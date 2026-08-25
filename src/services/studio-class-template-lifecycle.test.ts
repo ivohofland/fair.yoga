@@ -1410,7 +1410,7 @@ describe('updateStudioClassTemplate (DB)', () => {
     expect(result.template.location).toBe('Update Studio');
   });
 
-  it('returns slot_conflict when the edit lands on a live sibling slot, and logs it', async () => {
+  it('returns slot_conflict with heldBy: studio when the edit lands on a live sibling slot, and logs it', async () => {
     const occupant = await makeTemplate(teacherId, 'Slot Occupant');
     const mover = await makeTemplate(teacherId, 'Slot Mover');
 
@@ -1420,15 +1420,15 @@ describe('updateStudioClassTemplate (DB)', () => {
         startTime: timeToHHmm(occupant.scheduleRule.startTime),
       });
 
-      expect(result).toEqual({ ok: false, reason: 'slot_conflict' });
+      expect(result).toEqual({ ok: false, reason: 'slot_conflict', heldBy: 'studio' });
 
       // #231: a RETURNED failure never reaches `withErrorHandler`, and
-      // `respondError` does not log. Catching this P2002 is what would delete
-      // the line `classifyApiError` emits when it escapes, so the catch has to
-      // put one back.
+      // `respondError` does not log. Catching this `23P01` is what would
+      // delete the line `classifyApiError` emits when it escapes, so the
+      // catch has to put one back.
       expect(warn).toHaveBeenCalledWith(
-        expect.objectContaining({ templateId: mover.id, teacherId }),
-        'studio template edit refused by the slot index',
+        expect.objectContaining({ templateId: mover.id, teacherId, heldBy: 'studio' }),
+        'studio template edit refused: that slot is taken',
       );
     } finally {
       warn.mockRestore();
@@ -1439,21 +1439,23 @@ describe('updateStudioClassTemplate (DB)', () => {
   });
 
   /**
-   * PR #300 third pass. The third arm of the SAME catch block.
-   *
-   * That block has three arms — the P2002 above, this `YG001`, and `busy`
-   * below — and until now the first and third each had an "and logs it" test
-   * while the one #296 added, sitting between them, had none. The ARM is pinned
-   * end-to-end by the integration suite (delete it and a 409 becomes a 500),
-   * but the log line inside it was free to be deleted silently. That is the
-   * same shape as the defect this whole issue's review found: catching is what
-   * removes the record, and nothing checked that the record gets written.
+   * PR #300 third pass, updated for issue 298: the two arms this pinned
+   * separately (a same-family P2002, a cross-family `YG001`) are now one —
+   * `ScheduleRule_teacher_slot_excl` raises the identical `23P01` either way,
+   * and `heldBy` (probed by `ruleSlotHolder`, `src/lib/rule-slot-holder.ts`)
+   * is what tells them apart. This case pins the `heldBy: 'regular'` side;
+   * the case above pins `heldBy: 'studio'`. The ARM is pinned end-to-end by
+   * the integration suite (delete it and a 409 becomes a 500), but the log
+   * line inside it was free to be deleted silently before this test existed
+   * — the same shape as the defect this whole issue's review found: catching
+   * is what removes the record, and nothing checked that the record gets
+   * written.
    */
-  it('returns cross_family_slot_conflict when the class family holds the slot, and logs it', async () => {
+  it('returns slot_conflict with heldBy: regular when the class family holds the slot, and logs it', async () => {
     const mover = await makeTemplate(teacherId, 'Cross Family Mover');
     // The OTHER family at the slot the edit moves onto. A live `ClassTemplate`,
-    // so the cross-family trigger raises `YG001` rather than the slot index
-    // raising P2002 — the two arms are distinguished by which one fires.
+    // so it is this rule's `kind` — not which detector matched — that decides
+    // `heldBy` now.
     const room = await prisma.room.create({
       data: {
         venueName: 'Cross Venue', address: `${mover.id} Cross Street`, city: 'Amsterdam',
@@ -1483,10 +1485,10 @@ describe('updateStudioClassTemplate (DB)', () => {
         startTime: '21:45',
       });
 
-      expect(result).toEqual({ ok: false, reason: 'cross_family_slot_conflict' });
+      expect(result).toEqual({ ok: false, reason: 'slot_conflict', heldBy: 'regular' });
       expect(warn).toHaveBeenCalledWith(
-        expect.objectContaining({ templateId: mover.id, teacherId }),
-        'studio template edit refused: the class family holds that slot',
+        expect.objectContaining({ templateId: mover.id, teacherId, heldBy: 'regular' }),
+        'studio template edit refused: that slot is taken',
       );
     } finally {
       warn.mockRestore();

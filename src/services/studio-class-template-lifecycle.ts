@@ -46,11 +46,11 @@ import type { updateStudioClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { startOfLocalDay } from '@/lib/timezone';
 import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
-import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
+import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { isRecordNotFound, isTransientDbError } from '@/lib/api-errors';
 import { setLockTimeout } from '@/lib/db-locks';
 import { countSkipReasons, type SkipCounts } from '@/lib/generation';
-import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 // Server-only (pino). Safe here: this module's sole importer is
 // `api/studio-class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
 // transitively through `studio-class-generator`. No `'use client'` component
@@ -454,14 +454,16 @@ export type UpdateStudioClassTemplateResult =
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'no_fields' }
-  | { ok: false; reason: 'slot_conflict' }
   /**
-   * A LIVE row of the OTHER class family holds this slot (#296) — enforced by
-   * trigger, since no unique index can span two tables. A sibling of
-   * `slot_conflict` rather than a widening of it: the remedy is in the other
-   * half of the teacher's schedule, so the two cannot share a sentence.
+   * A live rule occupies the requested slot (#196/#296) — enforced by
+   * `ScheduleRule_teacher_slot_excl`, one exclusion constraint spanning both
+   * class families (issue 298), in place of the partial unique index and the
+   * cross-family trigger this reason used to split across two. `heldBy` is
+   * what tells the two apart now: the constraint's `23P01` cannot say which
+   * family raised it, so a fresh probe of `ScheduleRule` answers separately
+   * (`ruleSlotHolder`, `src/lib/rule-slot-holder.ts`).
    */
-  | { ok: false; reason: 'cross_family_slot_conflict' }
+  | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
   | { ok: false; reason: 'busy' };
 
 /**
@@ -533,8 +535,9 @@ export async function updateStudioClassTemplate(
   //     answering it for the family at once. An earlier revision of this
   //     comment claimed #231 had allowed it, which inverted the issue.
   //
-  // The `catch` below has FOUR returns and logs all four — the fourth is
-  // #296's `cross_family_slot_conflict`.
+  // The `catch` below has THREE returns and logs all three — the third is
+  // `slot_conflict`, which now carries both #196's within-family case and
+  // #296's cross-family one, told apart by `heldBy`.
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.scheduleRule.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
@@ -690,27 +693,35 @@ export async function updateStudioClassTemplate(
       return { ok: false, reason: 'not_found' };
     }
 
-    // `dayOfWeek` and `startTime` are both teacher-editable and both in
-    // `StudioClassTemplate_teacher_slot_unique` (#196), so an edit can move
-    // this template onto a slot another of its owner's live templates holds.
+    // `dayOfWeek` and `startTime` are both teacher-editable and both write
+    // onto the rule now (issue 298), so an edit can move this template onto a
+    // slot another of its owner's live rules — either family — already holds.
+    // Two separate branches stood here until this task — `isUniqueConflictOn`
+    // for a same-family collision, `isCrossFamilySlotConflict` for the other
+    // family's — because two different DB objects raised them.
+    // `ScheduleRule_teacher_slot_excl` (issue 298) replaced both with ONE
+    // exclusion constraint, and its `23P01` cannot say which family it
+    // refused, so `ruleSlotHolder` probes `ScheduleRule` itself to answer
+    // that.
     //
     // The log line is the point of catching rather than rethrowing. #231:
-    // "`classifyApiError` logs this same P2002 at `warn` when it escapes;
+    // "`classifyApiError` logs this same error at `warn` when it escapes;
     // catching it here must not be what removes that."
-    if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
+    if (isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')) {
+      const heldBy = await ruleSlotHolder(db, {
+        teacherId,
+        dayOfWeek: data.dayOfWeek ?? template.scheduleRule.dayOfWeek,
+        startMinutes: minutesSinceMidnight(
+          data.startTime !== undefined ? hhmmToTime(data.startTime) : template.scheduleRule.startTime,
+        ),
+        durationMinutes: data.durationMinutes ?? template.scheduleRule.durationMinutes,
+        excludeRuleId: template.scheduleRuleId,
+      });
       log.warn(
-        { err, templateId, teacherId },
-        'studio template edit refused by the slot index',
+        { err, templateId, teacherId, heldBy },
+        'studio template edit refused: that slot is taken',
       );
-      return { ok: false, reason: 'slot_conflict' };
-    }
-    // #296. `YG001`, not a P2002 — it would otherwise rethrow to a 500.
-    if (isCrossFamilySlotConflict(err)) {
-      log.warn(
-        { err, templateId, teacherId },
-        'studio template edit refused: the class family holds that slot',
-      );
-      return { ok: false, reason: 'cross_family_slot_conflict' };
+      return { ok: false, reason: 'slot_conflict', heldBy };
     }
 
     throw err;
@@ -853,14 +864,16 @@ export type ArchiveStudioTemplateResult =
   | { ok: true; action: 'unchanged'; template: StudioClassTemplateWithSlot }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
-  | { ok: false; reason: 'slot_conflict' }
   /**
-   * A LIVE row of the OTHER class family holds this slot (#296) — enforced by
-   * trigger, since no unique index can span two tables. A sibling of
-   * `slot_conflict` rather than a widening of it: the remedy is in the other
-   * half of the teacher's schedule, so the two cannot share a sentence.
+   * A live rule occupies the requested slot (#196/#296) — enforced by
+   * `ScheduleRule_teacher_slot_excl`, one exclusion constraint spanning both
+   * class families (issue 298), in place of the partial unique index and the
+   * cross-family trigger this reason used to split across two. `heldBy` is
+   * what tells the two apart now: the constraint's `23P01` cannot say which
+   * family raised it, so a fresh probe of `ScheduleRule` answers separately
+   * (`ruleSlotHolder`, `src/lib/rule-slot-holder.ts`).
    */
-  | { ok: false; reason: 'cross_family_slot_conflict' }
+  | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
   /**
    * See `ArchiveTemplateResult`'s `busy` arm (`class-template-lifecycle.ts`)
    * for what it guarantees and for the full range of causes behind it — a
@@ -1615,22 +1628,26 @@ export async function archiveOrUnarchiveStudioTemplate(
       );
       return { ok: false, reason: 'busy' };
     }
-    if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
-      // See the class family's twin: a returned failure never reaches
-      // `withErrorHandler`, so without this line this 409 leaves no server-side
-      // trace at all.
-      log.warn({ err, templateId, teacherId }, 'studio class un-archive refused: slot already held');
-      return { ok: false, reason: 'slot_conflict' };
-    }
-    // #296. Un-archiving makes the template live again at its slot, which is
-    // what fires the cross-family trigger. Logged for the reason above: a
-    // returned failure never reaches `withErrorHandler`.
-    if (isCrossFamilySlotConflict(err)) {
+    // Only reachable un-archiving: `isArchived` flips false in the same CAS
+    // that re-enters `ScheduleRule_teacher_slot_excl`'s scope, and another
+    // live rule — either family — can already hold this slot. Neither
+    // `dayOfWeek` nor `startTime` moves here, so the probe reads them
+    // straight off the pre-transaction `template` read. See the class
+    // family's twin: a returned failure never reaches `withErrorHandler`, so
+    // without this line this 409 leaves no server-side trace at all.
+    if (isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')) {
+      const heldBy = await ruleSlotHolder(db, {
+        teacherId,
+        dayOfWeek: template.scheduleRule.dayOfWeek,
+        startMinutes: minutesSinceMidnight(template.scheduleRule.startTime),
+        durationMinutes: template.scheduleRule.durationMinutes,
+        excludeRuleId: template.scheduleRuleId,
+      });
       log.warn(
-        { err, templateId, teacherId },
-        'studio class un-archive refused: the class family holds that slot',
+        { err, templateId, teacherId, heldBy },
+        'studio class un-archive refused: that slot is taken',
       );
-      return { ok: false, reason: 'cross_family_slot_conflict' };
+      return { ok: false, reason: 'slot_conflict', heldBy };
     }
     throw err;
   }

@@ -16,6 +16,34 @@ import {
   archiveOrUnarchiveTemplate,
   withSlot,
 } from '@/services/class-template-lifecycle';
+import type { RuleSlotHolder } from '@/lib/rule-slot-holder';
+
+/**
+ * The one `slot_conflict` reason (`class-template-lifecycle.ts`) carries a
+ * `heldBy` rather than a status, because the exclusion constraint behind it
+ * cannot say which family it refused — see that file's docblock on the
+ * reason. This route knows its own family, so it carries the map: PUT and the
+ * PATCH archive branch below both key off it.
+ *
+ * `satisfies Record<RuleSlotHolder, …>` is not decoration — a fourth holder
+ * state cannot be added without every route wording it, the same tether
+ * `COUNT_KEYS`/`ROOM_SEARCH_SELECT` use elsewhere (CLAUDE.md, Comment
+ * Discipline).
+ */
+const SLOT_TAKEN = {
+  regular: [
+    'You already have a recurring class at an overlapping time on that day.',
+    'DUPLICATE_TEMPLATE_SLOT',
+  ],
+  studio: [
+    'You already have a recurring studio class at an overlapping time on that day.',
+    'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT',
+  ],
+  unknown: [
+    'You already have a recurring class or studio class at an overlapping time on that day.',
+    'TEMPLATE_SLOT_CONFLICT',
+  ],
+} as const satisfies Record<RuleSlotHolder, readonly [string, string]>;
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -112,22 +140,10 @@ export const PUT = withErrorHandler(async (
     );
   }
   // The template's own dayOfWeek/startTime moved into a slot another of this
-  // teacher's live templates already holds (#196).
+  // teacher's live rules already holds — same family or the other (#196/#296).
   if (result.reason === 'slot_conflict') {
-    return respondError(
-      'You already have a recurring class on that day at that time.',
-      409,
-      'DUPLICATE_TEMPLATE_SLOT',
-    );
-  }
-  // The OTHER template family holds it (#296) — see the classes route for why
-  // the sentence differs from the branch above rather than being shared.
-  if (result.reason === 'cross_family_slot_conflict') {
-    return respondError(
-      'You already have a recurring studio class on that day at that time.',
-      409,
-      'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT',
-    );
+    const [message, code] = SLOT_TAKEN[result.heldBy];
+    return respondError(message, 409, code);
   }
   // This transaction lost a contention race (#100/#209) on the `ClassTemplate`
   // row itself — a generation claim, an archive, or a pause/resume holding it.
@@ -203,23 +219,12 @@ export const PATCH = withErrorHandler(async (
     if (result.reason === 'not_found') return respondError('Class template not found', 404);
     if (result.reason === 'forbidden') return respondError('Access denied', 403);
     // Only reachable un-archiving: `isArchived` flips false in the same CAS
-    // that re-enters `ClassTemplate_teacher_slot_unique`'s partial scope
-    // (#196), and another live template can already hold that slot.
+    // that re-enters `ScheduleRule_teacher_slot_excl`'s scope (#196/#296), and
+    // another live rule — same family or the other — can already hold that
+    // slot.
     if (result.reason === 'slot_conflict') {
-      return respondError(
-        'You already have a recurring class on that day at that time.',
-        409,
-        'DUPLICATE_TEMPLATE_SLOT',
-      );
-    }
-    // Un-archiving re-enters the slot, so it can be refused by the OTHER
-    // family's live template too (#296).
-    if (result.reason === 'cross_family_slot_conflict') {
-      return respondError(
-        'You already have a recurring studio class on that day at that time.',
-        409,
-        'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT',
-      );
+      const [message, code] = SLOT_TAKEN[result.heldBy];
+      return respondError(message, 409, code);
     }
     if (result.reason === 'busy') {
       return respondError(

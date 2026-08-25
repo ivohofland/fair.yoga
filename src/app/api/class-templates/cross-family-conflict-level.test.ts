@@ -2,37 +2,36 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 /**
- * ONE thing: that `POST /api/class-templates` words its cross-family 409 for
- * the statement that actually raised, and logs which one it was.
+ * ONE thing: that `POST /api/class-templates` still answers `YG001` from
+ * generation's own `Class` insert with the instance-level sentence, even
+ * though issue 298 removed the only OTHER thing this file used to test.
  *
  * WHY THIS IS MOCKED, and why that is the point — the same argument
  * `api/cron/daily-cleanup/route.test.ts` makes, for a stronger reason.
  *
- * The route answers two different sentences behind one status. A `YG001` from
- * the TEMPLATE insert means a live studio TEMPLATE holds this weekday slot; one
- * from GENERATION means a live studio CLASS holds one of the dates. The remedies
- * differ, and telling a teacher to go find a recurring studio class that does
- * not exist is the defect this branch exists to avoid.
+ * Before issue 298 this catch could be reached by `YG001` from TWO different
+ * statements — the template's own insert (a live studio TEMPLATE holds this
+ * weekday slot) or generation's `Class` insert (a live studio CLASS holds one
+ * of the dates) — and a `conflict.level` object told them apart so each got
+ * its own sentence. The template-level trigger that raised the FIRST one is
+ * gone: issue 298 replaced it with `ScheduleRule_teacher_slot_excl`, which
+ * raises `23P01`, not `YG001` — caught by `isExclusionConflictOn` earlier in
+ * this same catch, never reaching the branch below. So `conflict.level` had
+ * only one value left to carry, and the object that carried it is gone too
+ * (see the route's own comment where it stood).
  *
- * The template arm is covered end-to-end by `tests/integration/
- * cross-family-slot-api.test.ts`. **The instance arm cannot be**, and not for
- * want of effort: the generator pre-checks the sibling table with the same
- * predicate the trigger carries, so a pre-existing studio class is SKIPPED
- * (`blocked_by_other_family`) and never reaches the insert. The only way
- * generation raises is a row committing inside the window between that
+ * What is left, and why it still needs a mock: generation's race is covered
+ * end-to-end nowhere else. The generator pre-checks the sibling table with
+ * the same predicate the trigger carries, so a pre-existing studio class is
+ * SKIPPED (`blocked_by_other_family`) and never reaches the insert. The only
+ * way generation raises is a row committing inside the window between that
  * pre-check's `findMany` and its `createManyAndReturn` — the race
  * `docs/lock-order.md` records as knowingly accepted. An integration test
- * cannot stage it against a live app.
- *
- * So without this file, deleting `if (isCrossFamilySlotConflict(err))
- * conflict.level = 'instance';` fails nothing, and the race ships the wrong
- * sentence — which is exactly the outcome the `let`-to-object change was
- * measured against. That change hardened the read against a TYPO and left the
- * write unpinned against DELETION; this closes the other half.
+ * cannot stage it against a live app; this file forces it instead.
  *
  * Nothing here asserts wiring — not that the route calls the generator, not
- * what the generator did. Only the mapping from "which statement raised" to
- * "which sentence and which log field".
+ * what the generator did. Only that a `YG001` reaching this catch still maps
+ * to the instance-level sentence.
  */
 
 const generateInstancesForTemplate = vi.fn();
@@ -99,8 +98,8 @@ beforeEach(() => {
   classTemplateCreate.mockResolvedValue({ id: 'tpl-1', teacher: { defaultTimezone: 'UTC' } });
 });
 
-describe('POST /api/class-templates — which statement raised', () => {
-  it('words a GENERATION-time conflict for the instance family, and logs it as such', async () => {
+describe('POST /api/class-templates — the race integration cannot stage', () => {
+  it('words a GENERATION-time conflict for the instance family, and logs it', async () => {
     generateInstancesForTemplate.mockRejectedValue(
       yg001('Teacher teacher-1 already has a live studio class (sc-1) at 2031-05-06 09:00'),
     );
@@ -114,27 +113,12 @@ describe('POST /api/class-templates — which statement raised', () => {
     expect(payload.error.message).not.toMatch(/recurring/i);
     expect(payload.error.message).toMatch(/studio class/i);
 
-    // The field that makes the accepted race countable in production.
-    expect(warn).toHaveBeenCalled();
-    expect(warn.mock.calls[0]?.[0]).toMatchObject({ conflictLevel: 'instance' });
-  });
-
-  it('words a TEMPLATE-insert conflict for the template family, and logs it as such', async () => {
-    classTemplateCreate.mockRejectedValue(
-      yg001('Teacher teacher-1 already has an active studio class template (st-1) on day 2 at 09:00'),
+    // Logged so the accepted race stays countable in production — no
+    // `conflictLevel` any more: with only one reachable raiser left, a field
+    // whose entire job was telling two apart has nothing left to say.
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ teacherId: 'teacher-1' }),
+      'recurring class create refused: the studio family holds that slot',
     );
-
-    const res = await post();
-
-    expect(res.status).toBe(409);
-    const payload = (await res.json()) as { error: { message: string; code: string } };
-    expect(payload.error.code).toBe('CROSS_FAMILY_STUDIO_TEMPLATE_SLOT');
-    expect(payload.error.message).toMatch(/recurring studio class/i);
-    // `'untagged'`, not `'template'`: nothing tagged this error, and the log
-    // says what was observed rather than what is inferred. The RESPONSE still
-    // treats untagged as template — sound while the template insert is the
-    // only other raiser — but the two must not be conflated in the field
-    // someone greps to count races.
-    expect(warn.mock.calls[0]?.[0]).toMatchObject({ conflictLevel: 'untagged' });
   });
 });

@@ -22,7 +22,7 @@ import { PrismaClient } from '@prisma/client';
 import { generateStudioInstancesForTemplate } from '@/services/studio-class-generator';
 import { startOfLocalDay } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
-import { hhmmToTime } from '@/lib/time-of-day';
+import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -64,19 +64,23 @@ const send = (method: string, token: string, path: string, body?: unknown) =>
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 
-// startTime is required, not defaulted — every call site below must state
-// its own. dayOfWeek is fixed at 3 for every template this file creates.
-// StudioClassTemplate_teacher_slot_unique is (teacherId, dayOfWeek,
-// startTime) WHERE isArchived = false, so every call below that creates a
-// template unarchived for `ownerId` — or archives it at creation but later
-// un-archives it — needs a `startTime` of its own to land on a slot
-// 'Owner Template' (beforeAll's '18:00') isn't holding. A default here would
-// silently reopen that exact collision the moment a caller forgot to state
-// one — the class family's twin, `class-templates-api.test.ts`'s
-// `templateBody`, made the same removal for the same reason.
+// dayOfWeek and startTime are both required, not defaulted — every call site
+// below must state its own. `ScheduleRule_teacher_slot_excl` (issue 298)
+// replaced `StudioClassTemplate_teacher_slot_unique`'s exact-string match with
+// a RANGE-overlap exclusion, so an unarchived template for `ownerId` now needs
+// a slot nothing else this teacher holds is overlapping, not merely a
+// different string — one 60-minute-wide day no longer holds every fixture this
+// file creates, which is why `dayOfWeek` is a parameter rather than the fixed
+// 3 it used to be. Most callers still pass 3, alongside 'Owner Template'
+// (beforeAll's '18:00'); a caller past that day's budget states a day of its
+// own instead. A default for either parameter would silently reopen the exact
+// collision this signature exists to dodge — the class family's twin,
+// `class-templates-api.test.ts`'s `templateBody`, made the same removal for
+// the same reason.
 const makeTemplate = (
   teacherId: string,
   classType: string,
+  dayOfWeek: number,
   startTime: string,
   extra: { isArchived?: boolean; isActive?: boolean } = {},
 ) =>
@@ -87,7 +91,7 @@ const makeTemplate = (
           teacherId,
           kind: 'studio',
           classType,
-          dayOfWeek: 3,
+          dayOfWeek,
           startTime: hhmmToTime(startTime),
           durationMinutes: 60,
           ...extra,
@@ -111,7 +115,7 @@ beforeAll(async () => {
   otherAccountId = other.accountId;
   otherToken = other.token;
 
-  templateId = (await makeTemplate(ownerId, 'Owner Template', '18:00')).id;
+  templateId = (await makeTemplate(ownerId, 'Owner Template', 3, '18:00')).id;
 
   studioClassId = (
     await prisma.studioClass.create({
@@ -254,19 +258,18 @@ describe('POST /api/studio-class-templates', () => {
   // class-templates-api.test.ts: the create sits inside a $transaction that
   // also generates the four-week window, so a duplicate template would have
   // meant a second full four-week set of bookable studio classes, not just a
-  // second row. dayOfWeek 3 is 'Owner Template' and every PATCH fixture's
-  // slot ('18:00' through the '18:10' of 'Resume Reports') — three of those
-  // ('Toggle Target' 18:01, 'Archive Window' 18:03, 'Twice Archived' 18:08)
-  // end archived, which frees their slot again, but '18:11'/'18:12' still
-  // continue the sequence past its highest claimed minute rather than reuse
-  // one of theirs, so this block does not depend on which earlier fixtures
-  // ended archived and which stayed live.
+  // second row. Each case below picks a slot nothing else in this file holds
+  // — `ScheduleRule_teacher_slot_excl` checks for a RANGE overlap anywhere in
+  // `(teacherId, dayOfWeek)`, not just an identical string, which is why this
+  // block no longer packs its two cases minute-apart on 'Owner Template''s own
+  // weekday the way it did before that constraint replaced
+  // `StudioClassTemplate_teacher_slot_unique`.
   describe('POST /api/studio-class-templates is retry-safe on the slot key (#196)', () => {
     const post = (body: unknown) => send('POST', ownerToken, '/api/studio-class-templates', body);
 
     it('answers a repeated identical create with 409 and leaves one template and one window', async () => {
       const body = {
-        classType: 'Slot Studio Recurring', dayOfWeek: 3, startTime: '18:11',
+        classType: 'Slot Studio Recurring', dayOfWeek: 0, startTime: '00:00',
         durationMinutes: 60, location: 'Some Studio', hourlyRate: 45,
       };
 
@@ -278,7 +281,7 @@ describe('POST /api/studio-class-templates', () => {
       expect((await second.json()).error.code).toBe('DUPLICATE_STUDIO_TEMPLATE_SLOT');
 
       const templates = await prisma.studioClassTemplate.findMany({
-        where: { scheduleRule: { teacherId: ownerId, dayOfWeek: 3, startTime: hhmmToTime('18:11'), isArchived: false } },
+        where: { scheduleRule: { teacherId: ownerId, dayOfWeek: 0, startTime: hhmmToTime('00:00'), isArchived: false } },
       });
       expect(templates).toHaveLength(1);
 
@@ -293,7 +296,7 @@ describe('POST /api/studio-class-templates', () => {
 
     it('leaves one template and one window when two identical creates are in flight at once', async () => {
       const body = {
-        classType: 'Slot Studio Concurrent', dayOfWeek: 3, startTime: '18:12',
+        classType: 'Slot Studio Concurrent', dayOfWeek: 0, startTime: '02:00',
         durationMinutes: 60, location: 'Some Studio', hourlyRate: 45,
       };
 
@@ -304,7 +307,7 @@ describe('POST /api/studio-class-templates', () => {
       expect((await loser.json()).error.code).toBe('DUPLICATE_STUDIO_TEMPLATE_SLOT');
 
       const templates = await prisma.studioClassTemplate.findMany({
-        where: { scheduleRule: { teacherId: ownerId, dayOfWeek: 3, startTime: hhmmToTime('18:12'), isArchived: false } },
+        where: { scheduleRule: { teacherId: ownerId, dayOfWeek: 0, startTime: hhmmToTime('02:00'), isArchived: false } },
       });
       expect(templates).toHaveLength(1);
 
@@ -312,6 +315,136 @@ describe('POST /api/studio-class-templates', () => {
         where: { templateId: templates[0]!.id },
       });
       expect(generated).toHaveLength(4);
+    });
+  });
+
+  // The behaviour change this branch exists to prove: `19:00 +90` against
+  // `19:30 +60` is legal today (only an EXACT-start match was refused before
+  // issue 298) and refused after. A dedicated fresh teacher (mirroring the
+  // class family's `seedTeacher` fixtures for the same reason), plus a
+  // Room/TeacherRoom so a `ClassTemplate` can be planted directly — studio
+  // templates need neither.
+  describe('refuses an OVERLAP with the class family, not just an exact match (issue 298)', () => {
+    async function seedClassOwner(tag: string) {
+      const teacher = await makeTeacher(tag);
+      const room = await prisma.room.create({
+        data: {
+          venueName: `${tag} Venue`, address: `${suffix} ${tag} St`, city: 'Amsterdam',
+          postcode: '1011AB', floor: '1', roomName: 'Main', maxCapacity: 12,
+          isPublic: false, createdById: teacher.id,
+        },
+      });
+      const teacherRoom = await prisma.teacherRoom.create({
+        data: { teacherId: teacher.id, roomId: room.id, rentalRate: 20, capacityOverride: 12 },
+      });
+      return { ...teacher, roomId: room.id, teacherRoomId: teacherRoom.id };
+    }
+
+    async function cleanupClassOwner(owner: { id: string; accountId: string; roomId: string }) {
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.id } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.id } });
+      await prisma.room.delete({ where: { id: owner.roomId } });
+      await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+      await prisma.teacher.delete({ where: { id: owner.id } });
+      await prisma.account.delete({ where: { id: owner.accountId } });
+    }
+
+    it('answers 409 naming the class family when a new template OVERLAPS a class template', async () => {
+      const owner = await seedClassOwner('overlap-class');
+      try {
+        await prisma.classTemplate.create({
+          data: {
+            scheduleRule: {
+              create: {
+                teacherId: owner.id, kind: 'regular', classType: 'Overlap Class',
+                dayOfWeek: 2, startTime: hhmmToTime('19:00'), durationMinutes: 90,
+              },
+            },
+            teacherRoom: { connect: { id: owner.teacherRoomId } },
+            roomCost: 20, minRate: 30, targetRate: 60, minStudents: 3, maxStudents: 10,
+          },
+        });
+
+        const res = await send('POST', owner.token, '/api/studio-class-templates', {
+          classType: 'Overlap Studio', dayOfWeek: 2, startTime: '19:30',
+          durationMinutes: 60, location: 'Overlap Venue', hourlyRate: 40,
+        });
+        expect(res.status).toBe(409);
+        const body = (await res.json()) as { error: { message: string; code?: string } };
+        expect(body.error.code).toBe('CROSS_FAMILY_CLASS_TEMPLATE_SLOT');
+        // "at that time" described the exact-start index this constraint
+        // replaced; 19:00 and 19:30 are not the same time.
+        expect(body.error.message).toMatch(/overlapping/i);
+      } finally {
+        await cleanupClassOwner(owner);
+      }
+    });
+
+    it('still answers 409 on an exact-start collision — unchanged behaviour', async () => {
+      const owner = await seedClassOwner('exact-class');
+      try {
+        await prisma.classTemplate.create({
+          data: {
+            scheduleRule: {
+              create: {
+                teacherId: owner.id, kind: 'regular', classType: 'Exact Class',
+                dayOfWeek: 2, startTime: hhmmToTime('08:00'), durationMinutes: 60,
+              },
+            },
+            teacherRoom: { connect: { id: owner.teacherRoomId } },
+            roomCost: 20, minRate: 30, targetRate: 60, minStudents: 3, maxStudents: 10,
+          },
+        });
+
+        const res = await send('POST', owner.token, '/api/studio-class-templates', {
+          classType: 'Exact Studio', dayOfWeek: 2, startTime: '08:00',
+          durationMinutes: 60, location: 'Exact Venue', hourlyRate: 40,
+        });
+        expect(res.status).toBe(409);
+        const body = (await res.json()) as { error: { code?: string } };
+        expect(body.error.code).toBe('CROSS_FAMILY_CLASS_TEMPLATE_SLOT');
+      } finally {
+        await cleanupClassOwner(owner);
+      }
+    });
+
+    it('PUT: refuses a startTime change that OVERLAPS a class template, not just an exact match', async () => {
+      const owner = await seedClassOwner('put-overlap-class');
+      try {
+        await prisma.classTemplate.create({
+          data: {
+            scheduleRule: {
+              create: {
+                teacherId: owner.id, kind: 'regular', classType: 'PUT Overlap Class',
+                dayOfWeek: 4, startTime: hhmmToTime('10:00'), durationMinutes: 90,
+              },
+            },
+            teacherRoom: { connect: { id: owner.teacherRoomId } },
+            roomCost: 20, minRate: 30, targetRate: 60, minStudents: 3, maxStudents: 10,
+          },
+        });
+        const create = await send('POST', owner.token, '/api/studio-class-templates', {
+          classType: 'PUT Overlap Studio', dayOfWeek: 4, startTime: '13:00',
+          durationMinutes: 60, location: 'PUT Overlap Venue', hourlyRate: 40,
+        });
+        expect(create.status).toBe(201);
+        const { data: template } = (await create.json()) as { data: { id: string } };
+
+        // The class template occupies [10:00, 11:30); this lands the mover's
+        // start inside that range without matching it exactly.
+        const res = await send('PUT', owner.token, `/api/studio-class-templates/${template.id}`, {
+          startTime: '10:30',
+        });
+        expect(res.status).toBe(409);
+        const body = (await res.json()) as { error: { message: string; code?: string } };
+        expect(body.error.code).toBe('CROSS_FAMILY_CLASS_TEMPLATE_SLOT');
+        expect(body.error.message).toMatch(/overlapping/i);
+
+        const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
+        expect(timeToHHmm(after.scheduleRule.startTime)).toBe('13:00');
+      } finally {
+        await cleanupClassOwner(owner);
+      }
     });
   });
 });
@@ -357,30 +490,31 @@ describe('/api/studio-class-templates/[id] — ownership', () => {
   });
 });
 
-// Task 6b (#196). `StudioClassTemplate_teacher_slot_unique` is (teacherId,
-// dayOfWeek, startTime) WHERE isArchived = false — a plain edit can move a
-// live template onto a slot another of the teacher's live templates already
-// holds, the same clash `POST` guards against on create.
+// Task 6b (#196). `ScheduleRule_teacher_slot_excl` — a single exclusion
+// constraint spanning both class families now, in place of the partial unique
+// index this comment used to name — refuses a plain edit that moves a live
+// template onto a slot another of the teacher's live rules already holds, the
+// same clash `POST` guards against on create.
 describe('PUT /api/studio-class-templates/[id] collides on the slot key (#196)', () => {
   it('refuses a dayOfWeek/startTime change onto a slot another live template already holds', async () => {
-    await makeTemplate(ownerId, 'PUT Slot Occupant', '18:20');
-    const mover = await makeTemplate(ownerId, 'PUT Slot Mover', '18:21');
+    await makeTemplate(ownerId, 'PUT Slot Occupant', 0, '04:00');
+    const mover = await makeTemplate(ownerId, 'PUT Slot Mover', 0, '06:00');
 
     const res = await send('PUT', ownerToken, `/api/studio-class-templates/${mover.id}`, {
-      startTime: '18:20',
+      startTime: '04:00',
     });
     expect(res.status).toBe(409);
     const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe('DUPLICATE_STUDIO_TEMPLATE_SLOT');
 
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: mover.id }, include: { scheduleRule: true } });
-    expect(after.scheduleRule.startTime).toBe('18:21');
+    expect(timeToHHmm(after.scheduleRule.startTime)).toBe('06:00');
   });
 });
 
 describe('PUT /api/studio-class-templates/[id] — the teacher-editable boundary', () => {
   it('writes the edited fields and answers 200', async () => {
-    const t = await makeTemplate(ownerId, 'Boundary Edit', '18:40');
+    const t = await makeTemplate(ownerId, 'Boundary Edit', 0, '08:00');
 
     const res = await send('PUT', ownerToken, `/api/studio-class-templates/${t.id}`, {
       classType: 'Boundary Edited',
@@ -401,7 +535,7 @@ describe('PUT /api/studio-class-templates/[id] — the teacher-editable boundary
   // pins are guarding the wrong thing. Ported from the class family's twin in
   // class-templates-api.test.ts, which the studio family never had (#114).
   it('rejects an undeclared key — the schema is strict', async () => {
-    const t = await makeTemplate(ownerId, 'Strict Studio Flow', '18:41');
+    const t = await makeTemplate(ownerId, 'Strict Studio Flow', 0, '10:00');
 
     const res = await send('PUT', ownerToken, `/api/studio-class-templates/${t.id}`, {
       classType: 'Renamed',
@@ -446,7 +580,7 @@ describe('PUT /api/studio-class-templates/[id] — the teacher-editable boundary
    * `{ hourlyRate: 1 }` and pins neither half.
    */
   it('rejects a malformed body before revealing that the template is not yours', async () => {
-    const t = await makeTemplate(ownerId, 'Order Guard Studio', '18:43');
+    const t = await makeTemplate(ownerId, 'Order Guard Studio', 0, '12:00');
 
     const malformed = await send('PUT', otherToken, `/api/studio-class-templates/${t.id}`, {
       hourlyRate: 'not a number',
@@ -465,7 +599,7 @@ describe('PUT /api/studio-class-templates/[id] — the teacher-editable boundary
   it(
     'answers 503 STUDIO_TEMPLATE_BUSY when an edit loses the row, and changes nothing',
     async () => {
-      const t = await makeTemplate(ownerId, 'Busy Studio Edit', '18:42');
+      const t = await makeTemplate(ownerId, 'Busy Studio Edit', 0, '14:00');
 
       let release!: () => void;
       const held = new Promise<void>((resolve) => {
@@ -504,7 +638,7 @@ describe('PUT /api/studio-class-templates/[id] — the teacher-editable boundary
 
 describe('PATCH /api/studio-class-templates/[id]', () => {
   it('reaches paused then active as named, and archiving forces inactive', async () => {
-    const id = (await makeTemplate(ownerId, 'Toggle Target', '18:01')).id;
+    const id = (await makeTemplate(ownerId, 'Toggle Target', 0, '16:00')).id;
 
     const paused = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=paused`);
     expect(paused.status).toBe(200);
@@ -537,7 +671,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   // guards this in both places; the studio family guarded it in neither.
   it('refuses to activate an archived template — no classes for shelved things', async () => {
     const id = (
-      await makeTemplate(ownerId, 'Shelved', '18:00', { isArchived: true, isActive: false })
+      await makeTemplate(ownerId, 'Shelved', 3, '18:00', { isArchived: true, isActive: false })
     ).id;
 
     const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=active`);
@@ -552,7 +686,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     // Distinct startTime: this row un-archives before the test ends, joining
     // the isArchived=false slot-uniqueness set alongside 'Owner Template'.
     const id = (
-      await makeTemplate(ownerId, 'Unarchive Me', '18:02', {
+      await makeTemplate(ownerId, 'Unarchive Me', 4, '00:00', {
         isArchived: true,
         isActive: false,
       })
@@ -571,14 +705,14 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     expect(after.scheduleRule.isActive).toBe(false);
   });
 
-  // Task 6b (#196). `StudioClassTemplate_teacher_slot_unique` is (teacherId,
-  // dayOfWeek, startTime) WHERE isArchived = false — un-archiving is the one
-  // transition that re-enters that partial scope, so a shelved template can
-  // now collide with a live one holding the same slot.
+  // Task 6b (#196). `ScheduleRule_teacher_slot_excl` refuses a live overlap
+  // WHERE isArchived = false — un-archiving is the one transition that
+  // re-enters that scope, so a shelved template can now collide with a live
+  // one holding the same slot.
   it('refuses to un-archive into a slot another live template already holds', async () => {
-    const live = (await makeTemplate(ownerId, 'Unarchive Slot Live', '18:22')).id;
+    const live = (await makeTemplate(ownerId, 'Unarchive Slot Live', 4, '02:00')).id;
     const shelved = (
-      await makeTemplate(ownerId, 'Unarchive Slot Shelved', '18:22', {
+      await makeTemplate(ownerId, 'Unarchive Slot Shelved', 4, '02:00', {
         isArchived: true,
         isActive: false,
       })
@@ -607,7 +741,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   // #86, mirroring class-templates-api.test.ts's equivalent case: archiving
   // must withdraw the future window, not just flip the flag.
   it('archiving deletes the unbooked future window and reports the counts', async () => {
-    const template = await makeTemplate(ownerId, 'Archive Window', '18:03');
+    const template = await makeTemplate(ownerId, 'Archive Window', 4, '04:00');
     const makeInstance = (date: string) =>
       prisma.studioClass.create({
         data: {
@@ -638,7 +772,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   });
 
   it('pausing removes nothing and reports the last scheduled class', async () => {
-    const template = await makeTemplate(ownerId, 'Pause Window', '18:04');
+    const template = await makeTemplate(ownerId, 'Pause Window', 4, '06:00');
     const later = await prisma.studioClass.create({
       data: {
         teacherId: ownerId,
@@ -664,7 +798,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   });
 
   it('rejects a PATCH with no state parameter', async () => {
-    const id = (await makeTemplate(ownerId, 'No State', '18:05')).id;
+    const id = (await makeTemplate(ownerId, 'No State', 4, '08:00')).id;
 
     const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}`);
     expect(res.status).toBe(400);
@@ -675,7 +809,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   });
 
   it('rejects an unrecognised state value', async () => {
-    const id = (await makeTemplate(ownerId, 'Bad State', '18:06')).id;
+    const id = (await makeTemplate(ownerId, 'Bad State', 4, '10:00')).id;
 
     const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=sideways`);
     expect(res.status).toBe(400);
@@ -689,7 +823,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
    * identical requests must reach the same state, not opposite ones.
    */
   it('is idempotent: pausing twice leaves the template paused', async () => {
-    const id = (await makeTemplate(ownerId, 'Twice Paused', '18:07')).id;
+    const id = (await makeTemplate(ownerId, 'Twice Paused', 4, '14:00')).id;
 
     const pause = () =>
       send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=paused`);
@@ -712,7 +846,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
    * template. It must be a no-op — and must NOT withdraw a second time.
    */
   it('is idempotent: archiving twice does not withdraw twice', async () => {
-    const template = await makeTemplate(ownerId, 'Twice Archived', '18:08');
+    const template = await makeTemplate(ownerId, 'Twice Archived', 4, '16:00');
     await prisma.studioClass.create({
       data: {
         teacherId: ownerId,
@@ -751,7 +885,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
    * on the response body alone.
    */
   it('resuming fills the window rather than waiting for the hourly sweep', async () => {
-    const id = (await makeTemplate(ownerId, 'Resume Fills Window', '18:09')).id;
+    const id = (await makeTemplate(ownerId, 'Resume Fills Window', 4, '18:00')).id;
 
     await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=paused`);
     // Start from a genuinely empty window, so the count below can only come
@@ -796,7 +930,7 @@ describe('PATCH /api/studio-class-templates/[id] — lock contention', () => {
     'answers 503 STUDIO_TEMPLATE_BUSY when an un-archive loses the row, and changes nothing',
     async () => {
       const id = (
-        await makeTemplate(ownerId, 'Busy Unarchive', '18:31', {
+        await makeTemplate(ownerId, 'Busy Unarchive', 3, '18:31', {
           isArchived: true,
           isActive: false,
         })
@@ -831,7 +965,7 @@ describe('PATCH /api/studio-class-templates/[id] — lock contention', () => {
   it(
     'answers 503 STUDIO_TEMPLATE_BUSY when a pause loses the row',
     async () => {
-      const id = (await makeTemplate(ownerId, 'Busy Studio Pause', '18:32')).id;
+      const id = (await makeTemplate(ownerId, 'Busy Studio Pause', 5, '00:00')).id;
 
       const { release, settled } = holdTemplateRow(id);
       await new Promise((r) => setTimeout(r, 100));
@@ -868,7 +1002,7 @@ describe('PATCH /api/studio-class-templates/[id] — resume reporting', () => {
    * at `setMessage('')`. This is the wire half of that chain.
    */
   it('carries what the window holds and what the resume added', async () => {
-    const t = await makeTemplate(ownerId, 'Resume Reports', '18:10');
+    const t = await makeTemplate(ownerId, 'Resume Reports', 5, '02:00');
     await prisma.scheduleRule.update({
       where: { id: t.scheduleRuleId },
       data: { isActive: false },
@@ -906,7 +1040,7 @@ describe('/api/studio-classes', () => {
   // spread, so neither name appeared anywhere in the handler — a grep for the
   // key names found nothing, which is how this stayed hidden.
   it("ignores another teacher's templateId instead of attaching it", async () => {
-    const victimTemplate = await makeTemplate(otherId, 'Victim Studio Template', '18:00');
+    const victimTemplate = await makeTemplate(otherId, 'Victim Studio Template', 3, '18:00');
 
     const res = await send('POST', ownerToken, '/api/studio-classes', {
       classType: 'Squat Attempt',
@@ -1244,7 +1378,7 @@ describe('/api/studio-classes', () => {
     });
 
     it("refuses a date move on a generated row, naming cancel-plus-manual", async () => {
-      const tpl = await makeTemplate(ownerId, 'Policy Generated', '08:55');
+      const tpl = await makeTemplate(ownerId, 'Policy Generated', 5, '04:00');
       const sc = await makePolicyRow(new Date('2099-06-21'), '08:55', { templateId: tpl.id });
 
       const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
@@ -1344,7 +1478,7 @@ describe('/api/studio-classes', () => {
      * logic guarding nothing, with every other test in this block still green.
      */
     it('refuses a generated row its OWN date, unchanged — the gate reads presence', async () => {
-      const tpl = await makeTemplate(ownerId, 'Policy Unchanged Date', '09:05');
+      const tpl = await makeTemplate(ownerId, 'Policy Unchanged Date', 5, '06:00');
       const sc = await makePolicyRow(new Date('2099-06-23'), '09:05', { templateId: tpl.id });
 
       const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
@@ -1536,7 +1670,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
   });
 
   it('refuses a future generated class, naming cancel and the code', async () => {
-    const tpl = await makeTemplate(ownerId, 'Del Future', '05:30');
+    const tpl = await makeTemplate(ownerId, 'Del Future', 5, '08:00');
     const sc = await makeClass({ templateId: tpl.id, date: FUTURE, startTime: '05:30' });
 
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
@@ -1554,7 +1688,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
    * Template state is reversible — un-archive, resume, and the date is refilled.
    */
   it('still refuses a future generated class when its template is archived', async () => {
-    const tpl = await makeTemplate(ownerId, 'Del Archived', '05:45', {
+    const tpl = await makeTemplate(ownerId, 'Del Archived', 3, '05:45', {
       isArchived: true,
       isActive: false,
     });
@@ -1576,7 +1710,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
   });
 
   it('removes a past generated class', async () => {
-    const tpl = await makeTemplate(ownerId, 'Del Past', '06:15');
+    const tpl = await makeTemplate(ownerId, 'Del Past', 5, '10:00');
     const sc = await makeClass({ templateId: tpl.id, date: PAST, startTime: '06:15' });
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(200);
@@ -1592,7 +1726,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
    * exercises the real path, and its twin below covers the other direction.
    */
   it('removes a cancelled past generated class', async () => {
-    const tpl = await makeTemplate(ownerId, 'Del Cancelled Past', '06:30');
+    const tpl = await makeTemplate(ownerId, 'Del Cancelled Past', 5, '12:00');
     const sc = await makeClass({
       templateId: tpl.id,
       date: PAST,
@@ -1619,7 +1753,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
    * silently un-cancels itself on a class students were told was off.
    */
   it('refuses a cancelled future generated class, so cancelling cannot buy a removal', async () => {
-    const tpl = await makeTemplate(ownerId, 'Del Cancelled Future', '05:45');
+    const tpl = await makeTemplate(ownerId, 'Del Cancelled Future', 5, '14:00');
     const sc = await makeClass({
       templateId: tpl.id,
       date: FUTURE,
@@ -1651,7 +1785,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
     const today = new Date(
       `${new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Amsterdam' }).format(new Date())}T00:00:00.000Z`,
     );
-    const tpl = await makeTemplate(ownerId, 'Del Today Diverged', '23:30');
+    const tpl = await makeTemplate(ownerId, 'Del Today Diverged', 6, '23:30');
     const sc = await makeClass({ templateId: tpl.id, date: today, startTime: '00:01' });
 
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
@@ -1667,7 +1801,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
       `${new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Amsterdam' }).format(new Date())}T00:00:00.000Z`,
     ).getTime();
     const yesterday = new Date(todayMs - 24 * 60 * 60 * 1000);
-    const tpl = await makeTemplate(ownerId, 'Del Yesterday', '23:45');
+    const tpl = await makeTemplate(ownerId, 'Del Yesterday', 5, '23:45');
     const sc = await makeClass({ templateId: tpl.id, date: yesterday, startTime: '00:01' });
 
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);

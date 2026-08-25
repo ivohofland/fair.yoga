@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isExclusionConflictOn } from './exclusion-conflict';
 
 /**
  * Extra log fields a classification contributes, spread flat into the log
@@ -242,8 +243,11 @@ export function isTransientDbError(error: unknown): boolean {
  * Lives beside `isTransientDbError` because it answers the same kind of
  * question — what does this thrown value MEAN — and splitting the two across
  * modules by who imports them would put the two halves of one lookup table in
- * two places. This module imports nothing but `@prisma/client`, so a service
- * using it stays framework-agnostic.
+ * two places. This module's own imports stay within that same table —
+ * `isExclusionConflictOn` (`./exclusion-conflict`) is the shared DB-error
+ * matcher `classifyApiError` reuses below rather than re-implementing, and it
+ * in turn imports only `@prisma/client` — so a service using this module for
+ * classification alone still pulls in nothing web-framework-shaped.
  */
 export function isRecordNotFound(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
@@ -395,6 +399,23 @@ export function classifyApiError(error: unknown): ApiFailure {
       logMessage: 'unique constraint escaped a route to the 409 fallback',
       level: 'warn',
       detail: { target: error.meta?.target },
+    };
+  }
+
+  // The same gap one level in as the P2002 branch above, for the constraint
+  // issue 298 introduced: a route that never caught
+  // `ScheduleRule_teacher_slot_excl` itself, or a probe-and-catch that raced
+  // and lost. This branch has neither a probe nor a teacher in scope — those
+  // live at the call site that reaches `withErrorHandler`, not in this
+  // classifier — so it cannot name which family holds the slot the way the
+  // four template routes do; it carries the `unknown` sentence those routes'
+  // own `SLOT_TAKEN` maps use for exactly that case.
+  if (isExclusionConflictOn(error, 'ScheduleRule_teacher_slot_excl')) {
+    return {
+      status: 409,
+      message: 'You already have a recurring class or studio class at an overlapping time on that day.',
+      logMessage: 'schedule rule slot exclusion escaped a route to the 409 fallback',
+      level: 'warn',
     };
   }
 

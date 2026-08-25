@@ -7,7 +7,7 @@ import { generateInstancesForTemplate, getNextOccurrences } from '@/services/cla
 // a second definition in the test could only weaken it.
 import { mondayOf } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
-import { hhmmToTime } from '@/lib/time-of-day';
+import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -46,20 +46,48 @@ let otherSessionToken: string;
 const DAY_OF_WEEK = (((new Date().getUTCDay() + 6) % 7) + 2) % 7;
 const EXPECTED_JS_DAY = (DAY_OF_WEEK + 1) % 7;
 
+/**
+ * Five weekdays with no meaning of their own — room for this file's many
+ * single-purpose fixtures now that `ScheduleRule_teacher_slot_excl` (issue
+ * 298) refuses any RANGE overlap within one `(teacherId, dayOfWeek)`, not
+ * just an identical `startTime` string. This file creates more live
+ * templates than DAY_OF_WEEK holds at 60-minute spacing, and most of them
+ * have no stake in which weekday they land on — only a case that reads
+ * `EXPECTED_JS_DAY` or shares `sameWeekDayPair()`'s pair does.
+ *
+ * Each is DAY_OF_WEEK plus a distinct, fixed offset (1, 3, 4, 5, 6 — 2 is
+ * skipped, since `sameWeekDayPair()`'s OLD_DAY can coincide with
+ * DAY_OF_WEEK + 2 on some days of the week), so every one differs from
+ * DAY_OF_WEEK and from every other ALT_DAY on every day of the week, by
+ * construction rather than by luck.
+ */
+const ALT_DAY_1 = (DAY_OF_WEEK + 1) % 7;
+const ALT_DAY_2 = (DAY_OF_WEEK + 3) % 7;
+const ALT_DAY_3 = (DAY_OF_WEEK + 4) % 7;
+const ALT_DAY_4 = (DAY_OF_WEEK + 5) % 7;
+const ALT_DAY_5 = (DAY_OF_WEEK + 6) % 7;
+
 // startTime is required, not defaulted — every call site below must state
-// its own: ClassTemplate_teacher_slot_unique is (teacherId, dayOfWeek,
-// startTime) WHERE isArchived = false, this file reuses one teacher and one
-// dayOfWeek throughout, and most of these templates are never archived by
-// the end of their test (that is what several of them are proving) — so the
-// only way for later templates to coexist with earlier still-active ones is
-// a startTime of their own. A default here would silently reopen the exact
-// collision this file was repaired for, the moment a ninth inline caller
-// forgot to pass one.
-function templateBody(classType: string, startTime: string) {
+// its own: `ScheduleRule_teacher_slot_excl` (issue 298) refuses a RANGE
+// overlap, not just an identical string, this file reuses one teacher
+// throughout, and most of these templates are never archived by the end of
+// their test (that is what several of them are proving) — so the only way
+// for later templates to coexist with earlier still-active ones is a
+// startTime (and, past this file's single-day budget, a dayOfWeek) of their
+// own. A default startTime would silently reopen the exact collision this
+// file was repaired for, the moment a ninth inline caller forgot to pass one.
+//
+// `dayOfWeek` DOES default, to `DAY_OF_WEEK` — unlike startTime, that default
+// is the value most callers actually want (#123's weekday-derivation still
+// has to hold for every template a test reads `EXPECTED_JS_DAY` against), so
+// defaulting it is not the silent-collision trap the paragraph above warns
+// against. A caller past this file's one-day budget states its own day
+// instead, the same way it always had to state its own startTime.
+function templateBody(classType: string, startTime: string, dayOfWeek: number = DAY_OF_WEEK) {
   return {
     teacherRoomId,
     classType,
-    dayOfWeek: DAY_OF_WEEK,
+    dayOfWeek,
     startTime,
     durationMinutes: 60,
     roomCost: 15,
@@ -271,8 +299,8 @@ describe('POST /api/class-templates', () => {
   // #196. The create sits inside a $transaction that also generates the
   // four-week window, so a duplicate here is worse than a duplicate row: a
   // second identical template would have meant a second full four-week set
-  // of bookable classes. '09:40' and '11:00' are the two slots left over in
-  // this file's dense startTime sequence for DAY_OF_WEEK — see
+  // of bookable classes. Neither case reads the created template's weekday,
+  // so both sit on `ALT_DAY_1` rather than the shared `DAY_OF_WEEK` — see
   // templateBody's docblock above.
   describe('POST /api/class-templates is retry-safe on the slot key (#196)', () => {
     const post = (body: unknown) =>
@@ -283,7 +311,7 @@ describe('POST /api/class-templates', () => {
       });
 
     it('answers a repeated identical create with 409 and leaves one template and one window', async () => {
-      const body = templateBody('Slot Recurring', '09:40');
+      const body = templateBody('Slot Recurring', '00:00', ALT_DAY_1);
 
       const first = await post(body);
       expect(first.status).toBe(201);
@@ -293,7 +321,7 @@ describe('POST /api/class-templates', () => {
       expect((await second.json()).error.code).toBe('DUPLICATE_TEMPLATE_SLOT');
 
       const templates = await prisma.classTemplate.findMany({
-        where: { scheduleRule: { teacherId, dayOfWeek: DAY_OF_WEEK, startTime: hhmmToTime('09:40'), isArchived: false } },
+        where: { scheduleRule: { teacherId, dayOfWeek: ALT_DAY_1, startTime: hhmmToTime('00:00'), isArchived: false } },
       });
       expect(templates).toHaveLength(1);
 
@@ -307,7 +335,7 @@ describe('POST /api/class-templates', () => {
     });
 
     it('leaves one template and one window when two identical creates are in flight at once', async () => {
-      const body = templateBody('Slot Recurring Concurrent', '11:00');
+      const body = templateBody('Slot Recurring Concurrent', '02:00', ALT_DAY_1);
 
       const [a, b] = await Promise.all([post(body), post(body)]);
       expect([a.status, b.status].sort()).toEqual([201, 409]);
@@ -316,7 +344,7 @@ describe('POST /api/class-templates', () => {
       expect((await loser.json()).error.code).toBe('DUPLICATE_TEMPLATE_SLOT');
 
       const templates = await prisma.classTemplate.findMany({
-        where: { scheduleRule: { teacherId, dayOfWeek: DAY_OF_WEEK, startTime: hhmmToTime('11:00'), isArchived: false } },
+        where: { scheduleRule: { teacherId, dayOfWeek: ALT_DAY_1, startTime: hhmmToTime('02:00'), isArchived: false } },
       });
       expect(templates).toHaveLength(1);
 
@@ -380,6 +408,96 @@ describe('POST /api/class-templates', () => {
       await prisma.account.delete({ where: { id: owner.accountId } });
     }
   });
+
+  // The behaviour change this branch exists to prove: `19:00 +90` against
+  // `19:30 +60` is legal today (only an EXACT-start match was refused before
+  // issue 298) and refused after. A dedicated `seedTeacher` fixture, like the
+  // room-archive door above, so this doesn't have to find a free slot in the
+  // shared teacher's already-dense namespace.
+  describe('refuses an OVERLAP with the studio family, not just an exact match (issue 298)', () => {
+    it('answers 409 naming the studio family when a new template OVERLAPS a studio template', async () => {
+      const owner = await seedTeacher('overlap-studio');
+      try {
+        await prisma.studioClassTemplate.create({
+          data: {
+            scheduleRule: {
+              create: {
+                teacherId: owner.teacherId, kind: 'studio', classType: 'Overlap Studio',
+                dayOfWeek: 2, startTime: hhmmToTime('19:00'), durationMinutes: 90,
+              },
+            },
+            location: 'Overlap Venue', hourlyRate: 40,
+          },
+        });
+
+        const res = await fetch(`${BASE_URL}/api/class-templates`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+          body: JSON.stringify({
+            teacherRoomId: owner.teacherRoomId,
+            classType: 'Overlap Class',
+            dayOfWeek: 2,
+            startTime: '19:30',
+            durationMinutes: 60,
+            roomCost: 20, minRate: 30, targetRate: 60, minStudents: 3, maxStudents: 10,
+          }),
+        });
+        expect(res.status).toBe(409);
+        const body = (await res.json()) as { error: { message: string; code?: string } };
+        expect(body.error.code).toBe('CROSS_FAMILY_STUDIO_TEMPLATE_SLOT');
+        // "at that time" described the exact-start index this constraint
+        // replaced; 19:00 and 19:30 are not the same time.
+        expect(body.error.message).toMatch(/overlapping/i);
+      } finally {
+        await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
+        await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
+        await prisma.room.delete({ where: { id: owner.roomId } });
+        await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+        await prisma.teacher.delete({ where: { id: owner.teacherId } });
+        await prisma.account.delete({ where: { id: owner.accountId } });
+      }
+    });
+
+    it('still answers 409 on an exact-start collision — unchanged behaviour', async () => {
+      const owner = await seedTeacher('exact-studio');
+      try {
+        await prisma.studioClassTemplate.create({
+          data: {
+            scheduleRule: {
+              create: {
+                teacherId: owner.teacherId, kind: 'studio', classType: 'Exact Studio',
+                dayOfWeek: 2, startTime: hhmmToTime('08:00'), durationMinutes: 60,
+              },
+            },
+            location: 'Exact Venue', hourlyRate: 40,
+          },
+        });
+
+        const res = await fetch(`${BASE_URL}/api/class-templates`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+          body: JSON.stringify({
+            teacherRoomId: owner.teacherRoomId,
+            classType: 'Exact Class',
+            dayOfWeek: 2,
+            startTime: '08:00',
+            durationMinutes: 60,
+            roomCost: 20, minRate: 30, targetRate: 60, minStudents: 3, maxStudents: 10,
+          }),
+        });
+        expect(res.status).toBe(409);
+        const body = (await res.json()) as { error: { code?: string } };
+        expect(body.error.code).toBe('CROSS_FAMILY_STUDIO_TEMPLATE_SLOT');
+      } finally {
+        await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
+        await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
+        await prisma.room.delete({ where: { id: owner.roomId } });
+        await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+        await prisma.teacher.delete({ where: { id: owner.teacherId } });
+        await prisma.account.delete({ where: { id: owner.accountId } });
+      }
+    });
+  });
 });
 
 describe('PATCH /api/class-templates/[id]', () => {
@@ -389,11 +507,15 @@ describe('PATCH /api/class-templates/[id]', () => {
   // cases (which each POST inline instead of reaching across describes).
   // startTime is required, not defaulted, so every call site below is
   // forced to pick its own slot — see templateBody's comment above.
-  const newTemplate = async (classType: string, startTime: string): Promise<string> => {
+  const newTemplate = async (
+    classType: string,
+    startTime: string,
+    dayOfWeek: number = DAY_OF_WEEK,
+  ): Promise<string> => {
     const res = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody(classType, startTime)),
+      body: JSON.stringify(templateBody(classType, startTime, dayOfWeek)),
     });
     expect(res.status).toBe(201);
     return ((await res.json()) as { data: { id: string } }).data.id;
@@ -403,7 +525,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Toggle Flow', '09:31')),
+      body: JSON.stringify(templateBody('Toggle Flow', '04:00', ALT_DAY_1)),
     });
     expect(create.status).toBe(201);
     const { data: template } = (await create.json()) as { data: { id: string } };
@@ -463,7 +585,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Shelved Flow', '09:32')),
+      body: JSON.stringify(templateBody('Shelved Flow', '06:00', ALT_DAY_1)),
     });
     expect(create.status).toBe(201);
     const { data: template } = (await create.json()) as { data: { id: string } };
@@ -550,7 +672,7 @@ describe('PATCH /api/class-templates/[id]', () => {
   });
 
   it('archiving deletes the unbooked future window and reports the counts', async () => {
-    const id = await newTemplate('Archive Counts', '09:33');
+    const id = await newTemplate('Archive Counts', '02:00', ALT_DAY_3);
     // The POST generates a 4-week window; every class is unbooked.
     const before = await prisma.class.count({
       where: { templateId: id, date: { gt: new Date() } },
@@ -579,7 +701,7 @@ describe('PATCH /api/class-templates/[id]', () => {
   // the today case: the archive rule deliberately spares a class dated today,
   // so the page's own boundary is what a survivor must be checked against.
   it('archived templates leave nothing the public booking page would show', async () => {
-    const id = await newTemplate('No Longer Bookable', '09:34');
+    const id = await newTemplate('No Longer Bookable', '04:00', ALT_DAY_3);
 
     await fetch(`${BASE_URL}/api/class-templates/${id}?state=archived`, {
       method: 'PATCH',
@@ -598,7 +720,7 @@ describe('PATCH /api/class-templates/[id]', () => {
   });
 
   it('pausing deletes nothing and reports the last scheduled class', async () => {
-    const id = await newTemplate('Pause Counts', '09:35');
+    const id = await newTemplate('Pause Counts', '06:00', ALT_DAY_3);
     const before = await prisma.class.count({ where: { templateId: id } });
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}?state=paused`, {
@@ -613,7 +735,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     // `toBeNull()` alone also passes on `undefined` — assert the real value
     // the template's own `startTime` (passed to `newTemplate` above) would
     // produce.
-    expect(data.lastScheduled?.startTime).toBe('09:35');
+    expect(data.lastScheduled?.startTime).toBe('06:00');
     expect(await prisma.class.count({ where: { templateId: id } })).toBe(before);
   });
 
@@ -621,7 +743,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('No State', '09:36')),
+      body: JSON.stringify(templateBody('No State', '08:00', ALT_DAY_1)),
     });
     const { data: template } = (await create.json()) as { data: { id: string } };
 
@@ -640,7 +762,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Bad State', '09:37')),
+      body: JSON.stringify(templateBody('Bad State', '14:00', ALT_DAY_1)),
     });
     const { data: template } = (await create.json()) as { data: { id: string } };
 
@@ -665,7 +787,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Twice Paused', '09:38')),
+      body: JSON.stringify(templateBody('Twice Paused', '16:00', ALT_DAY_1)),
     });
     const { data: template } = (await create.json()) as { data: { id: string } };
 
@@ -696,7 +818,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Twice Archived', '09:39')),
+      body: JSON.stringify(templateBody('Twice Archived', '00:00', ALT_DAY_2)),
     });
     const { data: template } = (await create.json()) as { data: { id: string } };
 
@@ -731,7 +853,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Twice Active', '09:41')),
+      body: JSON.stringify(templateBody('Twice Active', '02:00', ALT_DAY_2)),
     });
     const { data: template } = (await create.json()) as { data: { id: string } };
 
@@ -765,7 +887,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Twice Unarchived', '09:42')),
+      body: JSON.stringify(templateBody('Twice Unarchived', '04:00', ALT_DAY_2)),
     });
     const { data: template } = (await create.json()) as { data: { id: string } };
 
@@ -793,15 +915,15 @@ describe('PATCH /api/class-templates/[id]', () => {
     expect(after.scheduleRule.isArchived).toBe(false);
   });
 
-  // Task 6b (#196). `ClassTemplate_teacher_slot_unique` is (teacherId,
-  // dayOfWeek, startTime) WHERE isArchived = false — un-archiving is the one
-  // transition that re-enters that partial scope, so a shelved template can
-  // now collide with a live one holding the same slot.
+  // Task 6b (#196). `ScheduleRule_teacher_slot_excl` refuses a live overlap
+  // WHERE isArchived = false — un-archiving is the one transition that
+  // re-enters that scope, so a shelved template can now collide with a live
+  // one holding the same slot.
   it('refuses to un-archive into a slot another live template already holds', async () => {
     const live = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Unarchive Slot Live', '09:52')),
+      body: JSON.stringify(templateBody('Unarchive Slot Live', '06:00', ALT_DAY_2)),
     });
     expect(live.status).toBe(201);
 
@@ -809,8 +931,8 @@ describe('PATCH /api/class-templates/[id]', () => {
       data: {
         scheduleRule: {
           create: {
-            teacherId, kind: 'regular', classType: 'Unarchive Slot Shelved', dayOfWeek: DAY_OF_WEEK,
-            startTime: hhmmToTime('09:52'), durationMinutes: 60, isArchived: true, isActive: false,
+            teacherId, kind: 'regular', classType: 'Unarchive Slot Shelved', dayOfWeek: ALT_DAY_2,
+            startTime: hhmmToTime('06:00'), durationMinutes: 60, isArchived: true, isActive: false,
           },
         },
         teacherRoom: { connect: { id: teacherRoomId } },
@@ -885,8 +1007,8 @@ describe('PATCH & PUT /api/class-templates/[id] — lock contention', () => {
         data: {
           scheduleRule: {
             create: {
-              teacherId, kind: 'regular', classType: 'Busy Archive', dayOfWeek: DAY_OF_WEEK,
-              startTime: hhmmToTime('09:53'), durationMinutes: 60,
+              teacherId, kind: 'regular', classType: 'Busy Archive', dayOfWeek: ALT_DAY_2,
+              startTime: hhmmToTime('08:00'), durationMinutes: 60,
             },
           },
           teacherRoom: { connect: { id: teacherRoomId } },
@@ -935,8 +1057,8 @@ describe('PATCH & PUT /api/class-templates/[id] — lock contention', () => {
         data: {
           scheduleRule: {
             create: {
-              teacherId, kind: 'regular', classType: 'Busy Pause', dayOfWeek: DAY_OF_WEEK,
-              startTime: hhmmToTime('09:54'), durationMinutes: 60,
+              teacherId, kind: 'regular', classType: 'Busy Pause', dayOfWeek: ALT_DAY_2,
+              startTime: hhmmToTime('14:00'), durationMinutes: 60,
             },
           },
           teacherRoom: { connect: { id: teacherRoomId } },
@@ -985,8 +1107,8 @@ describe('PATCH & PUT /api/class-templates/[id] — lock contention', () => {
         data: {
           scheduleRule: {
             create: {
-              teacherId, kind: 'regular', classType: 'Busy PUT', dayOfWeek: DAY_OF_WEEK,
-              startTime: hhmmToTime('09:55'), durationMinutes: 60,
+              teacherId, kind: 'regular', classType: 'Busy PUT', dayOfWeek: ALT_DAY_3,
+              startTime: hhmmToTime('00:00'), durationMinutes: 60,
             },
           },
           teacherRoom: { connect: { id: teacherRoomId } },
@@ -1043,11 +1165,15 @@ describe('PATCH & PUT /api/class-templates/[id] — lock contention', () => {
 describe('PUT /api/class-templates/[id]', () => {
   // startTime is required, not defaulted, so every call site below is
   // forced to pick its own slot — see templateBody's comment above.
-  const createTemplate = async (classType: string, startTime: string): Promise<string> => {
+  const createTemplate = async (
+    classType: string,
+    startTime: string,
+    dayOfWeek: number = DAY_OF_WEEK,
+  ): Promise<string> => {
     const res = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody(classType, startTime)),
+      body: JSON.stringify(templateBody(classType, startTime, dayOfWeek)),
     });
     expect(res.status).toBe(201);
     const { data } = (await res.json()) as { data: { id: string } };
@@ -1098,7 +1224,7 @@ describe('PUT /api/class-templates/[id]', () => {
   // nothing propagating there is no boundary left to respect, and the wider
   // set is the stronger claim.
   it('updates the template and leaves every generated instance untouched', async () => {
-    const id = await createTemplate('Editable Flow', '09:43');
+    const id = await createTemplate('Editable Flow', '08:00', ALT_DAY_3);
 
     const before = await prisma.class.findMany({
       where: { templateId: id },
@@ -1143,31 +1269,31 @@ describe('PUT /api/class-templates/[id]', () => {
   // the internal representation rather than on the number, which is not the
   // claim being made here.
   it('a PUT changing startTime and roomCost leaves every generated class byte-identical', async () => {
-    // 09:56 and 09:57 are BOTH this case's, and both must stay unused by
+    // '15:00' and '17:00' are BOTH this case's, and both must stay unused by
     // every sibling: it creates on the first and moves the template onto the
-    // second, so a case that already holds 09:57 turns this into a
-    // `slot_conflict` 409 rather than the 200 it is asserting. The file's
-    // one-slot-per-case convention (see `templateBody`) needs the extra line
-    // only here, because this is the only case that moves a template's slot
-    // onto a value no create in this file mentions.
-    const id = await createTemplate('Stamp Not Link', '09:56');
+    // second, so a case that already holds '17:00' turns this into a
+    // `slot_conflict` 409 rather than the 200 it is asserting. Both stay on
+    // the shared DAY_OF_WEEK — nothing here reads the template's weekday —
+    // spaced two hours past 'Instant Flow' (09:30) and 'Day Shift' (12:00),
+    // the file's other two permanent DAY_OF_WEEK occupants.
+    const id = await createTemplate('Stamp Not Link', '15:00');
 
     const before = await prisma.class.findMany({
       where: { templateId: id },
       orderBy: { date: 'asc' },
     });
     expect(before.length).toBeGreaterThan(0);
-    expect(before.every((c) => c.startTime === '09:56')).toBe(true);
+    expect(before.every((c) => c.startTime === '15:00')).toBe(true);
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify({ startTime: '09:57', roomCost: 99 }),
+      body: JSON.stringify({ startTime: '17:00', roomCost: 99 }),
     });
     expect(res.status).toBe(200);
 
     const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id }, include: { scheduleRule: true } });
-    expect(template.scheduleRule.startTime).toBe('09:57');
+    expect(timeToHHmm(template.scheduleRule.startTime)).toBe('17:00');
     expect(template.roomCost.toString()).toBe('99');
 
     const after = await prisma.class.findMany({
@@ -1209,7 +1335,7 @@ describe('PUT /api/class-templates/[id]', () => {
   });
 
   it('returns 400 for an empty payload, and writes nothing', async () => {
-    const id = await createTemplate('No Fields', '09:44');
+    const id = await createTemplate('No Fields', '14:00', ALT_DAY_3);
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -1223,7 +1349,7 @@ describe('PUT /api/class-templates/[id]', () => {
   });
 
   it("refuses to edit another teacher's template", async () => {
-    const id = await createTemplate('Not Yours', '09:45');
+    const id = await createTemplate('Not Yours', '16:00', ALT_DAY_3);
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -1241,7 +1367,7 @@ describe('PUT /api/class-templates/[id]', () => {
   // Prisma is by being declared in the schema — a source edit, which the pins
   // catch. If this test ever fails, the pins are guarding the wrong thing.
   it('rejects an undeclared key — the schema is strict', async () => {
-    const id = await createTemplate('Strict Flow', '09:46');
+    const id = await createTemplate('Strict Flow', '00:00', ALT_DAY_4);
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -1257,7 +1383,7 @@ describe('PUT /api/class-templates/[id]', () => {
   });
 
   it("refuses a teacherRoom belonging to another teacher", async () => {
-    const id = await createTemplate('Room Guard', '09:47');
+    const id = await createTemplate('Room Guard', '02:00', ALT_DAY_4);
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -1277,7 +1403,7 @@ describe('PUT /api/class-templates/[id]', () => {
   // cheap probe is `{}`, which parses fine and still yields 403 (see the case
   // above), so this ordering tells a prober strictly less, not more.
   it('rejects a malformed body before revealing that the template is not yours', async () => {
-    const id = await createTemplate('Order Guard', '09:48');
+    const id = await createTemplate('Order Guard', '04:00', ALT_DAY_4);
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -1303,7 +1429,7 @@ describe('PUT /api/class-templates/[id]', () => {
   // the generator lays the Thursdays down from the next free week (task 5).
   // Nothing about that is reachable from this endpoint any more.
   it('a dayOfWeek change deletes nothing and moves nothing', async () => {
-    const id = await createTemplate('Day Shift', '09:49');
+    const id = await createTemplate('Day Shift', '12:00');
 
     const before = await prisma.class.findMany({
       where: { templateId: id },
@@ -1355,7 +1481,7 @@ describe('PUT /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify({ ...templateBody('Effective Week', '09:58'), dayOfWeek: OLD_DAY }),
+      body: JSON.stringify({ ...templateBody('Effective Week', '01:00'), dayOfWeek: OLD_DAY }),
     });
     expect(create.status).toBe(201);
     const { data: created } = (await create.json()) as { data: { id: string } };
@@ -1462,7 +1588,7 @@ describe('PUT /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify({ ...templateBody('Slot Blocked Week', '09:59'), dayOfWeek: OLD_DAY }),
+      body: JSON.stringify({ ...templateBody('Slot Blocked Week', '03:00'), dayOfWeek: OLD_DAY }),
     });
     expect(create.status).toBe(201);
     const { data: created } = (await create.json()) as { data: { id: string } };
@@ -1479,7 +1605,7 @@ describe('PUT /api/class-templates/[id]', () => {
         teacherRoomId,
         classType: 'Slot Blocker',
         date: blocked,
-        startTime: '09:59',
+        startTime: '03:00',
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -1564,7 +1690,7 @@ describe('PUT /api/class-templates/[id]', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
       body: JSON.stringify({
-        ...templateBody('Cancelled Holds Week', '10:02'),
+        ...templateBody('Cancelled Holds Week', '19:00'),
         dayOfWeek: OLD_DAY,
       }),
     });
@@ -1661,7 +1787,7 @@ describe('PUT /api/class-templates/[id]', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
       body: JSON.stringify({
-        ...templateBody('Cancelled Frees Slot', '10:03'),
+        ...templateBody('Cancelled Frees Slot', '21:00'),
         dayOfWeek: OLD_DAY,
       }),
     });
@@ -1680,7 +1806,7 @@ describe('PUT /api/class-templates/[id]', () => {
         teacherRoomId,
         classType: 'Cancelled Slot Blocker',
         date: weekFive,
-        startTime: '10:03',
+        startTime: '21:00',
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -1743,7 +1869,7 @@ describe('PUT /api/class-templates/[id]', () => {
   // classes. Kept rather than deleted precisely for that reason — it fails
   // if the PUT ever starts generating again, from any direction.
   it('editing an archived template materializes no classes', async () => {
-    const id = await createTemplate('Shelved Flow', '09:50');
+    const id = await createTemplate('Shelved Flow', '06:00', ALT_DAY_4);
     expect(await prisma.class.count({ where: { templateId: id } })).toBeGreaterThan(0);
 
     const archive = await fetch(`${BASE_URL}/api/class-templates/${id}?state=archived`, {
@@ -1797,7 +1923,7 @@ describe('PUT /api/class-templates/[id]', () => {
    * answer.
    */
   it('names no week for a paused template, and says which state it is in', async () => {
-    const id = await createTemplate('Paused Edit', '11:19');
+    const id = await createTemplate('Paused Edit', '08:00', ALT_DAY_4);
     expect(await prisma.class.count({ where: { templateId: id } })).toBe(4);
 
     const pause = await fetch(`${BASE_URL}/api/class-templates/${id}?state=paused`, {
@@ -1864,7 +1990,7 @@ describe('PUT /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify({ ...templateBody('Week Held Resume', '11:20'), dayOfWeek: OLD_DAY }),
+      body: JSON.stringify({ ...templateBody('Week Held Resume', '23:00'), dayOfWeek: OLD_DAY }),
     });
     expect(create.status).toBe(201);
     const { data: created } = (await create.json()) as { data: { id: string } };
@@ -1915,26 +2041,27 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(still.every((c) => c.date.getUTCDay() === (OLD_DAY + 1) % 7)).toBe(true);
   });
 
-  // Task 6b (#196). `ClassTemplate_teacher_slot_unique` is (teacherId,
-  // dayOfWeek, startTime) WHERE isArchived = false — the six indexes
-  // constrain every write, not just creates, so moving a template's own
-  // dayOfWeek/startTime onto a slot another of the teacher's live templates
-  // already holds collides here exactly as a create into that slot does.
+  // Task 6b (#196). `ScheduleRule_teacher_slot_excl` — a single exclusion
+  // constraint spanning both class families now, in place of the partial
+  // unique index this comment used to name — constrains every write, not
+  // just creates, so moving a template's own dayOfWeek/startTime onto a slot
+  // another of the teacher's live templates already holds collides here
+  // exactly as a create into that slot does.
   it('refuses a dayOfWeek/startTime change onto a slot another live template already holds', async () => {
-    await createTemplate('PUT Slot Occupant', '09:51');
-    const moverId = await createTemplate('PUT Slot Mover', '11:16');
+    await createTemplate('PUT Slot Occupant', '14:00', ALT_DAY_4);
+    const moverId = await createTemplate('PUT Slot Mover', '16:00', ALT_DAY_4);
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${moverId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify({ startTime: '09:51' }),
+      body: JSON.stringify({ startTime: '14:00' }),
     });
     expect(res.status).toBe(409);
     const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe('DUPLICATE_TEMPLATE_SLOT');
 
     const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: moverId }, include: { scheduleRule: true } });
-    expect(after.scheduleRule.startTime).toBe('11:16');
+    expect(timeToHHmm(after.scheduleRule.startTime)).toBe('16:00');
   });
 
   // The inverse of the `sync_conflict` case that stood here (#196, #209).
@@ -1948,18 +2075,18 @@ describe('PUT /api/class-templates/[id]', () => {
   //
   // #194 deleted the propagation, so this PUT writes no `Class` row and that
   // index cannot be reached from here. The teacher's experience is the point
-  // of keeping the fixture: an unrelated draft sitting at 11:18 on one of the
+  // of keeping the fixture: an unrelated draft sitting at 01:00 on one of the
   // generated dates no longer blocks them from moving their recurring class
-  // to 11:18. Their existing classes stay at 11:17 next to it, and they move
+  // to 01:00. Their existing classes stay at 00:00 next to it, and they move
   // or cancel the ones they want moved.
   //
   // Deliberately NOT merged into the `slot_conflict` case above. That one is
-  // the template's own `ClassTemplate_teacher_slot_unique` and still 409s;
-  // this one is a `Class` row and now succeeds. Two different indexes, two
+  // the template's own `ScheduleRule_teacher_slot_excl` and still 409s; this
+  // one is a `Class` row and now succeeds. Two different constraints, two
   // different outcomes — a single "startTime collision" test would hide that
   // one of the two stopped being a collision at all.
   it('allows a startTime change onto a slot only a generated instance would have collided with', async () => {
-    const id = await createTemplate('Sync Slot Template', '11:17');
+    const id = await createTemplate('Sync Slot Template', '00:00', ALT_DAY_5);
     const instances = await prisma.class.findMany({
       where: { templateId: id },
       orderBy: { date: 'asc' },
@@ -1976,7 +2103,7 @@ describe('PUT /api/class-templates/[id]', () => {
         teacherRoomId,
         classType: 'Sync Slot Blocker',
         date: targetDate,
-        startTime: '11:18',
+        startTime: '01:00',
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -1990,19 +2117,19 @@ describe('PUT /api/class-templates/[id]', () => {
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify({ startTime: '11:18' }),
+      body: JSON.stringify({ startTime: '01:00' }),
     });
     expect(res.status).toBe(200);
 
     // The template moved, which is the half that used to be rolled back.
     const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id }, include: { scheduleRule: true } });
-    expect(template.scheduleRule.startTime).toBe('11:18');
+    expect(timeToHHmm(template.scheduleRule.startTime)).toBe('01:00');
 
     // And the generated instance did not, which is why there was nothing to
     // collide with. Both halves asserted: "the PUT returned 200" alone would
     // also be satisfied by a propagation that happened to find the slot free.
     const instance = await prisma.class.findUniqueOrThrow({ where: { id: instances[0]!.id } });
-    expect(instance.startTime).toBe('11:17');
+    expect(instance.startTime).toBe('00:00');
   });
 
   // Door 5 of the room archive lifecycle (issue 76, fix round 2):
@@ -2207,6 +2334,63 @@ describe('PUT /api/class-templates/[id]', () => {
       const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
       expect(after.description).toBe('edited while the room is archived');
       expect(after.teacherRoomId).toBe(owner.teacherRoomId);
+    } finally {
+      await prisma.class.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.room.delete({ where: { id: owner.roomId } });
+      await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+      await prisma.teacher.delete({ where: { id: owner.teacherId } });
+      await prisma.account.delete({ where: { id: owner.accountId } });
+    }
+  });
+
+  // The `[id]` route's own overlap case (issue 298) — the POST describe above
+  // covers create; this covers the PUT that moves an existing template onto a
+  // slot only overlapping, not matching, a studio template's.
+  it('refuses a startTime change that OVERLAPS a studio template, not just an exact match', async () => {
+    const owner = await seedTeacher('put-overlap-studio');
+    try {
+      await prisma.studioClassTemplate.create({
+        data: {
+          scheduleRule: {
+            create: {
+              teacherId: owner.teacherId, kind: 'studio', classType: 'PUT Overlap Studio',
+              dayOfWeek: 4, startTime: hhmmToTime('10:00'), durationMinutes: 90,
+            },
+          },
+          location: 'PUT Overlap Venue', hourlyRate: 40,
+        },
+      });
+      const create = await fetch(`${BASE_URL}/api/class-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({
+          teacherRoomId: owner.teacherRoomId,
+          classType: 'PUT Overlap Class',
+          dayOfWeek: 4,
+          startTime: '13:00',
+          durationMinutes: 60,
+          roomCost: 20, minRate: 30, targetRate: 60, minStudents: 3, maxStudents: 10,
+        }),
+      });
+      expect(create.status).toBe(201);
+      const { data: template } = (await create.json()) as { data: { id: string } };
+
+      // The studio template occupies [10:00, 11:30); this lands the mover's
+      // start inside that range without matching it exactly.
+      const res = await fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({ startTime: '10:30' }),
+      });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: { message: string; code?: string } };
+      expect(body.error.code).toBe('CROSS_FAMILY_STUDIO_TEMPLATE_SLOT');
+      expect(body.error.message).toMatch(/overlapping/i);
+
+      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
+      expect(timeToHHmm(after.scheduleRule.startTime)).toBe('13:00');
     } finally {
       await prisma.class.deleteMany({ where: { teacherId: owner.teacherId } });
       await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });

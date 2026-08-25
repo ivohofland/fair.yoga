@@ -16,6 +16,27 @@ import {
   archiveOrUnarchiveStudioTemplate,
   withSlot,
 } from '@/services/studio-class-template-lifecycle';
+import type { RuleSlotHolder } from '@/lib/rule-slot-holder';
+
+/**
+ * Mirrors `class-templates/[id]/route.ts`'s `SLOT_TAKEN` — see that file for
+ * why `heldBy` replaces the two reasons this used to be, and why the
+ * `satisfies` is load-bearing rather than decorative.
+ */
+const SLOT_TAKEN = {
+  studio: [
+    'You already have a recurring studio class at an overlapping time on that day.',
+    'DUPLICATE_STUDIO_TEMPLATE_SLOT',
+  ],
+  regular: [
+    'You already have a recurring class at an overlapping time on that day.',
+    'CROSS_FAMILY_CLASS_TEMPLATE_SLOT',
+  ],
+  unknown: [
+    'You already have a recurring class or studio class at an overlapping time on that day.',
+    'STUDIO_TEMPLATE_SLOT_CONFLICT',
+  ],
+} as const satisfies Record<RuleSlotHolder, readonly [string, string]>;
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -81,26 +102,14 @@ export const PUT = withErrorHandler(async (
   if (result.reason === 'not_found') return respondError('Studio class template not found', 404);
   if (result.reason === 'forbidden') return respondError('Access denied', 403);
   if (result.reason === 'no_fields') return respondError('No valid fields to update', 400);
-  // `StudioClassTemplate_teacher_slot_unique` is (teacherId, dayOfWeek,
-  // startTime) WHERE isArchived = false (#196). This route never touches
-  // `isArchived` — `PATCH` owns that, and the forbidden list makes it a compile
-  // error here — but `dayOfWeek`/`startTime` are both teacher-editable, so a
-  // plain edit into a slot another of this teacher's live templates already
-  // holds collides.
+  // `ScheduleRule_teacher_slot_excl` refuses a live overlap (#196/#296). This
+  // route never touches `isArchived` — `PATCH` owns that, and the forbidden
+  // list makes it a compile error here — but `dayOfWeek`/`startTime` are both
+  // teacher-editable, so a plain edit into a slot another of this teacher's
+  // live rules already holds collides, same family or the other.
   if (result.reason === 'slot_conflict') {
-    return respondError(
-      'You already have a recurring studio class on that day at that time.',
-      409,
-      'DUPLICATE_STUDIO_TEMPLATE_SLOT',
-    );
-  }
-  // The OTHER template family holds it (#296).
-  if (result.reason === 'cross_family_slot_conflict') {
-    return respondError(
-      'You already have a recurring class on that day at that time.',
-      409,
-      'CROSS_FAMILY_CLASS_TEMPLATE_SLOT',
-    );
+    const [message, code] = SLOT_TAKEN[result.heldBy];
+    return respondError(message, 409, code);
   }
   if (result.reason === 'busy') {
     return respondError(
@@ -177,23 +186,12 @@ export const PATCH = withErrorHandler(async (
     if (result.reason === 'not_found') return respondError('Studio class template not found', 404);
     if (result.reason === 'forbidden') return respondError('Access denied', 403);
     // Only reachable un-archiving: `isArchived` flips false in the same CAS
-    // that re-enters `StudioClassTemplate_teacher_slot_unique`'s partial
-    // scope (#196), and another live template can already hold that slot.
+    // that re-enters `ScheduleRule_teacher_slot_excl`'s scope (#196/#296), and
+    // another live rule — same family or the other — can already hold that
+    // slot.
     if (result.reason === 'slot_conflict') {
-      return respondError(
-        'You already have a recurring studio class on that day at that time.',
-        409,
-        'DUPLICATE_STUDIO_TEMPLATE_SLOT',
-      );
-    }
-    // Un-archiving re-enters the slot, so it can be refused by the OTHER
-    // family's live template too (#296).
-    if (result.reason === 'cross_family_slot_conflict') {
-      return respondError(
-        'You already have a recurring class on that day at that time.',
-        409,
-        'CROSS_FAMILY_CLASS_TEMPLATE_SLOT',
-      );
+      const [message, code] = SLOT_TAKEN[result.heldBy];
+      return respondError(message, 409, code);
     }
     if (result.reason === 'busy') {
       return respondError(

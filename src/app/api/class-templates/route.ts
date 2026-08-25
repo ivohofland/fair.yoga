@@ -13,10 +13,30 @@ import { createClassTemplateSchema } from '@/lib/schemas';
 import { generateInstancesForTemplate } from '@/services/class-generator';
 import { withSlot } from '@/services/class-template-lifecycle';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
+import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { countSkipReasons, type GenerationResult } from '@/lib/generation';
 import { log } from '@/lib/log';
+
+/**
+ * Mirrors `class-templates/[id]/route.ts`'s `SLOT_TAKEN` — see that file for
+ * why `heldBy` replaces two reasons, and why the `satisfies` is load-bearing.
+ */
+const SLOT_TAKEN = {
+  regular: [
+    'You already have a recurring class at an overlapping time on that day.',
+    'DUPLICATE_TEMPLATE_SLOT',
+  ],
+  studio: [
+    'You already have a recurring studio class at an overlapping time on that day.',
+    'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT',
+  ],
+  unknown: [
+    'You already have a recurring class or studio class at an overlapping time on that day.',
+    'TEMPLATE_SLOT_CONFLICT',
+  ],
+} as const satisfies Record<RuleSlotHolder, readonly [string, string]>;
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -78,51 +98,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // (`skipDuplicates: true`, a bare `ON CONFLICT DO NOTHING`) never gets a
   // chance to raise anything here even though it shares this transaction.
   //
-  // TRUE OF P2002, FALSE OF `YG001` (#296), which is why `conflict.level`
-  // exists below. Generation shares this transaction, and its `Class` insert
-  // fires a DIFFERENT trigger from the one the template insert fires: the
-  // template's reads `StudioClassTemplate`, generation's reads `StudioClass`.
-  // So this catch can now be reached by two conflicts that mean different
-  // things to a teacher — "you have a recurring studio class on Tuesdays at
-  // 09:00" and "you have a studio class on one of those Tuesdays" — and only
-  // the statement that raised knows which. Answering both with the template
-  // sentence sends a teacher hunting for a recurring studio class that does
-  // not exist.
-  // An OBJECT, not a `let`, and that is the whole of why. TypeScript does not
-  // track assignments made inside a closure, so a mutable local read in the
-  // outer `catch` narrows to its initialiser — measured: with a
-  // `let conflictLevel: 'template' | 'instance' | null`, a TYPO AT THE READ
-  // (`=== 'instancez'`) compiled clean and silently took the other branch,
-  // shipping the wrong 409 sentence forever. The union guarded the assignment
-  // and nothing at the read, and it only compiled at all because `null` is
-  // exempt from the no-overlap check — narrowing the union to two members
-  // turned the read into a build error, which is the tell that the type was
-  // inert by accident.
-  //
-  // Sharper than that, measured: the two-member `let` does not merely fail to
-  // catch the typo — it rejects the CORRECT comparison too. CFA pins the read
-  // to the initialiser, so `=== 'instance'` is itself `TS2367 … types
-  // '"template"' and '"instance"' have no overlap`. The `let` is not the
-  // weakest of the three candidate shapes; it is the only one that cannot
-  // express this at all.
-  //
-  // A `const` object keeps its property's declared type across the closure, so
-  // the comparison below is checked: the same typo is `TS2367 … types
-  // '"template" | "instance"' and '"instancez"' have no overlap`. Measured
-  // against all three candidate shapes before choosing this one.
-  // THREE states, not two, and the third is the one that carries information.
-  // `'untagged'` means no statement claimed this error — which today implies
-  // the template insert, because it runs first and generation is the only other
-  // raiser. That implication is an INFERENCE, and the log below must not
-  // present it as a measurement: an earlier version defaulted to `'template'`,
-  // so a race and a template conflict emitted the same field value and the one
-  // number this design leaves unmeasured stayed unmeasurable. The response copy
-  // still treats untagged as template — that inference is sound today — but the
-  // log says what was actually observed.
-  //
-  // It stops being sound the moment a third `YG001`-capable statement joins
-  // this transaction, which #228 (move this into a service) would do.
-  const conflict = { level: 'untagged' as 'untagged' | 'instance' };
+  // TRUE OF P2002 always, and TRUE OF `YG001` (#296) only from generation now.
+  // Generation shares this transaction, and its `Class` insert fires the
+  // entry-level cross-family trigger (`class_cross_family_slot_insert_guard`)
+  // — the ONE `YG001` source left in this transaction. The template insert
+  // used to be a second: two template-level triggers raised it before issue
+  // 298 replaced both with `ScheduleRule_teacher_slot_excl` below, a single
+  // exclusion constraint that raises `23P01` instead, for either family. A
+  // `conflict.level` object used to sit here disambiguating which statement
+  // raised a `YG001` — the template's own insert, or generation's — because
+  // both could. That question no longer has two answers, so the object that
+  // asked it is gone with the second answer.
   let template: {
     created: Prisma.ClassTemplateGetPayload<{
       include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } };
@@ -160,12 +146,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         },
         include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
       });
-      const generation = await generateInstancesForTemplate(tx, created).catch((err: unknown) => {
-        // Set on the failure path only, immediately before rethrowing, so the
-        // catch below can word the 409 for the statement that actually raised.
-        if (isCrossFamilySlotConflict(err)) conflict.level = 'instance';
-        throw err;
-      });
+      const generation = await generateInstancesForTemplate(tx, created);
       return { created, generation };
     },
       // FOUR sequential statements on a 2GB VPS — the create, generation's two
@@ -261,61 +242,45 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       { timeout: 10_000 },
     );
   } catch (err) {
-    // The template's slot key, not `Class`'s. Both models share this
-    // transaction, but only the template can raise P2002 here (see above),
-    // so there is no need to disambiguate by modelName even though
-    // (teacherId, dayOfWeek, startTime) and (teacherId, date, startTime) are
-    // different column sets by coincidence rather than guarantee — see
-    // isUniqueConflictOn's docblock.
-    if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
-      return respondError(
-        'You already have a recurring class on that day at that time.',
-        409,
-        'DUPLICATE_TEMPLATE_SLOT',
+    // The template's own slot, either family: `ScheduleRule_teacher_slot_excl`
+    // (issue 298) spans both, since `kind` is not part of its key. Only the
+    // template create can raise it here — generation's `Class` insert is a
+    // different table under a different constraint.
+    if (isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')) {
+      const heldBy = await ruleSlotHolder(prisma, {
+        teacherId: session.teacherId,
+        dayOfWeek: body.dayOfWeek,
+        startMinutes: minutesSinceMidnight(hhmmToTime(body.startTime)),
+        durationMinutes: body.durationMinutes,
+      });
+      log.warn(
+        { err, teacherId: session.teacherId, heldBy },
+        'recurring class create refused: that slot is taken',
       );
+      const [message, code] = SLOT_TAKEN[heldBy];
+      return respondError(message, 409, code);
     }
-    // The OTHER family holds it (#296) — a `YG001` from the cross-family
-    // trigger, which is not a P2002 and so passes straight through the branch
-    // above. Same status, deliberately different sentence: that clash is fixed
-    // within this family, this one sends the teacher to the other half of
-    // their schedule.
-    // LOGGED before responding, and this one earns it twice over. Besides the
-    // rule above, the `instance` arm is reachable ONLY through the cross-family
-    // race this design knowingly accepts: the pre-checks mirror the trigger
-    // predicates exactly, so nothing else can raise here. `docs/lock-order.md`
-    // records that race as "measured at 200 of 200 runs under a FORCED overlap
-    // — a rate conditional on racing, not a rate of races, which was never
-    // measured". A silent 409 would guarantee it stays unmeasured forever,
-    // because production would emit nothing when one happened. `conflictLevel`
-    // is logged so the race arm is greppable and countable.
+    // The OTHER family's INSTANCE holds it (#296) — a `YG001` from the
+    // entry-level cross-family trigger, which generation's own `Class` insert
+    // can raise and the branch above cannot: the template's own collision is
+    // caught there now, by the exclusion constraint, not by this trigger.
+    // LOGGED before responding: the pre-checks mirror the trigger predicates
+    // exactly, so this is reachable ONLY through the cross-family race this
+    // design knowingly accepts. `docs/lock-order.md` records that race as
+    // "measured at 200 of 200 runs under a FORCED overlap — a rate
+    // conditional on racing, not a rate of races, which was never measured".
+    // A silent 409 would guarantee it stays unmeasured forever, because
+    // production would emit nothing when one happened.
     if (isCrossFamilySlotConflict(err)) {
       log.warn(
-        { err, teacherId: session.teacherId, conflictLevel: conflict.level },
+        { err, teacherId: session.teacherId },
         'recurring class create refused: the studio family holds that slot',
       );
-      // Which sentence depends on which statement raised — see `conflict` and
-      // the note above the transaction. `'untagged'` is the fall-through, and
-      // the RESPONSE reads it as the template case: the template insert runs
-      // FIRST, so anything untagged came from it. The LOG keeps the two apart
-      // on purpose, which is the whole reason the third state exists.
-      //
-      // This comment said "`'template'` is the default" until PR #300's fourth
-      // pass — fifteen lines below the note explaining that an earlier version
-      // defaulted to `'template'` and no longer does, in both parallel files
-      // identically. `'template'` is not in the union at all now: nothing
-      // assigned it and nothing compared against it, so a reader following the
-      // sentence would grep the logs for a value that can never appear.
-      return conflict.level === 'instance'
-        ? respondError(
-            'You already have a studio class on one of those dates at that time.',
-            409,
-            'CROSS_FAMILY_STUDIO_SLOT',
-          )
-        : respondError(
-            'You already have a recurring studio class on that day at that time.',
-            409,
-            'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT',
-          );
+      return respondError(
+        'You already have a studio class on one of those dates at that time.',
+        409,
+        'CROSS_FAMILY_STUDIO_SLOT',
+      );
     }
     throw err;
   }
