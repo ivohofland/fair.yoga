@@ -21,7 +21,7 @@ export default async function StudioClassDetailPage({
 
   const studioClass = await prisma.studioClass.findUnique({
     where: { id },
-    include: { template: true },
+    include: { template: { include: { scheduleRule: true } } },
   });
 
   if (!studioClass || studioClass.teacherId !== session.teacherId) {
@@ -117,7 +117,7 @@ export default async function StudioClassDetailPage({
             <span className="type-label">Template</span>
             <p>
               <Link href={`/settings/studio-classes/${studioClass.template.id}`} className="text-teal text-sm">
-                {studioClass.template.classType || studioClass.template.location}
+                {studioClass.template.scheduleRule.classType || studioClass.template.location}
                 <span className="inline-block ml-1.5">&rarr;</span>
               </Link>
             </p>

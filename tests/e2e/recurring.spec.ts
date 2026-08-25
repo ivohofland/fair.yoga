@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import fs from 'fs';
 import { accountIdOfTeacher } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { timeToHHmm } from '@/lib/time-of-day';
 
 /**
  * The recurring-class lifecycle, end to end: template created through
@@ -82,7 +83,9 @@ test.describe('Recurring classes', () => {
 
   test.afterAll(async () => {
     await prisma.class.deleteMany({ where: { teacherId } });
-    await prisma.classTemplate.deleteMany({ where: { teacherId } });
+    // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298),
+    // so deleting the rules removes the templates with them.
+    await prisma.scheduleRule.deleteMany({ where: { teacherId } });
     // Again, after the templates are gone. This spec fires the *global*
     // generate-classes cron (see below) — `generateClassInstances` takes no
     // teacher scope — so a concurrently-running group can top this teacher's
@@ -120,10 +123,11 @@ test.describe('Recurring classes', () => {
     await expect(page.getByText(`${templateDayName} 08:15`)).toBeVisible();
 
     const template = await prisma.classTemplate.findFirstOrThrow({
-      where: { teacherId, classType: 'Recurring Flow' },
+      where: { scheduleRule: { teacherId, classType: 'Recurring Flow' } },
+      include: { scheduleRule: true },
     });
     templateId = template.id;
-    expect(template.isActive).toBe(true);
+    expect(template.scheduleRule.isActive).toBe(true);
 
     // No cron has fired: creation itself filled the four-week window,
     // and the schedule shows it immediately.
@@ -226,8 +230,11 @@ test.describe('Recurring classes', () => {
     await expect(page.getByText(expected)).toBeVisible({ timeout: 10_000 });
 
     // The template moved.
-    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
-    expect(template.startTime).toBe('10:00');
+    const template = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id: templateId },
+      include: { scheduleRule: true },
+    });
+    expect(timeToHHmm(template.scheduleRule.startTime)).toBe('10:00');
 
     // The classes did not — same rows, same ids, same time. Asserted on ids
     // as well as times: "still four rows at 08:15" would also be satisfied by

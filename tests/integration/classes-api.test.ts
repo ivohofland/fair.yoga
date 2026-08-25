@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, type ClassStatus } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { formatDayHeader } from '@/lib/format';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -975,16 +976,22 @@ describe('PUT /api/classes/[id]', () => {
   // `(templateId, date)` key fires.
   describe("PUT /api/classes/[id] collides on the template's own (templateId, date) key (#196)", () => {
     let templateDateTemplateId: string;
+    let templateDateScheduleRuleId: string;
 
     beforeAll(async () => {
       const template = await prisma.classTemplate.create({
         data: {
-          teacherId: ownerId,
-          teacherRoomId,
-          classType: 'Template Date Clash',
-          dayOfWeek: 2,
-          startTime: '07:00',
-          durationMinutes: 60,
+          scheduleRule: {
+            create: {
+              teacherId: ownerId,
+              kind: 'regular',
+              classType: 'Template Date Clash',
+              dayOfWeek: 2,
+              startTime: hhmmToTime('07:00'),
+              durationMinutes: 60,
+            },
+          },
+          teacherRoom: { connect: { id: teacherRoomId } },
           roomCost: 15,
           minRate: 10,
           targetRate: 20,
@@ -993,11 +1000,14 @@ describe('PUT /api/classes/[id]', () => {
         },
       });
       templateDateTemplateId = template.id;
+      templateDateScheduleRuleId = template.scheduleRuleId;
     });
 
     afterAll(async () => {
       await prisma.class.deleteMany({ where: { templateId: templateDateTemplateId } });
-      await prisma.classTemplate.delete({ where: { id: templateDateTemplateId } });
+      // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
+      // 298) — deleting the child directly here would orphan its rule row.
+      await prisma.scheduleRule.delete({ where: { id: templateDateScheduleRuleId } });
     });
 
     it("refuses moving one instance onto a sibling instance's date, naming the recurring class rather than a generic conflict", async () => {
@@ -1107,12 +1117,17 @@ describe('POST /api/classes', () => {
     victimRoomId = victimRoom.id;
     const victimTemplate = await prisma.classTemplate.create({
       data: {
-        teacherId: otherTeacherId,
-        teacherRoomId: victimRoom.id,
-        classType: 'Victim Recurring',
-        dayOfWeek: 3,
-        startTime: '18:00',
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId: otherTeacherId,
+            kind: 'regular',
+            classType: 'Victim Recurring',
+            dayOfWeek: 3,
+            startTime: hhmmToTime('18:00'),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: victimRoom.id } },
         roomCost: 15,
         minRate: 10,
         targetRate: 20,
@@ -1155,9 +1170,11 @@ describe('POST /api/classes', () => {
             })
           : Promise.resolve();
       },
+      // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
+      // 298) — deleting the child directly here would orphan its rule row.
       () =>
         otherTeacherId
-          ? prisma.classTemplate.deleteMany({
+          ? prisma.scheduleRule.deleteMany({
               where: { teacherId: otherTeacherId, classType: 'Victim Recurring' },
             })
           : Promise.resolve(),

@@ -7,6 +7,7 @@ import { generateInstancesForTemplate, getNextOccurrences } from '@/services/cla
 // a second definition in the test could only weaken it.
 import { mondayOf } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -182,7 +183,8 @@ afterAll(async () => {
     [otherTeacherId, otherRoomId, otherTeacherAccountId],
   ] as const) {
     await prisma.class.deleteMany({ where: { teacherId: t } });
-    await prisma.classTemplate.deleteMany({ where: { teacherId: t } });
+    // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298), so deleting the rules removes the templates with them.
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: t } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId: t } });
     await prisma.room.delete({ where: { id: r } });
     await prisma.session.deleteMany({ where: { accountId: a } });
@@ -232,20 +234,26 @@ describe('POST /api/class-templates', () => {
   });
 
   it('a generation failure rolls the whole create back — no template, no instances', async () => {
-    const before = await prisma.classTemplate.count({ where: { teacherId } });
+    const before = await prisma.classTemplate.count({ where: { scheduleRule: { teacherId } } });
 
     await expect(
       prisma.$transaction(async (tx) => {
         const created = await tx.classTemplate.create({
           data: {
-            teacherId, teacherRoomId, classType: 'Rollback', dayOfWeek: 2,
-            startTime: '09:00', durationMinutes: 60, roomCost: 10, minRate: 10,
+            scheduleRule: {
+              create: {
+                teacherId, kind: 'regular', classType: 'Rollback', dayOfWeek: 2,
+                startTime: hhmmToTime('09:00'), durationMinutes: 60,
+              },
+            },
+            teacherRoom: { connect: { id: teacherRoomId } },
+            roomCost: 10, minRate: 10,
             targetRate: 20, minStudents: 1, maxStudents: 8,
             // cancelDeadline/autoCancelCheck are enums with schema defaults
             // (HOURS_24 / HOURS_2) — the brief's numeric 120 predates that;
             // omitted here to compile against the current schema.
           },
-          include: { teacher: { select: { defaultTimezone: true } } },
+          include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
         });
         // Deterministic FK failure (P2003, not the swallowed P2002): bogus room.
         await generateInstancesForTemplate(tx, {
@@ -256,7 +264,7 @@ describe('POST /api/class-templates', () => {
       }),
     ).rejects.toThrow();
 
-    const after = await prisma.classTemplate.count({ where: { teacherId } });
+    const after = await prisma.classTemplate.count({ where: { scheduleRule: { teacherId } } });
     expect(after).toBe(before);
   });
 
@@ -285,7 +293,7 @@ describe('POST /api/class-templates', () => {
       expect((await second.json()).error.code).toBe('DUPLICATE_TEMPLATE_SLOT');
 
       const templates = await prisma.classTemplate.findMany({
-        where: { teacherId, dayOfWeek: DAY_OF_WEEK, startTime: '09:40', isArchived: false },
+        where: { scheduleRule: { teacherId, dayOfWeek: DAY_OF_WEEK, startTime: hhmmToTime('09:40'), isArchived: false } },
       });
       expect(templates).toHaveLength(1);
 
@@ -308,7 +316,7 @@ describe('POST /api/class-templates', () => {
       expect((await loser.json()).error.code).toBe('DUPLICATE_TEMPLATE_SLOT');
 
       const templates = await prisma.classTemplate.findMany({
-        where: { teacherId, dayOfWeek: DAY_OF_WEEK, startTime: '11:00', isArchived: false },
+        where: { scheduleRule: { teacherId, dayOfWeek: DAY_OF_WEEK, startTime: hhmmToTime('11:00'), isArchived: false } },
       });
       expect(templates).toHaveLength(1);
 
@@ -364,7 +372,7 @@ describe('POST /api/class-templates', () => {
       // Same FK-safe order as the file's own afterAll: class → classTemplate
       // → teacherRoom → room → session → teacher → account.
       await prisma.class.deleteMany({ where: { teacherId: owner.teacherId } });
-      await prisma.classTemplate.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
       await prisma.room.delete({ where: { id: owner.roomId } });
       await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
@@ -475,9 +483,10 @@ describe('PATCH /api/class-templates/[id]', () => {
 
     const after = await prisma.classTemplate.findUniqueOrThrow({
       where: { id: template.id },
+      include: { scheduleRule: true },
     });
-    expect(after.isActive).toBe(false);
-    expect(after.isArchived).toBe(true);
+    expect(after.scheduleRule.isActive).toBe(false);
+    expect(after.scheduleRule.isArchived).toBe(true);
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(0);
   });
 
@@ -486,18 +495,18 @@ describe('PATCH /api/class-templates/[id]', () => {
     // route) so its window starts empty.
     const templateA = await prisma.classTemplate.create({
       data: {
-        teacherId,
-        teacherRoomId,
-        classType: 'Scope A',
-        dayOfWeek: 4,
-        startTime: '10:00',
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId, kind: 'regular', classType: 'Scope A', dayOfWeek: 4,
+            startTime: hhmmToTime('10:00'), durationMinutes: 60, isActive: false,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoomId } },
         roomCost: 15,
         minRate: 10,
         targetRate: 20,
         minStudents: 2,
         maxStudents: 8,
-        isActive: false,
       },
     });
 
@@ -507,18 +516,18 @@ describe('PATCH /api/class-templates/[id]', () => {
     // must leave it alone.
     const templateB = await prisma.classTemplate.create({
       data: {
-        teacherId,
-        teacherRoomId,
-        classType: 'Scope B',
-        dayOfWeek: 5,
-        startTime: '10:00',
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId, kind: 'regular', classType: 'Scope B', dayOfWeek: 5,
+            startTime: hhmmToTime('10:00'), durationMinutes: 60, isActive: true,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoomId } },
         roomCost: 15,
         minRate: 10,
         targetRate: 20,
         minStudents: 2,
         maxStudents: 8,
-        isActive: true,
       },
     });
     expect(await prisma.class.count({ where: { templateId: templateB.id } })).toBe(0);
@@ -623,8 +632,8 @@ describe('PATCH /api/class-templates/[id]', () => {
     expect(res.status).toBe(400);
 
     // The row is untouched — a rejected request must not have toggled anything.
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
-    expect(after.isActive).toBe(true);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.isActive).toBe(true);
   });
 
   it('rejects an unrecognised state value', async () => {
@@ -643,8 +652,8 @@ describe('PATCH /api/class-templates/[id]', () => {
 
     // Same guarantee as the no-state case above — an unrecognised value is
     // rejected whole, not partially applied.
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
-    expect(after.isActive).toBe(true);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.isActive).toBe(true);
   });
 
   /**
@@ -674,8 +683,8 @@ describe('PATCH /api/class-templates/[id]', () => {
     expect(second.status).toBe(200);
     expect(((await second.json()) as { data: { action: string } }).data.action).toBe('unchanged');
 
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
-    expect(after.isActive).toBe(false);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.isActive).toBe(false);
   });
 
   /**
@@ -708,8 +717,8 @@ describe('PATCH /api/class-templates/[id]', () => {
     expect(second.status).toBe(200);
     expect(((await second.json()) as { data: { action: string } }).data.action).toBe('unchanged');
 
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
-    expect(after.isArchived).toBe(true);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.isArchived).toBe(true);
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(survivors);
   });
 
@@ -748,8 +757,8 @@ describe('PATCH /api/class-templates/[id]', () => {
     expect(second.status).toBe(200);
     expect(((await second.json()) as { data: { action: string } }).data.action).toBe('unchanged');
 
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
-    expect(after.isActive).toBe(true);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.isActive).toBe(true);
   });
 
   it('is idempotent: un-archiving twice leaves the template un-archived', async () => {
@@ -780,8 +789,8 @@ describe('PATCH /api/class-templates/[id]', () => {
     expect(second.status).toBe(200);
     expect(((await second.json()) as { data: { action: string } }).data.action).toBe('unchanged');
 
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
-    expect(after.isArchived).toBe(false);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.isArchived).toBe(false);
   });
 
   // Task 6b (#196). `ClassTemplate_teacher_slot_unique` is (teacherId,
@@ -798,19 +807,18 @@ describe('PATCH /api/class-templates/[id]', () => {
 
     const shelved = await prisma.classTemplate.create({
       data: {
-        teacherId,
-        teacherRoomId,
-        classType: 'Unarchive Slot Shelved',
-        dayOfWeek: DAY_OF_WEEK,
-        startTime: '09:52',
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId, kind: 'regular', classType: 'Unarchive Slot Shelved', dayOfWeek: DAY_OF_WEEK,
+            startTime: hhmmToTime('09:52'), durationMinutes: 60, isArchived: true, isActive: false,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoomId } },
         roomCost: 15,
         minRate: 10,
         targetRate: 20,
         minStudents: 2,
         maxStudents: 8,
-        isArchived: true,
-        isActive: false,
       },
     });
 
@@ -822,8 +830,8 @@ describe('PATCH /api/class-templates/[id]', () => {
     const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe('DUPLICATE_TEMPLATE_SLOT');
 
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: shelved.id } });
-    expect(after.isArchived).toBe(true);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: shelved.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.isArchived).toBe(true);
   });
 });
 
@@ -875,12 +883,13 @@ describe('PATCH & PUT /api/class-templates/[id] — lock contention', () => {
     async () => {
       const t = await prisma.classTemplate.create({
         data: {
-          teacherId,
-          teacherRoomId,
-          classType: 'Busy Archive',
-          dayOfWeek: DAY_OF_WEEK,
-          startTime: '09:53',
-          durationMinutes: 60,
+          scheduleRule: {
+            create: {
+              teacherId, kind: 'regular', classType: 'Busy Archive', dayOfWeek: DAY_OF_WEEK,
+              startTime: hhmmToTime('09:53'), durationMinutes: 60,
+            },
+          },
+          teacherRoom: { connect: { id: teacherRoomId } },
           roomCost: 15,
           minRate: 10,
           targetRate: 20,
@@ -908,9 +917,9 @@ describe('PATCH & PUT /api/class-templates/[id] — lock contention', () => {
         // That last sentence is a promise about the data, so it is read back
         // rather than trusted — and it is what makes the retry the copy
         // invites safe to offer.
-        const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-        expect(after.isArchived).toBe(false);
-        expect(after.archivedAt).toBeNull();
+        const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+        expect(after.scheduleRule.isArchived).toBe(false);
+        expect(after.scheduleRule.archivedAt).toBeNull();
       } finally {
         release();
         await settled.catch(() => {});
@@ -924,12 +933,13 @@ describe('PATCH & PUT /api/class-templates/[id] — lock contention', () => {
     async () => {
       const t = await prisma.classTemplate.create({
         data: {
-          teacherId,
-          teacherRoomId,
-          classType: 'Busy Pause',
-          dayOfWeek: DAY_OF_WEEK,
-          startTime: '09:54',
-          durationMinutes: 60,
+          scheduleRule: {
+            create: {
+              teacherId, kind: 'regular', classType: 'Busy Pause', dayOfWeek: DAY_OF_WEEK,
+              startTime: hhmmToTime('09:54'), durationMinutes: 60,
+            },
+          },
+          teacherRoom: { connect: { id: teacherRoomId } },
           roomCost: 15,
           minRate: 10,
           targetRate: 20,
@@ -958,8 +968,8 @@ describe('PATCH & PUT /api/class-templates/[id] — lock contention', () => {
         // unnoticed.
         expect(json.error.message).toContain('Nothing was changed.');
 
-        const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-        expect(after.isActive).toBe(true);
+        const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+        expect(after.scheduleRule.isActive).toBe(true);
       } finally {
         release();
         await settled.catch(() => {});
@@ -973,12 +983,13 @@ describe('PATCH & PUT /api/class-templates/[id] — lock contention', () => {
     async () => {
       const t = await prisma.classTemplate.create({
         data: {
-          teacherId,
-          teacherRoomId,
-          classType: 'Busy PUT',
-          dayOfWeek: DAY_OF_WEEK,
-          startTime: '09:55',
-          durationMinutes: 60,
+          scheduleRule: {
+            create: {
+              teacherId, kind: 'regular', classType: 'Busy PUT', dayOfWeek: DAY_OF_WEEK,
+              startTime: hhmmToTime('09:55'), durationMinutes: 60,
+            },
+          },
+          teacherRoom: { connect: { id: teacherRoomId } },
           roomCost: 15,
           minRate: 10,
           targetRate: 20,
@@ -1018,8 +1029,8 @@ describe('PATCH & PUT /api/class-templates/[id] — lock contention', () => {
 
         // That last sentence is a promise about the data, so it is read back
         // rather than trusted, matching the archive case above.
-        const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-        expect(after.classType).toBe('Busy PUT');
+        const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+        expect(after.scheduleRule.classType).toBe('Busy PUT');
       } finally {
         release();
         await settled.catch(() => {});
@@ -1155,8 +1166,8 @@ describe('PUT /api/class-templates/[id]', () => {
     });
     expect(res.status).toBe(200);
 
-    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
-    expect(template.startTime).toBe('09:57');
+    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id }, include: { scheduleRule: true } });
+    expect(template.scheduleRule.startTime).toBe('09:57');
     expect(template.roomCost.toString()).toBe('99');
 
     const after = await prisma.class.findMany({
@@ -1207,8 +1218,8 @@ describe('PUT /api/class-templates/[id]', () => {
     });
     expect(res.status).toBe(400);
 
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
-    expect(after.classType).toBe('No Fields');
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.classType).toBe('No Fields');
   });
 
   it("refuses to edit another teacher's template", async () => {
@@ -1221,8 +1232,8 @@ describe('PUT /api/class-templates/[id]', () => {
     });
     expect(res.status).toBe(403);
 
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
-    expect(after.classType).toBe('Not Yours');
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.classType).toBe('Not Yours');
   });
 
   // This is the runtime behaviour every compile-time pin's reasoning rests on:
@@ -1240,9 +1251,9 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(res.status).toBe(400);
 
     // Rejected whole: the declared field is not written either.
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
-    expect(after.classType).toBe('Strict Flow');
-    expect(after.isActive).toBe(true);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.classType).toBe('Strict Flow');
+    expect(after.scheduleRule.isActive).toBe(true);
   });
 
   it("refuses a teacherRoom belonging to another teacher", async () => {
@@ -1255,7 +1266,7 @@ describe('PUT /api/class-templates/[id]', () => {
     });
     expect(res.status).toBe(400);
 
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id }, include: { scheduleRule: true } });
     expect(after.teacherRoomId).toBe(teacherRoomId);
   });
 
@@ -1275,9 +1286,9 @@ describe('PUT /api/class-templates/[id]', () => {
     });
     expect(res.status).toBe(400);
 
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
-    expect(after.classType).toBe('Order Guard');
-    expect(after.isActive).toBe(true);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.classType).toBe('Order Guard');
+    expect(after.scheduleRule.isActive).toBe(true);
   });
 
   // `dayOfWeek` was the most destructive field on the allowlist: changing it
@@ -1310,8 +1321,8 @@ describe('PUT /api/class-templates/[id]', () => {
     });
     expect(res.status).toBe(200);
 
-    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
-    expect(template.dayOfWeek).toBe(NEW_DAY_OF_WEEK);
+    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id }, include: { scheduleRule: true } });
+    expect(template.scheduleRule.dayOfWeek).toBe(NEW_DAY_OF_WEEK);
 
     // Same rows, same ids, still on the OLD weekday. Asserted over every
     // instance rather than the `date > now` subset the deleted sync was
@@ -1374,7 +1385,7 @@ describe('PUT /api/class-templates/[id]', () => {
 
     const template = await prisma.classTemplate.findUniqueOrThrow({
       where: { id },
-      include: { teacher: { select: { defaultTimezone: true } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
     });
 
     // The sweep as it runs today. Its four-occurrence window is entirely held
@@ -1498,7 +1509,7 @@ describe('PUT /api/class-templates/[id]', () => {
 
     const template = await prisma.classTemplate.findUniqueOrThrow({
       where: { id },
-      include: { teacher: { select: { defaultTimezone: true } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
     });
 
     // The sweep, run from the week the probe passed over. It declines that
@@ -1593,7 +1604,7 @@ describe('PUT /api/class-templates/[id]', () => {
 
     const template = await prisma.classTemplate.findUniqueOrThrow({
       where: { id },
-      include: { teacher: { select: { defaultTimezone: true } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
     });
 
     // The sweep as it runs today, over those same four weeks. Week one comes
@@ -1698,7 +1709,7 @@ describe('PUT /api/class-templates/[id]', () => {
 
     const template = await prisma.classTemplate.findUniqueOrThrow({
       where: { id },
-      include: { teacher: { select: { defaultTimezone: true } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
     });
 
     // The sweep, run from week five's Monday and NOT from `predicted` — this
@@ -1922,8 +1933,8 @@ describe('PUT /api/class-templates/[id]', () => {
     const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe('DUPLICATE_TEMPLATE_SLOT');
 
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: moverId } });
-    expect(after.startTime).toBe('11:16');
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: moverId }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.startTime).toBe('11:16');
   });
 
   // The inverse of the `sync_conflict` case that stood here (#196, #209).
@@ -1984,8 +1995,8 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(res.status).toBe(200);
 
     // The template moved, which is the half that used to be rolled back.
-    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
-    expect(template.startTime).toBe('11:18');
+    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id }, include: { scheduleRule: true } });
+    expect(template.scheduleRule.startTime).toBe('11:18');
 
     // And the generated instance did not, which is why there was nothing to
     // collide with. Both halves asserted: "the PUT returned 200" alone would
@@ -2047,7 +2058,7 @@ describe('PUT /api/class-templates/[id]', () => {
       );
 
       // Not the 409 alone: the template's own room must be unchanged...
-      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
       expect(after.teacherRoomId).toBe(owner.teacherRoomId);
 
       // ...and — the assertion a guard placed after the transaction, rather
@@ -2061,7 +2072,7 @@ describe('PUT /api/class-templates/[id]', () => {
       // → teacherRoom → room → session → teacher → account. One
       // `teacherRoom.deleteMany` clears both this teacher's rooms' links.
       await prisma.class.deleteMany({ where: { teacherId: owner.teacherId } });
-      await prisma.classTemplate.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
       await prisma.room.delete({ where: { id: owner.roomId } });
       if (archivedRoomId) await prisma.room.delete({ where: { id: archivedRoomId } });
@@ -2127,7 +2138,7 @@ describe('PUT /api/class-templates/[id]', () => {
       const body = (await res.json()) as { error: { code: string } };
       expect(body.error.code).toBe('ROOM_ARCHIVED');
 
-      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
       expect(after.teacherRoomId).toBe(owner.teacherRoomId);
 
       // The assertion whose absence hid the defect. Its active-move sibling
@@ -2137,7 +2148,7 @@ describe('PUT /api/class-templates/[id]', () => {
       expect(instancesAfter.some((c) => c.teacherRoomId === archived.teacherRoomId)).toBe(false);
     } finally {
       await prisma.class.deleteMany({ where: { teacherId: owner.teacherId } });
-      await prisma.classTemplate.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
       await prisma.room.delete({ where: { id: owner.roomId } });
       if (archivedRoomId) await prisma.room.delete({ where: { id: archivedRoomId } });
@@ -2193,12 +2204,12 @@ describe('PUT /api/class-templates/[id]', () => {
       });
 
       expect(res.status).toBe(200);
-      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
       expect(after.description).toBe('edited while the room is archived');
       expect(after.teacherRoomId).toBe(owner.teacherRoomId);
     } finally {
       await prisma.class.deleteMany({ where: { teacherId: owner.teacherId } });
-      await prisma.classTemplate.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
       await prisma.room.delete({ where: { id: owner.roomId } });
       await prisma.session.deleteMany({ where: { accountId: owner.accountId } });

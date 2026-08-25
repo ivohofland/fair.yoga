@@ -11,6 +11,8 @@ import {
 } from '@/lib/api-utils';
 import { createStudioClassTemplateSchema } from '@/lib/schemas';
 import { generateStudioInstancesForTemplate } from '@/services/studio-class-generator';
+import { withSlot } from '@/services/studio-class-template-lifecycle';
+import { hhmmToTime } from '@/lib/time-of-day';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { log } from '@/lib/log';
@@ -21,11 +23,14 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (isErrorResponse(session)) return session;
 
   const templates = await prisma.studioClassTemplate.findMany({
-    where: { teacherId: session.teacherId },
+    where: { scheduleRule: { teacherId: session.teacherId } },
+    include: { scheduleRule: true },
     orderBy: { createdAt: 'desc' },
   });
 
-  return respondOk(templates);
+  return respondOk(
+    templates.map(({ scheduleRule, ...bare }) => withSlot(bare, scheduleRule)),
+  );
 });
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
@@ -95,18 +100,30 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const conflict = { level: 'untagged' as 'untagged' | 'instance' };
   let template: {
     created: Prisma.StudioClassTemplateGetPayload<{
-      include: { teacher: { select: { defaultTimezone: true } } };
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } };
     }>;
     generation: GenerationResult;
   };
   try {
     template = await prisma.$transaction(async (tx) => {
+      // Nested create (issue 298): `ScheduleRule` holds the slot now, so the
+      // template and its rule are born together in one statement.
       const created = await tx.studioClassTemplate.create({
         data: {
-          teacherId: session.teacherId,
-          ...parsed.data,
+          scheduleRule: {
+            create: {
+              teacherId: session.teacherId,
+              kind: 'studio',
+              classType: parsed.data.classType,
+              dayOfWeek: parsed.data.dayOfWeek,
+              startTime: hhmmToTime(parsed.data.startTime),
+              durationMinutes: parsed.data.durationMinutes,
+            },
+          },
+          location: parsed.data.location,
+          hourlyRate: parsed.data.hourlyRate,
         },
-        include: { teacher: { select: { defaultTimezone: true } } },
+        include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
       });
       const generation = await generateStudioInstancesForTemplate(tx, created).catch((err: unknown) => {
         // Set on the failure path only, immediately before rethrowing, so the
@@ -177,8 +194,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     throw err;
   }
 
-  const { teacher, ...created } = template.created;
-  void teacher;
+  const { scheduleRule, ...bare } = template.created;
+  const created = withSlot(bare, scheduleRule);
 
   // The same counts the PATCH `active` arm carries — see the class family's
   // POST for why 201 with no counts stopped being a complete answer once the

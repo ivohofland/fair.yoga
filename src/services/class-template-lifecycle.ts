@@ -28,11 +28,12 @@
  */
 
 import { Prisma } from '@prisma/client';
-import type { PrismaClient, ClassTemplate, ClassStatus } from '@prisma/client';
+import type { PrismaClient, ClassTemplate, ScheduleRule, ClassStatus } from '@prisma/client';
 import type { z } from 'zod';
 import type { updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { startOfLocalDay, mondayOf, classStartInstant } from '@/lib/timezone';
+import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
@@ -59,24 +60,46 @@ import {
 } from '@/lib/template-selection';
 
 /**
- * The fields a teacher may change on an existing template.
+ * The fields a teacher may change on an existing template — the WIRE shape,
+ * spanning both `ClassTemplate` and `ScheduleRule` now that issue 298 has
+ * split the model the schema describes.
  *
  * Derived from `updateClassTemplateSchema`, not hand-declared: deriving is what
  * puts a newly added schema field into `keyof`, which is what every pin below
  * depends on. A hand-declared type would never see the offending field at all.
  *
- * Unlike `ClassUpdateData`, this needs no `Omit`/intersection — every schema
- * field maps to a column of the same type, including the two enums. That is why
- * the reverse pin here has no equivalent of the `date` blind spot documented in
- * `class-lifecycle.ts`.
+ * Unlike `ClassUpdateData`, this needs no `Omit`/intersection of its own —
+ * every schema field maps to a column of the same type somewhere, including
+ * the two enums. `ScheduleRuleUpdateData` and `ClassTemplateOwnUpdateData`
+ * below are the `Pick`/`Omit` that route each field to its model; neither has
+ * the `date` blind spot `class-lifecycle.ts` documents.
  */
 export type ClassTemplateUpdateData = z.infer<typeof updateClassTemplateSchema>;
 
 /**
- * Compile-time pin: every field the wire schema accepts must name a column
- * `update` can write on `ClassTemplate` — the write below checks the types,
- * this checks the name, and only this catches a name Prisma has never heard
- * of.
+ * The wire schema sliced to the four fields that route onto `ScheduleRule`
+ * rather than `ClassTemplate` (issue 298) — `startTime` still `"HH:MM"` here,
+ * the wire shape every caller of `ClassTemplateUpdateData` uses. Pins below
+ * check NAMES against this slice, not against the whole schema: the whole
+ * schema now spans two models, so a pin comparing it to one model's columns
+ * would name the other model's fields as missing forever.
+ */
+type ScheduleRuleUpdateData = Pick<
+  ClassTemplateUpdateData,
+  'classType' | 'dayOfWeek' | 'startTime' | 'durationMinutes'
+>;
+
+/** The wire schema sliced to what stayed on `ClassTemplate` — the complement of `ScheduleRuleUpdateData`. */
+type ClassTemplateOwnUpdateData = Omit<
+  ClassTemplateUpdateData,
+  'classType' | 'dayOfWeek' | 'startTime' | 'durationMinutes'
+>;
+
+/**
+ * Compile-time pin: every field the wire schema routes to `ClassTemplate`
+ * must name a column `update` can write there — the write below checks the
+ * types, this checks the name, and only this catches a name Prisma has never
+ * heard of.
  *
  * The reference is the *Many* input deliberately, as in the class service: the
  * single-record type additionally accepts a nested relation write (`classes`)
@@ -84,20 +107,25 @@ export type ClassTemplateUpdateData = z.infer<typeof updateClassTemplateSchema>;
  * wave through a schema field named after that relation.
  */
 const _templateUpdateColumnsExist: NoneOf<
-  Exclude<keyof ClassTemplateUpdateData, keyof Prisma.ClassTemplateUncheckedUpdateManyInput>
+  Exclude<keyof ClassTemplateOwnUpdateData, keyof Prisma.ClassTemplateUncheckedUpdateManyInput>
 > = true;
 void _templateUpdateColumnsExist;
 
 /**
- * The fields a teacher may change on their own template via
+ * The fields a teacher may change on their own template's own row via
  * `PUT /api/class-templates/[id]`.
  *
  * Adding a member is how a new schema field gets authorized. Since #194 a
  * template is a stamp, not a live link: editing one of these fields changes
  * the template row and NOTHING else. No generated `Class` moves, is rewritten,
- * or is deleted — not on a `dayOfWeek` change, not on a rate change, not on a
- * room change. The next generation run reads the new values; every class
- * already on the schedule keeps the values it was stamped with.
+ * or is deleted — not on a rate change, not on a room change. The next
+ * generation run reads the new values; every class already on the schedule
+ * keeps the values it was stamped with.
+ *
+ * The rule's own slot fields (`classType`, `dayOfWeek`, `startTime`,
+ * `durationMinutes`) are NOT here (issue 298) — they left this model for
+ * `ScheduleRule`, and `TeacherEditableScheduleRuleField` below is their
+ * allowlist now.
  *
  * One member still carries a consequence beyond the row, and it is the reason
  * this list is an allowlist rather than a schema dump:
@@ -106,12 +134,8 @@ void _templateUpdateColumnsExist;
  *                       teacher attaching their template to another's room.
  */
 type TeacherEditableClassTemplateField =
-  | 'classType'
   | 'description'
   | 'teacherRoomId'
-  | 'dayOfWeek'
-  | 'startTime'
-  | 'durationMinutes'
   | 'roomCost'
   | 'minRate'
   | 'targetRate'
@@ -121,9 +145,9 @@ type TeacherEditableClassTemplateField =
   | 'autoCancelCheck';
 
 /**
- * Compile-time pin (forward): every field the schema accepts must be on the
- * allowlist. Add a column-shaped field to the schema without adding it here and
- * this names that field instead of resolving to `true`.
+ * Compile-time pin (forward): every field the schema routes to `ClassTemplate`
+ * must be on the allowlist. Add a column-shaped field to that slice without
+ * adding it here and this names that field instead of resolving to `true`.
  *
  * As in `class-lifecycle.ts`, forward and reverse together force the allowlist to
  * *equal* the schema's key set, so the allowlist holds no policy of its own.
@@ -132,44 +156,42 @@ type TeacherEditableClassTemplateField =
  * never right.
  */
 const _templateFieldsArePermitted: NoneOf<
-  Exclude<keyof ClassTemplateUpdateData, TeacherEditableClassTemplateField>
+  Exclude<keyof ClassTemplateOwnUpdateData, TeacherEditableClassTemplateField>
 > = true;
 void _templateFieldsArePermitted;
 
 /**
  * Compile-time pin (reverse): every allowlist entry must still be a field the
- * schema accepts, so the list cannot rot into granting permission for a column
- * that no longer flows through this route.
+ * schema routes to `ClassTemplate`, so the list cannot rot into granting
+ * permission for a column that no longer flows through this route.
  *
- * Also the only pin that fires if `ClassTemplateUpdateData` ever degrades to
+ * Also the only pin that fires if `ClassTemplateOwnUpdateData` ever degrades to
  * `{}` or `unknown` — on an empty `keyof` the forward pin passes vacuously.
  */
 const _templateAllowlistHasNoStaleFields: NoneOf<
-  Exclude<TeacherEditableClassTemplateField, keyof ClassTemplateUpdateData>
+  Exclude<TeacherEditableClassTemplateField, keyof ClassTemplateOwnUpdateData>
 > = true;
 void _templateAllowlistHasNoStaleFields;
 
 /**
  * The `ClassTemplate` columns the plain update path must never write.
  *
- * "Plain update path", not "never": `isActive` and `isArchived` are edited
- * constantly — by `PATCH` on this very route — and that is the point. Each
- * column here is owned by a different, guarded path:
- *   - `id`         → identity
- *   - `teacherId`  → ownership
- *   - `isActive`   → `PATCH`, which wraps the flip in a transaction and calls
- *                    `generateInstancesForTemplate`. A bare flip to `true`
- *                    would mark a template active with no instance window.
- *   - `isArchived` → `PATCH ?state=archived`, which also forces
- *                    `isActive: false`. Writing it alone can produce the
- *                    archived-but-active state `PATCH` refuses to create.
- *   - `archivedAt`, `withdrawnCount` → written only by the same `PATCH
- *                    ?state=archived|unarchived` transaction that owns
- *                    `isArchived` (#97). A plain update setting these directly
- *                    could forge "Archived <date> · <count> withdrawn" onto a
- *                    template that was never archived — the exact stale-record
- *                    state the un-archive clear exists to prevent.
+ *   - `id`             → identity
+ *   - `scheduleRuleId`,
+ *     `kind`           → identity, exactly like `id` (issue 298): which rule
+ *                        this template belongs to. Writable here, a teacher
+ *                        could re-parent their template onto another rule by
+ *                        id — including, via the composite FK, one they do
+ *                        not own. Nothing on this route ever needs to move a
+ *                        template between rules.
  *   - `createdAt`, `updatedAt` → Prisma-managed.
+ *
+ * `teacherId`, `isActive`, `isArchived`, `archivedAt` and `withdrawnCount`
+ * left this model for `ScheduleRule` in issue 298 — see
+ * `PlainUpdateForbiddenScheduleRuleField` below for why each is still
+ * forbidden on the rule's own plain-update path; none is a `ClassTemplate`
+ * column any more; a name here for one of them would fail
+ * `_templateForbiddenColumnsExist` below rather than protect anything.
  *
  * The forward and reverse pins make the allowlist mirror the schema, so the
  * quickest way to clear a forward-pin failure is to paste the offending name
@@ -178,11 +200,8 @@ void _templateAllowlistHasNoStaleFields;
  */
 type PlainUpdateForbiddenTemplateField =
   | 'id'
-  | 'teacherId'
-  | 'isActive'
-  | 'isArchived'
-  | 'archivedAt'
-  | 'withdrawnCount'
+  | 'scheduleRuleId'
+  | 'kind'
   | 'createdAt'
   | 'updatedAt';
 
@@ -191,22 +210,10 @@ type PlainUpdateForbiddenTemplateField =
  * silently. See the twin in `class-lifecycle.ts` for the measurement that
  * motivated it — the pins either side of this one hold membership and
  * non-overlap, and both are blind to a deletion.
- *
- * `isActive` is the entry that matters most here: it is what stops a `PUT`
- * flipping a template active, which would bypass the transaction-and-generate
- * path `PATCH` owns and door 3's resume refusal with it. Door 5 no longer
- * gates on `isActive`, but door 3 still does.
  */
 const _templateForbiddenListIsComplete: NoneOf<
   Exclude<
-    | 'id'
-    | 'teacherId'
-    | 'isActive'
-    | 'isArchived'
-    | 'archivedAt'
-    | 'withdrawnCount'
-    | 'createdAt'
-    | 'updatedAt',
+    'id' | 'scheduleRuleId' | 'kind' | 'createdAt' | 'updatedAt',
     PlainUpdateForbiddenTemplateField
   >
 > = true;
@@ -214,8 +221,8 @@ void _templateForbiddenListIsComplete;
 
 /**
  * Compile-time pin: every name above must be a real `ClassTemplate` column.
- * Without this a typo (`isActiv`) would sit in the forbidden list protecting
- * nothing while looking like protection.
+ * Without this a typo (`scheduleRuleld`) would sit in the forbidden list
+ * protecting nothing while looking like protection.
  */
 const _templateForbiddenColumnsExist: NoneOf<
   Exclude<PlainUpdateForbiddenTemplateField, keyof Prisma.ClassTemplateUncheckedUpdateManyInput>
@@ -232,6 +239,168 @@ const _templateAllowlistHasNoForbiddenFields: NoneOf<
 > = true;
 void _templateAllowlistHasNoForbiddenFields;
 
+// ---------------------------------------------------------------------------
+// The rule half of the partition (issue 298)
+//
+// `updateClassTemplate`'s wire schema spans two models now: the economics
+// stayed on `ClassTemplate` (pinned above), the slot fields moved to
+// `ScheduleRule`. One partition, two models, so it needs two sets of lists
+// and two sets of pins — reusing the child's lists for both would either
+// delete a teacher's ability to edit their schedule, delete the protection on
+// `isActive`/`isArchived`/`archivedAt`/`withdrawnCount`/`teacherId` outright
+// (naming them in a `ClassTemplate`-scoped list cannot even compile, since
+// none is a `ClassTemplate` column any more), or let a teacher re-parent a
+// template onto a rule they do not own. Mirrors the six pins above, against
+// `keyof Prisma.ScheduleRuleUncheckedUpdateManyInput` rather than
+// `ClassTemplate`'s.
+// ---------------------------------------------------------------------------
+
+/**
+ * Compile-time pin: every field the wire schema routes to `ScheduleRule` must
+ * name a column `update` can write there.
+ */
+const _scheduleRuleUpdateColumnsExist: NoneOf<
+  Exclude<keyof ScheduleRuleUpdateData, keyof Prisma.ScheduleRuleUncheckedUpdateManyInput>
+> = true;
+void _scheduleRuleUpdateColumnsExist;
+
+/**
+ * The rule fields a teacher may change through `PUT /api/class-templates/[id]`
+ * — the slot half of the wire schema (issue 298). `dayOfWeek` carries the same
+ * stamp-not-link consequence `TeacherEditableClassTemplateField` documents:
+ * editing it moves nothing already generated.
+ */
+type TeacherEditableScheduleRuleField =
+  | 'classType'
+  | 'dayOfWeek'
+  | 'startTime'
+  | 'durationMinutes';
+
+/** Compile-time pin (forward): every field the schema routes to `ScheduleRule` must be on this allowlist. */
+const _scheduleRuleFieldsArePermitted: NoneOf<
+  Exclude<keyof ScheduleRuleUpdateData, TeacherEditableScheduleRuleField>
+> = true;
+void _scheduleRuleFieldsArePermitted;
+
+/** Compile-time pin (reverse): every allowlist entry must still be a field the schema routes to `ScheduleRule`. */
+const _scheduleRuleAllowlistHasNoStaleFields: NoneOf<
+  Exclude<TeacherEditableScheduleRuleField, keyof ScheduleRuleUpdateData>
+> = true;
+void _scheduleRuleAllowlistHasNoStaleFields;
+
+/**
+ * The `ScheduleRule` columns the plain update path must never write.
+ *
+ *   - `id`, `teacherId`, `kind` → identity/ownership.
+ *   - `isActive`   → `PATCH`, which wraps the flip in a transaction and calls
+ *                    `generateInstancesForTemplate`. A bare flip to `true`
+ *                    would mark a template active with no instance window.
+ *   - `isArchived` → `PATCH ?state=archived`, which also forces
+ *                    `isActive: false`. Writing it alone can produce the
+ *                    archived-but-active state `PATCH` refuses to create.
+ *   - `archivedAt`, `withdrawnCount` → written only by the same `PATCH
+ *                    ?state=archived|unarchived` transaction that owns
+ *                    `isArchived` (#97). A plain update setting these directly
+ *                    could forge "Archived <date> · <count> withdrawn" onto a
+ *                    template that was never archived — the exact stale-record
+ *                    state the un-archive clear exists to prevent.
+ *   - `createdAt`, `updatedAt` → Prisma-managed.
+ *
+ * `isActive` is the entry that matters most here: it is what stops a `PUT`
+ * flipping a template active, which would bypass the transaction-and-generate
+ * path `PATCH` owns and door 3's resume refusal with it. Door 5 no longer
+ * gates on `isActive`, but door 3 still does.
+ */
+type PlainUpdateForbiddenScheduleRuleField =
+  | 'id'
+  | 'teacherId'
+  | 'kind'
+  | 'isActive'
+  | 'isArchived'
+  | 'archivedAt'
+  | 'withdrawnCount'
+  | 'createdAt'
+  | 'updatedAt';
+
+/**
+ * Compile-time pin (completeness): every `ScheduleRule` column must be
+ * claimed by the allowlist or the forbidden list above — checked against the
+ * live Prisma type rather than a duplicated literal union, so a migration
+ * that adds an unclassified column reddens this rather than passing
+ * silently.
+ */
+const _scheduleRuleListsPartitionTheModel: NoneOf<
+  Exclude<
+    keyof Prisma.ScheduleRuleUncheckedUpdateManyInput,
+    TeacherEditableScheduleRuleField | PlainUpdateForbiddenScheduleRuleField
+  >
+> = true;
+void _scheduleRuleListsPartitionTheModel;
+
+/**
+ * Compile-time pin: every name above must be a real `ScheduleRule` column.
+ * Without this a typo would sit in the forbidden list protecting nothing
+ * while looking like protection.
+ */
+const _scheduleRuleForbiddenColumnsExist: NoneOf<
+  Exclude<PlainUpdateForbiddenScheduleRuleField, keyof Prisma.ScheduleRuleUncheckedUpdateManyInput>
+> = true;
+void _scheduleRuleForbiddenColumnsExist;
+
+/**
+ * Compile-time pin (forbidden): no forbidden column may appear on the
+ * allowlist.
+ */
+const _scheduleRuleAllowlistHasNoForbiddenFields: NoneOf<
+  Extract<TeacherEditableScheduleRuleField, PlainUpdateForbiddenScheduleRuleField>
+> = true;
+void _scheduleRuleAllowlistHasNoForbiddenFields;
+
+/**
+ * `ClassTemplate` with the rule's columns flattened back on, in the wire
+ * shape every caller already expects: `startTime` as `"HH:MM"` (design §6),
+ * not the `@db.Time` `Date` `ScheduleRule` stores it as (issue 298).
+ *
+ * Every result type below carries this rather than a bare `ClassTemplate`,
+ * because the route spreads the template straight onto the response body,
+ * `TemplateForm` reads `dayOfWeek`/`startTime`/`classType`/`durationMinutes`
+ * off it, and `ArchivedRecord`/the toggle buttons read
+ * `isActive`/`isArchived`/`archivedAt`/`withdrawnCount` off it — none of
+ * which the row itself still has.
+ */
+export type ClassTemplateWithSlot = ClassTemplate & {
+  teacherId: string;
+  classType: string;
+  dayOfWeek: number;
+  startTime: string;
+  durationMinutes: number;
+  isActive: boolean;
+  isArchived: boolean;
+  archivedAt: Date | null;
+  withdrawnCount: number | null;
+};
+
+/**
+ * Flattens a rule's columns onto its child, converting `startTime` to the
+ * wire's `"HH:MM"`. Exported for the routes' own reads
+ * (`GET /api/class-templates`, `GET /api/class-templates/[id]`, and the
+ * `POST` create), which need the same flattening this file's writes do.
+ */
+export function withSlot(template: ClassTemplate, rule: ScheduleRule): ClassTemplateWithSlot {
+  return {
+    ...template,
+    teacherId: rule.teacherId,
+    classType: rule.classType,
+    dayOfWeek: rule.dayOfWeek,
+    startTime: timeToHHmm(rule.startTime),
+    durationMinutes: rule.durationMinutes,
+    isActive: rule.isActive,
+    isArchived: rule.isArchived,
+    archivedAt: rule.archivedAt,
+    withdrawnCount: rule.withdrawnCount,
+  };
+}
+
 /**
  * Why an update did or did not happen. Every business outcome is a variant;
  * callers own the user-facing wording.
@@ -239,7 +408,7 @@ void _templateAllowlistHasNoForbiddenFields;
 export type UpdateClassTemplateResult =
   | {
       ok: true;
-      template: ClassTemplate;
+      template: ClassTemplateWithSlot;
       /**
        * The **Monday of the first week the new schedule reaches**, or `null`
        * when there is no such week to name (#194).
@@ -467,7 +636,7 @@ export type UpdateClassTemplateResult =
  */
 async function probeFirstEffectiveWeek(
   db: PrismaClient,
-  template: ClassTemplate,
+  template: ClassTemplateWithSlot,
   horizon: readonly Date[],
 ): Promise<Date | null> {
   // Guarded rather than `!`-asserted: under `noUncheckedIndexedAccess` a `!`
@@ -597,11 +766,9 @@ async function probeFirstEffectiveWeek(
  *
  * Three shapes are mapped below rather than left to propagate as a 500: P2025
  * becomes `{ ok: false, reason: 'not_found' }`, because the row is gone
- * before the caller is answered (#100); a P2002 on
- * `ClassTemplate_teacher_slot_unique` — raised by the `update` call below
- * writing this template's own `dayOfWeek`/`startTime` — becomes
- * `slot_conflict` (#196); and `isTransientDbError` matching — a holder of the
- * `ClassTemplate` row outlasting the `setLockTimeout` bound below — becomes
+ * before the caller is answered (#100); a P2002 named `slot_conflict` (#196);
+ * and `isTransientDbError` matching — a holder of the child or rule row
+ * outlasting the `setLockTimeout` bound below — becomes
  * `busy`. There was a fourth, `sync_conflict`: a P2002 on
  * `Class_teacher_slot_unique` raised when the propagation rewrote a generated
  * instance's `startTime` onto a slot some other class already held. Nothing
@@ -634,12 +801,16 @@ export async function updateClassTemplate(
   // because it is the same column the generator filters with and this read
   // already exists; the zone is a `Teacher` field and no PUT can move it, so
   // reading it before the write rather than after changes nothing.
+  //
+  // `scheduleRule` joined too (issue 298): `teacherId` and the slot fields
+  // live there now, and this read is also the fallback value for a PUT that
+  // touches none of them — see the transaction below.
   const template = await db.classTemplate.findUnique({
     where: { id: templateId },
-    include: { teacher: { select: { defaultTimezone: true } } },
+    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
   });
   if (!template) return { ok: false, reason: 'not_found' };
-  if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
+  if (template.scheduleRule.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
   // Defined-value scan, matching `updateClass`'s own `hasEdit` check
   // (`class-lifecycle.ts`): a key present with value `undefined` is not an
@@ -705,7 +876,8 @@ export async function updateClassTemplate(
   // read-only probe would be mapped to `busy` — "nothing was changed" — about
   // an edit that had already committed. The catch either returns or rethrows
   // on every path, so this is definitely assigned by the time the probe runs.
-  let updated: ClassTemplate;
+  let updated: ClassTemplateWithSlot;
+  let updatedRule: ScheduleRule;
   try {
     // `updated`, not `template`: the pre-transaction read at the head of this
     // function is already called `template`, and the `catch` below turns on
@@ -713,12 +885,12 @@ export async function updateClassTemplate(
     // transaction are not the same statement" is the sentence that explains
     // why P2025 has one source. Two values that the error mapping
     // distinguishes should not share a name.
-    updated = await db.$transaction(
+    const written = await db.$transaction(
       async (tx) => {
         // First statement, deliberately — and now the only statement it has
-        // to bound, the `update` immediately below it. A concurrent
-        // generation claim, archive, or pause/resume can hold this row locked
-        // for the duration of its own transaction.
+        // to bound, the two `update`s immediately below it. A concurrent
+        // generation claim, archive, or pause/resume can hold the child row
+        // locked for the duration of its own transaction.
         //
         // Without it the wait is bounded by NOTHING, not by the budget below:
         // Prisma checks that budget at statement boundaries, so it "cannot
@@ -731,15 +903,49 @@ export async function updateClassTemplate(
         // `setLockTimeout` on this path and no ambiguity left to resolve.
         await setLockTimeout(tx);
 
-        return tx.classTemplate.update({ where: { id: templateId }, data });
+        // The wire data covers both models now (issue 298): the four slot
+        // fields route to `ScheduleRule`, everything else stays a
+        // `ClassTemplate` column. Destructuring the four out — rather than
+        // hand-picking the rest — is tethered to the pins above:
+        // `_templateFieldsArePermitted`/`_templateAllowlistHasNoStaleFields`
+        // together prove `childData`'s keys equal `TeacherEditableClassTemplateField`
+        // exactly, so nothing wider can reach `classTemplate.update` this way.
+        const { classType, dayOfWeek, startTime, durationMinutes, ...childData } = data;
+
+        const updatedChild = await tx.classTemplate.update({ where: { id: templateId }, data: childData });
+
+        // Built field-by-field rather than spread, and typed with the same
+        // `Partial<Record<PlainUpdateForbiddenScheduleRuleField, never>>`
+        // guard `data` itself carries: a future edit that tried to fold a
+        // forbidden name (`isActive`, say) into this object would fail here,
+        // at the point it would actually reach the rule row, rather than
+        // relying on `data`'s own guard reaching this deep by construction.
+        const ruleData: Partial<Pick<Prisma.ScheduleRuleUncheckedUpdateManyInput, TeacherEditableScheduleRuleField>> &
+          Partial<Record<PlainUpdateForbiddenScheduleRuleField, never>> = {};
+        if (classType !== undefined) ruleData.classType = classType;
+        if (dayOfWeek !== undefined) ruleData.dayOfWeek = dayOfWeek;
+        if (startTime !== undefined) ruleData.startTime = hhmmToTime(startTime);
+        if (durationMinutes !== undefined) ruleData.durationMinutes = durationMinutes;
+
+        // Only written when the PUT actually touched one of the four —
+        // sparing the rule row a lock and an `updatedAt` bump on an edit that
+        // is purely economics (room, rates, capacity, deadlines).
+        const newRule =
+          Object.keys(ruleData).length > 0
+            ? await tx.scheduleRule.update({ where: { id: template.scheduleRuleId }, data: ruleData })
+            : template.scheduleRule;
+
+        return { updatedChild, newRule };
       },
-      // One statement now, where there were five (#194 deleted the sync).
-      // The transaction survives only to scope `SET LOCAL lock_timeout`, which
-      // is a no-op outside one (`db-locks.ts`) — remove the transaction and
-      // the #100/#209 bound goes with it, silently. That is the whole reason
-      // it is still here; it is not vestigial.
+      // Two statements now at most, where there were five (#194 deleted the
+      // sync). The transaction survives only to scope `SET LOCAL
+      // lock_timeout`, which is a no-op outside one (`db-locks.ts`) — remove
+      // the transaction and the #100/#209 bound goes with it, silently. That
+      // is the whole reason it is still here; it is not vestigial.
       { timeout: 10_000 },
     );
+    updated = withSlot(written.updatedChild, written.newRule);
+    updatedRule = written.newRule;
   } catch (err) {
     // Transient first, matching the order `pauseOrResumeTemplate` and
     // `archiveOrUnarchiveTemplate` use in this same file. Not
@@ -795,11 +1001,10 @@ export async function updateClassTemplate(
       return { ok: false, reason: 'not_found' };
     }
 
-    // One more source under this `try`, from #196. The `update` above writes
-    // `dayOfWeek`/`startTime` straight from `data` (both on
-    // `TeacherEditableClassTemplateField`), so it can collide on this
-    // template's own `ClassTemplate_teacher_slot_unique` — a second template
-    // of this teacher's already sitting on the requested day and time.
+    // One more source under this `try`, from #196. `dayOfWeek`/`startTime`
+    // write onto the rule now (`TeacherEditableScheduleRuleField`), so a
+    // collision here would be a second template of this teacher's already
+    // sitting on the requested day and time.
     //
     // A second branch stood here until #194, matching
     // `Class_teacher_slot_unique` (`teacherId`, `date`, `startTime`) and
@@ -859,7 +1064,7 @@ export async function updateClassTemplate(
   // land EARLIER than predicted, never later.
   const now = new Date();
   const horizon = getNextOccurrences(updated.dayOfWeek, now, DEFAULT_WEEKS * 2).filter(
-    (date) => classStartInstant(date, updated.startTime, template.teacher.defaultTimezone) > now,
+    (date) => classStartInstant(date, updated.startTime, template.scheduleRule.teacher.defaultTimezone) > now,
   );
 
   // The gate the probe cannot apply for itself, because it is not about a
@@ -881,7 +1086,7 @@ export async function updateClassTemplate(
   // Not probed-then-discarded: two reads for an answer that cannot be used are
   // two reads too many, and skipping them makes the precondition visible at
   // the call site rather than buried in a `null` return.
-  const generationState = templateGenerationState(updated);
+  const generationState = templateGenerationState(updatedRule);
 
   return {
     ok: true,
@@ -955,13 +1160,13 @@ export type PauseTemplateResult =
   | {
       ok: true;
       action: 'paused';
-      template: ClassTemplate;
+      template: ClassTemplateWithSlot;
       lastScheduled: LastScheduledClass | null;
     }
   | ({
       ok: true;
       action: 'active';
-      template: ClassTemplate;
+      template: ClassTemplateWithSlot;
       /**
        * Scheduled classes for this template from the start of the teacher's
        * today onward — the same predicate and boundary `remaining` uses, so
@@ -1002,7 +1207,7 @@ export type PauseTemplateResult =
        */
       counts: SkipCounts;
     })
-  | { ok: true; action: 'unchanged'; template: ClassTemplate }
+  | { ok: true; action: 'unchanged'; template: ClassTemplateWithSlot }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'archived' }
@@ -1041,9 +1246,9 @@ export type PauseTemplateResult =
  * and a no-op removes nothing twice.
  */
 export type ArchiveTemplateResult =
-  | { ok: true; action: 'archived'; template: ClassTemplate; deleted: number; remaining: number }
-  | { ok: true; action: 'unarchived'; template: ClassTemplate }
-  | { ok: true; action: 'unchanged'; template: ClassTemplate }
+  | { ok: true; action: 'archived'; template: ClassTemplateWithSlot; deleted: number; remaining: number }
+  | { ok: true; action: 'unarchived'; template: ClassTemplateWithSlot }
+  | { ok: true; action: 'unchanged'; template: ClassTemplateWithSlot }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'slot_conflict' }
@@ -1163,11 +1368,11 @@ type ResumeTransactionOutcome =
   | { outcome: 'not_found' }
   | { outcome: 'archived' }
   | { outcome: 'busy' }
-  | { outcome: 'unchanged'; template: ClassTemplate }
-  | { outcome: 'paused'; template: ClassTemplate }
+  | { outcome: 'unchanged'; template: ClassTemplateWithSlot }
+  | { outcome: 'paused'; template: ClassTemplateWithSlot }
   | ({
       outcome: 'active';
-      template: ClassTemplate;
+      template: ClassTemplateWithSlot;
       scheduled: number;
       added: number;
       counts: SkipCounts;
@@ -1193,19 +1398,20 @@ export async function pauseOrResumeTemplate(
   const template = await db.classTemplate.findUnique({
     where: { id: templateId },
     include: {
-      teacher: { select: { defaultTimezone: true } },
+      scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } },
       teacherRoom: { select: { isArchived: true } },
     },
   });
   if (!template) return { ok: false, reason: 'not_found' };
-  if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
+  if (template.scheduleRule.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
-  // Same reason as the drop further down: `PauseTemplateResult` carries a
-  // plain `ClassTemplate`, so the joined `teacher` and `teacherRoom` this
-  // include added are dropped rather than leaked back to the caller —
-  // including on this early-return path, before any write happens.
-  const { teacher: _t, teacherRoom: _tr, ...bare } = template;
-  void _t;
+  // Same reason as the drop further down: `PauseTemplateResult` carries
+  // `ClassTemplateWithSlot`, flattened fresh from whatever row versions each
+  // branch below actually reads — the joined `scheduleRule.teacher` and
+  // `teacherRoom` this include added are dropped rather than leaked back to
+  // the caller, including on this early-return path, before any write
+  // happens.
+  const { scheduleRule, teacherRoom: _tr, ...bare } = template;
   void _tr;
 
   const desiredActive = target === 'active';
@@ -1214,11 +1420,11 @@ export async function pauseOrResumeTemplate(
   // false`, so `?state=paused` on an archived template is already true and
   // there is nothing to refuse — only `?state=active` is the transition the
   // guard exists to block.
-  if (template.isActive === desiredActive) {
-    return { ok: true, action: 'unchanged', template: bare };
+  if (scheduleRule.isActive === desiredActive) {
+    return { ok: true, action: 'unchanged', template: withSlot(bare, scheduleRule) };
   }
 
-  if (template.isArchived) return { ok: false, reason: 'archived' };
+  if (scheduleRule.isArchived) return { ok: false, reason: 'archived' };
 
   // Door 3 of the room archive lifecycle (issue 76). Symmetric with door 2:
   // a paused template may SIT on an archived room, but resuming it is the
@@ -1296,8 +1502,8 @@ export async function pauseOrResumeTemplate(
         // exception — see the miss branch below for the three things it can
         // mean. That choice is also why this transaction no longer has a
         // P2025 source at all; the `catch` below records the full enumeration.
-        const swapped = await tx.classTemplate.updateMany({
-          where: { id: templateId, isArchived: false, isActive: !desiredActive },
+        const swapped = await tx.scheduleRule.updateMany({
+          where: { id: template.scheduleRuleId, isArchived: false, isActive: !desiredActive },
           data: { isActive: desiredActive },
         });
 
@@ -1305,8 +1511,13 @@ export async function pauseOrResumeTemplate(
           // A miss may or may not leave this transaction holding a lock, and
           // this plain re-read is correct either way. See
           // `archiveOrUnarchiveTemplate`'s own miss branch for the full
-          // account rather than repeating it here.
-          const current = await tx.classTemplate.findUnique({ where: { id: templateId } });
+          // account rather than repeating it here. Both rows read together
+          // (issue 298): the child's existence is still what `not_found`
+          // means, and the rule is what the classification below reads.
+          const current = await tx.classTemplate.findUnique({
+            where: { id: templateId },
+            include: { scheduleRule: true },
+          });
           if (!current) return { outcome: 'not_found' as const };
           // `isActive === desiredActive` before `isArchived`, deliberately —
           // the same order as the fast paths above, and for the same reason:
@@ -1317,10 +1528,10 @@ export async function pauseOrResumeTemplate(
           // would answer a plain pause with a 409 meant for resuming an
           // archived template. A racing *resume* is not already-desired, so it
           // falls through regardless of order.
-          if (current.isActive === desiredActive) {
-            return { outcome: 'unchanged' as const, template: current };
+          if (current.scheduleRule.isActive === desiredActive) {
+            return { outcome: 'unchanged' as const, template: withSlot(current, current.scheduleRule) };
           }
-          if (current.isArchived) return { outcome: 'archived' as const };
+          if (current.scheduleRule.isArchived) return { outcome: 'archived' as const };
           // Residual, and REACHABLE — measured, not merely conceded. This
           // CAS's `where` is `isArchived: false AND isActive: !desiredActive`;
           // a miss means one of those held *when the CAS ran*, and both are
@@ -1358,7 +1569,7 @@ export async function pauseOrResumeTemplate(
               templateId,
               teacherId,
               target,
-              observed: { isActive: current.isActive, isArchived: current.isArchived },
+              observed: { isActive: current.scheduleRule.isActive, isArchived: current.scheduleRule.isArchived },
               desiredActive,
             },
             'recurring class pause/resume CAS missed and the re-read matched no classification',
@@ -1369,14 +1580,15 @@ export async function pauseOrResumeTemplate(
         if (!desiredActive) {
           // `updateMany` returns a count, not a row. Safe to read back without
           // a lock re-check: the CAS above matched, so this transaction holds
-          // `FOR NO KEY UPDATE` on the row and nothing can change or delete it
-          // before we commit. `OrThrow` for that reason — a `| null` here
-          // would be an impossible branch every caller had to pretend to
-          // handle.
-          const paused = await tx.classTemplate.findUniqueOrThrow({
-            where: { id: templateId },
+          // `FOR NO KEY UPDATE` on the rule row and nothing can change or
+          // delete it before we commit. `OrThrow` for that reason — a `| null`
+          // here would be an impossible branch every caller had to pretend to
+          // handle. `bare`, not a fresh child read: pausing writes nothing on
+          // `ClassTemplate`, so the pre-transaction snapshot is still current.
+          const pausedRule = await tx.scheduleRule.findUniqueOrThrow({
+            where: { id: template.scheduleRuleId },
           });
-          return { outcome: 'paused' as const, template: paused };
+          return { outcome: 'paused' as const, template: withSlot(bare, pausedRule) };
         }
 
         // Take the row lock before generating. The CAS above only flipped
@@ -1444,13 +1656,12 @@ export async function pauseOrResumeTemplate(
         // the studio twin's; if you change this line, nothing will stop you.
         //
         // Do not "simplify" this to
-        // `template.teacher.…`.
-        const today = startOfLocalDay(new Date(), claimed.teacher.defaultTimezone);
+        // `template.scheduleRule.teacher.…`.
+        const today = startOfLocalDay(new Date(), claimed.scheduleRule.teacher.defaultTimezone);
         const scheduled = await tx.class.count({
           where: scheduledWhere(templateId, { gte: today }),
         });
-        const { teacher: _gen, ...bareT } = claimed;
-        void _gen;
+        const { scheduleRule: claimedRule, ...bareT } = claimed;
         const skipCounts = countSkipReasons(generation.skipped);
 
         // The studio twin's line, ported — this block was rewritten by #116
@@ -1472,7 +1683,7 @@ export async function pauseOrResumeTemplate(
 
         return {
           outcome: 'active' as const,
-          template: bareT,
+          template: withSlot(bareT, claimedRule),
           scheduled,
           added: generation.created,
           counts: skipCounts,
@@ -1566,7 +1777,7 @@ export async function pauseOrResumeTemplate(
       // `gte` today, not `gt`: this reports what is still on the schedule, and
       // today's class is still on it. Pause deletes nothing, so there is no
       // spare-today carve-out here to mirror.
-      const today = startOfLocalDay(new Date(), template.teacher.defaultTimezone);
+      const today = startOfLocalDay(new Date(), template.scheduleRule.teacher.defaultTimezone);
       const lastScheduled = await db.class.findFirst({
         where: scheduledWhere(templateId, { gte: today }),
         orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
@@ -1629,10 +1840,10 @@ export async function archiveOrUnarchiveTemplate(
 ): Promise<ArchiveTemplateResult> {
   const template = await db.classTemplate.findUnique({
     where: { id: templateId },
-    include: { teacher: { select: { defaultTimezone: true } } },
+    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
   });
   if (!template) return { ok: false, reason: 'not_found' };
-  if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
+  if (template.scheduleRule.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
   const archiving = target === 'archived';
 
@@ -1652,13 +1863,12 @@ export async function archiveOrUnarchiveTemplate(
   // paused it. That is correct — `isArchived` and `isActive` are independent
   // axes, and no button ever sends that combination — but it deserves to be
   // written down rather than left for a future reader to derive.
-  if (template.isArchived === archiving) {
-    const { teacher: _t, ...bare } = template;
-    void _t;
-    return { ok: true, action: 'unchanged', template: bare };
+  if (template.scheduleRule.isArchived === archiving) {
+    const { scheduleRule, ...bare } = template;
+    return { ok: true, action: 'unchanged', template: withSlot(bare, scheduleRule) };
   }
 
-  const timeZone = template.teacher.defaultTimezone;
+  const timeZone = template.scheduleRule.teacher.defaultTimezone;
 
   // Un-archiving (`archiving === false`) flips `isArchived` from `true` to
   // `false` in the CAS below — the one write in this function that can newly
@@ -1715,13 +1925,17 @@ export async function archiveOrUnarchiveTemplate(
         // those classes — a durable record (#97) of a withdrawal that says it
         // withdrew nothing.
         //
-        // Still the transaction's first statement, deliberately: this is what
-        // locks the row `claimTemplateForGeneration` (class-generator.ts) locks
-        // with its `FOR UPDATE`. Not the same lock mode — an `updateMany`
-        // touching no key column takes `FOR NO KEY UPDATE` — but the two
-        // *conflict*, and that conflict is what serialises an archive against a
-        // sweep in progress (#95). Moving the CAS after the `deleteMany` would
-        // withdraw classes before establishing the right to.
+        // Still the transaction's first statement, deliberately. Before issue
+        // 298 this CAS wrote `ClassTemplate` and so held the same row
+        // `claimTemplateForGeneration` (class-generator.ts) takes `FOR UPDATE`
+        // on, which is what serialised an archive against a sweep in progress
+        // (#95). `isArchived`/`isActive` now live on `ScheduleRule`, so this
+        // `updateMany` locks that row instead, and the claim's `FOR UPDATE OF
+        // ct` locks the child — two different tables, no conflict between
+        // them any more. Known-open, not closed here: re-establishing that
+        // serialization across the split is a separate, later change. Moving
+        // the CAS after the `deleteMany` would still withdraw classes before
+        // establishing the right to, whatever the lock story.
         //
         // The contended case resolves in Postgres, not here: the loser blocks
         // inside this statement, and when the winner commits, READ COMMITTED
@@ -1747,8 +1961,8 @@ export async function archiveOrUnarchiveTemplate(
         // takes the same mode — but the first limb: it raises P2025 where
         // `updateMany` returns `{ count: 0 }`, so the write itself becomes a
         // P2025 source needing its own guard.
-        const swapped = await tx.classTemplate.updateMany({
-          where: { id: templateId, isArchived: !archiving },
+        const swapped = await tx.scheduleRule.updateMany({
+          where: { id: template.scheduleRuleId, isArchived: !archiving },
           data: {
             isArchived: archiving,
             isActive: false,
@@ -1801,16 +2015,23 @@ export async function archiveOrUnarchiveTemplate(
           // Re-read rather than reusing the snapshot from the top of this
           // function: that one still says `isArchived: !archiving`, which is
           // the exact value the winner just falsified.
-          const current = await tx.classTemplate.findUnique({ where: { id: templateId } });
+          const current = await tx.classTemplate.findUnique({
+            where: { id: templateId },
+            include: { scheduleRule: true },
+          });
           if (!current) return { ok: false as const, reason: 'not_found' as const };
-          return { ok: true as const, action: 'unchanged' as const, template: current };
+          return {
+            ok: true as const,
+            action: 'unchanged' as const,
+            template: withSlot(current, current.scheduleRule),
+          };
         }
 
         if (!archiving) {
           // `updateMany` returns a count, not a row, and every arm of the
           // contract carries a template. Reading it back is safe here
-          // specifically because the CAS above holds this row's lock until we
-          // commit, so nothing can change or delete it in between — the same
+          // specifically because the CAS above holds the rule row's lock until
+          // we commit, so nothing can change or delete it in between — the same
           // lock-then-read pattern `claimTemplateForGeneration` uses, and
           // `OrThrow` for the same reason: the update just matched this row.
           //
@@ -1818,8 +2039,15 @@ export async function archiveOrUnarchiveTemplate(
           // Not a *live* one — the CAS above forced `isActive: false` in the
           // same write, so what is standing here is paused. Leaving a stale
           // count on it would be worse than having none (#97).
-          const cleared = await tx.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
-          return { ok: true as const, action: 'unarchived' as const, template: cleared };
+          const cleared = await tx.classTemplate.findUniqueOrThrow({
+            where: { id: templateId },
+            include: { scheduleRule: true },
+          });
+          return {
+            ok: true as const,
+            action: 'unarchived' as const,
+            template: withSlot(cleared, cleared.scheduleRule),
+          };
         }
 
         // One clock reading serves both the calendar boundary and the
@@ -2102,14 +2330,27 @@ export async function archiveOrUnarchiveTemplate(
         // first statement to take the row lock the sweep serialises against
         // (#95), so it cannot instead be moved down to where `deleted` exists.
         //
-        // A plain single-record `update` is enough here: the CAS's lock is still
-        // held, so nothing can have moved this row since.
-        const recorded = await tx.classTemplate.update({
-          where: { id: templateId },
+        // A plain single-record `update` is enough here: the CAS's lock on the
+        // rule row is still held, so nothing can have moved it since.
+        // `archivedAt`/`withdrawnCount` live on `ScheduleRule` now (issue 298).
+        const recordedRule = await tx.scheduleRule.update({
+          where: { id: template.scheduleRuleId },
           data: { archivedAt: now, withdrawnCount: deleted },
         });
 
-        return { ok: true as const, action: 'archived' as const, template: recorded, deleted, remaining };
+        // `template` unstripped still carries the pre-transaction
+        // `scheduleRule` join `withSlot` would otherwise re-spread onto the
+        // result — the archiving write touches no `ClassTemplate` column, so
+        // that outer read is still current for the child half.
+        const { scheduleRule: _sr, ...bareTemplate } = template;
+        void _sr;
+        return {
+          ok: true as const,
+          action: 'archived' as const,
+          template: withSlot(bareTemplate, recordedRule),
+          deleted,
+          remaining,
+        };
       },
       // The compare-and-swap above locks the same row the generator sweep's
       // `claimTemplateForGeneration` (class-generator.ts) holds `FOR UPDATE` for

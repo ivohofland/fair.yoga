@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { archiveOrUnarchiveTemplate } from './class-template-lifecycle';
 import { deleteStudentAccount } from './gdpr';
 import { log } from '@/lib/log';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
  * Issue 180 had two halves, and this file covers the one that still has code
@@ -93,7 +94,9 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
     }
     if (teacherIds.length) {
       await prisma.class.deleteMany({ where: { teacherId: { in: teacherIds } } });
-      await prisma.classTemplate.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
+      // 298), so deleting the rules removes the templates with them.
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: teacherIds } } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teacherIds } } });
     }
     if (roomIds.length) await prisma.room.deleteMany({ where: { id: { in: roomIds } } });
@@ -193,18 +196,23 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
 
     const template = await prisma.classTemplate.create({
       data: {
-        teacherId: teacher.id,
-        teacherRoomId: teacherRoom.id,
-        classType: 'Lock Order Flow',
-        dayOfWeek,
-        startTime: '09:00',
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId: teacher.id,
+            kind: 'regular',
+            classType: 'Lock Order Flow',
+            dayOfWeek,
+            startTime: hhmmToTime('09:00'),
+            durationMinutes: 60,
+            isActive: false, // keeps the background generator out of this test
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoom.id } },
         roomCost: 20,
         minRate: 15,
         targetRate: 25,
         minStudents: 2,
         maxStudents: 10,
-        isActive: false, // keeps the background generator out of this test
       },
       select: { id: true },
     });

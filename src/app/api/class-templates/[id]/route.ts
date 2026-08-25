@@ -14,6 +14,7 @@ import {
   type ClassTemplateUpdateData,
   pauseOrResumeTemplate,
   archiveOrUnarchiveTemplate,
+  withSlot,
 } from '@/services/class-template-lifecycle';
 
 export const GET = withErrorHandler(async (
@@ -26,15 +27,16 @@ export const GET = withErrorHandler(async (
 
   const template = await prisma.classTemplate.findUnique({
     where: { id },
-    include: { teacherRoom: { include: { room: true } } },
+    include: { teacherRoom: { include: { room: true } }, scheduleRule: true },
   });
   if (!template) return respondError('Class template not found', 404);
 
-  if (template.teacherId !== session.teacherId) {
+  if (template.scheduleRule.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 
-  return respondOk(template);
+  const { scheduleRule, ...bare } = template;
+  return respondOk(withSlot(bare, scheduleRule));
 });
 
 export const PUT = withErrorHandler(async (

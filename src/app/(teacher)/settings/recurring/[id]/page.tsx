@@ -6,6 +6,7 @@ import { TemplateForm } from '@/components/settings/template-form';
 import { ToggleTemplateButton } from '@/components/settings/toggle-template-button';
 import { ArchiveTemplateButton } from '@/components/settings/archive-template-button';
 import { ArchivedRecord } from '@/components/settings/archived-record';
+import { timeToHHmm } from '@/lib/time-of-day';
 
 export default async function EditTemplatePage({
   params,
@@ -19,28 +20,30 @@ export default async function EditTemplatePage({
     where: { id },
     include: {
       teacherRoom: { include: { room: true } },
-      teacher: { select: { defaultTimezone: true } },
+      scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } },
     },
   });
 
-  if (!template || template.teacherId !== session.teacherId) {
+  if (!template || template.scheduleRule.teacherId !== session.teacherId) {
     redirect('/settings/recurring');
   }
 
+  const { scheduleRule } = template;
+
   return (
     <>
-      <PageHeader title={template.classType} backHref="/settings/recurring" backLabel="Recurring classes" />
+      <PageHeader title={scheduleRule.classType} backHref="/settings/recurring" backLabel="Recurring classes" />
 
       <TemplateForm
         mode="edit"
         templateId={template.id}
         initial={{
           teacherRoomId: template.teacherRoomId,
-          classType: template.classType,
+          classType: scheduleRule.classType,
           description: template.description ?? '',
-          dayOfWeek: template.dayOfWeek,
-          startTime: template.startTime,
-          durationMinutes: template.durationMinutes,
+          dayOfWeek: scheduleRule.dayOfWeek,
+          startTime: timeToHHmm(scheduleRule.startTime),
+          durationMinutes: scheduleRule.durationMinutes,
           roomCost: Number(template.roomCost),
           minRate: Number(template.minRate),
           targetRate: Number(template.targetRate),
@@ -53,15 +56,15 @@ export default async function EditTemplatePage({
 
       <section className="mt-8 pt-6 border-t border-border flex flex-col gap-4">
         <ArchivedRecord
-          archivedAt={template.archivedAt}
-          withdrawnCount={template.withdrawnCount}
-          timeZone={template.teacher.defaultTimezone}
+          archivedAt={scheduleRule.archivedAt}
+          withdrawnCount={scheduleRule.withdrawnCount}
+          timeZone={scheduleRule.teacher.defaultTimezone}
         />
-        {!template.isArchived && (
-          <ToggleTemplateButton templateId={template.id} isActive={template.isActive} />
+        {!scheduleRule.isArchived && (
+          <ToggleTemplateButton templateId={template.id} isActive={scheduleRule.isActive} />
         )}
-        {!template.isActive && (
-          <ArchiveTemplateButton templateId={template.id} isArchived={template.isArchived} />
+        {!scheduleRule.isActive && (
+          <ArchiveTemplateButton templateId={template.id} isArchived={scheduleRule.isArchived} />
         )}
       </section>
     </>

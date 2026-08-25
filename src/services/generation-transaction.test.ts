@@ -44,6 +44,7 @@ import { generateInstancesForTemplate, getNextOccurrences } from './class-genera
 import { generateStudioInstancesForTemplate } from './studio-class-generator';
 import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { classStartInstant } from '@/lib/timezone';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = `gentx-${Date.now()}`;
@@ -114,8 +115,10 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.class.deleteMany({ where: { teacherId } });
   await prisma.studioClass.deleteMany({ where: { teacherId } });
-  await prisma.classTemplate.deleteMany({ where: { teacherId } });
-  await prisma.studioClassTemplate.deleteMany({ where: { teacherId } });
+  // `ClassTemplate`/`StudioClassTemplate` are `onDelete: Cascade` from
+  // `ScheduleRule` (issue 298), so deleting the rules removes both
+  // families' templates with them.
+  await prisma.scheduleRule.deleteMany({ where: { teacherId } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId } });
   await prisma.room.deleteMany({ where: { createdById: teacherId } });
   await prisma.teacher.delete({ where: { id: teacherId } });
@@ -128,27 +131,38 @@ async function freshClassTemplate() {
   // the TEMPLATE-level guard would refuse this create over a leftover sibling
   // — correctly, but before the test reaches the instance-level collision it
   // is about. (Observed: the studio case failed exactly this way first.)
-  await prisma.classTemplate.deleteMany({ where: { teacherId } });
-  await prisma.studioClassTemplate.deleteMany({ where: { teacherId } });
+  // `ClassTemplate`/`StudioClassTemplate` are `onDelete: Cascade` from
+  // `ScheduleRule` (issue 298), so one delete clears both families.
+  await prisma.scheduleRule.deleteMany({ where: { teacherId } });
   return prisma.classTemplate.create({
     data: {
-      teacherId, teacherRoomId, classType: 'GenTx', dayOfWeek: DAY, startTime: TIME,
-      durationMinutes: 60, roomCost: 20, minRate: 30, targetRate: 60,
+      scheduleRule: {
+        create: {
+          teacherId, kind: 'regular', classType: 'GenTx', dayOfWeek: DAY,
+          startTime: hhmmToTime(TIME), durationMinutes: 60,
+        },
+      },
+      teacherRoom: { connect: { id: teacherRoomId } },
+      roomCost: 20, minRate: 30, targetRate: 60,
       minStudents: 3, maxStudents: 10,
     },
-    include: { teacher: { select: { defaultTimezone: true } } },
+    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
   });
 }
 
 async function freshStudioTemplate() {
-  await prisma.studioClassTemplate.deleteMany({ where: { teacherId } });
-  await prisma.classTemplate.deleteMany({ where: { teacherId } });
+  await prisma.scheduleRule.deleteMany({ where: { teacherId } });
   return prisma.studioClassTemplate.create({
     data: {
-      teacherId, classType: 'GenTx Studio', dayOfWeek: DAY, startTime: TIME,
-      durationMinutes: 60, location: 'Elsewhere', hourlyRate: 40,
+      scheduleRule: {
+        create: {
+          teacherId, kind: 'studio', classType: 'GenTx Studio', dayOfWeek: DAY,
+          startTime: hhmmToTime(TIME), durationMinutes: 60,
+        },
+      },
+      location: 'Elsewhere', hourlyRate: 40,
     },
-    include: { teacher: { select: { defaultTimezone: true } } },
+    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
   });
 }
 

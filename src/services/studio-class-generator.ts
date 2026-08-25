@@ -10,6 +10,7 @@ import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { getNextOccurrences } from './class-generator';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
 import { classStartInstant } from '@/lib/timezone';
+import { timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
 const DEFAULT_WEEKS = 4;
@@ -21,7 +22,7 @@ const DEFAULT_WEEKS = 4;
  * `StudioClassTemplate` carries no zone of its own.
  */
 type StudioTemplateWithTimezone = Prisma.StudioClassTemplateGetPayload<{
-  include: { teacher: { select: { defaultTimezone: true } } };
+  include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } };
 }>;
 
 /**
@@ -76,17 +77,18 @@ export async function claimStudioTemplateForGeneration(
   // docblock carries the reason `$executeRawUnsafe` is safe for it.
   await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);
   const rows = await tx.$queryRaw<Array<{ id: string }>>`
-    SELECT "id" FROM "StudioClassTemplate"
-    WHERE "id" = ${templateId}
-      AND "isActive" = true
-      AND "isArchived" = false
-    FOR UPDATE`;
+    SELECT sct."id" FROM "StudioClassTemplate" sct
+      JOIN "ScheduleRule" sr ON sr."id" = sct."scheduleRuleId"
+    WHERE sct."id" = ${templateId}
+      AND sr."isActive" = true
+      AND sr."isArchived" = false
+    FOR UPDATE OF sct`;
   if (rows.length !== 1) return null;
 
   // Under the lock taken above; `OrThrow` because the row provably exists.
   return tx.studioClassTemplate.findUniqueOrThrow({
     where: { id: templateId },
-    include: { teacher: { select: { defaultTimezone: true } } },
+    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
   });
 }
 
@@ -135,17 +137,19 @@ export async function generateStudioInstancesForTemplate(
   // The next 4 occurrences whose start is still ahead of startDate. Ported from
   // the class family in #94 — the studio side had no such filter, so the hourly
   // sweep could materialise a class that had already started.
-  const dates = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
+  const startTimeStr = timeToHHmm(template.scheduleRule.startTime);
+  const dates = getNextOccurrences(template.scheduleRule.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
     .filter(
       (date) =>
-        classStartInstant(date, template.startTime, template.teacher.defaultTimezone) > startDate,
+        classStartInstant(date, startTimeStr, template.scheduleRule.teacher.defaultTimezone) >
+        startDate,
     )
     .slice(0, DEFAULT_WEEKS);
 
   // One query for the whole window. Scoped to this teacher: #196's studio index
   // is `(teacherId, date, startTime) WHERE "cancelledAt" IS NULL`.
   const occupants = await db.studioClass.findMany({
-    where: { teacherId: template.teacherId, date: { in: dates } },
+    where: { teacherId: template.scheduleRule.teacherId, date: { in: dates } },
     select: { templateId: true, date: true, startTime: true, cancelledAt: true },
   });
 
@@ -171,7 +175,7 @@ export async function generateStudioInstancesForTemplate(
   // condition for reopening it.
   const foreign = await db.class.findMany({
     where: {
-      teacherId: template.teacherId,
+      teacherId: template.scheduleRule.teacherId,
       date: { in: dates },
       status: { not: 'cancelled' },
     },
@@ -203,7 +207,7 @@ export async function generateStudioInstancesForTemplate(
     // Widen or narrow one without the other and this pre-check starts
     // disagreeing with the constraint that backs it — see the class family's
     // equivalent tripwire (`class-generator.ts`) and the spec's §4.1.
-    if (onDate.some((c) => c.startTime === template.startTime && c.cancelledAt === null)) {
+    if (onDate.some((c) => c.startTime === startTimeStr && c.cancelledAt === null)) {
       skipped.push({ date, reason: 'slot_taken' });
       continue;
     }
@@ -215,9 +219,7 @@ export async function generateStudioInstancesForTemplate(
     // a guarantee — but unlike that one it costs nothing to state, since both
     // branches `continue` and no row is created either way.
     if (
-      foreign.some(
-        (c) => c.date.getTime() === date.getTime() && c.startTime === template.startTime,
-      )
+      foreign.some((c) => c.date.getTime() === date.getTime() && c.startTime === startTimeStr)
     ) {
       skipped.push({ date, reason: 'blocked_by_other_family' });
       continue;
@@ -280,12 +282,12 @@ export async function generateStudioInstancesForTemplate(
       ? []
       : await db.studioClass.createManyAndReturn({
           data: free.map((date) => ({
-            teacherId: template.teacherId,
+            teacherId: template.scheduleRule.teacherId,
             templateId: template.id,
-            classType: template.classType,
+            classType: template.scheduleRule.classType,
             date,
-            startTime: template.startTime,
-            durationMinutes: template.durationMinutes,
+            startTime: startTimeStr,
+            durationMinutes: template.scheduleRule.durationMinutes,
             location: template.location,
             hourlyRate: template.hourlyRate,
           })),
@@ -299,7 +301,7 @@ export async function generateStudioInstancesForTemplate(
   }
 
   skipped.sort((a, b) => a.date.getTime() - b.date.getTime());
-  logSkippedStudioSlots(template.id, template.teacherId, skipped);
+  logSkippedStudioSlots(template.id, template.scheduleRule.teacherId, skipped);
 
   return { created: inserted.length, skipped };
 }
@@ -358,7 +360,8 @@ export async function generateStudioClassInstances(
   // shelved. It slipped once — the studio route had neither guard until #53's
   // coverage pass found it.
   const templates = await db.studioClassTemplate.findMany({
-    where: { isActive: true, isArchived: false },
+    where: { scheduleRule: { isActive: true, isArchived: false } },
+    include: { scheduleRule: true },
   });
 
   let totalCreated = 0;
@@ -390,7 +393,7 @@ export async function generateStudioClassInstances(
       // this, one contended template would stop every other teacher's studio
       // classes from generating.
       log.error(
-        { err, templateId: template.id, teacherId: template.teacherId },
+        { err, templateId: template.id, teacherId: template.scheduleRule.teacherId },
         'studio class generation failed for template',
       );
       errors.push(err);

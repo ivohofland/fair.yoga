@@ -1,9 +1,11 @@
 import Link from 'next/link';
 import { EmptyState } from '@/components/ui/empty-state';
-import type { StudioClassTemplate } from '@prisma/client';
+import type { StudioClassTemplateWithSlot } from '@/services/studio-class-template-lifecycle';
+
+export type StudioTemplateListItem = StudioClassTemplateWithSlot;
 
 interface StudioTemplateListProps {
-  templates: StudioClassTemplate[];
+  templates: StudioTemplateListItem[];
   emptyMessage?: string;
 }
 
@@ -13,7 +15,7 @@ const ROW_BASE =
   'flex items-start justify-between gap-3 min-h-14 py-2 border-b border-border no-underline';
 
 interface StudioTemplateRowProps {
-  template: StudioClassTemplate;
+  template: StudioTemplateListItem;
   /**
    * The whole `<Link>` class string, passed per section rather than composed
    * from a modifier: the active row carries no opacity class at all, and

@@ -11,6 +11,7 @@ import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
 import { classStartInstant, mondayOf } from '@/lib/timezone';
 import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
+import { timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
 // ---------------------------------------------------------------------------
@@ -146,7 +147,7 @@ export function firstFreeWeek(
 // ---------------------------------------------------------------------------
 
 type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
-  include: { teacher: { select: { defaultTimezone: true } } };
+  include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } };
 }>;
 
 /**
@@ -216,12 +217,15 @@ export async function generateInstancesForTemplate(
   // the guard below: `classStartInstant` warns on every unreadable input, so
   // asking it a second time would double the log lines for the one case the
   // guard exists to report.
-  const starts = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS + 1).map(
-    (date) => ({
-      date,
-      start: classStartInstant(date, template.startTime, template.teacher.defaultTimezone),
-    }),
-  );
+  const startTimeStr = timeToHHmm(template.scheduleRule.startTime);
+  const starts = getNextOccurrences(
+    template.scheduleRule.dayOfWeek,
+    startDate,
+    DEFAULT_WEEKS + 1,
+  ).map((date) => ({
+    date,
+    start: classStartInstant(date, startTimeStr, template.scheduleRule.teacher.defaultTimezone),
+  }));
   const dates = starts
     .filter(({ start }) => start > startDate)
     .map(({ date }) => date)
@@ -265,8 +269,8 @@ export async function generateInstancesForTemplate(
       log.warn(
         {
           templateId: template.id,
-          teacherId: template.teacherId,
-          startTime: template.startTime,
+          teacherId: template.scheduleRule.teacherId,
+          startTime: startTimeStr,
         },
         'recurring class generation found no candidate dates because their start instants could not be read',
       );
@@ -279,7 +283,7 @@ export async function generateInstancesForTemplate(
   // `(teacherId, date, startTime)` — another teacher's class can never block
   // this one and must not be read.
   const occupants = await db.class.findMany({
-    where: { teacherId: template.teacherId, date: { in: dates } },
+    where: { teacherId: template.scheduleRule.teacherId, date: { in: dates } },
     select: { templateId: true, date: true, startTime: true, status: true },
   });
 
@@ -348,7 +352,7 @@ export async function generateInstancesForTemplate(
   // not have to find the other one to learn the guard is not airtight.
   const foreign = await db.studioClass.findMany({
     where: {
-      teacherId: template.teacherId,
+      teacherId: template.scheduleRule.teacherId,
       date: { in: dates },
       cancelledAt: null,
     },
@@ -413,7 +417,7 @@ export async function generateInstancesForTemplate(
     // pre-check is what names the reason, not what enforces it.
     // Widen or narrow one without the other and this pre-check starts
     // disagreeing with the constraint that backs it — see the spec's §4.1.
-    if (onDate.some((c) => c.startTime === template.startTime && c.status !== 'cancelled')) {
+    if (onDate.some((c) => c.startTime === startTimeStr && c.status !== 'cancelled')) {
       skipped.push({ date, reason: 'slot_taken' });
       continue;
     }
@@ -426,9 +430,7 @@ export async function generateInstancesForTemplate(
     // `continue` and no row is created either way. The studio generator orders
     // its own pair the same way.
     if (
-      foreign.some(
-        (c) => c.date.getTime() === date.getTime() && c.startTime === template.startTime,
-      )
+      foreign.some((c) => c.date.getTime() === date.getTime() && c.startTime === startTimeStr)
     ) {
       skipped.push({ date, reason: 'blocked_by_other_family' });
       continue;
@@ -485,14 +487,14 @@ export async function generateInstancesForTemplate(
       ? []
       : await db.class.createManyAndReturn({
           data: free.map((date) => ({
-            teacherId: template.teacherId,
+            teacherId: template.scheduleRule.teacherId,
             teacherRoomId: template.teacherRoomId,
             templateId: template.id,
-            classType: template.classType,
+            classType: template.scheduleRule.classType,
             description: template.description,
             date,
-            startTime: template.startTime,
-            durationMinutes: template.durationMinutes,
+            startTime: startTimeStr,
+            durationMinutes: template.scheduleRule.durationMinutes,
             roomCost: template.roomCost,
             minRate: template.minRate,
             targetRate: template.targetRate,
@@ -515,7 +517,7 @@ export async function generateInstancesForTemplate(
   }
 
   skipped.sort((a, b) => a.date.getTime() - b.date.getTime());
-  logSkippedSlots(template.id, template.teacherId, skipped);
+  logSkippedSlots(template.id, template.scheduleRule.teacherId, skipped);
 
   return { created: inserted.length, skipped };
 }
@@ -621,11 +623,12 @@ export async function claimTemplateForGeneration(
   // docblock carries the reason `$executeRawUnsafe` is safe for it.
   await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);
   const rows = await tx.$queryRaw<Array<{ id: string }>>`
-    SELECT "id" FROM "ClassTemplate"
-    WHERE "id" = ${templateId}
-      AND "isActive" = true
-      AND "isArchived" = false
-    FOR UPDATE`;
+    SELECT ct."id" FROM "ClassTemplate" ct
+      JOIN "ScheduleRule" sr ON sr."id" = ct."scheduleRuleId"
+    WHERE ct."id" = ${templateId}
+      AND sr."isActive" = true
+      AND sr."isArchived" = false
+    FOR UPDATE OF ct`;
   if (rows.length !== 1) return null;
 
   // Under the lock taken above, so nothing can change this row before we
@@ -634,7 +637,7 @@ export async function claimTemplateForGeneration(
   // pretend to handle it.
   return tx.classTemplate.findUniqueOrThrow({
     where: { id: templateId },
-    include: { teacher: { select: { defaultTimezone: true } } },
+    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
   });
 }
 
@@ -694,8 +697,10 @@ export async function generateClassInstances(
   // then a product decision (does archiving pause the template? refuse the
   // sweep per-instance and log?), not something this file settles alone.
   const templates = await db.classTemplate.findMany({
-    where: { ...ACTIVE_TEMPLATE_WHERE, ...(teacherId ? { teacherId } : {}) },
-    include: { teacher: { select: { defaultTimezone: true } } },
+    where: {
+      scheduleRule: { ...ACTIVE_TEMPLATE_WHERE.scheduleRule, ...(teacherId ? { teacherId } : {}) },
+    },
+    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
   });
 
   let totalCreated = 0;
@@ -724,7 +729,7 @@ export async function generateClassInstances(
       );
     } catch (err) {
       log.error(
-        { err, templateId: template.id, teacherId: template.teacherId },
+        { err, templateId: template.id, teacherId: template.scheduleRule.teacherId },
         'class generation failed for template',
       );
       errors.push(err);

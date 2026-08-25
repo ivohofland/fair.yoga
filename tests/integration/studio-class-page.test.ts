@@ -18,6 +18,7 @@ import { PrismaClient } from '@prisma/client';
 import { startOfLocalDay } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { STUDIO_CLASS_EDIT_REFUSALS } from '@/services/studio-class-edit-refusals';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -78,7 +79,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.studioClass.deleteMany({ where: { teacherId } });
-  await prisma.studioClassTemplate.deleteMany({ where: { teacherId } });
+  // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
+  // 298) — deleting the rules removes the templates with them.
+  await prisma.scheduleRule.deleteMany({ where: { teacherId, kind: 'studio' } });
   await prisma.$disconnect();
 });
 
@@ -86,11 +89,16 @@ describe('the studio class page: which classes offer removal', () => {
   it('offers no removal on a future generated class', async () => {
     const tpl = await prisma.studioClassTemplate.create({
       data: {
-        teacherId,
-        classType: 'Page Template',
-        dayOfWeek: 3,
-        startTime: '07:00',
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Page Template',
+            dayOfWeek: 3,
+            startTime: hhmmToTime('07:00'),
+            durationMinutes: 60,
+          },
+        },
         location: 'Template Venue',
         hourlyRate: 45,
       },
@@ -121,11 +129,16 @@ describe('the studio class page: which classes offer removal', () => {
   it('offers no removal on a generated class dated today, however long ago it started', async () => {
     const tpl = await prisma.studioClassTemplate.create({
       data: {
-        teacherId,
-        classType: 'Page Template Today',
-        dayOfWeek: 4,
-        startTime: '23:30',
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Page Template Today',
+            dayOfWeek: 4,
+            startTime: hhmmToTime('23:30'),
+            durationMinutes: 60,
+          },
+        },
         location: 'Template Venue',
         hourlyRate: 45,
       },
@@ -406,6 +419,7 @@ describe('the reporting page, which is where the income claim is settled', () =>
 describe('the studio class edit page', () => {
   let strangerToken: string;
   let templateId: string;
+  let templateScheduleRuleId: string;
 
   const editPage = (id: string, as = token) =>
     fetch(`${BASE_URL}/studio-class/${id}/edit`, { headers: cookie(as) });
@@ -441,16 +455,22 @@ describe('the studio class edit page', () => {
     // (dayOfWeek, startTime).
     const template = await prisma.studioClassTemplate.create({
       data: {
-        teacherId,
-        classType: 'Edit Page Case',
-        dayOfWeek: 4,
-        startTime: '07:15',
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Edit Page Case',
+            dayOfWeek: 4,
+            startTime: hhmmToTime('07:15'),
+            durationMinutes: 60,
+          },
+        },
         location: 'Editable Studio',
         hourlyRate: 45,
       },
     });
     templateId = template.id;
+    templateScheduleRuleId = template.scheduleRuleId;
   });
 
   // Scoped to this block's own fixtures — the classType it plants and the one
@@ -458,7 +478,9 @@ describe('the studio class edit page', () => {
   // the surrounding describes are still using.
   afterAll(async () => {
     await prisma.studioClass.deleteMany({ where: { teacherId, classType: 'Edit Page Case' } });
-    await prisma.studioClassTemplate.deleteMany({ where: { id: templateId } });
+    // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
+    // 298) — deleting the child directly here would orphan its rule row.
+    await prisma.scheduleRule.deleteMany({ where: { id: templateScheduleRuleId } });
   });
 
   it('renders the editor for a manual future row, date picker open', async () => {

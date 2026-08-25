@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = `slot-${Date.now()}`;
@@ -33,15 +34,31 @@ const cls = (teacher: string, day: number) => ({
   roomCost: 20, minRate: 30, targetRate: 60, minStudents: 3, maxStudents: 10,
 });
 
-const tpl = (teacher: string, day: number) => ({
-  teacherId: teacher, teacherRoomId, classType: 'Yoga', dayOfWeek: day,
-  startTime: '09:00', durationMinutes: 60, roomCost: 20, minRate: 30,
-  targetRate: 60, minStudents: 3, maxStudents: 10,
+type TplOverrides = { startTime?: string; isActive?: boolean; isArchived?: boolean };
+
+const tpl = (teacher: string, day: number, overrides: TplOverrides = {}) => ({
+  scheduleRule: {
+    create: {
+      teacherId: teacher, kind: 'regular' as const, classType: 'Yoga', dayOfWeek: day,
+      startTime: hhmmToTime(overrides.startTime ?? '09:00'), durationMinutes: 60,
+      ...(overrides.isActive !== undefined ? { isActive: overrides.isActive } : {}),
+      ...(overrides.isArchived !== undefined ? { isArchived: overrides.isArchived } : {}),
+    },
+  },
+  teacherRoom: { connect: { id: teacherRoomId } },
+  roomCost: 20, minRate: 30, targetRate: 60, minStudents: 3, maxStudents: 10,
 });
 
-const studioTpl = (teacher: string, day: number) => ({
-  teacherId: teacher, classType: 'Yoga', dayOfWeek: day, startTime: '09:00',
-  durationMinutes: 60, location: 'Studio', hourlyRate: 40,
+const studioTpl = (teacher: string, day: number, overrides: TplOverrides = {}) => ({
+  scheduleRule: {
+    create: {
+      teacherId: teacher, kind: 'studio' as const, classType: 'Yoga', dayOfWeek: day,
+      startTime: hhmmToTime(overrides.startTime ?? '09:00'), durationMinutes: 60,
+      ...(overrides.isActive !== undefined ? { isActive: overrides.isActive } : {}),
+      ...(overrides.isArchived !== undefined ? { isArchived: overrides.isArchived } : {}),
+    },
+  },
+  location: 'Studio', hourlyRate: 40,
 });
 
 beforeAll(async () => {
@@ -67,8 +84,10 @@ afterAll(async () => {
   const teachers = [teacherId, otherTeacherId];
   await prisma.class.deleteMany({ where: { teacherId: { in: teachers } } });
   await prisma.studioClass.deleteMany({ where: { teacherId: { in: teachers } } });
-  await prisma.classTemplate.deleteMany({ where: { teacherId: { in: teachers } } });
-  await prisma.studioClassTemplate.deleteMany({ where: { teacherId: { in: teachers } } });
+  // `ClassTemplate`/`StudioClassTemplate` are `onDelete: Cascade` from
+  // `ScheduleRule` (issue 298), so deleting the rules removes both
+  // families' templates with them.
+  await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: teachers } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teachers } } });
   await prisma.room.deleteMany({ where: { createdById: { in: teachers } } });
   await prisma.teacher.deleteMany({ where: { id: { in: teachers } } });
@@ -156,7 +175,7 @@ describe('ClassTemplate_teacher_slot_unique', () => {
 
   it('an archived template does not block a replacement on that slot', async () => {
     const t = await prisma.classTemplate.create({ data: tpl(teacherId, 2) });
-    await prisma.classTemplate.update({ where: { id: t.id }, data: { isArchived: true } });
+    await prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { isArchived: true } });
     await expect(prisma.classTemplate.create({ data: tpl(teacherId, 2) })).resolves.toBeTruthy();
   });
 
@@ -185,7 +204,7 @@ describe('StudioClassTemplate_teacher_slot_unique', () => {
 
   it('an archived studio template does not block a replacement', async () => {
     const t = await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 4) });
-    await prisma.studioClassTemplate.update({ where: { id: t.id }, data: { isArchived: true } });
+    await prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { isArchived: true } });
     await expect(prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 4) }))
       .resolves.toBeTruthy();
   });
@@ -494,25 +513,25 @@ describe('cross-family slot exclusivity (#296)', () => {
 // single-family fixtures — freeing dayOfWeek 0-6 to be used honestly.
 describe('cross-family template slot exclusivity (#296)', () => {
   it('rejects a live studio template on a live class template slot', async () => {
-    await prisma.classTemplate.create({ data: { ...tpl(teacherId, 0), startTime: '10:00' } });
+    await prisma.classTemplate.create({ data: tpl(teacherId, 0, { startTime: '10:00' }) });
     await expect(
-      prisma.studioClassTemplate.create({ data: { ...studioTpl(teacherId, 0), startTime: '10:00' } }),
+      prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 0, { startTime: '10:00' }) }),
     ).rejects.toThrow(/YG001/);
   });
 
   it('rejects a live class template on a live studio template slot', async () => {
-    await prisma.studioClassTemplate.create({ data: { ...studioTpl(teacherId, 1), startTime: '10:00' } });
+    await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 1, { startTime: '10:00' }) });
     await expect(
-      prisma.classTemplate.create({ data: { ...tpl(teacherId, 1), startTime: '10:00' } }),
+      prisma.classTemplate.create({ data: tpl(teacherId, 1, { startTime: '10:00' }) }),
     ).rejects.toThrow(/YG001/);
   });
 
   it('an archived class template does not block the sibling studio family', async () => {
     await prisma.classTemplate.create({
-      data: { ...tpl(teacherId, 2), startTime: '10:00', isArchived: true },
+      data: tpl(teacherId, 2, { startTime: '10:00', isArchived: true }),
     });
     const st = await prisma.studioClassTemplate.create({
-      data: { ...studioTpl(teacherId, 2), startTime: '10:00' },
+      data: studioTpl(teacherId, 2, { startTime: '10:00' }),
     });
     expect(st.id).toBeTruthy();
   });
@@ -525,19 +544,19 @@ describe('cross-family template slot exclusivity (#296)', () => {
   // reddened nothing before this test existed.
   it('an archived studio template does not block the sibling class family', async () => {
     await prisma.studioClassTemplate.create({
-      data: { ...studioTpl(teacherId, 5), startTime: '10:00', isArchived: true },
+      data: studioTpl(teacherId, 5, { startTime: '10:00', isArchived: true }),
     });
-    const t = await prisma.classTemplate.create({ data: { ...tpl(teacherId, 5), startTime: '10:00' } });
+    const t = await prisma.classTemplate.create({ data: tpl(teacherId, 5, { startTime: '10:00' }) });
     expect(t.id).toBeTruthy();
   });
 
   it('unarchiving a class template into an occupied cross-family slot is rejected', async () => {
     const t = await prisma.classTemplate.create({
-      data: { ...tpl(teacherId, 3), startTime: '10:00', isArchived: true },
+      data: tpl(teacherId, 3, { startTime: '10:00', isArchived: true }),
     });
-    await prisma.studioClassTemplate.create({ data: { ...studioTpl(teacherId, 3), startTime: '10:00' } });
+    await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 3, { startTime: '10:00' }) });
     await expect(
-      prisma.classTemplate.update({ where: { id: t.id }, data: { isArchived: false } }),
+      prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { isArchived: false } }),
     ).rejects.toThrow(/YG001/);
   });
 
@@ -547,18 +566,18 @@ describe('cross-family template slot exclusivity (#296)', () => {
   // rejection coverage in either direction before this test existed.
   it('unarchiving a studio template into an occupied cross-family slot is rejected', async () => {
     const st = await prisma.studioClassTemplate.create({
-      data: { ...studioTpl(teacherId, 6), startTime: '10:00', isArchived: true },
+      data: studioTpl(teacherId, 6, { startTime: '10:00', isArchived: true }),
     });
-    await prisma.classTemplate.create({ data: { ...tpl(teacherId, 6), startTime: '10:00' } });
+    await prisma.classTemplate.create({ data: tpl(teacherId, 6, { startTime: '10:00' }) });
     await expect(
-      prisma.studioClassTemplate.update({ where: { id: st.id }, data: { isArchived: false } }),
+      prisma.scheduleRule.update({ where: { id: st.scheduleRuleId }, data: { isArchived: false } }),
     ).rejects.toThrow(/YG001/);
   });
 
   it('does not block another teacher on the same dayOfWeek and startTime', async () => {
-    await prisma.classTemplate.create({ data: { ...tpl(teacherId, 4), startTime: '10:00' } });
+    await prisma.classTemplate.create({ data: tpl(teacherId, 4, { startTime: '10:00' }) });
     const st = await prisma.studioClassTemplate.create({
-      data: { ...studioTpl(otherTeacherId, 4), startTime: '10:00' },
+      data: studioTpl(otherTeacherId, 4, { startTime: '10:00' }),
     });
     expect(st.id).toBeTruthy();
   });
@@ -573,8 +592,8 @@ describe('cross-family template slot exclusivity (#296)', () => {
   // belonging to a DIFFERENT teacher must not stop `teacherId` from taking
   // the same dayOfWeek/startTime.
   it("does not block a class template from another teacher's studio template at the same slot", async () => {
-    await prisma.studioClassTemplate.create({ data: { ...studioTpl(otherTeacherId, 4), startTime: '11:00' } });
-    const t = await prisma.classTemplate.create({ data: { ...tpl(teacherId, 4), startTime: '11:00' } });
+    await prisma.studioClassTemplate.create({ data: studioTpl(otherTeacherId, 4, { startTime: '11:00' }) });
+    const t = await prisma.classTemplate.create({ data: tpl(teacherId, 4, { startTime: '11:00' }) });
     expect(t.id).toBeTruthy();
   });
 
@@ -585,20 +604,20 @@ describe('cross-family template slot exclusivity (#296)', () => {
   // and a mover), and reusing 0-3 at a third startTime is simpler than
   // hunting for four more values in the 0-6 domain.
   it('moving a class template into an occupied cross-family slot is rejected', async () => {
-    await prisma.studioClassTemplate.create({ data: { ...studioTpl(teacherId, 0), startTime: '11:00' } });
-    const t = await prisma.classTemplate.create({ data: { ...tpl(teacherId, 1), startTime: '11:00' } });
+    await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 0, { startTime: '11:00' }) });
+    const t = await prisma.classTemplate.create({ data: tpl(teacherId, 1, { startTime: '11:00' }) });
     await expect(
-      prisma.classTemplate.update({ where: { id: t.id }, data: { dayOfWeek: 0 } }),
+      prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { dayOfWeek: 0 } }),
     ).rejects.toThrow(/YG001/);
   });
 
   it('moving a studio template into an occupied cross-family slot is rejected', async () => {
-    await prisma.classTemplate.create({ data: { ...tpl(teacherId, 2), startTime: '11:00' } });
+    await prisma.classTemplate.create({ data: tpl(teacherId, 2, { startTime: '11:00' }) });
     const st = await prisma.studioClassTemplate.create({
-      data: { ...studioTpl(teacherId, 3), startTime: '11:00' },
+      data: studioTpl(teacherId, 3, { startTime: '11:00' }),
     });
     await expect(
-      prisma.studioClassTemplate.update({ where: { id: st.id }, data: { dayOfWeek: 2 } }),
+      prisma.scheduleRule.update({ where: { id: st.scheduleRuleId }, data: { dayOfWeek: 2 } }),
     ).rejects.toThrow(/YG001/);
   });
 
@@ -622,25 +641,25 @@ describe('cross-family template slot exclusivity (#296)', () => {
    */
   it('moving a class template by startTime into an occupied cross-family slot is rejected', async () => {
     await prisma.studioClassTemplate.create({
-      data: { ...studioTpl(teacherId, 5), startTime: '13:00' },
+      data: studioTpl(teacherId, 5, { startTime: '13:00' }),
     });
     const t = await prisma.classTemplate.create({
-      data: { ...tpl(teacherId, 5), startTime: '13:30' },
+      data: tpl(teacherId, 5, { startTime: '13:30' }),
     });
     await expect(
-      prisma.classTemplate.update({ where: { id: t.id }, data: { startTime: '13:00' } }),
+      prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { startTime: hhmmToTime('13:00') } }),
     ).rejects.toThrow(/YG001/);
   });
 
   it('moving a studio template by startTime into an occupied cross-family slot is rejected', async () => {
     await prisma.classTemplate.create({
-      data: { ...tpl(teacherId, 6), startTime: '13:00' },
+      data: tpl(teacherId, 6, { startTime: '13:00' }),
     });
     const st = await prisma.studioClassTemplate.create({
-      data: { ...studioTpl(teacherId, 6), startTime: '13:30' },
+      data: studioTpl(teacherId, 6, { startTime: '13:30' }),
     });
     await expect(
-      prisma.studioClassTemplate.update({ where: { id: st.id }, data: { startTime: '13:00' } }),
+      prisma.scheduleRule.update({ where: { id: st.scheduleRuleId }, data: { startTime: hhmmToTime('13:00') } }),
     ).rejects.toThrow(/YG001/);
   });
 
@@ -658,21 +677,21 @@ describe('cross-family template slot exclusivity (#296)', () => {
    */
   it('a PAUSED but unarchived class template still holds its slot against the other family', async () => {
     await prisma.classTemplate.create({
-      data: { ...tpl(teacherId, 0), startTime: '14:00', isActive: false, isArchived: false },
+      data: tpl(teacherId, 0, { startTime: '14:00', isActive: false, isArchived: false }),
     });
     await expect(
       prisma.studioClassTemplate.create({
-        data: { ...studioTpl(teacherId, 0), startTime: '14:00' },
+        data: studioTpl(teacherId, 0, { startTime: '14:00' }),
       }),
     ).rejects.toThrow(/YG001/);
   });
 
   it('a PAUSED but unarchived studio template still holds its slot against the other family', async () => {
     await prisma.studioClassTemplate.create({
-      data: { ...studioTpl(teacherId, 1), startTime: '14:00', isActive: false, isArchived: false },
+      data: studioTpl(teacherId, 1, { startTime: '14:00', isActive: false, isArchived: false }),
     });
     await expect(
-      prisma.classTemplate.create({ data: { ...tpl(teacherId, 1), startTime: '14:00' } }),
+      prisma.classTemplate.create({ data: tpl(teacherId, 1, { startTime: '14:00' }) }),
     ).rejects.toThrow(/YG001/);
   });
 
@@ -682,11 +701,11 @@ describe('cross-family template slot exclusivity (#296)', () => {
   // and '11:00', for the same reason those two exist — clear of the '09:00'
   // single-family fixtures and of each other.
   it('leaves a pre-existing violating pair of templates editable on unrelated columns (class template)', async () => {
-    const t = await prisma.classTemplate.create({ data: { ...tpl(teacherId, 0), startTime: '12:00' } });
+    const t = await prisma.classTemplate.create({ data: tpl(teacherId, 0, { startTime: '12:00' }) });
     await prisma.$executeRaw`ALTER TABLE "StudioClassTemplate" DISABLE TRIGGER USER`;
     try {
       await prisma.studioClassTemplate.create({
-        data: { ...studioTpl(teacherId, 0), startTime: '12:00' },
+        data: studioTpl(teacherId, 0, { startTime: '12:00' }),
       });
     } finally {
       await prisma.$executeRaw`ALTER TABLE "StudioClassTemplate" ENABLE TRIGGER USER`;
@@ -699,19 +718,19 @@ describe('cross-family template slot exclusivity (#296)', () => {
 
     // Prove the guard still fires: the DISABLE/ENABLE bracket above must not
     // have leaked.
-    await prisma.studioClassTemplate.create({ data: { ...studioTpl(teacherId, 1), startTime: '12:00' } });
+    await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 1, { startTime: '12:00' }) });
     await expect(
-      prisma.classTemplate.create({ data: { ...tpl(teacherId, 1), startTime: '12:00' } }),
+      prisma.classTemplate.create({ data: tpl(teacherId, 1, { startTime: '12:00' }) }),
     ).rejects.toThrow(/YG001/);
   });
 
   it('leaves a pre-existing violating pair of templates editable on unrelated columns (studio template)', async () => {
     const st = await prisma.studioClassTemplate.create({
-      data: { ...studioTpl(teacherId, 2), startTime: '12:00' },
+      data: studioTpl(teacherId, 2, { startTime: '12:00' }),
     });
     await prisma.$executeRaw`ALTER TABLE "ClassTemplate" DISABLE TRIGGER USER`;
     try {
-      await prisma.classTemplate.create({ data: { ...tpl(teacherId, 2), startTime: '12:00' } });
+      await prisma.classTemplate.create({ data: tpl(teacherId, 2, { startTime: '12:00' }) });
     } finally {
       await prisma.$executeRaw`ALTER TABLE "ClassTemplate" ENABLE TRIGGER USER`;
     }
@@ -723,9 +742,9 @@ describe('cross-family template slot exclusivity (#296)', () => {
 
     // Prove the guard still fires: the DISABLE/ENABLE bracket above must not
     // have leaked.
-    await prisma.classTemplate.create({ data: { ...tpl(teacherId, 3), startTime: '12:00' } });
+    await prisma.classTemplate.create({ data: tpl(teacherId, 3, { startTime: '12:00' }) });
     await expect(
-      prisma.studioClassTemplate.create({ data: { ...studioTpl(teacherId, 3), startTime: '12:00' } }),
+      prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 3, { startTime: '12:00' }) }),
     ).rejects.toThrow(/YG001/);
   });
 });

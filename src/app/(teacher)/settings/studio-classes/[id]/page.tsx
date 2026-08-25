@@ -6,6 +6,7 @@ import { StudioTemplateForm, type StudioTemplateFormValues } from '@/components/
 import { ToggleStudioTemplateButton } from '@/components/settings/toggle-studio-template-button';
 import { ArchiveStudioTemplateButton } from '@/components/settings/archive-studio-template-button';
 import { ArchivedRecord } from '@/components/settings/archived-record';
+import { timeToHHmm } from '@/lib/time-of-day';
 
 export default async function EditStudioTemplatePage({
   params,
@@ -17,18 +18,20 @@ export default async function EditStudioTemplatePage({
 
   const template = await prisma.studioClassTemplate.findUnique({
     where: { id },
-    include: { teacher: { select: { defaultTimezone: true } } },
+    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
   });
 
-  if (!template || template.teacherId !== session.teacherId) {
+  if (!template || template.scheduleRule.teacherId !== session.teacherId) {
     redirect('/settings/studio-classes');
   }
 
+  const { scheduleRule } = template;
+
   const initial: StudioTemplateFormValues = {
-    classType: template.classType,
-    dayOfWeek: template.dayOfWeek,
-    startTime: template.startTime,
-    durationMinutes: template.durationMinutes,
+    classType: scheduleRule.classType,
+    dayOfWeek: scheduleRule.dayOfWeek,
+    startTime: timeToHHmm(scheduleRule.startTime),
+    durationMinutes: scheduleRule.durationMinutes,
     location: template.location,
     hourlyRate: Number(template.hourlyRate),
   };
@@ -36,7 +39,7 @@ export default async function EditStudioTemplatePage({
   return (
     <>
       <PageHeader
-        title={template.classType || template.location}
+        title={scheduleRule.classType || template.location}
         backHref="/settings/studio-classes"
         backLabel="Studio classes"
       />
@@ -49,15 +52,15 @@ export default async function EditStudioTemplatePage({
 
       <section className="mt-8 pt-6 border-t border-border flex flex-col gap-4">
         <ArchivedRecord
-          archivedAt={template.archivedAt}
-          withdrawnCount={template.withdrawnCount}
-          timeZone={template.teacher.defaultTimezone}
+          archivedAt={scheduleRule.archivedAt}
+          withdrawnCount={scheduleRule.withdrawnCount}
+          timeZone={scheduleRule.teacher.defaultTimezone}
         />
-        {!template.isArchived && (
-          <ToggleStudioTemplateButton templateId={template.id} isActive={template.isActive} />
+        {!scheduleRule.isArchived && (
+          <ToggleStudioTemplateButton templateId={template.id} isActive={scheduleRule.isActive} />
         )}
-        {!template.isActive && (
-          <ArchiveStudioTemplateButton templateId={template.id} isArchived={template.isArchived} />
+        {!scheduleRule.isActive && (
+          <ArchiveStudioTemplateButton templateId={template.id} isArchived={scheduleRule.isArchived} />
         )}
       </section>
     </>

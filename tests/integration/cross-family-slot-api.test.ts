@@ -23,6 +23,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { getNextOccurrences } from '@/services/class-generator';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -88,6 +89,56 @@ const studioTemplateBody = (dayOfWeek: number, startTime: string) => ({
   hourlyRate: 40,
 });
 
+/**
+ * Direct-Prisma fixture seeding for `ClassTemplate` — the slot fields route
+ * through the nested `scheduleRule` create now (issue 298); `templateBody`
+ * above stays flat because it is the WIRE body these tests also POST.
+ */
+const directClassTemplateData = (
+  dayOfWeek: number,
+  startTime: string,
+  opts: { isActive?: boolean; isArchived?: boolean } = {},
+) => ({
+  scheduleRule: {
+    create: {
+      teacherId,
+      kind: 'regular' as const,
+      classType: 'Cross Family Template',
+      dayOfWeek,
+      startTime: hhmmToTime(startTime),
+      durationMinutes: 60,
+      ...opts,
+    },
+  },
+  teacherRoom: { connect: { id: teacherRoomId } },
+  roomCost: 20,
+  minRate: 30,
+  targetRate: 60,
+  minStudents: 3,
+  maxStudents: 10,
+});
+
+/** Direct-Prisma fixture seeding for `StudioClassTemplate` — see `directClassTemplateData`. */
+const directStudioTemplateData = (
+  dayOfWeek: number,
+  startTime: string,
+  opts: { isActive?: boolean; isArchived?: boolean } = {},
+) => ({
+  scheduleRule: {
+    create: {
+      teacherId,
+      kind: 'studio' as const,
+      classType: 'Cross Family Studio Template',
+      dayOfWeek,
+      startTime: hhmmToTime(startTime),
+      durationMinutes: 60,
+      ...opts,
+    },
+  },
+  location: 'Elsewhere',
+  hourlyRate: 40,
+});
+
 beforeAll(async () => {
   const email = `crossfam-${suffix}@test.local`;
   const teacher = await prisma.teacher.create({
@@ -128,15 +179,15 @@ beforeAll(async () => {
 beforeEach(async () => {
   await prisma.class.deleteMany({ where: { teacherId } });
   await prisma.studioClass.deleteMany({ where: { teacherId } });
-  await prisma.classTemplate.deleteMany({ where: { teacherId } });
-  await prisma.studioClassTemplate.deleteMany({ where: { teacherId } });
+  // `ClassTemplate`/`StudioClassTemplate` are `onDelete: Cascade` from
+  // `ScheduleRule` (issue 298), so one delete clears both families.
+  await prisma.scheduleRule.deleteMany({ where: { teacherId } });
 });
 
 afterAll(async () => {
   await prisma.class.deleteMany({ where: { teacherId } });
   await prisma.studioClass.deleteMany({ where: { teacherId } });
-  await prisma.classTemplate.deleteMany({ where: { teacherId } });
-  await prisma.studioClassTemplate.deleteMany({ where: { teacherId } });
+  await prisma.scheduleRule.deleteMany({ where: { teacherId } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId } });
   await prisma.room.deleteMany({ where: { createdById: teacherId } });
   await prisma.session.deleteMany({ where: { accountId } });
@@ -185,7 +236,7 @@ describe('the class family refuses a slot the studio family holds', () => {
 
   it('POST /api/class-templates', async () => {
     await prisma.studioClassTemplate.create({
-      data: { teacherId, ...studioTemplateBody(2, '07:00') },
+      data: directStudioTemplateData(2, '07:00'),
     });
 
     const res = await send('POST', '/api/class-templates', templateBody(2, '07:00'));
@@ -195,10 +246,10 @@ describe('the class family refuses a slot the studio family holds', () => {
 
   it('PUT /api/class-templates/[id] — moved onto a held slot', async () => {
     await prisma.studioClassTemplate.create({
-      data: { teacherId, ...studioTemplateBody(2, '07:00') },
+      data: directStudioTemplateData(2, '07:00'),
     });
     const template = await prisma.classTemplate.create({
-      data: { teacherId, ...templateBody(4, '07:00') },
+      data: directClassTemplateData(4, '07:00'),
     });
 
     const res = await send('PUT', `/api/class-templates/${template.id}`, { dayOfWeek: 2 });
@@ -210,10 +261,10 @@ describe('the class family refuses a slot the studio family holds', () => {
     // Archiving withdraws the slot; un-archiving claims it back, and the other
     // family can have taken it meanwhile. That is the door #275 is about.
     const template = await prisma.classTemplate.create({
-      data: { teacherId, ...templateBody(2, '07:00'), isArchived: true, isActive: false },
+      data: directClassTemplateData(2, '07:00', { isArchived: true, isActive: false }),
     });
     await prisma.studioClassTemplate.create({
-      data: { teacherId, ...studioTemplateBody(2, '07:00') },
+      data: directStudioTemplateData(2, '07:00'),
     });
 
     const res = await send('PATCH', `/api/class-templates/${template.id}?state=unarchived`);
@@ -263,7 +314,7 @@ describe('the studio family refuses a slot the class family holds', () => {
 
   it('POST /api/studio-class-templates', async () => {
     await prisma.classTemplate.create({
-      data: { teacherId, ...templateBody(2, '07:00') },
+      data: directClassTemplateData(2, '07:00'),
     });
 
     const res = await send('POST', '/api/studio-class-templates', studioTemplateBody(2, '07:00'));
@@ -273,10 +324,10 @@ describe('the studio family refuses a slot the class family holds', () => {
 
   it('PUT /api/studio-class-templates/[id] — moved onto a held slot', async () => {
     await prisma.classTemplate.create({
-      data: { teacherId, ...templateBody(2, '07:00') },
+      data: directClassTemplateData(2, '07:00'),
     });
     const template = await prisma.studioClassTemplate.create({
-      data: { teacherId, ...studioTemplateBody(4, '07:00') },
+      data: directStudioTemplateData(4, '07:00'),
     });
 
     const res = await send('PUT', `/api/studio-class-templates/${template.id}`, { dayOfWeek: 2 });
@@ -286,10 +337,10 @@ describe('the studio family refuses a slot the class family holds', () => {
 
   it('PATCH /api/studio-class-templates/[id]?state=unarchived — re-entering a held slot', async () => {
     const template = await prisma.studioClassTemplate.create({
-      data: { teacherId, ...studioTemplateBody(2, '07:00'), isArchived: true, isActive: false },
+      data: directStudioTemplateData(2, '07:00', { isArchived: true, isActive: false }),
     });
     await prisma.classTemplate.create({
-      data: { teacherId, ...templateBody(2, '07:00') },
+      data: directClassTemplateData(2, '07:00'),
     });
 
     const res = await send('PATCH', `/api/studio-class-templates/${template.id}?state=unarchived`);
@@ -361,7 +412,7 @@ describe('the count reaches the teacher, not just the reducer', () => {
     // The hop #194 shipped broken: measured by the generator, reaching the
     // service, and stopping at the route.
     const template = await prisma.classTemplate.create({
-      data: { teacherId, ...templateBody(DAY, TIME), isActive: false },
+      data: directClassTemplateData(DAY, TIME, { isActive: false }),
     });
     await holdWholeWindowWithStudioClasses();
 

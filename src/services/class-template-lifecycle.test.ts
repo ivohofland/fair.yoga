@@ -10,6 +10,7 @@ import { startOfLocalDay, classStartInstant, mondayOf } from '@/lib/timezone';
 import { getNextOccurrences } from './class-generator';
 import { formatDayHeader } from '@/lib/format';
 import { setLockTimeout } from '@/lib/db-locks';
+import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -89,10 +90,15 @@ describe('updateClassTemplate (DB)', () => {
 
   // Counter-derived startTime: this block calls makeTemplate 11 times for one
   // teacher/dayOfWeek, and none of its tests read or assert the created
-  // template's literal startTime — so a distinct minute per call is enough
-  // to keep every create legal under ClassTemplate_teacher_slot_unique.
-  // Counted off the call sites when #194's fix wave added two of them, not
-  // incremented from the number that was here.
+  // template's literal startTime — so a slot per call, spaced wider than any
+  // one call's own `durationMinutes` (60), is enough to keep every create
+  // legal under `ScheduleRule_teacher_slot_excl` (issue 298), which excludes
+  // on RANGE overlap rather than exact `startTime` match. 75, not 60: "applies
+  // the update and returns just the template" widens its own row to
+  // `durationMinutes: 75` without moving it, and 60-wide spacing would let
+  // that widened range reach into the next counter slot. Counted off the
+  // call sites when #194's fix wave added two of them, not incremented from
+  // the number that was here.
   //
   // One of those two, "Archived Edit", IS archived — which FREES its slot
   // rather than taking one, since the index is partial (WHERE isArchived =
@@ -114,18 +120,24 @@ describe('updateClassTemplate (DB)', () => {
     makeTemplateCounter += 1;
     return prisma.classTemplate.create({
       data: {
-        teacherId,
-        teacherRoomId,
-        classType,
-        dayOfWeek: 3,
-        startTime: slotTime(30 + makeTemplateCounter),
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'regular',
+            classType,
+            dayOfWeek: 3,
+            startTime: hhmmToTime(slotTime(30 + makeTemplateCounter * 75)),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoomId } },
         roomCost: 15,
         minRate: 10,
         targetRate: 20,
         minStudents: 2,
         maxStudents: 8,
       },
+      include: { scheduleRule: true },
     });
   };
 
@@ -150,7 +162,9 @@ describe('updateClassTemplate (DB)', () => {
       [otherTeacherId, otherRoomId, otherAccountId],
     ] as const) {
       await prisma.class.deleteMany({ where: { teacherId: t } });
-      await prisma.classTemplate.deleteMany({ where: { teacherId: t } });
+      // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
+      // 298), so deleting the rule removes the template with it.
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: t } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: t } });
       await prisma.room.delete({ where: { id: r } });
       await prisma.session.deleteMany({ where: { accountId: a } });
@@ -178,16 +192,22 @@ describe('updateClassTemplate (DB)', () => {
     });
 
     expect(result).toEqual({ ok: false, reason: 'forbidden' });
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
-    expect(after.classType).toBe('Not Yours');
+    const after = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id: template.id },
+      include: { scheduleRule: true },
+    });
+    expect(after.scheduleRule.classType).toBe('Not Yours');
   });
 
   it('returns no_fields for an empty payload, and writes nothing', async () => {
     const template = await makeTemplate('Empty Payload');
     const result = await updateClassTemplate(prisma, template.id, teacherId, {});
     expect(result).toEqual({ ok: false, reason: 'no_fields' });
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
-    expect(after.classType).toBe('Empty Payload');
+    const after = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id: template.id },
+      include: { scheduleRule: true },
+    });
+    expect(after.scheduleRule.classType).toBe('Empty Payload');
   });
 
   // Defined-value scan (`updateClassTemplate`'s own `hasEdit` check,
@@ -201,8 +221,11 @@ describe('updateClassTemplate (DB)', () => {
       description: undefined,
     });
     expect(result).toEqual({ ok: false, reason: 'no_fields' });
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
-    expect(after.classType).toBe('Undefined Only');
+    const after = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id: template.id },
+      include: { scheduleRule: true },
+    });
+    expect(after.scheduleRule.classType).toBe('Undefined Only');
   });
 
   it('returns invalid_room for a room that does not exist', async () => {
@@ -411,12 +434,17 @@ describe('updateClassTemplate (DB)', () => {
     const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
     const template = await prisma.classTemplate.create({
       data: {
-        teacherId: solo.teacherId,
-        teacherRoomId: solo.teacherRoomId,
-        classType: 'Cross Family Probe',
-        dayOfWeek: todaySchemaDay,
-        startTime: '23:59',
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId: solo.teacherId,
+            kind: 'regular',
+            classType: 'Cross Family Probe',
+            dayOfWeek: todaySchemaDay,
+            startTime: hhmmToTime('23:59'),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: solo.teacherRoomId } },
         roomCost: 15,
         minRate: 10,
         targetRate: 20,
@@ -453,7 +481,8 @@ describe('updateClassTemplate (DB)', () => {
     expect(result.firstEffective!.getTime()).not.toBe(mondayOf(blocked));
 
     await prisma.studioClass.deleteMany({ where: { teacherId: solo.teacherId } });
-    await prisma.classTemplate.deleteMany({ where: { teacherId: solo.teacherId } });
+    // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298), so deleting the rule removes the template with it.
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: solo.teacherId } });
   });
 
   it('does not decline a date a CANCELLED studio class holds', async () => {
@@ -464,12 +493,17 @@ describe('updateClassTemplate (DB)', () => {
     const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
     const template = await prisma.classTemplate.create({
       data: {
-        teacherId: solo.teacherId,
-        teacherRoomId: solo.teacherRoomId,
-        classType: 'Cross Family Probe Cancelled',
-        dayOfWeek: todaySchemaDay,
-        startTime: '23:58',
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId: solo.teacherId,
+            kind: 'regular',
+            classType: 'Cross Family Probe Cancelled',
+            dayOfWeek: todaySchemaDay,
+            startTime: hhmmToTime('23:58'),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: solo.teacherRoomId } },
         roomCost: 15,
         minRate: 10,
         targetRate: 20,
@@ -504,7 +538,8 @@ describe('updateClassTemplate (DB)', () => {
     expect(result.firstEffective!.getTime()).toBe(mondayOf(notBlocked));
 
     await prisma.studioClass.deleteMany({ where: { teacherId: solo.teacherId } });
-    await prisma.classTemplate.deleteMany({ where: { teacherId: solo.teacherId } });
+    // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298), so deleting the rule removes the template with it.
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: solo.teacherId } });
   });
 
   it('drops an occurrence whose start has already passed, exactly as the sweep does', async () => {
@@ -512,12 +547,17 @@ describe('updateClassTemplate (DB)', () => {
     const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
     const template = await prisma.classTemplate.create({
       data: {
-        teacherId: solo.teacherId,
-        teacherRoomId: solo.teacherRoomId,
-        classType: 'Past Start',
-        dayOfWeek: todaySchemaDay,
-        startTime: '00:00',
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId: solo.teacherId,
+            kind: 'regular',
+            classType: 'Past Start',
+            dayOfWeek: todaySchemaDay,
+            startTime: hhmmToTime('00:00'),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: solo.teacherRoomId } },
         roomCost: 15,
         minRate: 10,
         targetRate: 20,
@@ -549,7 +589,8 @@ describe('updateClassTemplate (DB)', () => {
     expect(result.firstEffective!.getTime()).toBe(mondayOf(nextWeekOccurrence));
     expect(result.firstEffective!.getTime()).not.toBe(mondayOf(todayOccurrence));
 
-    await prisma.classTemplate.deleteMany({ where: { teacherId: solo.teacherId } });
+    // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298), so deleting the rule removes the template with it.
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: solo.teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId: solo.teacherId } });
     await prisma.room.delete({ where: { id: solo.roomId } });
     await prisma.teacher.delete({ where: { id: solo.teacherId } });
@@ -577,7 +618,7 @@ describe('updateClassTemplate (DB)', () => {
         templateId: template.id,
         classType: 'Stamp Only',
         date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-        startTime: template.startTime,
+        startTime: timeToHHmm(template.scheduleRule.startTime),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -590,7 +631,7 @@ describe('updateClassTemplate (DB)', () => {
     });
 
     const result = await updateClassTemplate(prisma, template.id, teacherId, {
-      dayOfWeek: (template.dayOfWeek + 2) % 7,
+      dayOfWeek: (template.scheduleRule.dayOfWeek + 2) % 7,
       startTime: '23:31',
       roomCost: 99,
       maxStudents: 20,
@@ -812,38 +853,45 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   let west: Seeded;
 
   // Counter-derived startTime: this block calls makeTemplate 29 times at
-  // runtime (28 call sites, one of them an `it.each` over 2 statuses) for
-  // one teacher/dayOfWeek — the tightest counter in this repair, landing on
-  // `slotTime(59)` = `'09:59'` exactly, which is why this block's
-  // `makeTemplate` uses `slotTime` (see its docblock) rather than a raw
-  // template literal: a 30th call here would have silently produced
-  // `'09:60'` under the old formula. Most tests here do archive their own
-  // template by the end (which flips isArchived and would free the slot on
-  // its own), but several deliberately don't (the two 'forbidden' cases, and
-  // the "does not tell a waiting student when the class was spared" case,
-  // whose whole point is that the archive matches nothing) — and once any
-  // one template is left behind unarchived, every later makeTemplate call in
-  // the block collides with it before it even gets a row created, which is
-  // what turned into a near-total cascade here. No test reads or asserts a
-  // created template's literal startTime, so a distinct minute per call
-  // removes the collision without touching any assertion.
+  // runtime (28 call sites, one of them an `it.each` over 2 statuses) for one
+  // teacher/dayOfWeek — the tightest counter in this repair. Most tests here
+  // do archive their own template by the end (which flips isArchived and
+  // would free the slot on its own), but several deliberately don't (the two
+  // 'forbidden' cases, and the "does not tell a waiting student when the
+  // class was spared" case, whose whole point is that the archive matches
+  // nothing) — and once any one template is left behind unarchived, every
+  // later makeTemplate call in the block collides with it before it even
+  // gets a row created, which is what turned into a near-total cascade here.
+  //
+  // `ScheduleRule_teacher_slot_excl` (issue 298) excludes on RANGE overlap,
+  // not exact `startTime` match, so a distinct minute per call is no longer
+  // enough — each slot must be spaced a full `durationMinutes` from the
+  // last. `durationMinutes: 10` here (not this file's usual 60) is what
+  // keeps 29 back-to-back slots inside one day; no test reads or asserts a
+  // created template's literal `durationMinutes` or `startTime`.
   let makeTemplateCounter = 0;
   const makeTemplate = (classType: string) => {
     makeTemplateCounter += 1;
     return prisma.classTemplate.create({
       data: {
-        teacherId,
-        teacherRoomId,
-        classType,
-        dayOfWeek: 3,
-        startTime: slotTime(30 + makeTemplateCounter),
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'regular',
+            classType,
+            dayOfWeek: 3,
+            startTime: hhmmToTime(slotTime(30 + makeTemplateCounter * 10)),
+            durationMinutes: 10,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoomId } },
         roomCost: 15,
         minRate: 10,
         targetRate: 20,
         minStudents: 2,
         maxStudents: 8,
       },
+      include: { scheduleRule: true },
     });
   };
 
@@ -985,7 +1033,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       [west.teacherId, west.roomId, west.accountId],
     ] as const) {
       await prisma.class.deleteMany({ where: { teacherId: t } });
-      await prisma.classTemplate.deleteMany({ where: { teacherId: t } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: t } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: t } });
       await prisma.room.delete({ where: { id: r } });
       await prisma.session.deleteMany({ where: { accountId: a } });
@@ -1015,8 +1063,8 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const result = await archiveOrUnarchiveTemplate(prisma, t.id, otherTeacherId, 'archived');
 
     expect(result).toEqual({ ok: false, reason: 'forbidden' });
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-    expect(after.isArchived).toBe(false);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.isArchived).toBe(false);
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
   });
 
@@ -1035,8 +1083,8 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const result = await archiveOrUnarchiveTemplate(prisma, t.id, otherTeacherId, 'unarchived');
 
     expect(result).toEqual({ ok: false, reason: 'forbidden' });
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-    expect(after.isArchived).toBe(false);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.isArchived).toBe(false);
   });
 
   it('deletes a future class nobody booked', async () => {
@@ -1573,12 +1621,17 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
 
       const t = await prisma.classTemplate.create({
         data: {
-          teacherId: seeded.teacherId,
-          teacherRoomId: seeded.teacherRoomId,
-          classType: `Zone ${teacher.defaultTimezone}`,
-          dayOfWeek: 3,
-          startTime: '09:30',
-          durationMinutes: 60,
+          scheduleRule: {
+            create: {
+              teacherId: seeded.teacherId,
+              kind: 'regular',
+              classType: `Zone ${teacher.defaultTimezone}`,
+              dayOfWeek: 3,
+              startTime: hhmmToTime('09:30'),
+              durationMinutes: 60,
+            },
+          },
+          teacherRoom: { connect: { id: seeded.teacherRoomId } },
           roomCost: 15,
           minRate: 10,
           targetRate: 20,
@@ -1713,10 +1766,10 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     // a fabricated timestamp is the hardest kind to spot, so `not.toBeNull()`
     // is the one assertion that would wave through the divergence this re-read
     // exists to catch.
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-    expect(after.withdrawnCount).toBe(2);
-    expect(after.archivedAt).not.toBeNull();
-    expect(after.archivedAt!.getTime()).toBe(archived.template.archivedAt!.getTime());
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.withdrawnCount).toBe(2);
+    expect(after.scheduleRule.archivedAt).not.toBeNull();
+    expect(after.scheduleRule.archivedAt!.getTime()).toBe(archived.template.archivedAt!.getTime());
   });
 
   /**
@@ -1760,9 +1813,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(archived.template.withdrawnCount).toBe(0);
     expect(archived.template.archivedAt).not.toBeNull();
 
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-    expect(after.withdrawnCount).toBe(0);
-    expect(after.archivedAt).not.toBeNull();
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.withdrawnCount).toBe(0);
+    expect(after.scheduleRule.archivedAt).not.toBeNull();
   });
 
   /**
@@ -1781,9 +1834,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     await makeClass(t.id, { date: futureOn(5) });
     expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
 
-    const recorded = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-    expect(recorded.withdrawnCount).toBe(1);
-    expect(recorded.archivedAt).not.toBeNull();
+    const recorded = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+    expect(recorded.scheduleRule.withdrawnCount).toBe(1);
+    expect(recorded.scheduleRule.archivedAt).not.toBeNull();
 
     const resumed = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'unarchived');
     expect(resumed.ok).toBe(true);
@@ -1794,9 +1847,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
 
     // As above: the assertions so far only prove what came back in the
     // response. Re-read the row to prove the clear reached the database.
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-    expect(after.archivedAt).toBeNull();
-    expect(after.withdrawnCount).toBeNull();
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.archivedAt).toBeNull();
+    expect(after.scheduleRule.withdrawnCount).toBeNull();
   });
 
   /**
@@ -1927,10 +1980,10 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
 
     // The durable record, which is what #97 is for: the winner's count and
     // the winner's timestamp, not the loser's `0` and `now`.
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-    expect(after.withdrawnCount).toBe(2);
-    expect(after.archivedAt).not.toBeNull();
-    expect(after.archivedAt!.getTime()).toBe(winner.template.archivedAt!.getTime());
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.withdrawnCount).toBe(2);
+    expect(after.scheduleRule.archivedAt).not.toBeNull();
+    expect(after.scheduleRule.archivedAt!.getTime()).toBe(winner.template.archivedAt!.getTime());
     expect(await prisma.class.count({ where: { templateId: t.id } })).toBe(0);
   });
 
@@ -2005,23 +2058,36 @@ describe('pauseOrResumeTemplate (DB)', () => {
   // a manually-inserted "occupied" class against the template's own
   // generated occurrences — that one call takes an explicit override
   // instead of the counter-derived default.
+  //
+  // `ScheduleRule_teacher_slot_excl` (issue 298) excludes on RANGE overlap,
+  // so each counter-derived slot is spaced a full `durationMinutes` (60)
+  // from the last, not just a minute — nine slots that way still lands
+  // inside one day (`'10:30'` .. `'18:30'`), each starting no earlier than
+  // the override's own slot ends (`'10:30'`), so the two schemes can never
+  // overlap.
   let makeTemplateCounter = 0;
   const makeTemplate = (classType: string, startTime?: string) => {
     makeTemplateCounter += 1;
     return prisma.classTemplate.create({
       data: {
-        teacherId,
-        teacherRoomId,
-        classType,
-        dayOfWeek: 3,
-        startTime: startTime ?? slotTime(30 + makeTemplateCounter),
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'regular',
+            classType,
+            dayOfWeek: 3,
+            startTime: hhmmToTime(startTime ?? slotTime(30 + makeTemplateCounter * 60)),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoomId } },
         roomCost: 15,
         minRate: 10,
         targetRate: 20,
         minStudents: 2,
         maxStudents: 8,
       },
+      include: { scheduleRule: true },
     });
   };
 
@@ -2064,7 +2130,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
       [otherTeacherId, otherRoomId, otherAccountId],
     ] as const) {
       await prisma.class.deleteMany({ where: { teacherId: t } });
-      await prisma.classTemplate.deleteMany({ where: { teacherId: t } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: t } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: t } });
       await prisma.room.delete({ where: { id: r } });
       await prisma.session.deleteMany({ where: { accountId: a } });
@@ -2242,8 +2308,8 @@ describe('pauseOrResumeTemplate (DB)', () => {
     const result = await pauseOrResumeTemplate(prisma, t.id, otherTeacherId, 'active');
 
     expect(result).toEqual({ ok: false, reason: 'forbidden' });
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-    expect(after.isActive).toBe(true);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.isActive).toBe(true);
   });
 
   it("returns 'archived' for an archived template rather than toggling", async () => {
@@ -2254,8 +2320,8 @@ describe('pauseOrResumeTemplate (DB)', () => {
     const result = await pauseOrResumeTemplate(prisma, t.id, teacherId, 'active');
 
     expect(result).toEqual({ ok: false, reason: 'archived' });
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-    expect(after.isActive).toBe(false);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.isActive).toBe(false);
   });
 
   /**
@@ -2280,9 +2346,9 @@ describe('pauseOrResumeTemplate (DB)', () => {
     if (!result.ok) throw new Error('expected ok');
     expect(result.action).toBe('unchanged');
 
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-    expect(after.isActive).toBe(false);
-    expect(after.isArchived).toBe(true);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.isActive).toBe(false);
+    expect(after.scheduleRule.isArchived).toBe(true);
   });
 
   /**
@@ -2306,7 +2372,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
    */
   it('maps a delete landing between the read and the write to not_found', async () => {
     const t = await makeTemplate('Deleted Pause');
-    await prisma.classTemplate.update({ where: { id: t.id }, data: { isActive: false } });
+    await prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { isActive: false } });
 
     let deleted = false;
     // Cast for the same reason as `interposing` above: the
@@ -2348,7 +2414,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
    */
   it('answers archived when an archive lands between the read and the write', async () => {
     const t = await makeTemplate('Archive Race');
-    await prisma.classTemplate.update({ where: { id: t.id }, data: { isActive: false } });
+    await prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { isActive: false } });
 
     let archived = false;
     // Cast for the same reason the sibling tests' `interposing` clients need
@@ -2361,8 +2427,8 @@ describe('pauseOrResumeTemplate (DB)', () => {
             const row = await query(args);
             if (!archived) {
               archived = true;
-              await prisma.classTemplate.update({
-                where: { id: t.id },
+              await prisma.scheduleRule.update({
+                where: { id: t.scheduleRuleId },
                 data: { isArchived: true, isActive: false, archivedAt: new Date() },
               });
             }
@@ -2379,8 +2445,8 @@ describe('pauseOrResumeTemplate (DB)', () => {
     // The refusal is not the whole guarantee: assert the two states the old
     // code actually corrupted. Without these, dropping `isArchived: false`
     // from the CAS and answering `archived` from a stale read would pass.
-    const after = await prisma.classTemplate.findUnique({ where: { id: t.id } });
-    expect(after?.isActive).toBe(false);
+    const after = await prisma.classTemplate.findUnique({ where: { id: t.id }, include: { scheduleRule: true } });
+    expect(after?.scheduleRule.isActive).toBe(false);
     expect(await prisma.class.count({ where: { templateId: t.id } })).toBe(0);
   });
 
@@ -2395,8 +2461,8 @@ describe('pauseOrResumeTemplate (DB)', () => {
             const row = await query(args);
             if (!paused) {
               paused = true;
-              await prisma.classTemplate.update({
-                where: { id: t.id },
+              await prisma.scheduleRule.update({
+                where: { id: t.scheduleRuleId },
                 data: { isActive: false },
               });
             }
@@ -2443,8 +2509,8 @@ describe('pauseOrResumeTemplate (DB)', () => {
             const row = await query(args);
             if (!archived) {
               archived = true;
-              await prisma.classTemplate.update({
-                where: { id: t.id },
+              await prisma.scheduleRule.update({
+                where: { id: t.scheduleRuleId },
                 data: { isArchived: true, isActive: false, archivedAt: new Date() },
               });
             }
@@ -2495,7 +2561,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
     'blocks a concurrent Class insert while generating, and answers busy',
     async () => {
       const t = await makeTemplate('Claim Blocks Insert');
-      await prisma.classTemplate.update({ where: { id: t.id }, data: { isActive: false } });
+      await prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { isActive: false } });
 
       const holder = new PrismaClient();
       let release!: () => void;
@@ -2548,8 +2614,8 @@ describe('pauseOrResumeTemplate (DB)', () => {
         expect(waited).toBeLessThan(5_000);
 
         // The rollback took the flag with it.
-        const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-        expect(after.isActive).toBe(false);
+        const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+        expect(after.scheduleRule.isActive).toBe(false);
       } finally {
         release();
         await holding;
@@ -2573,22 +2639,22 @@ describe('pauseOrResumeTemplate (DB)', () => {
    */
   it('answers busy when the CAS miss lands in the residual fourth state', async () => {
     const t = await makeTemplate('Residual Race');
-    await prisma.classTemplate.update({ where: { id: t.id }, data: { isActive: false } });
+    await prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { isActive: false } });
 
     let straddled = false;
     const interposing = prisma.$extends({
       query: {
-        classTemplate: {
+        scheduleRule: {
           async updateMany({ args, query }) {
             if (straddled) return query(args);
             straddled = true;
-            await prisma.classTemplate.update({
-              where: { id: t.id },
+            await prisma.scheduleRule.update({
+              where: { id: t.scheduleRuleId },
               data: { isActive: true },
             });
             const swapped = await query(args);
-            await prisma.classTemplate.update({
-              where: { id: t.id },
+            await prisma.scheduleRule.update({
+              where: { id: t.scheduleRuleId },
               data: { isActive: false },
             });
             return swapped;
@@ -2604,8 +2670,8 @@ describe('pauseOrResumeTemplate (DB)', () => {
 
     // Nothing was written: the CAS matched no row, so the rollback leaves the
     // template exactly as the interposed pause left it.
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
-    expect(after.isActive).toBe(false);
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
+    expect(after.scheduleRule.isActive).toBe(false);
     expect(await prisma.class.count({ where: { templateId: t.id } })).toBe(0);
   });
 });

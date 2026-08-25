@@ -1,9 +1,10 @@
 import Link from 'next/link';
 import { EmptyState } from '@/components/ui/empty-state';
-import type { ClassTemplate, TeacherRoom, Room } from '@prisma/client';
+import type { TeacherRoom, Room } from '@prisma/client';
+import type { ClassTemplateWithSlot } from '@/services/class-template-lifecycle';
 import { formatRoomLocation } from '@/lib/format';
 
-type TemplateWithRoom = ClassTemplate & {
+type TemplateWithRoom = ClassTemplateWithSlot & {
   teacherRoom: TeacherRoom & { room: Room };
 };
 

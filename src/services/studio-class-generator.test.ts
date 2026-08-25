@@ -16,6 +16,7 @@ import {
 // hardcoding them — a window-logic change then fails loudly instead of drifting.
 import { getNextOccurrences } from './class-generator';
 import { classStartInstant } from '@/lib/timezone';
+import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -31,6 +32,7 @@ type TransactionOptions = NonNullable<Parameters<PrismaClient['$transaction']>[1
 describe('generateStudioClassInstances (DB)', () => {
   let teacherId: string;
   let templateId: string;
+  let templateScheduleRuleId: string;
   /** Archived but active — the state the PATCH route used to allow. */
   let shelvedTemplateId: string;
 
@@ -49,17 +51,18 @@ describe('generateStudioClassInstances (DB)', () => {
 
     const template = await prisma.studioClassTemplate.create({
       data: {
-        teacherId,
-        classType: 'Hatha',
+        scheduleRule: {
+          create: {
+            teacherId, kind: 'studio', classType: 'Hatha', dayOfWeek: 1,
+            startTime: hhmmToTime('10:00'), durationMinutes: 60, isActive: true,
+          },
+        },
         location: 'Studio Gen Test',
-        dayOfWeek: 1,
-        startTime: '10:00',
-        durationMinutes: 60,
         hourlyRate: 45,
-        isActive: true,
       },
     });
     templateId = template.id;
+    templateScheduleRuleId = template.scheduleRuleId;
 
     // Defence in depth, mirroring class-generator.ts: the route now refuses to
     // activate an archived template, but if that invariant ever slips the
@@ -67,15 +70,14 @@ describe('generateStudioClassInstances (DB)', () => {
     // This row is written directly because the route no longer permits it.
     const shelved = await prisma.studioClassTemplate.create({
       data: {
-        teacherId,
-        classType: 'Shelved',
+        scheduleRule: {
+          create: {
+            teacherId, kind: 'studio', classType: 'Shelved', dayOfWeek: 2,
+            startTime: hhmmToTime('11:00'), durationMinutes: 60, isActive: true, isArchived: true,
+          },
+        },
         location: 'Studio Gen Test',
-        dayOfWeek: 2,
-        startTime: '11:00',
-        durationMinutes: 60,
         hourlyRate: 45,
-        isActive: true,
-        isArchived: true,
       },
     });
     shelvedTemplateId = shelved.id;
@@ -85,9 +87,9 @@ describe('generateStudioClassInstances (DB)', () => {
     await prisma.studioClass.deleteMany({
       where: { templateId: { in: [templateId, shelvedTemplateId] } },
     });
-    await prisma.studioClassTemplate.deleteMany({
-      where: { id: { in: [templateId, shelvedTemplateId] } },
-    });
+    // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
+    // 298), so deleting the rules removes the templates with them.
+    await prisma.scheduleRule.deleteMany({ where: { teacherId } });
     await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.$disconnect();
   });
@@ -179,14 +181,14 @@ describe('generateStudioClassInstances (DB)', () => {
     let originalStartTime: string;
 
     beforeAll(async () => {
-      const t = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } });
-      originalStartTime = t.startTime;
+      const t = await prisma.scheduleRule.findUniqueOrThrow({ where: { id: templateScheduleRuleId } });
+      originalStartTime = timeToHHmm(t.startTime);
     });
 
     afterEach(async () => {
-      await prisma.studioClassTemplate.update({
-        where: { id: templateId },
-        data: { isActive: true, isArchived: false, startTime: originalStartTime },
+      await prisma.scheduleRule.update({
+        where: { id: templateScheduleRuleId },
+        data: { isActive: true, isArchived: false, startTime: hhmmToTime(originalStartTime) },
       });
     });
 
@@ -195,16 +197,16 @@ describe('generateStudioClassInstances (DB)', () => {
     });
 
     it('refuses an archived template', async () => {
-      await prisma.studioClassTemplate.update({
-        where: { id: templateId },
+      await prisma.scheduleRule.update({
+        where: { id: templateScheduleRuleId },
         data: { isArchived: true },
       });
       expect(await claim(templateId)).toBeNull();
     });
 
     it('refuses a paused template', async () => {
-      await prisma.studioClassTemplate.update({
-        where: { id: templateId },
+      await prisma.scheduleRule.update({
+        where: { id: templateScheduleRuleId },
         data: { isActive: false },
       });
       expect(await claim(templateId)).toBeNull();
@@ -215,16 +217,16 @@ describe('generateStudioClassInstances (DB)', () => {
     });
 
     it('returns values committed after the caller read the row', async () => {
-      const before = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } });
-      await prisma.studioClassTemplate.update({
-        where: { id: templateId },
-        data: { startTime: '21:15' },
+      const before = await prisma.scheduleRule.findUniqueOrThrow({ where: { id: templateScheduleRuleId } });
+      await prisma.scheduleRule.update({
+        where: { id: templateScheduleRuleId },
+        data: { startTime: hhmmToTime('21:15') },
       });
 
       const claimed = await prisma.$transaction((tx) => claimStudioTemplateForGeneration(tx, templateId));
 
-      expect(before.startTime).not.toBe('21:15');
-      expect(claimed?.startTime).toBe('21:15');
+      expect(timeToHHmm(before.startTime)).not.toBe('21:15');
+      expect(claimed ? timeToHHmm(claimed.scheduleRule.startTime) : claimed).toBe('21:15');
     });
 
     /**
@@ -402,8 +404,8 @@ describe('generateStudioClassInstances (DB)', () => {
       'answers busy when a studio pause loses the row to the generation claim',
       async () => {
         // The sweep claims only an ACTIVE template, so this test needs one.
-        await prisma.studioClassTemplate.update({
-          where: { id: templateId },
+        await prisma.scheduleRule.update({
+          where: { id: templateScheduleRuleId },
           data: { isActive: true, isArchived: false },
         });
 
@@ -447,8 +449,8 @@ describe('generateStudioClassInstances (DB)', () => {
           // the next test. Worth stating plainly that the recorded mutations
           // never produced that commit: with the bound removed the pause does
           // not win the row, it never settles at all (mutations file, Task 4).
-          await prisma.studioClassTemplate.update({
-            where: { id: templateId },
+          await prisma.scheduleRule.update({
+            where: { id: templateScheduleRuleId },
             data: { isActive: true },
           });
         }
@@ -460,8 +462,8 @@ describe('generateStudioClassInstances (DB)', () => {
   describe('generateStudioClassInstances — archive mid-sweep', () => {
     afterEach(async () => {
       await prisma.studioClass.deleteMany({ where: { templateId } });
-      await prisma.studioClassTemplate.update({
-        where: { id: templateId },
+      await prisma.scheduleRule.update({
+        where: { id: templateScheduleRuleId },
         data: { isActive: true, isArchived: false },
       });
     });
@@ -486,8 +488,8 @@ describe('generateStudioClassInstances (DB)', () => {
 
       const archiving = prisma.$transaction(
         async (tx) => {
-          await tx.studioClassTemplate.update({
-            where: { id: templateId },
+          await tx.scheduleRule.update({
+            where: { id: templateScheduleRuleId },
             data: { isArchived: true, isActive: false },
           });
           await held;
@@ -520,15 +522,20 @@ describe('generateStudioClassInstances (DB)', () => {
     let original: { dayOfWeek: number; startTime: string };
 
     beforeAll(async () => {
-      const t = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } });
-      original = { dayOfWeek: t.dayOfWeek, startTime: t.startTime };
+      const t = await prisma.scheduleRule.findUniqueOrThrow({ where: { id: templateScheduleRuleId } });
+      original = { dayOfWeek: t.dayOfWeek, startTime: timeToHHmm(t.startTime) };
     });
 
     afterEach(async () => {
       await prisma.studioClass.deleteMany({ where: { templateId } });
-      await prisma.studioClassTemplate.update({
-        where: { id: templateId },
-        data: { ...original, isActive: true, isArchived: false },
+      await prisma.scheduleRule.update({
+        where: { id: templateScheduleRuleId },
+        data: {
+          dayOfWeek: original.dayOfWeek,
+          startTime: hhmmToTime(original.startTime),
+          isActive: true,
+          isArchived: false,
+        },
       });
     });
 
@@ -553,9 +560,9 @@ describe('generateStudioClassInstances (DB)', () => {
       // 1. Edit, uncommitted. Holds the row lock; invisible to the sweep.
       const editing = prisma.$transaction(
         async (tx) => {
-          await tx.studioClassTemplate.update({
-            where: { id: templateId },
-            data: { dayOfWeek: 5, startTime: '18:45' },
+          await tx.scheduleRule.update({
+            where: { id: templateScheduleRuleId },
+            data: { dayOfWeek: 5, startTime: hhmmToTime('18:45') },
           });
           await held;
         },
@@ -638,14 +645,14 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
   const makeTemplate = async (teacherId: string, dayOfWeek: number, startTime: string) => {
     const t = await prisma.studioClassTemplate.create({
       data: {
-        teacherId,
-        classType: 'Per Template',
+        scheduleRule: {
+          create: {
+            teacherId, kind: 'studio', classType: 'Per Template', dayOfWeek,
+            startTime: hhmmToTime(startTime), durationMinutes: 60, isActive: true,
+          },
+        },
         location: 'Studio Per Template',
-        dayOfWeek,
-        startTime,
-        durationMinutes: 60,
         hourlyRate: 45,
-        isActive: true,
       },
     });
     templateIds.push(t.id);
@@ -656,7 +663,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
   const withZone = (id: string) =>
     prisma.studioClassTemplate.findUniqueOrThrow({
       where: { id },
-      include: { teacher: { select: { defaultTimezone: true } } },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
     });
 
   const datesFor = (templateId: string) =>
@@ -824,7 +831,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     const id = await makeTemplate(eastTeacherId, 6, '07:30');
     const tpl = await withZone(id);
     const dates = getNextOccurrences(6, now, 5)
-      .filter((d) => classStartInstant(d, '07:30', tpl.teacher.defaultTimezone) > now)
+      .filter((d) => classStartInstant(d, '07:30', tpl.scheduleRule.teacher.defaultTimezone) > now)
       .slice(0, 4);
     const collide = dates[2]!;
 
@@ -938,13 +945,16 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
   it('names a cancelled own instance as blocked_by_cancelled', async () => {
     const now = new Date();
-    // 09:01, not 09:00: the earlier "creates the four-week window..." test
-    // above leaves its own dayOfWeek-3/09:00 template behind (this describe's
-    // afterEach only clears StudioClass rows, not templates), which would
-    // otherwise collide under StudioClassTemplate_teacher_slot_unique. This
-    // test's meaning is indifferent to the exact minute — it only reads back
-    // the dates the generator itself creates.
-    const id = await makeTemplate(eastTeacherId, 3, '09:01');
+    // 12:15, not 09:00: the earlier "creates the four-week window..." and
+    // "logs blocked dates..." tests above leave their own dayOfWeek-3
+    // templates behind (this describe's afterEach only clears StudioClass
+    // rows, not templates), and `ScheduleRule_teacher_slot_excl` (issue 298)
+    // excludes on RANGE overlap, not exact `startTime` match, so a slot here
+    // has to clear the full hour those templates occupy (09:00-10:00,
+    // 11:15-12:15), not just land on a distinct minute. This test's meaning
+    // is indifferent to the exact time — it only reads back the dates the
+    // generator itself creates.
+    const id = await makeTemplate(eastTeacherId, 3, '12:15');
     const tpl = await withZone(id);
 
     const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
@@ -971,10 +981,11 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
   it('skips only the slot another studio class occupies', async () => {
     const now = new Date();
-    // 09:02: see the comment on the same slot in the "names a cancelled own
-    // instance" test above — this keeps it clear of both that template and
-    // the leftover 09:00 one.
-    const id = await makeTemplate(eastTeacherId, 3, '09:02');
+    // 13:15: see the comment on the same slot in the "names a cancelled own
+    // instance" test above — spaced a full hour past its 12:15 slot, and past
+    // the 09:00 and 11:15 ones before it, so the RANGE this template occupies
+    // clears all three.
+    const id = await makeTemplate(eastTeacherId, 3, '13:15');
     const tpl = await withZone(id);
 
     const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
@@ -990,11 +1001,11 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     await prisma.studioClass.create({
       data: {
-        teacherId: tpl.teacherId,
+        teacherId: tpl.scheduleRule.teacherId,
         templateId: null,
         classType: 'Manual',
         date: dates[1]!,
-        startTime: tpl.startTime,
+        startTime: timeToHHmm(tpl.scheduleRule.startTime),
         durationMinutes: 60,
         location: 'Elsewhere',
         hourlyRate: 50,
@@ -1018,7 +1029,12 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
    */
   it('skips a date held by a live class from the other family', async () => {
     const now = new Date();
-    const id = await makeTemplate(eastTeacherId, 3, '09:10');
+    // 14:15: `ScheduleRule_teacher_slot_excl` (issue 298) excludes on RANGE
+    // overlap, so this has to clear the four dayOfWeek-3 templates this
+    // describe's earlier tests leave behind (09:00, 11:15, 12:15, 13:15),
+    // each an hour wide — see the comment on "names a cancelled own instance"
+    // above for why they're never cleaned up mid-describe.
+    const id = await makeTemplate(eastTeacherId, 3, '14:15');
     const tpl = await withZone(id);
 
     const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
@@ -1034,11 +1050,11 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     await prisma.class.create({
       data: {
-        teacherId: tpl.teacherId,
+        teacherId: tpl.scheduleRule.teacherId,
         teacherRoomId: eastTeacherRoomId,
         classType: 'Cross Family',
         date: dates[1]!,
-        startTime: tpl.startTime,
+        startTime: timeToHHmm(tpl.scheduleRule.startTime),
         durationMinutes: 60,
         roomCost: 20,
         minRate: 30,
@@ -1058,7 +1074,10 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     // predicate the trigger carries (`status <> 'cancelled'`). Widen the
     // pre-check past liveness and this goes red.
     const now = new Date();
-    const id = await makeTemplate(eastTeacherId, 3, '09:11');
+    // 15:15: one more hour past the "skips a date held by a live class..."
+    // test's 14:15 — see its comment for why this describe's dayOfWeek-3
+    // slots have to stack an hour apart rather than a minute apart.
+    const id = await makeTemplate(eastTeacherId, 3, '15:15');
     const tpl = await withZone(id);
 
     const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
@@ -1074,11 +1093,11 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     await prisma.class.create({
       data: {
-        teacherId: tpl.teacherId,
+        teacherId: tpl.scheduleRule.teacherId,
         teacherRoomId: eastTeacherRoomId,
         classType: 'Cross Family Cancelled',
         date: dates[1]!,
-        startTime: tpl.startTime,
+        startTime: timeToHHmm(tpl.scheduleRule.startTime),
         durationMinutes: 60,
         roomCost: 20,
         minRate: 30,
@@ -1096,9 +1115,10 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
   it('does not treat a cancelled neighbour as occupying the slot', async () => {
     const now = new Date();
-    // 09:03: see the comment on the same slot in the "names a cancelled own
-    // instance" test above.
-    const id = await makeTemplate(eastTeacherId, 3, '09:03');
+    // 16:15: see the comment on the same slot in the "names a cancelled own
+    // instance" test above — the last of this describe's dayOfWeek-3 slots,
+    // an hour past the 15:15 one before it.
+    const id = await makeTemplate(eastTeacherId, 3, '16:15');
     const tpl = await withZone(id);
 
     const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
@@ -1114,11 +1134,11 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     await prisma.studioClass.create({
       data: {
-        teacherId: tpl.teacherId,
+        teacherId: tpl.scheduleRule.teacherId,
         templateId: null,
         classType: 'Manual',
         date: dates[1]!,
-        startTime: tpl.startTime,
+        startTime: timeToHHmm(tpl.scheduleRule.startTime),
         durationMinutes: 60,
         location: 'Elsewhere',
         hourlyRate: 50,
@@ -1141,18 +1161,21 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
   function tmpl(id: string, teacherId: string) {
     return {
       id,
-      teacherId,
-      dayOfWeek: 0,
-      startTime: '09:00',
-      classType: 'Hatha',
-      durationMinutes: 60,
       location: 'Stub Studio',
       hourlyRate: 45,
-      // generateStudioInstancesForTemplate (#94) now reads
-      // template.teacher.defaultTimezone to decide whether today's occurrence
-      // has already started; UTC keeps that decision equal to plain instant
-      // comparison so it doesn't interact with this test's own fixture dates.
-      teacher: { defaultTimezone: 'UTC' },
+      scheduleRule: {
+        teacherId,
+        dayOfWeek: 0,
+        startTime: hhmmToTime('09:00'),
+        classType: 'Hatha',
+        durationMinutes: 60,
+        // generateStudioInstancesForTemplate (#94) now reads
+        // template.scheduleRule.teacher.defaultTimezone to decide whether
+        // today's occurrence has already started; UTC keeps that decision
+        // equal to plain instant comparison so it doesn't interact with this
+        // test's own fixture dates.
+        teacher: { defaultTimezone: 'UTC' },
+      },
     };
   }
 

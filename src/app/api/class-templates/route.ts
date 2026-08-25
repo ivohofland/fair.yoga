@@ -11,6 +11,8 @@ import {
 } from '@/lib/api-utils';
 import { createClassTemplateSchema } from '@/lib/schemas';
 import { generateInstancesForTemplate } from '@/services/class-generator';
+import { withSlot } from '@/services/class-template-lifecycle';
+import { hhmmToTime } from '@/lib/time-of-day';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { countSkipReasons, type GenerationResult } from '@/lib/generation';
@@ -21,12 +23,14 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (isErrorResponse(session)) return session;
 
   const templates = await prisma.classTemplate.findMany({
-    where: { teacherId: session.teacherId },
-    include: { teacherRoom: { include: { room: true } } },
+    where: { scheduleRule: { teacherId: session.teacherId } },
+    include: { teacherRoom: { include: { room: true } }, scheduleRule: true },
     orderBy: { createdAt: 'desc' },
   });
 
-  return respondOk(templates);
+  return respondOk(
+    templates.map(({ scheduleRule, ...bare }) => withSlot(bare, scheduleRule)),
+  );
 });
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
@@ -121,21 +125,31 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const conflict = { level: 'untagged' as 'untagged' | 'instance' };
   let template: {
     created: Prisma.ClassTemplateGetPayload<{
-      include: { teacher: { select: { defaultTimezone: true } } };
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } };
     }>;
     generation: GenerationResult;
   };
   try {
     template = await prisma.$transaction(async (tx) => {
+      // Nested create (issue 298): `ScheduleRule` holds the slot now, so the
+      // template and its rule are born together in one statement — the
+      // checked `data` shape Prisma requires for a nested relation write,
+      // `teacherRoom` included, rather than the unchecked `teacherRoomId`
+      // scalar this used before the split.
       const created = await tx.classTemplate.create({
         data: {
-          teacherId: session.teacherId,
-          teacherRoomId: body.teacherRoomId,
-          classType: body.classType,
+          scheduleRule: {
+            create: {
+              teacherId: session.teacherId,
+              kind: 'regular',
+              classType: body.classType,
+              dayOfWeek: body.dayOfWeek,
+              startTime: hhmmToTime(body.startTime),
+              durationMinutes: body.durationMinutes,
+            },
+          },
+          teacherRoom: { connect: { id: body.teacherRoomId } },
           description: body.description,
-          dayOfWeek: body.dayOfWeek,
-          startTime: body.startTime,
-          durationMinutes: body.durationMinutes,
           roomCost: body.roomCost,
           minRate: body.minRate,
           targetRate: body.targetRate,
@@ -144,7 +158,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           cancelDeadline: body.cancelDeadline,
           autoCancelCheck: body.autoCancelCheck,
         },
-        include: { teacher: { select: { defaultTimezone: true } } },
+        include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
       });
       const generation = await generateInstancesForTemplate(tx, created).catch((err: unknown) => {
         // Set on the failure path only, immediately before rethrowing, so the
@@ -306,8 +320,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     throw err;
   }
 
-  const { teacher, ...created } = template.created;
-  void teacher;
+  const { scheduleRule, ...bare } = template.created;
+  const created = withSlot(bare, scheduleRule);
 
   // The atomicity note above guarantees a generation *failure* rolls the
   // template back. It does not cover generation *succeeding* having created

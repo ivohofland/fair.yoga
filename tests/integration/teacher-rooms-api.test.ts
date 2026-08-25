@@ -20,6 +20,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -216,19 +217,24 @@ beforeAll(async () => {
   linkWithArchivedTemplateId = archivedTemplateLink.id;
   await prisma.classTemplate.create({
     data: {
-      teacherId: ownerId,
-      teacherRoomId: archivedTemplateLink.id,
-      classType: 'Teacher Rooms Delete Guard',
-      dayOfWeek: 2,
-      startTime: '18:00',
-      durationMinutes: 60,
+      scheduleRule: {
+        create: {
+          teacherId: ownerId,
+          kind: 'regular',
+          classType: 'Teacher Rooms Delete Guard',
+          dayOfWeek: 2,
+          startTime: hhmmToTime('18:00'),
+          durationMinutes: 60,
+          isActive: false,
+          isArchived: true,
+        },
+      },
+      teacherRoom: { connect: { id: archivedTemplateLink.id } },
       roomCost: 15,
       minRate: 10,
       targetRate: 20,
       minStudents: 1,
       maxStudents: 8,
-      isActive: false,
-      isArchived: true,
     },
   });
 
@@ -239,19 +245,24 @@ beforeAll(async () => {
   linkWithLiveTemplateId = liveTemplateLink.id;
   await prisma.classTemplate.create({
     data: {
-      teacherId: ownerId,
-      teacherRoomId: liveTemplateLink.id,
-      classType: 'Teacher Rooms Delete Guard Live',
-      dayOfWeek: 3,
-      startTime: '19:00',
-      durationMinutes: 60,
+      scheduleRule: {
+        create: {
+          teacherId: ownerId,
+          kind: 'regular',
+          classType: 'Teacher Rooms Delete Guard Live',
+          dayOfWeek: 3,
+          startTime: hhmmToTime('19:00'),
+          durationMinutes: 60,
+          isActive: true,
+          isArchived: false,
+        },
+      },
+      teacherRoom: { connect: { id: liveTemplateLink.id } },
       roomCost: 15,
       minRate: 10,
       targetRate: 20,
       minStudents: 1,
       maxStudents: 8,
-      isActive: true,
-      isArchived: false,
     },
   });
 });
@@ -260,7 +271,10 @@ afterAll(async () => {
   // FK order: class → classTemplate → teacherRoom → room. Both Class and
   // ClassTemplate.teacherRoom are Restrict, so both must go first.
   await prisma.class.deleteMany({ where: { teacherId: { in: [ownerId, otherId] } } });
-  await prisma.classTemplate.deleteMany({ where: { teacherId: { in: [ownerId, otherId] } } });
+  // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298),
+  // so deleting the rules removes the templates before the teacher-room
+  // delete below — same ordering requirement, re-pointed.
+  await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: [ownerId, otherId] } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: [ownerId, otherId] } } });
   await prisma.room.deleteMany({ where: { createdById: { in: [ownerId, otherId] } } });
   await prisma.session.deleteMany({

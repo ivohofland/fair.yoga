@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher } from './account-helpers';
 import { hydrationSignal, patchOk, reloadHydrated, SERVER_RENDER_TIMEOUT } from './page-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
  * The studio class family, end to end — the first browser coverage it has had
@@ -107,15 +108,20 @@ test.describe('Studio class templates', () => {
     otherTemplateId = (
       await prisma.studioClassTemplate.create({
         data: {
-          teacherId,
-          classType: 'Yin Retreat',
+          scheduleRule: {
+            create: {
+              teacherId,
+              kind: 'studio',
+              classType: 'Yin Retreat',
+              dayOfWeek: otherTemplateDayOfWeek,
+              startTime: hhmmToTime('19:00'),
+              durationMinutes: 60,
+              isActive: false,
+              isArchived: false,
+            },
+          },
           location: 'Riverside Loft',
-          dayOfWeek: otherTemplateDayOfWeek,
-          startTime: '19:00',
-          durationMinutes: 60,
           hourlyRate: 30,
-          isActive: false,
-          isArchived: false,
         },
       })
     ).id;
@@ -135,7 +141,9 @@ test.describe('Studio class templates', () => {
     // beforeAll threw, which is exactly when `teacherId` is unset.
     if (teacherId) {
       await prisma.studioClass.deleteMany({ where: { teacherId } });
-      await prisma.studioClassTemplate.deleteMany({ where: { teacherId } });
+      // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule`
+      // (issue 298), so deleting the rules removes the templates with them.
+      await prisma.scheduleRule.deleteMany({ where: { teacherId } });
       await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });
       await prisma.teacher.delete({ where: { id: teacherId } });
     }
@@ -166,11 +174,12 @@ test.describe('Studio class templates', () => {
     await expect(page.getByText('Studio Flow')).toBeVisible();
 
     const template = await prisma.studioClassTemplate.findFirstOrThrow({
-      where: { teacherId, classType: 'Studio Flow' },
+      where: { scheduleRule: { teacherId, classType: 'Studio Flow' } },
+      include: { scheduleRule: true },
     });
     templateId = template.id;
-    expect(template.isActive).toBe(true);
-    expect(template.isArchived).toBe(false);
+    expect(template.scheduleRule.isActive).toBe(true);
+    expect(template.scheduleRule.isArchived).toBe(false);
 
     // Creation itself filled the window — no cron has fired.
     expect(await prisma.studioClass.count({ where: { templateId } })).toBe(4);
@@ -341,9 +350,12 @@ test.describe('Studio class templates', () => {
     ).toBeVisible();
 
     expect(await prisma.studioClass.count({ where: { templateId } })).toBe(0);
-    const t = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } });
-    expect(t.isArchived).toBe(true);
-    expect(t.withdrawnCount).toBe(4);
+    const t = await prisma.studioClassTemplate.findUniqueOrThrow({
+      where: { id: templateId },
+      include: { scheduleRule: true },
+    });
+    expect(t.scheduleRule.isArchived).toBe(true);
+    expect(t.scheduleRule.withdrawnCount).toBe(4);
   });
 
   test('an archived template leaves the live list for the archived one', async ({ page }) => {
@@ -408,10 +420,13 @@ test.describe('Studio class templates', () => {
       page.getByRole('button', { name: 'Archive studio class', exact: true }),
     ).toBeVisible(SERVER_RENDER_TIMEOUT);
 
-    const t = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } });
-    expect(t.isArchived).toBe(false);
-    expect(t.isActive).toBe(false);
-    expect(t.archivedAt).toBeNull();
+    const t = await prisma.studioClassTemplate.findUniqueOrThrow({
+      where: { id: templateId },
+      include: { scheduleRule: true },
+    });
+    expect(t.scheduleRule.isArchived).toBe(false);
+    expect(t.scheduleRule.isActive).toBe(false);
+    expect(t.scheduleRule.archivedAt).toBeNull();
 
     // Back on the live list, marked paused, still named. Scoped to this row
     // for the same reason as the earlier paused-list test: the second fixture

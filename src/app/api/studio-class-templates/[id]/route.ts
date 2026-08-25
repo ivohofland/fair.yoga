@@ -14,6 +14,7 @@ import {
   type StudioClassTemplateUpdateData,
   pauseOrResumeStudioTemplate,
   archiveOrUnarchiveStudioTemplate,
+  withSlot,
 } from '@/services/studio-class-template-lifecycle';
 
 export const GET = withErrorHandler(async (
@@ -24,11 +25,15 @@ export const GET = withErrorHandler(async (
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const template = await prisma.studioClassTemplate.findUnique({ where: { id } });
+  const template = await prisma.studioClassTemplate.findUnique({
+    where: { id },
+    include: { scheduleRule: true },
+  });
   if (!template) return respondError('Studio class template not found', 404);
-  if (template.teacherId !== session.teacherId) return respondError('Access denied', 403);
+  if (template.scheduleRule.teacherId !== session.teacherId) return respondError('Access denied', 403);
 
-  return respondOk(template);
+  const { scheduleRule, ...bare } = template;
+  return respondOk(withSlot(bare, scheduleRule));
 });
 
 export const PUT = withErrorHandler(async (

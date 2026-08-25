@@ -24,6 +24,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -173,19 +174,24 @@ beforeAll(async () => {
   });
   await prisma.classTemplate.create({
     data: {
-      teacherId: creator.id,
-      teacherRoomId: withTemplateTeacherRoom.id,
-      classType: 'Rooms API Delete Template Guard',
-      dayOfWeek: 4,
-      startTime: '20:00',
-      durationMinutes: 60,
+      scheduleRule: {
+        create: {
+          teacherId: creator.id,
+          kind: 'regular',
+          classType: 'Rooms API Delete Template Guard',
+          dayOfWeek: 4,
+          startTime: hhmmToTime('20:00'),
+          durationMinutes: 60,
+          isActive: false,
+          isArchived: true,
+        },
+      },
+      teacherRoom: { connect: { id: withTemplateTeacherRoom.id } },
       roomCost: 15,
       minRate: 10,
       targetRate: 20,
       minStudents: 1,
       maxStudents: 8,
-      isActive: false,
-      isArchived: true,
     },
   });
 
@@ -254,7 +260,10 @@ afterAll(async () => {
     // `teacherRoom.deleteMany` took its link — NOT the CASCADE, which that
     // statement pre-empts; and that room carried no template), so a
     // roomId-scoped sweep would have to tolerate that gap anyway.
-    await prisma.classTemplate.deleteMany({ where: { teacherId: { in: [creatorId, otherTeacherId] } } });
+    // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298),
+    // so deleting the rules removes the templates before the teacher-room
+    // delete below — same ordering requirement, re-pointed.
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: [creatorId, otherTeacherId] } } });
     await prisma.teacherRoom.deleteMany({ where: { roomId: { in: roomIds } } });
     // deleteMany, not delete: the happy-path case already removed one of these
     // rooms, and deleteMany no-ops over a missing row where delete would throw.

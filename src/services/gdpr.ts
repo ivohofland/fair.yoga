@@ -19,6 +19,8 @@ import { handleSpotFreed, reorderWaitingEntries } from './waitlist';
 import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
+import { withSlot as withClassSlot } from './class-template-lifecycle';
+import { withSlot as withStudioSlot } from './studio-class-template-lifecycle';
 
 // ---------------------------------------------------------------------------
 // Export
@@ -163,10 +165,9 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
     where: { id: teacherId },
     include: {
       teacherRooms: { include: { room: true } },
-      classTemplates: true,
+      scheduleRules: { include: { classTemplates: true, studioClassTemplates: true } },
       classes: { include: { _count: { select: { registrations: true } } } },
       studioClasses: true,
-      studioClassTemplates: true,
       announcements: true,
     },
   });
@@ -199,7 +200,12 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       rentalRate: tr.rentalRate,
       capacity: tr.capacityOverride,
     })),
-    recurringTemplates: teacher.classTemplates,
+    // Both template families reached via `scheduleRules` now (issue 298) —
+    // `classTemplates`/`studioClassTemplates` left `Teacher`'s own relations
+    // for the rule's, and each rule carries at most one of either family.
+    recurringTemplates: teacher.scheduleRules.flatMap((r) =>
+      r.classTemplates.map((ct) => withClassSlot(ct, r)),
+    ),
     classes: teacher.classes.map((c) => ({
       classType: c.classType,
       date: c.date,
@@ -210,7 +216,9 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       effectiveTeacherRate: c.effectiveTeacherRate,
     })),
     studioClasses: teacher.studioClasses,
-    studioClassTemplates: teacher.studioClassTemplates,
+    studioClassTemplates: teacher.scheduleRules.flatMap((r) =>
+      r.studioClassTemplates.map((sct) => withStudioSlot(sct, r)),
+    ),
     announcements: teacher.announcements.map((a) => ({
       message: a.message,
       sentAt: a.sentAt,
@@ -1147,8 +1155,17 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         }
       }
 
-      await tx.classTemplate.updateMany({ where: { teacherId }, data: { isActive: false, isArchived: true } });
-      await tx.studioClassTemplate.updateMany({ where: { teacherId }, data: { isActive: false, isArchived: true } });
+      // `isActive`/`isArchived` live on `ScheduleRule` now (issue 298), kept
+      // as two statements — one per `kind` — mirroring the pre-split shape
+      // rather than collapsing to one `updateMany` over both families.
+      await tx.scheduleRule.updateMany({
+        where: { teacherId, kind: 'regular' },
+        data: { isActive: false, isArchived: true },
+      });
+      await tx.scheduleRule.updateMany({
+        where: { teacherId, kind: 'studio' },
+        data: { isActive: false, isArchived: true },
+      });
       // `StudentPrivacy` BEFORE `TeacherStudent` — the same order
       // `deleteStudentAccount` above and `unlinkTeacher`
       // (services/invitations.ts) both take these two rows in (#174 task 7;
@@ -1241,25 +1258,15 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       });
       if (erased.count === 0) throw new AlreadyErasedError('teacher');
     },
-    // The `classTemplate.updateMany`/`studioClassTemplate.updateMany` below
-    // contend for the same ROWS that `claimTemplateForGeneration` /
-    // `claimStudioTemplateForGeneration` (class-generator.ts,
-    // studio-class-generator.ts) lock for the duration of their own
-    // per-template transactions (#95) — not in the same MODE, which is the
-    // distinction #126 corrects here, one of eight sites (#125 did six; this
-    // one and `class-generator.test.ts`'s contention docblock were the two it
-    // missed, and an earlier draft of this very paragraph called itself the
-    // last of seven before the eighth turned up on the same branch). An
-    // `updateMany` takes `FOR NO KEY UPDATE`; the claims take `FOR
-    // UPDATE`. The two conflict with each other, which is all this paragraph
-    // needs — but they differ against a third party: an inserting row's FK
-    // check takes `FOR KEY SHARE`, which `FOR UPDATE` blocks and `FOR NO KEY
-    // UPDATE` does not.
-    //
-    // Those claims are held by the sweep for both families, and by both
-    // families' resume — the studio family's since #94, the class family's
-    // since #116 — so account erasure can block on a sweep or a resume in
-    // progress the same way an archive or pause click can.
+    // `isActive`/`isArchived` live on `ScheduleRule` now (issue 298), so the
+    // two `updateMany`s above write that row rather than the child
+    // `claimTemplateForGeneration` / `claimStudioTemplateForGeneration`
+    // (class-generator.ts, studio-class-generator.ts) hold `FOR UPDATE` on
+    // for the duration of their own per-template transactions (#95). Two
+    // different tables, no conflict between them: this erasure no longer
+    // serializes against a sweep or a resume in progress. Known-open, not
+    // closed here — the same gap `archiveOrUnarchiveTemplate`'s CAS carries
+    // (`class-template-lifecycle.ts`) and its studio twin.
     //
     // This site needs the matching 10s budget more than those four
     // do, not just for symmetry: by the time this transaction opens,

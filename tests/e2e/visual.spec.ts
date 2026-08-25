@@ -5,6 +5,7 @@ import path from 'path';
 import { accountIdOfTeacher } from './account-helpers';
 import { hydrationSignal } from './page-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
  * Visual regression: screenshot baselines for the design system's key
@@ -287,14 +288,19 @@ test.describe('Visual regression', () => {
     // StudioClassTemplate never pairs against a Class.
     const studioTemplate = await prisma.studioClassTemplate.create({
       data: {
-        teacherId,
-        classType: 'Visual Studio Flow',
-        dayOfWeek: 2, // 0 = Monday in this schema, so 2 is Wednesday
-        startTime: '18:00',
-        durationMinutes: 75,
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Visual Studio Flow',
+            dayOfWeek: 2, // 0 = Monday in this schema, so 2 is Wednesday
+            startTime: hhmmToTime('18:00'),
+            durationMinutes: 75,
+            isActive: false,
+          },
+        },
         location: 'Visual Community Studio',
         hourlyRate: 42,
-        isActive: false,
       },
     });
     studioTemplateId = studioTemplate.id;
@@ -302,8 +308,9 @@ test.describe('Visual regression', () => {
 
   test.afterAll(async () => {
     await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
-    // No explicit studioClassTemplate delete: Teacher -> StudioClassTemplate
-    // is Cascade, so `teacher.delete` below already takes it. An explicit one
+    // No explicit studioClassTemplate delete: Teacher -> ScheduleRule ->
+    // StudioClassTemplate is Cascade all the way (issue 298), so
+    // `teacher.delete` below already takes it. An explicit one
     // would add only a failure mode — Prisma drops an `undefined` where-clause
     // rather than matching nothing, and this hook still runs when beforeAll
     // threw before `teacherId` was assigned.

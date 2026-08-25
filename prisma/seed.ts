@@ -1,4 +1,5 @@
 import { PrismaClient, Prisma } from '@prisma/client';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 
@@ -430,13 +431,19 @@ async function main() {
   // ==========================================================================
   const vinyasaTemplate = await prisma.classTemplate.create({
     data: {
-      teacherId: ivo.id,
-      teacherRoomId: ivoYogaschool.id,
-      classType: 'Vinyasa',
+      scheduleRule: {
+        create: {
+          teacherId: ivo.id,
+          kind: 'regular',
+          classType: 'Vinyasa',
+          dayOfWeek: 1, // Tuesday
+          startTime: hhmmToTime('09:00'),
+          durationMinutes: 75,
+          isActive: true,
+        },
+      },
+      teacherRoom: { connect: { id: ivoYogaschool.id } },
       description: 'Dynamic flow class suitable for all levels.',
-      dayOfWeek: 1, // Tuesday
-      startTime: '09:00',
-      durationMinutes: 75,
       roomCost: new Prisma.Decimal('35.00'),
       minRate: new Prisma.Decimal('15.00'),
       targetRate: new Prisma.Decimal('25.00'),
@@ -444,7 +451,6 @@ async function main() {
       maxStudents: 12,
       cancelDeadline: 'HOURS_24',
       autoCancelCheck: 'HOURS_2',
-      isActive: true,
     },
   });
 
@@ -695,14 +701,19 @@ async function main() {
   // ==========================================================================
   const studioTemplate = await prisma.studioClassTemplate.create({
     data: {
-      teacherId: ivo.id,
-      classType: 'Vinyasa',
-      dayOfWeek: 3, // Thursday
-      startTime: '11:00',
-      durationMinutes: 60,
+      scheduleRule: {
+        create: {
+          teacherId: ivo.id,
+          kind: 'studio',
+          classType: 'Vinyasa',
+          dayOfWeek: 3, // Thursday
+          startTime: hhmmToTime('11:00'),
+          durationMinutes: 60,
+          isActive: true,
+        },
+      },
       location: 'Yoga Studio Centrum, Amsterdam',
       hourlyRate: new Prisma.Decimal('35.00'),
-      isActive: true,
     },
   });
 

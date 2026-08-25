@@ -15,14 +15,19 @@ import { ACTIVE_TEMPLATE_WHERE, templateGenerationState } from './template-selec
 
 describe('ACTIVE_TEMPLATE_WHERE', () => {
   it('selects live templates only — active and not archived', () => {
-    expect(ACTIVE_TEMPLATE_WHERE).toEqual({ isActive: true, isArchived: false });
+    expect(ACTIVE_TEMPLATE_WHERE).toEqual({
+      scheduleRule: { isActive: true, isArchived: false },
+    });
   });
 
   // `isArchived: false` is defense in depth: the routes already keep archived
   // templates inactive, so dropping it would change nothing observable today
   // and would silently remove the backstop `class-generator.ts` documents.
   it('keeps both keys, not just isActive', () => {
-    expect(Object.keys(ACTIVE_TEMPLATE_WHERE).sort()).toEqual(['isActive', 'isArchived']);
+    expect(Object.keys(ACTIVE_TEMPLATE_WHERE.scheduleRule).sort()).toEqual([
+      'isActive',
+      'isArchived',
+    ]);
   });
 });
 
@@ -37,7 +42,7 @@ describe('templateGenerationState', () => {
     // The pin that keeps the row-set predicate and the single-row answer from
     // drifting: the constant's own value, fed to the function, must be the
     // state the constant selects.
-    expect(templateGenerationState(ACTIVE_TEMPLATE_WHERE)).toBe('active');
+    expect(templateGenerationState(ACTIVE_TEMPLATE_WHERE.scheduleRule)).toBe('active');
   });
 
   it('calls a template the sweep skips paused, not active', () => {

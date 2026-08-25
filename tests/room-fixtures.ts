@@ -27,6 +27,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import crypto from 'crypto';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 export type RoomFixture = { teacherId: string; roomId: string; linkId: string };
 export type ClassFixtureStatus = 'draft' | 'open' | 'in_progress' | 'completed' | 'cancelled';
@@ -98,19 +99,24 @@ export function fixtureRun(prefix: string) {
   ) {
     return db.classTemplate.create({
       data: {
-        teacherId: f.teacherId,
-        teacherRoomId: f.linkId,
-        classType: 'Hatha',
-        dayOfWeek: 2,
-        startTime: '18:00',
-        durationMinutes: 60,
+        scheduleRule: {
+          create: {
+            teacherId: f.teacherId,
+            kind: 'regular',
+            classType: 'Hatha',
+            dayOfWeek: 2,
+            startTime: hhmmToTime('18:00'),
+            durationMinutes: 60,
+            isActive: opts.isActive,
+            isArchived: opts.isArchived,
+          },
+        },
+        teacherRoom: { connect: { id: f.linkId } },
         roomCost: new Prisma.Decimal(20),
         minRate: new Prisma.Decimal(15),
         targetRate: new Prisma.Decimal(25),
         minStudents: 2,
         maxStudents: 10,
-        isActive: opts.isActive,
-        isArchived: opts.isArchived,
       },
     });
   }
@@ -119,7 +125,10 @@ export function fixtureRun(prefix: string) {
   async function cleanup(db: PrismaClient) {
     const mine = { teacher: { pageSlug: { startsWith: suffix } } };
     await db.class.deleteMany({ where: mine });
-    await db.classTemplate.deleteMany({ where: mine });
+    // `ClassTemplate`/`StudioClassTemplate` are `onDelete: Cascade` from
+    // `ScheduleRule` (issue 298) — deleting the rule removes both families'
+    // templates, so this deletes the rule rather than nesting the filter.
+    await db.scheduleRule.deleteMany({ where: mine });
     await db.teacherRoom.deleteMany({ where: mine });
     await db.room.deleteMany({ where: { createdBy: { pageSlug: { startsWith: suffix } } } });
     await db.teacher.deleteMany({ where: { pageSlug: { startsWith: suffix } } });

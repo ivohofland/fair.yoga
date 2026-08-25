@@ -413,10 +413,10 @@ const SERVER_OWNED_FIELDS = [
   'totalStudents', 'updatedAt', 'withdrawnCount',
 ] as const;
 
-// Every name above must be a real column on one of the fourteen models in this
-// union. Without this a typo would sit in the list protecting nothing while
-// looking like protection. Fails naming the offender. A legitimate server-owned
-// name that lives only on a model outside this union (e.g. TeacherStudent,
+// Every name above must be a real column on one of the models in this union.
+// Without this a typo would sit in the list protecting nothing while looking
+// like protection. Fails naming the offender. A legitimate server-owned name
+// that lives only on a model outside this union (e.g. TeacherStudent,
 // Session) would fail this pin too — the fix there is to grow the union, not to
 // delete the name.
 //
@@ -424,6 +424,10 @@ const SERVER_OWNED_FIELDS = [
 // missing here is an obstacle to *adding* a legitimate name later
 // (WaitlistEntry.position, Notification.readAt), because the addition would
 // fail this pin and read as a typo.
+//
+// `ScheduleRule` (issue 298) is what makes `isActive`/`isArchived`/
+// `archivedAt`/`withdrawnCount`/`teacherId` still real columns here: all five
+// left `ClassTemplate`/`StudioClassTemplate` for it.
 type AnyModelKey =
   | keyof Prisma.ClassUncheckedUpdateManyInput
   | keyof Prisma.StudioClassUncheckedUpdateManyInput
@@ -438,7 +442,8 @@ type AnyModelKey =
   | keyof Prisma.AnnouncementUncheckedUpdateManyInput
   | keyof Prisma.StudentPrivacyUncheckedUpdateManyInput
   | keyof Prisma.StudioClassTemplateUncheckedUpdateManyInput
-  | keyof Prisma.TeacherRoomUncheckedUpdateManyInput;
+  | keyof Prisma.TeacherRoomUncheckedUpdateManyInput
+  | keyof Prisma.ScheduleRuleUncheckedUpdateManyInput;
 
 const _serverOwnedNamesExist: NoneOf<
   Exclude<(typeof SERVER_OWNED_FIELDS)[number], AnyModelKey>

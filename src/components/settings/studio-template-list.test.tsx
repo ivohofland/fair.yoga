@@ -1,9 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, getNodeText } from '@testing-library/react';
-import type { StudioClassTemplate } from '@prisma/client';
 // The pure-JS Decimal — a component test must not pull in the query engine.
 import { Decimal } from '@prisma/client/runtime/library';
-import { StudioTemplateList } from './studio-template-list';
+import { StudioTemplateList, type StudioTemplateListItem } from './studio-template-list';
 
 /**
  * #281. `StudioTemplateList` renders its active, paused, and archived
@@ -17,6 +16,8 @@ import { StudioTemplateList } from './studio-template-list';
  */
 const base = {
   id: 't1',
+  scheduleRuleId: 'rule-1',
+  kind: 'studio',
   teacherId: 'teacher-1',
   classType: 'Vinyasa',
   dayOfWeek: 1,
@@ -30,7 +31,7 @@ const base = {
   withdrawnCount: null,
   createdAt: new Date('2026-01-01T00:00:00Z'),
   updatedAt: new Date('2026-01-01T00:00:00Z'),
-} satisfies StudioClassTemplate;
+} satisfies StudioTemplateListItem;
 
 const STATES = [
   { name: 'active', template: { ...base, isActive: true, isArchived: false } },

@@ -21,8 +21,7 @@
  * their graphs. Nothing here imports anything, so either side can take it.
  */
 export const ACTIVE_TEMPLATE_WHERE = {
-  isActive: true,
-  isArchived: false,
+  scheduleRule: { isActive: true, isArchived: false },
 } as const;
 
 /**

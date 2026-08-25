@@ -66,8 +66,11 @@ describe('pauseOrResumeTemplate — door 3: resuming into an archived room', () 
 
     expect(result).toEqual({ ok: false, reason: 'room_archived' });
 
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: tpl.id } });
-    expect(after.isActive).toBe(false);
+    const after = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id: tpl.id },
+      include: { scheduleRule: true },
+    });
+    expect(after.scheduleRule.isActive).toBe(false);
     expect(await prisma.class.count({ where: { templateId: tpl.id } })).toBe(0);
   });
 
