@@ -310,6 +310,17 @@ model TeacherRoom {
 // CLASSES
 // ============================================================================
 
+/// Since #298, carries neither a slot index nor a trigger: the calendar
+/// identity that `ClassTemplate_teacher_slot_unique` and the two
+/// `class_template_cross_family_slot_*_guard` triggers used to enforce moved
+/// to `ScheduleRule`, whose own docblock carries the `EXCLUDE USING gist`
+/// that replaced them.
+///
+/// What Prisma cannot show here instead: `ClassTemplate_kind_check`, `CHECK
+/// ("kind" = 'regular')`. Paired with `StudioClassTemplate`'s own `'studio'`
+/// check below, it is what makes the composite foreign key
+/// `(scheduleRuleId, kind) → ScheduleRule(id, kind)` mean "regular children
+/// hang off regular rules" — not merely "the pair agrees".
 model ClassTemplate {
   id              String          @id @default(uuid())
   scheduleRuleId  String          @unique
@@ -403,6 +414,17 @@ model Class {
   @@unique([templateId, date])
 }
 
+/// Since #298, carries neither a slot index nor a trigger: the calendar
+/// identity that `StudioClassTemplate_teacher_slot_unique` and the two
+/// `studio_class_template_cross_family_slot_*_guard` triggers used to enforce
+/// moved to `ScheduleRule`, whose own docblock carries the `EXCLUDE USING
+/// gist` that replaced them.
+///
+/// What Prisma cannot show here instead: `StudioClassTemplate_kind_check`,
+/// `CHECK ("kind" = 'studio')`. Paired with `ClassTemplate`'s own `'regular'`
+/// check above, it is what makes the composite foreign key
+/// `(scheduleRuleId, kind) → ScheduleRule(id, kind)` mean "studio children
+/// hang off studio rules" — not merely "the pair agrees".
 model StudioClassTemplate {
   id             String   @id @default(uuid())
   scheduleRuleId String   @unique

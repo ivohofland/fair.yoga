@@ -72,9 +72,13 @@
  *     needs the `which is terminal` wording for exactly this reason.
  *
  * That is also why this matcher needs no wording discriminator of its own,
- * where its 23514 neighbour does: `YG001` is emitted by these eight triggers
- * and by nothing else in the schema, so the SQLSTATE alone is the whole
- * predicate. It must stay that way — a second user-defined `YG001` would make
+ * where its 23514 neighbour does: `YG001` is emitted by the cross-family slot
+ * guard's triggers and by nothing else in the schema, so the SQLSTATE alone
+ * is the whole predicate. The trigger roster — how many, on which tables — is
+ * `docs/lock-order.md`'s to keep ("The cross-family slot guard reads, and
+ * does not lock"), including the grep that re-derives it; do not duplicate a
+ * count here. What stays true regardless of that roster's size: it must stay
+ * a roster of exactly one meaning — a second user-defined `YG001` would make
  * this function silently wrong, and no test would notice.
  *
  * The SQLSTATE is matched inside its Postgres framing (`code: "YG001"` /

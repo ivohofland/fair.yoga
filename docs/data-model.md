@@ -1,6 +1,6 @@
 # Data Model — Ethical Yoga App
 
-16 entities across 6 domains. This is the source of truth for the application's data layer.
+17 entities across 6 domains. This is the source of truth for the application's data layer.
 
 ---
 
@@ -182,18 +182,43 @@ Each teacher sets their own capacity and rental rate for a room. Rental rate is 
 
 ## Classes
 
-### ClassTemplate (recurring class definition)
+### ScheduleRule (shared calendar identity, #298)
 
 | Field | Type | Notes |
 |---|---|---|
 | **id** (PK) | uuid | |
 | *teacher_id* (FK) | → Teacher | |
-| *teacher_room_id* (FK) | → TeacherRoom | |
+| kind | enum: regular, studio | Pins which template family this rule belongs to. `ClassTemplate`/`StudioClassTemplate` attach by the composite `(schedule_rule_id, kind)`, so a `CHECK` on each child pins its own literal and the pair can only ever mean "regular child ↔ regular rule" |
 | class_type | string | e.g. "Vinyasa", "Yin", "Hatha" |
-| description | text, nullable | |
 | day_of_week | int (0-6) | 0 = Monday |
 | start_time | time | |
 | duration_minutes | int | |
+| is_active | boolean | Teacher can pause/stop a recurring class |
+| is_archived | boolean | |
+| archived_at | datetime, nullable | When this rule was last archived |
+| withdrawn_count | int, nullable | How many future unbooked instances that archive withdrew |
+| **Timestamps** | | |
+| created_at | datetime | |
+| updated_at | datetime | |
+
+One teacher, one slot, across both template families (#296, #298): an
+`EXCLUDE USING gist` constraint over `(teacher_id, day_of_week, slot)` —
+`slot` a generated range covering `[start_time, start_time +
+duration_minutes)` — partial on `is_archived = false`, refuses two live rules
+of either kind whose windows overlap for one teacher on one weekday. Range,
+not exact-start: two templates a minute apart are no longer both legal, where
+they were before #298. `ClassTemplate` and `StudioClassTemplate` below hold
+only their own economics now — they reach their teacher, and everything
+calendar-shaped, through this row.
+
+### ClassTemplate (recurring class economics)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | |
+| *schedule_rule_id* (FK) | → ScheduleRule, unique | The calendar identity — teacher, day/time, active/archived state — moved to the rule (#298); this row reaches Teacher through it, not directly |
+| *teacher_room_id* (FK) | → TeacherRoom | |
+| description | text, nullable | |
 | **Economics** | | Copied to each instance at generation time — a later template edit does not re-copy (#194) |
 | room_cost | decimal | From TeacherRoom.rental_rate |
 | min_rate | decimal | Minimum teacher earns per student |
@@ -203,12 +228,13 @@ Each teacher sets their own capacity and rental rate for a room. Rental rate is 
 | **Policies** | | |
 | cancel_deadline | enum: 48h, 24h, 12h, 6h | Student cancellation window |
 | auto_cancel_check | enum: 4h, 2h, 1h | When to check min_students threshold |
-| is_active | boolean | Teacher can pause/stop a recurring class |
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
 
-Class instances are generated on a rolling 4-week basis. Runs indefinitely until teacher deactivates.
+Class instances are generated on a rolling 4-week basis. Runs indefinitely
+until the rule is paused or archived — see ScheduleRule above for day/time,
+active/archived state, and the cross-family slot rule.
 
 ### Class (single class instance)
 
@@ -381,7 +407,8 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
 - Account → has one Student (optional)
 - Teacher → has many TeacherRooms
 - Teacher → has many Classes
-- Teacher → has many ClassTemplates
+- Teacher → has many ScheduleRules
+- ScheduleRule → has one ClassTemplate (kind: regular) or one StudioClassTemplate (kind: studio)
 - Teacher → has many StudioClasses
 - Teacher → has many Announcements
 - Room → has many TeacherRooms
@@ -401,6 +428,7 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
 
 ## Design Notes
 
+- **A `Teacher` hard-delete cascades through `ScheduleRule`, not directly to `ClassTemplate`/`StudioClassTemplate`** (#298) — one hop further out than `TeacherRoom`, whose `ClassTemplate_teacherRoomId_fkey` is `ON DELETE RESTRICT`. Measured in a rolled-back transaction against the real constraints: a single `DELETE FROM "Teacher"` still succeeds cleanly and every dependent row goes, because PostgreSQL defers a `NOT DEFERRABLE` foreign-key check to the end of the enclosing statement, and by then the sibling `ON DELETE CASCADE` from `Teacher` through `ScheduleRule` has already removed the `ClassTemplate`/`StudioClassTemplate` row the RESTRICT check would otherwise block on. That deferral is a property of one statement, not of the transaction: nothing in `src/` issues a hard `teacher.delete` today (erasure soft-deletes, per `deleteTeacherAccount`), but wherever tests tear a teacher down by hand across separate `deleteMany` calls, `scheduleRule.deleteMany` must run before `teacherRoom.deleteMany` — reversed, the `teacherRoom.deleteMany` hits the still-live `ClassTemplate`/`StudioClassTemplate` row and fails on `ClassTemplate_teacherRoomId_fkey`, measured the same way.
 - **tier_at_booking** on Registration captures the student's income tier at the moment they booked. The student's global tier on the Student table can change anytime, but pricing uses the tier at booking time. This also serves as income history — no separate tracking table needed.
 - **settings_locked** on Class flips to true when the first Registration is created. After that, economic fields (room_cost, min_rate, target_rate, min_students, max_students) are immutable.
 - **Terminal status is the second, wider freeze** (#247). Once a Class is `completed` or `cancelled`, `updateClass` refuses every field edit — the class, not a column list — and `PUT /api/classes/[id]` answers 409. It never lifts. `date` is additionally frozen in the database by the `class_terminal_date_guard` trigger, because the waitlist retention sweep above deletes on a status-plus-date predicate and reads that column before it does. The trigger is narrower than the service on purpose: it guards `date` alone, so the two layers are not the same rule twice.

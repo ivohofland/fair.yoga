@@ -805,6 +805,40 @@ modified and demands a reset. Applied migrations are immutable including their
 comments; prose about a migration belongs in prose. The invariant spans two tables, so no
 unique index can express it; a trigger is what is left.
 
+**A second migration comment is stranded the same way, and this document
+becomes its owner too.** `20260825065109_schedule_rule_backfill/migration.sql`,
+block 4, drops the four TEMPLATE-half triggers this section describes above —
+`class_template_cross_family_slot_insert_guard`,
+`class_template_cross_family_slot_update_guard`,
+`studio_class_template_cross_family_slot_insert_guard`,
+`studio_class_template_cross_family_slot_update_guard` — ahead of dropping the
+columns their `WHEN` clauses name, and its own comment there reads:
+
+> Measured: 10 dependencies across the four triggers, on teacherId,
+> dayOfWeek, startTime and isArchived.
+
+That is a prose count and a member roster reaching into the previous
+migration ("since the previous migration"), both of which CLAUDE.md's Comment
+Discipline forbids, and the migration is applied — a comment-only edit
+changes the checksum `prisma migrate status` never checks (NAMES only), so
+nothing would catch the fix until the next `prisma migrate dev` demanded a
+reset. The comment stays wrong where it sits. This document is the live copy,
+re-derivable rather than remembered:
+
+```sql
+SELECT count(*) FROM pg_depend d
+JOIN pg_trigger t ON t.oid = d.objid AND d.classid = 'pg_trigger'::regclass
+JOIN pg_class c ON c.oid = d.refobjid
+WHERE d.refclassid = 'pg_class'::regclass AND d.refobjsubid > 0
+  AND c.relname IN ('ClassTemplate','StudioClassTemplate');
+```
+
+It returned 10 before this branch (the count the stranded comment records) and
+returns 0 after — measured against both `ethical_yoga_test` and `ethical_yoga`
+on 2026-08-25, once the migration above had run. A reader who finds the
+migration comment first should believe this paragraph, not that one: the
+triggers it counted dependencies for no longer exist, on either table.
+
 Each `BEFORE INSERT`/`BEFORE UPDATE` function runs a plain
 `SELECT … LIMIT 1` against the SIBLING table and raises `YG001` if it finds a
 live row. **No source line in `src/` issues that `SELECT`**, which is the
