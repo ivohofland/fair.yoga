@@ -21,6 +21,7 @@ async function makeTeacher(tag: string): Promise<string> {
 }
 
 let roomId: string;
+let teacherRoomId: string;
 
 beforeAll(async () => {
   await prisma.$connect();
@@ -34,18 +35,23 @@ beforeAll(async () => {
     },
   });
   roomId = room.id;
-  await prisma.teacherRoom.create({
+  const teacherRoom = await prisma.teacherRoom.create({
     // `capacityOverride` is required and has no default (schema.prisma).
     data: { teacherId, roomId, rentalRate: 20, capacityOverride: 12 },
   });
+  teacherRoomId = teacherRoom.id;
 });
 
 afterAll(async () => {
   const teachers = [teacherId, otherTeacherId];
   await prisma.class.deleteMany({ where: { teacherId: { in: teachers } } });
   await prisma.studioClass.deleteMany({ where: { teacherId: { in: teachers } } });
-  await prisma.classTemplate.deleteMany({ where: { teacherId: { in: teachers } } });
-  await prisma.studioClassTemplate.deleteMany({ where: { teacherId: { in: teachers } } });
+  // Deletes both `ClassTemplate` and `StudioClassTemplate` rows via
+  // `onDelete: Cascade` on their composite FK to `ScheduleRule` — neither
+  // child carries `teacherId` any more (prisma/schema.prisma). Must precede
+  // `teacherRoom.deleteMany`: `ClassTemplate_teacherRoomId_fkey` is
+  // `ON DELETE RESTRICT`, and a surviving template blocks the room delete.
+  await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: teachers } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teachers } } });
   await prisma.room.deleteMany({ where: { createdById: { in: teachers } } });
   await prisma.teacher.deleteMany({ where: { id: { in: teachers } } });
@@ -140,5 +146,41 @@ describe('ScheduleRule slot exclusion', () => {
     await expect(prisma.scheduleRule.create({
       data: rule(teacherId, { dayOfWeek: 4, startTime: at('00:15'), durationMinutes: 30 }),
     })).resolves.toBeDefined();
+  });
+});
+
+describe('ScheduleRule composite foreign key', () => {
+  it('refuses a studio template on a regular rule', async () => {
+    const r = await prisma.scheduleRule.create({ data: rule(teacherId, { dayOfWeek: 5, startTime: at('06:00') }) });
+    await expect(
+      prisma.$executeRawUnsafe(
+        `INSERT INTO "StudioClassTemplate" ("id","scheduleRuleId","kind","location","hourlyRate","createdAt","updatedAt")
+         VALUES (gen_random_uuid()::text, $1, 'studio', 'Probe', 40, now(), now())`,
+        r.id,
+      ),
+    ).rejects.toThrow(/foreign key/i);
+  });
+
+  it('refuses flipping a rule kind while a child is attached', async () => {
+    // startTime '08:00', not '06:30': the previous case's rule occupies
+    // dayOfWeek 5 06:00-07:30 (default durationMinutes: 90), and 06:30 would
+    // overlap it under ScheduleRule_teacher_slot_excl.
+    const r = await prisma.scheduleRule.create({ data: rule(teacherId, { dayOfWeek: 5, startTime: at('08:00') }) });
+    // teacherRoomId is required on ClassTemplate and does NOT move to the rule.
+    await prisma.classTemplate.create({
+      data: {
+        scheduleRuleId: r.id, kind: 'regular', teacherRoomId,
+        roomCost: 20, minRate: 30, targetRate: 60, minStudents: 3, maxStudents: 10,
+      },
+    });
+    // Not /foreign key/i: both composite FKs carry ON UPDATE CASCADE (the
+    // migration's block 3, matching Prisma's own convention), so flipping the
+    // parent's kind cascades into the attached child's own kind column FIRST
+    // — and it is that child's `ClassTemplate_kind_check` CHECK, not the FK
+    // itself, that raises. Measured, not assumed: the FK never gets a chance
+    // to reject anything here because the cascade already satisfies it.
+    await expect(
+      prisma.$executeRawUnsafe(`UPDATE "ScheduleRule" SET "kind"='studio' WHERE "id"=$1`, r.id),
+    ).rejects.toThrow(/check constraint/i);
   });
 });

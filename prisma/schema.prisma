@@ -146,10 +146,8 @@ model Teacher {
 
   account         Account          @relation(fields: [accountId], references: [id])
   teacherRooms    TeacherRoom[]
-  classTemplates  ClassTemplate[]
   classes         Class[]
   studioClasses         StudioClass[]
-  studioClassTemplates  StudioClassTemplate[]
   announcements   Announcement[]
   studentPrivacy  StudentPrivacy[]
   createdRooms    Room[]           @relation("RoomCreator")
@@ -312,30 +310,12 @@ model TeacherRoom {
 // CLASSES
 // ============================================================================
 
-/// Carries a partial unique index Prisma cannot express and therefore cannot
-/// show: `ClassTemplate_teacher_slot_unique` on (teacherId, dayOfWeek,
-/// startTime) WHERE isArchived = false (#196). It is invisible to `migrate
-/// diff`, so it will not appear as drift and will not be dropped — and
-/// equally will not appear in this file unless someone keeps this comment
-/// true.
-///
-/// Since #296 it also carries TWO TRIGGERS, invisible for the same reason and
-/// worse: `migrate diff` cannot see a trigger at all, so they will never show
-/// as drift. `class_template_cross_family_slot_insert_guard` and
-/// `class_template_cross_family_slot_update_guard` reject a row that would make this
-/// teacher live at a slot the OTHER class family already holds — the invariant
-/// no unique index can express, because it spans two tables. They read the
-/// sibling table with a plain unlocked `SELECT` and take no lock; see
-/// `docs/lock-order.md`, "The cross-family slot guard".
 model ClassTemplate {
   id              String          @id @default(uuid())
-  teacherId       String
+  scheduleRuleId  String          @unique
+  kind            RuleKind
   teacherRoomId   String
-  classType       String
   description     String?         @db.Text
-  dayOfWeek       Int
-  startTime       String
-  durationMinutes Int
   roomCost        Decimal         @db.Decimal(10, 2)
   minRate         Decimal         @db.Decimal(10, 2)
   targetRate      Decimal         @db.Decimal(10, 2)
@@ -343,47 +323,12 @@ model ClassTemplate {
   maxStudents     Int
   cancelDeadline  CancelDeadline  @default(HOURS_24)
   autoCancelCheck AutoCancelCheck @default(HOURS_2)
-  isActive        Boolean         @default(true)
-  isArchived      Boolean         @default(false)
-
-  /// When this template was last archived (#97).
-  ///
-  /// Null when no archive has recorded one — which is not the same as
-  /// `isArchived: false`. `deleteTeacherAccount` (src/services/gdpr.ts) bulk-archives
-  /// every template of an erased teacher with an `updateMany` that writes
-  /// neither this column nor `withdrawnCount`, so `isArchived: true` with both
-  /// null is reachable today, as it is for every template archived before #97
-  /// shipped. Read this as "the archive that recorded itself", never as "is it
-  /// archived" — `isArchived` answers that.
-  ///
-  /// Cleared again on un-archive, which forces `isActive: false` in the same
-  /// write: what has no withdrawal to report is a template that is no longer
-  /// archived, and it is paused at that moment, not live. Re-archiving
-  /// overwrites rather than accumulating — a teacher asking what archiving
-  /// removed means the archive in force, not every archive this template has
-  /// had.
-  archivedAt      DateTime?
-
-  /// How many future unbooked classes that same archive withdrew — the
-  /// `deleteMany`'s own returned count, written inside its transaction, so it
-  /// cannot claim a number the delete did not produce. Null and cleared on
-  /// exactly the terms `archivedAt` above describes, which is what keeps a
-  /// recorded `0` ("archived, withdrew nothing") distinguishable from no
-  /// record at all.
-  ///
-  /// What is still scheduled is deliberately not stored beside it. The archive
-  /// PATCH returns a `remaining` count once, for the confirmation message
-  /// shown right after the click; nothing persists it and no page recomputes
-  /// it on load. Only the deletion is unrecoverable, so only the deletion is
-  /// recorded — and a frozen copy would go stale the moment a teacher cancels
-  /// one of the survivors.
-  withdrawnCount  Int?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
-  teacher     Teacher     @relation(fields: [teacherId], references: [id], onDelete: Cascade)
-  teacherRoom TeacherRoom @relation(fields: [teacherRoomId], references: [id])
-  classes     Class[]
+  scheduleRule ScheduleRule @relation(fields: [scheduleRuleId, kind], references: [id, kind], onDelete: Cascade)
+  teacherRoom  TeacherRoom  @relation(fields: [teacherRoomId], references: [id])
+  classes      Class[]
 }
 
 /// Carries a partial unique index Prisma cannot express and therefore cannot
@@ -458,80 +403,16 @@ model Class {
   @@unique([templateId, date])
 }
 
-/// Carries a partial unique index Prisma cannot express and therefore cannot
-/// show: `StudioClassTemplate_teacher_slot_unique` on (teacherId, dayOfWeek,
-/// startTime) WHERE isArchived = false (#196). It is invisible to `migrate
-/// diff`, so it will not appear as drift and will not be dropped — and
-/// equally will not appear in this file unless someone keeps this comment
-/// true.
-///
-/// Since #296 it also carries TWO TRIGGERS, invisible for the same reason and
-/// worse: `migrate diff` cannot see a trigger at all, so they will never show
-/// as drift. `studio_class_template_cross_family_slot_insert_guard` and
-/// `studio_class_template_cross_family_slot_update_guard` reject a row that would make this
-/// teacher live at a slot the OTHER class family already holds — the invariant
-/// no unique index can express, because it spans two tables. They read the
-/// sibling table with a plain unlocked `SELECT` and take no lock; see
-/// `docs/lock-order.md`, "The cross-family slot guard".
 model StudioClassTemplate {
-  id              String   @id @default(uuid())
-  teacherId       String
-  classType       String
-  dayOfWeek       Int
-  startTime       String
-  durationMinutes Int
-  location        String
-  hourlyRate      Decimal  @db.Decimal(10, 2)
-  isActive        Boolean  @default(true)
-  isArchived      Boolean  @default(false)
+  id             String   @id @default(uuid())
+  scheduleRuleId String   @unique
+  kind           RuleKind
+  location       String
+  hourlyRate     Decimal  @db.Decimal(10, 2)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  /// When this template was last archived (#97).
-  ///
-  /// Null when no archive has recorded one — which is not the same as
-  /// `isArchived: false`. `deleteTeacherAccount` (src/services/gdpr.ts) bulk-archives
-  /// every studio template of an erased teacher with an `updateMany` that
-  /// writes neither this column nor `withdrawnCount`, so `isArchived: true`
-  /// with both null is reachable today, as it is for every template archived
-  /// before #97 shipped. Read this as "the archive that recorded itself",
-  /// never as "is it archived" — `isArchived` answers that.
-  ///
-  /// Cleared again on un-archive, which forces `isActive: false` in the same
-  /// write: what has no withdrawal to report is a template that is no longer
-  /// archived, and it is paused at that moment, not live. Re-archiving
-  /// overwrites rather than accumulating — a teacher asking what archiving
-  /// removed means the archive in force, not every archive this template has
-  /// had.
-  archivedAt      DateTime?
-
-  /// How many future studio classes that same archive withdrew — the
-  /// `deleteMany`'s own returned count, written inside its transaction, so it
-  /// cannot claim a number the delete did not produce. Null and cleared on
-  /// exactly the terms `archivedAt` above describes, which is what keeps a
-  /// recorded `0` ("archived, withdrew nothing") distinguishable from no
-  /// record at all.
-  ///
-  /// Not "unbooked", unlike `ClassTemplate.withdrawnCount`: `StudioClass` has
-  /// no registrations to consult, so the only filter is `cancelledAt: null`
-  /// and every uncancelled future studio class the boundary reaches is
-  /// withdrawn. An already-cancelled one survives — NOT because it is an
-  /// income record, which it is not: the sole `studioClass.findMany` in
-  /// `settings/reporting/page.tsx` queries with `cancelledAt: null` and
-  /// excludes it from earnings and from the month rollup outright. It survives
-  /// because it holds `(templateId, date)`, and a date the teacher cancelled
-  /// deliberately must not be refilled on the next resume. Corrected under
-  /// issue 279, which inherited the wrong reason from this sentence.
-  ///
-  /// What is still scheduled is deliberately not stored beside it. The archive
-  /// PATCH returns a `remaining` count once, for the confirmation message
-  /// shown right after the click; nothing persists it and no page recomputes
-  /// it on load. Only the deletion is unrecoverable, so only the deletion is
-  /// recorded — and a frozen copy would go stale the moment a teacher cancels
-  /// one of the survivors.
-  withdrawnCount  Int?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  teacher       Teacher       @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  scheduleRule  ScheduleRule  @relation(fields: [scheduleRuleId, kind], references: [id, kind], onDelete: Cascade)
   studioClasses StudioClass[]
 }
 
@@ -566,7 +447,16 @@ model ScheduleRule {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  teacher             Teacher                @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  // Array, not `ClassTemplate?`: Prisma requires a `@@unique` matching the
+  // exact [scheduleRuleId, kind] field pair to model a to-one back-relation,
+  // and the DB constraint the migration installs is `UNIQUE (scheduleRuleId)`
+  // alone (Prisma's own naming convention for `scheduleRuleId String @unique`)
+  // — adding a second, redundant composite unique index just to satisfy the
+  // relation shape has no DB reason to exist. Runtime cardinality is still
+  // 0-or-1, enforced by that single-column constraint.
+  classTemplate       ClassTemplate[]
+  studioClassTemplate StudioClassTemplate[]
 
   @@unique([id, kind])
   @@index([teacherId, dayOfWeek])
