@@ -1829,6 +1829,33 @@ further out than `TeacherRoom`, whose `ClassTemplate_teacherRoomId_fkey` is
 hard-deletes, so no production path changes — but any teardown or future hard
 delete must remove the rules first.
 
+- [ ] **Step 3a: two `schema.prisma` model docblocks this branch falsifies — and three that look identical and must NOT be touched**
+
+Five model docblocks in `prisma/schema.prisma` describe constraints Prisma
+cannot show. Four of them say, word for word, *"Since #296 it also carries TWO
+TRIGGERS, invisible for the same reason."* Measured 2026-08-25:
+
+| Docblock | Model | Names | This branch |
+|---|---|---|---|
+| `:263` | `Room` | two partial unique indexes (#196) | untouched |
+| `:316` | `ClassTemplate` | `ClassTemplate_teacher_slot_unique` + two triggers | **falsified — both go** |
+| `:390` | `Class` | `Class_teacher_slot_unique` + two triggers | untouched |
+| `:462` | `StudioClassTemplate` | `StudioClassTemplate_teacher_slot_unique` + two triggers | **falsified — both go** |
+| `:576` | `StudioClass` | `StudioClass_teacher_slot_unique` + two triggers | untouched |
+
+Only the two template models change. The three survivors are the entry layer,
+whose four triggers this branch keeps — **editing them would be the mirror-image
+error**, correcting a claim that is still true.
+
+For the two that change: after Task 2 those models carry no slot index and no
+trigger at all. What they *do* carry that Prisma cannot express is the new
+`CHECK ("kind" = 'regular')` / `CHECK ("kind" = 'studio')`, which is what makes
+the composite foreign key mean "regular children hang off regular rules". Say
+that, and **do not replace one prose count with a smaller one** — name the
+constraint, as `ScheduleRule`'s own docblock now does after Task 1's review.
+
+Verify line numbers before editing; Task 1 already moved this file.
+
 - [ ] **Step 3b: `src/lib/cross-family-conflict.ts` — a prose count this branch falsifies**
 
 Its docblock states:
