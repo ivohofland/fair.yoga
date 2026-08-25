@@ -1180,6 +1180,51 @@ the one part of Task 3 that is not a re-point, and it was added to this plan
 mid-execution precisely because the original text called the whole task
 mechanical.
 
+- [ ] **Step 4c: Re-point the two generator claims' SQL — the read the compiler cannot see**
+
+`claimTemplateForGeneration` (`class-generator.ts`) and
+`claimStudioTemplateForGeneration` (`studio-class-generator.ts`) each hold a raw
+statement whose predicate reads two columns that left the child in Task 2:
+
+```sql
+SELECT "id" FROM "ClassTemplate"
+ WHERE "id" = $1 AND "isActive" = true AND "isArchived" = false
+ FOR UPDATE
+```
+
+It is a template literal, so `tsc` says nothing and it fails at runtime with
+`42703 column "isActive" does not exist`. **Eleven files call these two
+functions**, so leaving them broken floods this task's exit criterion with
+failures that have nothing to do with re-pointing:
+
+```bash
+grep -rn "claimTemplateForGeneration\|claimStudioTemplateForGeneration" src/ \
+  | awk -F: '{print $1}' | sort -u
+```
+
+Re-point the predicate through the rule, and lock the child only:
+
+```sql
+SELECT ct."id" FROM "ClassTemplate" ct
+  JOIN "ScheduleRule" sr ON sr."id" = ct."scheduleRuleId"
+ WHERE ct."id" = $1
+   AND sr."isActive" = true
+   AND sr."isArchived" = false
+ FOR UPDATE OF ct
+```
+
+**`FOR UPDATE OF ct`, never a bare `FOR UPDATE`** on a joined query — a bare one
+locks both relations and silently introduces the cross-table ordering question
+Task 3c exists to avoid. `docs/lock-order.md:249` states the same rule for the
+`Class` join.
+
+**This is the read half only. The lock CONVENTION is Task 3c** — the six write
+paths that must take the child's lock before writing the rule, the NOWAIT probe
+tests, the mutations and `docs/lock-order.md`. Between this step and that task
+the claim locks the child while the archive does not, so the two do not
+serialize. That gap is deliberate and measured: Task 3c Step 2 writes the test
+that observes it failing, which is the only chance to see it.
+
 - [ ] **Step 5: Run the typecheck to green**
 
 ```bash
@@ -1358,11 +1403,22 @@ plainly that the lock became explicit because the columns it guards moved, not
 that a lock was added for a new reason. State what is true now; the
 before-and-after goes in the PR body (CLAUDE.md, *Comment Discipline*).
 
-- [ ] **Step 4: Re-point both claims**
+- [ ] **Step 4: Verify Task 3 re-pointed both claims, and that it locked only the child**
 
-Join the rule for the predicate, `FOR UPDATE OF ct`. This is where Task 3's
-census would otherwise have left a runtime `42703` — these two statements are
-raw SQL and `tsc` cannot see them.
+Task 3 Step 4c already re-pointed the two claim statements, because eleven
+files call them and leaving them broken would have swamped that task's exit
+criterion. Confirm here rather than redo:
+
+- each claim joins `ScheduleRule` for the `isActive`/`isArchived` predicate
+- each ends `FOR UPDATE OF ct` — **a bare `FOR UPDATE` is a defect**, because on
+  a joined query it locks both relations and reintroduces the cross-table
+  ordering this task's decision exists to avoid
+- the `SELECT` list still returns only the child's `id`, so the caller's
+  `findUniqueOrThrow` still runs under the lock rather than beside it
+
+If any of those is wrong, fix it here and say so — a bare `FOR UPDATE` would
+make Step 2's tests pass for the wrong reason, and no test in this file can
+tell the difference.
 
 - [ ] **Step 5: Prove each lock is load-bearing — one mutation per path**
 
