@@ -542,10 +542,9 @@ enum RuleKind {
 
 /// The calendar identity shared by the two template families (#298).
 ///
-/// Two invisible constraints live on this table and cannot be expressed here:
-/// an `EXCLUDE USING gist` over a generated `slot` column, and
-/// `UNIQUE (id, kind)`, the parent key for each child's composite foreign key.
-/// Both are hand-authored; `docs/lock-order.md` carries the argument.
+/// Carries an invisible constraint this file cannot express: an `EXCLUDE
+/// USING gist` over a generated `slot` column, hand-authored in the
+/// migration. `docs/lock-order.md` carries the argument.
 model ScheduleRule {
   id              String    @id @default(uuid())
   teacherId       String
@@ -554,6 +553,12 @@ model ScheduleRule {
   dayOfWeek       Int
   startTime       DateTime  @db.Time
   durationMinutes Int
+
+  /// The generated occupancy range. Declared so `prisma migrate dev` does not
+  /// read it as drift; `Unsupported` keeps it out of the generated client, so
+  /// it can be neither read nor written from TypeScript.
+  slot            Unsupported("int4range")? @default(dbgenerated())
+
   isActive        Boolean   @default(true)
   isArchived      Boolean   @default(false)
   archivedAt      DateTime?

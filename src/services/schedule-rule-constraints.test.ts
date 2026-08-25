@@ -75,12 +75,11 @@ async function expectSlotRefusal(fn: () => Promise<unknown>): Promise<void> {
  * the exclusion constraint absent these would still pass on a sequential
  * retry and fail only under a race, which is the case that motivated #196.
  *
- * The assertions here name the exclusion constraint by NAME
- * (`isExclusionConflictOn`), unlike `slot-constraints.test.ts`'s sibling
- * suite, which names `meta.target` — the column list. A 23P01 exclusion
- * violation carries no `meta.target`: `code` and `meta` are both `undefined`
- * on the Prisma error (`src/lib/exclusion-conflict.ts`), which is the whole
- * reason that matcher exists rather than reusing `isUniqueConflictOn`.
+ * The assertions name the exclusion constraint by NAME (`isExclusionConflictOn`)
+ * rather than by `meta.target`, because a 23P01 exclusion violation carries no
+ * `meta.target`: `code` and `meta` are both `undefined` on the Prisma error
+ * (`src/lib/exclusion-conflict.ts`), which is the whole reason that matcher
+ * exists rather than reusing `isUniqueConflictOn`.
  */
 describe('ScheduleRule slot exclusion', () => {
   it('refuses an overlapping rule in the other family', async () => {
