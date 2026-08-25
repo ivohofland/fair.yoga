@@ -140,9 +140,11 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
 
       if (mode === 'create') {
         // #40. A second identical POST to /api/studio-class-templates now
-        // collides with `StudioClassTemplate_teacher_slot_unique`
-        // ((teacherId, dayOfWeek, startTime) WHERE isArchived = false, #196)
-        // and comes back as a 409 DUPLICATE_STUDIO_TEMPLATE_SLOT
+        // collides with `ScheduleRule_teacher_slot_excl` (issue 298) — an
+        // `EXCLUDE USING gist` on (teacherId, dayOfWeek, slot) WHERE
+        // isArchived = false, the constraint that replaced
+        // `StudioClassTemplate_teacher_slot_unique` — and comes back as a
+        // 409 DUPLICATE_STUDIO_TEMPLATE_SLOT
         // (`api/studio-class-templates/route.ts`) rather than a second
         // template and a second generated window. That backstop is
         // server-side and after the round trip, though — it does not stop

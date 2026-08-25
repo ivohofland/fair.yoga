@@ -309,10 +309,12 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
 
       if (mode === 'create') {
         // #40. A second identical POST to /api/class-templates now collides
-        // with `ClassTemplate_teacher_slot_unique` ((teacherId, dayOfWeek,
-        // startTime) WHERE isArchived = false, #196) and comes back as a 409
-        // DUPLICATE_TEMPLATE_SLOT (`api/class-templates/route.ts`) rather
-        // than a second template. That backstop is server-side and after the
+        // with `ScheduleRule_teacher_slot_excl` (issue 298) — an `EXCLUDE
+        // USING gist` on (teacherId, dayOfWeek, slot) WHERE isArchived =
+        // false, the constraint that replaced `ClassTemplate_teacher_slot_
+        // unique` — and comes back as a 409 DUPLICATE_TEMPLATE_SLOT
+        // (`api/class-templates/route.ts`) rather than a second template.
+        // That backstop is server-side and after the
         // round trip, though — it does not stop the second request from
         // being sent, or turn its failure into anything gentler than an
         // error banner. The push below normally unmounts this form; when it

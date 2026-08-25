@@ -549,20 +549,33 @@ The reason is structural, not luck. Two template-driven writers can only
 collide on `(teacherId, date, startTime)` if their templates agree on
 `(teacherId, dayOfWeek, startTime)` — a template generates on one weekday at
 one time, so same slot means same weekday and same time — and that is the key
-`ClassTemplate_teacher_slot_unique` forbids. The archived-template hole in that
-partial index does not open it: archiving deletes every future `draft`/`open`
-instance (`scheduledWhere`, `gt: today`), and an archived template writes no
-`Class` row afterwards by any route — generation skips it, and since #194 an
-edit writes no `Class` row for any template at all. (This sentence used to
-reach the same conclusion through the sync's own `mutable` filter dropping
-what the delete spared; the mechanism went, the conclusion got shorter.)
+`ScheduleRule_teacher_slot_excl` forbids now, where `ClassTemplate_teacher_slot_unique`
+forbade it when this was measured: #298 replaced one with the other, and the
+argument did not change, only which object carries it. The archived-rule hole
+in that constraint does not open it: archiving deletes every future
+`draft`/`open` instance (`scheduledWhere`, `gt: today`), and an archived rule
+writes no `Class` row afterwards by any route — generation skips it, and
+since #194 an edit writes no `Class` row for any template at all. (This
+sentence used to reach the same conclusion through the sync's own `mutable`
+filter dropping what the delete spared; the mechanism went, the conclusion
+got shorter.)
 
-So one of the six new indexes is what keeps another of the six from being a
-live deadlock. **Nothing in the code says so, and nothing enforces it** — which
-is the same condition as the rest of this document. If
-`ClassTemplate_teacher_slot_unique` is ever dropped, narrowed, or given a
-predicate that lets two live templates share a weekday and time, the pairing
-above becomes live and it will not announce itself.
+So one of the six new indexes was what kept another of the six from being a
+live deadlock — **and that sentence has since been tested, not just left
+standing.** `ClassTemplate_teacher_slot_unique` WAS dropped, by #298, exactly
+the antecedent an earlier version of this paragraph warned about. The
+consequence it predicted did not follow: `ScheduleRule_teacher_slot_excl`
+inherited the same forbidding role — a stronger one, in fact, RANGE rather
+than exact-start — so no two live rules of either kind can share an
+overlapping weekday-and-time window for one teacher today either. **Nothing
+in the code says so, and nothing enforces it** — which is the same condition
+as the rest of this document, now applying to the new object: if
+`ScheduleRule_teacher_slot_excl` is ever dropped, narrowed, or given a
+predicate that lets two live rules share an overlapping window, the exposure
+this section describes reopens — for whichever pairing of template-driven
+writers is still live at that point, not necessarily the sync-vs-generator
+one below, which stays dead on its own terms regardless (#194 deleted the
+sync side).
 
 **#196 (PR #208) made this legible, not impossible.** The premise it started
 from — that `classifyApiError` had no branch for `40P01` and let this reach
@@ -628,8 +641,9 @@ either.
 **So the thing to check is a second call site, not a reordering.** Add one
 inside a transaction that already holds a `Class` row lock — a notification
 sweep, a cancellation path — and the inversion is immediate and will not
-announce itself, exactly like `ClassTemplate_teacher_slot_unique` quietly
-holding another pairing shut in "The slot key is a wait edge" above.
+announce itself, exactly like `ScheduleRule_teacher_slot_excl` (formerly
+`ClassTemplate_teacher_slot_unique`) quietly holding another pairing shut in
+"The slot key is a wait edge" above.
 
 **Not bounded by `LOCK_TIMEOUT_SQL`, and the wait really is unbounded in wall
 clock. This paragraph has now been wrong twice, in opposite directions, and the
@@ -788,11 +802,46 @@ trade `room-archive.ts:146-147` refused.
 
 ## The cross-family slot guard reads, and does not lock (#296)
 
-Eight triggers — two each on `Class`, `StudioClass`, `ClassTemplate` and
-`StudioClassTemplate` — enforce that one teacher holds at most one live row per
-slot ACROSS the two class families. The four SLOT partial unique indexes in
-`20260811202634` each enforce it within ONE table (that migration declares six;
-the other two are the `Room` identity pair), and nothing spanned them.
+One teacher holds at most one live row per slot ACROSS the two class
+families. Since #298 the two halves of that invariant are different KINDS of
+mechanism, not just different counts of the same kind:
+
+- **`Class`/`StudioClass`, unchanged.** Four triggers — this branch does not
+  touch the entry layer: `class_cross_family_slot_insert_guard`,
+  `class_cross_family_slot_update_guard`,
+  `studio_class_cross_family_slot_insert_guard`,
+  `studio_class_cross_family_slot_update_guard`.
+- **`ClassTemplate`/`StudioClassTemplate`, now index-backed.**
+  `ScheduleRule_teacher_slot_excl`, one `EXCLUDE USING gist` constraint on
+  `ScheduleRule`, partial on `isArchived = false`. RANGE, not exact-start: it
+  rejects any two live rules of either kind whose
+  `[startTime, startTime+durationMinutes)` windows overlap for one teacher on
+  one weekday, where the trigger it replaced required an identical start time.
+
+Named rather than counted, on purpose — a bare count is exactly what rotted
+here (this was eight triggers, two each on all four tables, until #298 folded
+the template half into the constraint above). Both halves are re-derivable
+rather than remembered: the trigger roster is
+
+    grep -rn "cross_family_slot" prisma/migrations/
+
+(a hit inside `20260825065109_schedule_rule_backfill` is the migration that
+DROPS the four template triggers, not a live one — see the pg_depend note
+below, right after this section's migration-comment history), and
+the exclusion constraint is `\d+ "ScheduleRule"` or its own `ADD CONSTRAINT`.
+
+The four SLOT partial unique indexes in `20260811202634` each enforced
+within-family exclusivity for one table (that migration declared six; the
+other two are the `Room` identity pair), and nothing spanned them — which is
+why the cross-family invariant needed triggers at all, historically, on every
+table it touched. Two of those four
+(`ClassTemplate_teacher_slot_unique`, `StudioClassTemplate_teacher_slot_unique`)
+are gone now too, folded into the same `ScheduleRule_teacher_slot_excl` that
+replaced the template triggers — a teacher's within-family and cross-family
+template exclusivity are one constraint now, not two mechanisms layered on
+each other. `Class_teacher_slot_unique` and `StudioClass_teacher_slot_unique`
+are untouched; the entry layer's within-family and cross-family checks are
+still two separate mechanisms (index, then trigger), exactly as before.
 
 That clarification lives here rather than beside the indexes it describes, and
 the reason is worth one line: it was briefly added as a comment inside
@@ -839,9 +888,10 @@ on 2026-08-25, once the migration above had run. A reader who finds the
 migration comment first should believe this paragraph, not that one: the
 triggers it counted dependencies for no longer exist, on either table.
 
-Each `BEFORE INSERT`/`BEFORE UPDATE` function runs a plain
-`SELECT … LIMIT 1` against the SIBLING table and raises `YG001` if it finds a
-live row. **No source line in `src/` issues that `SELECT`**, which is the
+Each surviving `BEFORE INSERT`/`BEFORE UPDATE` function — the
+`Class`/`StudioClass` half only, now — runs a plain `SELECT … LIMIT 1` against
+the SIBLING table and raises `YG001` if it finds a live row. **No source line
+in `src/` issues that `SELECT`**, which is the
 property the #103 section above is about — so the check that finds it is a grep
 of `prisma/migrations/`, not of `src/`:
 
@@ -858,7 +908,7 @@ produce a `40P01`. The difference is one clause.
 and not only a performance one.** They fire only when the row is live AND the
 slot moved or the row became live. An unrelated update — `spotBroadcastAt`, the
 completion totals, `settingsLocked` — pays for no sibling read at all, so the
-overwhelming majority of writes to these four tables touch the sibling table
+overwhelming majority of writes to these two tables touch the sibling table
 zero times.
 
 ### What it costs: a residual race, measured
@@ -927,7 +977,7 @@ and **ten endpoints across eight route files** answer 409:
 
 | How it reaches the 409 | Endpoints |
 |---|---|
-| a `catch` beside their own `isUniqueConflictOn` branch | `POST /api/classes`, `POST /api/studio-classes`, `PUT /api/studio-classes/[id]`, `POST /api/class-templates`, `POST /api/studio-class-templates` |
+| a `catch` beside their own within-family-conflict branch — `isUniqueConflictOn` for the three entry-level writes, `isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')` for the two template `POST`s since #298 replaced their slot index | `POST /api/classes`, `POST /api/studio-classes`, `PUT /api/studio-classes/[id]`, `POST /api/class-templates`, `POST /api/studio-class-templates` |
 | a `cross_family_slot_conflict` reason their service returns, because they issue no write of their own | `PUT /api/classes/[id]`, `PUT /api/class-templates/[id]`, `PUT /api/studio-class-templates/[id]`, `PATCH /api/class-templates/[id]?state=unarchived`, `PATCH /api/studio-class-templates/[id]?state=unarchived` |
 
 Five and five. An earlier version of this paragraph said "all eight routes …
@@ -938,19 +988,29 @@ than counted", which is the right instinct and was defeated by naming an
 incomplete set — so the table above is the naming.
 
 **The grep does not agree with the table, and should not.**
-`grep -rn "CROSS_FAMILY_" src/app/api/ | wc -l` returns **12**: ten endpoints,
-of which the two template `POST`s carry TWO branches each. Those two are the
-only endpoints where a cross-family `YG001` can arrive from two different
-triggers meaning two different things — the template insert's (which reads the
-sibling TEMPLATE table) and generation's (which reads the sibling INSTANCE
-table, since generation shares the transaction). They answer
-`CROSS_FAMILY_*_TEMPLATE_SLOT` and `CROSS_FAMILY_*_SLOT` respectively, chosen
-by a `conflictLevel` flag set on the failure path. Answering both with the
-template sentence would send a teacher hunting for a recurring studio class
-that does not exist, which is what they did until review caught it.
+`grep -rn "CROSS_FAMILY_" src/app/api/ | wc -l` returned 12 before #298 and
+returns **11** now (re-measured 2026-08-25): ten endpoints, of which the two
+template `POST`s still carry TWO branches each — that count did not move —
+but **only one of the two is a trigger any more.** Before #298, both were
+`YG001` from two different triggers reading two different sibling tables (the
+template's own insert, and generation's), disambiguated by a `conflict.level`
+flag on a shared failure object. Since #298 the template insert's own slot
+conflict — either family, because `ScheduleRule_teacher_slot_excl` spans both
+kinds — is `23P01` from that exclusion constraint, caught by
+`isExclusionConflictOn` earlier in the same `catch` and never reaching the
+`YG001` branch below it. Only generation's `Class`/`StudioClass` insert can
+still raise a `YG001` there. With one of the two raisers gone, the flag that
+told them apart has nothing left to disambiguate and is gone with it —
+`src/app/api/class-templates/cross-family-conflict-level.test.ts` is the
+record of that removal, and the reason its own mocked case survives: the
+generator's race is still real and still untested anywhere else. The two
+branches still answer `CROSS_FAMILY_*_TEMPLATE_SLOT` and `CROSS_FAMILY_*_SLOT`
+respectively — chosen now by WHICH matcher catches the error, not by a flag
+read off it.
 
-So: 12 branches, 10 endpoints, 8 files. Three numbers, none of them derivable
-from either of the others, which is why all three are written down.
+So: 11 branches, 10 endpoints, 8 files, as of the measurement above. Three
+numbers, none of them derivable from either of the others, which is why all
+three are written down rather than assumed to have held.
 
 That is the same division of labour `countRoomDeleteBlockers` has with the
 RESTRICT trigger one section up: the guard is the backstop, the pre-check is
