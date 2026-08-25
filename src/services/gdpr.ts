@@ -1155,6 +1155,44 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         }
       }
 
+      // Child rows locked first, ordered by id — mirrors `lockClassRowsOrdered`'s
+      // discipline (`db-locks.ts`) for the same reason: two transactions
+      // locking an overlapping set of `ClassTemplate` rows in different
+      // orders is an AB-BA cycle exactly like the `Class` case that helper
+      // exists for. This is the fix for a gap Task 3 left `known-open` here:
+      // before issue 298 this bulk write targeted `ClassTemplate` directly,
+      // and a bare `updateMany` locks the rows it matches, so it already
+      // serialised against `claimTemplateForGeneration`'s `FOR UPDATE OF ct`
+      // (`class-generator.ts`) for free. `isActive`/`isArchived` moved to
+      // `ScheduleRule`, so that free lock stopped covering the child.
+      //
+      // Not a theoretical gap — measured. `ACTIVE_TEMPLATE_WHERE`
+      // (`lib/template-selection.ts`), which the sweep's own `findMany`
+      // selects candidates with, carries no `teacher.deletedAt` filter at
+      // all: it tests only `scheduleRule.isActive`/`isArchived`. So an
+      // hourly sweep already mid-loop for this teacher when this transaction
+      // opens is not merely possible in theory, it is a candidate set the
+      // sweep's own selection query cannot distinguish from any other live
+      // teacher's. Restoring the child lock is what makes the sweep's claim
+      // wait here the same way it waits on `archiveOrUnarchiveTemplate`.
+      //
+      // `setLockTimeout` not repeated here — already in effect for the rest
+      // of this transaction from the `Class` pre-lock earlier in it
+      // (`db-locks.ts`, "`SET LOCAL` ... governs the whole rest of the
+      // transaction").
+      await tx.$queryRaw`
+        SELECT ct."id" FROM "ClassTemplate" ct
+          JOIN "ScheduleRule" sr ON sr."id" = ct."scheduleRuleId"
+        WHERE sr."teacherId" = ${teacherId}
+        ORDER BY ct."id"
+        FOR UPDATE OF ct`;
+      await tx.$queryRaw`
+        SELECT sct."id" FROM "StudioClassTemplate" sct
+          JOIN "ScheduleRule" sr ON sr."id" = sct."scheduleRuleId"
+        WHERE sr."teacherId" = ${teacherId}
+        ORDER BY sct."id"
+        FOR UPDATE OF sct`;
+
       // `isActive`/`isArchived` live on `ScheduleRule` now (issue 298), kept
       // as two statements — one per `kind` — mirroring the pre-split shape
       // rather than collapsing to one `updateMany` over both families.
@@ -1258,15 +1296,15 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       });
       if (erased.count === 0) throw new AlreadyErasedError('teacher');
     },
-    // `isActive`/`isArchived` live on `ScheduleRule` now (issue 298), so the
-    // two `updateMany`s above write that row rather than the child
-    // `claimTemplateForGeneration` / `claimStudioTemplateForGeneration`
-    // (class-generator.ts, studio-class-generator.ts) hold `FOR UPDATE` on
-    // for the duration of their own per-template transactions (#95). Two
-    // different tables, no conflict between them: this erasure no longer
-    // serializes against a sweep or a resume in progress. Known-open, not
-    // closed here — the same gap `archiveOrUnarchiveTemplate`'s CAS carries
-    // (`class-template-lifecycle.ts`) and its studio twin.
+    // `isActive`/`isArchived` live on `ScheduleRule` now (issue 298); the
+    // ordered `FOR UPDATE OF ct`/`FOR UPDATE OF sct` pre-locks above the two
+    // `updateMany`s take the same child row `claimTemplateForGeneration` /
+    // `claimStudioTemplateForGeneration` (class-generator.ts,
+    // studio-class-generator.ts) hold `FOR UPDATE` on for the duration of
+    // their own per-template transactions (#95), so this erasure serialises
+    // against a sweep or a resume in progress the same way
+    // `archiveOrUnarchiveTemplate`'s CAS does now (`class-template-lifecycle.ts`
+    // and its studio twin).
     //
     // This site needs the matching 10s budget more than those four
     // do, not just for symmetry: by the time this transaction opens,

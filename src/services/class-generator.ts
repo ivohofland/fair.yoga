@@ -551,14 +551,17 @@ function logSkippedSlots(templateId: string, teacherId: string, skipped: Skipped
 /**
  * Claims a template for generation, or reports it is no longer eligible.
  *
- * `FOR UPDATE` is the point, not the `SELECT`. It locks the same row
- * `archiveOrUnarchiveTemplate`'s compare-and-swap locks, and the two modes
- * conflict — that `updateMany` touches no key column, so Postgres grants it
- * `FOR NO KEY UPDATE`, which this blocks and which blocks this — so the sweep
- * and an archive serialise instead of interleaving:
+ * `FOR UPDATE OF ct` is the point, not the `SELECT`. It locks the same
+ * `ClassTemplate` row `archiveOrUnarchiveTemplate`, `pauseOrResumeTemplate`
+ * and `updateClassTemplate` each take as their own first statement (issue
+ * 298 / #315, `docs/lock-order.md`, "The child row is the lock node for the
+ * template families") — every one of them a plain `SELECT … FOR UPDATE`, the
+ * same exclusive mode this statement takes, so the sweep and any of the three
+ * serialise on that row rather than interleaving:
  *
- *   - claim first  → the archive's UPDATE waits; we generate and commit; the
- *                    archive's own deleteMany then withdraws what we made —
+ *   - claim first  → the other statement's own `FOR UPDATE` waits; we
+ *                    generate and commit; the archive's own `deleteMany` (if
+ *                    it was an archive waiting) then withdraws what we made —
  *                    all but a class dated today. Its boundary is `gt: today`
  *                    (`scheduledWhere` in `class-template-lifecycle.ts`), the
  *                    same deliberate spare-today carve-out applied everywhere
@@ -576,12 +579,47 @@ function logSkippedSlots(templateId: string, teacherId: string, skipped: Skipped
  *                    `classStartInstant` "start is still ahead" filter this
  *                    file's `generateInstancesForTemplate` does, so neither
  *                    family generates an already-started today's instance.
- *   - archive first → we wait, then read `isArchived: true` and skip.
+ *   - archive first → we wait on the child row, then re-verify eligibility
+ *                    against a FRESH read once we hold it (see below) and
+ *                    skip.
  *
  * A plain re-read would not do this. Under READ COMMITTED each statement takes
  * a fresh snapshot, so an archive committing between the re-read and the
  * `create` is invisible to the re-read and still lost. Do not "simplify" the
  * locking `SELECT` above into a plain `findUnique`.
+ *
+ * The `sr."isActive"`/`sr."isArchived"` predicate in that `SELECT` is a fast
+ * path, not the guarantee, and the distinction is load-bearing rather than
+ * pedantic. `FOR UPDATE OF ct` locks only `ct` — deliberately, per the
+ * decision linked above, which rejected locking `sr` too — so when this
+ * statement itself has to WAIT for that lock, Postgres's WHERE clause was
+ * already evaluated against the snapshot taken when the statement STARTED,
+ * before the wait. On unblock, `EvalPlanQual` re-verifies the columns of the
+ * row actually being locked (`ct`) if THAT row changed; it does not re-fetch
+ * `sr` on `ct`'s account, because `sr` was never part of the lock set. So a
+ * `ct` row that was eligible when this statement started, and still IS `ct`
+ * itself unchanged, can come back as a "match" via `rows.length === 1` even
+ * though the archive that made it wait committed `sr."isArchived" = true`
+ * while this statement was parked. Measured directly, isolated from Prisma:
+ * two throwaway tables shaped like `ClassTemplate`/`ScheduleRule`, one session
+ * holding the child row `FOR UPDATE` and updating (but never committing) the
+ * parent's flag, a second session's joined `FOR UPDATE OF` blocking on the
+ * first and then unblocking on commit — the second session's join predicate
+ * still read the PRE-commit flag, in six of six runs, and stayed stale even
+ * when the first session also issued a real `UPDATE` on the child row itself
+ * (to force `EvalPlanQual`) rather than only locking it. `rows.length === 1`
+ * is therefore necessary but not sufficient for eligibility whenever this
+ * statement actually waited — which is exactly the interleaving above one
+ * finds itself needing "archive first" to work.
+ *
+ * `findUniqueOrThrow` below is what closes it, because it is a SEPARATE
+ * statement issued only after this one returns — i.e., only after the lock is
+ * actually held, wait or no wait — and a separate statement takes its own
+ * fresh READ COMMITTED snapshot regardless of what the statement before it
+ * waited on. Its own `scheduleRule.isActive`/`isArchived` are re-checked
+ * against THAT snapshot before this function trusts the row, which is what
+ * "archive first → skip" above actually depends on, not the raw statement's
+ * own `WHERE`.
  *
  * Must be called with a transaction client, never a bare `PrismaClient` —
  * `Prisma.TransactionClient` is structurally just `Omit<PrismaClient,
@@ -607,10 +645,11 @@ function logSkippedSlots(templateId: string, teacherId: string, skipped: Skipped
  *
  * Returns the locked row rather than a boolean, so a caller cannot generate
  * from the snapshot its outer `findMany` read minutes earlier (#102). The raw
- * statement above still does the locking and the eligibility re-check; the
- * Prisma read below is what makes the values authoritative, and it is safe
- * precisely because the lock is still held when it runs. Two statements rather
- * than one `SELECT *` because `roomCost`, `minRate` and `targetRate` are
+ * statement above still does the locking and a first-pass eligibility filter;
+ * the Prisma read below is what makes both the VALUES and the eligibility
+ * VERDICT authoritative, for the reason above — and it is safe precisely
+ * because the lock is still held when it runs. Two statements rather than one
+ * `SELECT *` because `roomCost`, `minRate` and `targetRate` are
  * `DECIMAL(10,2)` and a raw row does not hand back Prisma's `Decimal`.
  */
 export async function claimTemplateForGeneration(
@@ -631,14 +670,22 @@ export async function claimTemplateForGeneration(
     FOR UPDATE OF ct`;
   if (rows.length !== 1) return null;
 
-  // Under the lock taken above, so nothing can change this row before we
-  // commit. `OrThrow` because the row provably exists — the FOR UPDATE just
-  // matched it — and an impossible `| null` would force every caller to
-  // pretend to handle it.
-  return tx.classTemplate.findUniqueOrThrow({
+  // Under the lock taken above, so nothing can change `ct` itself before we
+  // commit. `OrThrow` because the child row provably exists — the FOR UPDATE
+  // just matched it, and nothing in `src/` deletes a `ClassTemplate` — so an
+  // impossible `| null` would force every caller to pretend to handle it.
+  const fresh = await tx.classTemplate.findUniqueOrThrow({
     where: { id: templateId },
     include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
   });
+
+  // The authoritative eligibility check — see this function's docblock for
+  // why the raw statement's own `WHERE` cannot be trusted alone when it had
+  // to wait. This read is a fresh statement taken under the lock, so it sees
+  // whatever the row that made us wait actually committed.
+  if (!fresh.scheduleRule.isActive || fresh.scheduleRule.isArchived) return null;
+
+  return fresh;
 }
 
 /**

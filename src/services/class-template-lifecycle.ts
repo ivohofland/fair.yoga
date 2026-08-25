@@ -756,11 +756,13 @@ async function probeFirstEffectiveWeek(
  * Takes `teacherId` rather than a session: this is the ownership check, and
  * keeping it a plain argument is what lets the function be tested without HTTP.
  *
- * The `$transaction` now wraps a single `update`, and survives for one
- * reason: `SET LOCAL lock_timeout` is a no-op outside a transaction
- * (`db-locks.ts`), so deleting the wrapper would silently delete the #100/#209
- * lock bound with it. See the budget comment at the call for the same warning
- * where someone trimming this would read it. The `catch` sits OUTSIDE the
+ * The `$transaction` wraps an explicit child-row lock and up to two
+ * `update`s — one on this row, one on `ScheduleRule` when the PUT touches a
+ * calendar field — and survives for a reason beyond scoping `SET LOCAL
+ * lock_timeout` (`db-locks.ts`, still true and still load-bearing: deleting
+ * the wrapper would silently delete the #100/#209 lock bound with it). See
+ * the budget comment at the call for the same warning where someone trimming
+ * this would read it. The `catch` sits OUTSIDE the
  * `$transaction` call, the same shape `archiveOrUnarchiveTemplate` and `POST
  * /api/class-templates` already use: a P2002 raised inside Postgres aborts
  * the transaction, so there is nothing to catch from within, and the whole
@@ -891,7 +893,7 @@ export async function updateClassTemplate(
     const written = await db.$transaction(
       async (tx) => {
         // First statement, deliberately — and now the only statement it has
-        // to bound, the two `update`s immediately below it. A concurrent
+        // to bound, the up-to-three statements below it. A concurrent
         // generation claim, archive, or pause/resume can hold the child row
         // locked for the duration of its own transaction.
         //
@@ -905,6 +907,18 @@ export async function updateClassTemplate(
         // two was load-bearing. #194 deleted that function, so there is one
         // `setLockTimeout` on this path and no ambiguity left to resolve.
         await setLockTimeout(tx);
+
+        // The child's row lock, explicit rather than incidental. Every other
+        // caller in this file — `pauseOrResumeTemplate`,
+        // `archiveOrUnarchiveTemplate` — takes this same lock as their own
+        // first statement, so this one has to as well: `classType`,
+        // `dayOfWeek`, `startTime` and `durationMinutes` write `ScheduleRule`
+        // below, and a PUT that touches only those four would otherwise reach
+        // that write without ever touching `ClassTemplate` — an edit with
+        // nothing for the CAS in the sibling functions to wait on. See
+        // `docs/lock-order.md`, "The child row is the lock node for the
+        // template families" for the decision this implements.
+        await tx.$queryRaw`SELECT "id" FROM "ClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
 
         // The wire data covers both models now (issue 298): the fields named
         // in `TeacherEditableScheduleRuleField` route to `ScheduleRule`,
@@ -1480,8 +1494,9 @@ export async function pauseOrResumeTemplate(
   try {
     result = await db.$transaction(
       async (tx): Promise<ResumeTransactionOutcome> => {
-        // Bounds every statement left in this transaction — the CAS below
-        // first among them, then the claim and generation's insert — the sweep's claim holds this row `FOR UPDATE`.
+        // Bounds every statement left in this transaction — the child lock
+        // immediately below first among them, then the CAS, then the claim
+        // and generation's insert.
         //
         // Without it the wait is bounded by NOTHING, not by the 10s budget:
         // Prisma checks that budget at statement boundaries, so it "cannot
@@ -1489,6 +1504,27 @@ export async function pauseOrResumeTemplate(
         // to start a new one" (`db-locks.ts`), which the mutation records
         // measure as a hung test rather than a 10s abort.
         await setLockTimeout(tx);
+
+        // The child's row lock, taken explicitly and first — before the CAS
+        // touches `ScheduleRule` at all. `isActive`/`isArchived` moved off
+        // `ClassTemplate` in issue 298, so a bare `updateMany` on
+        // `ScheduleRule` no longer locks anything a concurrent
+        // `claimTemplateForGeneration` (`class-generator.ts`) or
+        // `archiveOrUnarchiveTemplate`/`updateClassTemplate` waits on — those
+        // now serialise through this same statement instead. See
+        // `docs/lock-order.md`, "The child row is the lock node for the
+        // template families" for the decision this implements.
+        //
+        // Row count checked, not discarded: `ScheduleRule` carries no FK back
+        // to `ClassTemplate`, so a `ClassTemplate` deleted out from under this
+        // transaction leaves an orphaned rule row the CAS below would still
+        // match — reachable only through a test double today (nothing in
+        // `src/` deletes a `ClassTemplate`), but the CAS cannot tell that
+        // apart from a real one, so the check is made here rather than relied
+        // on to never come up.
+        const childLock = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT "id" FROM "ClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
+        if (childLock.length === 0) return { outcome: 'not_found' as const };
 
         // A compare-and-swap, not a plain `update`. The two guards at the top
         // of this function are read outside any lock and are fast paths only,
@@ -1920,6 +1956,31 @@ export async function archiveOrUnarchiveTemplate(
         // to start a new one" (`db-locks.ts`).
         await setLockTimeout(tx);
 
+        // The child's row lock, taken explicitly and first — before the CAS
+        // below touches `ScheduleRule` at all, and before the `deleteMany`
+        // further down. Before issue 298 this CAS wrote `ClassTemplate`
+        // directly and so held, as a side effect of a plain `updateMany`, the
+        // same row `claimTemplateForGeneration` (class-generator.ts) takes
+        // `FOR UPDATE` on — which is what serialised an archive against a
+        // sweep in progress (#95). `isArchived`/`isActive` moved to
+        // `ScheduleRule` with the rest of the calendar identity, so that CAS
+        // no longer touches `ClassTemplate` at all; this statement is what
+        // takes its place. See `docs/lock-order.md`, "The child row is the
+        // lock node for the template families" for the decision this
+        // implements, and why the lock sits on the child rather than on
+        // `ScheduleRule` itself.
+        //
+        // Row count checked, not discarded: `ScheduleRule` carries no FK back
+        // to `ClassTemplate`, so a `ClassTemplate` deleted out from under this
+        // transaction leaves an orphaned rule row the CAS below would still
+        // match — reachable only through a test double today (nothing in
+        // `src/` deletes a `ClassTemplate`), but the CAS cannot tell that
+        // apart from a real one, so the check is made here rather than relied
+        // on to never come up.
+        const childLock = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT "id" FROM "ClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
+        if (childLock.length === 0) return { ok: false as const, reason: 'not_found' as const };
+
         // Compare-and-swap, the pattern `updateClass` already uses for #72.
         // Constraining the write to `isArchived: !archiving` makes the
         // *transition* the thing that can happen only once: two archives that
@@ -1929,18 +1990,6 @@ export async function archiveOrUnarchiveTemplate(
         // `deleteMany` produced only because the winner had already deleted
         // those classes — a durable record (#97) of a withdrawal that says it
         // withdrew nothing.
-        //
-        // Still the transaction's first statement, deliberately. Before issue
-        // 298 this CAS wrote `ClassTemplate` and so held the same row
-        // `claimTemplateForGeneration` (class-generator.ts) takes `FOR UPDATE`
-        // on, which is what serialised an archive against a sweep in progress
-        // (#95). `isArchived`/`isActive` now live on `ScheduleRule`, so this
-        // `updateMany` locks that row instead, and the claim's `FOR UPDATE OF
-        // ct` locks the child — two different tables, no conflict between
-        // them any more. Known-open, not closed here: re-establishing that
-        // serialization across the split is a separate, later change. Moving
-        // the CAS after the `deleteMany` would still withdraw classes before
-        // establishing the right to, whatever the lock story.
         //
         // The contended case resolves in Postgres, not here: the loser blocks
         // inside this statement, and when the winner commits, READ COMMITTED

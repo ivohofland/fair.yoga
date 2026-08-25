@@ -833,9 +833,13 @@ describe('generateClassInstances (DB)', () => {
         commit = resolve;
       });
 
-      // 1. Archive, but do not commit. Holds the row lock; invisible to others.
+      // 1. Archive, but do not commit. Takes the child's row lock first —
+      //    the same statement `archiveOrUnarchiveTemplate` takes as its own
+      //    first statement (issue 298 / #315) — then writes `ScheduleRule`,
+      //    invisible to others until commit.
       const archiving = prisma.$transaction(
         async (tx) => {
+          await tx.$queryRaw`SELECT "id" FROM "ClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
           await tx.scheduleRule.update({
             where: { id: templateScheduleRuleId },
             data: { isArchived: true, isActive: false },
@@ -848,7 +852,7 @@ describe('generateClassInstances (DB)', () => {
       await new Promise((r) => setTimeout(r, 100));
 
       // 2. Sweep. Its findMany reads the pre-archive row and includes the
-      //    template; its claim then blocks on the lock.
+      //    template; its claim then blocks on the child row lock above.
       let sweepSettled = false;
       const sweeping = generateClassInstances(prisma, undefined, teacherId).then((n) => {
         sweepSettled = true;
@@ -856,8 +860,8 @@ describe('generateClassInstances (DB)', () => {
       });
 
       await new Promise((r) => setTimeout(r, 300));
-      // Without FOR UPDATE the sweep sails past the claim and has already
-      // created the window by now.
+      // Without the child lock above, the sweep sails past the claim and has
+      // already created the window by now.
       expect(sweepSettled).toBe(false);
 
       // 3. Commit the archive; the claim unblocks and sees isArchived: true.
@@ -910,9 +914,13 @@ describe('generateClassInstances (DB)', () => {
         commit = resolve;
       });
 
-      // 1. Edit, uncommitted. Holds the row lock; invisible to the sweep.
+      // 1. Edit, uncommitted. Takes the child's row lock first — the same
+      //    statement `updateClassTemplate` takes as its own first statement
+      //    (issue 298 / #315) — then writes `ScheduleRule`, invisible to the
+      //    sweep until commit.
       const editing = prisma.$transaction(
         async (tx) => {
+          await tx.$queryRaw`SELECT "id" FROM "ClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
           await tx.scheduleRule.update({
             where: { id: templateScheduleRuleId },
             data: { dayOfWeek: 5, startTime: hhmmToTime('18:45') },
@@ -924,7 +932,8 @@ describe('generateClassInstances (DB)', () => {
 
       await new Promise((r) => setTimeout(r, 100));
 
-      // 2. Sweep. Its findMany reads the pre-edit row; its claim then blocks.
+      // 2. Sweep. Its findMany reads the pre-edit row; its claim then blocks
+      //    on the child row lock above.
       let sweepSettled = false;
       const sweeping = generateClassInstances(prisma, undefined, teacherId).then((n) => {
         sweepSettled = true;
@@ -2085,6 +2094,10 @@ describe('generateClassInstances (per-template isolation)', () => {
       scheduleRule: {
         teacherId, dayOfWeek: 0, startTime: hhmmToTime('09:00'),
         classType: 'Flow', durationMinutes: 60,
+        // The claim's own re-check (`claimTemplateForGeneration`'s docblock)
+        // reads these off this same fixture — omitting them would make every
+        // claim in this test come back ineligible and defeat it.
+        isActive: true, isArchived: false,
         teacher: { defaultTimezone: 'UTC' },
       },
     };

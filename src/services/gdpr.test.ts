@@ -10,6 +10,8 @@ import {
 } from './gdpr';
 import { lockClassRow, LOCK_TIMEOUT_SQL } from '@/lib/db-locks';
 import { log } from '@/lib/log';
+import { claimTemplateForGeneration } from './class-generator';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -2345,5 +2347,135 @@ describe('teacher erasure refuses to erase an already-erased profile (#196)', ()
     // teacher-half abort mislabelled `student` would send an operator reading
     // that line to the wrong transaction.
     expect((err as AlreadyErasedError).half).toBe('teacher');
+  }, 20_000);
+});
+
+/**
+ * Task 3c (#315), Step 6. `deleteTeacherAccount`'s bulk archive writes
+ * `ScheduleRule` — `isActive`/`isArchived` moved off `ClassTemplate` in issue
+ * 298 — and, before this fixed it, took no lock on `ClassTemplate` at all
+ * first. `ACTIVE_TEMPLATE_WHERE` (`lib/template-selection.ts`), which the
+ * hourly sweep's own candidate `findMany` selects with, carries no
+ * `teacher.deletedAt` filter, so a sweep already mid-claim for this teacher's
+ * template when an erasure opens is a real interleaving, not a theoretical
+ * one — measured by this test, which holds the claim's own `FOR UPDATE OF ct`
+ * and proves the erasure queues behind it exactly like
+ * `archiveOrUnarchiveTemplate`'s CAS does.
+ */
+describe('deleteTeacherAccount serialises against a claim in progress (#315)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-claim-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+  let templateId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Claim',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Erasure-vs-claim fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Claim Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234CD',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    teacherRoomId = teacherRoom.id;
+
+    const template = await prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'regular',
+            classType: 'Claim vs Erasure',
+            dayOfWeek: 2,
+            startTime: hhmmToTime('07:00'),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoomId } },
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+      },
+      select: { id: true },
+    });
+    templateId = template.id;
+  });
+
+  afterAll(async () => {
+    await prisma.class.deleteMany({ where: { templateId } });
+    await prisma.classTemplate.deleteMany({ where: { id: templateId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  it('waits for a concurrent claim to release the child row before archiving the teacher templates', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const claiming = prisma.$transaction(
+      async (tx) => {
+        expect(await claimTemplateForGeneration(tx, templateId)).not.toBeNull();
+        await held;
+      },
+      { timeout: 15_000 },
+    );
+
+    // Let the claim acquire the lock before the erasure contends for it.
+    await new Promise((r) => setTimeout(r, 100));
+
+    let erasureSettled = false;
+    const erasing = deleteTeacherAccount(prisma, teacherId).then(() => {
+      erasureSettled = true;
+    });
+
+    await new Promise((r) => setTimeout(r, 300));
+    // Without the ordered child-row pre-lock this fixed, the erasure's
+    // `ScheduleRule` write is unobstructed and this is true.
+    expect(erasureSettled).toBe(false);
+
+    release();
+    await claiming;
+    await erasing;
+
+    const rule = await prisma.scheduleRule.findUniqueOrThrow({
+      where: { id: (await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } })).scheduleRuleId },
+    });
+    expect(rule.isArchived).toBe(true);
+    expect(rule.isActive).toBe(false);
   }, 20_000);
 });

@@ -61,11 +61,14 @@ type StudioTemplateWithTimezone = Prisma.StudioClassTemplateGetPayload<{
  *
  * Returns the locked row rather than a boolean, so a caller cannot generate
  * from the snapshot its outer `findMany` read minutes earlier (#102). The raw
- * statement above still does the locking and the eligibility re-check; the
- * Prisma read below is what makes the values authoritative, and it is safe
- * precisely because the lock is still held when it runs. Two statements
- * rather than one `SELECT *` because `hourlyRate` is `DECIMAL(10,2)` and a
- * raw row does not hand back Prisma's `Decimal`.
+ * statement above still does the locking and a first-pass eligibility filter;
+ * the Prisma read below is what makes both the VALUES and the eligibility
+ * VERDICT authoritative — `claimTemplateForGeneration`'s docblock carries the
+ * measurement for why the raw statement's own `WHERE` cannot be trusted alone
+ * once it had to wait on the child lock — and it is safe precisely because
+ * the lock is still held when it runs. Two statements rather than one
+ * `SELECT *` because `hourlyRate` is `DECIMAL(10,2)` and a raw row does not
+ * hand back Prisma's `Decimal`.
  */
 export async function claimStudioTemplateForGeneration(
   tx: TransactionClientOnly,
@@ -86,10 +89,19 @@ export async function claimStudioTemplateForGeneration(
   if (rows.length !== 1) return null;
 
   // Under the lock taken above; `OrThrow` because the row provably exists.
-  return tx.studioClassTemplate.findUniqueOrThrow({
+  const fresh = await tx.studioClassTemplate.findUniqueOrThrow({
     where: { id: templateId },
     include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
   });
+
+  // The authoritative eligibility check — see `claimTemplateForGeneration`'s
+  // docblock (class-generator.ts) for why the raw statement's own `WHERE`
+  // cannot be trusted alone when it had to wait. This read is a fresh
+  // statement taken under the lock, so it sees whatever the row that made us
+  // wait actually committed.
+  if (!fresh.scheduleRule.isActive || fresh.scheduleRule.isArchived) return null;
+
+  return fresh;
 }
 
 /**

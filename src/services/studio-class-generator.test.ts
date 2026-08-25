@@ -486,8 +486,13 @@ describe('generateStudioClassInstances (DB)', () => {
         commit = resolve;
       });
 
+      // Takes the child's row lock first — the same statement
+      // `archiveOrUnarchiveStudioTemplate` takes as its own first statement
+      // (issue 298 / #315) — then writes `ScheduleRule`, invisible to others
+      // until commit.
       const archiving = prisma.$transaction(
         async (tx) => {
+          await tx.$queryRaw`SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
           await tx.scheduleRule.update({
             where: { id: templateScheduleRuleId },
             data: { isArchived: true, isActive: false },
@@ -506,6 +511,8 @@ describe('generateStudioClassInstances (DB)', () => {
       });
 
       await new Promise((r) => setTimeout(r, 300));
+      // Without the child lock above, the sweep sails past the claim and has
+      // already created the window by now.
       expect(sweepSettled).toBe(false);
 
       commit();
@@ -557,9 +564,13 @@ describe('generateStudioClassInstances (DB)', () => {
         commit = resolve;
       });
 
-      // 1. Edit, uncommitted. Holds the row lock; invisible to the sweep.
+      // 1. Edit, uncommitted. Takes the child's row lock first — the same
+      //    statement `updateStudioClassTemplate` takes as its own first
+      //    statement (issue 298 / #315) — then writes `ScheduleRule`,
+      //    invisible to the sweep until commit.
       const editing = prisma.$transaction(
         async (tx) => {
+          await tx.$queryRaw`SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
           await tx.scheduleRule.update({
             where: { id: templateScheduleRuleId },
             data: { dayOfWeek: 5, startTime: hhmmToTime('18:45') },
@@ -1175,6 +1186,12 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
         // equal to plain instant comparison so it doesn't interact with this
         // test's own fixture dates.
         teacher: { defaultTimezone: 'UTC' },
+        // The claim's own re-check (`claimTemplateForGeneration`'s docblock,
+        // class-generator.ts) reads these off this same fixture — omitting
+        // them would make every claim in this test come back ineligible and
+        // defeat it.
+        isActive: true,
+        isArchived: false,
       },
     };
   }

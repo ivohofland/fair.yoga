@@ -565,17 +565,22 @@ export async function updateStudioClassTemplate(
         // new one" (`db-locks.ts`). The mutation record measures it: removing
         // this line ends in a hung test, never a budget expiry.
         //
-        // No `SELECT … FOR UPDATE` before the write, and no re-read. The gap
-        // between this function's opening read and this write is not a
-        // correctness problem: archiving only ever *leaves*
-        // `StudioClassTemplate_teacher_slot_unique`'s partial scope
-        // (`WHERE isArchived = false`), un-archiving re-enters it and the
-        // index itself arbitrates, and every column the archive writes
-        // (`isActive`, `isArchived`, `archivedAt`, `withdrawnCount`) left this
-        // model for `ScheduleRule` (issue 298) — so disjoint from anything
-        // this write touches, more strongly than before: they are not
-        // `StudioClassTemplate` columns to collide on at all any more.
         await setLockTimeout(tx);
+
+        // The child's row lock, explicit rather than incidental. Every
+        // column the archive/pause CAS writes (`isActive`, `isArchived`,
+        // `archivedAt`, `withdrawnCount`) left this model for `ScheduleRule`
+        // (issue 298), and `classType`/`dayOfWeek`/`startTime`/
+        // `durationMinutes` below write `ScheduleRule` too — so a PUT that
+        // touches only rule fields would otherwise reach that write without
+        // ever locking `StudioClassTemplate`, and the sibling functions'
+        // CAS would have nothing to wait on. This statement is what closes
+        // that: `archiveOrUnarchiveStudioTemplate` and
+        // `pauseOrResumeStudioTemplate` take the same lock as their own
+        // first statement. See `docs/lock-order.md`, "The child row is the
+        // lock node for the template families" for the decision this
+        // implements.
+        await tx.$queryRaw`SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
 
         // The parameter's intersection guards the DOOR; this guards the
         // WRITE. Without it the invariant holds only as long as nobody edits
@@ -1002,8 +1007,8 @@ export async function pauseOrResumeStudioTemplate(
   try {
     result = await db.$transaction(
       async (tx): Promise<ResumeTransactionOutcome> => {
-        // Bounds every statement left in this transaction, the CAS below first
-        // among them — the sweep's claim holds this row `FOR UPDATE`.
+        // Bounds every statement left in this transaction, the child lock
+        // immediately below first among them, then the CAS.
         //
         // Without it the wait is bounded by NOTHING, which is a stronger
         // statement than the 10s budget and the one that is true: Prisma
@@ -1012,6 +1017,25 @@ export async function pauseOrResumeStudioTemplate(
         // new one" (`db-locks.ts`). The mutation records measure it — removing
         // this line ends in a hung test, never a 10s abort.
         await setLockTimeout(tx);
+
+        // The child's row lock, taken explicitly and first — before the CAS
+        // below touches `ScheduleRule` at all. `isActive`/`isArchived` moved
+        // off `StudioClassTemplate` in issue 298, so a bare `updateMany` on
+        // `ScheduleRule` no longer locks anything a concurrent
+        // `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) or
+        // `archiveOrUnarchiveStudioTemplate`/`updateStudioClassTemplate`
+        // waits on — those now serialise through this same statement
+        // instead. See `docs/lock-order.md`, "The child row is the lock node
+        // for the template families" for the decision this implements.
+        //
+        // Row count checked, not discarded: `ScheduleRule` carries no FK back
+        // to `StudioClassTemplate`, so a `StudioClassTemplate` deleted out
+        // from under this transaction leaves an orphaned rule row the CAS
+        // below would still match. Mirrors the class family's
+        // `pauseOrResumeTemplate` — see there for the reasoning.
+        const childLock = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
+        if (childLock.length === 0) return { outcome: 'not_found' };
 
         // Compare-and-swap, mirroring `archiveOrUnarchiveStudioTemplate`:
         // constraining the write to the exact `isActive`/`isArchived` values
@@ -1373,8 +1397,8 @@ export async function archiveOrUnarchiveStudioTemplate(
   try {
     return await db.$transaction(
       async (tx) => {
-        // Bounds every statement left in this transaction, the CAS below first
-        // among them — the sweep's claim holds this row `FOR UPDATE`.
+        // Bounds every statement left in this transaction, the child lock
+        // immediately below first among them, then the CAS.
         //
         // Without it the wait is bounded by NOTHING, which is a stronger
         // statement than the 10s budget and the one that is true: Prisma
@@ -1384,22 +1408,33 @@ export async function archiveOrUnarchiveStudioTemplate(
         // this line ends in a hung test, never a 10s abort.
         await setLockTimeout(tx);
 
+        // The child's row lock, taken explicitly and first — before the CAS
+        // below touches `ScheduleRule` at all, and before the `deleteMany`
+        // further down. Before issue 298 this CAS wrote `StudioClassTemplate`
+        // directly and so held, as a side effect of a plain `updateMany`, the
+        // same row `claimStudioTemplateForGeneration`
+        // (studio-class-generator.ts) takes `FOR UPDATE` on. `isArchived`/
+        // `isActive` moved to `ScheduleRule` with the rest of the calendar
+        // identity, so that CAS no longer touches `StudioClassTemplate` at
+        // all; this statement is what takes its place. See
+        // `docs/lock-order.md`, "The child row is the lock node for the
+        // template families" for the decision this implements.
+        //
+        // Row count checked, not discarded: `ScheduleRule` carries no FK back
+        // to `StudioClassTemplate`, so a `StudioClassTemplate` deleted out
+        // from under this transaction leaves an orphaned rule row the CAS
+        // below would still match. Mirrors the class family's
+        // `archiveOrUnarchiveTemplate` — see there for the reasoning.
+        const childLock = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
+        if (childLock.length === 0) return { ok: false as const, reason: 'not_found' as const };
+
         // Compare-and-swap, mirroring `archiveOrUnarchiveTemplate` — see there
         // for what a plain `update` cost: the loser of a race overwrote the
         // winner's `archivedAt`/`withdrawnCount` with a `0` its own
         // `deleteMany` produced only because the winner had already deleted
         // those classes. Constraining the write to `isArchived: !archiving`
         // makes the transition itself the thing that can happen only once.
-        //
-        // Still the transaction's first statement, deliberately. Before issue
-        // 298 this CAS wrote `StudioClassTemplate` and so held the same row
-        // `claimStudioTemplateForGeneration` (studio-class-generator.ts)
-        // takes `FOR UPDATE` on. `isArchived`/`isActive` now live on
-        // `ScheduleRule`, so this `updateMany` locks that row instead, and
-        // the claim's `FOR UPDATE OF sct` locks the child — two different
-        // tables, no conflict between them any more. Known-open, not closed
-        // here: re-establishing that serialization across the split is a
-        // separate, later change.
         //
         // No P2025 guard here, unlike `updateClassTemplate` in the class
         // family (#100) — `pauseOrResumeTemplate` belonged in that list until
