@@ -1835,8 +1835,43 @@ describes eight triggers. Four are now gone. Rewrite it to describe the four
 that remain (the class-level half), state that the template half became an
 index-backed constraint, and keep the reopen condition for the remaining half.
 
-Also update its `FOR UPDATE OF` census if this branch changed any lock site — it
-should not have, but the file ships the command that re-derives it, so run it.
+Also update its `FOR UPDATE OF` census. **This branch DID change lock sites** —
+Task 3c re-points both generator claims and adds an explicit child lock to six
+write paths — so the prediction this bullet used to carry ("it should not have")
+is falsified. Run the command the file ships and record what it returns now.
+
+**And hoist one census out of an applied migration, because it cannot be fixed
+where it sits.** `20260825065109_schedule_rule_backfill/migration.sql`'s block-4
+comment reads:
+
+> Measured: 10 dependencies across the four triggers, on teacherId, dayOfWeek,
+> startTime and isArchived.
+
+That is a prose count *and* a member roster, plus a claim reaching into the
+previous migration ("since the previous migration") — both forbidden by
+CLAUDE.md's Comment Discipline. The migration is applied, so the comment is
+immutable: a comment-only edit changes the checksum while `prisma migrate
+status` compares names, and nothing catches it until the next `prisma migrate
+dev` demands a reset.
+
+So the comment stays wrong where it is, and `docs/lock-order.md` becomes the
+owner — exactly what this file already did for
+`20260821120000_cross_family_slot_guard`, whose own prose was hoisted here for
+the same reason (see the note at *"The cross-family slot guard reads, and does
+not lock (#296)"*). Record the dependency census here **with the query that
+re-derives it**, so it has an owner and a check:
+
+```sql
+SELECT count(*) FROM pg_depend d
+JOIN pg_trigger t ON t.oid = d.objid AND d.classid = 'pg_trigger'::regclass
+JOIN pg_class c ON c.oid = d.refobjid
+WHERE d.refclassid = 'pg_class'::regclass AND d.refobjsubid > 0
+  AND c.relname IN ('ClassTemplate','StudioClassTemplate');
+```
+
+It returned 10 before this branch and returns 0 after. State plainly that the
+migration comment is the stale copy and this is the live one — a reader who
+finds the migration first must be able to tell which to believe.
 
 - [ ] **Step 2: `CLAUDE.md`**
 
