@@ -447,16 +447,19 @@ model ScheduleRule {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  teacher             Teacher                @relation(fields: [teacherId], references: [id], onDelete: Cascade)
-  // Array, not `ClassTemplate?`: Prisma requires a `@@unique` matching the
-  // exact [scheduleRuleId, kind] field pair to model a to-one back-relation,
-  // and the DB constraint the migration installs is `UNIQUE (scheduleRuleId)`
-  // alone (Prisma's own naming convention for `scheduleRuleId String @unique`)
-  // — adding a second, redundant composite unique index just to satisfy the
-  // relation shape has no DB reason to exist. Runtime cardinality is still
-  // 0-or-1, enforced by that single-column constraint.
-  classTemplate       ClassTemplate[]
-  studioClassTemplate StudioClassTemplate[]
+  teacher              Teacher                @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  // Plural despite 0-or-1 cardinality, matching every other array relation in
+  // this schema (`teacherRooms`, `classes`, `TeacherRoom.classTemplates`).
+  // Still arrays, not `ClassTemplate?`: Prisma requires a `@@unique` matching
+  // the exact [scheduleRuleId, kind] field pair to model a to-one
+  // back-relation, and the DB constraint the migration installs is `UNIQUE
+  // (scheduleRuleId)` alone (Prisma's own naming convention for
+  // `scheduleRuleId String @unique`) — adding a second, redundant composite
+  // unique index just to satisfy the relation shape has no DB reason to
+  // exist. Runtime cardinality is still 0-or-1, enforced by that
+  // single-column constraint.
+  classTemplates       ClassTemplate[]
+  studioClassTemplates StudioClassTemplate[]
 
   @@unique([id, kind])
   @@index([teacherId, dayOfWeek])
