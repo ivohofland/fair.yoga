@@ -118,6 +118,77 @@ consequences, not fourteen open questions.
 Both survivors are on `Class`, both belong to the class-freeze machinery, and
 both are load-bearing for a sweep that deletes rows. §4 is about them.
 
+### 1.3.1 What the ten deletions are justified against — both halves
+
+Ten deletions need a replacement named, and the exclusion constraint is only
+half of it. **Raised at spec review, and correctly**: rows 2–5 and 7–10 are the
+four cross-family guards, and the entry-level `EXCLUDE` does not by itself
+close what they close. It forbids two *entries* of one teacher from overlapping.
+It says nothing about how many children hang off one entry — so one entry
+carrying a `Class` and a `StudioClass` at an identical span would violate
+nothing, which is #296 exactly.
+
+The other half is **disjoint occupancy**, and it is a composite foreign key.
+The parent spec §3 (*"Disjoint occupancy is a composite foreign key"*) specifies
+it: `UNIQUE (id, kind)` on the parent, each child carrying `(entryId, kind)`
+with a `CHECK` pinning its own literal and a composite FK to `(id, kind)`.
+Named here rather than left to §6's blanket carry-over, because a reader of this
+document alone cannot otherwise check what ten deletions are being traded for.
+
+**This is not a proposal — stage A shipped it, and it is live.** The rule layer
+already carries the three-part structure:
+
+```
+ClassTemplate_kind_check                CHECK (kind = 'regular')
+ClassTemplate_scheduleRuleId_kind_fkey  FK (scheduleRuleId, kind) → ScheduleRule(id, kind)
+ClassTemplate_scheduleRuleId_key        UNIQUE (scheduleRuleId)
+```
+
+and its studio twin, pinning `'studio'`. Stage B mirrors it one layer down. The
+`UNIQUE` alone would *not* close the hole: it is per-table, so one rule could
+hold one child of each. Disjointness comes from the parent having a single
+`kind` that both children must match and neither may forge.
+
+**Mutation-tested against `fairyoga-db-1` on this tree**, rather than inherited:
+
+| Mutation | Refused by | SQLSTATE |
+|---|---|---|
+| studio child on a regular rule, `kind = 'studio'` | `StudioClassTemplate_scheduleRuleId_kind_fkey` | `23503` |
+| same, `kind = 'regular'` — forged to satisfy the FK | `StudioClassTemplate_kind_check` | `23514` |
+| flip the parent's `kind` with a child attached | `ClassTemplate_kind_check` | `23514` |
+
+**The third row disagrees with the parent spec, which records `23503` for it —
+and the parent spec is the only artifact that still does.** Stage A measured
+this and pinned it. `schedule-rule-constraints.test.ts:218` asserts
+`/check constraint/i` and explains why in its own comment: both composite FKs
+carry `ON UPDATE CASCADE`, so flipping the parent cascades into the child's
+`kind` column first and the child's `CHECK` raises — *"Measured, not assumed:
+the FK never gets a chance to reject anything here because the cascade already
+satisfies it."* The `20260825065109_schedule_rule_backfill` migration says the
+same thing about the `CHECK`'s purpose: *"The CHECK is what makes the composite
+FK mean 'regular children hang off regular rules'; without it the pair would
+merely have to agree."*
+
+So the substance was known, the code is right, the test pins it — and the
+correction never reached the spec. That is `.claude/skills/solve-issue` §4's
+exact failure mode, committed across a stage boundary: the fix landed in the
+migration, the plan and the test, and its twin in the design document stood.
+Recorded here because §6 carries parent §3 forward wholesale, so a stage-B
+test written from the parent spec's number would assert `23503` and fail.
+
+**The consequence to carry down: the `CHECK` is load-bearing, not redundant with
+the FK.** It reads like decoration once a composite FK already pins
+`child.kind = rule.kind` — but the FK alone is satisfiable by *both* children
+simultaneously, provided each agrees with the parent. Remove the `CHECK`s and
+the cascade above silently rewrites the child, after which the other family
+attaches to the same parent and disjointness is gone. Stage B needs both
+mutations at the entry layer, and the entry-layer twin of that test comment.
+
+**Totality is a different question and stays out** (§8). Nothing forces an entry
+to have a child; parent and child are written in one transaction. Disjointness
+is declarative and lands here; totality would need a deferred check and buys
+nothing this work needs.
+
 ### 1.4 The stop condition passes, and its zero is a real one
 
 The §7.2 entry-layer pre-flight, re-run:
@@ -429,12 +500,19 @@ comment, whose scope widens from exact-start to range overlap (parent spec,
 
 ---
 
-## 6. Carried unchanged from the parent spec
+## 6. Carried from the parent spec
 
 §3 (target schema), §4.1–§4.5, §5.1–§5.2, §6 (`startTime → @db.Time`, wire
 format stays `"HH:MM"`), §7.1 (the index census and the
 `slot-constraints.test.ts` port, group by group), §7.2 (no grandfathering), §8
 (issue consequences), §9 (left out), and §11 items 1, 3, 5, 6, 7.
+
+**Carried with one correction, not unchanged.** §3's disjoint-occupancy
+paragraph recorded the parent-`kind`-flip refusal as `23503`; it is `23514`,
+from the child's `CHECK`, and §1.3.1 has the measurement and the stage-A test
+that already pinned it. The parent spec has been corrected in place rather than
+annotated, per CLAUDE.md's *Comment Discipline* — the before-and-after lives
+here and in the PR body.
 
 Two of §11's items are answered above rather than carried: item 9 (the two
 end-instant call sites) by §2, and §4.6's deferred question by §3.

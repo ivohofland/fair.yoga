@@ -331,9 +331,18 @@ could otherwise carry a child of each family, which is the exact defect #296
 exists to prevent. Totality is not constrained (an entry with no child is
 permitted by the schema); parent and child are created in one transaction.
 
-**Measured, both directions** (§4 probe): a `studio` child on a `regular` entry
-is refused `23503`, and flipping a parent's `kind` while a child is attached is
-also refused `23503`.
+**Measured, both directions — and each is refused by a different constraint.** A
+`studio` child on a `regular` entry is refused `23503` by the composite FK.
+Flipping a parent's `kind` with a child attached is refused **`23514`, by the
+child's own `CHECK`**, not by the FK: the FK carries `ON UPDATE CASCADE`, so the
+flip cascades into the child's `kind` column first and never gives the FK
+anything to reject.
+
+That makes the `CHECK` load-bearing rather than redundant with the FK, which is
+the thing to keep: the FK alone constrains each child to agree with its parent,
+and *both* children can do that at once. `schedule-rule-constraints.test.ts:218`
+pins the behaviour and the `20260825065109_schedule_rule_backfill` migration
+states the reason — both from stage A, which is where this was measured.
 
 ---
 
