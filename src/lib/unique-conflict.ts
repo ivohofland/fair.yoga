@@ -16,20 +16,19 @@ import { Prisma } from '@prisma/client';
  *
  * Deliberately ignores `err.meta?.modelName`. The invariant that actually
  * holds is narrower than "one model per caller": no single `try` block may
- * raise P2002 from two models that share a column-name set. That is not the
- * same as "one model per `try`" — `updateClassTemplate`
- * (`src/services/class-template-lifecycle.ts`) raises P2002 from both
- * `ClassTemplate` and `Class` under one `try`, and its own comment says so —
- * it is safe only because `ClassTemplate` keys on `dayOfWeek` and `Class` on
- * `date`, so the two column sets never collide even though both tables carry
- * a `(teacherId, …, startTime)` slot key. `(teacherId, date, startTime)`
- * names both `Class_teacher_slot_unique` and `StudioClass_teacher_slot_unique`,
- * and `(teacherId, dayOfWeek, startTime)` names both
- * `ClassTemplate_teacher_slot_unique` and
- * `StudioClassTemplate_teacher_slot_unique`. A route whose transaction can
- * raise P2002 from two models sharing a column-name set — e.g. if `dayOfWeek`
- * and `date` ever converged — would need `modelName` added to disambiguate
- * them. Tracked as #210, which is not fixed here.
+ * raise P2002 from two models that share a column-name set — if one ever
+ * did, this matcher could not tell which model's row collided. `(teacherId,
+ * date, startTime)` names both `Class_teacher_slot_unique` and
+ * `StudioClass_teacher_slot_unique`; a route whose transaction can raise
+ * P2002 from both under one `try` would need `modelName` added to
+ * disambiguate them. Tracked as #210, which is not fixed here.
+ *
+ * `(teacherId, dayOfWeek, startTime)` is not this kind of pair any more:
+ * issue 298 replaced the two partial indexes that column set used to name
+ * (`ClassTemplate_teacher_slot_unique`, `StudioClassTemplate_teacher_slot_
+ * unique`) with `ScheduleRule_teacher_slot_excl`, a single exclusion
+ * constraint raising `23P01`, not P2002 — so no caller matches this function
+ * against those columns any more.
  */
 export function isUniqueConflictOn(err: unknown, columns: readonly string[]): boolean {
   if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') return false;

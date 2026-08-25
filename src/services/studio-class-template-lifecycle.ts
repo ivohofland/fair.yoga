@@ -130,7 +130,7 @@ void _studioTemplateUpdateColumnsExist;
  * The rule's own slot fields (`classType`, `dayOfWeek`, `startTime`,
  * `durationMinutes`) are NOT here (issue 298) — they left this model for
  * `ScheduleRule`, and `TeacherEditableScheduleRuleField` below is their
- * allowlist now, with the same `StudioClassTemplate_teacher_slot_unique` and
+ * allowlist now, with the same `ScheduleRule_teacher_slot_excl` and
  * stamp-not-link consequences this docblock used to record for them here.
  */
 type TeacherEditableStudioTemplateField = 'location' | 'hourlyRate';
@@ -292,10 +292,11 @@ void _scheduleRuleUpdateColumnsExist;
  * The rule fields a teacher may change through
  * `PUT /api/studio-class-templates/[id]` — the slot half of the wire schema
  * (issue 298).
- *   - `dayOfWeek`, `startTime` → both are in
- *     `StudioClassTemplate_teacher_slot_unique` (`(teacherId, dayOfWeek,
- *     startTime) WHERE isArchived = false`, #196), so editing either can
- *     collide with another of this teacher's live templates.
+ *   - `dayOfWeek`, `startTime` → both feed
+ *     `ScheduleRule_teacher_slot_excl` (`(teacherId, dayOfWeek, slot) WHERE
+ *     isArchived = false`, #196/#298), so editing either can collide with
+ *     another of this teacher's live rules — either family, since `kind` is
+ *     not part of that constraint's key.
  *   - `dayOfWeek` additionally → generated `StudioClass` rows are NOT moved or
  *     withdrawn, so an edit leaves up to four weeks of classes on the
  *     superseded weekday — the decided rule since #194, not a gap.
@@ -330,8 +331,8 @@ void _scheduleRuleAllowlistHasNoStaleFields;
  *                        `isActive: false`. Writing it alone can produce the
  *                        archived-but-active state `PATCH` refuses to create,
  *                        and moves the row in and out of
- *                        `StudioClassTemplate_teacher_slot_unique`'s partial
- *                        scope without the conflict handling that owns it.
+ *                        `ScheduleRule_teacher_slot_excl`'s scope without the
+ *                        conflict handling that owns it.
  *   - `archivedAt`,
  *     `withdrawnCount` → written only by the same archive transaction that
  *                        owns `isArchived` (#97, #111).
@@ -1072,22 +1073,22 @@ export async function pauseOrResumeStudioTemplate(
         // `updateMany` returns `{ count: 0 }`, so the write itself becomes a
         // P2025 source needing its own guard.
         //
-        // No P2002 guard here either, and this one is worth proving rather
-        // than asserting. The class family's `pauseOrResumeTemplate`
+        // No `23P01` guard here either, and this one is worth proving
+        // rather than asserting. The class family's `pauseOrResumeTemplate`
         // (`class-template-lifecycle.ts`) carried the identical proof for its
         // own CAS and it never got ported here; #116 rewrote that `catch`
         // wholesale and kept the paragraph, so the two still agree — check
         // there before editing this. `data` below is
         // `{ isActive: desiredActive }` — nothing else — and
-        // `StudioClassTemplate_teacher_slot_unique` covers `(teacherId,
-        // dayOfWeek, startTime)` `WHERE isArchived = false`. None of those four
-        // columns is in this write's `data`, so the indexed values themselves
-        // are unchanged: a row that already satisfied the constraint still
-        // does, regardless of which mechanism Postgres uses to re-check it.
-        // That exemption is local to this write, not to the file:
-        // `archiveOrUnarchiveStudioTemplate`'s own CAS, further down, DOES
-        // write `isArchived`, and un-archiving into a slot another live
-        // template holds is exactly what makes that one raise P2002 — see its
+        // `ScheduleRule_teacher_slot_excl` excludes on `(teacherId,
+        // dayOfWeek, slot)` `WHERE isArchived = false`. None of the columns
+        // that key names is in this write's `data`, so the excluded values
+        // themselves are unchanged: a row that already satisfied the
+        // constraint still does, regardless of which mechanism Postgres uses
+        // to re-check it. That exemption is local to this write, not to the
+        // file: `archiveOrUnarchiveStudioTemplate`'s own CAS, further down,
+        // DOES write `isArchived`, and un-archiving into a slot another live
+        // rule holds is exactly what makes that one raise `23P01` — see its
         // own `catch` for where that is handled.
         const swapped = await tx.scheduleRule.updateMany({
           where: { id: template.scheduleRuleId, isArchived: false, isActive: !desiredActive },
@@ -1401,10 +1402,10 @@ export async function archiveOrUnarchiveStudioTemplate(
 
   // Un-archiving (`archiving === false`) flips `isArchived` from `true` to
   // `false` in the CAS below, which is the one write in this function that
-  // can newly enter `StudioClassTemplate_teacher_slot_unique`'s partial scope
-  // (`WHERE isArchived = false`, #196) — archiving only ever leaves it, which
+  // can newly enter `ScheduleRule_teacher_slot_excl`'s scope (`WHERE
+  // isArchived = false`, #196/#298) — archiving only ever leaves it, which
   // cannot collide. Wrapped around the whole `$transaction`, not just the
-  // CAS statement, because a P2002 raised inside a Postgres transaction
+  // CAS statement, because a `23P01` raised inside a Postgres transaction
   // aborts it and the driver surfaces that failure from `$transaction`
   // itself, not from the individual `await` that triggered it.
   try {

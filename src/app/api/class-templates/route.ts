@@ -86,24 +86,28 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // Atomic: a generation failure rolls the template create back rather than
   // leaving a template that produces no classes. Failure propagates (500).
   //
-  // The catch sits OUTSIDE this call rather than inside it: a P2002 raised
-  // inside a Postgres transaction aborts that transaction, so there is
-  // nothing to catch from within — and rolling the whole thing back is
-  // correct anyway, since a template that duplicates an existing one should
-  // not exist, and neither should the window it would have generated.
+  // The catch sits OUTSIDE this call rather than inside it: a failed
+  // statement aborts a Postgres transaction, so there is nothing to catch
+  // from within — and rolling the whole thing back is correct anyway, since
+  // a template that duplicates an existing one should not exist, and neither
+  // should the window it would have generated.
   //
-  // Only the template's own P2002 can reach this catch. `tx.classTemplate
+  // Only the template's own `23P01` can reach this catch. `tx.classTemplate
   // .create` runs first and, on conflict, throws before generation ever
   // starts — so `generateInstancesForTemplate`'s `createManyAndReturn`
   // (`skipDuplicates: true`, a bare `ON CONFLICT DO NOTHING`) never gets a
   // chance to raise anything here even though it shares this transaction.
+  // No P2002 reaches this catch at all any more: the nested create's only
+  // former source, the template's own partial unique index, is gone (issue
+  // 298) — `ScheduleRule`'s auto-generated `id`/`kind` and the child's
+  // auto-generated `scheduleRuleId` cannot collide.
   //
-  // TRUE OF P2002 always, and TRUE OF `YG001` (#296) only from generation now.
-  // Generation shares this transaction, and its `Class` insert fires the
-  // entry-level cross-family trigger (`class_cross_family_slot_insert_guard`)
-  // — the ONE `YG001` source left in this transaction. The template insert
-  // used to be a second: two template-level triggers raised it before issue
-  // 298 replaced both with `ScheduleRule_teacher_slot_excl` below, a single
+  // `YG001` (#296) reaches this catch only from generation now. Generation
+  // shares this transaction, and its `Class` insert fires the entry-level
+  // cross-family trigger (`class_cross_family_slot_insert_guard`) — the ONE
+  // `YG001` source left in this transaction. The template insert used to be
+  // a second: two template-level triggers raised it before issue 298
+  // replaced both with `ScheduleRule_teacher_slot_excl` below, a single
   // exclusion constraint that raises `23P01` instead, for either family. A
   // `conflict.level` object used to sit here disambiguating which statement
   // raised a `YG001` — the template's own insert, or generation's — because

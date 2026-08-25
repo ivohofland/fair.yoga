@@ -75,16 +75,21 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // *existing* row.
   //
   // The catch sits OUTSIDE this call rather than inside it — same reasoning
-  // as the class family's POST (`api/class-templates/route.ts`): a P2002
-  // raised inside a Postgres transaction aborts that transaction, so there
-  // is nothing to catch from within, and rolling the whole thing back is
-  // correct anyway. Only the template's own P2002 can reach this catch —
-  // `tx.studioClassTemplate.create` runs first and, on conflict, throws
-  // before generation starts, so `generateStudioInstancesForTemplate`'s
-  // `createManyAndReturn` (`skipDuplicates: true`) never gets a chance to
-  // raise anything here even though it shares this transaction.
-  // TRUE OF P2002 always, and TRUE OF `YG001` (#296) only from generation now.
-  // Generation shares this transaction, and its `StudioClass` insert fires the
+  // as the class family's POST (`api/class-templates/route.ts`): a failed
+  // statement aborts a Postgres transaction, so there is nothing to catch
+  // from within, and rolling the whole thing back is correct anyway. Only
+  // the template's own `23P01` can reach this catch — `tx.studioClassTemplate
+  // .create` runs first and, on conflict, throws before generation starts,
+  // so `generateStudioInstancesForTemplate`'s `createManyAndReturn`
+  // (`skipDuplicates: true`) never gets a chance to raise anything here even
+  // though it shares this transaction. No P2002 reaches this catch at all
+  // any more: the nested create's only former source, the template's own
+  // partial unique index, is gone (issue 298) — `ScheduleRule`'s
+  // auto-generated `id`/`kind` and the child's auto-generated
+  // `scheduleRuleId` cannot collide.
+  //
+  // `YG001` (#296) reaches this catch only from generation now. Generation
+  // shares this transaction, and its `StudioClass` insert fires the
   // entry-level cross-family trigger — the ONE `YG001` source left in this
   // transaction. The template insert used to be a second: two template-level
   // triggers raised it before issue 298 replaced both with

@@ -39,9 +39,12 @@ export function minutesSinceMidnight(t: Date): number {
  * Called from a `catch` block outside its transaction, always against `db`,
  * never `tx`: a statement that fails inside a Postgres transaction aborts it,
  * so a probe issued on the aborted `tx` would answer `25P02` rather than an
- * answer. Every one of the six call sites this guards sits after its own
- * transaction's closing `)`, where Prisma has already rolled back and `db` is
- * a clean connection.
+ * answer, not a `RuleSlotHolder`. Every call site must therefore sit after
+ * its own transaction's closing `)`, where Prisma has already rolled back and
+ * `db` is a clean connection — re-derive the current set rather than trust a
+ * count here:
+ *
+ *   grep -rn "ruleSlotHolder(db\|ruleSlotHolder(prisma" src/services/ src/app/api/
  */
 export async function ruleSlotHolder(
   db: PrismaClient,

@@ -45,6 +45,19 @@ const terminalDateErrorFixture = new Prisma.PrismaClientUnknownRequestError(
   { clientVersion: 'test' },
 );
 
+/**
+ * The measured shape of a `23P01` through Prisma Client (`exclusion-
+ * conflict.test.ts`'s own fixture): `code` and `meta` are both undefined, and
+ * the SQLSTATE and constraint name survive only in `message`.
+ */
+const exclusionConflictErrorFixture = new Prisma.PrismaClientUnknownRequestError(
+  'Invalid `db.scheduleRule.create()` invocation\n\nError occurred during query execution:\n' +
+    'ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError ' +
+    '{ code: "23P01", message: "conflicting key value violates exclusion constraint \\"ScheduleRule_teacher_slot_excl\\"", ' +
+    'severity: "ERROR", detail: Some("Key ..."), column: None, hint: None }), transient: false })',
+  { clientVersion: 'test' },
+);
+
 describe('classifyApiError', () => {
   it('maps P2002 to a 409 logged at warn, naming the constraint that fired', () => {
     const failure = classifyApiError(prismaError('P2002', { target: ['teacherId', 'roomId'] }));
@@ -65,6 +78,24 @@ describe('classifyApiError', () => {
 
     expect(failure.logMessage).not.toBe(failure.message);
     expect(failure.logMessage.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The backstop issue 298 introduced: `ScheduleRule_teacher_slot_excl` is
+   * the one constraint the four template routes' own `isExclusionConflictOn`
+   * branches are meant to catch before it ever reaches here. This is what a
+   * write that skips that branch — a future call site, or a probe-and-catch
+   * that raced and lost — still gets: a 409, not a 500, and no family name,
+   * because this classifier has neither a probe nor a teacher in scope.
+   */
+  it('maps a ScheduleRule slot exclusion to a 409 logged at warn, naming neither family', () => {
+    const failure = classifyApiError(exclusionConflictErrorFixture);
+
+    expect(failure.status).toBe(409);
+    expect(failure.message).toBe(
+      'You already have a recurring class or studio class at an overlapping time on that day.',
+    );
+    expect(failure.level).toBe('warn');
   });
 
   /**

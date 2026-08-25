@@ -71,10 +71,11 @@ const send = (method: string, token: string, path: string, body?: unknown) =>
 // a slot nothing else this teacher holds is overlapping, not merely a
 // different string — one 60-minute-wide day no longer holds every fixture this
 // file creates, which is why `dayOfWeek` is a parameter rather than the fixed
-// 3 it used to be. Most callers still pass 3, alongside 'Owner Template'
-// (beforeAll's '18:00'); a caller past that day's budget states a day of its
-// own instead. A default for either parameter would silently reopen the exact
-// collision this signature exists to dodge — the class family's twin,
+// 3 it used to be. 3 is still 'Owner Template' (beforeAll's '18:00'), so no
+// other caller can safely reuse it without also picking a clear startTime; a
+// caller past that day's budget states a day of its own instead. A default
+// for either parameter would silently reopen the exact collision this
+// signature exists to dodge — the class family's twin,
 // `class-templates-api.test.ts`'s `templateBody`, made the same removal for
 // the same reason.
 const makeTemplate = (

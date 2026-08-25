@@ -765,16 +765,16 @@ async function probeFirstEffectiveWeek(
  * the budget comment at the call for the same warning where someone trimming
  * this would read it. The `catch` sits OUTSIDE the
  * `$transaction` call, the same shape `archiveOrUnarchiveTemplate` and `POST
- * /api/class-templates` already use: a P2002 raised inside Postgres aborts
- * the transaction, so there is nothing to catch from within, and the whole
+ * /api/class-templates` already use: a failed statement aborts a Postgres
+ * transaction, so there is nothing to catch from within, and the whole
  * thing rolling back is what makes catching it after the fact meaningful —
  * every reason mapped below describes a transaction that did not commit.
  *
  * Three shapes are mapped below rather than left to propagate as a 500: P2025
  * becomes `{ ok: false, reason: 'not_found' }`, because the row is gone
- * before the caller is answered (#100); a P2002 named `slot_conflict` (#196);
- * and `isTransientDbError` matching — a holder of the child or rule row
- * outlasting the `setLockTimeout` bound below — becomes
+ * before the caller is answered (#100); a `23P01` named `slot_conflict`
+ * (#196/#298); and `isTransientDbError` matching — a holder of the child or
+ * rule row outlasting the `setLockTimeout` bound below — becomes
  * `busy`. There was a fourth, `sync_conflict`: a P2002 on
  * `Class_teacher_slot_unique` raised when the propagation rewrote a generated
  * instance's `startTime` onto a slot some other class already held. Nothing
@@ -1787,19 +1787,20 @@ export async function pauseOrResumeTemplate(
     // this transaction and that changes silently. Whoever does that owes
     // this comment an enumeration of what it now covers.
     //
-    // Never P2002 from the CAS either, and this half is worth proving rather
-    // than asserting, because #196 added a partial unique index this file's
-    // other CAS does collide on. `data` up there is `{ isActive: desiredActive }`
-    // — nothing else — and `ClassTemplate_teacher_slot_unique` covers
-    // `(teacherId, dayOfWeek, startTime)` `WHERE isArchived = false`. None of
-    // those four columns is in this write's `data`, so the indexed values are
-    // unchanged: a row that already satisfied the constraint still does,
-    // whatever mechanism Postgres uses to re-check it. That exemption is local
-    // to this write — `archiveOrUnarchiveTemplate`'s CAS DOES write
-    // `isArchived`, and un-archiving into a slot another live template holds is
-    // exactly what makes that one raise P2002. This paragraph stood in the
-    // `catch` #116 replaced; it is kept because deleting the P2025 branch is no
-    // reason to delete the P2002 reasoning beside it, and
+    // Never `23P01` from the CAS either, and this half is worth proving
+    // rather than asserting, because #196/#298 added an exclusion constraint
+    // this file's other CAS does collide on. `data` up there is
+    // `{ isActive: desiredActive }` — nothing else — and
+    // `ScheduleRule_teacher_slot_excl` excludes on `(teacherId, dayOfWeek,
+    // slot)` `WHERE isArchived = false`. None of the columns that key names is
+    // in this write's `data`, so the excluded values are unchanged: a row
+    // that already satisfied the constraint still does, whatever mechanism
+    // Postgres uses to re-check it. That exemption is local to this write —
+    // `archiveOrUnarchiveTemplate`'s CAS DOES write `isArchived`, and
+    // un-archiving into a slot another live rule holds is exactly what makes
+    // that one raise `23P01`. This paragraph stood in the `catch` #116
+    // replaced; it is kept because deleting the P2025 branch is no reason to
+    // delete the exclusion-constraint reasoning beside it, and
     // `studio-class-template-lifecycle.ts` still cites it as the original.
     if (isTransientDbError(err)) {
       log.warn(
@@ -1919,10 +1920,10 @@ export async function archiveOrUnarchiveTemplate(
 
   // Un-archiving (`archiving === false`) flips `isArchived` from `true` to
   // `false` in the CAS below — the one write in this function that can newly
-  // enter `ClassTemplate_teacher_slot_unique`'s partial scope (`WHERE
-  // isArchived = false`, #196). Archiving only ever leaves that scope, which
-  // cannot collide. Wrapped around the whole `$transaction`, not just the CAS
-  // statement: a P2002 raised inside a Postgres transaction aborts it, and
+  // enter `ScheduleRule_teacher_slot_excl`'s scope (`WHERE isArchived =
+  // false`, #196/#298). Archiving only ever leaves that scope, which cannot
+  // collide. Wrapped around the whole `$transaction`, not just the CAS
+  // statement: a `23P01` raised inside a Postgres transaction aborts it, and
   // the driver surfaces that failure from `$transaction` itself rather than
   // from the individual `await` that triggered it.
   try {

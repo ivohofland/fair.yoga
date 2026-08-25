@@ -55,11 +55,11 @@ const EXPECTED_JS_DAY = (DAY_OF_WEEK + 1) % 7;
  * have no stake in which weekday they land on — only a case that reads
  * `EXPECTED_JS_DAY` or shares `sameWeekDayPair()`'s pair does.
  *
- * Each is DAY_OF_WEEK plus a distinct, fixed offset (1, 3, 4, 5, 6 — 2 is
- * skipped, since `sameWeekDayPair()`'s OLD_DAY can coincide with
- * DAY_OF_WEEK + 2 on some days of the week), so every one differs from
- * DAY_OF_WEEK and from every other ALT_DAY on every day of the week, by
- * construction rather than by luck.
+ * Each is DAY_OF_WEEK plus a distinct, fixed, nonzero offset mod 7 (1, 3, 4,
+ * 5, 6 — five of the six available; offset 2 carries no significance of its
+ * own and was simply not needed), so every one differs from DAY_OF_WEEK and
+ * from every other ALT_DAY on every day of the week, by construction rather
+ * than by luck.
  */
 const ALT_DAY_1 = (DAY_OF_WEEK + 1) % 7;
 const ALT_DAY_2 = (DAY_OF_WEEK + 3) % 7;
