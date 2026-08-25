@@ -56,7 +56,10 @@ import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 // transitively through `studio-class-generator`. No `'use client'` component
 // value-imports anything in this chain.
 import { log } from '@/lib/log';
-import type { LastScheduledClass } from './class-template-lifecycle';
+import type {
+  LastScheduledClass,
+  PlainUpdateForbiddenScheduleRuleField as PlainUpdateForbiddenClassRuleField,
+} from './class-template-lifecycle';
 import {
   claimStudioTemplateForGeneration,
   generateStudioInstancesForTemplate,
@@ -83,12 +86,13 @@ import {
 export type StudioClassTemplateUpdateData = z.infer<typeof updateStudioClassTemplateSchema>;
 
 /**
- * The wire schema sliced to the four fields that route onto `ScheduleRule`
- * rather than `StudioClassTemplate` (issue 298) — `startTime` still `"HH:MM"`
- * here, the wire shape every caller of `StudioClassTemplateUpdateData` uses.
- * Pins below check NAMES against this slice, not against the whole schema:
- * the whole schema now spans two models, so a pin comparing it to one model's
- * columns would name the other model's fields as missing forever.
+ * The wire schema sliced to the fields named in its own `Pick` below, the
+ * ones that route onto `ScheduleRule` rather than `StudioClassTemplate`
+ * (issue 298) — `startTime` still `"HH:MM"` here, the wire shape every
+ * caller of `StudioClassTemplateUpdateData` uses. Pins below check NAMES
+ * against this slice, not against the whole schema: the whole schema now
+ * spans two models, so a pin comparing it to one model's columns would name
+ * the other model's fields as missing forever.
  */
 type ScheduleRuleUpdateData = Pick<
   StudioClassTemplateUpdateData,
@@ -334,8 +338,9 @@ void _scheduleRuleAllowlistHasNoStaleFields;
  *   - `createdAt`,
  *     `updatedAt`      → Prisma-managed.
  *
- * The same nine names as `PlainUpdateForbiddenScheduleRuleField`
- * (`class-template-lifecycle.ts`) — one rule model, shared by both families.
+ * One rule model, shared by both families — `_ruleForbiddenListsAgree` below
+ * pins this list against the class family's own copy directly, rather than
+ * this docblock asserting the two agree in prose.
  */
 type PlainUpdateForbiddenScheduleRuleField =
   | 'id'
@@ -347,6 +352,19 @@ type PlainUpdateForbiddenScheduleRuleField =
   | 'withdrawnCount'
   | 'createdAt'
   | 'updatedAt';
+
+/**
+ * Compile-time pin: the two families' rule-level forbidden lists must be the
+ * same set. Both write the same `ScheduleRule` columns, so a name deny-listed
+ * in one family and not the other would be a hole in whichever forgot it.
+ * `Exclude` in both directions, because a one-way check passes when one list
+ * is a strict subset of the other.
+ */
+const _ruleForbiddenListsAgree: NoneOf<
+  | Exclude<PlainUpdateForbiddenScheduleRuleField, PlainUpdateForbiddenClassRuleField>
+  | Exclude<PlainUpdateForbiddenClassRuleField, PlainUpdateForbiddenScheduleRuleField>
+> = true;
+void _ruleForbiddenListsAgree;
 
 /**
  * Compile-time pin (completeness): every `ScheduleRule` column must be
@@ -388,11 +406,10 @@ void _scheduleRuleAllowlistHasNoForbiddenFields;
  *
  * Every result type below carries this rather than a bare
  * `StudioClassTemplate`, because the route spreads the template straight onto
- * the response body, its form reads `dayOfWeek`/`startTime`/`classType`/
- * `durationMinutes` off it, and `ArchivedRecord`/the toggle buttons read
- * `isActive`/`isArchived`/`archivedAt`/`withdrawnCount` off it — none of
- * which the row itself still has. The class family's `ClassTemplateWithSlot`
- * (`class-template-lifecycle.ts`) is the same shape one model over.
+ * the response body and the wire consumers on the other end still expect
+ * these columns to be there, which the row itself no longer has. The class
+ * family's `ClassTemplateWithSlot` (`class-template-lifecycle.ts`) is the
+ * same shape one model over.
  */
 export type StudioClassTemplateWithSlot = StudioClassTemplate & {
   teacherId: string;

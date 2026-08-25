@@ -77,12 +77,13 @@ import {
 export type ClassTemplateUpdateData = z.infer<typeof updateClassTemplateSchema>;
 
 /**
- * The wire schema sliced to the four fields that route onto `ScheduleRule`
- * rather than `ClassTemplate` (issue 298) — `startTime` still `"HH:MM"` here,
- * the wire shape every caller of `ClassTemplateUpdateData` uses. Pins below
- * check NAMES against this slice, not against the whole schema: the whole
- * schema now spans two models, so a pin comparing it to one model's columns
- * would name the other model's fields as missing forever.
+ * The wire schema sliced to the fields named in its own `Pick` below, the
+ * ones that route onto `ScheduleRule` rather than `ClassTemplate` (issue
+ * 298) — `startTime` still `"HH:MM"` here, the wire shape every caller of
+ * `ClassTemplateUpdateData` uses. Pins below check NAMES against this slice,
+ * not against the whole schema: the whole schema now spans two models, so a
+ * pin comparing it to one model's columns would name the other model's
+ * fields as missing forever.
  */
 type ScheduleRuleUpdateData = Pick<
   ClassTemplateUpdateData,
@@ -206,15 +207,16 @@ type PlainUpdateForbiddenTemplateField =
   | 'updatedAt';
 
 /**
- * Compile-time pin (completeness): no column may leave the list above
- * silently. See the twin in `class-lifecycle.ts` for the measurement that
- * motivated it — the pins either side of this one hold membership and
- * non-overlap, and both are blind to a deletion.
+ * Compile-time pin (completeness): every `ClassTemplate` column must be
+ * claimed by the allowlist or the forbidden list above — checked against the
+ * live Prisma type, so a migration that adds an unclassified column reddens
+ * this rather than passing silently, matching the rule-level and
+ * studio-family pins beside this one.
  */
 const _templateForbiddenListIsComplete: NoneOf<
   Exclude<
-    'id' | 'scheduleRuleId' | 'kind' | 'createdAt' | 'updatedAt',
-    PlainUpdateForbiddenTemplateField
+    keyof Prisma.ClassTemplateUncheckedUpdateManyInput,
+    TeacherEditableClassTemplateField | PlainUpdateForbiddenTemplateField
   >
 > = true;
 void _templateForbiddenListIsComplete;
@@ -250,7 +252,7 @@ void _templateAllowlistHasNoForbiddenFields;
 // `isActive`/`isArchived`/`archivedAt`/`withdrawnCount`/`teacherId` outright
 // (naming them in a `ClassTemplate`-scoped list cannot even compile, since
 // none is a `ClassTemplate` column any more), or let a teacher re-parent a
-// template onto a rule they do not own. Mirrors the six pins above, against
+// template onto a rule they do not own. Mirrors the pin set above, against
 // `keyof Prisma.ScheduleRuleUncheckedUpdateManyInput` rather than
 // `ClassTemplate`'s.
 // ---------------------------------------------------------------------------
@@ -311,7 +313,10 @@ void _scheduleRuleAllowlistHasNoStaleFields;
  * path `PATCH` owns and door 3's resume refusal with it. Door 5 no longer
  * gates on `isActive`, but door 3 still does.
  */
-type PlainUpdateForbiddenScheduleRuleField =
+// Exported so the studio file can pin its own forbidden list against this
+// one directly (`_ruleForbiddenListsAgree`) rather than asserting the two
+// agree in prose with nothing tethering the claim.
+export type PlainUpdateForbiddenScheduleRuleField =
   | 'id'
   | 'teacherId'
   | 'kind'
@@ -362,11 +367,9 @@ void _scheduleRuleAllowlistHasNoForbiddenFields;
  * not the `@db.Time` `Date` `ScheduleRule` stores it as (issue 298).
  *
  * Every result type below carries this rather than a bare `ClassTemplate`,
- * because the route spreads the template straight onto the response body,
- * `TemplateForm` reads `dayOfWeek`/`startTime`/`classType`/`durationMinutes`
- * off it, and `ArchivedRecord`/the toggle buttons read
- * `isActive`/`isArchived`/`archivedAt`/`withdrawnCount` off it — none of
- * which the row itself still has.
+ * because the route spreads the template straight onto the response body and
+ * the wire consumers on the other end still expect these columns to be
+ * there, which the row itself no longer has.
  */
 export type ClassTemplateWithSlot = ClassTemplate & {
   teacherId: string;
