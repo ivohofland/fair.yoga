@@ -3,11 +3,13 @@ import { Prisma } from '@prisma/client';
 import { isCrossFamilySlotConflict } from './cross-family-conflict';
 
 /**
- * Every message below is a real one, copied from the probe run recorded in
- * `isCrossFamilySlotConflict`'s docblock — not a hand-written approximation.
- * That matters here more than usual: this matcher reads a substring of a
- * message Prisma composes, so a fixture that merely looks plausible would pin
- * the matcher to a framing the database never emits.
+ * Every message below is real — either copied from the probe run
+ * `isCrossFamilySlotConflict`'s docblock records, or, where no probe was
+ * captured for that specific trigger, the literal `RAISE EXCEPTION` text from
+ * the migration that defines it. Never a hand-written approximation. That
+ * matters here more than usual: this matcher reads a substring of a message
+ * Prisma composes, so a fixture that merely looks plausible would pin the
+ * matcher to a framing the database never emits.
  */
 
 /** The shape a typed model call produces: no Prisma code of its own. */
@@ -47,14 +49,18 @@ describe('isCrossFamilySlotConflict', () => {
     expect(isCrossFamilySlotConflict(err)).toBe(true);
   });
 
-  it('matches the UPDATE path, whose message tail differs from an insert', () => {
-    // The guard fires from eight triggers across four tables, and their
-    // message tails differ ("a live class", "a live studio class", "an active
-    // class template"). Nothing here may depend on the tail — the SQLSTATE is
-    // the whole discriminator.
+  it('matches the Class-side message, worded differently from the StudioClass-side one above', () => {
+    // The two surviving triggers word their message from whichever side
+    // fired: `studio_class_reject_cross_family_slot()` (above) says "a live
+    // class"; `class_reject_cross_family_slot()` — the one this case
+    // exercises — says "a live studio class"
+    // (`20260821120000_cross_family_slot_guard/migration.sql`). Nothing here
+    // may depend on the tail — the SQLSTATE is the whole discriminator. The
+    // roster of what still emits `YG001` is `docs/lock-order.md`'s to keep,
+    // not a count in this comment.
     const err = modelCallError(
-      'Teacher 00a3eaac-747f-4616-a0c7-656daf7aa136 already has an active class ' +
-        'template (17c40177-a4bd-4a63-8901-9cec56427bb6) on day 2 at 07:00',
+      'Teacher 00a3eaac-747f-4616-a0c7-656daf7aa136 already has a live studio ' +
+        'class (17c40177-a4bd-4a63-8901-9cec56427bb6) at 2029-04-03 09:00',
     );
     expect(isCrossFamilySlotConflict(err)).toBe(true);
   });
