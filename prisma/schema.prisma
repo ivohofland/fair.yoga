@@ -438,6 +438,18 @@ model StudioClassTemplate {
   studioClasses StudioClass[]
 }
 
+/// A child table's own `kind` column is not enough to make the composite FK
+/// `(scheduleRuleId, kind) → ScheduleRule(id, kind)` mean "this family's
+/// children hang off this family's rules" — without more, it only means "the
+/// pair agrees", which a row of the wrong family could still satisfy by
+/// carrying its own `kind` alongside it. What closes that gap is a `CHECK
+/// ("kind" = '<this table's literal>')` on the child table, invisible to
+/// Prisma and therefore hand-authored in the migration rather than declared
+/// here — see `ClassTemplate`'s and `StudioClassTemplate`'s own docblocks for
+/// where each one's lives. A future variant of this enum needs a child table
+/// carrying the same pattern: a `CHECK` pinning that table's `kind` column to
+/// its own literal, or the composite FK it joins through means less than it
+/// appears to.
 enum RuleKind {
   regular
   studio

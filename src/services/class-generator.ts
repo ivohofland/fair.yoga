@@ -668,6 +668,12 @@ export async function claimTemplateForGeneration(
       AND sr."isActive" = true
       AND sr."isArchived" = false
     FOR UPDATE OF ct`;
+  // Silent on purpose: this row's own `WHERE` did not match, which for the
+  // sweep's caller is the ordinary "not selected" case — the pre-filter
+  // `findMany` runs unlocked and is routinely minutes stale by the time this
+  // statement executes. Logging every one of those would be noise, not
+  // signal. The re-check below is the branch this comment's sibling exists
+  // to distinguish from this one.
   if (rows.length !== 1) return null;
 
   // Under the lock taken above, so nothing can change `ct` itself before we
@@ -683,7 +689,17 @@ export async function claimTemplateForGeneration(
   // why the raw statement's own `WHERE` cannot be trusted alone when it had
   // to wait. This read is a fresh statement taken under the lock, so it sees
   // whatever the row that made us wait actually committed.
-  if (!fresh.scheduleRule.isActive || fresh.scheduleRule.isArchived) return null;
+  if (!fresh.scheduleRule.isActive || fresh.scheduleRule.isArchived) {
+    // The signal the sweep's own `if (!fresh) return 0` cannot give: THIS
+    // null is the measured `EvalPlanQual` race actually landing — the raw
+    // statement above matched and waited, and what it waited on committed a
+    // change the wait made it miss. `pauseOrResumeTemplate`'s own call site
+    // treats reaching this as impossible and throws right after; logging
+    // here first costs it nothing and gives the sweep's silent `return 0`
+    // the trace it does not otherwise get.
+    log.warn({ templateId }, 'class generation claim matched but found the row ineligible on re-check');
+    return null;
+  }
 
   return fresh;
 }

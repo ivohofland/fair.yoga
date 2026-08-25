@@ -86,6 +86,18 @@ async function expectSlotRefusal(fn: () => Promise<unknown>): Promise<void> {
  * `meta.target`: `code` and `meta` are both `undefined` on the Prisma error
  * (`src/lib/exclusion-conflict.ts`), which is the whole reason that matcher
  * exists rather than reusing `isUniqueConflictOn`.
+ *
+ * LOAD-BEARING PROPERTY THIS WHOLE DESCRIBE DEPENDS ON:
+ * `ScheduleRule_teacher_slot_excl` keys on `(teacherId, dayOfWeek, slot)` only
+ * — `kind` is not part of it (the migration's `EXCLUDE USING gist` clause,
+ * `prisma/migrations/20260825061213_schedule_rule/migration.sql`). That is
+ * why most cases below mix `regular` and `studio` freely rather than writing
+ * a same-family and a cross-family variant of each: with `kind` absent from
+ * the key, a same-family collision and a cross-family one compile to
+ * byte-identical SQL against this constraint, so one case proves both. If
+ * `kind` is ever added to the constraint's key, every case here that relies
+ * on that stand-in — this file's own comment beside the unarchive/move cases
+ * below names which — needs its same-family twin written back in.
  */
 describe('ScheduleRule slot exclusion', () => {
   it('refuses an overlapping rule in the other family', async () => {
@@ -151,10 +163,10 @@ describe('ScheduleRule slot exclusion', () => {
   // Ported from slot-constraints.test.ts (issue 298): the cases above only
   // ever exercise the constraint via CREATE. None of them prove it also
   // fires on UPDATE — unarchiving a rule, or moving its dayOfWeek/startTime,
-  // into a slot another live rule already holds. `kind` plays no part in
-  // `ScheduleRule_teacher_slot_excl` (it names only teacherId, dayOfWeek and
-  // slot), so a single rule-vs-rule case stands in for what the old
-  // trigger-based tests had to write once per template family.
+  // into a slot another live rule already holds. A single rule-vs-rule case
+  // stands in for what the old trigger-based tests had to write once per
+  // template family — this describe's own docblock above names the property
+  // that makes that stand-in valid.
   it('refuses unarchiving a rule into an occupied slot', async () => {
     const archived = await prisma.scheduleRule.create({
       data: rule(teacherId, { dayOfWeek: 1, startTime: at('05:00'), isArchived: true, archivedAt: new Date() }),

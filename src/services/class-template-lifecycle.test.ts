@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import type { RegistrationStatus } from '@prisma/client';
 import {
@@ -11,6 +11,7 @@ import { getNextOccurrences } from './class-generator';
 import { formatDayHeader } from '@/lib/format';
 import { setLockTimeout } from '@/lib/db-locks';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
+import { log } from '@/lib/log';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -114,7 +115,9 @@ describe('updateClassTemplate (DB)', () => {
   //
   // The past-start case further down builds its template inline instead,
   // under its own teacher: it needs a specific dayOfWeek and startTime, which
-  // is exactly what this helper does not offer.
+  // is exactly what this helper does not offer. The two `slot_conflict` cases
+  // (I4) below do the same, for the same reason — each needs a deliberate
+  // collision, which is exactly what this counter's spacing exists to avoid.
   let makeTemplateCounter = 0;
   const makeTemplate = (classType: string) => {
     makeTemplateCounter += 1;
@@ -300,6 +303,144 @@ describe('updateClassTemplate (DB)', () => {
     if (result.firstEffective !== null) {
       expect(result.firstEffective.getUTCDay()).toBe(1);
     }
+  });
+
+  // I4: the service-internal mirror of
+  // `studio-class-template-lifecycle.test.ts`'s "returns slot_conflict with
+  // heldBy: studio/regular" pair for `updateStudioClassTemplate` — this file
+  // had no `slot_conflict` assertion at all before these two, across every
+  // `ok: false` case `updateClassTemplate` can return. Route-level 409s are
+  // already pinned by the integration suite; these prove the service's own
+  // wiring — which fields feed `ruleSlotHolder` and what gets logged.
+  //
+  // Both build inline, under their own teacher, exactly as the past-start
+  // case above them does and for the identical reason: each needs a
+  // deliberate collision at a specific `(dayOfWeek, startTime)`, which is
+  // what `makeTemplate`'s counter-derived spacing exists to avoid.
+  it('returns slot_conflict with heldBy: regular when the edit lands on a live sibling slot, and logs it', async () => {
+    const solo = await seedTeacher('slot-conflict-regular');
+    const makeSoloTemplate = (classType: string, startTime: string) =>
+      prisma.classTemplate.create({
+        data: {
+          scheduleRule: {
+            create: {
+              teacherId: solo.teacherId,
+              kind: 'regular',
+              classType,
+              dayOfWeek: 5,
+              startTime: hhmmToTime(startTime),
+              durationMinutes: 60,
+            },
+          },
+          teacherRoom: { connect: { id: solo.teacherRoomId } },
+          roomCost: 15,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 2,
+          maxStudents: 8,
+        },
+        include: { scheduleRule: true },
+      });
+    const occupant = await makeSoloTemplate('Slot Occupant', '09:00');
+    const mover = await makeSoloTemplate('Slot Mover', '11:00');
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    try {
+      const result = await updateClassTemplate(prisma, mover.id, solo.teacherId, {
+        startTime: timeToHHmm(occupant.scheduleRule.startTime),
+      });
+
+      expect(result).toEqual({ ok: false, reason: 'slot_conflict', heldBy: 'regular' });
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ templateId: mover.id, teacherId: solo.teacherId, heldBy: 'regular' }),
+        'recurring class edit refused: that slot is taken',
+      );
+    } finally {
+      warn.mockRestore();
+    }
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id: mover.id },
+      include: { scheduleRule: true },
+    });
+    expect(timeToHHmm(after.scheduleRule.startTime)).toBe(timeToHHmm(mover.scheduleRule.startTime));
+
+    // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298),
+    // so deleting the rules removes both templates with them — matching the
+    // cross-family probe cases above, which clean up the same way and leave
+    // `solo`'s teacher/room/account behind the same way.
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: solo.teacherId } });
+  });
+
+  it('returns slot_conflict with heldBy: studio when the studio family holds the slot, and logs it', async () => {
+    const solo = await seedTeacher('slot-conflict-studio');
+    const mover = await prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId: solo.teacherId,
+            kind: 'regular',
+            classType: 'Cross Family Mover',
+            dayOfWeek: 5,
+            startTime: hhmmToTime('09:00'),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: solo.teacherRoomId } },
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+      },
+      include: { scheduleRule: true },
+    });
+    // The OTHER family at the slot the edit moves onto — a live
+    // `StudioClassTemplate`, so it is this rule's `kind`, not which detector
+    // matched, that decides `heldBy` now. Mirrors the studio twin's own
+    // cross-family case, `heldBy: 'regular'`, in the other direction.
+    await prisma.studioClassTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId: solo.teacherId,
+            kind: 'studio',
+            classType: 'Cross Family Holder',
+            dayOfWeek: 5,
+            startTime: hhmmToTime('11:00'),
+            durationMinutes: 60,
+          },
+        },
+        location: 'Cross Family Studio',
+        hourlyRate: 40,
+      },
+    });
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    try {
+      const result = await updateClassTemplate(prisma, mover.id, solo.teacherId, {
+        startTime: '11:00',
+      });
+
+      expect(result).toEqual({ ok: false, reason: 'slot_conflict', heldBy: 'studio' });
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ templateId: mover.id, teacherId: solo.teacherId, heldBy: 'studio' }),
+        'recurring class edit refused: that slot is taken',
+      );
+    } finally {
+      warn.mockRestore();
+    }
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id: mover.id },
+      include: { scheduleRule: true },
+    });
+    expect(timeToHHmm(after.scheduleRule.startTime)).toBe(timeToHHmm(mover.scheduleRule.startTime));
+
+    // `ClassTemplate`/`StudioClassTemplate` are `onDelete: Cascade` from
+    // `ScheduleRule` (issue 298), so deleting the rules removes both
+    // templates with them.
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: solo.teacherId } });
   });
 
   /**

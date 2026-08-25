@@ -306,18 +306,20 @@ export function isRestrictViolationOn(error: unknown, constraints: readonly stri
  * including non-Error throwables, yields an ApiFailure.
  *
  * The lock-race-to-503 mapping this docblock once described as unqueued has
- * landed (the transient branch below), and the `busy` variants on the five
- * template lifecycle result unions have landed alongside it — the
- * atomic-template-update branch made `UpdateClassTemplateResult`
- * (`class-template-lifecycle.ts`) the fifth, alongside `PauseTemplateResult`,
- * `ArchiveTemplateResult` and their two studio twins. They remain
+ * landed (the transient branch below), and the `busy` variants on the
+ * template lifecycle result unions have landed alongside it: `class-template-
+ * lifecycle.ts` exports `UpdateClassTemplateResult`, `PauseTemplateResult`
+ * and `ArchiveTemplateResult`; `studio-class-template-lifecycle.ts` exports
+ * their studio twins `UpdateStudioClassTemplateResult`,
+ * `PauseStudioTemplateResult` and `ArchiveStudioTemplateResult`. They remain
  * complementary rather than redundant, and it is worth saying which does
- * what: the unions make contention a COMPILE error at five specific routes
- * (`PUT` and both `PATCH` branches at `/api/class-templates/[id]`, and both
- * `PATCH` branches at `/api/studio-class-templates/[id]`), which a catch-all
- * cannot; this branch makes it legible everywhere else, which the unions
- * cannot. A service that catches contention never reaches here — by design,
- * since it can say something more specific than this can.
+ * what: each union makes contention a COMPILE error at the route that
+ * switches on its `reason` — `PUT` and both `PATCH` branches at
+ * `/api/class-templates/[id]`, and the same three at
+ * `/api/studio-class-templates/[id]` — which a catch-all cannot; this branch
+ * makes it legible everywhere else, which the unions cannot. A service that
+ * catches contention never reaches here — by design, since it can say
+ * something more specific than this can.
  */
 export function classifyApiError(error: unknown): ApiFailure {
   // The terminality triggers (migrations 20260805120000 and 20260817120000)

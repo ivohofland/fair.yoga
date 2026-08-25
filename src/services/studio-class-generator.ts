@@ -86,6 +86,11 @@ export async function claimStudioTemplateForGeneration(
       AND sr."isActive" = true
       AND sr."isArchived" = false
     FOR UPDATE OF sct`;
+  // Silent on purpose: this row's own `WHERE` did not match, which for the
+  // sweep's caller is the ordinary "not selected" case — see
+  // `claimTemplateForGeneration`'s twin (`class-generator.ts`) for why that
+  // is routine and not worth logging, and for the branch below this one that
+  // is.
   if (rows.length !== 1) return null;
 
   // Under the lock taken above; `OrThrow` because the row provably exists.
@@ -99,7 +104,17 @@ export async function claimStudioTemplateForGeneration(
   // cannot be trusted alone when it had to wait. This read is a fresh
   // statement taken under the lock, so it sees whatever the row that made us
   // wait actually committed.
-  if (!fresh.scheduleRule.isActive || fresh.scheduleRule.isArchived) return null;
+  if (!fresh.scheduleRule.isActive || fresh.scheduleRule.isArchived) {
+    // Mirrors `claimTemplateForGeneration`'s own log at this branch
+    // (class-generator.ts): this null is the measured `EvalPlanQual` race
+    // actually landing, not the ordinary "not selected" case above.
+    // `pauseOrResumeStudioTemplate`'s call site treats reaching this as
+    // impossible and throws right after; logging here first costs it
+    // nothing and gives the sweep's silent `return 0` the trace it does not
+    // otherwise get.
+    log.warn({ templateId }, 'studio class generation claim matched but found the row ineligible on re-check');
+    return null;
+  }
 
   return fresh;
 }

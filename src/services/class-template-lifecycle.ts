@@ -272,7 +272,11 @@ void _scheduleRuleUpdateColumnsExist;
  * stamp-not-link consequence `TeacherEditableClassTemplateField` documents:
  * editing it moves nothing already generated.
  */
-type TeacherEditableScheduleRuleField =
+// Exported so the studio file can pin its own allowlist against this one
+// directly (`_ruleAllowlistsAgree`), the same way
+// `PlainUpdateForbiddenScheduleRuleField` is exported for the forbidden
+// halves — one rule model, shared by both families.
+export type TeacherEditableScheduleRuleField =
   | 'classType'
   | 'dayOfWeek'
   | 'startTime'
@@ -779,9 +783,8 @@ async function probeFirstEffectiveWeek(
  * `Class_teacher_slot_unique` raised when the propagation rewrote a generated
  * instance's `startTime` onto a slot some other class already held. Nothing
  * writes a `Class` row here any more, so that error can no longer be raised
- * and the arm is gone; `slot_conflict`, which is the template's own slot
- * index and a different failure entirely, stays. Everything else still
- * propagates as an opaque 500.
+ * and the arm is gone; `slot_conflict`, a different failure entirely, stays.
+ * Everything else still propagates as an opaque 500.
  */
 export async function updateClassTemplate(
   db: PrismaClient,

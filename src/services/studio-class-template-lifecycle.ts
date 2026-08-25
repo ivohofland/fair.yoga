@@ -59,6 +59,7 @@ import { log } from '@/lib/log';
 import type {
   LastScheduledClass,
   PlainUpdateForbiddenScheduleRuleField as PlainUpdateForbiddenClassRuleField,
+  TeacherEditableScheduleRuleField as TeacherEditableClassRuleField,
 } from './class-template-lifecycle';
 import {
   claimStudioTemplateForGeneration,
@@ -300,6 +301,10 @@ void _scheduleRuleUpdateColumnsExist;
  *   - `dayOfWeek` additionally → generated `StudioClass` rows are NOT moved or
  *     withdrawn, so an edit leaves up to four weeks of classes on the
  *     superseded weekday — the decided rule since #194, not a gap.
+ *
+ * One rule model, shared by both families — `_ruleAllowlistsAgree` below pins
+ * this list against the class family's own copy directly, the same way
+ * `_ruleForbiddenListsAgree` pins the forbidden halves further down.
  */
 type TeacherEditableScheduleRuleField =
   | 'classType'
@@ -318,6 +323,23 @@ const _scheduleRuleAllowlistHasNoStaleFields: NoneOf<
   Exclude<TeacherEditableScheduleRuleField, keyof ScheduleRuleUpdateData>
 > = true;
 void _scheduleRuleAllowlistHasNoStaleFields;
+
+/**
+ * Compile-time pin: the two families' rule-level ALLOWED lists must be the
+ * same set. This does not add a new constraint — the forbidden halves are
+ * already pinned equal by `_ruleForbiddenListsAgree`, and each family's own
+ * allow/forbidden pair already partitions the same `ScheduleRule` columns
+ * (`_scheduleRuleListsPartitionTheModel` in both files), so the allow halves
+ * are already forced equal algebraically. It exists so a reader does not have
+ * to do that algebra to know the two allowlists cannot silently diverge.
+ * `Exclude` in both directions, matching `_ruleForbiddenListsAgree`, because a
+ * one-way check passes when one list is a strict subset of the other.
+ */
+const _ruleAllowlistsAgree: NoneOf<
+  | Exclude<TeacherEditableScheduleRuleField, TeacherEditableClassRuleField>
+  | Exclude<TeacherEditableClassRuleField, TeacherEditableScheduleRuleField>
+> = true;
+void _ruleAllowlistsAgree;
 
 /**
  * The `ScheduleRule` columns the plain update path must never write.
@@ -649,7 +671,7 @@ export async function updateStudioClassTemplate(
     if (isTransientDbError(err)) {
       log.warn(
         { err, templateId, teacherId },
-        'studio template edit lost a lock race (its own row, or the slot index against a concurrent write) — nothing committed',
+        'studio template edit lost a lock race (its own row, or the slot exclusion constraint against a concurrent write) — nothing committed',
       );
       return { ok: false, reason: 'busy' };
     }

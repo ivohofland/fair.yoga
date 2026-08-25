@@ -11,6 +11,7 @@ import {
 import { lockClassRow, LOCK_TIMEOUT_SQL } from '@/lib/db-locks';
 import { log } from '@/lib/log';
 import { claimTemplateForGeneration } from './class-generator';
+import { claimStudioTemplateForGeneration } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
@@ -2474,6 +2475,109 @@ describe('deleteTeacherAccount serialises against a claim in progress (#315)', (
 
     const rule = await prisma.scheduleRule.findUniqueOrThrow({
       where: { id: (await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } })).scheduleRuleId },
+    });
+    expect(rule.isArchived).toBe(true);
+    expect(rule.isActive).toBe(false);
+  }, 20_000);
+});
+
+/**
+ * The studio twin of the suite above. `deleteTeacherAccount`'s bulk archive
+ * takes an ordered pre-lock on `StudioClassTemplate` (`FOR UPDATE OF sct`)
+ * separately from the `ClassTemplate` one (`FOR UPDATE OF ct`) proved there —
+ * two statements, two tables, and the review round that added this test found
+ * that the suite above's own mutation (removing both together) had proved
+ * only the pair, not either lock individually. `claimStudioTemplateForGeneration`
+ * (`studio-class-generator.ts`) is a separate function with its own claim
+ * logic from `claimTemplateForGeneration`, so this is not redundant with the
+ * class-family case above — it is what makes the `sct` lock's necessity a
+ * measurement rather than an inference from the `ct` one.
+ */
+describe('deleteTeacherAccount serialises against a studio claim in progress (#315)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-studio-claim-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+  let templateId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Studio Claim',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Erasure-vs-studio-claim fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+
+    const template = await prisma.studioClassTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Studio Claim vs Erasure',
+            dayOfWeek: 3,
+            startTime: hhmmToTime('08:00'),
+            durationMinutes: 60,
+          },
+        },
+        location: 'Studio Claim Test',
+        hourlyRate: 40,
+      },
+      select: { id: true },
+    });
+    templateId = template.id;
+  });
+
+  afterAll(async () => {
+    await prisma.studioClass.deleteMany({ where: { templateId } });
+    await prisma.studioClassTemplate.deleteMany({ where: { id: templateId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  it('waits for a concurrent studio claim to release the child row before archiving the teacher templates', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const claiming = prisma.$transaction(
+      async (tx) => {
+        expect(await claimStudioTemplateForGeneration(tx, templateId)).not.toBeNull();
+        await held;
+      },
+      { timeout: 15_000 },
+    );
+
+    // Let the claim acquire the lock before the erasure contends for it.
+    await new Promise((r) => setTimeout(r, 100));
+
+    let erasureSettled = false;
+    const erasing = deleteTeacherAccount(prisma, teacherId).then(() => {
+      erasureSettled = true;
+    });
+
+    await new Promise((r) => setTimeout(r, 300));
+    // Without the ordered child-row pre-lock this fixed, the erasure's
+    // `ScheduleRule` write is unobstructed and this is true.
+    expect(erasureSettled).toBe(false);
+
+    release();
+    await claiming;
+    await erasing;
+
+    const rule = await prisma.scheduleRule.findUniqueOrThrow({
+      where: {
+        id: (await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } })).scheduleRuleId,
+      },
     });
     expect(rule.isArchived).toBe(true);
     expect(rule.isActive).toBe(false);
