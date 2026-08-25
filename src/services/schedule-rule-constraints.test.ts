@@ -147,6 +147,48 @@ describe('ScheduleRule slot exclusion', () => {
       data: rule(teacherId, { dayOfWeek: 4, startTime: at('00:15'), durationMinutes: 30 }),
     })).resolves.toBeDefined();
   });
+
+  // Ported from slot-constraints.test.ts (issue 298): the cases above only
+  // ever exercise the constraint via CREATE. None of them prove it also
+  // fires on UPDATE — unarchiving a rule, or moving its dayOfWeek/startTime,
+  // into a slot another live rule already holds. `kind` plays no part in
+  // `ScheduleRule_teacher_slot_excl` (it names only teacherId, dayOfWeek and
+  // slot), so a single rule-vs-rule case stands in for what the old
+  // trigger-based tests had to write once per template family.
+  it('refuses unarchiving a rule into an occupied slot', async () => {
+    const archived = await prisma.scheduleRule.create({
+      data: rule(teacherId, { dayOfWeek: 1, startTime: at('05:00'), isArchived: true, archivedAt: new Date() }),
+    });
+    await prisma.scheduleRule.create({ data: rule(teacherId, { dayOfWeek: 1, startTime: at('05:00') }) });
+    await expectSlotRefusal(() => prisma.scheduleRule.update({
+      where: { id: archived.id },
+      data: { isArchived: false },
+    }));
+  });
+
+  it("refuses moving a rule's dayOfWeek into an occupied slot", async () => {
+    await prisma.scheduleRule.create({ data: rule(teacherId, { dayOfWeek: 2, startTime: at('05:00') }) });
+    const mover = await prisma.scheduleRule.create({
+      data: rule(teacherId, { dayOfWeek: 3, startTime: at('05:00') }),
+    });
+    await expectSlotRefusal(() => prisma.scheduleRule.update({
+      where: { id: mover.id },
+      data: { dayOfWeek: 2 },
+    }));
+  });
+
+  it("refuses moving a rule's startTime into an occupied slot", async () => {
+    await prisma.scheduleRule.create({
+      data: rule(teacherId, { dayOfWeek: 4, startTime: at('05:00'), durationMinutes: 30 }),
+    });
+    const mover = await prisma.scheduleRule.create({
+      data: rule(teacherId, { dayOfWeek: 4, startTime: at('05:30'), durationMinutes: 30 }),
+    });
+    await expectSlotRefusal(() => prisma.scheduleRule.update({
+      where: { id: mover.id },
+      data: { startTime: at('05:15') },
+    }));
+  });
 });
 
 describe('ScheduleRule composite foreign key', () => {
