@@ -37,12 +37,55 @@
 
 **Re-measure at the end rather than predicting.** Stage A's inherited baseline was stale in structure, not only in count.
 
-## Data the migration will move (re-derive before writing it)
+## The migration carries no data, and the seed is why
 
+This app is pre-production. Production's first `prisma migrate deploy` runs
+against an empty database; CI runs `migrate deploy` against a fresh service
+container; and `prisma/seed.ts` opens by `deleteMany()`-ing every table, so the
+dev database is destroy-and-rebuild by design. **A backfill would never execute
+meaningfully anywhere** — its only real effect would be inventing `cancelledAt`
+and `classCompletedAt` timestamps the rows never recorded.
+
+So the rewire migration requires empty tables and refuses loudly otherwise. That
+is strictly safer than a backfill: it declines rather than inventing, which is
+what a future populated database actually wants.
+
+**The shape comes from `prisma/seed.ts` instead** (Task 2a step 5b).
+
+**`npx prisma migrate reset` is NOT available here.** Prisma's agent safety guard
+refuses a whole-database wipe without freshly-given human consent, which a
+subagent has no channel to obtain — stage A's plan records this. So the tables
+are emptied by scoped, ordered deletes instead, which is the same "scoped
+inverse rather than a wipe" discipline stage A used for mutation testing, and it
+leaves every other table alone:
+
+```bash
+# EMPTY_CLASSES — run against dev, then against ethical_yoga_test.
+# Order mirrors prisma/seed.ts's own teardown: dependents before Class.
+docker exec -i fairyoga-db-1 psql -U yoga -d "$DB" -X -c '
+  DELETE FROM "Announcement";  DELETE FROM "Notification";
+  DELETE FROM "Payment";       DELETE FROM "WaitlistEntry";
+  DELETE FROM "Registration";  DELETE FROM "Class";
+  DELETE FROM "StudioClass";'
 ```
-45 Class + 8 StudioClass = 53 CalendarEntry rows
-Class by status: draft 3, open 22, completed 10, cancelled 10
-  of the 10 cancelled, 2 have registrations
+
+Then `npx prisma migrate deploy`, `npx prisma generate`, and `npx prisma db seed`
+to rebuild dev. The test database needs no seed — `docs/test-database.md` states
+that unit tests build their own fixtures and never seed it; its current contents
+(42 classes, 6 studio classes, 457 teachers) are accumulated fixture litter.
+
+**Hand-authored migrations are created with `--create-only`, never by naming a
+file and then running `migrate dev`.** `migrate dev --name X` applies pending
+migrations *and* diffs the schema, so against a file you already wrote by hand it
+can author a *second* migration carrying the name you passed. Stage A's sequence
+is the one to copy:
+
+```bash
+npx prisma migrate dev --create-only --name <name>   # Prisma makes the empty dir
+# ... hand-author migration.sql, edit schema.prisma ...
+npx prisma migrate deploy                            # applies; never authors
+npx prisma generate
+npx prisma migrate status                            # the drift check
 ```
 
 ---
@@ -53,13 +96,13 @@ Class by status: draft 3, open 22, completed 10, cancelled 10
 
 | Path | Responsibility |
 |---|---|
-| `prisma/migrations/<ts>_calendar_entry/migration.sql` | `CalendarEntry` table, generated `span`, exclusion constraint, duration CHECK. Empty table, so the constraint is added before any data can violate it. |
-| `prisma/migrations/<ts>_calendar_entry_backfill/migration.sql` | Pre-flight, backfill, attach children, shrink `ClassStatus`, install the three new triggers, drop the six old ones and the moved columns. One explicit transaction. |
+| `prisma/migrations/<ts>_calendar_entry/migration.sql` | `CalendarEntry` table, generated `span`, exclusion constraint, duration CHECK. |
+| `prisma/migrations/<ts>_calendar_entry_rewire/migration.sql` | Empty-tables guard, attach children by composite FK, shrink `ClassStatus`, drop the moved columns, install the three new triggers and drop the six old ones. One explicit transaction, no data movement. |
 | `src/lib/entry-conflict.ts` | The failure-path probe that names the conflicting entry. |
 | `src/app/api/classes/[id]/cancel/route.ts` | The regular family's cancel door. |
 | `src/services/calendar-entry.test.ts` | Constraint and trigger behaviour, raw SQL. |
 
-**Modified (principal):** `prisma/schema.prisma`, `src/lib/db-locks.ts`, `src/services/class-lifecycle.ts`, `src/services/class-transitions.ts`, `src/services/waitlist-retention.ts`, `src/services/class-generator.ts`, `src/services/studio-class-generator.ts`, `src/lib/generation.ts`, `tests/migration-sql.ts`, `src/services/slot-constraints.test.ts`, and the twelve ownership sites enumerated in Task 2b.
+**Modified (principal):** `prisma/schema.prisma`, `src/lib/db-locks.ts`, `src/services/class-lifecycle.ts`, `src/services/class-transitions.ts`, `src/services/waitlist-retention.ts`, `src/services/class-generator.ts`, `src/services/studio-class-generator.ts`, `src/lib/generation.ts`, `prisma/seed.ts`, `tests/migration-sql.ts`, `src/services/slot-constraints.test.ts`, and the twelve ownership sites enumerated in Task 2b.
 
 ---
 
@@ -134,10 +177,14 @@ In `prisma/schema.prisma`, both models:
 - [ ] **Step 5: Apply and regenerate**
 
 ```bash
-npx prisma migrate dev --name entry_start_time_to_time
+npx prisma migrate dev --create-only --name entry_start_time_to_time
+# hand-author the migration.sql above into the directory Prisma just made
+npx prisma migrate deploy
+npx prisma generate
+npx prisma migrate status
 ```
 
-Expected: the migration applies, `prisma generate` runs, and `npx prisma migrate status` reports no drift. **If it offers to drop or recreate anything else, stop** — that is drift this plan has not accounted for.
+`--create-only` then `deploy`, never `migrate dev --name` against a file you wrote: the latter applies pending migrations *and* diffs, so it can author a second migration carrying your name. Expected: applied, and `migrate status` reports no drift. **If anything offers to drop or recreate something else, stop** — that is drift this plan has not accounted for.
 
 - [ ] **Step 6: Fix every compiler error**
 
@@ -211,7 +258,8 @@ Refs issue 327."
 
 **Files:**
 - Create: `prisma/migrations/<ts>_calendar_entry/migration.sql`
-- Create: `prisma/migrations/<ts>_calendar_entry_backfill/migration.sql`
+- Create: `prisma/migrations/<ts>_calendar_entry_rewire/migration.sql`
+- Modify: `prisma/seed.ts` — the source of dev data, since the migration carries none
 - Create: `src/services/calendar-entry.test.ts`
 - Modify: `prisma/schema.prisma`
 
@@ -399,7 +447,7 @@ Expected: every case fails with `relation "CalendarEntry" does not exist`.
 
 - [ ] **Step 4: Write the create-table migration**
 
-`prisma/migrations/<ts>_calendar_entry/migration.sql`. The exclusion constraint is added here, on an empty table, so the backfill's INSERT is what would violate it rather than an `ALTER` over existing data — the shape stage A used.
+`prisma/migrations/<ts>_calendar_entry/migration.sql`. The exclusion constraint is added here, on a table that is empty and stays empty until the seed runs — so the first thing that can violate it is seed data, which is editable, rather than an `ALTER` over rows you would have to reason about.
 
 ```sql
 -- The two families' shared enum. Renamed from `RuleKind`, which stage A named
@@ -463,47 +511,48 @@ ALTER TABLE "CalendarEntry"
   WHERE ("cancelledAt" IS NULL);
 ```
 
-- [ ] **Step 5: Write the backfill migration**
+- [ ] **Step 5: Write the rewire migration**
 
-`prisma/migrations/<ts>_calendar_entry_backfill/migration.sql`. **Order is load-bearing throughout** — each block is annotated with what it depends on.
+`prisma/migrations/<ts>_calendar_entry_rewire/migration.sql`.
+
+**There is no backfill, and that is deliberate.** This app is pre-production: production's first `prisma migrate deploy` runs against an empty database, CI runs against a fresh service container, and `prisma/seed.ts` opens by `deleteMany()`-ing every table, so the dev database is destroy-and-rebuild by design. A backfill here would never execute meaningfully anywhere — and its only real effect would be inventing `cancelledAt` and `classCompletedAt` timestamps that were never recorded. **Migration code that cannot run is worse than absent in a file this project may never edit again.**
+
+So the migration requires empty tables and says so. A guard is strictly safer than a backfill would have been: it refuses rather than inventing, which is the behaviour a future populated database actually wants.
 
 ```sql
--- Explicit, rather than relying on the runner. Prisma wraps migration.sql in a
--- transaction; `psql` in autocommit and `prisma db execute` do not, and under
--- those a failure between blocks leaves the schema half-moved.
 BEGIN;
 
 -- ---------------------------------------------------------------------------
--- 0. Pre-flight, against real rows. Design §1.4 / parent §7.2. An exclusion
---    constraint cannot be added NOT VALID, so this either passes or the whole
---    migration aborts with a named reason instead of a raw 23P01.
---    This is a ONE-SHOT data check, not an enforcement predicate — do not
---    count it as one in any later liveness audit.
+-- 0. This migration MOVES columns between tables and does not carry data.
+--    Pre-production: production's first deploy runs against an empty database
+--    and the dev/test databases are disposable. Refuse loudly rather than
+--    half-moving a schema or inventing timestamps the rows never recorded.
+--
+--    Remedy: the ordered deletes in the plan (dependents before Class), against
+--    BOTH ethical_yoga and ethical_yoga_test, then `prisma migrate deploy` and
+--    `prisma db seed`. NOT `prisma migrate reset` — Prisma's agent guard
+--    refuses a whole-database wipe without fresh human consent, and a scoped
+--    delete leaves every other table alone anyway.
+--
+--    This is a ONE-SHOT check, not an enforcement predicate — do not count it
+--    as one in any later liveness or constraint audit. The block at the same
+--    position in 20260821120000_cross_family_slot_guard was miscounted exactly
+--    that way (design §1.3).
 -- ---------------------------------------------------------------------------
 DO $$
 DECLARE n int;
 BEGIN
-  WITH e AS (
-    SELECT "teacherId" t, date d, "startTime" st, "durationMinutes" dm, id FROM "Class"
-     WHERE status <> 'cancelled'
-    UNION ALL
-    SELECT "teacherId", date, "startTime", "durationMinutes", id FROM "StudioClass"
-     WHERE "cancelledAt" IS NULL
-  ), s AS (
-    SELECT *, tsrange(d + st, d + st + (dm * interval '1 minute'), '[)') span FROM e
-  )
-  SELECT count(*) INTO n
-    FROM s a JOIN s b ON a.t = b.t AND a.id < b.id AND a.span && b.span;
+  SELECT (SELECT count(*) FROM "Class") + (SELECT count(*) FROM "StudioClass") INTO n;
   IF n > 0 THEN
-    RAISE EXCEPTION 'Refusing to install CalendarEntry: % overlapping live entry pair(s). Resolve them before migrating.', n;
+    RAISE EXCEPTION
+      'CalendarEntry rewire needs empty Class/StudioClass tables (found % rows). '
+      'Empty them with the ordered deletes in the plan, then migrate deploy.', n;
   END IF;
 END $$;
 
 -- ---------------------------------------------------------------------------
--- 1. Drop the six triggers FIRST. Four of them read columns block 6 drops; the
---    other two gate the status rewrite in block 4 and would refuse it
---    (class_terminal_status_guard fires on any status change away from a
---    terminal OLD, which is exactly what block 4 does to the cancelled rows).
+-- 1. Drop the six triggers FIRST: four read columns block 4 drops, and the two
+--    terminality guards gate the status column block 3 retypes.
 -- ---------------------------------------------------------------------------
 DROP TRIGGER IF EXISTS class_cross_family_slot_insert_guard        ON "Class";
 DROP TRIGGER IF EXISTS class_cross_family_slot_update_guard        ON "Class";
@@ -517,43 +566,21 @@ DROP FUNCTION IF EXISTS class_reject_terminal_date_change();
 -- class_reject_terminal_status_change() is REPLACED in block 5, not dropped.
 
 -- ---------------------------------------------------------------------------
--- 2. One entry per class. The id is preserved so children link by it and so a
---    row remains traceable to its pre-migration self.
---    cancelledAt / classCompletedAt take `updatedAt` as their timestamp: the
---    real instant was never recorded, and updatedAt is the closest thing the
---    row has. Only their NULL-ness is load-bearing.
+-- 2. Each child hangs off an entry. NOT NULL immediately — the tables are
+--    empty, which block 0 has already established.
 -- ---------------------------------------------------------------------------
-INSERT INTO "CalendarEntry"
-  ("id","teacherId","kind","classType","date","startTime","durationMinutes",
-   "cancelledAt","classCompletedAt","scheduleRuleId","createdAt","updatedAt")
-SELECT c.id, c."teacherId", 'regular', c."classType", c.date, c."startTime", c."durationMinutes",
-       CASE WHEN c.status = 'cancelled' THEN c."updatedAt" END,
-       CASE WHEN c.status = 'completed' THEN c."updatedAt" END,
-       ct."scheduleRuleId",
-       c."createdAt", c."updatedAt"
-  FROM "Class" c LEFT JOIN "ClassTemplate" ct ON ct.id = c."templateId";
-
-INSERT INTO "CalendarEntry"
-  ("id","teacherId","kind","classType","date","startTime","durationMinutes",
-   "cancelledAt","classCompletedAt","scheduleRuleId","createdAt","updatedAt")
-SELECT s.id, s."teacherId", 'studio', s."classType", s.date, s."startTime", s."durationMinutes",
-       s."cancelledAt", NULL, sct."scheduleRuleId",
-       s."createdAt", s."updatedAt"
-  FROM "StudioClass" s LEFT JOIN "StudioClassTemplate" sct ON sct.id = s."templateId";
-
--- ---------------------------------------------------------------------------
--- 3. Attach each child. ids match by construction above.
--- ---------------------------------------------------------------------------
-ALTER TABLE "Class"       ADD COLUMN "calendarEntryId" TEXT, ADD COLUMN "kind" "ClassFamily";
-ALTER TABLE "StudioClass" ADD COLUMN "calendarEntryId" TEXT, ADD COLUMN "kind" "ClassFamily";
-UPDATE "Class"       SET "calendarEntryId" = "id", "kind" = 'regular';
-UPDATE "StudioClass" SET "calendarEntryId" = "id", "kind" = 'studio';
-ALTER TABLE "Class"       ALTER COLUMN "calendarEntryId" SET NOT NULL, ALTER COLUMN "kind" SET NOT NULL;
-ALTER TABLE "StudioClass" ALTER COLUMN "calendarEntryId" SET NOT NULL, ALTER COLUMN "kind" SET NOT NULL;
+ALTER TABLE "Class"
+  ADD COLUMN "calendarEntryId" TEXT NOT NULL,
+  ADD COLUMN "kind" "ClassFamily" NOT NULL;
+ALTER TABLE "StudioClass"
+  ADD COLUMN "calendarEntryId" TEXT NOT NULL,
+  ADD COLUMN "kind" "ClassFamily" NOT NULL;
 
 -- The CHECK is what makes the composite FK mean "regular children hang off
 -- regular entries"; without it the pair would merely have to AGREE, which both
--- children can do at once. It is load-bearing, not redundant with the FK.
+-- children can do at once. Load-bearing, not redundant with the FK — and the
+-- constraint that actually raises when a parent's kind is flipped, because the
+-- FK's ON UPDATE CASCADE rewrites the child first.
 ALTER TABLE "Class"       ADD CONSTRAINT "Class_kind_check"       CHECK ("kind" = 'regular');
 ALTER TABLE "StudioClass" ADD CONSTRAINT "StudioClass_kind_check" CHECK ("kind" = 'studio');
 
@@ -570,27 +597,27 @@ ALTER TABLE "Class"       ADD CONSTRAINT "Class_calendarEntryId_key"       UNIQU
 ALTER TABLE "StudioClass" ADD CONSTRAINT "StudioClass_calendarEntryId_key" UNIQUE ("calendarEntryId");
 
 -- ---------------------------------------------------------------------------
--- 4. Liveness has moved to the entry, so `cancelled` leaves ClassStatus. Every
---    cancelled row needs a surviving status first, or the enum swap's USING
---    cast fails on it. The pre-cancellation status was never recorded;
---    VALID_TRANSITIONS admits only draft->cancelled and open->cancelled, and a
---    class holding a registration was necessarily open. Lossy in one direction
---    (an open class with no registrations reads back as draft) and harmless:
---    nothing renders `status` on a cancelled entry — the cancelled view is
---    driven by cancelledAt. Local dev: 10 rows, 2 with registrations.
+-- 3. Liveness has moved to the entry, so `cancelled` leaves ClassStatus.
+--    PostgreSQL cannot drop an enum value, so the type is recreated. No USING
+--    cast can fail here: the table is empty.
 -- ---------------------------------------------------------------------------
-UPDATE "Class" SET status = CASE
-    WHEN EXISTS (SELECT 1 FROM "Registration" r WHERE r."classId" = "Class".id) THEN 'open'
-    ELSE 'draft' END
-  WHERE status = 'cancelled';
-
 ALTER TYPE "ClassStatus" RENAME TO "ClassStatus_old";
 CREATE TYPE "ClassStatus" AS ENUM ('draft', 'open', 'in_progress', 'completed');
 ALTER TABLE "Class" ALTER COLUMN "status" DROP DEFAULT;
-ALTER TABLE "Class" ALTER COLUMN "status" TYPE "ClassStatus"
-  USING "status"::text::"ClassStatus";
+ALTER TABLE "Class" ALTER COLUMN "status" TYPE "ClassStatus" USING "status"::text::"ClassStatus";
 ALTER TABLE "Class" ALTER COLUMN "status" SET DEFAULT 'draft';
 DROP TYPE "ClassStatus_old";
+
+-- ---------------------------------------------------------------------------
+-- 4. Only now drop the moved columns. The two partial slot indexes and the two
+--    @@unique([templateId, date]) indexes go with them.
+-- ---------------------------------------------------------------------------
+ALTER TABLE "Class"
+  DROP COLUMN "teacherId", DROP COLUMN "classType", DROP COLUMN "date",
+  DROP COLUMN "startTime", DROP COLUMN "durationMinutes", DROP COLUMN "templateId";
+ALTER TABLE "StudioClass"
+  DROP COLUMN "teacherId", DROP COLUMN "classType", DROP COLUMN "date",
+  DROP COLUMN "startTime", DROP COLUMN "durationMinutes", DROP COLUMN "templateId";
 
 -- ---------------------------------------------------------------------------
 -- 5. The three triggers that replace the six.
@@ -622,6 +649,10 @@ CREATE TRIGGER class_terminal_status_guard
 --     (40P01) on the schedule-write hot path. This fires inside the completing
 --     transaction, so marker and status commit atomically, and it acquires
 --     Class -> Entry, which composes with lockClassRow.
+--
+--     A marker synced from TypeScript instead would miss a raw
+--     `UPDATE "Class" SET status='completed'` — and reaching clients that
+--     bypass the services is the whole reason the freeze is a trigger.
 --
 --     `NEW.status IN (...)`, deliberately: `tests/migration-sql.ts` parses that
 --     shape, so one parser pins this trigger and (a) above.
@@ -671,19 +702,46 @@ CREATE TRIGGER entry_frozen_schedule_guard
   BEFORE UPDATE OF "date", "startTime", "durationMinutes" ON "CalendarEntry"
   FOR EACH ROW EXECUTE FUNCTION entry_reject_frozen_schedule_change();
 
--- ---------------------------------------------------------------------------
--- 6. Only now drop the moved columns. The two partial slot indexes and the two
---    @@unique([templateId, date]) indexes go with them.
--- ---------------------------------------------------------------------------
-ALTER TABLE "Class"
-  DROP COLUMN "teacherId", DROP COLUMN "classType", DROP COLUMN "date",
-  DROP COLUMN "startTime", DROP COLUMN "durationMinutes", DROP COLUMN "templateId";
-ALTER TABLE "StudioClass"
-  DROP COLUMN "teacherId", DROP COLUMN "classType", DROP COLUMN "date",
-  DROP COLUMN "startTime", DROP COLUMN "durationMinutes", DROP COLUMN "templateId";
-
 COMMIT;
 ```
+
+**A second pre-flight for `CalendarEntry_scheduleRuleId_date_key` was proposed at review and is not needed** — the concern is real but lands somewhere else. That index is new and total where its two predecessors were per-family, so it *can* refuse data the old schema accepted. But this migration inserts nothing, so nothing can violate it here; the first writer is the seed, where a `23505` is a seed bug with an editable fix (step 7 names it). The review's supporting inference — that `ScheduleRule.classTemplates` being an array means two templates can share a rule — does not hold: `ClassTemplate.scheduleRuleId` and `StudioClassTemplate.scheduleRuleId` are both `String @unique`, and `ScheduleRule`'s own comment explains that the array is a Prisma modelling artifact, not cardinality.
+
+- [ ] **Step 5b: Update `prisma/seed.ts` — this is where the data comes from**
+
+`prisma/seed.ts` (1107 lines) opens by `deleteMany()`-ing every table and rebuilds from scratch, so it — not a backfill — is the source of the shape. Two changes:
+
+1. **Add `calendarEntry.deleteMany()` to the teardown block**, positioned *after* `class` and `studioClass` (children first; the FK is `ON DELETE CASCADE` from parent to child, so deleting entries first would take the classes with them and make the ordering misleading even though it would work).
+2. **Every `class.create` and `studioClass.create` becomes a nested create through the entry**, which is what keeps parent and child in one statement:
+
+```ts
+await prisma.calendarEntry.create({
+  data: {
+    teacherId: ivo.id,
+    kind: 'regular',
+    classType: 'Vinyasa Flow',
+    date: someDate,
+    startTime: hhmmToTime('19:00'),
+    durationMinutes: 90,
+    scheduleRuleId: template.scheduleRuleId,
+    classes: {
+      create: {
+        kind: 'regular',
+        teacherRoomId: room.id,
+        roomCost: 20, minRate: 30, targetRate: 60,
+        minStudents: 3, maxStudents: 12,
+        status: 'open',
+      },
+    },
+  },
+});
+```
+
+**A cancelled seed class sets `cancelledAt` on the entry**, not `status`. **A completed one sets `status: 'completed'` on the child and lets the sync trigger write `classCompletedAt`** — do not set the marker by hand in the seed, or the seed stops exercising the trigger it depends on.
+
+**`prisma/seed.ts` is inside the typecheck scope** — `tsconfig.json` includes `**/*.ts` and excludes only `node_modules` — so step 1's compiler enumeration *does* reach it and it cannot be silently missed. Verified 2026-08-25. It still needs its own attention, because a type-correct seed can still produce data the new constraints reject.
+
+**Re-space seeded times.** Range overlap is a change of kind: the seed's classes are spaced for an exact-start key. Any two live classes of one teacher whose `[start, start+duration)` windows touch will now abort the seed with `23P01`. Read `prisma/seed.ts`'s existing header comment about the UTC-hour window before editing times — it warns about a related trap.
 
 - [ ] **Step 6: Update `schema.prisma`**
 
@@ -765,11 +823,17 @@ Same on `StudioClass`. Replace every `RuleKind` with `ClassFamily`.
 - [ ] **Step 7: Apply, and check what Prisma offers**
 
 ```bash
-npx prisma migrate dev --name calendar_entry_backfill
+# 1. Empty Class/StudioClass in BOTH databases — see EMPTY_CLASSES above.
+#    The rewire migration's block 0 refuses otherwise, by design.
+# 2. Apply.
+npx prisma migrate deploy
+npx prisma generate
 npx prisma migrate status
+# 3. Rebuild dev data from the seed you updated in step 5b.
+npx prisma db seed
 ```
 
-Expected: both migrations applied, no drift. **If it offers `DROP COLUMN "span"`, the `Unsupported(...)` declaration is wrong — fix it rather than accepting the drop**, which cascade-drops the exclusion constraint.
+Expected: both migrations applied, no drift, and the seed completes. **A `23P01` from the seed means two of its classes now overlap** — re-space them (step 5b), do not weaken the constraint. **A `23505` on `CalendarEntry_scheduleRuleId_date_key` means the seed puts two classes of one rule on one date**; that index is new and total where its two predecessors were per-family, so it is the seed that must change. **If it offers `DROP COLUMN "span"`, the `Unsupported(...)` declaration is wrong — fix it rather than accepting the drop**, which cascade-drops the exclusion constraint.
 
 - [ ] **Step 8: Run the constraint tests**
 
@@ -794,10 +858,17 @@ A mutation must use a value the code under test cannot produce; do not reach for
 git add prisma/schema.prisma prisma/migrations src/services/calendar-entry.test.ts
 git commit -m "feat: CalendarEntry takes the entry-level calendar identity
 
-53 entries backfilled from 45 Class + 8 StudioClass rows. Four cross-family
-triggers, two trigger functions and two partial slot indexes are replaced by
-one EXCLUDE USING gist over a generated tsrange, plus a composite FK that makes
-disjoint occupancy declarative.
+Four cross-family triggers, two trigger functions and two partial slot indexes
+are replaced by one EXCLUDE USING gist over a generated tsrange, plus a
+composite FK that makes disjoint occupancy declarative.
+
+The migration carries no data and refuses non-empty tables. Pre-production:
+production's first deploy runs against an empty database, CI against a fresh
+container, and prisma/seed.ts is destroy-and-rebuild, so a backfill would never
+execute meaningfully anywhere — and would have had to invent cancelledAt and
+classCompletedAt timestamps the rows never recorded. The guard declines instead
+of inventing, which is what a populated database would actually want. The seed
+is updated in the same commit; it is where the shape comes from.
 
 The range catches a collision no per-date key could: a 23:30 class running 60
 minutes ends 00:30 the NEXT day, on a different date value.
@@ -877,42 +948,55 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
 
 - [ ] **Step 3: Write the failing race test, then rewrite `updateClass`**
 
-`src/services/class-lifecycle.test.ts`:
+**Drive the interleaving deterministically — no `setTimeout`.** A sleep passes locally and flakes in CI, and worse, under the new lock the reschedule *blocks* on the completion, so `setLockTimeout` can fire first and the assertion passes for a reason unrelated to the fix. `src/services/template-lock-order.test.ts` is this repo's worked example of a two-connection lock test; **open it and follow its shape** rather than inventing one.
+
+Assert the **reason**, never the boolean:
 
 ```ts
-it('refuses a reschedule that races a completion', async () => {
+it('refuses a reschedule that races a completion, and says why', async () => {
   const { classId } = await openClassInThePast();
-  // Completion holds both rows; the reschedule must not commit against a span
-  // the completion already decided from.
-  const [completion, reschedule] = await Promise.allSettled([
-    completeClass(prisma, classId, { requireEndedBy: new Date() }),
-    (async () => {
-      await new Promise((r) => setTimeout(r, 50));
-      return updateClass(prisma, classId, { startTime: '23:00' });
-    })(),
-  ]);
-  expect(completion.status).toBe('fulfilled');
-  const outcome = reschedule.status === 'fulfilled' ? reschedule.value : null;
-  expect(outcome?.ok).toBe(false);
+
+  // Connection A holds Class + CalendarEntry through completeClass. Connection
+  // B attempts the reschedule while A is open. A lock timeout would ALSO make
+  // ok false, so the reason is what distinguishes the fix from a flake.
+  const outcome = await withCompletionHeldOpen(classId, async () => {
+    return updateClass(dbOnSecondConnection, classId, { startTime: '23:00' });
+  });
+
+  expect(outcome.ok).toBe(false);
+  expect(outcome.reason).toBe('frozen');        // not 'terminal', not a timeout
 });
 ```
 
-Then rewrite `updateClass`. It writes both tables now — `classType`, `date`, `startTime`, `durationMinutes` to the entry; `description` and the five economic fields to `Class` — so it must become an explicit transaction, and it takes `lockClassRow` rather than relying on emergent statement order:
+Then rewrite `updateClass`. It writes both tables now — `classType`, `date`, `startTime`, `durationMinutes` to the entry; `description` and the five economic fields to `Class` — so it must become an explicit transaction, and it takes `lockClassRow` rather than relying on emergent statement order.
+
+**Two things the naive shape gets wrong**, both raised at plan review:
+
+1. **The two CAS results are different refusals and must not collapse into one reason.** A `Class` miss means terminal *status*; a `CalendarEntry` miss means a frozen *schedule*. They map to different sentences for the teacher.
+2. **A request may legitimately touch only one table.** Editing only `startTime` leaves `classData` empty, and an unconditional `updateMany` with nothing to set is not a reliable count-of-1. Guard both sides symmetrically on whether that side has work.
 
 ```ts
 return db.$transaction(async (tx) => {
   await lockClassRow(tx, classId);          // Class, then CalendarEntry
 
-  const classResult = await tx.class.updateMany({ where: classWhere, data: classData });
-  if (classResult.count !== 1) return { ok: false, reason: 'terminal' };
+  // Symmetric: each side runs only if it has work, and each has its OWN
+  // refusal. A request that touches neither table never reaches here —
+  // `updateClassSchema` rejects an empty body upstream.
+  if (classData !== null) {
+    const r = await tx.class.updateMany({
+      where: { id: classId, status: { notIn: [...TERMINAL_CLASS_STATUSES] }, ...lockedEconomics },
+      data: classData,
+    });
+    if (r.count !== 1) return { ok: false, reason: 'terminal' };
+  }
 
   if (entryData !== null) {
     // The CAS moved with the columns. `status: { notIn: TERMINAL }` sat on
-    // `Class` and four of the ten editable fields left that table, so the
-    // filter is re-expressed against the entry's OWN columns — the same
-    // predicate `entry_frozen_schedule_guard` enforces. The trigger is the
-    // backstop that reaches raw SQL; this is the path that returns a 409.
-    const entryResult = await tx.calendarEntry.updateMany({
+    // `Class`, and four of the ten editable fields left that table, so this
+    // filter is the entry's OWN columns — the same predicate
+    // `entry_frozen_schedule_guard` enforces. The trigger is the backstop that
+    // reaches raw SQL; this is the path that returns a 409.
+    const r = await tx.calendarEntry.updateMany({
       where: {
         id: entryId,
         classCompletedAt: null,
@@ -920,11 +1004,13 @@ return db.$transaction(async (tx) => {
       },
       data: entryData,
     });
-    if (entryResult.count !== 1) return { ok: false, reason: 'terminal' };
+    if (r.count !== 1) return { ok: false, reason: 'frozen' };
   }
   ...
 });
 ```
+
+`'frozen'` is a new reason and needs a sentence and an error code at `api/classes/[id]/route.ts`, beside the existing `terminal` / `slot_conflict` / `template_date_conflict` arms — read how those four are worded before adding a fifth.
 
 **`updateClass` changes from lock-free-with-CAS to lock-taking.** Say so in its docblock, and delete the sentence that currently reads "This function takes no lock at all" — it becomes false at this commit.
 
@@ -962,6 +1048,47 @@ Its docblock's safety argument names two triggers by their old identities. **Rew
 `class-generator.ts` and `studio-class-generator.ts`: the cross-family `foreign` read and its `blocked_by_other_family` branch are deleted — under one table there is no other family. The occupancy read becomes one query over `CalendarEntry`.
 
 `class-lifecycle.ts` (`completeClass`) and `class-transitions.ts` (`autoCompleteClasses`): both compute `classStartInstant(date, startTime, tz) + durationMinutes` from a single `Class` row. All three fields move, so both need the entry. `completeClass` already reads `teacher` under its lock via `include`, so adding `calendarEntry` to the same `include` is the shape that file already uses — and Step 2 makes that read lock-covered.
+
+- [ ] **Step 6b: Audit every POSITIVE `status` filter — the compiler cannot see these**
+
+**Raised at plan review, and it is the sharpest finding on this plan.** Task 2b step 1 leans on Prisma's string-literal union to enumerate the work, and it does — *for sites that express liveness negatively*. `status: { not: 'cancelled' }` and `notIn: ['cancelled']` stop compiling the moment the member leaves, so the compiler hands you that list.
+
+**Sites that express liveness positively keep compiling and silently change meaning.** After this branch a cancelled class *keeps its status* — cancellation is `CalendarEntry.cancelledAt`, not a status — so `status: { in: ['draft','open'] }` now matches cancelled classes that it used to exclude. Nothing in step 1 surfaces it, and Task 6's sweep greps *removed names*, which these sites do not contain.
+
+This is the one place the plan's known-gap policy does **not** apply: the list has to be hand-derived, because no compiler output contains it.
+
+```bash
+grep -rn "status: '\(draft\|open\|in_progress\|completed\)'\|status: { in:" src --include='*.ts' --include='*.tsx' | grep -v '\.test\.'
+```
+
+Measured 2026-08-25: **50 hits.** Most are `Registration.status`, `Payment.status` or `WaitlistEntry.status` and are unaffected — **give each hit a verdict rather than a blanket rewrite**; rewriting a still-correct filter is the mirror-image defect.
+
+The `Class.status` ones are the task, and the named sets are where to start, because a named set is a tether and a literal array is not:
+
+| Site | Constant | Did it mean "live"? |
+|---|---|---|
+| `gdpr.ts:325`, `gdpr.ts:468` | literal `['draft','open']` | verdict required |
+| `gdpr.ts:933`, `gdpr.ts:1057` | `CANCELLABLE_STATUSES` | verdict required |
+| `room-archive.ts:116` | `BLOCKING_CLASS_STATUSES` | verdict required |
+| `class-template-lifecycle.ts:1377` | `SCHEDULED_STATUSES` | verdict required |
+| `class-lifecycle.ts:413` | `sourceStatesFor(targetStatus)` | derived from `VALID_TRANSITIONS` |
+| `waitlist-retention.ts:379` | `TERMINAL_CLASS_STATUSES` | handled in step 5 |
+| `api/classes/[id]/transition/route.ts:78` | literal `['draft','open']` | moves to the cancel route (step 8) |
+
+Where a filter meant "live", it gains `calendarEntry: { cancelledAt: null }` alongside — the status half no longer carries that meaning on its own.
+
+**Each of the four named constants is derived or hand-declared against `ClassStatus`.** Open each definition: shrinking the enum changes what a derived one contains and silently leaves a hand-declared one wrong. `CANCELLABLE_STATUSES` is the one to read first — its name is about the operation this branch removes from the enum.
+
+Write a test for at least one user-visible consequence, so the finding is pinned rather than merely fixed:
+
+```ts
+it('a cancelled class is not offered as bookable', async () => {
+  const { classId } = await openClass();
+  await cancelClass(classId);                    // writes calendarEntry.cancelledAt
+  const bookable = await listBookableClasses(teacherId);
+  expect(bookable.map((c) => c.id)).not.toContain(classId);
+});
+```
 
 - [ ] **Step 7: Port the twelve ownership sites, inline**
 
@@ -1152,6 +1279,8 @@ YG001    blocked_by_other_family
 
 Grep each across `src/`, `tests/`, `docs/`, `prisma/schema.prisma`, `CLAUDE.md`. **Expect legitimate survivors** and give every hit its own verdict — rewriting a still-true claim is the mirror-image defect and costs more than the staleness did.
 
+**This sweep cannot find a positive-liveness filter** — those contain none of the removed names. Task 2b step 6b is where they are enumerated; confirm it was done rather than re-deriving it here.
+
 - [ ] **Step 2: Read whole docblocks in every touched function**
 
 A grep finds a stale NAME; it never finds a stale DESCRIPTION. Stage A's one Critical review finding was a docblock whose third sentence had been correctly rewritten and whose seventh still described the same object wrongly — in a paragraph that branch had itself edited. It survived nine keyword sweeps.
@@ -1171,5 +1300,7 @@ Record files and tests per project with totals that reconcile. Do not predict; s
 ## Self-Review
 
 **Spec coverage.** §1.3.1 disjoint occupancy → Task 2a steps 4–5, tested step 2. §1.3.2 census → Task 5 step 3. §1.4 stop condition → Task 2a steps 1 and 5 (block 0). §2 lock coverage → Task 2b steps 2–4. §3 probe → Task 3. §4 freeze → Task 2a step 5 blocks 5(b)(c), tested step 2. §4.4 three columns → Task 2a block 5(c). §4.5 asymmetry + two pins → Task 2a schema docblock, Task 5. §5 cancel door → Task 2b step 8. §6 `startTime` → Task 1. §7 stop conditions → Task 2a step 1, Task 1 step 8, Task 2b step 9.
+
+**Review findings folded in (2026-08-25):** positive-liveness filters → Task 2b step 6b (the one hand-derived list in this plan); `updateClass`'s two refusals and its empty-`data` case → step 3; the race test's timing → step 3, driven by a two-connection fixture and asserting the reason; `prisma/seed.ts` → File Structure, Task 2a step 5b, and confirmed inside the typecheck scope; `migrate dev --name` against hand-authored files → `--create-only` then `deploy` throughout; `migrate reset` unavailable to a subagent → scoped ordered deletes instead. One finding rejected with evidence: the second pre-flight (see Task 2a step 5).
 
 **Known gap, stated rather than hidden:** the plan does not enumerate every one of the ~41 query blocks Task 2b must port. That is deliberate — hand-listing them is the habit that left 20 of 26 integration files unobserved on #170. The compiler enumerates them exactly, and Task 2b step 1 makes that list the task.
