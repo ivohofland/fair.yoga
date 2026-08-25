@@ -211,7 +211,15 @@ Name a file only where its *order* matters, which here is nowhere.
   `dayOfWeek: number`, `startTime: Date` (`@db.Time`), `durationMinutes: number`,
   `isActive: boolean`, `isArchived: boolean`, `archivedAt: Date | null`,
   `withdrawnCount: number | null`. The generated `slot` column is **not** in the
-  Prisma model — it is unmappable and never written.
+  Prisma **client** — nothing in TypeScript can read or write it — but it IS
+  declared on the model as `slot Unsupported("int4range")? @default(dbgenerated())`.
+  Both halves are load-bearing. `Unsupported` fields are omitted from the
+  generated client, which is the "never written" guarantee. Declaring it at all
+  is what stops `prisma migrate dev` reading the column as drift and offering
+  `ALTER TABLE "ScheduleRule" DROP COLUMN "slot"` — which cascade-drops the
+  exclusion constraint. Measured 2026-08-25: only the optional +
+  `dbgenerated()` form diffs clean; a bare `Unsupported("int4range")?` still
+  wants `DROP DEFAULT` and the non-null form still wants `SET NOT NULL`.
 
 **`withdrawnCount` is nullable, and that is not a nullability oversight.** Both
 children declare it `Int?` (`schema.prisma:379`, `:529`) and **every live row is
@@ -378,6 +386,10 @@ model ScheduleRule {
   isArchived      Boolean   @default(false)
   archivedAt      DateTime?
   withdrawnCount  Int?
+  /// The generated occupancy range. Declared so `prisma migrate dev` does not
+  /// read it as drift; `Unsupported` keeps it out of the generated client, so
+  /// it can be neither read nor written from TypeScript.
+  slot            Unsupported("int4range")? @default(dbgenerated())
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -579,7 +591,13 @@ Expected: 8 passed.
 
 Never edit the applied migration to mutate it; a comment-only edit already
 changes its checksum. Apply mutations to the **test** database directly and
-restore with `npx prisma migrate reset` afterwards.
+restore with the scoped INVERSE of the exact SQL that made the mutation.
+**`npx prisma migrate reset` is not available here** — Prisma's own agent
+safety guard refuses a whole-database wipe without freshly-given human
+consent, which a subagent has no channel to obtain. That is a feature, not
+an obstacle: an inverse touches only what the mutation touched, where a
+reset would destroy the dev fixtures too. Verify each restore by reading the
+constraint definition back out of `pg_constraint`, then re-running the suite.
 
 *Mutation A — close the range.* Rebuild the generated column with `'[]'` instead
 of `'[)'`. Expected: `allows a rule starting exactly when the first ends` goes
@@ -850,6 +868,21 @@ npx prisma migrate dev && npx prisma generate
 npx vitest run --project unit src/services/schedule-rule-constraints.test.ts
 ```
 
+**`prisma migrate dev` is only safe here because `ScheduleRule.slot` is declared
+`Unsupported("int4range")? @default(dbgenerated())` on the model.** Without that
+line Prisma reads the generated column as drift and offers a corrective
+migration whose body is `ALTER TABLE "ScheduleRule" DROP COLUMN "slot"` —
+measured, read-only, on 2026-08-25. `slot` carries
+`ScheduleRule_teacher_slot_excl`, so accepting that prompt cascade-drops this
+branch's entire invariant. If `migrate dev` ever offers to name a corrective
+migration on this branch, **decline it** and re-derive the drift first:
+
+```bash
+npx prisma migrate diff --from-schema-datasource prisma/schema.prisma \
+  --to-schema-datamodel prisma/schema.prisma --script
+# expected: "This is an empty migration."
+```
+
 Expected: the two new cases pass — **after** you rewrite this file's own
 teardown, which Task 1 copied verbatim from `slot-constraints.test.ts` and which
 this task has just broken. `teacherId` no longer exists on either child, so:
@@ -903,9 +936,15 @@ test files (measured 2026-08-24; re-derive rather than trust).
 - Produces: a green `npx tsc --noEmit`, and a suite red **only** in the
   conflict-vocabulary files Task 4 then fixes.
 
-This task is mechanical and compiler-driven. It is one task because no
-intermediate state is independently reviewable: the branch does not build until
-it is finished.
+It is one task because no intermediate state is independently reviewable: the
+branch does not build until it is finished.
+
+**Most of it is mechanical and compiler-driven. Two parts are not, and both
+were added mid-execution because the original text said otherwise.** Step 4b
+rebuilds the write-authorization pins across the table split — a design change
+where the compiler flags the breakage and every obvious repair is wrong, one of
+them by silently removing a security check. And the conflict-detection layer
+below is invisible to the compiler entirely. Neither is a re-point.
 
 **The compiler does not enumerate all of this task's blast radius, and the gap
 is Task 4's whole subject.** Task 2 drops two partial unique indexes and four
@@ -1026,6 +1065,83 @@ Two consequences worth handling deliberately rather than discovering:
   prefer deleting the rules and letting the cascade run, rather than nesting the
   filter.
 
+- [ ] **Step 4b: Rebuild the write-authorization pins across the table split**
+
+**This step is not mechanical, and the compiler's guidance here is actively
+misleading.** Both lifecycle services carry a compile-time apparatus that
+partitions every writable column into an allowlist (`TeacherEditable*Field` —
+what a teacher may change through a plain `PUT`) and a forbidden list
+(`PlainUpdateForbidden*Field` — what only a guarded path may write). Six pins
+per family hold that partition, and the write itself is typed
+`… & Partial<Record<PlainUpdateForbidden*Field, never>>`.
+
+Task 2 splits the model those lists partition. Measured on `main` @ `3565eee`:
+
+| Pin | What it asserts | After Task 2 |
+|---|---|---|
+| `_templateUpdateColumnsExist` | wire-schema keys ⊆ child's update input | **breaks** — `classType`, `dayOfWeek`, `startTime`, `durationMinutes` left the child |
+| `_templateForbiddenColumnsExist` | forbidden names ⊆ child's update input | **breaks** — `teacherId`, `isActive`, `isArchived`, `archivedAt`, `withdrawnCount` left the child |
+| `_studioTemplateListsPartitionTheModel` | child's update input ⊆ allowlist ∪ forbidden | **breaks** — the new `scheduleRuleId` and `kind` are in neither list |
+| `_templateFieldsArePermitted`, `_templateAllowlistHasNoStaleFields`, `_templateAllowlistHasNoForbiddenFields`, `_templateForbiddenListIsComplete` | literal-vs-literal | unaffected, and therefore **no help** |
+
+Five of the eight forbidden names move to `ScheduleRule`, `isActive` among
+them — the one its own docblock calls the entry that matters most, because it
+is what stops a `PUT` flipping a template active and bypassing the
+transaction-and-generate path `PATCH` owns.
+
+**Three reflexive repairs make the compiler green and are all wrong:**
+
+1. *Delete the moved names from the allowlist.* Compiles. A teacher can then
+   no longer edit their own schedule at all — the feature dies silently, and
+   only an integration test would notice.
+2. *Delete the moved names from the forbidden list.* Compiles, and **removes
+   the protection outright.** Those five columns become writable through
+   whatever rule-update the plain `PUT` now issues, with nothing pinning them.
+   This is the #79 reflexive-grant failure the forbidden list's own docblock
+   warns about, arriving from a direction that docblock did not anticipate:
+   not "paste the name into the allowlist" but "delete it from the deny list
+   because it is no longer a column *here*."
+3. *Add `scheduleRuleId` and `kind` to the allowlist* to satisfy the partition
+   pin. Compiles. A teacher can then re-parent their template onto another
+   rule by id — including, via the composite foreign key, a rule they do not
+   own. That is an ownership hole, not a formatting fix.
+
+**The correct repair: the partition now spans two models, so it needs two sets
+of lists and two sets of pins.**
+
+- Keep the child's lists, reduced to the columns that stayed. `scheduleRuleId`
+  and `kind` join the **forbidden** side — they are identity, exactly like `id`.
+- Add rule-level `TeacherEditableScheduleRuleField` /
+  `PlainUpdateForbiddenScheduleRuleField`, and mirror all six pins against
+  `keyof Prisma.ScheduleRuleUncheckedUpdateManyInput`. `classType`,
+  `dayOfWeek`, `startTime`, `durationMinutes` go on the allowlist;
+  `id`, `teacherId`, `kind`, `isActive`, `isArchived`, `archivedAt`,
+  `withdrawnCount`, `createdAt`, `updatedAt` on the forbidden side.
+- Type the rule-update the same way the child-update is typed:
+  `… & Partial<Record<PlainUpdateForbiddenScheduleRuleField, never>>`.
+
+**Prove each new pin can fail, one mutation each** (the plan's Global
+Constraints require it, and these pins are the reason):
+
+- add `'publishedAt'` to the rule's forbidden list → only
+  `_scheduleRuleForbiddenColumnsExist` reddens (the measurement the studio
+  file's own docblock records for its twin)
+- add `'isActive'` to the rule's **allowlist** → the no-forbidden-on-allowlist
+  pin reddens
+- remove `'dayOfWeek'` from the rule's allowlist → the partition pin reddens
+- write `{ isActive: true }` into the rule-update data at the call site → the
+  `Partial<Record<…, never>>` intersection reddens
+
+Record the exact error text for each. A pin that compiles but cannot fail
+certifies nothing, and this apparatus is six-sevenths of the write
+authorization on these two routes.
+
+**If this step turns out to need design judgment beyond the above — report it
+rather than guessing.** Re-establishing an invariant across a table split is
+the one part of Task 3 that is not a re-point, and it was added to this plan
+mid-execution precisely because the original text called the whole task
+mechanical.
+
 - [ ] **Step 5: Run the typecheck to green**
 
 ```bash
@@ -1076,6 +1192,187 @@ and the diff did not touch means an error was silenced rather than fixed.
 ```bash
 git add $(cat /tmp/repoint-changed.txt | tr '\n' ' ')
 git commit -m "refactor: every template read reaches its slot through the rule (issue 298)"
+```
+
+---
+
+## Task 3c: The child row stops being locked for free
+
+**Files:**
+- Modify: `src/services/class-generator.ts`, `src/services/studio-class-generator.ts`,
+  `src/services/class-template-lifecycle.ts`, `src/services/studio-class-template-lifecycle.ts`
+- Test: `src/services/template-lock-order.test.ts` (extend), and the claim-vs-archive
+  interleavings already in `class-generator.test.ts` / `studio-class-generator.test.ts`
+- Doc: `docs/lock-order.md` (its plain-`FOR UPDATE` census section)
+
+**Interfaces:** consumes Task 3's compiling tree; produces no new exports.
+
+### Why this task exists — it was not in the original plan
+
+`claimTemplateForGeneration`'s `FOR UPDATE` does **three** jobs, and Task 2
+lands them on two different tables. Measured from its own docblock
+(`class-generator.ts:549-613`):
+
+| # | Job | Needs locked, after the split |
+|---|---|---|
+| A | serialize against `archiveOrUnarchiveTemplate`'s CAS — that `updateMany` takes `FOR NO KEY UPDATE`, which conflicts (`:551-556`) | the **rule** — every column that CAS writes moves |
+| B | block a concurrent `Class` insert, whose FK check takes `FOR KEY SHARE` on the template row — measured on #164, both directions (`:592-596`) | the **child** — `Class.templateId` still references `ClassTemplate.id` |
+| C | hold the economics authoritative for generation (#102, `:598-613`) | the **child** — the economics stay there |
+
+Postgres row locks are per-table. A child-only lock does not conflict with a
+rule-only `updateMany`, and the composite FK does not bridge them: archiving
+touches neither `id` nor `kind`, so no re-check fires on the child. Left alone,
+the claim becomes — in the analysis's words — *structurally equivalent to the
+plain re-read its own docblock forbids, just spelled as a `FOR UPDATE` on the
+wrong table.*
+
+**And it is not only the archive.** Measured: `pauseOrResumeTemplate`'s CAS
+writes only `isActive`; `archiveOrUnarchiveTemplate` writes `isArchived`,
+`isActive`, `archivedAt`, `withdrawnCount` across two statements. Every one of
+those columns moves. `updateClassTemplate` becomes a two-table write
+(`classType`/`dayOfWeek`/`startTime`/`durationMinutes` on the rule, the
+economics on the child) — and it takes **no explicit lock at all today**,
+relying on its own plain `UPDATE` to lock the row implicitly. That implicit lock
+now covers the wrong table for four of its columns, and the generator reads
+exactly those four to compute candidate dates.
+
+### The decision: the child stays the only lock node
+
+Taken with the maintainer, 2026-08-25. **Every writer of a rule's lifecycle or
+calendar columns takes the child row's `FOR UPDATE` as its first statement.**
+The claim joins the rule for the predicate and locks the child only:
+
+```sql
+-- the claim: predicate from the rule, lock on the child
+SELECT ct."id" FROM "ClassTemplate" ct
+  JOIN "ScheduleRule" sr ON sr."id" = ct."scheduleRuleId"
+ WHERE ct."id" = $1
+   AND sr."isActive" = true
+   AND sr."isArchived" = false
+ FOR UPDATE OF ct;
+```
+
+```sql
+-- every rule writer, first statement, before touching ScheduleRule
+SELECT "id" FROM "ClassTemplate" WHERE "id" = $1 FOR UPDATE;
+```
+
+Read of the rule under that lock is then safe, because every writer of those
+columns must hold the same child lock to reach them.
+
+**Rejected: lock both rows.** It adds `ScheduleRule` as a node to an ordering
+`docs/lock-order.md` twice declines to extend for lesser reasons (`:752-755`),
+with a named AB-BA against `updateClassTemplate`, in a codebase already carrying
+one open unfixed `ClassTemplate`-vs-`Class` ordering violation (#229,
+`docs/lock-order.md:1221-1254`).
+
+**Rejected: narrow the extraction.** The constraint's `WHERE isArchived = false`
+needs that column on the rule, so the rule would need its own copy of the
+lifecycle flags — the two-sources-of-truth drift this extraction exists to
+remove.
+
+**`FOR UPDATE OF ct` is required, never a bare `FOR UPDATE`** on the joined
+query — a bare one locks both relations and silently reintroduces the ordering
+question this decision exists to avoid. `docs/lock-order.md:249` states the same
+rule for the `Class` join.
+
+- [ ] **Step 1: Re-derive the census before editing**
+
+```bash
+grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" | grep -vE ":[0-9]+: *(\*|//)"
+```
+
+`docs/lock-order.md:191-198` says this returns four hits today: the two claim
+sites, plus `lockClassRow`/`lockClassRowsOrdered` in `db-locks.ts`. Confirm
+that, and record what it returns after this task — the count is the doc's
+enforcement mechanism, so it must be re-stated there rather than left stale.
+
+- [ ] **Step 2: Write the failing test FIRST — prove the claim serializes**
+
+Extend `src/services/template-lock-order.test.ts`. The invariant under test is
+not a deadlock; it is **mutual exclusion**: an archive in flight must block the
+claim, and vice versa. Use the `FOR UPDATE NOWAIT` probe pattern from
+`db-locks.test.ts:477-499`, which proves *which rows are actually locked*
+rather than asserting that a string was sent.
+
+Two cases per family:
+
+1. With `archiveOrUnarchiveTemplate`'s transaction open past its first
+   statement, a third connection's `SELECT … FROM "ClassTemplate" WHERE id=$1
+   FOR UPDATE NOWAIT` must fail with `55P03` / `could not obtain lock`. That is
+   the proof the archive holds the child row.
+2. With `claimTemplateForGeneration`'s transaction open, the same probe must
+   fail the same way.
+
+Run them before the implementation. Case 1 must FAIL initially — after Task 2
+the archive writes only `ScheduleRule` and holds no child lock at all. Record
+that failure: it is the direct evidence that the gap this task closes was real,
+and it is the only chance to observe it.
+
+- [ ] **Step 3: Add the child lock to the six write paths**
+
+`pauseOrResumeTemplate`, `archiveOrUnarchiveTemplate`, `updateClassTemplate`
+and their three studio twins. First statement in each transaction, after
+`setLockTimeout`, before any `ScheduleRule` write.
+
+`updateClassTemplate` is the one with no lock today — its docblock must say
+plainly that the lock became explicit because the columns it guards moved, not
+that a lock was added for a new reason. State what is true now; the
+before-and-after goes in the PR body (CLAUDE.md, *Comment Discipline*).
+
+- [ ] **Step 4: Re-point both claims**
+
+Join the rule for the predicate, `FOR UPDATE OF ct`. This is where Task 3's
+census would otherwise have left a runtime `42703` — these two statements are
+raw SQL and `tsc` cannot see them.
+
+- [ ] **Step 5: Prove each lock is load-bearing — one mutation per path**
+
+Remove the child lock from `archiveOrUnarchiveTemplate` only. Expected: Step 2's
+case 1 reddens for the class family while the studio family stays green. Restore.
+Repeat per path. A mutation that reddens nothing means the probe is not
+observing what it claims to.
+
+Then mutate the claim's `FOR UPDATE OF ct` to a bare `FOR UPDATE` and record
+what changes — it should still pass Step 2 (both rows are locked, which is a
+superset) and that is exactly why a passing test is not sufficient here. Note
+the result; the reason for `OF ct` is ordering, not exclusion, and no test in
+this file can see it.
+
+- [ ] **Step 6: `deleteTeacherAccount`'s bulk archive — decide and report**
+
+`gdpr.ts` bulk-archives every template of an erased teacher with an
+`updateMany` that writes `isArchived` and nothing else. After the split that
+`updateMany` targets `ScheduleRule`, so the same gap applies to it.
+
+Two defensible answers: take the child locks ordered by `id` first, mirroring
+`lockClassRowsOrdered`'s discipline; or document why the erasure path does not
+need to serialize against the generator (it runs after the account is gone, so
+there may be no live sweep to race). **Do not guess — measure whether a sweep
+can be in flight during erasure, and report which answer the evidence supports.**
+This step may legitimately end in a `known-open` comment beside the code rather
+than a lock.
+
+- [ ] **Step 7: `docs/lock-order.md`**
+
+Re-state the plain-`FOR UPDATE` census with what Step 1 measured, and add the
+convention as a named rule: the child row is the lock node for the template
+families; a rule's lifecycle and calendar columns are only ever written under
+it. Say plainly that this is a convention enforced by a grep and a test, not by
+the database — the same standing `lockClassRowsOrdered` has — and ship the grep
+that re-derives it, as that file already does for `FOR UPDATE OF`.
+
+Also correct Task 6 Step 1's prediction: this branch **did** change a lock site,
+two of them, and added a convention.
+
+- [ ] **Step 8: Commit**
+
+```bash
+npm run verify
+git add src/services/class-generator.ts src/services/studio-class-generator.ts \
+        src/services/class-template-lifecycle.ts src/services/studio-class-template-lifecycle.ts \
+        src/services/template-lock-order.test.ts docs/lock-order.md
+git commit -m "fix: the child row stops being locked for free (issue 298)"
 ```
 
 ---
@@ -1433,7 +1730,10 @@ Task 1 Step 7 writes eight cases, of which three are refusals, not five; Task 2
 appends two more refusals that this mutation cannot reach. If more than three
 go red, something other than the exclusion constraint was holding a case that
 was supposed to be its own — which is exactly what this step exists to find.
-Restore with `npx prisma migrate reset` against the test database.
+Restore by re-adding the constraint with the exact DDL from the migration
+file — `npx prisma migrate reset` is refused by Prisma's agent consent gate
+(measured on Task 1), and an inverse is less destructive anyway. Confirm the
+restore by reading `pg_constraint` back, not by assuming the `ALTER` worked.
 
 Without this step the branch could ship a constraint nothing depends on — which
 is exactly what the four now-deleted triggers were doing for the same invariant
