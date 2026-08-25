@@ -833,23 +833,42 @@ COMMIT;
   what makes a statement-by-statement replay safe — but do not defend it with a
   hazard the execution model precludes.
 
-**One regression this migration causes, which is not visible in the SQL.**
+**A regression this migration was predicted to cause, and does not.**
 `ClassTemplate` loses its direct `teacherId → Teacher ON DELETE CASCADE` along
-with the column, so a `Teacher` hard-delete now reaches it only via
-`Teacher → ScheduleRule → ClassTemplate` — one hop further out than
-`Teacher → TeacherRoom`, whose `ClassTemplate_teacherRoomId_fkey` is
-`ON DELETE RESTRICT` and fires first:
+with the column, so a `Teacher` hard-delete reaches it one hop further out, via
+`Teacher → ScheduleRule → ClassTemplate`. An earlier draft of this plan
+predicted that `TeacherRoom`'s `ON DELETE RESTRICT` would therefore fire first:
 
 ```
-POST-migration:  DELETE FROM "Teacher" WHERE id='…';
+PREDICTED:  DELETE FROM "Teacher" WHERE id='…';
 ERROR:  update or delete on table "TeacherRoom" violates foreign key constraint
         "ClassTemplate_teacherRoomId_fkey" on table "ClassTemplate"
 ```
 
-Production is unaffected — `gdpr.ts` anonymises rather than hard-deletes — so the
-blast radius is test fixtures and any future hard-delete path. Teardowns must
-delete the `ScheduleRule` rows (letting the cascade take both children) *before*
-`teacherRoom.deleteMany`. Task 6 records it.
+**Measured post-migration, in a rolled-back transaction against a from-scratch
+fixture: the delete succeeds cleanly, no error, all four rows gone.**
+PostgreSQL defers a `NOT DEFERRABLE` foreign-key check to the end of the
+enclosing *statement*, not to the moment each cascading row action runs. One
+`DELETE FROM "Teacher"` fires both cascades in that statement, and by the time
+`ClassTemplate_teacherRoomId_fkey`'s RESTRICT check runs, the `ClassTemplate`
+row it would have blocked on is already gone via the sibling path.
+
+**And the same timing rule applies before the migration**, where the sibling
+path is the direct `teacherId` cascade rather than the one through
+`ScheduleRule` — so this is very likely not a behaviour change at all, merely
+a longer path to the same end-of-statement state. That half is *reasoned, not
+measured*: measuring it needs a checkout of `main`. Anyone who needs certainty
+should measure it rather than inherit this sentence.
+
+Production is unaffected either way — `gdpr.ts` anonymises rather than
+hard-deletes.
+
+**The teardown ordering is still required, and for a different reason than the
+one above.** A test teardown deletes as *separate statements*, and
+end-of-statement timing gives no help across statement boundaries: a
+`teacherRoom.deleteMany` issued while a `ClassTemplate` row still stands is
+refused by RESTRICT. So `scheduleRule.deleteMany` must precede it. Task 6
+records the measured behaviour, not the prediction.
 
 - [ ] **Step 4: Update the Prisma schema to match**
 
@@ -932,8 +951,23 @@ git commit -m "feat: the two template families become children of one rule (issu
 
 ## Task 3: Make the codebase compile again
 
-**Files:** enumerated by the compiler, not by hand. Expect ~29 non-test and ~24
-test files (measured 2026-08-24; re-derive rather than trust).
+**Files: 33, measured against Task 2's actual end state** (`f06913e`,
+2026-08-25) — 662 errors over 16 non-test and 17 test files:
+
+```bash
+npx tsc --noEmit 2>&1 | grep -oE "^[^(]+\.tsx?" | sort -u
+```
+
+That replaces this plan's earlier estimate of ~29 non-test and ~24 test files,
+which was written before the schema change existed. Two entries the plan's own
+"Modified" list never named are in it: `prisma/seed.ts` and
+`tests/room-fixtures.ts`, plus three `tests/e2e/*.spec.ts`. Three entries it
+predicted are not: only `template-list.tsx`, `studio-template-list.tsx` and
+`studio-template-list.test.tsx` appear from the settings surface, not "six
+settings pages and four settings components".
+
+Re-derive it anyway rather than trusting the number — it moves as the task
+progresses, and it is the enumeration Step 7 reconciles against.
 
 **Interfaces:**
 - Consumes: Task 2's schema.
@@ -1821,13 +1855,24 @@ two template tables hold only economics.
 Add `ScheduleRule`; remove the nine moved fields from both template entries,
 and note that a template now reaches its teacher through its rule.
 
-Record the delete-path change explicitly, because it is invisible in the schema
-and was found only by executing the migration: a `Teacher` hard-delete no longer
-cascades directly to `ClassTemplate`. It reaches it via `ScheduleRule`, one hop
-further out than `TeacherRoom`, whose `ClassTemplate_teacherRoomId_fkey` is
-`ON DELETE RESTRICT` and fires first. `gdpr.ts` anonymises rather than
-hard-deletes, so no production path changes — but any teardown or future hard
-delete must remove the rules first.
+Record the delete-path change, and record it as **measured**, not as Task 2's
+plan text originally predicted it. A `Teacher` hard-delete no longer cascades
+directly to `ClassTemplate`; it reaches it via `ScheduleRule`, one hop further
+out than `TeacherRoom`, whose `ClassTemplate_teacherRoomId_fkey` is
+`ON DELETE RESTRICT`. The plan predicted that RESTRICT would now fire and refuse
+the delete. **It does not** — measured in a rolled-back transaction, the delete
+succeeds cleanly and every row goes, because PostgreSQL defers the FK check to
+the end of the enclosing statement and the sibling cascade has already removed
+the blocking row.
+
+Write the measured behaviour and the mechanism. Do **not** write the predicted
+error, and do not write "this was previously thought to be X" — the
+before-and-after belongs in the PR body.
+
+What must still be recorded is the *teardown* consequence, which survives the
+correction because it does not depend on the prediction: separate `deleteMany`
+statements get no end-of-statement help across statement boundaries, so
+`scheduleRule.deleteMany` must precede `teacherRoom.deleteMany`.
 
 - [ ] **Step 3a: two `schema.prisma` model docblocks this branch falsifies — and three that look identical and must NOT be touched**
 
