@@ -50,10 +50,10 @@ describe('isCrossFamilySlotConflict', () => {
   });
 
   it('matches the Class-side message, worded differently from the StudioClass-side one above', () => {
-    // The two surviving triggers word their message from whichever side
-    // fired: `studio_class_reject_cross_family_slot()` (above) says "a live
-    // class"; `class_reject_cross_family_slot()` — the one this case
-    // exercises — says "a live studio class"
+    // The surviving triggers word their message from whichever side fired:
+    // `studio_class_reject_cross_family_slot()` (above) says "a live class";
+    // `class_reject_cross_family_slot()` — the one this case exercises —
+    // says "a live studio class"
     // (`20260821120000_cross_family_slot_guard/migration.sql`). Nothing here
     // may depend on the tail — the SQLSTATE is the whole discriminator. The
     // roster of what still emits `YG001` is `docs/lock-order.md`'s to keep,

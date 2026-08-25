@@ -124,26 +124,28 @@ Classes move through states: `draft → open → in_progress → completed → c
   that row's editability
 - **One teacher, one slot, across both families** (#296): a teacher holds at
   most one LIVE class per `(date, startTime)` counting `Class` and
-  `StudioClass` together, and at most one live template per teacher counting
-  `ClassTemplate` and `StudioClassTemplate` together. Cancelled classes and
-  archived rules do not participate — each family keeps its own spelling of
-  "live" (`status <> 'cancelled'` versus `cancelledAt IS NULL` for classes;
-  `isArchived = false` on the shared rule), and a PAUSED template still holds
-  its slot. The two halves are enforced differently, and #298 is why: the
-  class half is still four triggers reading the sibling table with an
-  unlocked `SELECT`, because the rule spans two tables and PostgreSQL has no
-  cross-table unique key — the residual race the unlocked read leaves open
-  still survives there, documented in `docs/lock-order.md`. The template half
-  is now one `EXCLUDE USING gist` constraint on `ScheduleRule` — index-backed
-  and race-free by construction, the way within-family exclusivity always
-  was — and it is RANGE-based, not exact-start: two templates whose
-  `[startTime, startTime+durationMinutes)` windows overlap now conflict even
-  when their start times differ, where before only an identical start time
-  did. Two `Data Model` consequences follow: `ScheduleRule` now holds the
-  calendar identity both template families share (`teacherId`, `dayOfWeek`,
-  `startTime`, `durationMinutes`, `isActive`, `isArchived`, `archivedAt`,
-  `withdrawnCount`), and `ClassTemplate`/`StudioClassTemplate` hold only their
-  own economics, reaching their teacher through the rule rather than
+  `StudioClass` together, and at most one live template per
+  `(dayOfWeek, overlapping time window)` counting `ClassTemplate` and
+  `StudioClassTemplate` together. Cancelled classes and archived rules do not
+  participate — each family keeps its own spelling of "live" (`status <>
+  'cancelled'` versus `cancelledAt IS NULL` for classes; `isArchived = false`
+  on the shared rule), and a PAUSED template still holds its slot. The two
+  halves are enforced differently, and #298 is why: the class half is still
+  four triggers reading the sibling table with an unlocked `SELECT`, because
+  the rule spans two tables and PostgreSQL has no cross-table unique key —
+  the residual race the unlocked read leaves open still survives there,
+  documented in `docs/lock-order.md`. The template half is now one
+  `EXCLUDE USING gist` constraint on `ScheduleRule`, scoped per teacher per
+  weekday — index-backed and race-free by construction, the way within-family
+  exclusivity always was — and it is RANGE-based, not exact-start: two
+  templates whose `[startTime, startTime+durationMinutes)` windows overlap
+  now conflict even when their start times differ, where before only an
+  identical start time did. Two `Data Model` consequences follow:
+  `ScheduleRule` now holds the calendar identity both template families
+  share (`teacherId`, `classType`, `dayOfWeek`, `startTime`,
+  `durationMinutes`, `isActive`, `isArchived`, `archivedAt`,
+  `withdrawnCount`), and `ClassTemplate`/`StudioClassTemplate` hold only
+  their own economics, reaching their teacher through the rule rather than
   directly. Both generators pre-check and skip (`blocked_by_other_family`);
   ten write endpoints across eight route files answer 409 naming which family
   holds the slot
