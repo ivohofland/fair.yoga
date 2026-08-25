@@ -376,10 +376,15 @@ order, **naming both tables explicitly**.
   — a filter on `Class`. Four of the ten fields it is guarding move to
   `CalendarEntry`, where that filter does not reach, so post-split the entry
   write is unguarded and a completion committing mid-edit no longer refuses the
-  reschedule. The filter has to be re-expressed as a condition on §4's freeze
-  marker, which is on the row being written. This is the second place where the
-  extraction breaks a guard by moving the column rather than by touching the
-  guard, and neither is visible to `tsc`.
+  reschedule. The filter is re-expressed against the entry's **own** columns —
+  `classCompletedAt IS NULL AND NOT (kind = 'regular' AND cancelledAt IS NOT
+  NULL)`, the same predicate §4.5 gives the guard — so it sits on the row being
+  written. This is the second place where the extraction breaks a guard by
+  moving the column rather than by touching the guard, and neither is visible to
+  `tsc`.
+
+  The CAS stays the primary path and §4's trigger is its backstop, which is the
+  arrangement `updateClass` and `class_terminal_date_guard` already have today.
 
 `lockClassRowsOrdered` has four production call sites (`gdpr.ts` ×2,
 `waitlist.ts`, `class-template-lifecycle.ts`). **Each gets its own written
@@ -512,30 +517,92 @@ depending on TRIGGERS"* is the hazard the docblock names.
   would have to read terminality from a *different* table than the one it
   guards.
 
-### 4.3 Decision: the entry carries its own freeze marker
+### 4.3 Decision: the entry carries a freeze marker, and a trigger maintains it
 
-`CalendarEntry` gains a nullable timestamp recording that this entry's schedule
-is fixed because the class it belongs to reached a terminal state. Both guards
-become **single-table triggers on `CalendarEntry`**, reading `OLD` on the very
-row the statement is already locking.
+`CalendarEntry` gains `classCompletedAt`, a nullable timestamp meaning exactly
+*the owning class completed*. It is written by **an `AFTER UPDATE OF status ON
+"Class"` trigger**, never by application code. The freeze guard on
+`CalendarEntry` is single-table and reads its own `OLD`.
 
-The alternative — recreating the guard on `CalendarEntry` and having it read the
-owning `Class.status` — was rejected on a measured property, not on taste. A
-trigger's read runs in the statement's snapshot, so a concurrent *uncommitted*
-completion is invisible to it: the trigger would see a non-terminal class,
-allow the date to move, and the completion would then commit. §2's lock fix
-closes that for every path through `lockClassRow`, but the triggers exist
-*because they reach every client including raw SQL* — that is the reason the
-reaper's docblock gives for being allowed to delete at all — so a guard that is
-only as strong as the application's locking discipline is strictly weaker than
-what it replaces.
+**This is the third of three options, and it arrived at spec review after the
+first two had been weighed against each other.** Both earlier candidates are
+recorded because each fails for a reason worth not rediscovering, and because
+the ground on which this document first rejected the cross-table option was
+wrong.
 
-A `BEFORE UPDATE` trigger reading its own row's `OLD` has no such window. **This
-is stronger than today's arrangement, not merely equivalent**, and it removes
-the cross-table read that #298 set out to eliminate rather than reintroducing
-one.
+| | cross-table read | marker, app-synced | **marker, trigger-synced** |
+|---|---|---|---|
+| reaches raw SQL | yes | **no** | yes |
+| new lock edge | Entry → Class, inverts §2.3 | none | Class → Entry, matches §2.3 |
+| sync obligation | none | on 3+ call sites | none |
+| guard-path cost | a lock per schedule write | free | free |
 
-### 4.4 The trigger's column list widens, and it is easy to carry over unchanged
+**Correction: the cross-table option's stated rejection ground does not hold.**
+An earlier draft rejected it because "a trigger's read runs in the statement's
+snapshot, so a concurrent *uncommitted* completion is invisible to it". That is
+a property of a **non-locking** read. `SELECT status … FOR SHARE` blocks on the
+completing transaction's `FOR UPDATE`, and under `READ COMMITTED` `EvalPlanQual`
+re-fetches the newly committed row when the lock releases — so the trigger would
+see `completed` and raise. The visibility argument was simply wrong.
+
+(It is consistent with stage A's finding that `FOR UPDATE OF ct` does *not*
+re-fetch a non-locked join member. That is about join members a statement
+declined to lock; this is a single-table locking read of the row in question.
+Different mechanisms, and the two facts do not conflict.)
+
+**It fails on lock order instead — measured, `40P01`.** An `UPDATE` on
+`CalendarEntry` already holds that row when its trigger fires, so the trigger's
+read acquires `CalendarEntry → Class`. §2.3 fixes `lockClassRow` at
+`Class → CalendarEntry`. That is a straight ABBA against `completeClass`, on the
+schedule-write hot path, introduced by the guard itself:
+
+```
+ERROR:  deadlock detected
+CONTEXT:  while locking tuple (0,1) in relation "c"
+SQL statement "SELECT status FROM c WHERE id = OLD."classId" FOR SHARE"
+```
+
+The error names the guard's own read as the waiting statement. Inverting §2.3 to
+match would re-decide the ordering rule for all ten `lockClassRow` callers and
+`lockClassRowsOrdered`'s four, to save one column. Rejected.
+
+**And the app-synced marker is weaker than what it replaces — which contradicts
+the reason for keeping triggers at all.** §4.1 keeps triggers because they reach
+every client including raw SQL; that reach is the reaper's licence to delete. A
+marker synced by the completion and cancel paths reaches only clients that go
+through those paths. A raw `UPDATE "Class" SET status='completed'` leaves the
+entry unfrozen, its `date` mutable, and the reaper's "more than 365 days past
+its date" premise false. That trades a concurrency window for a writer-
+discipline window, against the exact threat model that motivates the trigger.
+An earlier draft of this document proposed it while also making the raw-SQL
+argument two paragraphs earlier — an internal contradiction, not a trade-off
+that was weighed.
+
+**The trigger-synced marker has neither weakness.** The sync fires inside the
+completing transaction, so the marker and the status commit atomically — no
+window, and no code path can forget it, including raw SQL. Its own lock
+acquisition is `Class → CalendarEntry`, the order §2.3 already chose, so it
+composes rather than conflicting. Net it is one trigger added against four
+deleted, and it is a write-sync rather than a cross-table read inside a guard.
+
+**Measured, on the scratch shape.** A control first, so the test can fail: with
+no completion in flight, the reschedule succeeds and the date moves. Then the
+race — session 1 takes `Class` then `CalendarEntry`, sets `status='completed'`
+(the sync trigger writes the marker), and holds for 3s; session 2 attempts the
+reschedule 1s in:
+
+```
+[S2] ERROR:  entry e1 is frozen (class completed)
+[S2] CONTEXT:  PL/pgSQL function freeze_guard() line 4 at RAISE
+```
+
+Session 2 blocked on the row lock, and when session 1 committed, `EvalPlanQual`
+re-fetched the row so the `BEFORE UPDATE` trigger's `OLD` carried the
+freshly-committed marker. **That re-fetch is the property the whole design rests
+on**, which is why it is measured rather than reasoned: without it the guard is
+porous exactly when it matters.
+
+### 4.4 The guard's column list widens, and it is easy to carry over unchanged
 
 `class_terminal_date_guard` is `BEFORE UPDATE OF date` — one column, because on
 `Class` there was only one to name. **On `CalendarEntry` the frozen thing is the
@@ -550,53 +617,58 @@ Lifecycle* already says a terminal class is frozen as a whole — *"`updateClass
 refuses every field, 409"* — so a one-column guard would also be narrower than
 the stated rule.
 
-The status guard needs no such widening: it is `BEFORE UPDATE OF status` on
-`Class`, and `status` stays on `Class`.
+The status guard on `Class` needs no such widening: it is
+`BEFORE UPDATE OF status`, and `status` stays on `Class`.
 
-### 4.5 The two families cannot write the marker symmetrically
+### 4.5 What the marker means, and why the cancel half does not need it
 
-An earlier draft named the writers as "the completion path and the two cancel
-paths". **Raised at review, and that is wrong**, because the two cancellations
-are not the same kind of event:
+**Post-§5 the marker narrows to one thing.** `cancelled` is no longer a
+`ClassStatus`, so terminality for the class family is `completed` alone — and
+the cancel half of the freeze needs no marker at all, because `kind` and
+`cancelledAt` are **both already columns on the entry**. The single-table guard
+expresses it directly:
 
-- Cancelling a `Class` is **terminal** — `VALID_TRANSITIONS` has
-  `cancelled: []`, and nothing leaves it.
-- Cancelling a `StudioClass` is **reversible**, and the un-cancel path is live:
-  `api/studio-classes/[id]/route.ts` writes
-  `cancelledAt: cancelledAt ? new Date(cancelledAt) : null`, and §5 carries that
-  path forward.
+```
+frozen  ⟺  OLD."classCompletedAt" IS NOT NULL
+           OR (OLD.kind = 'regular' AND OLD."cancelledAt" IS NOT NULL)
+```
 
-So if the studio cancel path sets the marker, un-cancel is dead; if it does not,
-the marker means "terminal" for one `kind` and nothing for the other.
+That is tighter than an earlier draft's scope note, which had the marker
+standing for "reached a terminal state" and then needed a paragraph explaining
+why only one `kind` ever populates it. It does not: the marker means *the owning
+class completed*, one writer writes it, and the family asymmetry falls out of
+the guard's second disjunct rather than out of a documentation obligation.
 
-**The asymmetry is correct and is the design, not a gap.** The reaper reaps
-`WaitlistEntry` rows, which exist only for the regular family, so a studio entry
-never needs the marker. The writers are therefore: `completeClass`, and the
-**regular** family's cancel path. The studio cancel path deliberately does not
-write it.
+**The asymmetry is still real and still belongs in the docblock**, but it is now
+a one-liner about the `kind` conjunct rather than about who writes the column:
+cancelling a `Class` is terminal (`VALID_TRANSITIONS` has `cancelled: []`),
+while cancelling a `StudioClass` is reversible and its un-cancel path is live
+(`api/studio-classes/[id]/route.ts` writes
+`cancelledAt: cancelledAt ? new Date(cancelledAt) : null`). A studio entry that
+is cancelled is not frozen, and must not be.
 
-**This has to be stated where the column is declared**, alongside the scope note
-below — otherwise the next reader finds a nullable timestamp on a shared table
-that only one `kind` ever populates and reasonably reads it as a bug. Both notes
-are the column's own business, so they belong in its docblock rather than in
-`docs/` (CLAUDE.md, *Comment Discipline*): they describe the row they sit on,
-and `kind` is a column on that row.
+**What the marker is not.** Not a general "is this row editable" flag. The two
+families' editability rules differ and stay where they are — #276's studio rule
+is date-derived (`date < teacher's today`), the `Class` family's is
+status-derived. `classCompletedAt` answers one question, and its name says which.
 
-The cost is a sync obligation on a denormalised column, and it is bounded to
-those two writers, both of which already write in a transaction that holds the
-entry's lock under §2.
+**Two texts now hard-code the terminal status list, not one.** The status guard
+on `Class` and the new sync trigger both do, so `class-terminal-status.test.ts`
+pins the derived constant against **both** migrations' SQL rather than one. That
+is the cost this option adds, recorded because the test's whole shape exists to
+catch a constant and a trigger drifting apart, and a second trigger it does not
+know about is exactly the drift it would miss.
 
-**What the marker is not.** It is not a general "is this row editable" flag. The
-two families' editability rules genuinely differ and stay where they are: #276's
-studio rule is date-derived (`date < teacher's today`), and the `Class` family's
-is status-derived. The marker answers exactly the question the reaper needs —
-*has the owning class reached a terminal state* — and the plan must state that
-scope where the column is declared, because a wider-sounding name invites a
-second meaning.
+`TERMINAL_CLASS_STATUSES` is re-derived with the enum shrink, and both pinning
+tests are re-pointed. They keep their shape: a derived constant compared against
+migration SQL, independent texts nothing else forces to agree.
 
-`TERMINAL_CLASS_STATUSES` and both pinning tests are re-pointed with it. The
-tests keep their shape: derived constant compared against the new migrations'
-SQL, two independent texts nothing else forces to agree.
+**§2.3's CAS keeps its job.** With the guard trigger-backed, `updateClass`'s
+re-expressed filter on the entry's own columns stays the primary path — it
+returns a clean typed refusal and a 409 — and the trigger is the backstop that
+reaches raw SQL. That is exactly how `updateClass` and `class_terminal_date_guard`
+relate today, per `waitlist-retention.ts`'s own argument, so the pairing is
+preserved rather than invented.
 
 ---
 
