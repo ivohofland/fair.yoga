@@ -3,8 +3,8 @@
  * `PUT /api/class-templates/[id]`.
  *
  * The sibling of `class-lifecycle.ts`'s update section (#82 is #79 one route
- * over), with the same six pins. Three things deliberately differ, and are
- * worth knowing before reading this as a mirror:
+ * over), with the same pin structure. Three things deliberately differ, and
+ * are worth knowing before reading this as a mirror:
  *
  *   - Ownership lives here, not in the route. `updateClass` takes no
  *     `teacherId` and its route checks ownership; this takes one and checks it
@@ -906,10 +906,11 @@ export async function updateClassTemplate(
         // `setLockTimeout` on this path and no ambiguity left to resolve.
         await setLockTimeout(tx);
 
-        // The wire data covers both models now (issue 298): the four slot
-        // fields route to `ScheduleRule`, everything else stays a
-        // `ClassTemplate` column. Destructuring the four out — rather than
-        // hand-picking the rest — is tethered to the pins above:
+        // The wire data covers both models now (issue 298): the fields named
+        // in `TeacherEditableScheduleRuleField` route to `ScheduleRule`,
+        // everything else stays a `ClassTemplate` column. Destructuring those
+        // out — rather than hand-picking the rest — is tethered to the pins
+        // above:
         // `_templateFieldsArePermitted`/`_templateAllowlistHasNoStaleFields`
         // together prove `childData`'s keys equal `TeacherEditableClassTemplateField`
         // exactly, so nothing wider can reach `classTemplate.update` this way.
@@ -930,9 +931,10 @@ export async function updateClassTemplate(
         if (startTime !== undefined) ruleData.startTime = hhmmToTime(startTime);
         if (durationMinutes !== undefined) ruleData.durationMinutes = durationMinutes;
 
-        // Only written when the PUT actually touched one of the four —
-        // sparing the rule row a lock and an `updatedAt` bump on an edit that
-        // is purely economics (room, rates, capacity, deadlines).
+        // Only written when the PUT actually touched one of
+        // `TeacherEditableScheduleRuleField`'s members — sparing the rule row
+        // a lock and an `updatedAt` bump on an edit that is purely economics
+        // (room, rates, capacity, deadlines).
         const newRule =
           Object.keys(ruleData).length > 0
             ? await tx.scheduleRule.update({ where: { id: template.scheduleRuleId }, data: ruleData })

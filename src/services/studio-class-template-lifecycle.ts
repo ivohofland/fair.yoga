@@ -272,8 +272,8 @@ void _studioTemplateAllowlistHasNoForbiddenFields;
 //
 // `updateStudioClassTemplate`'s wire schema spans two models now: the
 // economics (`location`, `hourlyRate`) stayed on `StudioClassTemplate`
-// (pinned above), the slot fields moved to `ScheduleRule`. Mirrors the six
-// pins above, against `keyof Prisma.ScheduleRuleUncheckedUpdateManyInput`
+// (pinned above), the slot fields moved to `ScheduleRule`. Mirrors the pin
+// set above, against `keyof Prisma.ScheduleRuleUncheckedUpdateManyInput`
 // rather than `StudioClassTemplate`'s. Deliberately the same names as
 // `class-template-lifecycle.ts`'s twin set — separate modules, so no
 // collision, and the two families should read side by side.
@@ -580,8 +580,8 @@ export async function updateStudioClassTemplate(
         // The parameter's intersection guards the DOOR; this guards the
         // WRITE. Without it the invariant holds only as long as nobody edits
         // this call — `data: { ...data, isActive: false }` compiles clean with
-        // all six pins above still green, which is precisely what they exist
-        // to prevent, one level down.
+        // the pins above still green, which is precisely what they exist to
+        // prevent, one level down.
         //
         // Honest about its reach: it catches the natural regression, which is
         // a spread added to this initializer. A future edit that bypasses
@@ -589,10 +589,11 @@ export async function updateStudioClassTemplate(
         // there is no way to annotate an object literal in argument position.
         // It raises the bar; it is not a proof.
         //
-        // The wire data covers both models now (issue 298): the four slot
-        // fields route to `ScheduleRule`, `location`/`hourlyRate` stay
-        // `StudioClassTemplate` columns. Destructuring the four out — rather
-        // than hand-picking the rest — is tethered to the pins above:
+        // The wire data covers both models now (issue 298): the fields named
+        // in `TeacherEditableScheduleRuleField` route to `ScheduleRule`,
+        // `location`/`hourlyRate` stay `StudioClassTemplate` columns.
+        // Destructuring those out — rather than hand-picking the rest — is
+        // tethered to the pins above:
         // `_studioTemplateFieldsArePermitted`/`_studioTemplateAllowlistHasNoStaleFields`
         // together prove `childData`'s keys equal `TeacherEditableStudioTemplateField`
         // exactly, so nothing wider can reach `studioClassTemplate.update` this way.
@@ -618,9 +619,10 @@ export async function updateStudioClassTemplate(
         if (startTime !== undefined) ruleData.startTime = hhmmToTime(startTime);
         if (durationMinutes !== undefined) ruleData.durationMinutes = durationMinutes;
 
-        // Only written when the PUT actually touched one of the four —
-        // sparing the rule row a lock and an `updatedAt` bump on an edit that
-        // is purely economics (location, hourly rate).
+        // Only written when the PUT actually touched one of
+        // `TeacherEditableScheduleRuleField`'s members — sparing the rule row
+        // a lock and an `updatedAt` bump on an edit that is purely economics
+        // (location, hourly rate).
         const newRule =
           Object.keys(ruleData).length > 0
             ? await tx.scheduleRule.update({ where: { id: template.scheduleRuleId }, data: ruleData })
