@@ -17,9 +17,34 @@ family. Occupancy is enforced by `EXCLUDE USING gist` over a generated
 `int4range` of minutes-since-midnight.
 
 **Tech Stack:** Next.js 14 App Router, TypeScript `strict`, Prisma + PostgreSQL
-16, vitest (three projects: `unit`, `components`, `integration`), `btree_gist`.
+16, vitest (**four** projects: `unit`, `unit-sweeps`, `components`,
+`integration` — #321 split `unit` on 2026-08-24), `btree_gist`.
 
 **Spec:** `docs/superpowers/specs/2026-08-24-calendar-entry-extraction-design.md`
+(§4.6 was added with this amendment).
+
+**Amended 2026-08-25, before execution**, after re-verifying the premise against
+`fairyoga-db-1`. The issue's four measured claims all held exactly — the
+rule-layer and entry-layer overlap pre-flights, `withdrawnCount` NULL on 11/11
+and 1/1, and `pg_depend`'s 10 column dependencies. Four things in *this
+document* did not:
+
+1. The baseline table described three vitest projects; #321 made it four.
+2. `btree_gist` is installed in `ethical_yoga_test` and **not** in
+   `ethical_yoga` — a manual artifact of the design's own measurement session,
+   which makes Task 1's `CREATE EXTENSION` load-bearing rather than defensive.
+3. `ClassTemplate_rule_unique`, cited to justify keeping the `isUniqueConflictOn`
+   arm, does not exist — in the repo or the database.
+4. Task 4 was scoped to two route catch blocks. The conflict-detection layer is
+   **31 sites across four non-test files**, and changes mechanism without
+   changing a single type, so Task 3's compiler-driven enumeration is blind to
+   all of it. Task 4 is rewritten around that; Task 3's exit criteria and stop
+   condition 4 change with it.
+
+The rule-layer pre-flight's zero is also **confirmed vacuous**: of six live
+rules only teacher `f4f7d978` holds two, on different weekdays, so the overlap
+predicate has never had a candidate pair. Seed a deliberate overlap before
+trusting a clean run.
 
 ---
 
@@ -47,21 +72,34 @@ family. Occupancy is enforced by `EXCLUDE USING gist` over a generated
   `'use client'` component value-imports.
 - Run `npm run verify` before pushing. It needs :3000 live.
 
-## Measured baseline (2026-08-24, on `main` at `284e84a`)
+## Measured baseline (re-measured 2026-08-25, on `main` at `3565eee`)
 
 | Project | Files | Tests |
 |---|---|---|
-| `unit` | 68 | 1068 |
-| `components` | 45 | 294 |
+| `unit` | 58 | 946 |
+| `unit-sweeps` | 10 | 122 |
+| `components` | 45 | 296 |
 | `integration` | 33 | 513 |
-| **Total** | **146** | **1875** |
+| **Total** | **146** | **1877** |
 
-`68 + 45 + 33 = 146`. `1068 + 294 + 513 = 1875`. All passing.
+`58 + 10 + 45 + 33 = 146`. `946 + 122 + 296 + 513 = 1877`. All passing.
 
-**Re-measure this at execution time rather than trusting it.** It was taken
-before any of this work and the repo moves; on #212 a predicted after-figure was
-wrong by two because that branch's own review added tests the prediction could
-not have known about.
+The same run reports `103 + 43 = 146` files and `1242 + 635 = 1877` tests,
+because `npm test` is now **two** `vitest run` invocations
+(`unit`+`components`, then `unit-sweeps`+`integration`) — the totals reconcile
+across both partitions.
+
+**This table replaces the one written 2026-08-24, which was stale in structure
+and not only in count.** #321 landed between the two measurements and split
+`unit` into `unit` + `unit-sweeps` (`vitest.config.ts`'s `SWEEP_TESTS`), so the
+project set went from three to four. The split moved no tests —
+`58 + 10 = 68` and `946 + 122 = 1068` reconcile exactly against the old single
+`unit` row. The real drift is `components`, 294 → 296.
+
+**Re-measure again at execution time rather than trusting even this.** On #212 a
+predicted after-figure was wrong by two because that branch's own review added
+tests the prediction could not have known about — and the correction above is
+the same lesson from the other direction, one day later.
 
 ---
 
@@ -137,6 +175,9 @@ skip, produced when a generator finds an occupied slot for a candidate
 | `src/services/schedule-rule-constraints.test.ts` | The exclusion constraint's mutation table (§4.4), driven through Prisma |
 | `src/lib/exclusion-conflict.ts` | Detect a 23P01 for a named constraint; `isUniqueConflictOn`'s sibling |
 | `src/lib/exclusion-conflict.test.ts` | Its tests, including one that proves the matcher can fail |
+| `src/lib/rule-slot-holder.ts` | Probe `ScheduleRule` for which family holds a refused slot — the discriminator the single constraint no longer carries (Task 4) |
+| `src/lib/rule-slot-holder.test.ts` | Its eight cases and three mutations |
+| `src/lib/time-of-day.ts` | `@db.Time` ↔ `"HH:MM"` at the Prisma boundary (Task 3 Step 3); import-free so client components may use it |
 
 **Modified** (the compile surface — see Task 3 for how it is enumerated rather
 than listed by hand)
@@ -476,7 +517,23 @@ npx prisma migrate dev --create-only --name schedule_rule
 ```
 
 Keep Prisma's generated `CREATE TYPE "RuleKind"` and `CREATE TABLE
-"ScheduleRule"`, and append the parts Prisma cannot express:
+"ScheduleRule"`, and append the parts Prisma cannot express.
+
+**The `CREATE EXTENSION` line below is load-bearing — do not drop it as
+redundant.** Measured 2026-08-25: `btree_gist` is installed in
+`ethical_yoga_test` and **not** in `ethical_yoga`, and no migration creates it
+anywhere —
+
+```
+grep -rln "btree_gist\|CREATE EXTENSION" prisma/migrations/     # no matches
+```
+
+— so the one in the test database is a manual artifact left by the design
+document's own measurement session. Anyone reasoning "the constraint built
+cleanly when §4.4 measured it, so the extension must be present" would be
+reading the wrong database. `yoga` is superuser on this server (`usesuper = t`),
+so the statement succeeds; on a host where it is not, this is the line that
+fails, and it should fail loudly.
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS btree_gist;
@@ -843,11 +900,38 @@ test files (measured 2026-08-24; re-derive rather than trust).
 
 **Interfaces:**
 - Consumes: Task 2's schema.
-- Produces: a green `npx tsc --noEmit` and a green suite.
+- Produces: a green `npx tsc --noEmit`, and a suite red **only** in the
+  conflict-vocabulary files Task 4 then fixes.
 
 This task is mechanical and compiler-driven. It is one task because no
 intermediate state is independently reviewable: the branch does not build until
 it is finished.
+
+**The compiler does not enumerate all of this task's blast radius, and the gap
+is Task 4's whole subject.** Task 2 drops two partial unique indexes and four
+triggers. Every error-matcher that names one of those objects keeps compiling
+and starts always returning `false`:
+
+- `isUniqueConflictOn(err, ['teacherId','dayOfWeek','startTime'])` names the two
+  dropped indexes. Its signature is `(err: unknown, columns: readonly string[])`
+  — string literals, so no type error.
+- `isCrossFamilySlotConflict(err)` matches SQLSTATE `YG001`, which only triggers
+  raise. It stays live for the **entry** layer (those four triggers survive) and
+  goes dead for the template layer.
+
+Measured 2026-08-25: **31 occurrences of the two `slot_conflict` /
+`cross_family_slot_conflict` reason strings across 4 non-test files** —
+`class-template-lifecycle.ts` (12), `studio-class-template-lifecycle.ts` (11),
+`class-templates/[id]/route.ts` (4), `studio-class-templates/[id]/route.ts` (4)
+— plus 8 across 3 test files. **`npx tsc --noEmit` flags none of them.**
+
+```
+grep -rn "slot_conflict" src/ tests/ | awk -F: '{print $1}' | sort | uniq -c
+```
+
+So **do not chase the resulting red tests in this task.** Re-point reads and
+ownership here; leave every conflict-detection branch exactly as it is. Task 4
+owns them, and it owns them as a design change rather than a re-point.
 
 - [ ] **Step 1: Enumerate the work**
 
@@ -950,15 +1034,32 @@ npx tsc --noEmit
 
 Expected: no output. Iterate until it is silent.
 
-- [ ] **Step 6: Run the whole suite**
+- [ ] **Step 6: Run the whole suite, and expect a bounded red**
 
 ```bash
-npm run verify
+npm run verify 2>&1 | tee /tmp/task3-verify.log
+grep -E "^ *(FAIL|×)" /tmp/task3-verify.log | sort -u > /tmp/task3-red.txt
 ```
 
-Expected: 146 files, 1875 tests, all passing — the same numbers as the baseline.
-This task changes no behaviour, so **any** count change is a defect to diagnose,
-not a number to update.
+Expected: `npx tsc --noEmit` silent, and **failures confined to the
+conflict-vocabulary set** — the 8 assertions in
+`src/services/studio-class-template-lifecycle.test.ts` (4),
+`src/services/template-lock-order.test.ts` (1) and
+`tests/integration/class-templates-api.test.ts` (3), plus anything reaching a
+500 where a 409 was asserted.
+
+An earlier draft of this plan expected **green** here, on the grounds that this
+task changes no behaviour. That was wrong for one reason and right in spirit:
+re-pointing reads changes nothing, but Task 2 already removed the objects the
+conflict branches matched on, so those branches are dead before this task
+starts. The failures are Task 4's input, not this task's defect.
+
+**Every red line must be in that set.** A failure outside it *is* a defect in
+this task's re-pointing — diagnose it here rather than carrying it forward. Keep
+`/tmp/task3-red.txt`; Task 4 Step 7 reconciles against it.
+
+File and test *counts* must still be `146` / `1877`. This task adds and removes
+no tests, so a count change is a defect either way.
 
 - [ ] **Step 7: Reconcile the diff against the enumeration**
 
@@ -979,126 +1080,317 @@ git commit -m "refactor: every template read reaches its slot through the rule (
 
 ---
 
-## Task 4: A slot conflict answers 409, not 500
+## Task 4: One constraint, one refusal — and a probe that still names the family
 
 **Files:**
-- Modify: `src/lib/api-errors.ts`, and the four template routes
-  (`src/app/api/class-templates/route.ts`,
-  `src/app/api/class-templates/[id]/route.ts`,
-  `src/app/api/studio-class-templates/route.ts`,
-  `src/app/api/studio-class-templates/[id]/route.ts`)
+- Create: `src/lib/rule-slot-holder.ts`, `src/lib/rule-slot-holder.test.ts`
+- Modify: `src/lib/api-errors.ts`; both template lifecycle services; the four
+  template routes
 - Test: `tests/integration/class-templates-api.test.ts`,
-  `tests/integration/studio-api.test.ts`
+  `tests/integration/studio-api.test.ts`,
+  `src/services/studio-class-template-lifecycle.test.ts`,
+  `src/services/template-lock-order.test.ts`
 
 **Interfaces:**
-- Consumes: `isExclusionConflictOn` (Task 1) and Task 3's compiling tree.
-- Produces: nothing new.
+- Consumes: `isExclusionConflictOn` (Task 1), Task 3's compiling tree.
+- Produces: `RuleSlotHolder = 'regular' | 'studio' | 'unknown'` and
+  `ruleSlotHolder(db, probe): Promise<RuleSlotHolder>`; a `heldBy` field on the
+  four template services' `slot_conflict` failure.
 
-**Why this task exists.** `isUniqueConflictOn`
-(`src/lib/unique-conflict.ts:34`) gates on `err.code === 'P2002'`, Prisma's
-mapping of SQLSTATE 23505. The exclusion constraint raises **23P01**, which
-Prisma surfaces with `code` and `meta` both `undefined` — so the existing 409
-branches stop matching and every template slot conflict falls through to a 500.
-That is the shape of #301, and Task 1's matcher exists to close it.
+### Why this task is a design change and not a re-point
 
-- [ ] **Step 1: Write the failing integration cases**
+`isUniqueConflictOn(err, ['teacherId','dayOfWeek','startTime'])` gates on
+`P2002`, Prisma's mapping of `23505`, raised by the two partial unique indexes
+Task 2 drops. `isCrossFamilySlotConflict(err)` matches `YG001`, raised by the
+four template triggers Task 2 drops. **Both die with the objects they name, and
+neither stops compiling.** One `ScheduleRule_teacher_slot_excl` now raises
+`23P01` for what were two distinct refusals, and a `23P01` cannot say which
+family holds the slot: PostgreSQL's `DETAIL` names the conflicting key values,
+never the conflicting row's `kind`.
 
-In `tests/integration/class-templates-api.test.ts`, following the file's
-existing auth and fixture helpers:
+Left alone, every template slot conflict falls through to `throw err` and a 500.
+That is #301's shape, one layer deeper than Task 1's matcher reaches.
+
+### The measured collapse: four codes, two sentences, one discriminator
+
+The four template-layer refusals as they stand today (2026-08-25):
+
+| Route | Code | Sentence | Holder |
+|---|---|---|---|
+| class POST + PUT + archive | `DUPLICATE_TEMPLATE_SLOT` | "You already have a recurring class on that day at that time." | `regular` |
+| class POST + PUT + archive | `CROSS_FAMILY_STUDIO_TEMPLATE_SLOT` | "You already have a recurring studio class on that day at that time." | `studio` |
+| studio POST + PUT + archive | `DUPLICATE_STUDIO_TEMPLATE_SLOT` | "You already have a recurring studio class on that day at that time." | `studio` |
+| studio POST + PUT + archive | `CROSS_FAMILY_CLASS_TEMPLATE_SLOT` | "You already have a recurring class on that day at that time." | `regular` |
+
+**The sentence is a pure function of the holder's kind, not of the writer's.**
+Rows 1 and 4 are the same sentence; so are rows 2 and 3. What today's code
+derives from *which database object raised*, this task derives from *one probe
+of `ScheduleRule`* — so all four codes and both sentences survive unchanged in
+meaning, and only the mechanism moves.
+
+**Two codes are NOT in scope and must keep their branch.**
+`CROSS_FAMILY_STUDIO_SLOT` ("You already have a studio class on one of those
+dates at that time.") and `CROSS_FAMILY_CLASS_SLOT` are the `conflict.level ===
+'instance'` arms of the two POST routes: a *generated `Class`* colliding with a
+`StudioClass`, caught by the four **entry-level** triggers, which this branch
+does not touch. `isCrossFamilySlotConflict` stays imported and stays live in
+both POST routes for exactly this arm. Deleting it is a regression, not a
+cleanup.
+
+**Only the POST routes generate.** `updateTemplate` writes no `Class` row at all
+(#194 deleted the sync) and `archiveOrUnarchiveTemplate` only withdraws them, so
+neither can raise an entry-level `YG001` — which is why their
+`cross_family_slot_conflict` branches are wholly template-level and wholly
+replaced here.
+
+### The probe, and the one fact that makes it legal
 
 ```typescript
-it('answers 409 when a new template OVERLAPS a studio template', async () => {
-  // 19:00 +90 studio, then 19:30 +60 regular. Legal today — this is the
-  // behaviour change the extraction introduces (design §2.2f).
+// src/lib/rule-slot-holder.ts
+import type { PrismaClient } from '@prisma/client';
+
+/**
+ * Which family's rule occupies a slot, asked after `ScheduleRule_teacher_slot_excl`
+ * has already refused a write.
+ *
+ * `'unknown'` is not an error path: the refusing rule can be archived between the
+ * failed write and this probe, and a refusal that names the wrong half of a
+ * teacher's schedule is worse than one that names neither.
+ */
+export type RuleSlotHolder = 'regular' | 'studio' | 'unknown';
+
+export async function ruleSlotHolder(
+  db: PrismaClient,
+  probe: {
+    teacherId: string;
+    dayOfWeek: number;
+    startMinutes: number;
+    durationMinutes: number;
+    /** The row being updated, which conflicts with itself otherwise. */
+    excludeRuleId?: string;
+  },
+): Promise<RuleSlotHolder> { /* … */ }
+```
+
+The query reads the **generated `slot` column itself**, not a re-derivation of
+it, so it cannot disagree with the constraint about what a slot *is*:
+
+```sql
+SELECT "kind"::text AS kind FROM "ScheduleRule"
+ WHERE "teacherId" = $1 AND "dayOfWeek" = $2 AND "isArchived" = false
+   AND "slot" && int4range($3, $3 + $4, '[)')
+   AND ($5::text IS NULL OR "id" <> $5::text)
+ LIMIT 1;
+```
+
+`$queryRaw` is required rather than preferred: `slot` is a generated column and
+is deliberately absent from the Prisma model (Task 1), so no Prisma `where` can
+reach it.
+
+**The `'[)'` is duplicated from the constraint, and that duplication is the one
+thing here that can silently drift.** Step 5's boundary mutation is what holds
+it; do not skip it on the grounds that the constraint is already tested.
+
+**Why a fresh query in a `catch` is safe.** A statement that fails inside a
+PostgreSQL transaction aborts it — every later command gets `25P02`, so a probe
+issued on `tx` would fail rather than answer. It is safe here because **every
+one of the six catch blocks sits outside its own `$transaction` call**, so
+Prisma has already rolled back and `db` is a clean connection. Verified
+2026-08-25 at all six:
+
+```
+grep -n 'await db.\$transaction\|^\s*} catch (err' \
+  src/services/class-template-lifecycle.ts \
+  src/services/studio-class-template-lifecycle.ts \
+  src/app/api/class-templates/route.ts \
+  src/app/api/studio-class-templates/route.ts
+```
+
+Each `catch` line follows its transaction's closing `)`. **Pass `db`, never
+`tx`.** If a future refactor moves a catch inside a transaction, this probe is
+the thing that breaks, and it breaks as `25P02`, not as a wrong answer.
+
+- [ ] **Step 1: The probe's failing test**
+
+`src/lib/rule-slot-holder.test.ts`, in the `unit` project, against the test
+database — same fixture shape as `schedule-rule-constraints.test.ts`. Cases:
+
+1. a live `regular` rule overlapping the probe → `'regular'`
+2. a live `studio` rule overlapping the probe → `'studio'`
+3. an **archived** rule overlapping the probe → `'unknown'` (archiving frees it)
+4. a **paused** (`isActive: false`) rule overlapping → its kind, not `'unknown'`
+5. a rule ending exactly at the probe's start → `'unknown'` (half-open)
+6. a rule on a different `dayOfWeek` → `'unknown'`
+7. another teacher's overlapping rule → `'unknown'`
+8. `excludeRuleId` naming the only overlapping rule → `'unknown'`
+
+Run; expect `Cannot find module './rule-slot-holder'`.
+
+- [ ] **Step 2: Implement, run to green, then mutate**
+
+Three mutations, each with an expected single-case verdict:
+
+- *Drop `AND "isArchived" = false`* → case 3 goes red. Without it the probe
+  disagrees with the constraint about which rules occupy a slot.
+- *`'[)'` → `'[]'`* → case 5 goes red. This is the duplication guard.
+- *Drop the `excludeRuleId` clause* → case 8 goes red. Without it every PUT that
+  moves a rule reports the rule as its own blocker.
+
+Record the exact failure text for each, restore, re-verify.
+
+- [ ] **Step 3: Add `heldBy` to the four services' failure**
+
+In `class-template-lifecycle.ts` (`:344`/`:352` and `:1049`/`:1057`) and
+`studio-class-template-lifecycle.ts` (`:302`/`:309` and `:659`/`:666`) —
+**verify these line references before editing; Task 3 has already moved this
+file** — change the two union members to one:
+
+```typescript
+// before
+| { ok: false; reason: 'slot_conflict' }
+| { ok: false; reason: 'cross_family_slot_conflict' }
+
+// after — one constraint, one reason, and the discriminator the DB no longer carries
+| { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
+```
+
+and in each of the four `catch` blocks replace **both** the `isUniqueConflictOn`
+and the `isCrossFamilySlotConflict` branch with one:
+
+```typescript
+if (isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')) {
+  const heldBy = await ruleSlotHolder(db, { … , excludeRuleId: ruleId });
+  log.warn({ err, templateId, teacherId, heldBy }, 'recurring class edit refused: that slot is taken');
+  return { ok: false, reason: 'slot_conflict', heldBy };
+}
+```
+
+Keep the `log.warn`. Its existing docblock gives the reason — a returned failure
+never reaches `withErrorHandler`, so catching here is what would otherwise
+remove the server-side record — and `heldBy` is now the field that makes the two
+cases greppable, replacing the two distinct reasons that did it before.
+
+- [ ] **Step 4: Re-point the routes, with a compiler tether on the copy**
+
+In each of the four routes, replace the paired `slot_conflict` /
+`cross_family_slot_conflict` branches with one branch keyed on `heldBy`. Each
+route knows its own family, so each carries its own map — and the map is
+`satisfies`-tethered, the house pattern (`COUNT_KEYS`,
+`ROOM_SEARCH_SELECT`; CLAUDE.md, *Comment Discipline*):
+
+```typescript
+// src/app/api/class-templates/[id]/route.ts
+const SLOT_TAKEN = {
+  regular: ['You already have a recurring class at an overlapping time on that day.', 'DUPLICATE_TEMPLATE_SLOT'],
+  studio:  ['You already have a recurring studio class at an overlapping time on that day.', 'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT'],
+  unknown: ['You already have a recurring class or studio class at an overlapping time on that day.', 'TEMPLATE_SLOT_CONFLICT'],
+} as const satisfies Record<RuleSlotHolder, readonly [string, string]>;
+
+if (result.reason === 'slot_conflict') {
+  const [message, code] = SLOT_TAKEN[result.heldBy];
+  return respondError(message, 409, code);
+}
+```
+
+The studio routes mirror it with `DUPLICATE_STUDIO_TEMPLATE_SLOT` /
+`CROSS_FAMILY_CLASS_TEMPLATE_SLOT` / `STUDIO_TEMPLATE_SLOT_CONFLICT`.
+
+**All four existing codes are preserved deliberately**, so integration
+assertions that name them keep their meaning. **The sentences change**, and that
+is the copy half of this issue's scope: "at that time" described an exact-start
+index and is now false — the constraint refuses `19:00 +90` against
+`19:30 +60`, where no two times are equal. Every sentence must say *overlapping*.
+
+`satisfies Record<RuleSlotHolder, …>` is not decoration: a fourth holder state
+must not be addable without every route being forced to word it. Prove it —
+add `'deleted'` to `RuleSlotHolder`, confirm all four routes fail to compile,
+remove it.
+
+- [ ] **Step 5: The POST routes keep their instance arm**
+
+In both POST routes the `isCrossFamilySlotConflict` branch stays, reduced to its
+`conflict.level === 'instance'` arm only — `CROSS_FAMILY_STUDIO_SLOT` /
+`CROSS_FAMILY_CLASS_SLOT`. Its `'untagged'` (template) arm is what the new
+`isExclusionConflictOn` branch replaces.
+
+**`conflict.level`'s union may now be a one-member type.** If `'untagged'` is no
+longer reachable, say so by deleting it rather than leaving a comparison that
+cannot be false — the exact defect its own comment records from PR #300's fourth
+pass, where `'template'` survived in prose after leaving the union. Check
+whether anything still assigns it before deciding.
+
+- [ ] **Step 6: Add the classifier backstop**
+
+In `src/lib/api-errors.ts`, in `classifyApiError`, beside the `P2002` branch at
+`:391`, map a `ScheduleRule_teacher_slot_excl` violation to 409. This covers
+anything reaching `withErrorHandler` without its own branch — the gap #301
+names. It cannot name a family (it has no probe and no teacher context), so it
+carries the `unknown` sentence.
+
+- [ ] **Step 7: Reconcile against Task 3's red list, then run everything**
+
+```bash
+npm run verify
+comm -23 /tmp/task3-red.txt <(grep -E "^ *(FAIL|×)" /tmp/task4-verify.log | sort -u)
+```
+
+Every line Task 3 recorded as red must now be green, and nothing new may be red.
+**Reconcile against that file, not against a grep for one phrase** — a
+keyword sweep scoped to one finding cannot see another finding's twin
+(`.claude/skills/solve-issue` §4).
+
+Test counts will change here, unlike Task 3: this task adds
+`rule-slot-holder.test.ts` (8 cases) and the overlap cases below, and removes
+none. Record the delta and its arithmetic.
+
+- [ ] **Step 8: The behaviour change, proved reachable from the API**
+
+The overlap refusal is new — `19:00 +90` against `19:30 +60` is legal today.
+In `tests/integration/class-templates-api.test.ts`:
+
+```typescript
+it('answers 409 naming the studio family when a new template OVERLAPS a studio template', async () => {
   await createStudioTemplate({ dayOfWeek: 2, startTime: '19:00', durationMinutes: 90 });
   const res = await post('/api/class-templates', {
     ...templateBody, dayOfWeek: 2, startTime: '19:30', durationMinutes: 60,
   });
   expect(res.status).toBe(409);
-  expect((await res.json()).error).toMatch(/studio/i);
+  expect((await res.json()).error.code).toBe('CROSS_FAMILY_STUDIO_TEMPLATE_SLOT');
 });
 
-it('still answers 409 on an exact-start collision', async () => {
-  await createStudioTemplate({ dayOfWeek: 3, startTime: '19:00', durationMinutes: 60 });
-  const res = await post('/api/class-templates', {
-    ...templateBody, dayOfWeek: 3, startTime: '19:00', durationMinutes: 60,
-  });
-  expect(res.status).toBe(409);
-});
+it('still answers 409 on an exact-start collision', async () => { /* unchanged behaviour */ });
 ```
 
-Add the mirror pair to `tests/integration/studio-api.test.ts` (studio template
-overlapping a regular one).
+Plus the mirror pair in `tests/integration/studio-api.test.ts`, and one PUT case
+per family so the `[id]` routes are covered rather than only the POSTs.
 
-- [ ] **Step 2: Run them and watch them fail with 500**
+**Warm each route file with one `curl` first.** `next dev` compiles lazily and a
+first-request timeout reads exactly like an assertion failure; `PUT
+/api/class-templates/[id]` and `POST /api/class-templates` are different files
+and compile separately.
 
-```bash
-npx vitest run --project integration tests/integration/class-templates-api.test.ts
-```
+- [ ] **Step 9: Prove each route's branch is load-bearing**
 
-Expected: FAIL — `expected 500 to be 409`. **A 409 here means the branch is
-already matching and this task is unnecessary; stop and re-derive.** Warm the
-route first with one `curl`: `next dev` compiles lazily and a first-request
-timeout reads exactly like an assertion failure.
+Comment out the `slot_conflict` branch in the class-template PUT only. Expected:
+that route's overlap case 500s and goes red while the other three stay green.
+Restore. Repeat per route.
 
-- [ ] **Step 3: Add the branch to each of the four routes**
+A single mutation reddening all four would mean the Step 6 classifier is doing
+the work and the route branches are dead — worth knowing either way, and it is
+the finding if it happens.
 
-Beside the existing slot-conflict branch. Worked example, from the class
-template POST:
-
-```typescript
-} catch (err) {
-  if (
-    isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime']) ||
-    isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')
-  ) {
-    return NextResponse.json(
-      { error: 'You already have a class or studio class at an overlapping time on that day.' },
-      { status: 409 },
-    );
-  }
-  throw err;
-}
-```
-
-The `isUniqueConflictOn` arm stays for now: it still covers
-`ClassTemplate_rule_unique` and any other declared key on the write. Only the
-slot key changed mechanism.
-
-- [ ] **Step 4: Add the classifier arm**
-
-In `src/lib/api-errors.ts`, in `classifyApiError`, beside the `P2002` branch at
-`:391`, add an arm mapping a `ScheduleRule_teacher_slot_excl` violation to 409.
-This is the backstop for the four routes plus anything that reaches
-`withErrorHandler` without its own branch — the gap #301 names.
-
-- [ ] **Step 5: Run to green**
-
-```bash
-npx vitest run --project integration tests/integration/class-templates-api.test.ts tests/integration/studio-api.test.ts
-```
-
-Expected: all pass, including the two pre-existing exact-start cases.
-
-- [ ] **Step 6: Prove each route's branch is load-bearing**
-
-Comment out the `isExclusionConflictOn` arm in the class-template POST only.
-Expected: that route's overlap case returns 500 and goes red, while the other
-three routes stay green. Restore.
-
-Repeat per route. A single mutation that reddens all four would mean the
-classifier is doing the work and the route branches are dead code — which is
-worth knowing either way, and is the finding if it happens.
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 npm run verify
-git add src/lib/api-errors.ts \
+git add src/lib/rule-slot-holder.ts src/lib/rule-slot-holder.test.ts \
+        src/lib/api-errors.ts \
+        src/services/class-template-lifecycle.ts src/services/studio-class-template-lifecycle.ts \
+        src/services/studio-class-template-lifecycle.test.ts src/services/template-lock-order.test.ts \
         "src/app/api/class-templates/route.ts" "src/app/api/class-templates/[id]/route.ts" \
         "src/app/api/studio-class-templates/route.ts" "src/app/api/studio-class-templates/[id]/route.ts" \
         tests/integration/class-templates-api.test.ts tests/integration/studio-api.test.ts
-git commit -m "fix: an overlapping rule answers 409, not the 500 an unmapped 23P01 gives (issue 298)"
+git commit -m "fix: one constraint refuses the slot, and a probe still names the family (issue 298)"
 ```
 
 ---
@@ -1131,7 +1423,16 @@ docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
 npx vitest run --project unit src/services/schedule-rule-constraints.test.ts
 ```
 
-Expected: the five refusal cases fail; the five acceptance cases still pass.
+Expected: **the three exclusion-refusal cases fail** — `refuses an overlapping
+rule in the other family`, `refuses a same-start rule in the other family`, and
+`does NOT free the slot when a rule is merely PAUSED` — while the **five
+acceptance cases still pass**, and so do Task 2's **two composite-FK refusals**,
+which are a different constraint and must not move.
+
+Task 1 Step 7 writes eight cases, of which three are refusals, not five; Task 2
+appends two more refusals that this mutation cannot reach. If more than three
+go red, something other than the exclusion constraint was holding a case that
+was supposed to be its own — which is exactly what this step exists to find.
 Restore with `npx prisma migrate reset` against the test database.
 
 Without this step the branch could ship a constraint nothing depends on — which
@@ -1186,7 +1487,8 @@ git commit -m "test: the template slot cases move to the constraint that now hol
 
 **Files:**
 - Modify: `docs/lock-order.md`, `CLAUDE.md`, `docs/data-model.md`,
-  `prisma/schema.prisma` (docblocks)
+  `prisma/schema.prisma` (docblocks), `src/lib/cross-family-conflict.ts`
+  (docblock — see Step 3b)
 
 - [ ] **Step 1: `docs/lock-order.md`**
 
@@ -1223,6 +1525,27 @@ further out than `TeacherRoom`, whose `ClassTemplate_teacherRoomId_fkey` is
 hard-deletes, so no production path changes — but any teardown or future hard
 delete must remove the rules first.
 
+- [ ] **Step 3b: `src/lib/cross-family-conflict.ts` — a prose count this branch falsifies**
+
+Its docblock states:
+
+> `YG001` is emitted by these eight triggers and by nothing else in the schema,
+> so the SQLSTATE alone is the whole predicate.
+
+Four of those eight go in Task 2. The claim reaches past its own file — the
+triggers live in migrations — which is why it went stale from an edit made
+elsewhere, exactly as CLAUDE.md's *Comment Discipline* predicts.
+
+**Do not replace the count with a smaller count.** The load-bearing half is the
+*uniqueness*, not the arithmetic: "a second user-defined `YG001` would make this
+function silently wrong, and no test would notice." Keep that sentence, drop the
+number, and point at `docs/lock-order.md` — which owns the trigger roster and
+ships the command that re-derives it. Add the roster there if it is not already
+carried in the rewrite from Step 1.
+
+And correct it **by replacement, not annotation**: no "this previously said
+eight". That belongs in the PR body, which already asks for it.
+
 - [ ] **Step 4: Verify no stale claim survives**
 
 ```bash
@@ -1255,7 +1578,12 @@ Stop and report rather than working around, if:
    A guard that cannot fail certifies nothing. Warm the routes first — `next dev`
    compiles lazily and the first request can blow a 5s timeout, which reads
    exactly like an assertion failure.
-4. **The test count changes during Task 3.** That task changes no behaviour.
+4. **The test COUNT changes during Task 3, or a test fails outside the
+   conflict-vocabulary set.** That task adds and removes no tests, so the count
+   must hold at 146/1877. Its *failures* are expected and bounded — Task 2
+   already removed the objects the conflict branches match on — and Task 3
+   Step 6 records the set. A red outside that set is a re-pointing defect;
+   diagnose it there rather than carrying it into Task 4.
 
 ## What the PR body must record
 
@@ -1269,6 +1597,15 @@ Stop and report rather than working around, if:
   `SkipReason` rename. **#297 and #298 are unaffected by this PR's merge** —
   they are closed by the decision, not by this code. (Never write the
   auto-close keyword next to a bare `#N`; see the hazard list.)
-- Which suites ran. `npm run verify` runs all three vitest projects, so a green
-  verify **is** the whole integration suite — state it with the arithmetic that
-  proves it.
+- Which suites ran. `npm run verify` runs all **four** vitest projects — `unit`,
+  `unit-sweeps`, `components`, `integration` — across two `vitest run`
+  invocations, so a green verify **is** the whole integration suite. State it
+  with the arithmetic that proves it, per project. (It was three projects until
+  #321 split `unit`; a PR body claiming three would be describing a repo that
+  stopped existing on 2026-08-24.)
+- The four premise corrections this branch measured before starting: the stale
+  baseline structure, `btree_gist` present in the test database and absent from
+  dev, `ClassTemplate_rule_unique` naming a constraint that never existed, and
+  the 31 conflict-detection sites the compiler cannot see. Say which inherited
+  claims were checked and **which held** — the four measured facts in the issue
+  body all did, exactly.

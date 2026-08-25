@@ -491,6 +491,79 @@ presentation and generation concern, used by `classStartInstant` to decide
 whether a candidate date has already started — and does not enter the
 constraint.
 
+### 4.6 One constraint cannot say which family holds the slot — so a probe does
+
+*Added 2026-08-25, during the rule-layer build. This section records a decision
+the design did not make, found by measuring what §4.4 costs the API surface.*
+
+§4.4 replaces two enforcement mechanisms with one. The two it replaces are
+**distinguishable by construction** and the one that replaces them is not:
+
+| Refusal | Raised by | Survives §4.4? |
+|---|---|---|
+| this teacher's *own* family already holds the slot | `ClassTemplate_teacher_slot_unique` / its studio twin → `P2002` | **no** — index dropped |
+| the *other* family holds it | the four #296 template triggers → `YG001` | **no** — triggers dropped |
+| either of the above | `ScheduleRule_teacher_slot_excl` → `23P01` | replaces both |
+
+A `23P01` reports the conflicting key values in `DETAIL`. It does not report the
+conflicting row's `kind`, and no formulation of the constraint could make it —
+the constraint is one index over one table, and "which family" is a column on
+the row it collided with, not part of the key.
+
+**Measured cost if nothing is done: four distinct 409s become one 500.**
+`isUniqueConflictOn(err, ['teacherId','dayOfWeek','startTime'])` and
+`isCrossFamilySlotConflict(err)` both keep compiling and both start always
+returning `false`, so every template slot conflict falls through to
+`withErrorHandler`. 31 occurrences of the two `reason` strings across four
+non-test files, none of which `tsc --noEmit` can see.
+
+**Decision: one reason, and a probe supplies the discriminator.** The services
+return `{ ok: false, reason: 'slot_conflict', heldBy }` where `heldBy` is
+`'regular' | 'studio' | 'unknown'`, read by querying `ScheduleRule`'s generated
+`slot` column after the write has already been refused. The four existing error
+codes and both existing sentences survive with their meanings intact.
+
+Three things make this the right shape rather than a workaround:
+
+- **The sentence was never a function of the writer.** Measured across the four
+  template routes, `DUPLICATE_TEMPLATE_SLOT` and `CROSS_FAMILY_CLASS_TEMPLATE_SLOT`
+  carry the *same* sentence, and so do `CROSS_FAMILY_STUDIO_TEMPLATE_SLOT` and
+  `DUPLICATE_STUDIO_TEMPLATE_SLOT`. Copy depends only on which kind of rule
+  holds the slot. The old two-reason split encoded that fact indirectly, through
+  which database object happened to raise; `heldBy` encodes it directly.
+- **The schema merging the families does not merge the product.** Recurring
+  classes and studio classes remain separate surfaces in Settings, so "go look
+  at your studio classes" stays the actionable half of the refusal even though
+  one table now holds both. This is the one place where §4.4's "under the
+  extraction there is no other family" does *not* carry up — it is true of the
+  schema and false of the UI.
+- **`'unknown'` is a real state, not a defensive default.** The refusing rule can
+  be archived between the failed write and the probe. Naming the wrong half of a
+  teacher's schedule is worse than naming neither, so that case gets its own
+  sentence rather than defaulting into one of the two.
+
+**What this deliberately does not do.** It adds no pre-check. There is none at
+the template layer today — both services detect purely by catching the database's
+refusal, verified 2026-08-25 (neither service reads the other family's template
+table at all) — and adding one would introduce a check-then-write race the
+current design avoids by construction. The probe runs only after a refusal, on
+the failure path, and its answer is advisory: the refusal itself is already
+final.
+
+**Where the probe may run.** A statement that fails inside a PostgreSQL
+transaction aborts it, so a probe issued on `tx` would return `25P02` rather than
+an answer. All six catch blocks that need it sit *outside* their own
+`$transaction` call, so Prisma has already rolled back and the base client is
+clean. That is a property of the current code, not a guarantee — a refactor that
+moves a catch inside a transaction breaks the probe, loudly.
+
+**The entry layer inherits this question, not this answer.** `CalendarEntry`'s
+exclusion constraint will be equally silent about what it collided with, and the
+two surviving instance-level codes (`CROSS_FAMILY_STUDIO_SLOT`,
+`CROSS_FAMILY_CLASS_SLOT`) are still trigger-backed today. Stage B decides
+whether the same probe shape serves there or whether an entry collision wants to
+name the class rather than the family.
+
 ---
 
 ## 5. Liveness moves to the entry
