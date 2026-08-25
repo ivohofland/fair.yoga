@@ -722,8 +722,9 @@ export async function generateClassInstances(
   // and the CAS below is invisible to it. Measured on #116's branch: four
   // classes generated into a just-archived room
   // (`{"outcome":"active","roomArchived":true,"generated":4}`). The template's
-  // own archive race IS closed by the CAS — but a CAS on `ClassTemplate`
-  // cannot carry a predicate on the related room's column.
+  // own archive race IS closed by the CAS — but a CAS on `ScheduleRule`
+  // (issue 298; it wrote `ClassTemplate` directly before that) cannot carry
+  // a predicate on the related room's column.
   //
   // Not closed here, deliberately, and not by oversight: `room-archive.ts`
   // (see its own KNOWN-OPEN, spec section 8) accepts this same race class from

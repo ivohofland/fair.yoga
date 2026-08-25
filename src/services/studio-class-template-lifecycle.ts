@@ -1563,13 +1563,12 @@ export async function archiveOrUnarchiveStudioTemplate(
           remaining,
         };
       },
-      // Before issue 298 the compare-and-swap above locked the same row
+      // This CAS writes `ScheduleRule`, and is serialised against a sweep
+      // in progress by the explicit child-row `FOR UPDATE` this transaction
+      // already took above, before the CAS — the same lock
       // `claimStudioTemplateForGeneration` (studio-class-generator.ts) holds
-      // `FOR UPDATE` for the duration of its own per-template transaction,
-      // and the CAS's own `FOR NO KEY UPDATE` conflicted with that. The CAS
-      // now writes `ScheduleRule`, the claim still locks the child, and the
-      // two tables no longer conflict — known-open, not closed here. This
-      // archive can still block on a concurrent pause or resume, though:
+      // for the duration of its own per-template transaction. This archive
+      // can still block on a concurrent pause or resume, though:
       // `pauseOrResumeStudioTemplate`'s own CAS holds the same rule row from
       // its `updateMany` through generation to commit, on the same 10s
       // budget, so a user-facing PATCH can make an archive wait on another
