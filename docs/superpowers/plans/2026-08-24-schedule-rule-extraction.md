@@ -510,8 +510,12 @@ describe('ScheduleRule slot exclusion', () => {
 });
 ```
 
-Each case uses its own `dayOfWeek` so the cases cannot interfere; there is one
-teacher fixture for the whole file, as in `slot-constraints.test.ts`.
+Cases are isolated by holding a distinct `(dayOfWeek, slot)` pair, not by
+holding a distinct `dayOfWeek` — with eight cases and seven weekdays, one
+weekday each is arithmetically impossible, so a case that shares a weekday
+must separate on the range instead. Two do share `dayOfWeek: 2` and sit at
+~19:00 and ~07:00. There is one teacher fixture for the whole file, as in
+`slot-constraints.test.ts`.
 
 - [ ] **Step 8: Run it and watch every case fail**
 
