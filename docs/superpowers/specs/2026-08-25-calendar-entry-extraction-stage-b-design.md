@@ -53,7 +53,7 @@ src/services/class-lifecycle.ts:550
 **The TypeScript half of the liveness audit.** 48 `'cancelled'` references in
 non-test `src/`, of which exactly 1 is a `case` arm — so the protection comes
 from Prisma's string-literal union, not from switch exhaustiveness, exactly as
-§2.2(d) says.
+parent §2.2(d) says.
 
 ### 1.2 Moved
 
@@ -189,6 +189,57 @@ to have a child; parent and child are written in one transaction. Disjointness
 is declarative and lands here; totality would need a deferred check and buys
 nothing this work needs.
 
+### 1.3.2 The same defect again, in §7.1's census — found by applying §1.3's lesson
+
+**Raised at spec review**: §1.3 indicts a *method*, not one number, so every
+other figure derived by grepping `prisma/migrations/**` inherits it. Parent
+§7.1's index census and its `slot-constraints.test.ts` port are both derived
+that way, and that census decides which tests get rewritten. Re-derived from
+`pg_indexes` — a two-minute job that found the second instance.
+
+**It is stale in both directions at once.**
+
+*Over-counting.* §7.1 tables four `*_teacher_slot_unique` indexes. Two survive:
+
+| Index | §7.1 | live |
+|---|---|---|
+| `Class_teacher_slot_unique` | dropped by this work | **present** |
+| `StudioClass_teacher_slot_unique` | dropped by this work | **present** |
+| `ClassTemplate_teacher_slot_unique` | merged | **gone** — stage A merged it |
+| `StudioClassTemplate_teacher_slot_unique` | merged | **gone** — stage A merged it |
+
+So §7.1's headline — *"4 partial unique indexes + 8 triggers → 2 exclusion
+constraints"* — describes the arc from before stage A, not the work in front of
+stage B. **Stage B's half is `2 partial unique indexes + 4 triggers → 1
+exclusion constraint`**, plus the composite FK of §1.3.1. The other exclusion
+constraint, `ScheduleRule_teacher_slot_excl`, is already live.
+
+*Under-counting, in the file the port depends on.* §7.1 describes
+`slot-constraints.test.ts` as 731 lines and cites case groups by line
+(`:93`–`:201`, `:202`–`:251`, `:252`–`:731`). It is now **421 lines**; stage A
+moved the template-layer cases into `schedule-rule-constraints.test.ts` (240).
+Every line citation in §7.1 is off, and a plan written against them would
+re-point cases that are no longer there.
+
+*And the correction it already made now runs the other way.* §7.1 names **four**
+"leaves a pre-existing violating pair editable on unrelated columns" cases to
+delete, at `:310`, `:461`, `:684`, `:708` — and says so in an explicit
+self-correction: *"Four, not two: an earlier draft counted only the
+instance-level pair."* Live there are **two**, at `:247` and `:398`. The
+document reasoned its way from two to four, and stage A took it back to two for
+an unrelated reason. Both numbers were right when written; neither is right now.
+
+*What holds.* Both `@@unique([templateId, date])` indexes are live
+(`Class_templateId_date_key`, `StudioClass_templateId_date_key`), so §7.1's
+claim that they become one `UNIQUE (scheduleRuleId, date)` on `CalendarEntry`
+stands unchanged.
+
+**The plan re-derives this census from `pg_indexes` and the file itself, never
+from §7.1's line numbers.** Recorded rather than silently fixed because it is
+the second instance of one method failing, and the pattern is what transfers:
+a number derived from the migration corpus goes stale the moment a later
+migration touches the object, and nothing in the document can notice.
+
 ### 1.4 The stop condition passes, and its zero is a real one
 
 The §7.2 entry-layer pre-flight, re-run:
@@ -291,10 +342,44 @@ order, **naming both tables explicitly**.
   against the pre-wait snapshot and `EvalPlanQual` never re-fetches a non-locked
   join member. Measured 6/6 in isolation from Prisma during stage A. So the
   statement must name `CalendarEntry`, not reach it through a join.
-- **No new cycle.** `updateClass` acquires at most one of the two rows
-  implicitly, so it cannot hold one and wait for the other. Where a caller
-  writes both in one transaction it must take them in `lockClassRow`'s order;
-  that is the ordering rule to record in `docs/lock-order.md`.
+- **A new cycle is possible, and `updateClass` is the writer that creates it.**
+  An earlier draft of this section claimed `updateClass` "acquires at most one
+  of the two rows implicitly, so it cannot hold one and wait for the other".
+  **That is false.** `TeacherEditableClassField` has ten members and the split
+  cuts through it:
+
+  | move to `CalendarEntry` | stay on `Class` |
+  |---|---|
+  | `classType`, `date`, `startTime`, `durationMinutes` | `description`, `roomCost`, `minRate`, `targetRate`, `minStudents`, `maxStudents` |
+
+  `4 + 6 = 10`. One `updateClass` call can write both tables, so it takes two
+  implicit row locks in whatever order Prisma emits the statements — and if
+  that order is entry-then-class it deadlocks against `lockClassRow`.
+
+  **So the mitigation is not "no cycle exists"; it is a rewrite.**
+  `updateClass` opens no transaction at all today — `db.class.findUnique` then
+  `db.class.updateMany`, both on the base client — so it must become an
+  explicit transaction that writes `Class` before `CalendarEntry`, matching
+  `lockClassRow`'s order. **Recommended further: have it call `lockClassRow`
+  outright** rather than rely on emergent ordering. It already blocks on that
+  lock today by accident; taking it deliberately makes the order a statement
+  rather than a property of Prisma's query emission, which is the kind of
+  accidental correctness §2.2 exists to stop trusting. The plan decides,
+  because it changes `updateClass` from lock-free-with-CAS to lock-taking, and
+  that is a concurrency-profile change a teacher-facing edit path should make
+  on purpose.
+
+- **The CAS filter guards a row it stops writing.** Also raised at review, and
+  it is the same split seen from the other end. `updateClass`'s conditional
+  `updateMany` carries
+  `where: { id, status: { notIn: TERMINAL_CLASS_STATUSES }, …settingsLocked }`
+  — a filter on `Class`. Four of the ten fields it is guarding move to
+  `CalendarEntry`, where that filter does not reach, so post-split the entry
+  write is unguarded and a completion committing mid-edit no longer refuses the
+  reschedule. The filter has to be re-expressed as a condition on §4's freeze
+  marker, which is on the row being written. This is the second place where the
+  extraction breaks a guard by moving the column rather than by touching the
+  guard, and neither is visible to `tsc`.
 
 `lockClassRowsOrdered` has four production call sites (`gdpr.ts` ×2,
 `waitlist.ts`, `class-template-lifecycle.ts`). **Each gets its own written
@@ -367,7 +452,7 @@ layer wants more than `heldBy`:
   layer they are not separate surfaces: the Schedule tab at `/` lists both
   families in one list (CLAUDE.md, *Information Architecture*). Naming the
   family tells a teacher something they can already see.
-- **The midnight spill makes it close to mandatory.** §4.3's new capability is
+- **The midnight spill makes it close to mandatory.** Parent §4.3's new capability is
   that a 23:30 +60 entry collides with 00:15 the *next* day. A teacher told only
   that "the other family holds this slot" cannot find the conflict by looking at
   the date they are editing — the conflicting row is not on it.
@@ -450,9 +535,56 @@ is stronger than today's arrangement, not merely equivalent**, and it removes
 the cross-table read that #298 set out to eliminate rather than reintroducing
 one.
 
-The cost is a sync obligation on a denormalised column, and it is bounded: the
-writers are the completion path and the two cancel paths (§5), all of which
-already write in a transaction that holds the entry's lock under §2.
+### 4.4 The trigger's column list widens, and it is easy to carry over unchanged
+
+`class_terminal_date_guard` is `BEFORE UPDATE OF date` — one column, because on
+`Class` there was only one to name. **On `CalendarEntry` the frozen thing is the
+span, and the span is generated from three columns**, so the replacement is
+`BEFORE UPDATE OF date, "startTime", "durationMinutes"`.
+
+Raised at review, and worth stating because the failure is silent in the
+direction people do not look: guarding only `date` leaves a terminal class's
+start time and duration mutable, which moves its span, which the exclusion
+constraint then re-evaluates against every other entry. CLAUDE.md's *Class
+Lifecycle* already says a terminal class is frozen as a whole — *"`updateClass`
+refuses every field, 409"* — so a one-column guard would also be narrower than
+the stated rule.
+
+The status guard needs no such widening: it is `BEFORE UPDATE OF status` on
+`Class`, and `status` stays on `Class`.
+
+### 4.5 The two families cannot write the marker symmetrically
+
+An earlier draft named the writers as "the completion path and the two cancel
+paths". **Raised at review, and that is wrong**, because the two cancellations
+are not the same kind of event:
+
+- Cancelling a `Class` is **terminal** — `VALID_TRANSITIONS` has
+  `cancelled: []`, and nothing leaves it.
+- Cancelling a `StudioClass` is **reversible**, and the un-cancel path is live:
+  `api/studio-classes/[id]/route.ts` writes
+  `cancelledAt: cancelledAt ? new Date(cancelledAt) : null`, and §5 carries that
+  path forward.
+
+So if the studio cancel path sets the marker, un-cancel is dead; if it does not,
+the marker means "terminal" for one `kind` and nothing for the other.
+
+**The asymmetry is correct and is the design, not a gap.** The reaper reaps
+`WaitlistEntry` rows, which exist only for the regular family, so a studio entry
+never needs the marker. The writers are therefore: `completeClass`, and the
+**regular** family's cancel path. The studio cancel path deliberately does not
+write it.
+
+**This has to be stated where the column is declared**, alongside the scope note
+below — otherwise the next reader finds a nullable timestamp on a shared table
+that only one `kind` ever populates and reasonably reads it as a bug. Both notes
+are the column's own business, so they belong in its docblock rather than in
+`docs/` (CLAUDE.md, *Comment Discipline*): they describe the row they sit on,
+and `kind` is a column on that row.
+
+The cost is a sync obligation on a denormalised column, and it is bounded to
+those two writers, both of which already write in a transaction that holds the
+entry's lock under §2.
 
 **What the marker is not.** It is not a general "is this row editable" flag. The
 two families' editability rules genuinely differ and stay where they are: #276's
@@ -496,23 +628,33 @@ which is lifecycle-triad merging, and §9 leaves that out.
 
 The un-cancel path at `api/studio-classes/[id]/route.ts:143` keeps its re-entry
 comment, whose scope widens from exact-start to range overlap (parent spec,
-§4.2 and §11 item 6).
+parent §4.2 and §11 item 6).
 
 ---
 
 ## 6. Carried from the parent spec
 
-§3 (target schema), §4.1–§4.5, §5.1–§5.2, §6 (`startTime → @db.Time`, wire
-format stays `"HH:MM"`), §7.1 (the index census and the
-`slot-constraints.test.ts` port, group by group), §7.2 (no grandfathering), §8
-(issue consequences), §9 (left out), and §11 items 1, 3, 5, 6, 7.
+Section numbers below refer to the **parent** spec unless prefixed "stage B".
 
-**Carried with one correction, not unchanged.** §3's disjoint-occupancy
-paragraph recorded the parent-`kind`-flip refusal as `23503`; it is `23514`,
-from the child's `CHECK`, and §1.3.1 has the measurement and the stage-A test
-that already pinned it. The parent spec has been corrected in place rather than
-annotated, per CLAUDE.md's *Comment Discipline* — the before-and-after lives
-here and in the PR body.
+Carried whole: §3 (target schema), §4.1–§4.5, §5.1–§5.2, §6
+(`startTime → @db.Time`, wire format stays `"HH:MM"`), §7.2 (no
+grandfathering), §8 (issue consequences), §9 (left out), and §11 items 1, 3, 5,
+6, 7.
+
+**Two are carried with corrections rather than whole**, and both corrections are
+in stage B §1.3:
+
+- **§3's disjoint-occupancy paragraph** recorded the parent-`kind`-flip refusal
+  as `23503`; it is `23514`, from the child's `CHECK`. Stage B §1.3.1 has the
+  measurement and the stage-A test that already pinned it. The parent spec is
+  corrected in place rather than annotated, per CLAUDE.md's *Comment
+  Discipline* — the before-and-after lives here and in the PR body.
+- **§7.1's index census and `slot-constraints.test.ts` port** are stale in both
+  directions: four `*_teacher_slot_unique` indexes are two, 731 lines are 421,
+  four deletable cases are two, and every line citation is off. Stage B §1.3.2
+  has the re-derivation. **The plan takes its census from `pg_indexes` and the
+  file, not from §7.1**, which is the one carried item that must not be read
+  literally.
 
 Two of §11's items are answered above rather than carried: item 9 (the two
 end-instant call sites) by §2, and §4.6's deferred question by §3.
@@ -529,6 +671,19 @@ tether (CLAUDE.md, *Comment Discipline*) is what keeps the rename total.
 1. **The entry-layer overlap pre-flight (§1.4) returns rows.** The migration
    aborts; the resolution is a decision about those specific rows, never a
    weakening of the constraint.
+
+   **Run it twice: once before writing the migration, and again inside the
+   migration's own transaction.** Raised at spec review. The pre-flight in §1.4
+   is a check on a moving target — 43 live rows in local dev make a class
+   created between the check and the `ALTER` unlikely, but the failure mode is
+   an aborted migration on a constraint that cannot be added `NOT VALID`
+   (§7.2), so the cheap guard is worth its one `DO $$` block. The precedent is
+   in-repo: `20260821120000_cross_family_slot_guard` opens with exactly such a
+   block. Note the irony deliberately — that block is also what §1.3's
+   migration-text grep mistook for two live enforcement predicates. A one-shot
+   pre-flight is the right tool here and a false positive for any later audit,
+   which is an argument for a comment on the block saying so, not against
+   having it.
 2. **`prisma migrate dev` offers `DROP COLUMN "span"`.** The generated column
    must be declared `Unsupported("tsrange")? @default(dbgenerated())` or the
    diff cascade-drops the exclusion constraint — stage A's lesson, and the first
