@@ -1503,14 +1503,56 @@ git commit -m "fix: the child row stops being locked for free (issue 298)"
   template routes
 - Test: `tests/integration/class-templates-api.test.ts`,
   `tests/integration/studio-api.test.ts`,
-  `src/services/studio-class-template-lifecycle.test.ts`,
-  `src/services/template-lock-order.test.ts`
+  `tests/integration/cross-family-slot-api.test.ts`,
+  `src/services/studio-class-template-lifecycle.test.ts`
 
 **Interfaces:**
 - Consumes: `isExclusionConflictOn` (Task 1), Task 3's compiling tree.
 - Produces: `RuleSlotHolder = 'regular' | 'studio' | 'unknown'` and
   `ruleSlotHolder(db, probe): Promise<RuleSlotHolder>`; a `heldBy` field on the
   four template services' `slot_conflict` failure.
+
+### Step 0 (do this first): the integration fixtures collide, and this task owns them
+
+**Measured 2026-08-25**, first trustworthy integration run after the dev server
+was restarted: 450 of 513 pass; **63 fail across exactly three files** —
+`class-templates-api` (34), `studio-api` (23), `cross-family-slot-api` (6).
+
+Most are not conflict-mapping failures at all. The shape census is 23 ×
+`expected 500 to be 201`, 6 × `500 to be 409`, 3 × `500 to be 200`, 6 ×
+`TypeError: Cannot read properties of undefined (reading 'id')` (cascade from a
+failed create), 2 × array-shaped. **A create that should return 201 is
+returning 500** — traced to `class-templates-api.test.ts:406`, which creates at
+`'09:31'` beside a `'09:30'` sibling, with 60-minute durations.
+
+Census of literal times across the three files:
+
+```
+05:00 05:15 05:30 05:45 06:00 06:15 06:30 06:45 07:00 07:05 07:15 07:25
+08:10 08:20 08:30 08:40 08:50 08:55 08:58 09:00 09:05 09:10 09:15 09:20
+09:25 09:30 09:31 09:32 09:33 …
+```
+
+Five-to-fifteen-minute increments against 60-minute durations. Every one
+overlapped its neighbours the instant the exact-match unique index became a
+range-overlap exclusion constraint. Legal before, refused now.
+
+**This is the same root cause as the ~95 fixture repairs Task 3 absorbed** in
+the unit files — the plan's "the two dropped indexes" phrasing, which hid a
+change of *kind*. Task 3 fixed what it could see and could not run this
+project, so the integration half arrived here unowned.
+
+**The rule, and it is the finding a reviewer will check:** re-space where the
+adjacency is **incidental**; never where a test is **about** two templates
+colliding. Task 3's score on the unit files was 8 incidental, 0 under-test —
+every deliberate collision there is built from an explicit literal separate
+from the fixture counter, so re-spacing counters could not erase a subject.
+Hold to that standard and **report both numbers**.
+
+Do this before the branch work below: until these fixtures stop colliding in
+setup, the 409 cases you add cannot run at all.
+
+---
 
 ### Why this task is a design change and not a re-point
 
