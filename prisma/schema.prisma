@@ -156,6 +156,7 @@ model Teacher {
   teacherStudents TeacherStudent[]
   invitations     Invitation[]
   teacherBlocks   TeacherBlock[]
+  scheduleRules   ScheduleRule[]
 }
 
 model Student {
@@ -532,6 +533,38 @@ model StudioClassTemplate {
 
   teacher       Teacher       @relation(fields: [teacherId], references: [id], onDelete: Cascade)
   studioClasses StudioClass[]
+}
+
+enum RuleKind {
+  regular
+  studio
+}
+
+/// The calendar identity shared by the two template families (#298).
+///
+/// Two invisible constraints live on this table and cannot be expressed here:
+/// an `EXCLUDE USING gist` over a generated `slot` column, and
+/// `UNIQUE (id, kind)`, the parent key for each child's composite foreign key.
+/// Both are hand-authored; `docs/lock-order.md` carries the argument.
+model ScheduleRule {
+  id              String    @id @default(uuid())
+  teacherId       String
+  kind            RuleKind
+  classType       String
+  dayOfWeek       Int
+  startTime       DateTime  @db.Time
+  durationMinutes Int
+  isActive        Boolean   @default(true)
+  isArchived      Boolean   @default(false)
+  archivedAt      DateTime?
+  withdrawnCount  Int?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([id, kind])
+  @@index([teacherId, dayOfWeek])
 }
 
 /// Carries a partial unique index Prisma cannot express and therefore cannot

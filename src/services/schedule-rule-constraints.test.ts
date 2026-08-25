@@ -1,0 +1,145 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { PrismaClient } from '@prisma/client';
+import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
+
+const prisma = new PrismaClient();
+const suffix = `slot-${Date.now()}`;
+let teacherId: string;
+let otherTeacherId: string;
+const accountIds: string[] = [];
+
+async function makeTeacher(tag: string): Promise<string> {
+  const email = `${tag}-${suffix}@test.local`;
+  const t = await prisma.teacher.create({
+    data: {
+      firstName: 'Slot', lastName: tag, email, bio: 'slot constraint fixture',
+      pageSlug: `${tag}-${suffix}`, account: { create: { email } },
+    },
+  });
+  accountIds.push(t.accountId);
+  return t.id;
+}
+
+let roomId: string;
+
+beforeAll(async () => {
+  await prisma.$connect();
+  teacherId = await makeTeacher('owner');
+  otherTeacherId = await makeTeacher('other');
+  const room = await prisma.room.create({
+    data: {
+      venueName: 'Slot Venue', address: `${suffix} Slot Street`, city: 'Amsterdam',
+      postcode: '1011AB', floor: '1', roomName: 'Main', maxCapacity: 12,
+      isPublic: false, createdById: teacherId,
+    },
+  });
+  roomId = room.id;
+  await prisma.teacherRoom.create({
+    // `capacityOverride` is required and has no default (schema.prisma).
+    data: { teacherId, roomId, rentalRate: 20, capacityOverride: 12 },
+  });
+});
+
+afterAll(async () => {
+  const teachers = [teacherId, otherTeacherId];
+  await prisma.class.deleteMany({ where: { teacherId: { in: teachers } } });
+  await prisma.studioClass.deleteMany({ where: { teacherId: { in: teachers } } });
+  await prisma.classTemplate.deleteMany({ where: { teacherId: { in: teachers } } });
+  await prisma.studioClassTemplate.deleteMany({ where: { teacherId: { in: teachers } } });
+  await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teachers } } });
+  await prisma.room.deleteMany({ where: { createdById: { in: teachers } } });
+  await prisma.teacher.deleteMany({ where: { id: { in: teachers } } });
+  // `Teacher.accountId` has no `onDelete: Cascade` (prisma/schema.prisma),
+  // so the Account row each makeTeacher() created survives the teacher
+  // delete above and must be removed separately, only after it — Account
+  // is what Teacher.accountId references.
+  await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  await prisma.$disconnect();
+});
+
+const EXCL = 'ScheduleRule_teacher_slot_excl';
+const at = (hhmm: string) => new Date(`1970-01-01T${hhmm}:00Z`);
+
+const rule = (teacher: string, over: Record<string, unknown> = {}) => ({
+  teacherId: teacher, kind: 'regular' as const, classType: 'Yoga',
+  dayOfWeek: 1, startTime: at('19:00'), durationMinutes: 90, ...over,
+});
+
+/** Asserts the DATABASE refused, and that it was THIS constraint that did. */
+async function expectSlotRefusal(fn: () => Promise<unknown>): Promise<void> {
+  await expect(fn()).rejects.toSatisfy((e: unknown) => isExclusionConflictOn(e, EXCL));
+}
+
+/**
+ * These assert the DATABASE rejects the write, not a route-level 409 — with
+ * the exclusion constraint absent these would still pass on a sequential
+ * retry and fail only under a race, which is the case that motivated #196.
+ *
+ * The assertions here name the exclusion constraint by NAME
+ * (`isExclusionConflictOn`), unlike `slot-constraints.test.ts`'s sibling
+ * suite, which names `meta.target` — the column list. A 23P01 exclusion
+ * violation carries no `meta.target`: `code` and `meta` are both `undefined`
+ * on the Prisma error (`src/lib/exclusion-conflict.ts`), which is the whole
+ * reason that matcher exists rather than reusing `isUniqueConflictOn`.
+ */
+describe('ScheduleRule slot exclusion', () => {
+  it('refuses an overlapping rule in the other family', async () => {
+    await prisma.scheduleRule.create({ data: rule(teacherId) });
+    await expectSlotRefusal(() => prisma.scheduleRule.create({
+      data: rule(teacherId, { kind: 'studio', startTime: at('19:30'), durationMinutes: 60 }),
+    }));
+  });
+
+  it('refuses a same-start rule in the other family', async () => {
+    await prisma.scheduleRule.create({ data: rule(teacherId, { dayOfWeek: 2 }) });
+    await expectSlotRefusal(() => prisma.scheduleRule.create({
+      data: rule(teacherId, { dayOfWeek: 2, kind: 'studio', durationMinutes: 60 }),
+    }));
+  });
+
+  it('allows a rule starting exactly when the first ends', async () => {
+    await prisma.scheduleRule.create({ data: rule(teacherId, { dayOfWeek: 3 }) });
+    await expect(prisma.scheduleRule.create({
+      data: rule(teacherId, { dayOfWeek: 3, kind: 'studio', startTime: at('20:30'), durationMinutes: 60 }),
+    })).resolves.toBeDefined();
+  });
+
+  it('allows the same slot on a different weekday', async () => {
+    await prisma.scheduleRule.create({ data: rule(teacherId, { dayOfWeek: 4 }) });
+    await expect(prisma.scheduleRule.create({
+      data: rule(teacherId, { dayOfWeek: 5, startTime: at('19:30') }),
+    })).resolves.toBeDefined();
+  });
+
+  it('lets an ARCHIVED rule sit on an occupied slot — archiving frees it', async () => {
+    await prisma.scheduleRule.create({ data: rule(teacherId, { dayOfWeek: 6 }) });
+    await expect(prisma.scheduleRule.create({
+      data: rule(teacherId, { dayOfWeek: 6, isArchived: true, archivedAt: new Date(), startTime: at('19:30') }),
+    })).resolves.toBeDefined();
+  });
+
+  it('does NOT free the slot when a rule is merely PAUSED', async () => {
+    await prisma.scheduleRule.create({ data: rule(teacherId, { dayOfWeek: 0, isActive: false }) });
+    await expectSlotRefusal(() => prisma.scheduleRule.create({
+      data: rule(teacherId, { dayOfWeek: 0, startTime: at('19:30') }),
+    }));
+  });
+
+  it('does not block another teacher', async () => {
+    await prisma.scheduleRule.create({ data: rule(teacherId, { dayOfWeek: 2, startTime: at('07:00') }) });
+    await expect(prisma.scheduleRule.create({
+      data: rule(otherTeacherId, { dayOfWeek: 2, startTime: at('07:30') }),
+    })).resolves.toBeDefined();
+  });
+
+  it('does NOT catch a rule spilling past midnight into the next weekday', async () => {
+    // A deliberate blind spot, pinned so it is recorded rather than discovered.
+    // A (dayOfWeek, slot) key cannot see Monday 23:30+60 reaching Tuesday
+    // 00:30; the ENTRY-level constraint catches it when the two rules
+    // generate. Design doc §4.4, "What this does not reach".
+    await prisma.scheduleRule.create({ data: rule(teacherId, { dayOfWeek: 3, startTime: at('23:30'), durationMinutes: 60 }) });
+    await expect(prisma.scheduleRule.create({
+      data: rule(teacherId, { dayOfWeek: 4, startTime: at('00:15'), durationMinutes: 30 }),
+    })).resolves.toBeDefined();
+  });
+});
