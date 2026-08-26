@@ -129,13 +129,32 @@ Three things take both, and all three take them in this order:
 - **`lockClassRowsOrdered` with `entries: true`** — every `Class` row first,
   ascending by `c.id`; then their entries, ascending by `e.id`. Two of its four
   callers pass the flag; each carries its own written verdict at the call site.
-- **`class_sync_entry_completed`**, the trigger that stamps
-  `CalendarEntry.classCompletedAt`. It fires `AFTER UPDATE OF status ON
-  "Class"`, so it acquires `Class` and then the entry, inside the completing
-  transaction. That is why terminality reaches the entry as a WRITE rather than
-  as a cross-table read: a guard on `CalendarEntry` that consulted
-  `Class.status` would acquire Entry then Class, against this order, and a
-  measured `40P01` on the schedule-write hot path is what that produced.
+- **`class_sync_entry_completed`**, the trigger function that stamps
+  `CalendarEntry.classCompletedAt`. Two triggers fire it — `AFTER UPDATE OF
+  status ON "Class"` and, since
+  `20260826140000_entry_guard_restorations`, `AFTER INSERT ON "Class"` — and
+  both take the same order: the statement already holds the `Class` tuple it
+  wrote when the function updates the entry, so it is `Class` then entry,
+  inside the writing transaction. That is why terminality reaches the entry as
+  a WRITE rather than as a cross-table read: a guard on `CalendarEntry` that
+  consulted `Class.status` would acquire Entry then Class, against this order,
+  and a measured `40P01` on the schedule-write hot path is what that produced.
+
+  **The reverse direction is cheap and is still not free.** A guard on `Class`
+  that consulted `CalendarEntry` would take Class then entry, which composes
+  with everything above — so the objection to it is not the ordering, it is
+  what the read costs. A guard's sibling read is an unlocked `SELECT`, and
+  "What it costs: a residual race, measured" below prices that mechanism: two
+  transactions writing opposite sides of one slot both committed in 200 of 200
+  forced-overlap runs, because an unlocked read cannot see an uncommitted
+  sibling. A guard is not a substitute for a constraint.
+
+  That is why one terminality arm is carried `known-open` rather than closed
+  with a trigger: a cancelled class's `Class.status` is not frozen at the
+  database, and freezing it needs exactly that read. The marker and the full
+  argument sit beside `TERMINAL_CLASS_STATUSES` in
+  `src/services/class-lifecycle.ts`; what belongs here is the mechanism it
+  turns on.
 
 Nothing takes an entry lock and then asks for a class lock, which is what makes
 the order sufficient rather than merely conventional. The check is the same

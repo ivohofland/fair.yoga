@@ -31,29 +31,39 @@
  *    row's schedule is frozen by one trigger. `date` and terminality both live
  *    on `CalendarEntry` now — terminality as `classCompletedAt IS NOT NULL OR
  *    (kind = 'regular' AND cancelledAt IS NOT NULL)`, which is character for
- *    character the predicate `entry_reject_frozen_schedule_change`
- *    (`prisma/migrations/20260826080100_calendar_entry_rewire/`) evaluates
- *    before it refuses. So on any row this sweep considers, `date` is
- *    physically immovable from any client, raw SQL included: that is what
- *    makes "more than 365 days past" a property of the row rather than a
- *    snapshot something can move underneath it. The freeze covers
- *    `startTime` and `durationMinutes` in the same trigger; this sweep reads
- *    only `date`, and does not care about the other two.
+ *    character the predicate `entry_reject_frozen_schedule_change` evaluates
+ *    before it refuses. That function's live definition comes from
+ *    `prisma/migrations/20260826140000_entry_guard_restorations/`, which
+ *    replaced the one the rewire installed; the predicate is unchanged, and
+ *    what the replacement added is an early return when none of the three
+ *    frozen columns actually changes — a write that carries an unchanged
+ *    `date` is not a move, so nothing below depends on the difference. So on
+ *    any row this sweep considers, `date` is physically immovable from any
+ *    client, raw SQL included: that is what makes "more than 365 days past" a
+ *    property of the row rather than a snapshot something can move underneath
+ *    it. The freeze covers `startTime` and `durationMinutes` in the same
+ *    trigger; this sweep reads only `date`, and does not care about the other
+ *    two.
  *
- *    THE TERMINALITY HALF IS HELD ONE STEP LESS FIRMLY THAN THE DATE HALF,
- *    and the difference is worth stating rather than smoothing over.
- *    `classCompletedAt` cannot be undone in practice — `class_sync_entry_
- *    completed` is its only writer and only ever sets it, and its precondition
- *    is a `completed` status that `class_reject_terminal_status_change`
- *    refuses to let go of. `cancelledAt` has no equivalent trigger: nothing in
- *    the database stops a REGULAR entry being un-cancelled, where before #327
- *    the same act meant leaving a terminal `ClassStatus` and a trigger refused
- *    it. What holds it today is that no such door exists in `src/` — the
- *    studio family's PUT is the only writer that clears the column, and its
- *    `kind` keeps it out of this disjunct. Re-derive rather than trust this
- *    sentence:
+ *    BOTH HALVES OF TERMINALITY ARE HELD BY TRIGGERS, which they were not when
+ *    the rewire landed. `classCompletedAt` cannot be undone —
+ *    `class_sync_entry_completed` is its only writer and only ever sets it,
+ *    and its precondition is a `completed` status that
+ *    `class_reject_terminal_status_change` refuses to let go of. `cancelledAt`
+ *    on a REGULAR entry is now equally immovable: `entry_terminal_liveness_
+ *    guard` refuses to clear it, and refuses to set it on a completed entry.
+ *    The studio family's PUT is still the only writer in `src/` that clears the
+ *    column, and both that trigger's `kind` conjunct and this disjunct's keep
+ *    the studio family out of the question either way.
  *
- *      grep -rn 'cancelledAt' src --include='*.ts' | grep -v '\.test\.'
+ *    ONE THING IS STILL NOT FROZEN, and it does not reach this sweep. A
+ *    cancelled class's `Class.status` can still be walked to `completed` from
+ *    raw SQL — the KNOWN-OPEN beside `TERMINAL_CLASS_STATUSES`
+ *    (`class-lifecycle.ts`) states why it was not closed. The row it produces
+ *    is one this sweep would already have considered: a cancelled regular
+ *    entry satisfies the second disjunct on its own, so a status walk adds
+ *    nothing to reapability and takes nothing away from the freeze, which
+ *    reads the entry's own columns and not the class's status.
  *
  *  - Every `WaitlistEntry` write site falls into one of three buckets, and none
  *    of them can write a row this sweep would then wrongly reap. To re-derive

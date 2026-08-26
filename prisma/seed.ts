@@ -82,11 +82,16 @@ async function createClass(
 /**
  * A class that has already been taught.
  *
- * Created live and then TRANSITIONED, rather than inserted at `completed`:
- * `class_sync_entry_completed_guard` fires AFTER UPDATE OF status, and it is
- * what writes `CalendarEntry.classCompletedAt`. An insert straight to
- * `completed` would leave the entry with no marker and therefore unfrozen —
- * seeding a state the application cannot reach.
+ * Created live and then TRANSITIONED, rather than inserted at `completed`,
+ * because `completeClass` (`class-lifecycle.ts`) is how a class reaches
+ * `completed` in this application and it gets there by updating a live row.
+ * Seeding it any other way would stage a state no writer in `src/` produces.
+ *
+ * NOT because of the marker any more. `class_sync_entry_completed` hangs off
+ * `AFTER INSERT` as well as `AFTER UPDATE OF status` since
+ * `20260826140000_entry_guard_restorations`, so an insert straight to
+ * `completed` stamps `CalendarEntry.classCompletedAt` and freezes the entry
+ * too. Realism is the reason that survives.
  *
  * The totals go in the same statement as the flip, as `completeClass` writes
  * them.

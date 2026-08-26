@@ -80,13 +80,43 @@ export const VALID_TRANSITIONS: Record<ClassStatus, readonly ClassStatus[]> = {
  *   `date`, `startTime` and `durationMinutes`.
  *
  * Deriving from a TABLE while depending on TRIGGERS is the one hazard here:
- * widen the table and this widens silently while neither text does.
- * `class-terminal-status.test.ts` re-derives the set out of both texts and
- * compares it against this constant, for exactly that reason — adding a
- * terminal status a trigger does not cover fails there, not in production. Two
- * texts rather than one because the sync trigger is what carries terminality
- * across to the entry, and a second frozen list this constant does not know
- * about is precisely the drift a single pin would miss.
+ * widen the table and this widens silently while neither text does. Each text
+ * has its OWN drift pin re-deriving the set out of it and comparing it against
+ * this constant — `class-terminal-status.test.ts` reads the guard,
+ * `class-terminal-date.test.ts` reads the sync trigger — so adding a terminal
+ * status a trigger does not cover fails there, not in production. Two texts
+ * rather than one because the sync trigger is what carries terminality across
+ * to the entry, and a second frozen list this constant does not know about is
+ * precisely the drift a single pin would miss. Two pins rather than one
+ * because both texts now live in one migration file, so nothing but the
+ * function name tells them apart (`tests/migration-sql.ts`).
+ *
+ * KNOWN-OPEN, and deliberate: A CANCELLED CLASS'S `status` IS NOT FROZEN AT
+ * THE DATABASE. This constant has one member, so
+ * `class_reject_terminal_status_change` refuses only a completed class leaving
+ * `completed`. Before #327 cancellation was a `ClassStatus` and the same
+ * trigger refused every status change on a cancelled class; liveness moved to
+ * `CalendarEntry.cancelledAt`, and that arm did not move with it. Raw SQL can
+ * still walk a cancelled class up to `completed`, at which point the sync
+ * trigger stamps the marker and the row is both cancelled and completed.
+ *
+ * Not restored, and the reason is a mechanism rather than an oversight: the
+ * guard would have to sit on `Class` and read `CalendarEntry.cancelledAt`, a
+ * cross-table read inside a trigger. `docs/lock-order.md` prices that under
+ * "Ordering BETWEEN `Class` and its `CalendarEntry`": the ordering is fine,
+ * the unlocked `SELECT` is the cost, and this project has been removing guards
+ * of that shape rather than adding them — the template half in #298, the
+ * cross-family class half in #327, both replaced by exclusion constraints.
+ * `entry_terminal_liveness_guard`
+ * (`20260826140000_entry_guard_restorations`) restored the two arms that CAN
+ * be expressed on the row being written: un-cancelling a regular entry, and
+ * cancelling a completed one.
+ *
+ * What holds it meanwhile is the service layer: every status writer's CAS
+ * carries `calendarEntry: { cancelledAt: null }` beside its status predicate.
+ * Re-derive rather than trust that sentence —
+ *
+ *     grep -rn 'cancelledAt: null' src --include='*.ts' | grep -v '\.test\.'
  *
  * Annotated and frozen, NOT `as const satisfies` — the same shape and reason as
  * `CLAIMABLE_WAITLIST_STATUSES` (`lib/waitlist-status.ts`, which explains it at

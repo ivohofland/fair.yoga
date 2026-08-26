@@ -27,21 +27,37 @@ const terminalStatusErrorFixture = new Prisma.PrismaClientUnknownRequestError(
 );
 
 /**
- * The SECOND trigger to reach the same branch (#247,
- * `20260817120000_class_terminal_date_trigger`). Transcribed from a real fire
- * observed through `db.class.updateMany` in `src/services/class-lifecycle.ts`,
- * not hand-written: same SQLSTATE, same `which is terminal` clause, different
- * tail.
+ * The SECOND trigger to reach the same branch (#247), which since #327 is
+ * `entry_frozen_schedule_guard` on `CalendarEntry` rather than the `Class`
+ * trigger it replaced. Transcribed from a real fire through
+ * `prisma.calendarEntry.update`, not hand-written: same SQLSTATE, same
+ * `which is terminal` clause, different tail.
  *
- * It exists because the 409 mapping is now SHARED, and a shared mapping pinned
- * by only the fixture that happened to come first is pinned for one caller and
- * assumed for the other. Anyone narrowing the matcher back to status-only
+ * It exists because the 409 mapping is SHARED, and a shared mapping pinned by
+ * only the fixture that happened to come first is pinned for one caller and
+ * assumed for the others. Anyone narrowing the matcher back to status-only
  * wording — the obvious "fix" once `which is terminal` stops being unique to
- * one migration — turns date violations into 500s, and this is the test that
+ * one trigger — turns schedule violations into 500s, and this is the test that
  * refuses to let that happen quietly.
  */
 const terminalDateErrorFixture = new Prisma.PrismaClientUnknownRequestError(
-  `Invalid \`prisma.class.updateMany()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "Class 30cb2d25-dd22-4bd3-8baf-e99f4f9c8219 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+  `Invalid \`prisma.calendarEntry.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "CalendarEntry 6c218048-a8f5-4478-a846-5722ec90278d is completed, which is terminal; cannot change its date, start time or duration", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+  { clientVersion: 'test' },
+);
+
+/**
+ * The THIRD, `entry_terminal_liveness_guard` (#327,
+ * `20260826140000_entry_guard_restorations`) — a regular entry refusing to be
+ * un-cancelled, or a completed one refusing to be cancelled. Also transcribed
+ * from a real fire through `prisma.calendarEntry.update`.
+ *
+ * Its own fixture rather than a reuse of the one above, because it is what
+ * gives `detail.trigger` a third value to be wrong about: the two `warn`
+ * triggers write different rows on different tables, and a facet that called
+ * both `status` could not tell an operator which CAS was losing races.
+ */
+const terminalLivenessErrorFixture = new Prisma.PrismaClientUnknownRequestError(
+  `Invalid \`prisma.calendarEntry.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "CalendarEntry dbdb2fe7-0571-44e3-9a68-89080663a0f8 is cancelled, which is terminal; cannot change its cancellation", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
   { clientVersion: 'test' },
 );
 
@@ -102,20 +118,21 @@ describe('classifyApiError', () => {
    * One classification, two log levels, and the table carries both so the
    * split cannot be flattened back without a named failure.
    *
-   * The CALLER sees the same thing either way — same 409, same message — and
-   * that is deliberate; the two triggers mean the same thing to a teacher.
-   * The OPERATOR does not. A status fire is a lost CAS race, a shape this
-   * project has expected since #174, so `warn`. A date fire cannot happen at
-   * all while `updateClass` is the only writer of `Class.date` and its CAS
-   * excludes terminal rows — so if it happens, an unguarded writer of the
-   * column `reapClosedWaitlistEntries` reads before it DELETEs has appeared.
-   * That is `error`, and pinning it here is what stops a future tidy-up from
-   * collapsing the two back to one level on the grounds that the branch
-   * "returns the same thing anyway".
+   * The CALLER sees the same thing every time — same 409, same message — and
+   * that is deliberate; the triggers mean the same thing to a teacher. The
+   * OPERATOR does not. A status or liveness fire is a lost CAS race, a shape
+   * this project has expected since #174, so `warn`. A date fire cannot happen
+   * at all while `updateClass` is the only writer that moves an existing
+   * entry's `date` and its entry CAS re-asks what the guard asks — so if it
+   * happens, an unguarded writer of the column `reapClosedWaitlistEntries`
+   * reads before it DELETEs has appeared. That is `error`, and pinning it here
+   * is what stops a future tidy-up from collapsing the levels back to one on
+   * the grounds that the branch "returns the same thing anyway".
    */
   it.each([
     ['status', terminalStatusErrorFixture, 'warn'],
     ['date', terminalDateErrorFixture, 'error'],
+    ['liveness', terminalLivenessErrorFixture, 'warn'],
   ] as const)('maps the terminal-%s trigger to a 409 logged at %s', (column, fixture, level) => {
     const failure = classifyApiError(fixture);
 

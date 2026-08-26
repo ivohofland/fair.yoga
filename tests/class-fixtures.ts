@@ -101,18 +101,21 @@ export async function createClassFixture(
   if (!cls) throw new Error('createClassFixture: the nested class row did not come back');
 
   // A COMPLETED fixture is created live and then TRANSITIONED, never inserted
-  // already-completed. `class_sync_entry_completed` is an `AFTER UPDATE OF
-  // status` trigger, so a row INSERTed carrying `status = 'completed'`
-  // produces no `CalendarEntry.classCompletedAt` marker at all — and that
-  // marker is what the freeze guard and `waitlist-retention.ts`'s reaper both
-  // read. A fixture that skipped the transition would be a completed class the
-  // reaper could not see, which is a fixture staging a state production cannot
-  // reach. `prisma/seed.ts` does the same thing for the same reason and says
-  // so.
+  // already-completed — because `completeClass` (`class-lifecycle.ts`) is how a
+  // class reaches `completed` in this application, and it gets there by
+  // updating a live row. A fixture that INSERTed at `completed` would stage a
+  // state no writer in `src/` produces.
+  //
+  // NOT because of the marker any more. `class_sync_entry_completed` now hangs
+  // off `AFTER INSERT` as well as `AFTER UPDATE OF status`, so an insert
+  // straight to `completed` stamps `CalendarEntry.classCompletedAt` too — that
+  // is what `20260826140000_entry_guard_restorations` closed, and
+  // `calendar-entry.test.ts` pins both paths. The transition is kept for
+  // realism, which is the reason that survives.
   if (classFields.status === 'completed') {
     // No `in_progress` update here: the create above already inserted the row
     // in that status, so this is the one transition that actually changes
-    // `status` and fires `class_sync_entry_completed`.
+    // `status`.
     await db.class.update({ where: { id: cls.id }, data: { status: 'completed' } });
     const marked = await db.calendarEntry.findUniqueOrThrow({ where: { id: bareEntry.id } });
     return { ...cls, calendarEntry: marked };

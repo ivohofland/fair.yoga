@@ -339,6 +339,9 @@ export function classifyApiError(error: unknown): ApiFailure {
     // writer has had a CAS or a row lock since #174, so a trigger catching one
     // means a guard was bypassed under contention — expected-but-notable, the
     // same reading as the P2002 branch below, and `warn` is right for it.
+    // `status` and `liveness` are told apart anyway: they are different rows on
+    // different tables, and an operator narrowing "which CAS is losing races"
+    // to one of them cannot do it from a facet that calls both `status`.
     //
     // A DATE fire is not a race, because there is no race to lose:
     // `updateClass` is the only writer in `src/` that moves an existing
@@ -350,7 +353,14 @@ export function classifyApiError(error: unknown): ApiFailure {
     // class's queue — the precondition for the data loss #247 exists to
     // prevent. That must not land in the log at the level a lock timeout lands
     // at.
-    const trigger = error.message.includes('cannot change its date') ? 'date' : 'status';
+    // Three values, one per trigger, read off the message tail each one owns.
+    // `status` is the fallback rather than a third test, so a trigger added
+    // without a tail of its own lands on the level that pages nobody.
+    const trigger = error.message.includes('cannot change its date')
+      ? 'date'
+      : error.message.includes('cannot change its cancellation')
+        ? 'liveness'
+        : 'status';
     return {
       status: 409,
       // Deliberately names no column. Every trigger that reaches this branch
