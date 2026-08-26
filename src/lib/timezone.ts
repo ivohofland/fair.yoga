@@ -245,9 +245,8 @@ export function isoOrNull(date: Date): string | null {
  * place to pin timezone behaviour, rather than two call sites that drift — and
  * so the wrong implementation has somewhere to be refused. That wrong
  * implementation is comparing `CalendarEntry.date` (stored at UTC midnight)
- * against
- * `now`: it agrees with this one at most hours of most days, which is precisely
- * why `timezone.test.ts` pins a case where the two disagree.
+ * against `now`: it agrees with this one at most hours of most days, which is
+ * precisely why `timezone.test.ts` pins a case where the two disagree.
  *
  * `now` is required rather than defaulted. A caller that wants to shift the
  * clock has to say so — the same reasoning `CompletionTiming` gives in

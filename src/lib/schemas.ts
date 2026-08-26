@@ -15,10 +15,9 @@ import { isIncomeTier } from '@/lib/tiers';
  * "2026-02-31"}` answered 200 having moved the class to a day the caller
  * never sent, and reported that as success.
  *
- * This is `CalendarEntry.date` among others, the column `waitlist-retention.ts`
- * reads
- * before it permanently deletes a class's waitlist, so a silently rewritten
- * value here is not a cosmetic wrong answer.
+ * This is `CalendarEntry.date` among others, the column
+ * `waitlist-retention.ts` reads before it permanently deletes a class's
+ * waitlist, so a silently rewritten value here is not a cosmetic wrong answer.
  */
 const isoDate = z
   .string()

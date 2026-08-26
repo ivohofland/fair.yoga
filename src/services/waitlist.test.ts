@@ -168,9 +168,8 @@ const uniqueSuffix = Date.now();
  * the next hour rather than ever emitting an invalid minute like `'09:60'`
  * once a block's fixture counter crosses 30 — a raw `HH:${counter}` literal
  * would build exactly that. `CalendarEntry.startTime` is `@db.Time` and would
- * refuse
- * the row outright at the DB, which is a less useful failure here than this
- * guard's message naming the fixture counter that produced it. The two
+ * refuse the row outright at the DB, which is a less useful failure here than
+ * this guard's message naming the fixture counter that produced it. The two
  * blocks below that use this each pick their own hour offset (`slotTime(60 +
  * counter)` for a `10:xx` base) so neither counter's values can land in the
  * other's hour. Mirrors `class-template-lifecycle.test.ts`'s `slotTime`.

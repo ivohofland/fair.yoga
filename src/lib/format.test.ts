@@ -132,9 +132,9 @@ describe('formatDateShort', () => {
   });
 
   /**
-   * Reads its argument with UTC accessors. `CalendarEntry.date` is a `@db.Date`
-   * stored
-   * at midnight UTC, so a local read renders the previous day west of UTC —
+   * Reads its argument with UTC accessors. `CalendarEntry.date` is a
+   * `@db.Date` stored at midnight UTC, so a local read renders the previous
+   * day west of UTC —
    * which the suite's `TZ` pin makes visible rather than theoretical. Unlike
    * the two cases above, this fixture crosses a month (and would cross a
    * weekday too, were one rendered): a local read west of UTC would give
