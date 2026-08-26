@@ -1060,6 +1060,30 @@ describe('/api/studio-classes', () => {
     expect(row?.t).toBeInstanceOf(Date);
   });
 
+  // The read direction of the same guarantee. The test above only pins the
+  // create route's own round trip — GET /api/studio-classes/[id] carries its
+  // own, separate `timeToHHmm(studioClass.startTime)` call, and nothing else
+  // in this file reads a studio class back by id at all. Delete that call and
+  // this fails with the stored column's own wire shape (an ISO timestamp)
+  // while every other test in the suite stays green.
+  it('returns startTime as "HH:MM" on GET /api/studio-classes/[id]', async () => {
+    const created = await send('POST', ownerToken, '/api/studio-classes', {
+      classType: 'Wire Format Read',
+      date: '2027-03-04',
+      startTime: '20:45',
+      durationMinutes: 60,
+      location: 'Guest Studio',
+      hourlyRate: 55,
+    });
+    expect(created.status).toBe(201);
+    const { data: createdData } = (await created.json()) as { data: { id: string } };
+
+    const res = await send('GET', ownerToken, `/api/studio-classes/${createdData.id}`);
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as { data: { startTime: string } };
+    expect(data.startTime).toBe('20:45');
+  });
+
   // #148. Both keys reached prisma.studioClass.create through a `{ date, ...rest }`
   // spread, so neither name appeared anywhere in the handler — a grep for the
   // key names found nothing, which is how this stayed hidden.

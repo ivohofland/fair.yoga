@@ -271,12 +271,9 @@ export function isoOrNull(date: Date): string | null {
  * a value the guard can still reason about, where this one has no start
  * instant at all.
  *
- * THE SCHEDULING TRIPLE IS STILL ONE OBJECT, not positional arguments, though
- * the original reason for it — `startTime` and `timeZone` were adjacent
- * `string`s, so swapping them compiled silently — no longer holds now that
- * `startTime` is a `Date`: a swap would fail to compile. Left as a named
- * object anyway rather than un-done, since restructuring this signature is
- * outside what changing `startTime`'s type needs to touch.
+ * THE SCHEDULING TRIPLE IS STILL ONE OBJECT, not positional arguments:
+ * restructuring this signature is outside what changing `startTime`'s type
+ * needs to touch.
  */
 export function startsInPast(
   cls: { date: Date; startTime: Date; timeZone: string },

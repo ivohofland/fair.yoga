@@ -246,9 +246,9 @@ Runs hourly as part of the in-process scheduler (see Background Jobs below). For
 // how the loop this replaced went on being documented after it was gone.
 // `dayOfWeek`, `startTime` and `teacherId` left `ClassTemplate` for
 // `ScheduleRule` in issue 298, so they're reached through `template.scheduleRule.*`.
-// `startTime` is `ScheduleRule.startTime` itself (a `@db.Time` `Date`, issue
-// 327 Task 1) — no `timeToHHmm` round trip, since `classStartInstant` and
-// `Class.startTime` both want that type directly.
+// `startTime` is `ScheduleRule.startTime` itself (a `@db.Time` `Date`) — no
+// `timeToHHmm` round trip, since `classStartInstant` and `Class.startTime`
+// (issue 327 Task 1) both want that type directly.
 const startTime = template.scheduleRule.startTime;
 const dates = getNextOccurrences(template.scheduleRule.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
   .filter((d) => classStartInstant(d, startTime, tz) > startDate)

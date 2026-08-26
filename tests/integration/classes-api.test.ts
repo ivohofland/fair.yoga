@@ -1280,6 +1280,30 @@ describe('POST /api/classes', () => {
     expect(row?.t).toBeInstanceOf(Date);
   });
 
+  // The read direction of the same guarantee. The test above only pins the
+  // create route's own round trip — GET /api/classes/[id] carries its own,
+  // separate `timeToHHmm(cls.startTime)` call, and nothing else in this file
+  // reads a class back by id at all. Delete that call and this fails with the
+  // stored column's own wire shape (an ISO timestamp) while every other test
+  // in the suite stays green.
+  it('returns startTime as "HH:MM" on GET /api/classes/[id]', async () => {
+    const created = await post(ownerToken, {
+      ...baseBody(),
+      date: '2027-03-03',
+      startTime: '20:15',
+      durationMinutes: 60,
+    });
+    expect(created.status).toBe(201);
+    const { data: createdData } = (await created.json()) as { data: { id: string } };
+
+    const res = await fetch(`${BASE_URL}/api/classes/${createdData.id}`, {
+      headers: cookie(ownerToken),
+    });
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as { data: { startTime: string } };
+    expect(data.startTime).toBe('20:15');
+  });
+
   // The route's `teacherRoom.teacherId !== session.teacherId` check is this
   // endpoint's only ownership guard, and the server-owned-fields register
   // explicitly disclaims `teacherRoomId` — so nothing else covers it. Weakened

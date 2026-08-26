@@ -62,12 +62,21 @@ parent §2.2(d) says.
 | `startTime` files (non-test) | 53 | **54** |
 | `startTime` refs (non-test) | 247 | **268** |
 | `startTime` test files | 60 | **63** |
-| `timeHHmm` validator sites | 11 | **12** |
+| `timeHHmm` references | 11 | **12** |
 | live `Class` rows | 32 | **35** |
 | live `StudioClass` rows | 8 | 8 |
 
 The `startTime` growth is stage A's own: `src/lib/time-of-day.ts` and the rule
 layer's conversions at its callers. The row growth is ordinary local use.
+
+The `timeHHmm` row is a reference count, not a validator-site count. The
+parent spec's own command, re-run unchanged —
+`grep -rn "timeHHmm" src --include='*.ts' | grep -v '\.test\.' | wc -l` —
+returns 12: the definition (`schemas.ts:35`), three prose mentions
+(`time-of-day.ts:6`, `schemas.ts:59`, `class-generator.ts:248`), and 8 actual
+validator usages (`schemas.ts:331,358,394,422,448,457,470,481`) —
+1 + 3 + 8 = 12. The number of sites where `timeHHmm` actually validates a
+value is 8.
 
 ### 1.3 Wrong: the SQL liveness audit is 12 predicates, not 14
 

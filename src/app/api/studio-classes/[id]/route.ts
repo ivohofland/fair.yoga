@@ -131,20 +131,23 @@ export const PUT = withErrorHandler(async (
     );
   }
 
+  // `startTime` stays inside `gated` — Gate 1's `Object.keys(gated)` check
+  // (above) needs its presence, not its wire shape — so the "HH:MM" → `Date`
+  // conversion happens here instead of at the destructure, after the field
+  // has already done its job of tripping (or not tripping) that gate. Read
+  // off `gated.startTime` rather than mutating `updateData` after the fact:
+  // if a future change ever pulls `startTime` out of `gated` (the way `date`,
+  // `cancelledAt` and `studentCount` already are), `gated.startTime` stops
+  // compiling — a `typeof updateData.startTime === 'string'` runtime probe
+  // would instead just go quietly dead.
   const updateData: Record<string, unknown> = {
     ...gated,
     // The schema validates `date` as a YYYY-MM-DD string; Prisma needs a Date
     // (UTC midnight, same as creation). Same transform as
     // src/app/api/classes/[id]/route.ts.
     ...(dateString !== undefined ? { date: new Date(dateString) } : {}),
+    ...(gated.startTime !== undefined ? { startTime: hhmmToTime(gated.startTime) } : {}),
   };
-  // `startTime` stays inside `gated` above — Gate 1's `Object.keys(gated)`
-  // check needs its presence, not its wire shape — so the "HH:MM" → `Date`
-  // conversion happens here instead of at the destructure, after the field
-  // has already done its job of tripping (or not tripping) that gate.
-  if (typeof updateData.startTime === 'string') {
-    updateData.startTime = hhmmToTime(updateData.startTime);
-  }
   if (studentCount !== undefined) {
     updateData.studentCount = studentCount;
   }

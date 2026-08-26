@@ -56,10 +56,9 @@ const EXPECTED_JS_DAY = (DAY_OF_WEEK + 1) % 7;
  * `EXPECTED_JS_DAY` or shares `sameWeekDayPair()`'s pair does.
  *
  * Each is DAY_OF_WEEK plus a distinct, fixed, nonzero offset mod 7 (1, 3, 4,
- * 5, 6 — five of the six available; offset 2 carries no significance of its
- * own and was simply not needed), so every one differs from DAY_OF_WEEK and
- * from every other ALT_DAY on every day of the week, by construction rather
- * than by luck.
+ * 5, 6 — five of the six available; offset 2 is reserved, not free, see
+ * below), so every one differs from DAY_OF_WEEK and from every other
+ * ALT_DAY on every day of the week, by construction rather than by luck.
  *
  * That construction only proves mutual distinctness, not distinctness from
  * TODAY. DAY_OF_WEEK is itself today plus 2 (see above), so today is
@@ -67,14 +66,20 @@ const EXPECTED_JS_DAY = (DAY_OF_WEEK + 1) % 7;
  * this unavoidable: 7 weekdays, and DAY_OF_WEEK plus five ALT_DAYs already
  * name 6 of them, so the 7th (today) has nowhere left to be but one of the
  * six offsets already claimed — and offset 2 (today's own) is the one this
- * file reserves for `NEW_DAY_OF_WEEK`, forcing today onto an ALT_DAY instead.
- * ALT_DAY_4 is that one, every day of the year. (ALT_DAY_5, one offset over,
- * is by the same arithmetic always tomorrow.) A fixture whose test cares
- * whether its window is strictly in the future — e.g. anything read against
- * an archive's `date > today` withdrawal — cannot use ALT_DAY_4 for that
- * reason and cannot be fixed by picking a different offset for ALT_DAY_4
- * itself; some offset is always today, by the same pigeonhole. Move that
- * fixture to a different ALT_DAY instead.
+ * file reserves for `NEW_DAY_OF_WEEK` (`(DAY_OF_WEEK + 2) % 7`, used
+ * wherever a case needs a day distinct from both DAY_OF_WEEK and today),
+ * forcing today onto an ALT_DAY instead. ALT_DAY_4 is that one, every day
+ * of the year. ALT_DAY_5, one offset over, is by the same arithmetic always
+ * tomorrow — only one day out, which is not this file's own two-days-out
+ * zone margin above; it reads as safely-in-the-future only because this
+ * file's teacher is pinned to `defaultTimezone: 'UTC'` (`seedTeacher`), not
+ * by construction. A fixture whose test cares whether its window is
+ * strictly in the future — e.g. anything read against an archive's
+ * `date > today` withdrawal — cannot use ALT_DAY_4 for that reason, should
+ * not lean on ALT_DAY_5 without also depending on the UTC pin, and cannot
+ * be fixed by picking a different offset for ALT_DAY_4 itself; some offset
+ * is always today, by the same pigeonhole. ALT_DAY_1 (three days out) is
+ * the one with no such dependency.
  */
 const ALT_DAY_1 = (DAY_OF_WEEK + 1) % 7;
 const ALT_DAY_2 = (DAY_OF_WEEK + 3) % 7;
@@ -1895,9 +1900,12 @@ describe('PUT /api/class-templates/[id]', () => {
     // ALT_DAY_4 is unavoidably today (see the ALT_DAY docblock) and today's
     // occurrence survives archiving's `date > today` withdrawal by design —
     // that would make this case fail to prove what it claims on its own
-    // fixture's day. ALT_DAY_5 (tomorrow) is not today on any date, so the
-    // whole window this test creates is always in the future.
-    const id = await createTemplate('Shelved Flow', '06:00', ALT_DAY_5);
+    // fixture's day. ALT_DAY_5 is only one day out, which this file's own
+    // top-of-file rule ("two clears any zone") says is not enough on its
+    // own — it only reads as tomorrow-for-the-teacher because this file
+    // pins `defaultTimezone: 'UTC'` (`seedTeacher`). ALT_DAY_1 is three days
+    // out, clearing that margin outright with no dependency on the pin.
+    const id = await createTemplate('Shelved Flow', '06:00', ALT_DAY_1);
     expect(await prisma.class.count({ where: { templateId: id } })).toBeGreaterThan(0);
 
     const archive = await fetch(`${BASE_URL}/api/class-templates/${id}?state=archived`, {
