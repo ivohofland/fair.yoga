@@ -180,7 +180,7 @@ describe('processEmailFallback (DB)', () => {
 
   afterAll(async () => {
     await prisma.notification.deleteMany({ where: { id: { in: notificationIds } } });
-    await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
     if (roomId) {
       await prisma.teacherRoom.deleteMany({ where: { roomId } });
       await prisma.room.delete({ where: { id: roomId } });

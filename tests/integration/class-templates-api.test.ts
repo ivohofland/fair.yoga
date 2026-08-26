@@ -256,7 +256,7 @@ beforeEach(async () => {
   // both teachers' classes here keeps each run starting from the empty slate
   // the templates below assume. beforeAll seeds no classes, so clearing both
   // teachers' is sufficient.
-  await prisma.class.deleteMany({ where: { calendarEntry: { teacherId: { in: [teacherId, otherTeacherId] } } } });
+  await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: [teacherId, otherTeacherId] } } });
 });
 
 describe('POST /api/class-templates', () => {
@@ -677,7 +677,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     // ...but B — also active, untouched by this request — stays empty.
     expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateB.id } } } } } })).toBe(0);
 
-    await prisma.class.deleteMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: { in: [templateA.id, templateB.id] } } } } } } });
+    await prisma.calendarEntry.deleteMany({ where: { scheduleRule: { classTemplates: { some: { id: { in: [templateA.id, templateB.id] } } } } } });
     // `scheduleRule.deleteMany`, not `classTemplate.deleteMany`: deleting only
     // the child leaves its `ScheduleRule` row orphaned and still live, holding
     // `(teacherId, dayOfWeek, slot)` against `ScheduleRule_teacher_slot_excl`

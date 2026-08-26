@@ -139,7 +139,7 @@ async function cleanupStudentWaitingInClass(
   // `WaitlistEntry.class` is `onDelete: Cascade`, so any surviving entry
   // (e.g. the erasure never ran because an earlier assertion threw) goes
   // with the class below — no separate delete needed for it here.
-  await prisma.class.deleteMany({ where: { id: fixture.classId } });
+  await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: fixture.classId } } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId: fixture.teacherId } });
   await prisma.room.deleteMany({ where: { id: fixture.roomId } });
   await prisma.student.deleteMany({ where: { id: fixture.studentId } });
@@ -251,7 +251,7 @@ async function makeStudentWithClosedEntriesInClasses(classCount: number) {
 async function cleanupStudentWithClosedEntries(
   fixture: Awaited<ReturnType<typeof makeStudentWithClosedEntriesInClasses>>,
 ): Promise<void> {
-  await prisma.class.deleteMany({ where: { id: { in: fixture.classIds } } });
+  await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: fixture.classIds } } } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId: fixture.teacherId } });
   await prisma.room.deleteMany({ where: { id: fixture.roomId } });
   await prisma.student.deleteMany({ where: { id: fixture.studentId } });
@@ -385,7 +385,7 @@ let studentAccountId: string;
     });
     await prisma.payment.deleteMany({ where: { registration: { classId: completedClassId } } });
     await prisma.registration.deleteMany({ where: { classId: { in: [completedClassId, openClassId] } } });
-    await prisma.class.deleteMany({ where: { id: { in: [completedClassId, openClassId] } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: [completedClassId, openClassId] } } } } });
     await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.student.delete({ where: { id: studentId } });
@@ -2176,7 +2176,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       where: { recipientId: { in: [fixture.studentId, fixture.waiterId, fixture.teacherId] } },
     });
     await prisma.registration.deleteMany({ where: { classId: fixture.classId } });
-    await prisma.class.deleteMany({ where: { id: fixture.classId } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: fixture.classId } } } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId: fixture.teacherId } });
     await prisma.room.deleteMany({ where: { id: fixture.roomId } });
     await prisma.student.deleteMany({ where: { id: { in: [fixture.studentId, fixture.waiterId] } } });

@@ -115,7 +115,11 @@ beforeAll(async () => {
         classType,
         date: new Date('2099-06-01'),
         startTime: hhmmToTime(startTime),
-        durationMinutes: 60,
+        // 15 minutes, matching the spacing callers use (09:00, 09:15, 09:30
+        // …): `CalendarEntry_teacher_slot_excl` refuses an OVERLAP since
+        // #327, where the key it replaced refused only an identical start
+        // time. Nothing here reads the duration.
+        durationMinutes: 15,
         roomCost: 15,
         minRate: 10,
         targetRate: 20,
@@ -264,7 +268,7 @@ afterAll(async () => {
   ].filter(Boolean);
   if (allClassIds.length > 0) {
     await prisma.notification.deleteMany({ where: { relatedClassId: { in: allClassIds } } });
-    await prisma.class.deleteMany({ where: { id: { in: allClassIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: allClassIds } } } } });
   }
   // Guarded like every other delete in this function: an undefined
   // `teacherId` turns `deleteMany` into an unfiltered delete-all across the
@@ -382,6 +386,23 @@ describe('POST /api/classes/[id]/transition', () => {
       body: JSON.stringify(body),
     });
 
+  /**
+   * Cancellation moved to its own door in #327 and is no longer a transition:
+   * `cancelled` left `ClassStatus`, so there is no target status to name and
+   * `transitionClassSchema` rejects the word. The duty of care moved with it
+   * — registered students are still notified and the waitlist still closes —
+   * which is why the cases below stayed in this block rather than being
+   * rewritten: they are the same behaviour, one URL over, and two of them
+   * depend on running in this order against the shared `cancelClassId`.
+   *
+   * No body: the URL is the whole request.
+   */
+  const cancel = (token: string | null, id: string) =>
+    fetch(`${BASE_URL}/api/classes/${id}/cancel`, {
+      method: 'POST',
+      headers: { ...(token ? cookie(token) : {}) },
+    });
+
   it('rejects a signed-out caller', async () => {
     const res = await transition(null, classId, { status: 'open' });
     expect(res.status).toBe(401);
@@ -447,11 +468,15 @@ describe('POST /api/classes/[id]/transition', () => {
   });
 
   it('cancels a class (happy path)', async () => {
-    const res = await transition(ownerToken, cancelClassId, { status: 'cancelled' });
+    const res = await cancel(ownerToken, cancelClassId);
     expect(res.status).toBe(200);
 
+    // The ENTRY carries it since #327; the class keeps its `draft` status,
+    // asserted alongside so a regression that wrote neither reads as what it
+    // is rather than as a missing cancellation.
     const cancelled = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId }, include: { calendarEntry: true },});
-    expect(cancelled.status).toBe('cancelled');
+    expect(cancelled.status).toBe('draft');
+    expect(cancelled.calendarEntry.cancelledAt).not.toBeNull();
   });
 
   /**
@@ -467,7 +492,7 @@ describe('POST /api/classes/[id]/transition', () => {
    * to call from a unit test.
    */
   it('names the class in the cancellation notice it sends', async () => {
-    const res = await transition(ownerToken, noticeClassId, { status: 'cancelled' });
+    const res = await cancel(ownerToken, noticeClassId);
     expect(res.status).toBe(200);
 
     const note = await prisma.notification.findFirstOrThrow({
@@ -578,9 +603,15 @@ describe('POST /api/classes/[id]/transition', () => {
         await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
         locked();
         await released;
-        // Lands while the handler is parked on its CAS: after the
-        // top-of-handler read, before the in-transaction re-read.
-        await tx.$executeRaw`UPDATE "Class" SET "classType" = 'Vinyasa' WHERE id = ${cls.id}`;
+        // Lands while the handler is parked on its lock: after the
+        // top-of-handler read, before the in-transaction re-read. On
+        // `CalendarEntry` since #327 — `classType` left `Class` with the rest
+        // of the calendar identity — reached through the child's
+        // `calendarEntryId`. The row the handler parks on is still `Class`,
+        // which is the one held above: `lockClassRow` takes it first.
+        await tx.$executeRaw`
+          UPDATE "CalendarEntry" SET "classType" = 'Vinyasa'
+           WHERE id = (SELECT "calendarEntryId" FROM "Class" WHERE id = ${cls.id})`;
       },
       { timeout: 20_000 },
     );
@@ -602,7 +633,7 @@ describe('POST /api/classes/[id]/transition', () => {
     try {
       await parked;
 
-      pending = transition(ownerToken, cls.id, { status: 'cancelled' });
+      pending = cancel(ownerToken, cls.id);
 
       // The lever is asserted, not assumed. If the request answered inside this
       // second it never parked, the rewrite never interleaved, and a green run
@@ -704,7 +735,7 @@ describe('POST /api/classes/[id]/transition', () => {
     try {
       await parked;
 
-      pending = transition(ownerToken, cls.id, { status: 'cancelled' });
+      pending = cancel(ownerToken, cls.id);
 
       // Asserted, not assumed — the same reason as the sibling above. A request
       // that answered without parking would prove nothing.
@@ -731,7 +762,7 @@ describe('POST /api/classes/[id]/transition', () => {
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
       // `deleteMany`, not `delete`: on the happy path the holder already
       // deleted this row, and a `delete` would throw P2025 out of the cleanup.
-      await prisma.class.deleteMany({ where: { id: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
     }
     // Explicit: this test sleeps 1s by design and then makes a full Next.js
     // round trip, against a 5s default that the suite has already been observed
@@ -739,17 +770,19 @@ describe('POST /api/classes/[id]/transition', () => {
   }, 15_000);
 
   it('409s cancelling an already-cancelled class', async () => {
-    const res = await transition(ownerToken, cancelClassId, { status: 'cancelled' });
+    const res = await cancel(ownerToken, cancelClassId);
     expect(res.status).toBe(409);
 
-    // Pin WHICH 409 fired — verbatim substring from the route's own guard
-    // text in src/app/api/classes/[id]/transition/route.ts (the conditional
-    // updateMany matched 0 rows because the class is already cancelled).
+    // Pin WHICH 409 fired — verbatim substring from the route's own guard text
+    // in src/app/api/classes/[id]/cancel/route.ts. That route's CAS has TWO
+    // conjuncts a teacher can hit since #327 (already cancelled, or past the
+    // point where cancelling is the right verb), and they answer with
+    // different sentences; this is the first.
     const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('Cannot cancel a class with status "cancelled"');
+    expect(json.error.message).toContain('This class is already cancelled.');
 
     const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId }, include: { calendarEntry: true },});
-    expect(unchanged.status).toBe('cancelled');
+    expect(unchanged.calendarEntry.cancelledAt).not.toBeNull();
   });
 
   /**
@@ -928,7 +961,12 @@ describe('PUT /api/classes/[id]', () => {
             classType: 'Reschedule Slot',
             date: new Date('2099-08-01'),
             startTime: hhmmToTime(startTime),
-            durationMinutes: 60,
+            // 15 minutes, matching the two callers' spacing below:
+            // `CalendarEntry_teacher_slot_excl` refuses an OVERLAP since
+            // #327, so the pair could not be planted at all with a wider one.
+            // The move under test lands on an IDENTICAL start time, so it
+            // still collides.
+            durationMinutes: 15,
             roomCost: 15,
             minRate: 10,
             targetRate: 20,
@@ -1065,11 +1103,15 @@ describe('PUT /api/classes/[id]', () => {
   it('cancelled class: the edit is refused with 409 naming cancelled, not completed (#247)', async () => {
     const before = await prisma.class.findUniqueOrThrow({
       where: { id: cancelledTerminalClassId }, include: { calendarEntry: true },});
-    expect(before.status).toBe('cancelled');
+    // The premise, on the row that carries it since #327: the class keeps a
+    // live status and the ENTRY holds the cancellation.
+    expect(before.calendarEntry.cancelledAt).not.toBeNull();
 
     // Not a duplicate of the `completed` case above. The route builds its
-    // message by interpolating `result.status`, so the two statuses render two
-    // different sentences from one branch, and only one of them was pinned.
+    // message by interpolating `result.state`, and the two states render two
+    // different sentences from one branch — of which only one was pinned. That
+    // `state` is `ClassStatus | 'cancelled'` rather than `ClassStatus` is
+    // exactly because this sentence still has to say "cancelled".
     // A regression that hard-coded "completed" into that string — the obvious
     // way to write it if only the completed fixture exists — would have passed
     // the whole suite while telling half of the affected teachers their class
@@ -1153,7 +1195,9 @@ describe('POST /api/classes', () => {
       () => {
         const roomIds = [teacherRoomId, victimRoomId].filter(Boolean);
         return roomIds.length > 0
-          ? prisma.class.deleteMany({ where: { teacherRoomId: { in: roomIds }, calendarEntry: { classType: 'Create Route' } } })
+          ? prisma.calendarEntry.deleteMany({
+              where: { classType: 'Create Route', classes: { some: { teacherRoomId: { in: roomIds } } } },
+            })
           : Promise.resolve();
       },
       // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
@@ -1227,7 +1271,12 @@ describe('POST /api/classes', () => {
     const res = await post(ownerToken, {
       ...baseBody(),
       templateId: victimTemplateId,
-      startTime: '10:15',
+      // 12:00, not 10:15: `baseBody`'s own 10:00 create earlier in this block
+      // is 60 minutes long and still standing, and
+      // `CalendarEntry_teacher_slot_excl` refuses an OVERLAP since #327 where
+      // the key it replaced refused only an identical start time. The hour is
+      // arbitrary to what this test asserts.
+      startTime: '12:00',
     });
     expect(res.status).toBe(201);
 
@@ -1236,9 +1285,10 @@ describe('POST /api/classes', () => {
     expect(created.calendarEntry.scheduleRuleId).toBeNull();
 
     // The victim's own generation window is untouched. Both assertions here
-    // rest on an absence, and `Class.templateId` is `onDelete: SetNull` — so a
-    // cascaded template delete would produce the same null and the same zero
-    // count. Not reachable today; this removes the ambiguity anyway.
+    // rest on an absence, and `CalendarEntry.scheduleRuleId` is
+    // `onDelete: SetNull` — so a cascaded rule delete would produce the same
+    // null and the same zero count. Not reachable today; this removes the
+    // ambiguity anyway.
     expect(
       await prisma.classTemplate.findUnique({ where: { id: victimTemplateId } }),
     ).not.toBeNull();
@@ -1260,9 +1310,14 @@ describe('POST /api/classes', () => {
     const { data } = (await res.json()) as { data: { id: string; startTime: string } };
     expect(data.startTime).toBe('19:00');
 
-    // The column, not the wire: a text column would come back as a string here.
+    // The column, not the wire: a text column would come back as a string
+    // here. On `CalendarEntry` since #327 — `Class` has no `startTime` of its
+    // own any more — reached through the child's `calendarEntryId`.
     const [row] = await prisma.$queryRaw<Array<{ t: Date }>>`
-      SELECT "startTime" AS t FROM "Class" WHERE id = ${data.id}`;
+      SELECT e."startTime" AS t
+        FROM "Class" c
+        JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+       WHERE c.id = ${data.id}`;
     expect(row?.t).toBeInstanceOf(Date);
   });
 
@@ -1324,8 +1379,14 @@ describe('POST /api/classes', () => {
       await prisma.calendarEntry.deleteMany({ where: { teacherId: ownerId, classType: 'Slot Yoga' } });
     });
 
+    // The three cases below each override `startTime`, and they must land
+     // clear of ONE ANOTHER'S SPANS since #327 —
+    // `CalendarEntry_teacher_slot_excl` refuses an overlap where the key it
+    // replaced refused only an identical start time, and every row planted
+    // here survives until this block's `afterAll`. Hence 07:00 / 09:00 /
+    // 11:00 rather than the quarter-hours they used to use.
     const slotBody = () => ({
-      teacherRoomId, classType: 'Slot Yoga', date: '2027-04-05', startTime: '07:15',
+      teacherRoomId, classType: 'Slot Yoga', date: '2027-04-05', startTime: '07:00',
       durationMinutes: 60, roomCost: 20, minRate: 30, targetRate: 60,
       minStudents: 3, maxStudents: 10,
     });
@@ -1344,45 +1405,46 @@ describe('POST /api/classes', () => {
       expect(second.status).toBe(409);
       expect((await second.json()).error.code).toBe('DUPLICATE_CLASS_SLOT');
 
-      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('07:15') } }, include: { calendarEntry: true },});
+      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('07:00') } }, include: { calendarEntry: true },});
       expect(rows).toHaveLength(1);
     });
 
     it('leaves exactly one class when two identical creates are in flight at once', async () => {
-      const body = { ...slotBody(), startTime: '07:45' };
+      const body = { ...slotBody(), startTime: '09:00' };
       const [a, b] = await Promise.all([post(body), post(body)]);
       expect([a.status, b.status].sort()).toEqual([201, 409]);
 
       const loser = a.status === 409 ? a : b;
       expect((await loser.json()).error.code).toBe('DUPLICATE_CLASS_SLOT');
 
-      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('07:45') } }, include: { calendarEntry: true },});
+      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('09:00') } }, include: { calendarEntry: true },});
       expect(rows).toHaveLength(1);
     });
 
-    // PR #208 review, E4. `Class_teacher_slot_unique`'s partial predicate
-    // (`WHERE status <> 'cancelled'`) is what frees a cancelled class's slot
-    // — proven at the DB layer by `slot-constraints.test.ts` and at the route
-    // layer by the two tests above that a live slot is refused. Neither
-    // proves the two compose: that cancelling through the app and then
+    // PR #208 review, E4. `CalendarEntry_teacher_slot_excl`'s partial
+    // predicate (`WHERE "cancelledAt" IS NULL`) is what frees a cancelled
+    // class's slot — proven at the DB layer by `slot-constraints.test.ts` and
+    // at the route layer by the two tests above that a live slot is refused.
+    // Neither proves the two compose: that cancelling through the app and then
     // POSTing again actually round-trips through this route to a 201.
     it('lets a freed slot be re-used once the occupying class is cancelled', async () => {
-      const body = { ...slotBody(), startTime: '08:15' };
+      const body = { ...slotBody(), startTime: '11:00' };
       const first = await post(body);
       expect(first.status).toBe(201);
       const { data: created } = (await first.json()) as { data: { id: string } };
 
-      // Direct write, not `POST …/transition`: this test is about the slot
-      // index's predicate, not the transition route, and a draft class can
-      // reach `cancelled` in one step either way (`VALID_TRANSITIONS`).
+      // Direct write, not `POST …/cancel`: this test is about the slot
+      // constraint's predicate, not the cancel route, and the column it sets
+      // is the one that route sets.
       await prisma.calendarEntry.updateMany({ where: { classes: { some: { id: created.id } } }, data: { cancelledAt: new Date() } });
 
       const second = await post(body);
       expect(second.status).toBe(201);
 
-      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('08:15') } }, include: { calendarEntry: true },});
+      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('11:00') } }, include: { calendarEntry: true },});
       expect(rows).toHaveLength(2);
-      expect(rows.find((r) => r.id === created.id)?.status).toBe('cancelled');
+      // Read off the ENTRY: the cancelled row keeps its `draft` status.
+      expect(rows.find((r) => r.id === created.id)?.calendarEntry.cancelledAt).not.toBeNull();
     });
   });
 });

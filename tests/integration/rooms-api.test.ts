@@ -236,7 +236,7 @@ afterAll(async () => {
   // ClassTemplate.teacherRoom are Restrict, so both must go first.
   const classIds = [deleteClassId, crossTeacherClassId].filter(Boolean);
   if (classIds.length > 0) {
-    await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
   }
   const roomIds = [
     roomId,

@@ -40,13 +40,37 @@ const suffix = uniqueSuffix();
  * That is #138's failure mode: a check that runs when both paths agree.
  */
 
-// Distinct `startTime` per class: `Class_teacher_slot_unique` is
-// (teacherId, date, startTime) WHERE status <> 'cancelled', so four of the five
-// classes below would collide on a shared literal time — the four non-cancelled
-// ones. Add a class here and give it its own index.
+// Distinct `startTime` per class: `CalendarEntry_teacher_slot_excl` is
+// (teacherId WITH =, span WITH &&) WHERE "cancelledAt" IS NULL, so four of the
+// five classes below would collide on a shared literal time — the four
+// uncancelled ones. Add a class here and give it its own index.
+//
+// A minute apart, and the fixture's DURATION below is a minute to match:
+// #327 made the constraint refuse an OVERLAP where the key it replaced refused
+// only an identical start time.
 function slot(n: number): string {
   const minute = String(n).padStart(2, '0');
   return `09:${minute}`;
+}
+
+/**
+ * The rendered page, with the two things that split a sentence in the markup
+ * taken out: React's text-node `<!-- -->` separators and its HTML-escaping of
+ * an apostrophe.
+ *
+ * The entity half was added in #327 and the reason is worth keeping. These
+ * assertions used to match `didn't get a spot` against the RSC flight payload
+ * in the trailing `self.__next_f.push` scripts, where the apostrophe is raw —
+ * not against the `<p>` that actually renders it, where React writes
+ * `&#x27;`. That worked only while the payload happened to keep the whole
+ * sentence inside one push chunk, and this branch changed the page's props
+ * (the calendar identity moved to `CalendarEntry`, so the serialized tree
+ * differs), which moved the chunk boundary into the middle of the sentence.
+ * Normalising here makes the assertion about the rendered element, which is
+ * what these tests are actually named for.
+ */
+function normalise(html: string): string {
+  return html.replaceAll('<!-- -->', '').replaceAll('&#x27;', "'");
 }
 
 const CLASS_DATE = new Date('2099-06-01');
@@ -93,7 +117,7 @@ async function makeClass(
       classType,
       date: CLASS_DATE,
       startTime: hhmmToTime(slot(slotIndex)),
-      durationMinutes: 60,
+      durationMinutes: 1,
       roomCost: 20,
       minRate: 15,
       targetRate: 25,
@@ -298,7 +322,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
-  await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+  await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId } });
   await prisma.room.deleteMany({ where: { createdById: teacherId } });
   await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
@@ -361,7 +385,7 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
     // against correct output. Stripping the markers asserts on what a reader
     // sees. (`privacy-page.test.ts` needs no such step because the page it
     // checks builds its name as one template string.)
-    const html = (await res.text()).replaceAll('<!-- -->', '');
+    const html = normalise(await res.text());
 
     expect(html).toContain('1 on waitlist');
 
@@ -422,7 +446,7 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
       headers: cookie(teacherToken),
     });
     expect(res.status).toBe(200);
-    const html = (await res.text()).replaceAll('<!-- -->', '');
+    const html = normalise(await res.text());
 
     // Both rows counted — `waiting` AND `expired`, the two members of
     // `CLAIMABLE_WAITLIST_STATUSES` — because both can still be walked in.
@@ -450,7 +474,7 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
       headers: cookie(teacherToken),
     });
     expect(res.status).toBe(200);
-    const html = (await res.text()).replaceAll('<!-- -->', '');
+    const html = normalise(await res.text());
 
     // Proves the page rendered rather than redirecting — `class-info.tsx`
     // always emits this clause, and only for a class this teacher owns.

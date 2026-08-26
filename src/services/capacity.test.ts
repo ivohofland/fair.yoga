@@ -104,7 +104,7 @@ describe('readSeatCount (DB)', () => {
 
   afterAll(async () => {
     await prisma.registration.deleteMany({ where: { classId: { in: [classId, overClassId] } } });
-    await prisma.class.deleteMany({ where: { id: { in: [classId, overClassId] } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: [classId, overClassId] } } } } });
     await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
     await prisma.room.delete({ where: { id: roomId } });

@@ -134,7 +134,7 @@ describe('updateClass against a completion that already holds the class', () => 
   });
 
   afterAll(async () => {
-    await prisma.class.deleteMany({ where: { calendarEntryId: entryId } });
+    await prisma.calendarEntry.deleteMany({ where: { id: entryId } });
     await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.deleteMany({ where: { id: roomId } });

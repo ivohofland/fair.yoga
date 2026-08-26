@@ -153,7 +153,13 @@ beforeAll(async () => {
       classType: 'Waitlist API Freed Spot',
       date: freedSpotDate,
       startTime: hhmmToTime(freedSpotStartTime),
-      durationMinutes: 60,
+      // ONE MINUTE (#327). The three clock-derived fixtures in this file sit
+        // ONE minute apart by construction — their offsets are chosen to land
+        // inside the claim window — and
+        // `CalendarEntry_teacher_slot_excl` refuses an OVERLAP where the key
+        // it replaced refused only an identical start time. The window these
+        // tests turn on is computed from the START, never the duration.
+        durationMinutes: 1,
       roomCost: 20,
       minRate: 15,
       targetRate: 25,
@@ -172,7 +178,7 @@ afterAll(async () => {
   const classIds = [farFutureClassId, freedSpotClassId];
   await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
-  await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+  await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId } });
   await prisma.room.delete({ where: { id: roomId } });
 
@@ -385,7 +391,13 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
         classType: 'Waitlist API Roster Claim',
         date: claimDate,
         startTime: hhmmToTime(claimStartTime),
-        durationMinutes: 60,
+        // ONE MINUTE (#327). The three clock-derived fixtures in this file sit
+        // ONE minute apart by construction — their offsets are chosen to land
+        // inside the claim window — and
+        // `CalendarEntry_teacher_slot_excl` refuses an OVERLAP where the key
+        // it replaced refused only an identical start time. The window these
+        // tests turn on is computed from the START, never the duration.
+        durationMinutes: 1,
         roomCost: 20,
         minRate: 15,
         targetRate: 25,
@@ -410,7 +422,7 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
     await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
     await prisma.teacherStudent.deleteMany({ where: { teacherId, studentId: { in: studentIds } } });
     await prisma.studentPrivacy.deleteMany({ where: { teacherId, studentId: { in: studentIds } } });
-    await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
 
     for (const id of studentIds) {
       const record = await prisma.student.findUniqueOrThrow({
@@ -577,7 +589,7 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
     // nothing to do with the lock; with it, the uncontended answer is 201 and
     // the lock is the only thing left that can change it. 2099-06-03 keeps
     // this off farFutureClassId's and promoteClassId's slots —
-    // Class_teacher_slot_unique is (teacherId, date, startTime).
+    // `CalendarEntry_teacher_slot_excl` is (teacherId WITH =, span WITH &&).
     const joinClass = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
@@ -625,7 +637,13 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
         classType: 'Waitlist API Lock Claim',
         date: lockClaimDate,
         startTime: hhmmToTime(lockClaimStartTime),
-        durationMinutes: 60,
+        // ONE MINUTE (#327). The three clock-derived fixtures in this file sit
+        // ONE minute apart by construction — their offsets are chosen to land
+        // inside the claim window — and
+        // `CalendarEntry_teacher_slot_excl` refuses an OVERLAP where the key
+        // it replaced refused only an identical start time. The window these
+        // tests turn on is computed from the START, never the duration.
+        durationMinutes: 1,
         roomCost: 20,
         minRate: 15,
         targetRate: 25,
@@ -670,7 +688,7 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
     await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
     await prisma.teacherStudent.deleteMany({ where: { teacherId, studentId: { in: studentIds } } });
     await prisma.studentPrivacy.deleteMany({ where: { teacherId, studentId: { in: studentIds } } });
-    await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
 
     for (const id of studentIds) {
       const record = await prisma.student.findUniqueOrThrow({

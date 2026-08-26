@@ -832,7 +832,7 @@ describe('GET /api/students — overduePayments', () => {
     // Guards: on a failed beforeAll roomId/otherTeacherId are undefined —
     // an undefined filter turns deleteMany into delete-all, and delete()
     // throws. overdueClassIds is safe unguarded: `in: []` matches nothing.
-    await prisma.class.deleteMany({ where: { id: { in: overdueClassIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: overdueClassIds } } } } });
     if (roomId) {
       await prisma.teacherRoom.deleteMany({ where: { roomId } });
       await prisma.room.delete({ where: { id: roomId } });

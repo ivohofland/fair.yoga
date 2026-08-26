@@ -42,7 +42,12 @@ const page = async (id: string) => {
 };
 
 const makeClass = ({ startTime, ...data }: {
-  templateId?: string | null;
+  // The RULE, not the template: a studio class hangs off a `CalendarEntry`
+  // since #327, and the entry's `scheduleRuleId` is what the two predicates
+  // this file drives read as "generated". Spread into the fixture below, so
+  // the old name compiled cleanly and failed at runtime — excess-property
+  // checking does not survive a spread.
+  scheduleRuleId?: string | null;
   classType?: string;
   date: Date;
   startTime: string;
@@ -104,7 +109,7 @@ describe('the studio class page: which classes offer removal', () => {
       },
     });
     const sc = await makeClass({
-      templateId: tpl.id,
+      scheduleRuleId: tpl.scheduleRuleId,
       date: new Date('2099-08-05T00:00:00.000Z'),
       startTime: '07:00',
     });
@@ -144,7 +149,7 @@ describe('the studio class page: which classes offer removal', () => {
       },
     });
     const sc = await makeClass({
-      templateId: tpl.id,
+      scheduleRuleId: tpl.scheduleRuleId,
       date: startOfLocalDay(new Date(), TZ),
       startTime: '00:01',
     });
@@ -207,7 +212,7 @@ describe('the studio class page: what the removal claims it costs', () => {
 
   it('claims nothing for a future-dated manual class, which reporting does not count', async () => {
     const sc = await makeClass({
-      templateId: null,
+      scheduleRuleId: null,
       date: new Date('2099-08-06T00:00:00.000Z'),
       startTime: '07:30',
     });
@@ -233,9 +238,16 @@ describe('the studio class page: what the removal claims it costs', () => {
    */
   it('claims the earnings for a manual class dated today, at its real duration', async () => {
     const sc = await makeClass({
-      templateId: null,
+      scheduleRuleId: null,
       date: startOfLocalDay(new Date(), TZ),
-      startTime: '00:00',
+      // 02:00, not 00:00: this is the one case in this file that needs a real
+      // duration (the figure it asserts is derived from it), and 90 minutes
+      // from 00:00 runs over the 00:01 fixture the generated-today case above
+      // plants on the same date. `CalendarEntry_teacher_slot_excl` refuses an
+      // OVERLAP since #327, where the key it replaced only refused an
+      // identical start time. Any hour clear of the others will do — the
+      // assertion is about the earnings figure, not the hour.
+      startTime: '02:00',
       hourlyRate: 45,
       durationMinutes: 90,
     });
@@ -282,7 +294,7 @@ describe('the studio class page: which classes offer editing', () => {
 
   it('offers editing on a live non-past row', async () => {
     const sc = await makeClass({
-      templateId: null,
+      scheduleRuleId: null,
       date: new Date('2099-08-07T00:00:00.000Z'),
       startTime: '08:00',
     });
@@ -294,7 +306,7 @@ describe('the studio class page: which classes offer editing', () => {
 
   it('offers editing on a cancelled non-past row, beside the cancellation notice', async () => {
     const sc = await makeClass({
-      templateId: null,
+      scheduleRuleId: null,
       date: new Date('2099-08-08T00:00:00.000Z'),
       startTime: '08:15',
       cancelledAt: new Date('2026-08-01T10:00:00.000Z'),
@@ -306,7 +318,7 @@ describe('the studio class page: which classes offer editing', () => {
 
   it('offers no editing on a past row, whose schedule is an income record', async () => {
     const sc = await makeClass({
-      templateId: null,
+      scheduleRuleId: null,
       date: new Date('2020-08-06T00:00:00.000Z'),
       startTime: '08:30',
     });
@@ -317,7 +329,7 @@ describe('the studio class page: which classes offer editing', () => {
 
   it('offers no editing to another teacher, whom the page redirects home', async () => {
     const sc = await makeClass({
-      templateId: null,
+      scheduleRuleId: null,
       date: new Date('2099-08-09T00:00:00.000Z'),
       startTime: '08:45',
     });
@@ -416,13 +428,16 @@ describe('the reporting page, which is where the income claim is settled', () =>
  */
 describe('the studio class edit page', () => {
   let strangerToken: string;
-  let templateId: string;
   let templateScheduleRuleId: string;
 
   const editPage = (id: string, as = token) =>
     fetch(`${BASE_URL}/studio-class/${id}/edit`, { headers: cookie(as) });
 
-  const makeEditCase = ({ startTime, ...data }: { templateId?: string | null; date: Date; startTime: string }) =>
+  const makeEditCase = ({ startTime, ...data }: {
+    scheduleRuleId?: string | null;
+    date: Date;
+    startTime: string;
+  }) =>
     createStudioClassFixture(prisma, {
         teacherId,
         classType: 'Edit Page Case',
@@ -466,7 +481,6 @@ describe('the studio class edit page', () => {
         hourlyRate: 45,
       },
     });
-    templateId = template.id;
     templateScheduleRuleId = template.scheduleRuleId;
   });
 
@@ -482,7 +496,7 @@ describe('the studio class edit page', () => {
 
   it('renders the editor for a manual future row, date picker open', async () => {
     const sc = await makeEditCase({
-      templateId: null,
+      scheduleRuleId: null,
       date: new Date('2099-09-01T00:00:00.000Z'),
       startTime: '07:00',
     });
@@ -504,7 +518,7 @@ describe('the studio class edit page', () => {
    */
   it('closes the date picker on a generated row and says why', async () => {
     const sc = await makeEditCase({
-      templateId,
+      scheduleRuleId: templateScheduleRuleId,
       date: new Date('2099-09-03T00:00:00.000Z'),
       startTime: '07:15',
     });
@@ -519,7 +533,7 @@ describe('the studio class edit page', () => {
 
   it('turns a past row away — an income record has no editor', async () => {
     const sc = await makeEditCase({
-      templateId: null,
+      scheduleRuleId: null,
       date: new Date('2020-09-01T00:00:00.000Z'),
       startTime: '07:30',
     });
@@ -535,7 +549,7 @@ describe('the studio class edit page', () => {
 
   it('turns another teacher away from a row they do not own', async () => {
     const sc = await makeEditCase({
-      templateId: null,
+      scheduleRuleId: null,
       date: new Date('2099-09-02T00:00:00.000Z'),
       startTime: '07:45',
     });
@@ -549,7 +563,7 @@ describe('the studio class edit page', () => {
 
   it('offers the detail page link on a generated row, which edits all but its date', async () => {
     const sc = await makeEditCase({
-      templateId,
+      scheduleRuleId: templateScheduleRuleId,
       date: new Date('2099-09-10T00:00:00.000Z'),
       startTime: '07:15',
     });

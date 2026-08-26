@@ -267,7 +267,7 @@ beforeAll(async () => {
 afterAll(async () => {
   // FK order: class → classTemplate → teacherRoom → room. Both Class and
   // ClassTemplate.teacherRoom are Restrict, so both must go first.
-  await prisma.class.deleteMany({ where: { calendarEntry: { teacherId: { in: [ownerId, otherId] } } } });
+  await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: [ownerId, otherId] } } });
   // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298),
   // so deleting the rules removes the templates before the teacher-room
   // delete below — same ordering requirement, re-pointed.

@@ -85,7 +85,7 @@ describe('generateStudioClassInstances (DB)', () => {
   });
 
   afterAll(async () => {
-    await prisma.studioClass.deleteMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: { in: [templateId, shelvedTemplateId] } } } } } } });
+    await prisma.calendarEntry.deleteMany({ where: { scheduleRule: { studioClassTemplates: { some: { id: { in: [templateId, shelvedTemplateId] } } } } } });
     // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
     // 298), so deleting the rules removes the templates with them.
     await prisma.scheduleRule.deleteMany({ where: { teacherId } });
@@ -685,12 +685,12 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
   // Without this, one test's leftover classes occupy the next test's slots —
   // the generator's occupancy check is scoped per teacher (mirroring #196).
   afterEach(async () => {
-    await prisma.studioClass.deleteMany({ where: { calendarEntry: { teacherId: { in: [eastTeacherId, westTeacherId] } } } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: [eastTeacherId, westTeacherId] } } });
     // #296: the cross-family cases create `Class` rows, and a leftover one
     // occupies the next test's slot exactly the way a leftover StudioClass
     // does — the whole point of the reason being added is that the generator
     // now reads that table too.
-    await prisma.class.deleteMany({ where: { calendarEntry: { teacherId: { in: [eastTeacherId, westTeacherId] } } } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: [eastTeacherId, westTeacherId] } } });
   });
 
   beforeAll(async () => {
@@ -723,9 +723,9 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
   });
 
   afterAll(async () => {
-    await prisma.studioClass.deleteMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: { in: templateIds } } } } } } });
+    await prisma.calendarEntry.deleteMany({ where: { scheduleRule: { studioClassTemplates: { some: { id: { in: templateIds } } } } } });
     await prisma.studioClassTemplate.deleteMany({ where: { id: { in: templateIds } } });
-    await prisma.class.deleteMany({ where: { calendarEntry: { teacherId: { in: [eastTeacherId, westTeacherId] } } } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: [eastTeacherId, westTeacherId] } } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId: eastTeacherId } });
     await prisma.room.deleteMany({ where: { createdById: eastTeacherId } });
     await prisma.teacher.deleteMany({ where: { id: { in: [eastTeacherId, westTeacherId] } } });

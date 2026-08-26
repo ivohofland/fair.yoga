@@ -204,7 +204,7 @@ describe('reconcileWaitlists (DB)', () => {
     await prisma.notification.deleteMany({ where: { relatedClassId: { in: classIds } } });
     await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
     await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
-    await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
     await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
     await prisma.room.delete({ where: { id: roomId } });

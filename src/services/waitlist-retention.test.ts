@@ -307,7 +307,7 @@ afterAll(async () => {
   await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.payment.deleteMany({ where: { registration: { classId: { in: classIds } } } });
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
-  await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+  await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
   await prisma.student.deleteMany({ where: { id: { in: [studentId, studentId2] } } });
   await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
   await prisma.room.deleteMany({ where: { id: roomId } });

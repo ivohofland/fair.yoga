@@ -107,7 +107,7 @@ test.describe('Class edit screen', () => {
     const classIds = [draftClassId, lockedClassId, cancelledClassId].filter(Boolean);
     if (classIds.length) {
       await prisma.notification.deleteMany({ where: { relatedClassId: { in: classIds } } });
-      await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
     }
     if (teacherId) await prisma.teacherStudent.deleteMany({ where: { teacherId } });
     if (roomId) {

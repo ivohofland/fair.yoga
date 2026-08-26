@@ -60,7 +60,12 @@ async function makeClass(maxStudents: number): Promise<string> {
       classType: 'Reg API',
       date: new Date('2099-06-01'),
       startTime: hhmmToTime(startTime),
-      durationMinutes: 60,
+      // ONE MINUTE, and it is the counter spacing above that decides it
+      // (#327). `CalendarEntry_teacher_slot_excl` refuses an OVERLAP where the
+      // key it replaced refused an identical start time, so fixtures a minute
+      // apart must be a minute long. Nothing in this file reads the duration:
+      // the walk-in window it does turn on is computed from the START.
+      durationMinutes: 1,
       roomCost: 20,
       minRate: 15,
       targetRate: 25,
@@ -88,11 +93,13 @@ async function makeClass(maxStudents: number): Promise<string> {
  * student's DELETE takes the `late_cancel` branch.
  *
  * `minuteOffset` is required and must differ per caller:
- * `Class_teacher_slot_unique` (#196 branch 1) forbids one teacher two live
- * classes at one `(date, startTime)`, and `startTime` here is truncated to
- * `HH:MM`, so two callers in the same minute collide on the index rather than
- * on anything the test is about. Any offset is safe — the deadline is hours
- * behind either way.
+ * `CalendarEntry_teacher_slot_excl` (#327, which replaced #196's per-family
+ * key) forbids one teacher two live entries whose spans OVERLAP, so two
+ * callers anywhere inside each other's duration collide on the constraint
+ * rather than on anything the test is about. Any offset is safe — the
+ * deadline is hours behind either way — but the DURATION below has to be no
+ * wider than the smallest gap between two callers, which is why it is one
+ * minute rather than a plausible class length. Nothing here reads it.
  */
 async function makeLateCancelClass(maxStudents: number, minuteOffset: number): Promise<string> {
   const target = new Date(Date.now() + 3 * 60 * 60 * 1000 + minuteOffset * 60 * 1000);
@@ -117,7 +124,7 @@ async function makeLateCancelClass(maxStudents: number, minuteOffset: number): P
       classType: 'Reg API Late Cancel',
       date: new Date(`${parts.year}-${parts.month}-${parts.day}`),
       startTime: hhmmToTime(`${parts.hour}:${parts.minute}`),
-      durationMinutes: 60,
+      durationMinutes: 1,
       roomCost: 20,
       minRate: 15,
       targetRate: 25,
@@ -250,7 +257,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
-  await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+  await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: [ownerId, otherTeacherId] } } });
   await prisma.room.delete({ where: { id: roomId } });
   await prisma.teacherStudent.deleteMany({ where: { teacherId: ownerId } });
@@ -1013,7 +1020,7 @@ describe('teacher-facing registration reads honour StudentPrivacy', () => {
 
     afterAll(async () => {
       await prisma.registration.deleteMany({ where: { classId: dualClassId } });
-      await prisma.class.deleteMany({ where: { id: dualClassId } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: dualClassId } } } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: dualTeacherId } });
       await prisma.room.deleteMany({ where: { id: dualRoomId } });
       await prisma.session.deleteMany({ where: { accountId: dualAccountId } });
@@ -1323,7 +1330,7 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
       where: { recipientId: { in: [cancellerId, waiterId] } },
     });
     await prisma.registration.deleteMany({ where: { classId: { in: raceClassIds } } });
-    await prisma.class.deleteMany({ where: { id: { in: raceClassIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: raceClassIds } } } } });
     await prisma.teacherRoom.deleteMany({ where: { id: raceTeacherRoomId } });
     await prisma.room.deleteMany({ where: { id: raceRoomId } });
     await prisma.studentPrivacy.deleteMany({ where: { teacherId: raceTeacherId } });
@@ -1351,12 +1358,14 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
    * window is relative, so a fixed date would drift out of it.
    *
    * `minuteOffset` is required, with no default, because every caller needs a
-   * DIFFERENT one: `Class_teacher_slot_unique` (#196 branch 1) forbids one
-   * teacher two live classes at the same `(date, startTime)`, and `startTime`
-   * here is truncated to `HH:MM`, so two fixtures built in the same minute
-   * would collide on the index rather than on anything this block is testing.
-   * Same reasoning as the `startTime`-without-a-default rule the slot blocks
-   * in `classes-api.test.ts` adopted.
+   * DIFFERENT one: `CalendarEntry_teacher_slot_excl` (#327, which replaced
+   * #196's per-family key) forbids one teacher two live entries whose spans
+   * OVERLAP, so two fixtures inside each other's duration would collide on the
+   * constraint rather than on anything this block is testing. Same reasoning
+   * as the `startTime`-without-a-default rule the slot blocks in
+   * `classes-api.test.ts` adopted — one step wider, because the constraint
+   * became a range: the DURATION below is one minute so that any distinct
+   * offset is enough. Nothing here reads it.
    *
    * Valid offsets are `(−30, +30]` minutes: the window holds while
    * `cutoff ≤ now < deadline`, which works out to `offset ≤ 30` on one side
@@ -1370,7 +1379,7 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     const cls = await createClassFixture(prisma, {
         teacherId: raceTeacherId, teacherRoomId: raceTeacherRoomId,
         classType: 'Race Cancel', date: new Date(`${date}T00:00:00Z`), startTime: hhmmToTime(startTime),
-        durationMinutes: 60, roomCost: 20, minRate: 30, targetRate: 60,
+        durationMinutes: 1, roomCost: 20, minRate: 30, targetRate: 60,
         minStudents: 1, maxStudents: 1, cancelDeadline: 'HOURS_48',
         autoCancelCheck: 'HOURS_2', status: 'open',
       });

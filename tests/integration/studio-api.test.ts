@@ -134,7 +134,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const teacherIds = [ownerId, otherId];
-  await prisma.studioClass.deleteMany({ where: { calendarEntry: { teacherId: { in: teacherIds } } } });
+  await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teacherIds } } });
   // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
   // 298), so deleting the rules removes the templates with them.
   await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: teacherIds } } });
@@ -1043,9 +1043,14 @@ describe('/api/studio-classes', () => {
     const { data } = (await res.json()) as { data: { id: string; startTime: string } };
     expect(data.startTime).toBe('19:30');
 
-    // The column, not the wire: a text column would come back as a string here.
+    // The column, not the wire: a text column would come back as a string
+    // here. On `CalendarEntry` since #327 — `StudioClass` has no `startTime`
+    // of its own any more — reached through the child's `calendarEntryId`.
     const [row] = await prisma.$queryRaw<Array<{ t: Date }>>`
-      SELECT "startTime" AS t FROM "StudioClass" WHERE id = ${data.id}`;
+      SELECT e."startTime" AS t
+        FROM "StudioClass" sc
+        JOIN "CalendarEntry" e ON e.id = sc."calendarEntryId"
+       WHERE sc.id = ${data.id}`;
     expect(row?.t).toBeInstanceOf(Date);
   });
 
@@ -1094,8 +1099,8 @@ describe('/api/studio-classes', () => {
     const created = await prisma.studioClass.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true },});
     expect(created.calendarEntry.scheduleRuleId).toBeNull();
 
-    // Both assertions rest on an absence, and `StudioClass.templateId` is
-    // `onDelete: SetNull` — so a cascaded template delete would produce the
+    // Both assertions rest on an absence, and `CalendarEntry.scheduleRuleId`
+    // is `onDelete: SetNull` — so a cascaded rule delete would produce the
     // same null and the same zero count. Not reachable today; this removes the
     // ambiguity anyway.
     expect(
@@ -1175,6 +1180,10 @@ describe('/api/studio-classes', () => {
     // date, startTime, location, duration, rate — belongs to this block
     // alone, so the read-backs below cannot be satisfied by any other
     // fixture's leftover state.
+    // Callers space themselves by HOURS rather than minutes, because
+    // `CalendarEntry_teacher_slot_excl` refuses an OVERLAP since #327 and one
+    // of the three cases below WIDENS its own row to 105 minutes. A gap
+    // narrower than the widest duration any test writes is what would collide.
     const makeStudioClass = (startTime: string) =>
       createStudioClassFixture(prisma, {
           teacherId: ownerId,
@@ -1190,11 +1199,11 @@ describe('/api/studio-classes', () => {
     // block's teardown; it can run before the top-level afterAll without
     // touching studioClassId or any other fixture.
     afterAll(async () => {
-      await prisma.studioClass.deleteMany({ where: { calendarEntry: { teacherId: ownerId, classType: 'PUT Persistence' } } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: ownerId, classType: 'PUT Persistence' } });
     });
 
     it('persists a location change', async () => {
-      const sc = await makeStudioClass('07:05');
+      const sc = await makeStudioClass('07:00');
 
       const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
         location: 'Lighthouse Studio',
@@ -1206,7 +1215,7 @@ describe('/api/studio-classes', () => {
     });
 
     it('persists a durationMinutes change', async () => {
-      const sc = await makeStudioClass('07:15');
+      const sc = await makeStudioClass('09:00');
 
       const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
         durationMinutes: 105,
@@ -1218,7 +1227,7 @@ describe('/api/studio-classes', () => {
     });
 
     it('persists an hourlyRate change', async () => {
-      const sc = await makeStudioClass('07:25');
+      const sc = await makeStudioClass('11:00');
 
       const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
         hourlyRate: 62.5,
@@ -1242,13 +1251,17 @@ describe('/api/studio-classes', () => {
   describe('PUT /api/studio-classes/[id] collides on the slot key (#196)', () => {
     const SLOT_DATE = new Date('2027-05-10');
 
+    // 15 minutes, matching the spacing callers use below:
+    // `CalendarEntry_teacher_slot_excl` refuses an OVERLAP since #327, so two
+    // fixtures a quarter-hour apart must be a quarter-hour long. The moves
+    // these tests make land on an IDENTICAL start time, so they still collide.
     const makeStudioClass = (startTime: string, over: Record<string, unknown> = {}) =>
       createStudioClassFixture(prisma, {
           teacherId: ownerId,
           classType: 'PUT Slot',
           date: SLOT_DATE,
           startTime: hhmmToTime(startTime),
-          durationMinutes: 60,
+          durationMinutes: 15,
           location: 'Some Studio',
           hourlyRate: 45,
           ...over,
@@ -1314,13 +1327,17 @@ describe('/api/studio-classes', () => {
     // owns — a future block above this one must not lose its fixtures here.
     const crossFamilyIds: { classId: string; teacherRoomId: string; roomId: string }[] = [];
 
+    // 10 minutes, matching the spacing callers use below (08:30, 08:40,
+    // 08:50 …): `CalendarEntry_teacher_slot_excl` refuses an OVERLAP since
+    // #327. Nothing in this block reads the duration — it is about which
+    // FIELDS the PUT accepts on which rows.
     const makePolicyRow = (date: Date, startTime: string, extra: Record<string, unknown> = {}) =>
       createStudioClassFixture(prisma, {
           teacherId: ownerId,
           classType: 'PUT Policy',
           date,
           startTime: hhmmToTime(startTime),
-          durationMinutes: 60,
+          durationMinutes: 10,
           location: 'Policy Studio',
           hourlyRate: 45,
           ...extra,
@@ -1329,7 +1346,7 @@ describe('/api/studio-classes', () => {
     // Scoped to this block's own classType and the ids it actually planted,
     // like every sibling block above.
     afterAll(async () => {
-      await prisma.studioClass.deleteMany({ where: { calendarEntry: { teacherId: ownerId, classType: 'PUT Policy' } } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: ownerId, classType: 'PUT Policy' } });
       for (const ids of crossFamilyIds) {
         await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: ids.classId } } } });
         await prisma.teacherRoom.delete({ where: { id: ids.teacherRoomId } });
@@ -1406,7 +1423,7 @@ describe('/api/studio-classes', () => {
 
     it("refuses a date move on a generated row, naming cancel-plus-manual", async () => {
       const tpl = await makeTemplate(ownerId, 'Policy Generated', 5, '04:00');
-      const sc = await makePolicyRow(new Date('2099-06-21'), '08:55', { templateId: tpl.id });
+      const sc = await makePolicyRow(new Date('2099-06-21'), '08:55', { scheduleRuleId: tpl.scheduleRuleId });
 
       const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
         date: '2099-06-28',
@@ -1437,9 +1454,22 @@ describe('/api/studio-classes', () => {
 
     // Fixture mirrors cross-family-slot-api.test.ts's "studio family refuses a
     // slot the class family holds" setup: a Room + TeacherRoom so a Class row
-    // can be planted directly, then a pure `date` move onto it. The guard is
-    // a trigger (SQLSTATE YG001), so this fires through the DB, not through
-    // any pre-check the route could have.
+    // can be planted directly, then a pure `date` move onto it. The guard is a
+    // constraint, so this fires through the DB, not through any pre-check the
+    // route could have.
+    //
+    // THE CODE STOPPED NAMING THE OTHER FAMILY IN #327, and that is what this
+    // case now asserts. The refusal used to be a `YG001` from a trigger that
+    // existed only for cross-family collisions, so the route could answer
+    // `CROSS_FAMILY_CLASS_SLOT` — a different sentence, sending the teacher to
+    // the other half of their schedule. Both families share one
+    // `CalendarEntry_teacher_slot_excl` now; it raises `23P01` and cannot say
+    // which family holds the slot, so the route answers its own family's
+    // sentence. Not a weakening of the refusal — the move is still refused,
+    // still 409, still leaves the row where it was, which is what the three
+    // assertions below check. What is lost is the REMEDY the message points
+    // at, and Task 3's entry probe is what restores it; this assertion is
+    // expected to change again then.
     it('refuses a date move onto a slot the class family already holds', async () => {
       const room = await prisma.room.create({
         data: {
@@ -1481,9 +1511,12 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(409);
       const json = (await res.json()) as { error: { code: string; message: string } };
-      expect(json.error.code).toBe('CROSS_FAMILY_CLASS_SLOT');
-      expect(json.error.message).toMatch(/already have a class/i);
+      expect(json.error.code).toBe('DUPLICATE_STUDIO_SLOT');
+      expect(json.error.message).toMatch(/already have a studio class/i);
 
+      // The row did not move — the half of this test the code change does not
+      // touch, and the half that would matter if the refusal ever stopped
+      // being enforced rather than merely stopped being specific.
       const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true },});
       expect(after.calendarEntry.date.getTime()).toBe(new Date('2031-05-07').getTime());
     });
@@ -1504,7 +1537,7 @@ describe('/api/studio-classes', () => {
      */
     it('refuses a generated row its OWN date, unchanged — the gate reads presence', async () => {
       const tpl = await makeTemplate(ownerId, 'Policy Unchanged Date', 5, '06:00');
-      const sc = await makePolicyRow(new Date('2099-06-23'), '09:05', { templateId: tpl.id });
+      const sc = await makePolicyRow(new Date('2099-06-23'), '09:05', { scheduleRuleId: tpl.scheduleRuleId });
 
       const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
         date: '2099-06-23',
@@ -1630,7 +1663,13 @@ describe('/api/studio-classes', () => {
     });
 
     it('leaves exactly one row when two identical creates are in flight at once', async () => {
-      const body = { ...slotBody(), startTime: '11:30' };
+      // 13:00, not 11:30: the case above leaves a 60-minute row standing at
+      // 11:00, and `CalendarEntry_teacher_slot_excl` refuses an OVERLAP since
+      // #327 — so at 11:30 BOTH creates lose to that leftover and the race
+      // this test stages never happens. A start time clear of it is what keeps
+      // the constraint answering about the two requests rather than about the
+      // previous test.
+      const body = { ...slotBody(), startTime: '13:00' };
       const [a, b] = await Promise.all([
         send('POST', ownerToken, '/api/studio-classes', body),
         send('POST', ownerToken, '/api/studio-classes', body),
@@ -1640,7 +1679,7 @@ describe('/api/studio-classes', () => {
       const loser = a.status === 409 ? a : b;
       expect((await loser.json()).error.code).toBe('DUPLICATE_STUDIO_SLOT');
 
-      const rows = await prisma.studioClass.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: hhmmToTime('11:30') } }, include: { calendarEntry: true } });
+      const rows = await prisma.studioClass.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: hhmmToTime('13:00') } }, include: { calendarEntry: true } });
       expect(rows).toHaveLength(1);
     });
   });
@@ -1648,7 +1687,12 @@ describe('/api/studio-classes', () => {
 
 describe('DELETE /api/studio-classes/[id]', () => {
   const makeClass = ({ startTime, ...data }: {
-    templateId?: string | null;
+    // The RULE, not the template: a studio class hangs off a `CalendarEntry`
+    // since #327, and the entry's `scheduleRuleId` is what
+    // `studioClassDeletability` reads as "generated". Spread into the fixture
+    // below, so the old name compiled cleanly and failed at runtime —
+    // excess-property checking does not survive a spread.
+    scheduleRuleId?: string | null;
     date: Date;
     startTime: string;
     cancelledAt?: Date | null;
@@ -1656,7 +1700,11 @@ describe('DELETE /api/studio-classes/[id]', () => {
     createStudioClassFixture(prisma, {
         teacherId: ownerId,
         classType: 'Removable',
-        durationMinutes: 60,
+        // Callers here space their fixtures 15 minutes apart, and
+        // `CalendarEntry_teacher_slot_excl` refuses an OVERLAP since #327 —
+        // so the duration has to be no wider than that gap. Nothing in this
+        // block reads it.
+        durationMinutes: 15,
         location: 'Community Studio',
         hourlyRate: 45,
         startTime: hhmmToTime(startTime),
@@ -1691,7 +1739,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
 
   it('refuses a future generated class, naming cancel and the code', async () => {
     const tpl = await makeTemplate(ownerId, 'Del Future', 5, '08:00');
-    const sc = await makeClass({ templateId: tpl.id, date: FUTURE, startTime: '05:30' });
+    const sc = await makeClass({ scheduleRuleId: tpl.scheduleRuleId, date: FUTURE, startTime: '05:30' });
 
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(409);
@@ -1712,7 +1760,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
       isArchived: true,
       isActive: false,
     });
-    const sc = await makeClass({ templateId: tpl.id, date: FUTURE, startTime: '05:45' });
+    const sc = await makeClass({ scheduleRuleId: tpl.scheduleRuleId, date: FUTURE, startTime: '05:45' });
 
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(409);
@@ -1720,7 +1768,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
   });
 
   it('removes a future manual class, because nothing regenerates it', async () => {
-    const sc = await makeClass({ templateId: null, date: FUTURE, startTime: '06:00' });
+    const sc = await makeClass({ scheduleRuleId: null, date: FUTURE, startTime: '06:00' });
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(200);
     // respondOk wraps in `data` — the plan's predicted bare `{ deleted: true }`
@@ -1731,7 +1779,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
 
   it('removes a past generated class', async () => {
     const tpl = await makeTemplate(ownerId, 'Del Past', 5, '10:00');
-    const sc = await makeClass({ templateId: tpl.id, date: PAST, startTime: '06:15' });
+    const sc = await makeClass({ scheduleRuleId: tpl.scheduleRuleId, date: PAST, startTime: '06:15' });
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(200);
     expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).toBeNull();
@@ -1748,7 +1796,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
   it('removes a cancelled past generated class', async () => {
     const tpl = await makeTemplate(ownerId, 'Del Cancelled Past', 5, '12:00');
     const sc = await makeClass({
-      templateId: tpl.id,
+      scheduleRuleId: tpl.scheduleRuleId,
       date: PAST,
       startTime: '06:30',
       cancelledAt: new Date('2020-07-01T10:00:00.000Z'),
@@ -1775,7 +1823,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
   it('refuses a cancelled future generated class, so cancelling cannot buy a removal', async () => {
     const tpl = await makeTemplate(ownerId, 'Del Cancelled Future', 5, '14:00');
     const sc = await makeClass({
-      templateId: tpl.id,
+      scheduleRuleId: tpl.scheduleRuleId,
       date: FUTURE,
       startTime: '05:45',
       cancelledAt: new Date('2020-07-01T10:00:00.000Z'),
@@ -1806,7 +1854,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
       `${new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Amsterdam' }).format(new Date())}T00:00:00.000Z`,
     );
     const tpl = await makeTemplate(ownerId, 'Del Today Diverged', 6, '23:30');
-    const sc = await makeClass({ templateId: tpl.id, date: today, startTime: '00:01' });
+    const sc = await makeClass({ scheduleRuleId: tpl.scheduleRuleId, date: today, startTime: '00:01' });
 
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(409);
@@ -1822,7 +1870,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
     ).getTime();
     const yesterday = new Date(todayMs - 24 * 60 * 60 * 1000);
     const tpl = await makeTemplate(ownerId, 'Del Yesterday', 5, '23:45');
-    const sc = await makeClass({ templateId: tpl.id, date: yesterday, startTime: '00:01' });
+    const sc = await makeClass({ scheduleRuleId: tpl.scheduleRuleId, date: yesterday, startTime: '00:01' });
 
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(200);

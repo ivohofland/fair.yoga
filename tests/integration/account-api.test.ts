@@ -311,7 +311,7 @@ describe('DELETE /api/account', () => {
         ],
       },
     });
-    await prisma.class.deleteMany({ where: { id: { in: seededClassIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: seededClassIds } } } } });
     await prisma.teacherRoom.deleteMany({ where: { id: { in: seededTeacherRoomIds } } });
     await prisma.room.deleteMany({ where: { id: { in: seededRoomIds } } });
     await prisma.student.deleteMany({ where: { id: { in: seededStudentIds } } });

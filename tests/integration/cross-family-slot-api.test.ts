@@ -16,8 +16,31 @@
  * and a trigger both answer 409, so a status assertion cannot tell them apart —
  * that is the defect #103 shipped past review, where `if (false && …)` in two
  * routes left every test green because the catch answered a byte-identical 409.
- * Here the message also pins WHICH family is named, and swapping the two
- * families' sentences is a real mistake no status check could see.
+ * Here the message also pins WHICH sentence a caller gets, and swapping two
+ * doors' sentences is a real mistake no status check could see.
+ *
+ * ── WHAT #327 TOOK AWAY, AND WHAT IT DID NOT ──────────────────────────────
+ *
+ * The ROW doors no longer name the other family, and this file now asserts
+ * that rather than the sentence it used to. #296 gave each family its own
+ * partial slot index plus a trigger that fired only on a CROSS-family
+ * collision, raising a SQLSTATE (`YG001`) nothing else raised — so a route
+ * could tell the two apart in its catch and answer
+ * `CROSS_FAMILY_STUDIO_SLOT` / `CROSS_FAMILY_CLASS_SLOT`, a different sentence
+ * pointing at the other half of the teacher's schedule.
+ *
+ * Both families share ONE `CalendarEntry_teacher_slot_excl` now. It raises
+ * `23P01`, it carries no family in its payload, and the two indexes and four
+ * triggers it replaced are dropped — so every row door answers its own
+ * family's within-family sentence. The refusal is unchanged in every other
+ * respect: still 409, still nothing written, still enforced by the database
+ * rather than by a pre-check. What is lost is the REMEDY the copy points at.
+ *
+ * Task 3's entry probe is what restores the discrimination, and these
+ * assertions are expected to change again when it lands. The TEMPLATE doors
+ * below are untouched: they answer from the generator's own `SkipReason`
+ * pre-check rather than from a constraint's payload, and that pre-check can
+ * still see which family holds the slot.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
@@ -217,7 +240,7 @@ describe('the class family refuses a slot the studio family holds', () => {
 
     const res = await send('POST', '/api/classes', classBody('09:00'));
 
-    await expect409(res, 'CROSS_FAMILY_STUDIO_SLOT', /studio class/i);
+    await expect409(res, 'DUPLICATE_CLASS_SLOT', /already have a class/i);
   });
 
   it('PUT /api/classes/[id] — moved onto a held slot', async () => {
@@ -228,7 +251,7 @@ describe('the class family refuses a slot the studio family holds', () => {
 
     const res = await send('PUT', `/api/classes/${data.id}`, { startTime: '09:00' });
 
-    await expect409(res, 'CROSS_FAMILY_STUDIO_SLOT', /studio class/i);
+    await expect409(res, 'DUPLICATE_CLASS_SLOT', /already have a class/i);
   });
 
   it('POST /api/class-templates', async () => {
@@ -276,7 +299,7 @@ describe('the studio family refuses a slot the class family holds', () => {
 
     const res = await send('POST', '/api/studio-classes', studioBody('09:00'));
 
-    await expect409(res, 'CROSS_FAMILY_CLASS_SLOT', /already have a class/i);
+    await expect409(res, 'DUPLICATE_STUDIO_SLOT', /already have a studio class/i);
   });
 
   it('PUT /api/studio-classes/[id] — moved onto a held slot', async () => {
@@ -287,7 +310,7 @@ describe('the studio family refuses a slot the class family holds', () => {
 
     const res = await send('PUT', `/api/studio-classes/${data.id}`, { startTime: '09:00' });
 
-    await expect409(res, 'CROSS_FAMILY_CLASS_SLOT', /already have a class/i);
+    await expect409(res, 'DUPLICATE_STUDIO_SLOT', /already have a studio class/i);
   });
 
   it('PUT /api/studio-classes/[id] — un-cancelled back into a held slot', async () => {
@@ -298,7 +321,7 @@ describe('the studio family refuses a slot the class family holds', () => {
 
     const res = await send('PUT', `/api/studio-classes/${studio.id}`, { cancelledAt: null });
 
-    await expect409(res, 'CROSS_FAMILY_CLASS_SLOT', /already have a class/i);
+    await expect409(res, 'DUPLICATE_STUDIO_SLOT', /already have a studio class/i);
   });
 
   it('POST /api/studio-class-templates', async () => {
@@ -430,34 +453,53 @@ describe('the count reaches the teacher, not just the reducer', () => {
   });
 });
 
-describe('the two sentences are not interchangeable', () => {
+describe('the two sentences are the CALLER\'s, not the holder\'s', () => {
   /**
-   * The swap a status assertion cannot see. Each family must name the OTHER
-   * one, and the within-family 409 must keep its own sentence — three distinct
-   * messages behind one status code.
+   * This case used to pin the swap a status assertion cannot see: each family
+   * naming the OTHER one, with the within-family 409 keeping a third sentence.
+   * #327 removed the information that made that possible — see this file's
+   * header — so what it pins now is the property that replaced it, stated as
+   * plainly as the old one was:
+   *
+   *   **the sentence a caller gets depends on WHICH DOOR they knocked on, not
+   *   on which family holds the slot.**
+   *
+   * That is worth a test rather than a deletion, because it is exactly the
+   * assumption Task 3's probe has to overturn, and because the two doors
+   * answering identical copy would be a real regression if it happened by
+   * accident rather than by this change. Both halves still assert 409 and a
+   * message; neither is relaxed.
    */
-  it('names the studio family to a class caller and the class family to a studio caller', async () => {
+  it('gives a class caller the class sentence and a studio caller the studio one', async () => {
     await createStudioClassFixture(prisma, { teacherId, ...studioBody('09:00'), date: dateAt(DATE), startTime: hhmmToTime('09:00') });
     const toClass = await send('POST', '/api/classes', classBody('09:00'));
-    const classBody409 = await expect409(toClass, 'CROSS_FAMILY_STUDIO_SLOT', /studio class/i);
+    const classBody409 = await expect409(toClass, 'DUPLICATE_CLASS_SLOT', /already have a class/i);
 
     await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await createClassFixture(prisma, { teacherId, ...classBody('09:00'), date: dateAt(DATE), startTime: hhmmToTime('09:00') });
     const toStudio = await send('POST', '/api/studio-classes', studioBody('09:00'));
-    const studioBody409 = await expect409(toStudio, 'CROSS_FAMILY_CLASS_SLOT', /already have a class/i);
+    const studioBody409 = await expect409(toStudio, 'DUPLICATE_STUDIO_SLOT', /already have a studio class/i);
 
+    // Still two distinct sentences, and still the one the caller's own family
+    // uses — what changed is that the holder is a CROSS-family row in both
+    // cases and neither message says so.
     expect(classBody409.message).not.toBe(studioBody409.message);
-    expect(classBody409.message).toMatch(/studio/i);
-    expect(studioBody409.message).not.toMatch(/studio/i);
+    expect(studioBody409.message).toMatch(/studio/i);
+    expect(classBody409.message).not.toMatch(/studio/i);
   });
 
-  it('leaves the WITHIN-family 409 saying something different again', async () => {
+  /**
+   * The within-family collision, kept for what it now proves rather than for
+   * what it used to. It used to be the third of three distinct sentences; it
+   * is now byte-identical to the cross-family one above, which is the whole
+   * content of this branch's change and is asserted here directly so the
+   * collapse is visible rather than implied.
+   */
+  it('answers a WITHIN-family collision with exactly the same 409', async () => {
     await createClassFixture(prisma, { teacherId, ...classBody('09:00'), date: dateAt(DATE), startTime: hhmmToTime('09:00') });
 
     const res = await send('POST', '/api/classes', classBody('09:00'));
 
-    // Same status, same family named — but a different code, because the
-    // remedy is inside this family rather than across the two.
     await expect409(res, 'DUPLICATE_CLASS_SLOT', /already have a class/i);
   });
 });

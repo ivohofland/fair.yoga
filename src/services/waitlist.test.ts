@@ -472,7 +472,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
       await prisma.waitlistEntry.deleteMany({
         where: { classId: { in: [mineClassId, theirsClassId] } },
       });
-      await prisma.class.deleteMany({ where: { id: { in: [mineClassId, theirsClassId] } } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: [mineClassId, theirsClassId] } } } } });
     });
   });
 
@@ -1122,7 +1122,7 @@ describe('claimSpot (DB)', () => {
     await prisma.notification.deleteMany({ where: { relatedClassId: { in: classIds } } });
     await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
     await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
-    await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
     await prisma.student.deleteMany({ where: { id: { in: [fillerId, waiterId, outsiderId] } } });
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
     await prisma.room.delete({ where: { id: roomId } });
@@ -1490,7 +1490,7 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
     await prisma.notification.deleteMany({ where: { relatedClassId: { in: classIds } } });
     await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
     await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
-    await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
     await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
     await prisma.room.delete({ where: { id: roomId } });
@@ -1748,7 +1748,7 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
   afterAll(async () => {
     await prisma.waitlistEntry.deleteMany({ where: { classId } });
     await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.class.deleteMany({ where: { id: classId } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: classId } } } });
     await prisma.student.deleteMany({ where: { id: { in: [...studentIds, fillerId] } } });
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
     await prisma.room.delete({ where: { id: roomId } });

@@ -979,7 +979,7 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
     // particular) — cleanup must not throw over that.
     if (registrationId) await prisma.payment.deleteMany({ where: { registrationId } });
     if (classId) await prisma.registration.deleteMany({ where: { classId } });
-    if (classId) await prisma.class.deleteMany({ where: { id: classId } });
+    if (classId) await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: classId } } } });
     if (teacherRoomId) await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
     if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
 
@@ -1946,7 +1946,7 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
     await prisma.payment.deleteMany({ where: { registration: { classId: { in: classIds } } } });
     await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
-    await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
     if (teacherRoomId) await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
     if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
 
@@ -2383,7 +2383,7 @@ describe('unlinking silences the teacher and freezes the shares (#166 whole-bran
     await prisma.notification.deleteMany({ where: { recipientId: c1StudentId } });
     await prisma.announcement.deleteMany({ where: { teacherId: c1TeacherId } });
     await prisma.registration.deleteMany({ where: { classId: c1ClassId } });
-    await prisma.class.deleteMany({ where: { id: c1ClassId } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: c1ClassId } } } });
     await prisma.teacherRoom.deleteMany({ where: { id: c1TeacherRoomId } });
     await prisma.room.deleteMany({ where: { id: c1RoomId } });
     await prisma.studentPrivacy.deleteMany({ where: { teacherId: c1TeacherId } });
@@ -2565,7 +2565,7 @@ describe('unlinking withdraws waiting entries for the teacher (#166 F3)', () => 
     await prisma.waitlistEntry.deleteMany({ where: { classId } });
     await prisma.registration.deleteMany({ where: { classId } });
     await prisma.notification.deleteMany({ where: { recipientId: { in: [studentId, teacherId] } } });
-    await prisma.class.deleteMany({ where: { id: classId } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: classId } } } });
     await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
     await prisma.room.deleteMany({ where: { id: roomId } });
 
@@ -2723,7 +2723,7 @@ describe('the unlink withdrawal takes the class lock (#166 whole-branch I4)', ()
   afterAll(async () => {
     await prisma.waitlistEntry.deleteMany({ where: { classId: lockClassId } });
     await prisma.registration.deleteMany({ where: { classId: lockClassId } });
-    await prisma.class.deleteMany({ where: { id: lockClassId } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: lockClassId } } } });
     await prisma.teacherRoom.deleteMany({ where: { id: lockTeacherRoomId } });
     await prisma.room.deleteMany({ where: { id: lockRoomId } });
     await prisma.studentPrivacy.deleteMany({ where: { teacherId: lockTeacherId } });

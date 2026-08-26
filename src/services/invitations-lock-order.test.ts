@@ -48,7 +48,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
       await prisma.registration.deleteMany({
         where: { class: { calendarEntry: { teacherId: { in: lockOrderTeacherIds } } } },
       });
-      await prisma.class.deleteMany({ where: { calendarEntry: { teacherId: { in: lockOrderTeacherIds } } } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: lockOrderTeacherIds } } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: lockOrderTeacherIds } } });
       await prisma.invitation.deleteMany({ where: { teacherId: { in: lockOrderTeacherIds } } });
       await prisma.teacherStudent.deleteMany({ where: { teacherId: { in: lockOrderTeacherIds } } });

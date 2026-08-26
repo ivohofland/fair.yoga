@@ -94,7 +94,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       await prisma.registration.deleteMany({ where: { studentId: { in: studentIds } } });
     }
     if (teacherIds.length) {
-      await prisma.class.deleteMany({ where: { calendarEntry: { teacherId: { in: teacherIds } } } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teacherIds } } });
       // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
       // 298), so deleting the rules removes the templates with them.
       await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: teacherIds } } });

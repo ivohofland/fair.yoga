@@ -153,7 +153,7 @@ describe('POST /api/announcements', () => {
     }
     if (teacherId) await prisma.announcement.deleteMany({ where: { teacherId } });
     const classIds = [class1Id, class2Id, class3Id, foreignClassId].filter(Boolean);
-    if (classIds.length) await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+    if (classIds.length) await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
     if (roomId) {
       await prisma.teacherRoom.deleteMany({ where: { roomId } });
       await prisma.room.delete({ where: { id: roomId } });
