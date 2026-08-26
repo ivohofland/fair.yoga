@@ -4,6 +4,7 @@ import { classifyApiError } from '@/lib/api-errors';
 import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 import { enforcedTerminalStatuses } from '../../tests/migration-sql';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 /**
  * A pure DB-invariant test for `class_terminal_date_guard` (#247) — no HTTP
@@ -97,8 +98,7 @@ let makeClassCounter = 0;
 
 async function makeClass(opts: { status: ClassStatus }): Promise<{ classId: string }> {
   makeClassCounter += 1;
-  const cls = await prisma.class.create({
-    data: {
+  const cls = await createClassFixture(prisma, {
       teacherId,
       teacherRoomId,
       classType: 'Terminal Date Test',
@@ -111,8 +111,7 @@ async function makeClass(opts: { status: ClassStatus }): Promise<{ classId: stri
       minStudents: 1,
       maxStudents: 8,
       status: opts.status,
-    },
-  });
+    });
   classIds.push(cls.id);
   return { classId: cls.id };
 }
@@ -218,10 +217,10 @@ describe('class_terminal_date_guard', () => {
       // it on the raw error would assert something no caller can observe.
       let caught: unknown;
       try {
-        await prisma.class.update({
-          where: { id: classId },
-          data: { date: new Date('2020-01-01') },
-        });
+        await prisma.calendarEntry.update({
+      where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: classId }, select: { calendarEntryId: true } })).calendarEntryId },
+      data: { date: new Date('2020-01-01') },
+    });
       } catch (err) {
         caught = err;
       }
@@ -235,8 +234,8 @@ describe('class_terminal_date_guard', () => {
       // classifyApiError does with this shape is what a caller would see.
       expect(classifyApiError(caught).status).toBe(409);
 
-      const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
-      expect(after.date.toISOString().slice(0, 10)).toBe(ORIGINAL_DATE);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+      expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe(ORIGINAL_DATE);
     },
   );
 
@@ -255,8 +254,8 @@ describe('class_terminal_date_guard', () => {
 
     await prisma.$executeRaw`UPDATE "Class" SET date = '2099-07-01' WHERE id = ${classId}`;
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
-    expect(after.date.toISOString().slice(0, 10)).toBe('2099-07-01');
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-07-01');
   });
 
   it('allows a write that carries a terminal class\'s unchanged date alongside another column', async () => {
@@ -281,9 +280,9 @@ describe('class_terminal_date_guard', () => {
       UPDATE "Class" SET date = ${ORIGINAL_DATE}::date, description = 'Unchanged date'
       WHERE id = ${classId}`;
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(after.description).toBe('Unchanged date');
-    expect(after.date.toISOString().slice(0, 10)).toBe(ORIGINAL_DATE);
+    expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe(ORIGINAL_DATE);
   });
 
   /**

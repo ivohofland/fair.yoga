@@ -10,6 +10,7 @@ import { inviteContact, unlinkTeacher } from '@/services/invitations';
 import { promoteNext } from '@/services/waitlist';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -955,14 +956,12 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
       data: { teacherId, roomId, capacityOverride: 10, rentalRate: 30 },
     });
     teacherRoomId = teacherRoom.id;
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId, teacherRoomId: teacherRoom.id, classType: 'Vinyasa', date: new Date(),
         startTime: hhmmToTime('09:00'), durationMinutes: 60, roomCost: 30,
         minRate: 15, targetRate: 25, minStudents: 2, maxStudents: 10,
         status: 'completed', settingsLocked: true,
-      },
-    });
+      });
     classId = cls.id;
     const registration = await prisma.registration.create({
       data: {
@@ -1773,14 +1772,12 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     });
     teacherRoomId = teacherRoom.id;
 
-    const openClass = await prisma.class.create({
-      data: {
+    const openClass = await createClassFixture(prisma, {
         teacherId: resolveTeacherId, teacherRoomId, classType: 'Resolve Open',
         date: new Date('2099-06-01'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 10,
         status: 'open',
-      },
-    });
+      });
     openClassId = openClass.id;
 
     // auto_promote window: far enough out that promoteNext's own window
@@ -1788,14 +1785,12 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     // `promoteClassId`. Distinct date from openClassId above: same teacher,
     // and Class_teacher_slot_unique is (teacherId, date, startTime) —
     // reusing openClassId's slot would collide with that still-open class.
-    const promoteClass = await prisma.class.create({
-      data: {
+    const promoteClass = await createClassFixture(prisma, {
         teacherId: resolveTeacherId, teacherRoomId, classType: 'Resolve Promote',
         date: new Date('2099-06-02'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 2,
         status: 'open',
-      },
-    });
+      });
     promoteClassId = promoteClass.id;
 
     // first_come_first_claimed window: same derivation as
@@ -1809,14 +1804,12 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     const claimStartTime = `${String(classStart.getUTCHours()).padStart(2, '0')}:${String(
       classStart.getUTCMinutes(),
     ).padStart(2, '0')}`;
-    const claimClass = await prisma.class.create({
-      data: {
+    const claimClass = await createClassFixture(prisma, {
         teacherId: resolveTeacherId, teacherRoomId, classType: 'Resolve Claim',
         date: claimDate, startTime: hhmmToTime(claimStartTime), durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 1,
         cancelDeadline: 'HOURS_6', status: 'open',
-      },
-    });
+      });
     claimClassId = claimClass.id;
 
     const declineStudent = await prisma.student.create({
@@ -2370,14 +2363,12 @@ describe('unlinking silences the teacher and freezes the shares (#166 whole-bran
       data: { teacherId: c1TeacherId, roomId: c1RoomId, capacityOverride: 10, rentalRate: 20 },
     });
     c1TeacherRoomId = teacherRoom.id;
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId: c1TeacherId, teacherRoomId: c1TeacherRoomId, classType: 'C1 Class',
         date: new Date('2099-06-01'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 10,
         status: 'open',
-      },
-    });
+      });
     c1ClassId = cls.id;
 
     // The registration is the whole point: announcements pick recipients
@@ -2530,14 +2521,12 @@ describe('unlinking withdraws waiting entries for the teacher (#166 F3)', () => 
 
     // auto_promote window: far enough out that promoteNext's own window
     // check never trips — same trick used throughout this file.
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId, teacherRoomId, classType: 'F3 Class',
         date: new Date('2099-06-01'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 1,
         status: 'open',
-      },
-    });
+      });
     classId = cls.id;
 
     const student = await prisma.student.create({
@@ -2702,14 +2691,12 @@ describe('the unlink withdrawal takes the class lock (#166 whole-branch I4)', ()
       data: { teacherId: lockTeacherId, roomId: lockRoomId, capacityOverride: 5, rentalRate: 20 },
     });
     lockTeacherRoomId = teacherRoom.id;
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId: lockTeacherId, teacherRoomId: lockTeacherRoomId, classType: 'Lock Class',
         date: new Date('2099-06-01'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 1,
         status: 'open',
-      },
-    });
+      });
     lockClassId = cls.id;
 
     const student = await prisma.student.create({

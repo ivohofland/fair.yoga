@@ -21,10 +21,12 @@ export function CancelClassButton({ classId, registrationCount }: CancelClassBut
     setCancelling(true);
     setError('');
     try {
-      const res = await fetch(`/api/classes/${classId}/transition`, {
+      // Its own door since #327, not a transition: cancellation is
+      // `CalendarEntry.cancelledAt`, and `transitionClassSchema` no longer
+      // accepts a status this enum does not have. No body — the URL is the
+      // whole request.
+      const res = await fetch(`/api/classes/${classId}/cancel`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'cancelled' }),
       });
       if (res.ok) {
         router.refresh();

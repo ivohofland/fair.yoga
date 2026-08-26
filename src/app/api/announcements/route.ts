@@ -27,9 +27,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   if (body.classId) {
     // Verify teacher owns the class
-    const cls = await prisma.class.findUnique({ where: { id: body.classId } });
+    const cls = await prisma.class.findUnique({
+      where: { id: body.classId },
+      include: { calendarEntry: { select: { teacherId: true } } },
+    });
     if (!cls) return respondError('Class not found', 404);
-    if (cls.teacherId !== session.teacherId) return respondError('Not your class', 403);
+    if (cls.calendarEntry.teacherId !== session.teacherId) {
+      return respondError('Not your class', 403);
+    }
 
     // Get all non-cancelled registrations for this class
     const registrations = await prisma.registration.findMany({
@@ -42,7 +47,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // Get ALL students who have any registration with this teacher
     const registrations = await prisma.registration.findMany({
       where: {
-        class: { teacherId: session.teacherId },
+        class: { calendarEntry: { teacherId: session.teacherId } },
         status: { not: 'cancelled' },
       },
       select: { studentId: true },

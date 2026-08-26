@@ -40,14 +40,23 @@ export function StatusBadge({ variant, children }: StatusBadgeProps) {
   );
 }
 
-// Maps a class's lifecycle status + registration counts to a badge variant.
-// Replaces the old deriveDotShape/deriveDisplayStatus helpers.
+// Maps a class's lifecycle status + cancellation + registration counts to a
+// badge variant. Replaces the old deriveDotShape/deriveDisplayStatus helpers.
+//
+// `cancelled` is a SEPARATE parameter since #327, not a `ClassStatus` member:
+// cancellation moved to `CalendarEntry.cancelledAt`, so a cancelled class
+// still carries a live status and a switch over `status` alone would render it
+// as "Open for registration". Second in the list, beside the status, because
+// the two together are what liveness is now — and required rather than
+// optional, so every call site has to answer it.
 export function deriveBadgeVariant(
   status: ClassStatus,
+  cancelled: boolean,
   registrations: number,
   minStudents: number,
   maxStudents: number,
 ): BadgeVariant {
+  if (cancelled) return 'cancelled';
   switch (status) {
     case 'draft':
       return 'draft';
@@ -57,7 +66,5 @@ export function deriveBadgeVariant(
       return registrations < minStudents ? 'below_min' : 'in_progress';
     case 'completed':
       return 'completed';
-    case 'cancelled':
-      return 'cancelled';
   }
 }

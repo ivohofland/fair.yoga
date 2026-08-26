@@ -7,6 +7,7 @@ import {
 } from './studio-class-template-lifecycle';
 import { log } from '@/lib/log';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
+import { createStudioClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -138,21 +139,25 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
   // rather than a raw `09:${counter}` literal, matching `makeTemplate`'s own
   // counter above.
   let makeClassCounter = 0;
-  const makeClass = (templateId: string, opts: { date: Date; cancelledAt?: Date | null }) => {
+  const makeClass = (scheduleRuleId: string, opts: { date: Date; cancelledAt?: Date | null }) => {
     makeClassCounter += 1;
-    return prisma.studioClass.create({
-      data: {
+    return createStudioClassFixture(prisma, {
         teacherId,
-        templateId,
+        scheduleRuleId,
         classType: 'Archive Rule',
         date: opts.date,
         startTime: hhmmToTime(slotTime(makeClassCounter)),
-        durationMinutes: 60,
+        // ONE MINUTE, and it is the counter-spacing that decides it (#327).
+        // `CalendarEntry_teacher_slot_excl` is a range overlap now, so
+        // fixtures a minute apart must be a minute long or they collide — and
+        // this block plants more fixtures on one date than any wider spacing
+        // fits in a day. Nothing here reads the duration; what these tests are
+        // about is which classes an archive withdraws.
+        durationMinutes: 1,
         location: 'Studio Loft',
         hourlyRate: 45,
         cancelledAt: opts.cancelledAt ?? null,
-      },
-    });
+      });
   };
 
   /** Narrows to the archiving arm — see the class family's test for why. */
@@ -178,7 +183,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
       [teacherId, accountId],
       [otherTeacherId, otherAccountId],
     ] as const) {
-      await prisma.studioClass.deleteMany({ where: { teacherId: t } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: t } });
       // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule`
       // (issue 298), so deleting the rule removes the template with it.
       await prisma.scheduleRule.deleteMany({ where: { teacherId: t } });
@@ -201,7 +206,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
 
   it("returns forbidden for another teacher's template, and leaves it and its classes untouched", async () => {
     const t = await makeTemplate('Not Yours');
-    const c = await makeClass(t.id, { date: future() });
+    const c = await makeClass(t.scheduleRuleId, { date: future() });
 
     // The ownership check is the only thing stopping teacher B from
     // destroying teacher A's schedule — this is the function that deletes
@@ -232,7 +237,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
 
   it('deletes a future uncancelled studio class', async () => {
     const t = await makeTemplate('Del Unbooked');
-    const c = await makeClass(t.id, { date: future() });
+    const c = await makeClass(t.scheduleRuleId, { date: future() });
 
     const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
 
@@ -242,7 +247,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
 
   it('keeps an already-cancelled future class — it holds its template date, and is not income', async () => {
     const t = await makeTemplate('Keep Cancelled');
-    const c = await makeClass(t.id, { date: future(), cancelledAt: new Date() });
+    const c = await makeClass(t.scheduleRuleId, { date: future(), cancelledAt: new Date() });
 
     const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
 
@@ -254,7 +259,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
 
   it("keeps today's class — the date > now boundary", async () => {
     const t = await makeTemplate('Keep Today');
-    const c = await makeClass(t.id, { date: today() });
+    const c = await makeClass(t.scheduleRuleId, { date: today() });
 
     const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
 
@@ -267,7 +272,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
 
   it("reports deleted: 0, remaining: 1 when today's class is the only one scheduled", async () => {
     const t = await makeTemplate('Today Only');
-    await makeClass(t.id, { date: today() });
+    await makeClass(t.scheduleRuleId, { date: today() });
 
     const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
 
@@ -281,7 +286,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
 
   it('keeps past classes', async () => {
     const t = await makeTemplate('Keep Past');
-    const c = await makeClass(t.id, { date: past() });
+    const c = await makeClass(t.scheduleRuleId, { date: past() });
 
     const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
 
@@ -293,15 +298,15 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
 
   it('reports deleted and remaining counts — remaining is 0 with nothing scheduled today', async () => {
     const t = await makeTemplate('Counts');
-    const unbooked1 = await makeClass(t.id, { date: futureOn(5) });
-    const unbooked2 = await makeClass(t.id, { date: futureOn(6) });
-    const pastClass = await makeClass(t.id, { date: past() });
+    const unbooked1 = await makeClass(t.scheduleRuleId, { date: futureOn(5) });
+    const unbooked2 = await makeClass(t.scheduleRuleId, { date: futureOn(6) });
+    const pastClass = await makeClass(t.scheduleRuleId, { date: past() });
     // Future, uncancelled classes have no registrations to consult at all —
     // there is no charged-status filter, so every one of them beyond today is
     // deletable. None of these is dated today, so `remaining` — which now
     // only ever counts a today survivor — is 0 here (see the "keeps today's
     // class" case above for when it is not).
-    const alreadyCancelled = await makeClass(t.id, {
+    const alreadyCancelled = await makeClass(t.scheduleRuleId, {
       date: futureOn(7),
       cancelledAt: new Date(),
     });
@@ -319,8 +324,8 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
 
   it('leaves the window untouched when un-archiving', async () => {
     const t = await makeTemplate('Archive Then Resume');
-    const unbooked = await makeClass(t.id, { date: futureOn(5) });
-    const cancelled = await makeClass(t.id, { date: futureOn(6), cancelledAt: new Date() });
+    const unbooked = await makeClass(t.scheduleRuleId, { date: futureOn(5) });
+    const cancelled = await makeClass(t.scheduleRuleId, { date: futureOn(6), cancelledAt: new Date() });
 
     const archived = expectArchived(
       await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'),
@@ -348,8 +353,8 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
    */
   it('records when it archived and how many classes it withdrew', async () => {
     const t = await makeTemplate('Records Withdrawal');
-    await makeClass(t.id, { date: futureOn(5) });
-    await makeClass(t.id, { date: futureOn(6) });
+    await makeClass(t.scheduleRuleId, { date: futureOn(5) });
+    await makeClass(t.scheduleRuleId, { date: futureOn(6) });
 
     const before = Date.now();
     const archived = expectArchived(
@@ -384,9 +389,9 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
    */
   it('records the deleted count, not the scheduled count', async () => {
     const t = await makeTemplate('Withdrawal Excludes Today');
-    await makeClass(t.id, { date: futureOn(5) });
-    await makeClass(t.id, { date: futureOn(6) });
-    await makeClass(t.id, { date: today() });
+    await makeClass(t.scheduleRuleId, { date: futureOn(5) });
+    await makeClass(t.scheduleRuleId, { date: futureOn(6) });
+    await makeClass(t.scheduleRuleId, { date: today() });
 
     const archived = expectArchived(
       await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'),
@@ -435,7 +440,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
    */
   it('clears the record when un-archiving', async () => {
     const t = await makeTemplate('Cleared On Resume');
-    await makeClass(t.id, { date: futureOn(5) });
+    await makeClass(t.scheduleRuleId, { date: futureOn(5) });
     expectArchived(await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'));
 
     const recorded = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
@@ -469,12 +474,12 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
    */
   it('overwrites the record when archiving a second time', async () => {
     const t = await makeTemplate('Archived Twice');
-    await makeClass(t.id, { date: futureOn(5) });
-    await makeClass(t.id, { date: futureOn(6) });
+    await makeClass(t.scheduleRuleId, { date: futureOn(5) });
+    await makeClass(t.scheduleRuleId, { date: futureOn(6) });
     expectArchived(await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'));
     await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'unarchived');
 
-    await makeClass(t.id, { date: futureOn(7) });
+    await makeClass(t.scheduleRuleId, { date: futureOn(7) });
     const before = Date.now();
     const second = expectArchived(
       await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'),
@@ -496,8 +501,8 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
    */
   it('two concurrent archives: the loser records nothing over the winner', async () => {
     const t = await makeTemplate('Concurrent Archive');
-    await makeClass(t.id, { date: futureOn(5) });
-    await makeClass(t.id, { date: futureOn(6) });
+    await makeClass(t.scheduleRuleId, { date: futureOn(5) });
+    await makeClass(t.scheduleRuleId, { date: futureOn(6) });
 
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
@@ -568,7 +573,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     expect(after.scheduleRule.withdrawnCount).toBe(2);
     expect(after.scheduleRule.archivedAt).not.toBeNull();
     expect(after.scheduleRule.archivedAt!.getTime()).toBe(winner.template.archivedAt!.getTime());
-    expect(await prisma.studioClass.count({ where: { templateId: t.id } })).toBe(0);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: t.id } } } } } })).toBe(0);
   });
 });
 
@@ -613,19 +618,21 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     });
   };
 
-  const makeClass = (templateId: string, date: Date, startTime: string) =>
-    prisma.studioClass.create({
-      data: {
+  const makeClass = (scheduleRuleId: string, date: Date, startTime: string) =>
+    createStudioClassFixture(prisma, {
         teacherId,
-        templateId,
+        scheduleRuleId,
         classType: 'Pause Rule',
         date,
         startTime: hhmmToTime(startTime),
-        durationMinutes: 60,
+        // ONE MINUTE (#327): callers here space their fixtures a minute apart
+        // ('08:00' beside '08:01'), and the slot constraint is a range overlap
+        // now — so the duration has to be no wider than that spacing. Nothing
+        // in this block reads it.
+        durationMinutes: 1,
         location: 'Studio Loft',
         hourlyRate: 45,
-      },
-    });
+      });
 
   /**
    * A `dayOfWeek` two days out, so a generated window never contains a class
@@ -643,7 +650,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
    * `defaultTimezone: 'UTC'` (see its comment, which #123 put there). That pin
    * is what makes this `getUTCDay()` and the service's `startOfLocalDay(now,
    * tz)` name the same day, and what makes the boundary test's
-   * `makeClass(t.id, new Date(), …)` land exactly on `gte` rather than a day
+   * `makeClass(t.scheduleRuleId, new Date(), …)` land exactly on `gte` rather than a day
    * off. Under the schema default of `Europe/Amsterdam` the boundary test would
    * fail deterministically between 00:00 and 02:00 local — the same failure
    * #123 already fixed once in this file. Do not seed a zone here without
@@ -709,7 +716,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
       [teacherId, accountId],
       [otherTeacherId, otherAccountId],
     ] as const) {
-      await prisma.studioClass.deleteMany({ where: { teacherId: t } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: t } });
       // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule`
       // (issue 298), so deleting the rule removes the template with it.
       await prisma.scheduleRule.deleteMany({ where: { teacherId: t } });
@@ -722,8 +729,8 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
 
   it('pausing deletes nothing and reports the furthest-out scheduled class', async () => {
     const t = await makeTemplate('Pause Active');
-    const soon = await makeClass(t.id, futureOn(3), '08:00');
-    const later = await makeClass(t.id, futureOn(10), '19:00');
+    const soon = await makeClass(t.scheduleRuleId, futureOn(3), '08:00');
+    const later = await makeClass(t.scheduleRuleId, futureOn(10), '19:00');
 
     const result = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
 
@@ -734,7 +741,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(result.lastScheduled).not.toBeNull();
     if (!result.lastScheduled) throw new Error('expected lastScheduled');
     expect(result.lastScheduled.date.toISOString().slice(0, 10)).toBe(
-      later.date.toISOString().slice(0, 10),
+      later.calendarEntry.date.toISOString().slice(0, 10),
     );
     expect(result.lastScheduled.startTime).toBe('19:00');
     // Deletes nothing: pausing withdraws no already-generated class — that is
@@ -764,7 +771,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     // StudioClass_teacher_slot_unique. The exact minute is arbitrary here —
     // see the comment above — so this is a same-family repair, not a
     // change to what the test proves.
-    const c = await makeClass(t.id, futureOn(3), '08:01');
+    const c = await makeClass(t.scheduleRuleId, futureOn(3), '08:01');
 
     const paused = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
     expect(paused.ok).toBe(true);
@@ -873,7 +880,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     if (result.action !== 'active') throw new Error('expected the active action');
     expect(result.added).toBe(4);
     expect(result.scheduled).toBe(4);
-    expect(await prisma.studioClass.count({ where: { templateId: t.id } })).toBe(4);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: t.id } } } } } })).toBe(4);
 
     // The window count above reads the database, but the resume itself is
     // only asserted through the returned `action`. Re-read the flag too: the
@@ -943,16 +950,12 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
 
     // Cancel the two furthest-out. `.slice(2)` rather than indexing, so this
     // needs no non-null assertions under `noUncheckedIndexedAccess`.
-    const generated = await prisma.studioClass.findMany({
-      where: { templateId: t.id },
-      orderBy: { date: 'asc' },
-      select: { id: true },
-    });
+    const generated = await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: t.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, select: { id: true } });
     expect(generated).toHaveLength(4);
     const toCancel = generated.slice(2).map((c) => c.id);
     expect(toCancel).toHaveLength(2);
-    await prisma.studioClass.updateMany({
-      where: { id: { in: toCancel } },
+    await prisma.calendarEntry.updateMany({
+      where: { studioClasses: { some: { id: { in: toCancel } } } },
       data: { cancelledAt: new Date() },
     });
 
@@ -996,9 +999,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     // The spared pair still stands: the archive left them and the resume did
     // not resurrect them.
     expect(
-      await prisma.studioClass.count({
-        where: { templateId: t.id, cancelledAt: { not: null } },
-      }),
+      await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: t.id } } }, cancelledAt: { not: null } } } }),
     ).toBe(2);
   });
 
@@ -1026,10 +1027,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     // 0s below are caused by the cancels, not by a starved fixture.
     expect(filled.added).toBe(4);
 
-    await prisma.studioClass.updateMany({
-      where: { templateId: t.id },
-      data: { cancelledAt: new Date() },
-    });
+    await prisma.calendarEntry.updateMany({ where: { scheduleRule: { studioClassTemplates: { some: { id: t.id } } } }, data: { cancelledAt: new Date() } });
 
     await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
     const resumed = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
@@ -1057,13 +1055,12 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     });
 
     // Exactly on the `gte: today` boundary.
-    await makeClass(t.id, new Date(), '07:00');
+    await makeClass(t.scheduleRuleId, new Date(), '07:00');
     // Inside the boundary but cancelled. `futureOn(1)` cannot collide with the
     // generated window, which starts two days out by construction.
-    await prisma.studioClass.create({
-      data: {
+    await createStudioClassFixture(prisma, {
         teacherId,
-        templateId: t.id,
+        scheduleRuleId: t.scheduleRuleId,
         classType: 'Pause Rule',
         date: futureOn(1),
         startTime: hhmmToTime('07:30'),
@@ -1071,8 +1068,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
         location: 'Studio Loft',
         hourlyRate: 45,
         cancelledAt: new Date(),
-      },
-    });
+      });
 
     const resumed = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
 
@@ -1094,7 +1090,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     expect(result.action).toBe('paused');
-    expect(await prisma.studioClass.count({ where: { templateId: t.id } })).toBe(0);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: t.id } } } } } })).toBe(0);
   });
 
   /**
@@ -1115,7 +1111,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(result).toEqual({ ok: false, reason: 'archived' });
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
     expect(after.scheduleRule.isActive).toBe(false);
-    expect(await prisma.studioClass.count({ where: { templateId: t.id } })).toBe(0);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: t.id } } } } } })).toBe(0);
   });
 
   /**
@@ -1199,7 +1195,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     // standing on a template the teacher just archived. Its non-racing twin
     // ("refuses to resume an archived template, and generates nothing")
     // asserts this too; the racing case is where getting it wrong is easier.
-    expect(await prisma.studioClass.count({ where: { templateId: t.id } })).toBe(0);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: t.id } } } } } })).toBe(0);
   });
 
   /**
@@ -1339,7 +1335,7 @@ describe('updateStudioClassTemplate (DB)', () => {
       [teacherId, accountId],
       [otherTeacherId, otherAccountId],
     ] as const) {
-      await prisma.studioClass.deleteMany({ where: { teacherId: t } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: t } });
       // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule`
       // (issue 298), so deleting the rule removes the template with it.
       await prisma.scheduleRule.deleteMany({ where: { teacherId: t } });
@@ -1664,18 +1660,16 @@ describe('updateStudioClassTemplate (DB)', () => {
   it('leaves generated classes on the superseded schedule when dayOfWeek moves (#194)', async () => {
     const t = await makeTemplate(teacherId, 'No Sync On Edit');
 
-    const instance = await prisma.studioClass.create({
-      data: {
+    const instance = await createStudioClassFixture(prisma, {
         teacherId,
-        templateId: t.id,
+        scheduleRuleId: t.scheduleRuleId,
         classType: 'No Sync On Edit',
         date: futureOn(7),
         startTime: t.scheduleRule.startTime,
         durationMinutes: 60,
         location: 'Update Studio',
         hourlyRate: 45,
-      },
-    });
+      });
 
     const result = await updateStudioClassTemplate(prisma, t.id, teacherId, {
       dayOfWeek: t.scheduleRule.dayOfWeek === 4 ? 5 : 4,
@@ -1691,11 +1685,11 @@ describe('updateStudioClassTemplate (DB)', () => {
     // cancelled, still attached. Four assertions rather than one because a
     // future sync could plausibly move it, cancel it, re-point it or delete
     // it, and each would be a different product answer to #194.
-    const after = await prisma.studioClass.findUnique({ where: { id: instance.id } });
+    const after = await prisma.studioClass.findUnique({ where: { id: instance.id }, include: { calendarEntry: true },});
     expect(after).not.toBeNull();
-    expect(after?.startTime.getTime()).toBe(instance.startTime.getTime());
+    expect(after?.calendarEntry.startTime.getTime()).toBe(instance.calendarEntry.startTime.getTime());
     expect(after?.location).toBe('Update Studio');
-    expect(after?.cancelledAt).toBeNull();
-    expect(after?.templateId).toBe(t.id);
+    expect(after?.calendarEntry.cancelledAt).toBeNull();
+    expect(after?.calendarEntry.scheduleRuleId).toBe(t.scheduleRuleId);
   });
 });

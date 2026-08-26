@@ -12,6 +12,7 @@ import {
   WaitlistPromotionError,
 } from './waitlist';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 // ===========================================================================
 // Pure logic tests — getWaitlistWindow
@@ -208,14 +209,17 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     maxStudents: number,
   ): Promise<string> {
     makeClassCounter += 1;
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
         date: new Date('2099-06-01'),
         startTime: hhmmToTime(slotTime(makeClassCounter)),
-        durationMinutes: 60,
+        // ONE MINUTE (#327): the slot constraint is a range overlap now, so a
+        // fixture spaced a minute from the last must be a minute long. No
+        // waitlist test reads the duration — the cancel-deadline window these
+        // tests turn on is computed from the START.
+        durationMinutes: 1,
         roomCost: 35,
         minRate: 15,
         targetRate: 25,
@@ -223,8 +227,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
         maxStudents,
         status,
         settingsLocked: true,
-      },
-    });
+      });
     return cls.id;
   }
 
@@ -310,9 +313,9 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     // teardown's `teacherRoom` delete on an FK violation, the way an
     // id-list-scoped version did. Same fix as the sibling `afterAll`s in
     // `class-transitions.test.ts` and `class-lifecycle.test.ts`.
-    await prisma.waitlistEntry.deleteMany({ where: { class: { teacherId } } });
-    await prisma.registration.deleteMany({ where: { class: { teacherId } } });
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.waitlistEntry.deleteMany({ where: { class: { calendarEntry: { teacherId } } } });
+    await prisma.registration.deleteMany({ where: { class: { calendarEntry: { teacherId } } } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     for (const sid of [...studentIds, ...fillerIds]) {
       await prisma.student.delete({ where: { id: sid } });
     }
@@ -439,14 +442,14 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
       expect(closed).toBe(1);
 
       await prisma.waitlistEntry.deleteMany({ where: { classId: closingClassId } });
-      await prisma.class.delete({ where: { id: closingClassId } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: closingClassId } } } });
     });
 
     it('returns 0 and writes nothing when there is no queue', async () => {
       const closingClassId = await makeClass('in_progress', 2);
       const closed = await prisma.$transaction((tx) => closeQueueOnStart(tx, closingClassId));
       expect(closed).toBe(0);
-      await prisma.class.delete({ where: { id: closingClassId } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: closingClassId } } } });
     });
 
     it('leaves another class queue untouched', async () => {
@@ -502,7 +505,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     expect(entry.status).toBe('expired');
 
     await prisma.waitlistEntry.deleteMany({ where: { classId: staleClassId } });
-    await prisma.class.delete({ where: { id: staleClassId } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: staleClassId } } } });
   });
 
   /**
@@ -644,8 +647,7 @@ describe('promoteNext (DB)', () => {
     teacherRoomId = teacherRoom.id;
 
     // Two spots, both taken by fillers — students join a genuinely full class.
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Yin',
@@ -659,8 +661,7 @@ describe('promoteNext (DB)', () => {
         maxStudents: 2,
         status: 'open',
         settingsLocked: true,
-      },
-    });
+      });
     classId = cls.id;
 
     for (let i = 1; i <= 2; i++) {
@@ -699,7 +700,7 @@ describe('promoteNext (DB)', () => {
   afterAll(async () => {
     await prisma.waitlistEntry.deleteMany({ where: { classId } });
     await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.class.delete({ where: { id: classId } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: classId } } } });
     for (const sid of [...studentIds, ...fillerIds]) {
       await prisma.student.delete({ where: { id: sid } });
     }
@@ -887,12 +888,14 @@ describe('promoteNext (DB)', () => {
     // the tests above, so a guard appended there would depend on that order.
     // `cancelRegistration` above closes over the shared `classId` and can't
     // target this class, so its update is inlined below.
-    const lockedClass = await prisma.class.create({
-      data: {
+    const lockedClass = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Yin',
-        date: new Date('2099-07-01'),
+        // A day of its own, not an hour: the sibling fixture above runs
+        // 18:00–19:15 on 2099-07-01, and since #327 the slot constraint
+        // refuses an OVERLAP rather than an identical start time.
+        date: new Date('2099-07-02'),
         startTime: hhmmToTime('19:00'),
         durationMinutes: 75,
         roomCost: 40,
@@ -902,8 +905,7 @@ describe('promoteNext (DB)', () => {
         maxStudents: 1,
         status: 'open',
         settingsLocked: true,
-      },
-    });
+      });
     const lockedClassId = lockedClass.id;
 
     try {
@@ -953,7 +955,7 @@ describe('promoteNext (DB)', () => {
     } finally {
       await prisma.waitlistEntry.deleteMany({ where: { classId: lockedClassId } });
       await prisma.registration.deleteMany({ where: { classId: lockedClassId } });
-      await prisma.class.delete({ where: { id: lockedClassId } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: lockedClassId } } } });
     }
   }, 20_000);
 });
@@ -1035,8 +1037,7 @@ describe('claimSpot (DB)', () => {
       classTeacherId = extraTeacher.id;
     }
 
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId: classTeacherId,
         teacherRoomId,
         classType: 'Claim Flow',
@@ -1050,8 +1051,7 @@ describe('claimSpot (DB)', () => {
         maxStudents: 1,
         cancelDeadline: 'HOURS_24',
         status: 'open',
-      },
-    });
+      });
     classIds.push(cls.id);
     await prisma.registration.create({
       data: { classId: cls.id, studentId: fillerId, tierAtBooking: 3 },
@@ -1195,7 +1195,10 @@ describe('claimSpot (DB)', () => {
     await freeTheSpot(classId);
     // Cancelled after the waitlist formed — the status guard runs first, so
     // this fires even though the window and capacity are both fine.
-    await prisma.class.update({ where: { id: classId }, data: { status: 'cancelled' } });
+    await prisma.calendarEntry.update({
+      where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: classId }, select: { calendarEntryId: true } })).calendarEntryId },
+      data: { cancelledAt: new Date() },
+    });
 
     await expectRejection(
       claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW),
@@ -1432,14 +1435,14 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
     let makeClassCounter = 0;
     const makeClass = async (label: string, maxStudents: number): Promise<string> => {
       makeClassCounter += 1;
-      const cls = await prisma.class.create({
-        data: {
+      const cls = await createClassFixture(prisma, {
           teacherId,
           teacherRoomId,
           classType: label,
           date: new Date('2099-08-01'),
           startTime: hhmmToTime(slotTime(60 + makeClassCounter)),
-          durationMinutes: 60,
+          // ONE MINUTE (#327) — see the block above.
+          durationMinutes: 1,
           roomCost: 25,
           minRate: 15,
           targetRate: 25,
@@ -1447,8 +1450,7 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
           maxStudents,
           status: 'open',
           settingsLocked: true,
-        },
-      });
+        });
       classIds.push(cls.id);
       return cls.id;
     };
@@ -1694,8 +1696,7 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
     teacherRoomId = teacherRoom.id;
 
     // One spot, taken by a filler — full, so the waitlist will accept joins.
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Lock Flow',
@@ -1709,8 +1710,7 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
         maxStudents: 1,
         status: 'open',
         settingsLocked: true,
-      },
-    });
+      });
     classId = cls.id;
 
     const filler = await prisma.student.create({
@@ -1930,8 +1930,7 @@ describe('handleSpotFreed (DB)', () => {
 
     // maxStudents: 1 plus one registration is the cheapest way to be full,
     // which is what `addToWaitlist` requires before it will accept anyone.
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'SpotFreed Flow',
@@ -1945,8 +1944,7 @@ describe('handleSpotFreed (DB)', () => {
         maxStudents: 1,
         cancelDeadline: 'HOURS_24',
         status: 'open',
-      },
-    });
+      });
     classId = cls.id;
 
     await prisma.registration.create({
@@ -1961,7 +1959,7 @@ describe('handleSpotFreed (DB)', () => {
     await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
     await prisma.waitlistEntry.deleteMany({ where: { classId } });
     await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.class.delete({ where: { id: classId } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: classId } } } });
     await prisma.student.deleteMany({ where: { id: { in: [fillerId, ...waiterIds] } } });
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
     await prisma.room.delete({ where: { id: roomId } });

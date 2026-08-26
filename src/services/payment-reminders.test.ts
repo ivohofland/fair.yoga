@@ -7,6 +7,7 @@ import {
   processPaymentReminders,
 } from './payment-reminders';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -71,8 +72,7 @@ describe('payment reminders (DB)', () => {
     });
     teacherRoomId = tr.id;
 
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'PayRem Hatha',
@@ -85,8 +85,7 @@ describe('payment reminders (DB)', () => {
         minStudents: 1,
         maxStudents: 12,
         status: 'completed',
-      },
-    });
+      });
     classId = cls.id;
 
     const student = await prisma.student.create({
@@ -104,7 +103,7 @@ describe('payment reminders (DB)', () => {
     await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
     await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
     await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.class.delete({ where: { id: classId } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: classId } } } });
     await prisma.student.deleteMany({ where: { email: { contains: `payrem-${uniqueSuffix}` } } });
     await prisma.student.delete({ where: { id: studentId } });
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });

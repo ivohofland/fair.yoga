@@ -76,9 +76,9 @@
 export type SkipReason =
   /** This template's own non-cancelled instance is already on that date. Correct idempotency; never logged. Includes `completed`/`in_progress` rows, which the classification does not distinguish — only `cancelled` is split out, because only `cancelled` is what the copy needs to explain. */
   | 'already_generated'
-  /** This template's own CANCELLED instance holds the date. `@@unique([templateId, date])` makes it permanently unfillable (#192). */
+  /** This template's own CANCELLED instance holds the date. `@@unique([scheduleRuleId, date])` on `CalendarEntry` is TOTAL rather than partial on liveness, which makes the date permanently unfillable (#192). */
   | 'blocked_by_cancelled'
-  /** Another of this teacher's classes holds that date + startTime (#196). */
+  /** Another of this teacher's LIVE classes starts at that date + startTime (#196). */
   | 'slot_taken'
   /**
    * This template already has a class in the WEEK containing that date, on a
@@ -88,21 +88,29 @@ export type SkipReason =
    * `dayOfWeek`/`startTime` moved and the previously generated classes still
    * hold those weeks.
    *
-   * Counted with no status filter: a cancelled class holds its week. That is
+   * Counted with no liveness filter: a cancelled class holds its week. That is
    * deliberate and is the one place this codebase does NOT read cancelled as
    * free — see the spec's §3.2 for the flip-flop schedule the alternative
-   * produces. Do not "fix" it for consistency with `Class_teacher_slot_unique`.
+   * produces. Do not "fix" it for consistency with
+   * `CalendarEntry_teacher_slot_excl`.
    */
   | 'already_this_week'
   /**
-   * A LIVE class from the OTHER family holds this teacher's slot (#296).
+   * A LIVE entry of this teacher's OVERLAPS the candidate, and did not start
+   * at the same minute (#296, widened by #327).
+   *
+   * THE NAME IS NARROWER THAN THE CONDITION and is being corrected rather than
+   * kept: with both families in one `CalendarEntry` table behind one RANGE
+   * constraint, what a generator's pre-check can see is an overlap, and an
+   * overlapping entry may be of either family. The copy still names the other
+   * half of the teacher's schedule, which is right for the common case and
+   * wrong for a same-family class that merely runs into the candidate.
    *
    * Distinct from `slot_taken`, which means one of this teacher's own
-   * SAME-family classes holds it. Kept separate because the remedy differs:
-   * `slot_taken` is answered inside this family, and this one sends the
-   * teacher to the other half of their schedule. Folding the two would make
-   * one member carry two situations with two remedies — the conflation #288
-   * is open about.
+   * SAME-family classes starts at exactly that minute. Kept separate because
+   * the remedy differs: `slot_taken` is answered inside this family. Folding
+   * the two would make one member carry two situations with two remedies —
+   * the conflation #288 is open about.
    *
    * It is the one member whose copy is not shared between the families, since
    * each has to name the opposite half: see `resumeMessage` and
@@ -286,4 +294,33 @@ export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
     }
   }
   return { blockedByCancelled, slotTaken, alreadyThisWeek, blockedByOtherFamily };
+}
+
+/**
+ * Whether two same-date entries occupy overlapping minutes of the day.
+ *
+ * The shape `CalendarEntry_teacher_slot_excl` refuses, expressed in
+ * TypeScript so the two generators can NAME a blocked date rather than
+ * discovering it as a `23P01`. The constraint is the enforcement; this is the
+ * pre-check that produces a `SkipReason`.
+ *
+ * Minutes since midnight on both sides, because `startTime` is a `@db.Time`
+ * column and arrives as a `Date` pinned to 1970-01-01 UTC — the same
+ * conversion `minutesSinceMidnight` (`lib/rule-slot-holder.ts`) makes for the
+ * rule layer's `int4range`, one layer down.
+ *
+ * SAME-DATE ONLY, and the caller is what supplies that: both generators filter
+ * their occupancy read to the candidate date before calling this. An entry
+ * whose duration carries it past midnight overlaps a candidate on the NEXT
+ * calendar date, and neither the caller's filter nor this function sees that —
+ * the constraint still does, so such a candidate is refused at insert rather
+ * than named here.
+ */
+export function spansOverlap(
+  a: { startTime: Date; durationMinutes: number },
+  b: { startTime: Date; durationMinutes: number },
+): boolean {
+  const aStart = a.startTime.getUTCHours() * 60 + a.startTime.getUTCMinutes();
+  const bStart = b.startTime.getUTCHours() * 60 + b.startTime.getUTCMinutes();
+  return aStart < bStart + b.durationMinutes && bStart < aStart + a.durationMinutes;
 }

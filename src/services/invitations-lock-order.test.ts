@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { acceptInvitation, unlinkTeacher } from './invitations';
 import { resolveInvitationOnLink } from './link-consent';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 /**
  * Lock-ORDER invariants for the two table pairs #174 task 7 fixed:
@@ -45,9 +46,9 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
   afterAll(async () => {
     if (lockOrderTeacherIds.length) {
       await prisma.registration.deleteMany({
-        where: { class: { teacherId: { in: lockOrderTeacherIds } } },
+        where: { class: { calendarEntry: { teacherId: { in: lockOrderTeacherIds } } } },
       });
-      await prisma.class.deleteMany({ where: { teacherId: { in: lockOrderTeacherIds } } });
+      await prisma.class.deleteMany({ where: { calendarEntry: { teacherId: { in: lockOrderTeacherIds } } } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: lockOrderTeacherIds } } });
       await prisma.invitation.deleteMany({ where: { teacherId: { in: lockOrderTeacherIds } } });
       await prisma.teacherStudent.deleteMany({ where: { teacherId: { in: lockOrderTeacherIds } } });
@@ -95,8 +96,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
       data: { teacherId, roomId: room.id, capacityOverride: 15, rentalRate: 30 },
       select: { id: true },
     });
-    return prisma.class.create({
-      data: {
+    return createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'Lock Order Flow',
@@ -109,9 +109,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
         minStudents: 1,
         maxStudents: 10,
         status: 'open',
-      },
-      select: { id: true },
-    });
+      });
   }
 
   /**
@@ -523,7 +521,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
 
     const booking = prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
-      await tx.class.findUnique({ where: { id: cls.id } });
+      await tx.class.findUnique({ where: { id: cls.id }, include: { calendarEntry: true },});
       await tx.registration.count({
         where: { classId: cls.id, status: { in: ['registered', 'attended', 'no_show'] } },
       });

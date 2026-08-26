@@ -23,7 +23,7 @@ export {
  * editable.
  *
  *   scheduleEditable ⟺ NOT past
- *   dateEditable     ⟺ scheduleEditable AND templateId === null
+ *   dateEditable     ⟺ scheduleEditable AND scheduleRuleId === null
  *
  * ── WHY A CALENDAR DATE AND NOT A START INSTANT ────────────────────────────
  *
@@ -35,7 +35,7 @@ export {
  *
  * ── WHY A GENERATED ROW MAY NOT MOVE ITS DATE ──────────────────────────────
  *
- * Moving the row frees its `(templateId, date)` key, and the hourly sweep —
+ * Moving the row frees its `(scheduleRuleId, date)` key, and the hourly sweep —
  * which counts any row of the template, cancelled included, as occupancy per
  * date — recreates the class on the old date within the hour. That is the
  * delete-resurrection race the deletion service exists to prevent, reached
@@ -55,7 +55,7 @@ export {
  * today is the case where those differ, and the route gates it separately
  * (`past_date`); see the gates in `api/studio-classes/[id]/route.ts`.
  *
- * THE PARAMETER IS NARROW ON PURPOSE: callers pass `{ templateId, date }` and
+ * THE PARAMETER IS NARROW ON PURPOSE: callers pass `{ scheduleRuleId, date }` and
  * nothing more, so the predicate is physically handed only what it may read.
  * That is a speed bump, not a wall — a REQUIRED new field breaks every call
  * site, an OPTIONAL one compiles silently at all of them. The alarm is the
@@ -91,7 +91,7 @@ export function studioClassDateIsPast(date: Date, now: Date, timeZone: string): 
 }
 
 export function studioClassEditability(
-  sc: { templateId: string | null; date: Date },
+  sc: { scheduleRuleId: string | null; date: Date },
   now: Date,
   timeZone: string,
 ): StudioClassEditVerdict {
@@ -103,5 +103,5 @@ export function studioClassEditability(
   if (studioClassDateIsPast(sc.date, now, timeZone)) {
     return { scheduleEditable: false, dateEditable: false };
   }
-  return { scheduleEditable: true, dateEditable: sc.templateId === null };
+  return { scheduleEditable: true, dateEditable: sc.scheduleRuleId === null };
 }

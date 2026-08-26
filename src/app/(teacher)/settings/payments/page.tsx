@@ -16,13 +16,18 @@ export default async function PaymentsOverviewPage() {
   const session = await requireTeacherSession();
 
   const payments = await prisma.payment.findMany({
-    where: { registration: { class: { teacherId: session.teacherId } } },
+    where: { registration: { class: { calendarEntry: { teacherId: session.teacherId } } } },
     orderBy: { createdAt: 'desc' },
     include: {
       registration: {
         select: {
           student: { select: studentNameSelect(session.teacherId) },
-          class: { select: { id: true, classType: true, date: true, startTime: true } },
+          class: {
+            select: {
+              id: true,
+              calendarEntry: { select: { classType: true, date: true, startTime: true } },
+            },
+          },
         },
       },
     },
@@ -72,7 +77,7 @@ export default async function PaymentsOverviewPage() {
               paymentId={p.id}
               studentName={studentName(p)}
               classId={p.registration.class.id}
-              classContext={`${p.registration.class.classType} · ${formatDateShort(p.registration.class.date)} · ${timeToHHmm(p.registration.class.startTime)}`}
+              classContext={`${p.registration.class.calendarEntry.classType} · ${formatDateShort(p.registration.class.calendarEntry.date)} · ${timeToHHmm(p.registration.class.calendarEntry.startTime)}`}
               amount={Number(p.amount)}
               status={p.status}
               reminderSentAt={p.reminderSentAt}
@@ -91,7 +96,7 @@ export default async function PaymentsOverviewPage() {
               key={p.id}
               paymentId={p.id}
               studentName={studentName(p)}
-              classContext={`${p.registration.class.classType} · ${formatDateShort(p.registration.class.date)} · ${timeToHHmm(p.registration.class.startTime)}`}
+              classContext={`${p.registration.class.calendarEntry.classType} · ${formatDateShort(p.registration.class.calendarEntry.date)} · ${timeToHHmm(p.registration.class.calendarEntry.startTime)}`}
               paidAt={p.paidAt}
               timeZone={session.defaultTimezone}
               amount={Number(p.amount)}

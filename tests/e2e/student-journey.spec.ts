@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 /**
  * The student's side of a contested class, end to end through the UI:
@@ -70,8 +71,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     });
 
     // One seat: the second student always lands on the waitlist.
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'One Seat Yin',
@@ -84,8 +84,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
         minStudents: 1,
         maxStudents: 1,
         status: 'open',
-      },
-    });
+      });
     classId = cls.id;
 
     const mkStudent = async (first: string): Promise<{ id: string; token: string }> => {
@@ -117,7 +116,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     await prisma.waitlistEntry.deleteMany({ where: { classId } });
     await prisma.registration.deleteMany({ where: { classId } });
     await prisma.teacherStudent.deleteMany({ where: { teacherId } });
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
     for (const sid of [aliceId, bramId]) {

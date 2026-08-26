@@ -17,8 +17,12 @@ export default async function StudioClassEditPage({
   const { id } = await params;
   const session = await requireTeacherSession();
 
-  const studioClass = await prisma.studioClass.findUnique({ where: { id } });
-  if (!studioClass || studioClass.teacherId !== session.teacherId) redirect('/');
+  const studioClass = await prisma.studioClass.findUnique({
+    where: { id },
+    include: { calendarEntry: true },
+  });
+  if (!studioClass || studioClass.calendarEntry.teacherId !== session.teacherId) redirect('/');
+  const entry = studioClass.calendarEntry;
 
   // Full-scope rows only. A fresh two-field literal, not `studioClass` — the
   // predicate is handed only what it may read, and passing the literal
@@ -26,7 +30,7 @@ export default async function StudioClassEditPage({
   // and has an editor nowhere; its page still reaches the count and the
   // cancellation.
   const verdict = studioClassEditability(
-    { templateId: studioClass.templateId, date: studioClass.date },
+    { scheduleRuleId: entry.scheduleRuleId, date: entry.date },
     new Date(),
     session.defaultTimezone,
   );
@@ -39,18 +43,18 @@ export default async function StudioClassEditPage({
         className="inline-flex items-center gap-1.5 type-label text-teal no-underline mb-2"
       >
         <Icon name="arrow-left" size={18} />
-        {studioClass.classType}
+        {entry.classType}
       </Link>
       <h1 className="type-title mb-6">Edit class</h1>
       <StudioClassEditForm
         studioClassId={studioClass.id}
         dateEditable={verdict.dateEditable}
         initial={{
-          classType: studioClass.classType,
+          classType: entry.classType,
           location: studioClass.location,
-          date: studioClass.date.toISOString().slice(0, 10),
-          startTime: timeToHHmm(studioClass.startTime),
-          durationMinutes: studioClass.durationMinutes,
+          date: entry.date.toISOString().slice(0, 10),
+          startTime: timeToHHmm(entry.startTime),
+          durationMinutes: entry.durationMinutes,
           hourlyRate: Number(studioClass.hourlyRate),
         }}
       />

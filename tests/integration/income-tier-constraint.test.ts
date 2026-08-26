@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = `tier-check-${Date.now()}`;
@@ -118,8 +119,7 @@ describe('Registration.tierAtBooking constraint', () => {
       data: { teacherId, roomId, capacityOverride: 8, rentalRate: 15 },
     });
 
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'Tier Check Flow',
@@ -132,8 +132,7 @@ describe('Registration.tierAtBooking constraint', () => {
         minStudents: 1,
         maxStudents: 8,
         status: 'open',
-      },
-    });
+      });
     classId = cls.id;
 
     const student = await prisma.student.create({
@@ -168,7 +167,7 @@ describe('Registration.tierAtBooking constraint', () => {
 
   afterAll(async () => {
     await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.deleteMany({ where: { id: roomId } });
     await prisma.student.deleteMany({ where: { id: { in: [studentId, createStudentId] } } });

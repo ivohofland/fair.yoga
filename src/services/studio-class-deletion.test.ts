@@ -16,7 +16,7 @@ describe('studioClassDeletability', () => {
   describe('the matrix', () => {
     it('allows a manual class that has not started', () => {
       expect(
-        studioClassDeletability({ templateId: null, date: d('2026-06-20') }, now, AMS),
+        studioClassDeletability({ scheduleRuleId: null, date: d('2026-06-20') }, now, AMS),
       ).toEqual({ deletable: true });
     });
 
@@ -25,19 +25,19 @@ describe('studioClassDeletability', () => {
       // runs. This is the case that separates "manual" from "past": a teacher
       // who mislogged this morning's studio class clears it this morning.
       expect(
-        studioClassDeletability({ templateId: null, date: d('2026-06-15') }, now, AMS),
+        studioClassDeletability({ scheduleRuleId: null, date: d('2026-06-15') }, now, AMS),
       ).toEqual({ deletable: true });
     });
 
     it('refuses a generated class dated in the future, because the sweep would create it again', () => {
       expect(
-        studioClassDeletability({ templateId: 'tpl-1', date: d('2026-06-20') }, now, AMS),
+        studioClassDeletability({ scheduleRuleId: 'tpl-1', date: d('2026-06-20') }, now, AMS),
       ).toEqual({ deletable: false, reason: 'regenerates' });
     });
 
     it('allows a generated class dated before today, which the sweep cannot reach', () => {
       expect(
-        studioClassDeletability({ templateId: 'tpl-1', date: d('2026-06-10') }, now, AMS),
+        studioClassDeletability({ scheduleRuleId: 'tpl-1', date: d('2026-06-10') }, now, AMS),
       ).toEqual({ deletable: true });
     });
   });
@@ -55,7 +55,7 @@ describe('studioClassDeletability', () => {
    * Worked: template moved Wed 09:00 → 19:00. The standing class keeps 09:00.
    * At 10:30 its own start has passed, so the old rule allowed removal — and
    * the sweep, filtering on 19:00, found that instant still ahead, found
-   * `(templateId, date)` freed by the removal, and re-inserted on the same date
+   * `(scheduleRuleId, date)` freed by the removal, and re-inserted on the same date
    * within the hour. A delete that undid itself.
    *
    * The calendar-date rule is immune rather than merely careful: the latest
@@ -70,7 +70,7 @@ describe('studioClassDeletability', () => {
       // 09:00 Amsterdam on 2026-06-15 is 07:00Z; `now` is 12:00Z. Started, and
       // still refused, because the template may name a later hour today.
       expect(
-        studioClassDeletability({ templateId: 'tpl-1', date: d('2026-06-15') }, now, AMS),
+        studioClassDeletability({ scheduleRuleId: 'tpl-1', date: d('2026-06-15') }, now, AMS),
       ).toEqual({ deletable: false, reason: 'regenerates' });
     });
 
@@ -78,7 +78,7 @@ describe('studioClassDeletability', () => {
       // 23:58 local Amsterdam — the date is still today, so still refused.
       expect(
         studioClassDeletability(
-          { templateId: 'tpl-1', date: d('2026-06-15') },
+          { scheduleRuleId: 'tpl-1', date: d('2026-06-15') },
           new Date('2026-06-15T21:58:00.000Z'),
           AMS,
         ),
@@ -89,7 +89,7 @@ describe('studioClassDeletability', () => {
       // 00:30 Amsterdam on the 16th. The 15th is now strictly past, locally.
       expect(
         studioClassDeletability(
-          { templateId: 'tpl-1', date: d('2026-06-15') },
+          { scheduleRuleId: 'tpl-1', date: d('2026-06-15') },
           new Date('2026-06-15T22:30:00.000Z'),
           AMS,
         ),
@@ -113,7 +113,7 @@ describe('studioClassDeletability', () => {
       // "today" at the 15th and refuses a class dated the 15th.
       expect(
         studioClassDeletability(
-          { templateId: 'tpl-1', date: d('2026-06-15') },
+          { scheduleRuleId: 'tpl-1', date: d('2026-06-15') },
           new Date('2026-06-15T22:30:00.000Z'),
           AMS,
         ),
@@ -126,7 +126,7 @@ describe('studioClassDeletability', () => {
       // which is still today for this teacher, and still a generator candidate.
       expect(
         studioClassDeletability(
-          { templateId: 'tpl-1', date: d('2026-06-14') },
+          { scheduleRuleId: 'tpl-1', date: d('2026-06-14') },
           new Date('2026-06-15T02:30:00.000Z'),
           NYC,
         ),
@@ -144,7 +144,7 @@ describe('studioClassDeletability', () => {
    */
   it('refuses a generated class whose date cannot be read', () => {
     expect(
-      studioClassDeletability({ templateId: 'tpl-1', date: new Date('nonsense') }, now, AMS),
+      studioClassDeletability({ scheduleRuleId: 'tpl-1', date: new Date('nonsense') }, now, AMS),
     ).toEqual({ deletable: false, reason: 'regenerates' });
   });
 
@@ -164,7 +164,7 @@ describe('studioClassDeletability', () => {
   it('refuses template state at the type level', () => {
     studioClassDeletability(
       // @ts-expect-error template state is reversible and must not reach the predicate
-      { templateId: 'tpl-1', date: d('2026-06-10'), template: { isArchived: true } },
+      { scheduleRuleId: 'tpl-1', date: d('2026-06-10'), template: { isArchived: true } },
       now,
       AMS,
     );

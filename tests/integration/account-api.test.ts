@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -242,8 +243,7 @@ describe('DELETE /api/account', () => {
       data: { teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 15 },
     });
     seededTeacherRoomIds.push(teacherRoom.id);
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: `Flow ${label}`,
@@ -256,8 +256,7 @@ describe('DELETE /api/account', () => {
         minStudents: 1,
         maxStudents: 8,
         status: 'in_progress',
-      },
-    });
+      });
     seededClassIds.push(cls.id);
     const attendee = await prisma.student.create({
       data: { firstName: 'Att', lastName: label, email: `att-${label}-${suffix}@test.local` },
@@ -383,8 +382,7 @@ describe('DELETE /api/account', () => {
       data: { teacherId: acc.teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 15 },
     });
     seededTeacherRoomIds.push(teacherRoom.id);
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId: acc.teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'Erasure Flow',
@@ -397,8 +395,7 @@ describe('DELETE /api/account', () => {
         minStudents: 1,
         maxStudents: 8,
         status: 'in_progress',
-      },
-    });
+      });
     seededClassIds.push(cls.id);
     const attendee = await prisma.student.create({
       data: { firstName: 'Book', lastName: 'Ed', email: `attendee-${suffix}@test.local` },
@@ -549,7 +546,7 @@ describe('DELETE /api/account', () => {
 
     // And something really did — the class completed, in its own committed
     // transaction, before the failure.
-    const completed = await prisma.class.findUniqueOrThrow({ where: { id: billed.classId } });
+    const completed = await prisma.class.findUniqueOrThrow({ where: { id: billed.classId }, include: { calendarEntry: true },});
     expect(completed.status).toBe('completed');
     expect(
       await prisma.payment.count({ where: { registrationId: billed.registrationId } }),
@@ -592,8 +589,7 @@ describe('DELETE /api/account', () => {
       data: { teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 15 },
     });
     seededTeacherRoomIds.push(teacherRoom.id);
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'Busy Flow',
@@ -606,8 +602,7 @@ describe('DELETE /api/account', () => {
         minStudents: 1,
         maxStudents: 8,
         status: 'open',
-      },
-    });
+      });
     seededClassIds.push(cls.id);
     await prisma.waitlistEntry.create({
       data: { classId: cls.id, studentId: acc.studentId, position: 1, status: 'waiting' },

@@ -14,6 +14,7 @@ import { createSession, validateSession } from '@/lib/auth';
 import { transitionClass, completeClass } from '@/services/class-lifecycle';
 import { markPaymentPaid, getPaymentsForClass, getOutstandingPayments } from '@/services/payments';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -42,7 +43,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
         where: { registration: { classId } },
       });
       await prisma.registration.deleteMany({ where: { classId } });
-      await prisma.class.delete({ where: { id: classId } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: classId } } } });
     }
     if (studentId) {
       const st = await prisma.student.findUnique({
@@ -163,8 +164,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
   // Step 6: Create class in draft status
   // -----------------------------------------------------------------------
   it('Step 6: creates a class in draft status', async () => {
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
@@ -177,8 +177,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
         minStudents: 1,
         maxStudents: 12,
         status: 'draft',
-      },
-    });
+      });
     classId = cls.id;
 
     expect(classId).toBeDefined();
@@ -197,7 +196,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
       expect(result.newStatus).toBe('open');
     }
 
-    const cls = await prisma.class.findUnique({ where: { id: classId } });
+    const cls = await prisma.class.findUnique({ where: { id: classId }, include: { calendarEntry: true },});
     expect(cls?.status).toBe('open');
   });
 
@@ -291,7 +290,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
   // Step 14: Verify class completion data
   // -----------------------------------------------------------------------
   it('Step 14: class has correct completion data', async () => {
-    const cls = await prisma.class.findUnique({ where: { id: classId } });
+    const cls = await prisma.class.findUnique({ where: { id: classId }, include: { calendarEntry: true },});
 
     expect(cls).not.toBeNull();
     expect(cls!.status).toBe('completed');

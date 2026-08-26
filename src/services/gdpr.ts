@@ -42,18 +42,33 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
         include: {
           class: {
             select: {
-              classType: true,
-              date: true,
-              startTime: true,
               status: true,
-              teacher: { select: { firstName: true, lastName: true } },
+              // The calendar identity moved to the entry (#327), the teacher
+              // with it. `cancelledAt` is selected because `status` can no
+              // longer carry a cancellation, and an Art. 15 export that stops
+              // saying a class was called off has lost a fact.
+              calendarEntry: {
+                select: {
+                  classType: true,
+                  date: true,
+                  startTime: true,
+                  cancelledAt: true,
+                  teacher: { select: { firstName: true, lastName: true } },
+                },
+              },
             },
           },
           payment: { select: { amount: true, status: true, method: true, paidAt: true } },
         },
       },
       waitlistEntries: {
-        include: { class: { select: { classType: true, date: true, startTime: true } } },
+        include: {
+          class: {
+            select: {
+              calendarEntry: { select: { classType: true, date: true, startTime: true } },
+            },
+          },
+        },
       },
     },
   });
@@ -122,19 +137,20 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
       since: t.createdAt,
     })),
     bookings: student.registrations.map((r) => ({
-      class: r.class.classType,
-      teacher: `${r.class.teacher.firstName} ${r.class.teacher.lastName}`,
-      date: r.class.date,
-      startTime: timeToHHmm(r.class.startTime),
+      class: r.class.calendarEntry.classType,
+      teacher: `${r.class.calendarEntry.teacher.firstName} ${r.class.calendarEntry.teacher.lastName}`,
+      date: r.class.calendarEntry.date,
+      startTime: timeToHHmm(r.class.calendarEntry.startTime),
       status: r.status,
+      classCancelledAt: r.class.calendarEntry.cancelledAt,
       tierAtBooking: r.tierAtBooking,
       price: r.price,
       payment: r.payment,
       registeredAt: r.registeredAt,
     })),
     waitlist: student.waitlistEntries.map((w) => ({
-      class: w.class.classType,
-      date: w.class.date,
+      class: w.class.calendarEntry.classType,
+      date: w.class.calendarEntry.date,
       status: w.status,
       position: w.position,
     })),
@@ -167,8 +183,16 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
     include: {
       teacherRooms: { include: { room: true } },
       scheduleRules: { include: { classTemplates: true, studioClassTemplates: true } },
-      classes: { include: { _count: { select: { registrations: true } } } },
-      studioClasses: true,
+      // Both class families reached through `calendarEntries` now (#327):
+      // `Class` and `StudioClass` left `Teacher`'s own relations for the
+      // entry's, and each entry carries at most one of either family. Same
+      // shape as `scheduleRules` above, one layer down.
+      calendarEntries: {
+        include: {
+          classes: { include: { _count: { select: { registrations: true } } } },
+          studioClasses: true,
+        },
+      },
       announcements: true,
     },
   });
@@ -207,19 +231,32 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
     recurringTemplates: teacher.scheduleRules.flatMap((r) =>
       r.classTemplates.map((ct) => withClassSlot(ct, r)),
     ),
-    classes: teacher.classes.map((c) => ({
-      classType: c.classType,
-      date: c.date,
-      startTime: timeToHHmm(c.startTime),
-      status: c.status,
-      registrations: c._count.registrations,
-      totalRevenue: c.totalRevenue,
-      effectiveTeacherRate: c.effectiveTeacherRate,
-    })),
-    studioClasses: teacher.studioClasses.map((sc) => ({
-      ...sc,
-      startTime: timeToHHmm(sc.startTime),
-    })),
+    // `cancelledAt` alongside `status` on both families, because since #327
+    // `status` cannot say a class was cancelled and an Art. 15 export that
+    // stops reporting a cancellation has lost a fact the subject held.
+    classes: teacher.calendarEntries.flatMap((e) =>
+      e.classes.map((c) => ({
+        classType: e.classType,
+        date: e.date,
+        startTime: timeToHHmm(e.startTime),
+        durationMinutes: e.durationMinutes,
+        status: c.status,
+        cancelledAt: e.cancelledAt,
+        registrations: c._count.registrations,
+        totalRevenue: c.totalRevenue,
+        effectiveTeacherRate: c.effectiveTeacherRate,
+      })),
+    ),
+    studioClasses: teacher.calendarEntries.flatMap((e) =>
+      e.studioClasses.map((sc) => ({
+        ...sc,
+        classType: e.classType,
+        date: e.date,
+        startTime: timeToHHmm(e.startTime),
+        durationMinutes: e.durationMinutes,
+        cancelledAt: e.cancelledAt,
+      })),
+    ),
     studioClassTemplates: teacher.scheduleRules.flatMap((r) =>
       r.studioClassTemplates.map((sct) => withStudioSlot(sct, r)),
     ),
@@ -322,11 +359,14 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // Record which open classes free a spot — the waitlist hook runs on
     // them after the erasure commits. A read, so it carries no lock-ordering
     // obligation — see the ordered pre-lock below for what does.
+    // `calendarEntry: { cancelledAt: null }` beside the statuses (#327): a
+    // cancelled class keeps its `draft`/`open` status now, and this list feeds
+    // `handleSpotFreed` — which has nothing to free on a class that is off.
     const upcoming = await tx.registration.findMany({
       where: {
         studentId,
         status: 'registered',
-        class: { status: { in: ['draft', 'open'] } },
+        class: { status: { in: ['draft', 'open'] }, calendarEntry: { cancelledAt: null } },
       },
       select: { classId: true, class: { select: { status: true } } },
     });
@@ -465,11 +505,16 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // teacher erasure and a student erasure overlap on two classes") and fails
     // with `40P01` if the clause is removed.
     // Cancel upcoming registrations so open classes free the spots.
+    // The same predicate as the `upcoming` read above, `cancelledAt: null`
+    // included, and it has to stay the same: this write is what that read
+    // predicts. A cancelled class frees no spot, so its registrations are left
+    // exactly as they were — which is what `status: { in: ['draft','open'] }`
+    // did on its own before cancellation left the enum.
     await tx.registration.updateMany({
       where: {
         studentId,
         status: 'registered',
-        class: { status: { in: ['draft', 'open'] } },
+        class: { status: { in: ['draft', 'open'] }, calendarEntry: { cancelledAt: null } },
       },
       data: { status: 'cancelled', cancelledAt: new Date() },
     });
@@ -848,8 +893,13 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
   // A class already underway has happened — complete it (pricing, payment
   // records, notifications) instead of pretending it was cancelled
   // mid-session. The billing is the students' payment history too.
+  // `cancelledAt: null` beside the status (#327): a cancelled class keeps its
+  // `in_progress` status now, and `completeClass` bills — so without it this
+  // erasure would run the pricing engine over a class the teacher had already
+  // called off. (`completeClass` refuses one anyway; this is what keeps the
+  // erasure from asking.)
   const inProgress = await db.class.findMany({
-    where: { teacherId, status: 'in_progress' },
+    where: { calendarEntry: { teacherId, cancelledAt: null }, status: 'in_progress' },
     select: { id: true },
   });
   for (const cls of inProgress) {
@@ -934,12 +984,26 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // No `include` of registrations any more: the recipient list is read
       // inside the loop, under the lock the CAS takes — see there.
       const upcoming = await tx.class.findMany({
-        where: { teacherId, status: { in: [...CANCELLABLE_STATUSES] } },
+        where: {
+          // `cancelledAt: null` beside the statuses, not instead of them
+          // (#327). `CANCELLABLE_STATUSES` is `ClassStatus` minus `completed`,
+          // which USED to exclude an already-cancelled class for free; now it
+          // does not, and re-cancelling one would re-notify every student.
+          calendarEntry: { teacherId, cancelledAt: null },
+          status: { in: [...CANCELLABLE_STATUSES] },
+        },
         orderBy: { id: 'asc' },
-        // `date`/`startTime` for the notification bodies below: a waitlist-only
-        // student can place the class by nothing else (the entry closes to
-        // `removed` and the cancelled class links nowhere in the inbox).
-        select: { id: true, classType: true, date: true, startTime: true },
+        // `classType`/`date`/`startTime` for the notification bodies below: a
+        // waitlist-only student can place the class by nothing else (the entry
+        // closes to `removed` and the cancelled class links nowhere in the
+        // inbox). All three live on the calendar entry since #327, along with
+        // the entry id the cancel below writes.
+        select: {
+          id: true,
+          calendarEntry: {
+            select: { id: true, classType: true, date: true, startTime: true },
+          },
+        },
       });
 
       // Every class this erasure may cancel, locked ascending in ONE statement
@@ -1026,9 +1090,19 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // bound applies here, since Article 17 does not distinguish which
       // subject is being erased, and `api/account/route.ts` already answers
       // the resulting `55P03` with a retryable 503.
+      //
+      // VERDICT (#327): this transaction WRITES entry-level state — the cancel
+      // below is `CalendarEntry.cancelledAt`, and its CAS re-evaluates that
+      // column — so the entry rows are locked here too, keeping the lock set a
+      // superset of the write set. The sibling pre-lock in
+      // `deleteStudentAccount` above does NOT take them: it never reads or
+      // writes an entry column.
       await lockClassRowsOrdered(tx, {
-        where: Prisma.sql`c."teacherId" = ${teacherId}
+        join: Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
+        where: Prisma.sql`e."teacherId" = ${teacherId}
+          AND e."cancelledAt" IS NULL
           AND c.status IN (${CANCELLABLE_STATUSES_SQL})`,
+        entries: true,
       });
 
       for (const cls of upcoming) {
@@ -1057,15 +1131,24 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         // fired, following the precedent `updateClass` (`class-lifecycle.ts`)
         // sets for its own second check. `warn`, not `error`: the two
         // expected causes are races this CAS exists to lose gracefully.
-        const cancelled = await tx.class.updateMany({
-          where: { id: cls.id, status: { in: [...CANCELLABLE_STATUSES] } },
-          data: { status: 'cancelled' },
+        //
+        // The write is the ENTRY's `cancelledAt` since #327, with the class
+        // half of the predicate carried through the relation so the CAS still
+        // asks the same question it always did: cancel this class only while
+        // it is live and not yet completed.
+        const cancelled = await tx.calendarEntry.updateMany({
+          where: {
+            id: cls.calendarEntry.id,
+            cancelledAt: null,
+            classes: { some: { status: { in: [...CANCELLABLE_STATUSES] } } },
+          },
+          data: { cancelledAt: new Date() },
         });
 
         if (cancelled.count === 0) {
           const observed = await tx.class.findUnique({
             where: { id: cls.id },
-            select: { status: true },
+            select: { status: true, calendarEntry: { select: { cancelledAt: true } } },
           });
           // The `continue` below skips the waitlist sweep too, deliberately —
           // "does not touch the waitlist" is exactly what the test "leaves a
@@ -1098,7 +1181,11 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
             {
               teacherId,
               classId: cls.id,
+              // Both halves, because neither answers alone any more: a
+              // concurrent cancellation leaves `status` untouched and only
+              // `cancelledAt` shows it.
               observedStatus: observed?.status ?? 'row-deleted',
+              observedCancelledAt: observed?.calendarEntry.cancelledAt ?? null,
               waitingEntriesLeft,
             },
             'teacher erasure: class cancel CAS matched nothing',
@@ -1152,7 +1239,7 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
             recipientId: r.studentId,
             type: 'class_cancelled' as const,
             title: 'Class cancelled',
-            body: `${cls.classType} class on ${formatDayHeader(cls.date)} at ${timeToHHmm(cls.startTime)} has been cancelled — the teacher closed their account.`,
+            body: `${cls.calendarEntry.classType} class on ${formatDayHeader(cls.calendarEntry.date)} at ${timeToHHmm(cls.calendarEntry.startTime)} has been cancelled — the teacher closed their account.`,
             relatedClassId: cls.id,
           }));
           await createBulkNotifications(tx, notifications);

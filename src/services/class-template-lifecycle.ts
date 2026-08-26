@@ -606,19 +606,16 @@ export type UpdateClassTemplateResult =
  *   - `already_this_week` — the same read, and the same `isWeekHeld` the
  *     generator's loop decides with. That sharing is the point of the
  *     function existing.
- *   - `slot_taken` (#196) — somebody ELSE's row: another non-cancelled class of
- *     this teacher at the same `(date, startTime)`. Invisible to a
- *     `templateId`-keyed read, which is why there is a SECOND read. Missing it
- *     made the prediction land EARLIER than the sweep delivers, which is the
- *     dishonest direction: rule 1 of #194 leaves a moved-off template's
- *     instances standing, so a second template edited onto that day and time
- *     finds its own weeks empty and every date occupied.
- *   - `blocked_by_other_family` (#296) — a LIVE class of the other family at
- *     this teacher's `(date, startTime)`. Reproduced by a THIRD read, added in
- *     the same change that gave the generator the reason. Adding one without
- *     the other is what would make this probe name a week the sweep then
- *     skips — the same shape as the `slot_taken` omission above, and the
- *     reason that omission is written down rather than quietly fixed.
+ *   - `slot_taken` (#196) and `blocked_by_other_family` (#296) — somebody
+ *     ELSE's row: another LIVE entry of this teacher at the same
+ *     `(date, startTime)`. Invisible to a rule-keyed read, which is why there
+ *     is a SECOND read. Missing it made the prediction land EARLIER than the
+ *     sweep delivers, which is the dishonest direction: rule 1 of #194 leaves
+ *     a moved-off template's instances standing, so a second template edited
+ *     onto that day and time finds its own weeks empty and every date
+ *     occupied. The two reasons took two reads until #327 put both families
+ *     in one `CalendarEntry`; they take one now, and the probe does not tell
+ *     them apart because the answer it gives is the same either way.
  *   - `raced` — **not reproduced, and not reproducible.** It is a concurrent
  *     insert landing between the generator's pre-check and its write, so at
  *     probe time it has not happened yet and there is nothing to read. Its
@@ -629,12 +626,11 @@ export type UpdateClassTemplateResult =
  *
  * The two facts are kept apart rather than merged into one set, because they
  * are not the same fact: a WEEK this template already occupies versus a single
- * DATE whose slot another class holds. Slot-taken dates are removed from the
+ * DATE whose slot another entry holds. Slot-taken dates are removed from the
  * candidate list; `firstFreeWeek` then answers the week question over what is
- * left. All THREE reads are bounded by `horizon` itself — its first and last
- * weeks for the week read, its own members for the two slot reads (this
- * family's, and since #296 the other family's) — so nothing here can disagree
- * with anything else about which dates are in play.
+ * left. BOTH reads are bounded by `horizon` itself — its first and last weeks
+ * for the week read, its own members for the slot read — so nothing here can
+ * disagree with anything else about which dates are in play.
  *
  * Answers `null` rather than throwing when a read fails. The edit has already
  * committed by the time this runs, so a probe failure must not turn a saved
@@ -655,13 +651,14 @@ async function probeFirstEffectiveWeek(
   if (first === undefined || last === undefined) return null;
 
   try {
-    const [ownRows, slotHolders, foreignHolders] = await Promise.all([
-      // The weeks this template already occupies. Keyed on `templateId`, which
-      // rides `@@unique([templateId, date])`, and bounded by the horizon's own
-      // first and last weeks. No status filter — see the docblock.
-      db.class.findMany({
+    const [ownRows, slotHolders] = await Promise.all([
+      // The weeks this template already occupies. Keyed on `scheduleRuleId`,
+      // which rides `@@unique([scheduleRuleId, date])`, and bounded by the
+      // horizon's own first and last weeks. No liveness filter — see the
+      // docblock.
+      db.calendarEntry.findMany({
         where: {
-          templateId: template.id,
+          scheduleRuleId: template.scheduleRuleId,
           date: {
             gte: new Date(mondayOf(first)),
             lt: new Date(mondayOf(last) + 7 * 24 * 60 * 60 * 1000),
@@ -670,37 +667,28 @@ async function probeFirstEffectiveWeek(
         select: { date: true },
       }),
       // The dates whose slot is already taken, mirroring the generator's own
-      // predicate: this teacher's non-cancelled classes at this template's
-      // `startTime`. `status: { not: 'cancelled' }` rather than no filter,
-      // matching `Class_teacher_slot_unique`'s partial scope (`WHERE "status"
-      // <> 'cancelled'`) — the opposite of the read above, and for the
-      // opposite reason: a cancelled class does not hold a slot, and a
-      // cancelled class does hold a week. `date: { in: … }` over the horizon
+      // predicate: this teacher's LIVE entries at this template's `startTime`.
+      // `cancelledAt: null` rather than no filter, matching
+      // `CalendarEntry_teacher_slot_excl`'s partial scope (`WHERE
+      // "cancelledAt" IS NULL`) — the opposite of the read above, and for the
+      // opposite reason: a cancelled entry does not hold a slot, and a
+      // cancelled entry does hold a week. `date: { in: … }` over the horizon
       // itself rather than a second pair of bounds, so the two reads cannot
       // drift apart about the range; `@@index([teacherId, date])` backs it.
-      db.class.findMany({
-        where: {
-          teacherId: template.teacherId,
-          startTime: hhmmToTime(template.startTime),
-          status: { not: 'cancelled' },
-          date: { in: [...horizon] },
-        },
-        select: { date: true },
-      }),
-      // The OTHER family (#296), mirroring the same predicate one table over:
-      // `cancelledAt IS NULL` is `StudioClass`'s spelling of the liveness
-      // `status <> 'cancelled'` expresses above.
       //
-      // This read is not an extension of the probe, it is a REPAIR of it. Once
-      // the generator declines a cross-family date (`blocked_by_other_family`),
-      // a probe blind to the studio table counts that date as a free candidate
-      // and names a week the sweep will then skip — landing EARLIER than
-      // delivered, which this function's own docblock calls the dishonest
-      // direction and which is exactly the defect `slot_taken` was found
-      // missing for. Adding the reason without adding this read would have
-      // reproduced that defect one family over, in the same function, three
-      // issues later.
-      db.studioClass.findMany({
+      // ONE READ FOR BOTH FAMILIES since #327, where this used to be two — the
+      // second was a `StudioClass` scan added in #296, and it was not an
+      // extension of the probe but a REPAIR of it: a probe blind to the other
+      // family counted a cross-family date as a free candidate and named a
+      // week the sweep would then skip, landing EARLIER than delivered, which
+      // this function's own docblock calls the dishonest direction. With one
+      // occupancy table that blindness is not expressible.
+      //
+      // Still EXACT-START rather than overlap-based, unlike the generator's
+      // own pre-check: this probe answers "which week can the new schedule
+      // first reach", and a partial overlap that the generator would decline
+      // would make this answer later than delivered — the honest direction.
+      db.calendarEntry.findMany({
         where: {
           teacherId: template.teacherId,
           startTime: hhmmToTime(template.startTime),
@@ -711,16 +699,13 @@ async function probeFirstEffectiveWeek(
       }),
     ]);
 
-    const heldWeeks = new Set(ownRows.map((c) => mondayOf(c.date)));
-    // Both families' slot holders in one set. They are not told apart here, and
-    // deliberately: this function answers "which week can the new schedule
-    // first reach", and a date is unreachable for the same reason whichever
+    const heldWeeks = new Set(ownRows.map((e) => mondayOf(e.date)));
+    // Both families' slot holders in one set, which is now what the table is
+    // rather than something this function assembles. They are not told apart,
+    // and deliberately: a date is unreachable for the same reason whichever
     // family holds it. The GENERATOR tells them apart, because its two reasons
     // carry two different remedies for the teacher.
-    const takenDates = new Set([
-      ...slotHolders.map((c) => c.date.getTime()),
-      ...foreignHolders.map((c) => c.date.getTime()),
-    ]);
+    const takenDates = new Set(slotHolders.map((e) => e.date.getTime()));
 
     // Removed from the candidates rather than folded into `heldWeeks`. Folding
     // would be shorter and would say something false: a taken slot does not
@@ -1373,11 +1358,31 @@ const SCHEDULED_STATUSES_SQL = Prisma.raw(SCHEDULED_STATUSES.map((s) => `'${s}'`
  * Both are compared against a *calendar date* from `startOfLocalDay`, never a
  * raw instant — see that helper for why.
  */
-const scheduledWhere = (templateId: string, date: { gt: Date } | { gte: Date }) => ({
-  templateId,
-  date,
-  status: { in: [...SCHEDULED_STATUSES] },
-});
+const scheduledWhere = (
+  scheduleRuleId: string,
+  date: { gt: Date } | { gte: Date },
+  alsoOnClass: Prisma.ClassWhereInput = {},
+) =>
+  ({
+    // A `CalendarEntry` predicate since #327, not a `Class` one, and the shift
+    // is not cosmetic: `date` and the rule key both live there, and the
+    // ARCHIVE'S DELETE HAS TO DELETE THE ENTRY. Deleting the `Class` alone
+    // would leave its entry standing, still holding `(scheduleRuleId, date)`
+    // against the hourly sweep and still occupying the slot — a withdrawn
+    // class that can never be regenerated and that blocks the date for good.
+    // Cascade runs the other way (`Class.calendarEntry` is `onDelete:
+    // Cascade`), so deleting the entry takes the class with it.
+    scheduleRuleId,
+    date,
+    // The half `status IN ('draft','open')` used to carry for free. A
+    // cancelled class keeps a live status now, and archiving must leave it
+    // standing: it holds the date the teacher deliberately called off, which
+    // is exactly what `ScheduleRule.withdrawnCount`'s docblock says the studio
+    // family's `cancelledAt: null` filter is for. Both families spell it the
+    // same way here.
+    cancelledAt: null,
+    classes: { some: { status: { in: [...SCHEDULED_STATUSES] }, ...alsoOnClass } },
+  }) satisfies Prisma.CalendarEntryWhereInput;
 
 /**
  * One arm per way `pauseOrResumeTemplate`'s transaction can resolve. Internal
@@ -1710,8 +1715,8 @@ export async function pauseOrResumeTemplate(
         // Do not "simplify" this to
         // `template.scheduleRule.teacher.…`.
         const today = startOfLocalDay(new Date(), claimed.scheduleRule.teacher.defaultTimezone);
-        const scheduled = await tx.class.count({
-          where: scheduledWhere(templateId, { gte: today }),
+        const scheduled = await tx.calendarEntry.count({
+          where: scheduledWhere(claimed.scheduleRuleId, { gte: today }),
         });
         const { scheduleRule: claimedRule, ...bareT } = claimed;
         const skipCounts = countSkipReasons(generation.skipped);
@@ -1831,8 +1836,8 @@ export async function pauseOrResumeTemplate(
       // today's class is still on it. Pause deletes nothing, so there is no
       // spare-today carve-out here to mirror.
       const today = startOfLocalDay(new Date(), template.scheduleRule.teacher.defaultTimezone);
-      const lastScheduledRow = await db.class.findFirst({
-        where: scheduledWhere(templateId, { gte: today }),
+      const lastScheduledRow = await db.calendarEntry.findFirst({
+        where: scheduledWhere(template.scheduleRuleId, { gte: today }),
         orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
         select: { date: true, startTime: true },
       });
@@ -2185,18 +2190,18 @@ export async function archiveOrUnarchiveTemplate(
         // transaction's own call above; issuing it again here would be
         // redundant, not wrong.
         //
-        // `c.date > ${today}`, not Prisma's `date: { gt: today }` used
+        // `e.date > ${today}`, not Prisma's `date: { gt: today }` used
         // everywhere else `scheduledWhere` is called — `FOR UPDATE OF c` has
         // no query-builder equivalent, so this statement is raw SQL end to
         // end. The two forms are NOT the same comparison, and the difference
         // is worth stating precisely rather than waving through, because the
         // property this pre-lock needs is one-directional.
         //
-        // `Class.date` is `@db.Date`. Prisma's `date: { gt: today }` binds a
-        // `date` parameter, so Postgres compares `date > date`. A `$queryRaw`
-        // binds a JS `Date` as `timestamptz`, so this statement compares
-        // `date > timestamptz`, which promotes `c.date` to an instant at
-        // midnight IN THE SESSION `TimeZone`. Measured, both directions:
+        // `CalendarEntry.date` is `@db.Date`. Prisma's `date: { gt: today }`
+        // binds a `date` parameter, so Postgres compares `date > date`. A
+        // `$queryRaw` binds a JS `Date` as `timestamptz`, so this statement
+        // compares `date > timestamptz`, which promotes `e.date` to an instant
+        // at midnight IN THE SESSION `TimeZone`. Measured, both directions:
         //
         //   TimeZone=UTC               '2026-08-15'::date > '2026-08-15T00:00:00Z' → f
         //   TimeZone=America/New_York  same comparison                             → t
@@ -2272,10 +2277,18 @@ export async function archiveOrUnarchiveTemplate(
         // re-evaluation regardless, and widening the pre-lock past `today`
         // would lock history for no gain, since a past-dated row is never a
         // delete candidate.
+        //
+        // VERDICT (#327): this transaction reads AND writes entry-level
+        // scheduling state — the `deleteMany` below re-evaluates a predicate
+        // over the entry's `date`, and the row it deletes IS the entry — so
+        // the entry rows are locked here too.
         await lockClassRowsOrdered(tx, {
-          where: Prisma.sql`c."templateId" = ${templateId}
-            AND c.date > ${today}
+          join: Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
+          where: Prisma.sql`e."scheduleRuleId" = ${template.scheduleRuleId}
+            AND e."cancelledAt" IS NULL
+            AND e.date > ${today}
             AND c.status IN (${SCHEDULED_STATUSES_SQL})`,
+          entries: true,
         });
 
         // #112. Who is waiting on a class this archive might withdraw.
@@ -2305,15 +2318,22 @@ export async function archiveOrUnarchiveTemplate(
         const candidates = await tx.waitlistEntry.findMany({
           where: {
             status: 'waiting',
-            class: scheduledWhere(templateId, { gt: today }),
+            class: { calendarEntry: scheduledWhere(template.scheduleRuleId, { gt: today }) },
           },
           select: {
             studentId: true,
             classId: true,
             // Type, date AND time: the notification outlives the class row with
             // a null link, so these three fields are the only identity it will
-            // ever have. A student with two weekly classes needs the time.
-            class: { select: { classType: true, date: true, startTime: true } },
+            // ever have. A student with two weekly classes needs the time. All
+            // three moved to the entry in #327.
+            class: {
+              select: {
+                calendarEntry: {
+                  select: { classType: true, date: true, startTime: true },
+                },
+              },
+            },
           },
         });
 
@@ -2327,11 +2347,10 @@ export async function archiveOrUnarchiveTemplate(
         // returned `count` is the number of rows that actually matched then — not
         // a stale count from an earlier read. Do not "optimise" this back into a
         // read-then-delete.
-        const { count: deleted } = await tx.class.deleteMany({
-          where: {
-            ...scheduledWhere(templateId, { gt: today }),
+        const { count: deleted } = await tx.calendarEntry.deleteMany({
+          where: scheduledWhere(template.scheduleRuleId, { gt: today }, {
             registrations: { none: { status: { in: [...CHARGED_STATUSES] } } },
-          },
+          }),
         });
 
         // Which candidates' classes actually went. `deleteMany` returns a count,
@@ -2370,7 +2389,7 @@ export async function archiveOrUnarchiveTemplate(
               recipientId: c.studentId,
               type: 'class_cancelled' as const,
               title: 'Class cancelled',
-              body: `The ${c.class.classType} class on ${formatDayHeader(c.class.date)} at ${timeToHHmm(c.class.startTime)} has been withdrawn by your teacher. You were on its waiting list.`,
+              body: `The ${c.class.calendarEntry.classType} class on ${formatDayHeader(c.class.calendarEntry.date)} at ${timeToHHmm(c.class.calendarEntry.startTime)} has been withdrawn by your teacher. You were on its waiting list.`,
             }));
             await createBulkNotifications(tx, notifications);
           }
@@ -2385,8 +2404,8 @@ export async function archiveOrUnarchiveTemplate(
         // the delete's own boundary would exclude that
         // same survivor and tell the teacher nothing is left while the class is
         // still open on their public page.
-        const remaining = await tx.class.count({
-          where: scheduledWhere(templateId, { gte: today }),
+        const remaining = await tx.calendarEntry.count({
+          where: scheduledWhere(template.scheduleRuleId, { gte: today }),
         });
 
         // Written from the delete's own `count`, inside the same transaction, so

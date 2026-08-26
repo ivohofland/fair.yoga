@@ -13,6 +13,7 @@ import { log } from '@/lib/log';
 import { claimTemplateForGeneration } from './class-generator';
 import { claimStudioTemplateForGeneration } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -81,8 +82,7 @@ async function makeStudentWaitingInClass(
     data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 15, rentalRate: 30 },
     select: { id: true },
   });
-  const cls = await prisma.class.create({
-    data: {
+  const cls = await createClassFixture(prisma, {
       teacherId: teacher.id,
       teacherRoomId: teacherRoom.id,
       classType: 'Lock class',
@@ -95,9 +95,7 @@ async function makeStudentWaitingInClass(
       minStudents: 1,
       maxStudents: 10,
       status: 'open',
-    },
-    select: { id: true },
-  });
+    });
   const student = await prisma.student.create({
     data: {
       firstName: 'Lock',
@@ -214,8 +212,7 @@ async function makeStudentWithClosedEntriesInClasses(classCount: number) {
   });
   const classIds: string[] = [];
   for (let i = 0; i < classCount; i++) {
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId: teacher.id,
         teacherRoomId: teacherRoom.id,
         classType: `Budget class ${i}`,
@@ -228,9 +225,7 @@ async function makeStudentWithClosedEntriesInClasses(classCount: number) {
         minStudents: 1,
         maxStudents: 10,
         status: 'open',
-      },
-      select: { id: true },
-    });
+      });
     await prisma.waitlistEntry.create({
       data: { classId: cls.id, studentId: student.id, position: 1, status: 'expired' },
     });
@@ -325,8 +320,7 @@ let studentAccountId: string;
     });
 
     const mkClass = (status: 'completed' | 'open', date: string) =>
-      prisma.class.create({
-        data: {
+      createClassFixture(prisma, {
           teacherId,
           teacherRoomId,
           classType: `GDPR ${status}`,
@@ -339,8 +333,7 @@ let studentAccountId: string;
           minStudents: 1,
           maxStudents: 10,
           status,
-        },
-      });
+        });
 
     const completed = await mkClass('completed', '2026-06-01');
     completedClassId = completed.id;
@@ -926,8 +919,12 @@ let studentAccountId: string;
     expect(teacher.pageSlug).toBe(`deleted-${teacherId}`);
     expect(teacher.deletedAt).not.toBeNull();
 
-    const openClass = await prisma.class.findUniqueOrThrow({ where: { id: openClassId } });
-    expect(openClass.status).toBe('cancelled');
+    // Cancellation is the ENTRY's column since #327 — the class keeps its
+    // `open` status, which is asserted alongside so a regression that wrote
+    // neither reads as what it is.
+    const openClass = await prisma.class.findUniqueOrThrow({ where: { id: openClassId }, include: { calendarEntry: true },});
+    expect(openClass.status).toBe('open');
+    expect(openClass.calendarEntry.cancelledAt).not.toBeNull();
 
     // Registered student was told
     const note = await prisma.notification.findFirst({
@@ -936,7 +933,7 @@ let studentAccountId: string;
     expect(note).not.toBeNull();
 
     // Completed class (the students' payment history) survives
-    const completed = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId } });
+    const completed = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId }, include: { calendarEntry: true },});
     expect(completed.status).toBe('completed');
 
     await prisma.notification.deleteMany({ where: { recipientId: other.id } });
@@ -1321,7 +1318,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     await prisma.registration.deleteMany({
       where: { studentId: { in: [registeredStudentId, waitingStudentId] } },
     });
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.student.deleteMany({ where: { id: { in: [registeredStudentId, waitingStudentId] } } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
@@ -1331,8 +1328,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
   });
 
   it('leaves a class that completed after the erasure read alone, and still erases', async () => {
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'CAS class',
@@ -1345,9 +1341,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
         minStudents: 1,
         maxStudents: 10,
         status: 'in_progress',
-      },
-      select: { id: true },
-    });
+      });
     const classId = cls.id;
 
     await prisma.registration.create({
@@ -1442,7 +1436,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     // Order matters for what a regression reports: checking the row first
     // means the unconditional-update bug shows as the actual overwrite
     // ("expected 'completed' to be 'cancelled'"), not just a wrong boolean.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(after.status).toBe('completed');
 
     // The skip has to be real, not just "the class row happens to look
@@ -1579,8 +1573,8 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // premise below rather than assuming it, so a planner or storage change
     // that invalidates it fails loudly instead of leaving this test green for
     // no reason.
-    await prisma.class.create({ data: { ...base, id: HIGH_CLASS_ID, date: new Date('2099-06-01') } });
-    await prisma.class.create({ data: { ...base, id: LOW_CLASS_ID, date: new Date('2099-06-02') } });
+    await createClassFixture(prisma, { ...base, id: HIGH_CLASS_ID, date: new Date('2099-06-01') });
+    await createClassFixture(prisma, { ...base, id: LOW_CLASS_ID, date: new Date('2099-06-02') });
 
     const student = await prisma.student.create({
       data: {
@@ -1617,7 +1611,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
   afterAll(async () => {
     await prisma.notification.deleteMany({ where: { recipientId: studentId } });
     await prisma.waitlistEntry.deleteMany({ where: { studentId } });
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.student.deleteMany({ where: { id: studentId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.deleteMany({ where: { id: roomId } });
@@ -1632,9 +1626,10 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // this ever stops holding, the test below can no longer provoke the cycle
     // and would pass on broken code — so it fails here instead.
     const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM "Class"
-      WHERE "teacherId" = ${teacherId}
-        AND status IN ('draft', 'open', 'in_progress')
+      SELECT c.id FROM "Class" c
+      JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+      WHERE e."teacherId" = ${teacherId}
+        AND c.status IN ('draft', 'open', 'in_progress')
     `;
     expect(heapOrder.map((r) => r.id)).toEqual([HIGH_CLASS_ID, LOW_CLASS_ID]);
 
@@ -1864,11 +1859,10 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // both, and the student's entries on both are gone. A fixture that never
     // contended satisfies the no-deadlock assertions above perfectly, so this
     // is what stops it doing that.
-    const statuses = await prisma.class.findMany({
-      where: { teacherId },
-      select: { status: true },
+    const cancelled = await prisma.calendarEntry.count({
+      where: { teacherId, cancelledAt: { not: null } },
     });
-    expect(statuses.map((c) => c.status)).toEqual(['cancelled', 'cancelled']);
+    expect(cancelled).toBe(2);
     const remainingEntries = await prisma.waitlistEntry.count({
       where: { studentId, classId: { in: [LOW_CLASS_ID, HIGH_CLASS_ID] } },
     });
@@ -1953,8 +1947,7 @@ describe('deleteTeacherAccount notifies whoever is registered when it cancels (#
       select: { id: true },
     });
 
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'Notify class',
@@ -1967,9 +1960,7 @@ describe('deleteTeacherAccount notifies whoever is registered when it cancels (#
         minStudents: 1,
         maxStudents: 10,
         status: 'open',
-      },
-      select: { id: true },
-    });
+      });
     classId = cls.id;
 
     const early = await prisma.student.create({
@@ -1993,7 +1984,7 @@ describe('deleteTeacherAccount notifies whoever is registered when it cancels (#
       where: { recipientId: { in: [earlyStudentId, lateStudentId, teacherId] } },
     });
     await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.student.deleteMany({ where: { id: { in: [earlyStudentId, lateStudentId] } } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.deleteMany({ where: { id: roomId } });
@@ -2042,8 +2033,8 @@ describe('deleteTeacherAccount notifies whoever is registered when it cancels (#
 
     expect(hookCalls).toBe(1);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
-    expect(after.status).toBe('cancelled');
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    expect(after.calendarEntry.cancelledAt).not.toBeNull();
 
     // The student who was already there is told — this half passes either
     // way, and is here so a regression reads as "the late one was missed"
@@ -2128,8 +2119,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
     });
 
     const target = new Date(Date.now() + 48 * 60 * 60 * 1000 + 30 * 60 * 1000);
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId: teacher.id,
         teacherRoomId: teacherRoom.id,
         classType: 'Race class',
@@ -2144,9 +2134,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
         cancelDeadline: 'HOURS_48',
         autoCancelCheck: 'HOURS_2',
         status: 'open',
-      },
-      select: { id: true },
-    });
+      });
     const student = await prisma.student.create({
       data: {
         firstName: 'Race',
@@ -2433,7 +2421,9 @@ describe('deleteTeacherAccount serialises against a claim in progress (#315)', (
   });
 
   afterAll(async () => {
-    await prisma.class.deleteMany({ where: { templateId } });
+    await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+    });
     await prisma.classTemplate.deleteMany({ where: { id: templateId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.deleteMany({ where: { id: roomId } });
@@ -2536,7 +2526,9 @@ describe('deleteTeacherAccount serialises against a studio claim in progress (#3
   });
 
   afterAll(async () => {
-    await prisma.studioClass.deleteMany({ where: { templateId } });
+    await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+    });
     await prisma.studioClassTemplate.deleteMany({ where: { id: templateId } });
     await prisma.teacher.deleteMany({ where: { id: teacherId } });
     await prisma.account.deleteMany({ where: { id: accountId } });

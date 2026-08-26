@@ -14,9 +14,10 @@ export default async function PastClassesPage() {
 
   const [classes, studioClasses] = await Promise.all([
     prisma.class.findMany({
-      where: { teacherId: session.teacherId, date: { lt: today } },
-      orderBy: { date: 'desc' },
+      where: { calendarEntry: { teacherId: session.teacherId, date: { lt: today } } },
+      orderBy: { calendarEntry: { date: 'desc' } },
       include: {
+        calendarEntry: true,
         _count: { select: { registrations: true } },
         // Payment statuses feed the completed-card rollup (✓ all paid …).
         registrations: {
@@ -27,8 +28,9 @@ export default async function PastClassesPage() {
       },
     }),
     prisma.studioClass.findMany({
-      where: { teacherId: session.teacherId, date: { lt: today } },
-      orderBy: { date: 'desc' },
+      where: { calendarEntry: { teacherId: session.teacherId, date: { lt: today } } },
+      include: { calendarEntry: true },
+      orderBy: { calendarEntry: { date: 'desc' } },
     }),
   ]);
 

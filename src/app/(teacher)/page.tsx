@@ -35,11 +35,11 @@ export default async function TeacherHome() {
     }),
     prisma.class.findMany({
       where: {
-        teacherId: session.teacherId,
-        date: { gte: start, lt: end },
+        calendarEntry: { teacherId: session.teacherId, date: { gte: start, lt: end } },
       },
-      orderBy: { date: 'asc' },
+      orderBy: { calendarEntry: { date: 'asc' } },
       include: {
+        calendarEntry: true,
         _count: { select: { registrations: true } },
         // Payment statuses feed the completed-card rollup (✓ all paid …).
         registrations: {
@@ -51,13 +51,13 @@ export default async function TeacherHome() {
     }),
     prisma.studioClass.findMany({
       where: {
-        teacherId: session.teacherId,
-        date: { gte: start, lt: end },
+        calendarEntry: { teacherId: session.teacherId, date: { gte: start, lt: end } },
       },
-      orderBy: { date: 'asc' },
+      include: { calendarEntry: true },
+      orderBy: { calendarEntry: { date: 'asc' } },
     }),
     prisma.teacherRoom.count({ where: { teacherId: session.teacherId, isArchived: false } }),
-    prisma.class.count({ where: { teacherId: session.teacherId } }),
+    prisma.class.count({ where: { calendarEntry: { teacherId: session.teacherId } } }),
   ]);
 
   // The checklist retires itself once the teacher has taught the basics

@@ -19,6 +19,7 @@ import { startOfLocalDay } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { STUDIO_CLASS_EDIT_REFUSALS } from '@/services/studio-class-edit-refusals';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createStudioClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -49,8 +50,7 @@ const makeClass = ({ startTime, ...data }: {
   hourlyRate?: number;
   durationMinutes?: number;
 }) =>
-  prisma.studioClass.create({
-    data: {
+  createStudioClassFixture(prisma, {
       teacherId,
       classType: 'Page Case',
       durationMinutes: 60,
@@ -58,8 +58,7 @@ const makeClass = ({ startTime, ...data }: {
       hourlyRate: 45,
       startTime: hhmmToTime(startTime),
       ...data,
-    },
-  });
+    });
 
 beforeAll(async () => {
   await prisma.$connect();
@@ -79,7 +78,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.studioClass.deleteMany({ where: { teacherId } });
+  await prisma.calendarEntry.deleteMany({ where: { teacherId } });
   // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
   // 298) — deleting the rules removes the templates with them.
   await prisma.scheduleRule.deleteMany({ where: { teacherId, kind: 'studio' } });
@@ -278,7 +277,7 @@ describe('the studio class page: which classes offer editing', () => {
   });
 
   afterAll(async () => {
-    await prisma.studioClass.deleteMany({ where: { teacherId: otherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: otherId } });
   });
 
   it('offers editing on a live non-past row', async () => {
@@ -370,7 +369,7 @@ describe('the reporting page, which is where the income claim is settled', () =>
   });
 
   afterAll(async () => {
-    await prisma.studioClass.deleteMany({ where: { teacherId: soloId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: soloId } });
   });
 
   it('loses the removed class earnings, which a cancelled class never had', async () => {
@@ -379,19 +378,17 @@ describe('the reporting page, which is where the income claim is settled', () =>
 
     // 60.00/hr x 90 min = 90.00, and studentCount is deliberately left null to
     // show it plays no part in the figure.
-    const sc = await prisma.studioClass.create({
-      data: {
+    const sc = await createStudioClassFixture(prisma, {
         teacherId: soloId,
         classType: 'Solo Case',
-        templateId: null,
+        scheduleRuleId: null,
         date: new Date('2020-08-07T00:00:00.000Z'),
         startTime: hhmmToTime('08:00'),
         durationMinutes: 90,
         location: 'Community Studio',
         hourlyRate: 60,
         studentCount: null,
-      },
-    });
+      });
 
     expect(await reporting()).toContain('90.00');
 
@@ -426,8 +423,7 @@ describe('the studio class edit page', () => {
     fetch(`${BASE_URL}/studio-class/${id}/edit`, { headers: cookie(as) });
 
   const makeEditCase = ({ startTime, ...data }: { templateId?: string | null; date: Date; startTime: string }) =>
-    prisma.studioClass.create({
-      data: {
+    createStudioClassFixture(prisma, {
         teacherId,
         classType: 'Edit Page Case',
         durationMinutes: 60,
@@ -435,8 +431,7 @@ describe('the studio class edit page', () => {
         hourlyRate: 45,
         startTime: hhmmToTime(startTime),
         ...data,
-      },
-    });
+      });
 
   beforeAll(async () => {
     const email = `studioedit-stranger-${suffix}@test.local`;
@@ -479,7 +474,7 @@ describe('the studio class edit page', () => {
   // template it owns — rather than every studio row this teacher has, which
   // the surrounding describes are still using.
   afterAll(async () => {
-    await prisma.studioClass.deleteMany({ where: { teacherId, classType: 'Edit Page Case' } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId, classType: 'Edit Page Case' } });
     // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
     // 298) — deleting the child directly here would orphan its rule row.
     await prisma.scheduleRule.deleteMany({ where: { id: templateScheduleRuleId } });

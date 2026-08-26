@@ -25,8 +25,12 @@ export default async function BookClassPage({
   const cls = await prisma.class.findUnique({
     where: { id: classId },
     include: {
-      teacher: {
-        select: { id: true, firstName: true, lastName: true, pageSlug: true, deletedAt: true },
+      calendarEntry: {
+        include: {
+          teacher: {
+            select: { id: true, firstName: true, lastName: true, pageSlug: true, deletedAt: true },
+          },
+        },
       },
       teacherRoom: { include: { room: true } },
       registrations: {
@@ -37,9 +41,16 @@ export default async function BookClassPage({
   });
 
   // deletedAt: erasure renames the slug, but never rely on that alone.
-  if (!cls || cls.teacher.pageSlug !== slug || cls.teacher.deletedAt || cls.status !== 'open') {
+  // `cancelledAt` beside the status (#327): a cancelled class keeps its `open`
+  // status, and this is the page that takes a booking.
+  if (!cls
+      || cls.calendarEntry.teacher.pageSlug !== slug
+      || cls.calendarEntry.teacher.deletedAt
+      || cls.calendarEntry.cancelledAt !== null
+      || cls.status !== 'open') {
     notFound();
   }
+  const entry = cls.calendarEntry;
 
   const activeCount = cls.registrations.filter((r) => r.status !== 'late_cancel').length;
   const isFull = activeCount >= cls.maxStudents;
@@ -100,11 +111,11 @@ export default async function BookClassPage({
         className="inline-flex items-center gap-1.5 type-label text-teal no-underline mb-2"
       >
         <Icon name="arrow-left" size={18} />
-        {cls.teacher.firstName} {cls.teacher.lastName}
+        {entry.teacher.firstName} {entry.teacher.lastName}
       </Link>
-      <h1 className="type-title">{cls.classType}</h1>
+      <h1 className="type-title">{entry.classType}</h1>
       <p className="type-body mt-1">
-        {formatDayHeader(cls.date)} &middot; {timeToHHmm(cls.startTime)} &middot; {cls.durationMinutes} min
+        {formatDayHeader(entry.date)} &middot; {timeToHHmm(entry.startTime)} &middot; {entry.durationMinutes} min
       </p>
       <p className="type-caption mt-0.5">
         {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}

@@ -14,6 +14,7 @@ import { claimTemplateForGeneration } from '@/services/class-generator';
 import { claimStudioTemplateForGeneration } from '@/services/studio-class-generator';
 import { closeQueueOnStart, withdrawWaitingEntriesForTeacher } from '@/services/waitlist';
 import { readSeatCount } from '@/services/capacity';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 
@@ -346,8 +347,8 @@ describe('lockClassRowsOrdered', () => {
     // HIGH inserted FIRST, so an unordered scan of this small table returns
     // physical order — the REVERSE of ascending by id. Asserted below, not
     // assumed.
-    await prisma.class.create({ data: { ...base, id: highClassId, date: new Date('2099-06-01') } });
-    await prisma.class.create({ data: { ...base, id: lowClassId, date: new Date('2099-06-02') } });
+    await createClassFixture(prisma, { ...base, id: highClassId, date: new Date('2099-06-01') });
+    await createClassFixture(prisma, { ...base, id: lowClassId, date: new Date('2099-06-02') });
 
     const studentA = await prisma.student.create({
       data: {
@@ -392,7 +393,7 @@ describe('lockClassRowsOrdered', () => {
 
   afterAll(async () => {
     await prisma.waitlistEntry.deleteMany({ where: { classId: { in: [lowClassId, highClassId] } } });
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.student.deleteMany({ where: { id: { in: [studentAId, studentBId] } } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.deleteMany({ where: { id: roomId } });
@@ -406,12 +407,15 @@ describe('lockClassRowsOrdered', () => {
     // or storage change makes them agree, the assertion below stops proving
     // anything and this line fails loudly first.
     const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT c.id FROM "Class" c WHERE c."teacherId" = ${teacherId}
+      SELECT c.id FROM "Class" c
+        JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+       WHERE e."teacherId" = ${teacherId}
     `;
     expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
 
     const locked = await prisma.$transaction((tx) =>
-      lockClassRowsOrdered(tx, { where: Prisma.sql`c."teacherId" = ${teacherId}` }),
+      lockClassRowsOrdered(tx, { join: Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
+          where: Prisma.sql`e."teacherId" = ${teacherId}` }),
     );
 
     expect(locked).toEqual([lowClassId, highClassId]);
@@ -425,14 +429,16 @@ describe('lockClassRowsOrdered', () => {
     const raw = await prisma.$queryRaw<Array<{ id: string }>>`
       SELECT c.id FROM "Class" c
       JOIN "WaitlistEntry" w ON w."classId" = c.id
-      WHERE c."teacherId" = ${teacherId}
+      JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+      WHERE e."teacherId" = ${teacherId}
     `;
     expect(raw.filter((r) => r.id === lowClassId)).toHaveLength(2);
 
     const locked = await prisma.$transaction((tx) =>
       lockClassRowsOrdered(tx, {
-        join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`,
-        where: Prisma.sql`c."teacherId" = ${teacherId}`,
+        join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id
+          JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
+        where: Prisma.sql`e."teacherId" = ${teacherId}`,
       }),
     );
 
@@ -464,8 +470,9 @@ describe('lockClassRowsOrdered', () => {
     const holder = prisma.$transaction(
       async (tx) => {
         await lockClassRowsOrdered(tx, {
-          join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`,
-          where: Prisma.sql`c."teacherId" = ${teacherId}`,
+          join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id
+            JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
+          where: Prisma.sql`e."teacherId" = ${teacherId}`,
         });
         locked();
         await released;
@@ -504,7 +511,8 @@ describe('lockClassRowsOrdered', () => {
     // Observes the effect rather than re-asserting the string that was sent
     // — the distinction the `SHOW` tests above this describe block make.
     const seen = await prisma.$transaction(async (tx) => {
-      await lockClassRowsOrdered(tx, { where: Prisma.sql`c."teacherId" = ${teacherId}` });
+      await lockClassRowsOrdered(tx, { join: Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
+          where: Prisma.sql`e."teacherId" = ${teacherId}` });
       return tx.$queryRaw<Array<{ lock_timeout: string }>>`SHOW lock_timeout`;
     });
     expect(seen[0]?.lock_timeout).toBe('2s');
@@ -512,7 +520,8 @@ describe('lockClassRowsOrdered', () => {
 
   it('returns an empty array without erroring when nothing matches', async () => {
     const locked = await prisma.$transaction((tx) =>
-      lockClassRowsOrdered(tx, { where: Prisma.sql`c."teacherId" = ${'no-such-teacher'}` }),
+      lockClassRowsOrdered(tx, { join: Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
+          where: Prisma.sql`e."teacherId" = ${'no-such-teacher'}` }),
     );
     expect(locked).toEqual([]);
   });

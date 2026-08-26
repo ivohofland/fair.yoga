@@ -378,8 +378,14 @@ export const updateClassSchema = z.object({
 // POST /api/classes/[id]/complete so the pricing engine runs and
 // payments + notifications are created. A bare status flip would
 // silently skip billing.
+//
+// 'cancelled' is absent for a different reason (#327): it is not a
+// `ClassStatus` at all any more. Cancellation writes
+// `CalendarEntry.cancelledAt`, and the regular family reaches it through
+// POST /api/classes/[id]/cancel — its own door, because it carries a duty of
+// care the studio family's does not.
 export const transitionClassSchema = z.object({
-  status: z.enum(['draft', 'open', 'in_progress', 'cancelled']),
+  status: z.enum(['draft', 'open', 'in_progress']),
 });
 
 // ============================================================================

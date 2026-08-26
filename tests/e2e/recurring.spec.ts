@@ -82,7 +82,7 @@ test.describe('Recurring classes', () => {
   });
 
   test.afterAll(async () => {
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298),
     // so deleting the rules removes the templates with them.
     await prisma.scheduleRule.deleteMany({ where: { teacherId } });
@@ -95,7 +95,7 @@ test.describe('Recurring classes', () => {
     // with P2003 (`Class.teacherRoom` has no onDelete, so Restrict), stranding
     // the room, session and teacher rows under a cleanup error. `workers: 1`
     // closes the window today; this closes the hole (#290).
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });
@@ -131,7 +131,7 @@ test.describe('Recurring classes', () => {
 
     // No cron has fired: creation itself filled the four-week window,
     // and the schedule shows it immediately.
-    expect(await prisma.class.count({ where: { templateId } })).toBe(4);
+    expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(4);
     await page.goto('/');
     await expect(page.getByText('Recurring Flow').first()).toBeVisible();
   });
@@ -148,32 +148,26 @@ test.describe('Recurring classes', () => {
     const first = await fire();
     expect(first.status).toBe(200);
 
-    const instances = await prisma.class.findMany({
-      where: { templateId },
-      orderBy: { date: 'asc' },
-    });
+    const instances = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
     expect(instances.length).toBe(4);
     for (const instance of instances) {
       expect(instance.status).toBe('open');
-      expect(timeToHHmm(instance.startTime)).toBe('08:15');
-      expect(instance.date.getUTCDay()).toBe(templateJsDay);
-      expect(instance.date.getTime()).toBeGreaterThan(Date.now() - 24 * 3600 * 1000);
+      expect(timeToHHmm(instance.calendarEntry.startTime)).toBe('08:15');
+      expect(instance.calendarEntry.date.getUTCDay()).toBe(templateJsDay);
+      expect(instance.calendarEntry.date.getTime()).toBeGreaterThan(Date.now() - 24 * 3600 * 1000);
     }
 
     // Re-firing must not duplicate — unique (templateId, date).
     const second = await fire();
     expect(second.status).toBe(200);
-    expect(await prisma.class.count({ where: { templateId } })).toBe(4);
+    expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(4);
   });
 
   test('the first instance appears on the schedule as a bookable class', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByText('Recurring Flow').first()).toBeVisible();
 
-    const first = await prisma.class.findFirstOrThrow({
-      where: { templateId },
-      orderBy: { date: 'asc' },
-    });
+    const first = await prisma.class.findFirstOrThrow({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
     await page.goto(`/class/${first.id}`);
     await expect(page.getByRole('heading', { name: 'Recurring Flow' })).toBeVisible();
     await expect(page.getByText('Open for registration')).toBeVisible();
@@ -200,12 +194,9 @@ test.describe('Recurring classes', () => {
   test('editing the template leaves the already-scheduled instances where they are', async ({
     page,
   }) => {
-    const before = await prisma.class.findMany({
-      where: { templateId },
-      orderBy: { date: 'asc' },
-    });
+    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
     expect(before.length).toBe(4);
-    expect(before.every((c) => timeToHHmm(c.startTime) === '08:15')).toBe(true);
+    expect(before.every((c) => timeToHHmm(c.calendarEntry.startTime) === '08:15')).toBe(true);
 
     await page.goto(`/settings/recurring/${templateId}`);
     await page.getByLabel('Start time').fill('10:00');
@@ -216,7 +207,7 @@ test.describe('Recurring classes', () => {
     // the new schedule can reach is the fifth — one week past the last of them
     // — and the service's probe has to say so. `templateDate` moves with the
     // run day, so a fixed date here would pass on one day of the week.
-    const weekFive = new Date(before[3]!.date);
+    const weekFive = new Date(before[3]!.calendarEntry.date);
     weekFive.setUTCDate(weekFive.getUTCDate() + 7);
     // Back to that week's Monday, the same conversion `mondayOf` makes: the
     // copy speaks about weeks, not about the class's own weekday.
@@ -239,11 +230,8 @@ test.describe('Recurring classes', () => {
     // The classes did not — same rows, same ids, same time. Asserted on ids
     // as well as times: "still four rows at 08:15" would also be satisfied by
     // a delete-and-refill that happened to land on the old time.
-    const after = await prisma.class.findMany({
-      where: { templateId },
-      orderBy: { date: 'asc' },
-    });
+    const after = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
     expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
-    expect(after.every((c) => timeToHHmm(c.startTime) === '08:15')).toBe(true);
+    expect(after.every((c) => timeToHHmm(c.calendarEntry.startTime) === '08:15')).toBe(true);
   });
 });

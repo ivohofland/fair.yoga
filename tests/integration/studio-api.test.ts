@@ -23,6 +23,7 @@ import { generateStudioInstancesForTemplate } from '@/services/studio-class-gene
 import { startOfLocalDay } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
+import { createClassFixture, createStudioClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -119,8 +120,7 @@ beforeAll(async () => {
   templateId = (await makeTemplate(ownerId, 'Owner Template', 3, '18:00')).id;
 
   studioClassId = (
-    await prisma.studioClass.create({
-      data: {
+    await createStudioClassFixture(prisma, {
         teacherId: ownerId,
         classType: 'Owner Studio Class',
         date: new Date('2099-06-03'),
@@ -128,14 +128,13 @@ beforeAll(async () => {
         durationMinutes: 60,
         location: 'Community Studio',
         hourlyRate: 45,
-      },
-    })
+      })
   ).id;
 });
 
 afterAll(async () => {
   const teacherIds = [ownerId, otherId];
-  await prisma.studioClass.deleteMany({ where: { teacherId: { in: teacherIds } } });
+  await prisma.studioClass.deleteMany({ where: { calendarEntry: { teacherId: { in: teacherIds } } } });
   // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
   // 298), so deleting the rules removes the templates with them.
   await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: teacherIds } } });
@@ -154,9 +153,7 @@ afterAll(async () => {
 // file order-independent and re-runnable against a dev DB that accumulates
 // rows between runs.
 beforeEach(async () => {
-  await prisma.studioClass.deleteMany({
-    where: { teacherId: { in: [ownerId, otherId] }, templateId: { not: null } },
-  });
+  await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: [ownerId, otherId] }, scheduleRuleId: { not: null } } });
 });
 
 describe('POST /api/studio-class-templates', () => {
@@ -205,7 +202,7 @@ describe('POST /api/studio-class-templates', () => {
     expect(res.status).toBe(201);
 
     const { data } = (await res.json()) as { data: { id: string } };
-    expect(await prisma.studioClass.count({ where: { templateId: data.id } })).toBe(4);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: data.id } } } } } })).toBe(4);
   });
 
   /**
@@ -289,9 +286,7 @@ describe('POST /api/studio-class-templates', () => {
       // The half the endpoint's severity actually lives in: a second
       // template would have generated a second full four-week set of
       // bookable studio classes.
-      const generated = await prisma.studioClass.findMany({
-        where: { templateId: templates[0]!.id },
-      });
+      const generated = await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templates[0]!.id } } } } }, include: { calendarEntry: true } });
       expect(generated).toHaveLength(4);
     });
 
@@ -312,9 +307,7 @@ describe('POST /api/studio-class-templates', () => {
       });
       expect(templates).toHaveLength(1);
 
-      const generated = await prisma.studioClass.findMany({
-        where: { templateId: templates[0]!.id },
-      });
+      const generated = await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templates[0]!.id } } } } }, include: { calendarEntry: true } });
       expect(generated).toHaveLength(4);
     });
   });
@@ -744,18 +737,16 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   it('archiving deletes the unbooked future window and reports the counts', async () => {
     const template = await makeTemplate(ownerId, 'Archive Window', 4, '04:00');
     const makeInstance = (date: string) =>
-      prisma.studioClass.create({
-        data: {
+      createStudioClassFixture(prisma, {
           teacherId: ownerId,
-          templateId: template.id,
+          scheduleRuleId: template.scheduleRuleId,
           classType: 'Archive Window',
           date: new Date(date),
           startTime: hhmmToTime('18:00'),
           durationMinutes: 60,
           location: 'Community Studio',
           hourlyRate: 45,
-        },
-      });
+        });
     await makeInstance('2099-08-05');
     await makeInstance('2099-08-12');
 
@@ -769,23 +760,21 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     const { data } = (await res.json()) as { data: { deleted: number; remaining: number } };
     expect(data.deleted).toBe(2);
     expect(data.remaining).toBe(0);
-    expect(await prisma.studioClass.count({ where: { templateId: template.id } })).toBe(0);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: template.id } } } } } })).toBe(0);
   });
 
   it('pausing removes nothing and reports the last scheduled class', async () => {
     const template = await makeTemplate(ownerId, 'Pause Window', 4, '06:00');
-    const later = await prisma.studioClass.create({
-      data: {
+    const later = await createStudioClassFixture(prisma, {
         teacherId: ownerId,
-        templateId: template.id,
+        scheduleRuleId: template.scheduleRuleId,
         classType: 'Pause Window',
         date: new Date('2099-09-01'),
         startTime: hhmmToTime('19:00'),
         durationMinutes: 60,
         location: 'Community Studio',
         hourlyRate: 45,
-      },
-    });
+      });
 
     const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${template.id}?state=paused`);
     expect(res.status).toBe(200);
@@ -848,18 +837,16 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
    */
   it('is idempotent: archiving twice does not withdraw twice', async () => {
     const template = await makeTemplate(ownerId, 'Twice Archived', 4, '16:00');
-    await prisma.studioClass.create({
-      data: {
+    await createStudioClassFixture(prisma, {
         teacherId: ownerId,
-        templateId: template.id,
+        scheduleRuleId: template.scheduleRuleId,
         classType: 'Twice Archived',
         date: new Date('2099-10-01'),
         startTime: hhmmToTime('18:00'),
         durationMinutes: 60,
         location: 'Community Studio',
         hourlyRate: 45,
-      },
-    });
+      });
 
     const archive = () =>
       send('PATCH', ownerToken, `/api/studio-class-templates/${template.id}?state=archived`);
@@ -869,7 +856,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     const firstBody = (await first.json()) as { data: { action: string; deleted: number } };
     expect(firstBody.data.action).toBe('archived');
 
-    const survivors = await prisma.studioClass.count({ where: { templateId: template.id } });
+    const survivors = await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: template.id } } } } } });
 
     const second = await archive();
     expect(second.status).toBe(200);
@@ -877,7 +864,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
 
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
     expect(after.scheduleRule.isArchived).toBe(true);
-    expect(await prisma.studioClass.count({ where: { templateId: template.id } })).toBe(survivors);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: template.id } } } } } })).toBe(survivors);
   });
 
   /**
@@ -891,13 +878,15 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=paused`);
     // Start from a genuinely empty window, so the count below can only come
     // from the resume itself and not from generation at some earlier step.
-    await prisma.studioClass.deleteMany({ where: { templateId: id } });
+    await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { studioClassTemplates: { some: { id: id } } } },
+    });
 
     const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=active`);
 
     expect(res.status).toBe(200);
     expect(((await res.json()) as { data: { action: string } }).data.action).toBe('active');
-    expect(await prisma.studioClass.count({ where: { templateId: id } })).toBe(4);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: id } } } } } })).toBe(4);
   });
 });
 
@@ -1102,8 +1091,8 @@ describe('/api/studio-classes', () => {
     expect(res.status).toBe(201);
 
     const { data } = (await res.json()) as { data: { id: string } };
-    const created = await prisma.studioClass.findUniqueOrThrow({ where: { id: data.id } });
-    expect(created.templateId).toBeNull();
+    const created = await prisma.studioClass.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true },});
+    expect(created.calendarEntry.scheduleRuleId).toBeNull();
 
     // Both assertions rest on an absence, and `StudioClass.templateId` is
     // `onDelete: SetNull` — so a cascaded template delete would produce the
@@ -1113,7 +1102,7 @@ describe('/api/studio-classes', () => {
       await prisma.studioClassTemplate.findUnique({ where: { id: victimTemplate.id } }),
     ).not.toBeNull();
     expect(
-      await prisma.studioClass.count({ where: { templateId: victimTemplate.id } }),
+      await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: victimTemplate.id } } } } } }),
     ).toBe(0);
   });
 
@@ -1133,7 +1122,7 @@ describe('/api/studio-classes', () => {
     expect(res.status).toBe(201);
 
     const { data } = (await res.json()) as { data: { id: string } };
-    const created = await prisma.studioClass.findUniqueOrThrow({ where: { id: data.id } });
+    const created = await prisma.studioClass.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true },});
     expect(created.studentCount).toBeNull();
   });
 
@@ -1146,7 +1135,7 @@ describe('/api/studio-classes', () => {
       expect(res.status, `${method} should be 403`).toBe(403);
     }
 
-    const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId } });
+    const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId }, include: { calendarEntry: true },});
     expect(Number(after.hourlyRate)).toBe(45);
   });
 
@@ -1158,7 +1147,7 @@ describe('/api/studio-classes', () => {
     });
     expect(cancel.status).toBe(200);
     expect(
-      (await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId } })).cancelledAt,
+      (await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId }, include: { calendarEntry: true },})).calendarEntry.cancelledAt,
     ).not.toBeNull();
 
     const restore = await send('PUT', ownerToken, `/api/studio-classes/${studioClassId}`, {
@@ -1166,7 +1155,7 @@ describe('/api/studio-classes', () => {
     });
     expect(restore.status).toBe(200);
     expect(
-      (await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId } })).cancelledAt,
+      (await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId }, include: { calendarEntry: true },})).calendarEntry.cancelledAt,
     ).toBeNull();
   });
 
@@ -1187,8 +1176,7 @@ describe('/api/studio-classes', () => {
     // alone, so the read-backs below cannot be satisfied by any other
     // fixture's leftover state.
     const makeStudioClass = (startTime: string) =>
-      prisma.studioClass.create({
-        data: {
+      createStudioClassFixture(prisma, {
           teacherId: ownerId,
           classType: 'PUT Persistence',
           date: PIN_DATE,
@@ -1196,16 +1184,13 @@ describe('/api/studio-classes', () => {
           durationMinutes: 75,
           location: 'Harbour Studio',
           hourlyRate: 80,
-        },
-      });
+        });
 
     // Scoped to this block's own classType, mirroring the slot-conflict
     // block's teardown; it can run before the top-level afterAll without
     // touching studioClassId or any other fixture.
     afterAll(async () => {
-      await prisma.studioClass.deleteMany({
-        where: { teacherId: ownerId, classType: 'PUT Persistence' },
-      });
+      await prisma.studioClass.deleteMany({ where: { calendarEntry: { teacherId: ownerId, classType: 'PUT Persistence' } } });
     });
 
     it('persists a location change', async () => {
@@ -1216,7 +1201,7 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
       expect(after.location).toBe('Lighthouse Studio');
     });
 
@@ -1228,8 +1213,8 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
-      expect(after.durationMinutes).toBe(105);
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      expect(after.calendarEntry.durationMinutes).toBe(105);
     });
 
     it('persists an hourlyRate change', async () => {
@@ -1240,7 +1225,7 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
       expect(Number(after.hourlyRate)).toBe(62.5);
     });
   });
@@ -1258,8 +1243,7 @@ describe('/api/studio-classes', () => {
     const SLOT_DATE = new Date('2027-05-10');
 
     const makeStudioClass = (startTime: string, over: Record<string, unknown> = {}) =>
-      prisma.studioClass.create({
-        data: {
+      createStudioClassFixture(prisma, {
           teacherId: ownerId,
           classType: 'PUT Slot',
           date: SLOT_DATE,
@@ -1268,13 +1252,12 @@ describe('/api/studio-classes', () => {
           location: 'Some Studio',
           hourlyRate: 45,
           ...over,
-        },
-      });
+        });
 
     // Scoped to this block's own classType, so it can run before the
     // top-level afterAll without touching studioClassId or any other fixture.
     afterAll(async () => {
-      await prisma.studioClass.deleteMany({ where: { teacherId: ownerId, classType: 'PUT Slot' } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: ownerId, classType: 'PUT Slot' } });
     });
 
     it('refuses a startTime change onto a slot another live studio class already holds', async () => {
@@ -1288,8 +1271,8 @@ describe('/api/studio-classes', () => {
       const json = (await res.json()) as { error: { code: string } };
       expect(json.error.code).toBe('DUPLICATE_STUDIO_SLOT');
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id } });
-      expect(timeToHHmm(after.startTime)).toBe('12:15');
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true },});
+      expect(timeToHHmm(after.calendarEntry.startTime)).toBe('12:15');
     });
 
     // The two rows can coexist at creation: `cancelled` starts outside the
@@ -1306,8 +1289,8 @@ describe('/api/studio-classes', () => {
       const json = (await res.json()) as { error: { code: string } };
       expect(json.error.code).toBe('DUPLICATE_STUDIO_SLOT');
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: cancelled.id } });
-      expect(after.cancelledAt).not.toBeNull();
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: cancelled.id }, include: { calendarEntry: true },});
+      expect(after.calendarEntry.cancelledAt).not.toBeNull();
     });
   });
 
@@ -1332,8 +1315,7 @@ describe('/api/studio-classes', () => {
     const crossFamilyIds: { classId: string; teacherRoomId: string; roomId: string }[] = [];
 
     const makePolicyRow = (date: Date, startTime: string, extra: Record<string, unknown> = {}) =>
-      prisma.studioClass.create({
-        data: {
+      createStudioClassFixture(prisma, {
           teacherId: ownerId,
           classType: 'PUT Policy',
           date,
@@ -1342,17 +1324,14 @@ describe('/api/studio-classes', () => {
           location: 'Policy Studio',
           hourlyRate: 45,
           ...extra,
-        },
-      });
+        });
 
     // Scoped to this block's own classType and the ids it actually planted,
     // like every sibling block above.
     afterAll(async () => {
-      await prisma.studioClass.deleteMany({
-        where: { teacherId: ownerId, classType: 'PUT Policy' },
-      });
+      await prisma.studioClass.deleteMany({ where: { calendarEntry: { teacherId: ownerId, classType: 'PUT Policy' } } });
       for (const ids of crossFamilyIds) {
-        await prisma.class.delete({ where: { id: ids.classId } });
+        await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: ids.classId } } } });
         await prisma.teacherRoom.delete({ where: { id: ids.teacherRoomId } });
         await prisma.room.delete({ where: { id: ids.roomId } });
       }
@@ -1366,8 +1345,8 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
-      expect(after.classType).toBe('Renamed Via Policy');
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      expect(after.calendarEntry.classType).toBe('Renamed Via Policy');
     });
 
     it('moves a manual row to another date', async () => {
@@ -1378,8 +1357,8 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
-      expect(after.date.getTime()).toBe(new Date('2099-06-02').getTime());
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      expect(after.calendarEntry.date.getTime()).toBe(new Date('2099-06-02').getTime());
     });
 
     it('refuses a schedule edit on a past row — it is an income record', async () => {
@@ -1393,7 +1372,7 @@ describe('/api/studio-classes', () => {
       expect(json.error.code).toBe('STUDIO_CLASS_INCOME_RECORD');
       expect(json.error.message).toContain('student count and cancellation');
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
       expect(Number(after.hourlyRate)).toBe(45);
     });
 
@@ -1408,7 +1387,7 @@ describe('/api/studio-classes', () => {
       const json = (await res.json()) as { error: { code: string } };
       expect(json.error.code).toBe('STUDIO_CLASS_INCOME_RECORD');
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
       expect(after.studentCount).toBeNull();
       expect(Number(after.hourlyRate)).toBe(45);
     });
@@ -1421,7 +1400,7 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
       expect(after.studentCount).toBe(3);
     });
 
@@ -1437,8 +1416,8 @@ describe('/api/studio-classes', () => {
       expect(json.error.code).toBe('STUDIO_CLASS_GENERATED_DATE');
       expect(json.error.message).toContain('recurring template');
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
-      expect(after.date.getTime()).toBe(new Date('2099-06-21').getTime());
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      expect(after.calendarEntry.date.getTime()).toBe(new Date('2099-06-21').getTime());
     });
 
     it('refuses a date move onto a slot another live studio class already holds', async () => {
@@ -1452,8 +1431,8 @@ describe('/api/studio-classes', () => {
       const json = (await res.json()) as { error: { code: string } };
       expect(json.error.code).toBe('DUPLICATE_STUDIO_SLOT');
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id } });
-      expect(after.date.getTime()).toBe(new Date('2027-05-11').getTime());
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true },});
+      expect(after.calendarEntry.date.getTime()).toBe(new Date('2027-05-11').getTime());
     });
 
     // Fixture mirrors cross-family-slot-api.test.ts's "studio family refuses a
@@ -1477,8 +1456,7 @@ describe('/api/studio-classes', () => {
       const teacherRoom = await prisma.teacherRoom.create({
         data: { teacherId: ownerId, roomId: room.id, rentalRate: 20, capacityOverride: 12 },
       });
-      const holder = await prisma.class.create({
-        data: {
+      const holder = await createClassFixture(prisma, {
           teacherId: ownerId,
           teacherRoomId: teacherRoom.id,
           classType: 'Policy Cross Family Holder',
@@ -1490,8 +1468,7 @@ describe('/api/studio-classes', () => {
           targetRate: 60,
           minStudents: 3,
           maxStudents: 10,
-        },
-      });
+        });
       crossFamilyIds.push({
         classId: holder.id,
         teacherRoomId: teacherRoom.id,
@@ -1507,8 +1484,8 @@ describe('/api/studio-classes', () => {
       expect(json.error.code).toBe('CROSS_FAMILY_CLASS_SLOT');
       expect(json.error.message).toMatch(/already have a class/i);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id } });
-      expect(after.date.getTime()).toBe(new Date('2031-05-07').getTime());
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true },});
+      expect(after.calendarEntry.date.getTime()).toBe(new Date('2031-05-07').getTime());
     });
 
     it('rejects an empty PUT rather than issuing a no-op write', async () => {
@@ -1554,8 +1531,8 @@ describe('/api/studio-classes', () => {
       expect(json.error.code).toBe('STUDIO_CLASS_INCOME_RECORD');
       expect(json.error.message).not.toMatch(/recurring template/);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
-      expect(after.date.getTime()).toBe(new Date('2020-02-01').getTime());
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      expect(after.calendarEntry.date.getTime()).toBe(new Date('2020-02-01').getTime());
     });
 
     /**
@@ -1577,8 +1554,8 @@ describe('/api/studio-classes', () => {
       expect(json.error.code).toBe('STUDIO_CLASS_PAST_DATE');
       expect(json.error.message).toMatch(/cannot move to a date in the past/i);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
-      expect(after.date.getTime()).toBe(new Date('2099-06-24').getTime());
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      expect(after.calendarEntry.date.getTime()).toBe(new Date('2099-06-24').getTime());
     });
 
     /**
@@ -1597,7 +1574,7 @@ describe('/api/studio-classes', () => {
       });
       expect(cancel.status).toBe(200);
       expect(
-        (await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } })).cancelledAt,
+        (await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },})).calendarEntry.cancelledAt,
       ).not.toBeNull();
 
       const restore = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
@@ -1605,7 +1582,7 @@ describe('/api/studio-classes', () => {
       });
       expect(restore.status).toBe(200);
       expect(
-        (await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } })).cancelledAt,
+        (await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },})).calendarEntry.cancelledAt,
       ).toBeNull();
     });
 
@@ -1625,7 +1602,7 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
       expect(Number(after.hourlyRate)).toBe(77);
     });
   });
@@ -1648,9 +1625,7 @@ describe('/api/studio-classes', () => {
       expect(second.status).toBe(409);
       expect((await second.json()).error.code).toBe('DUPLICATE_STUDIO_SLOT');
 
-      const rows = await prisma.studioClass.findMany({
-        where: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: hhmmToTime('11:00') },
-      });
+      const rows = await prisma.studioClass.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: hhmmToTime('11:00') } }, include: { calendarEntry: true } });
       expect(rows).toHaveLength(1);
     });
 
@@ -1665,9 +1640,7 @@ describe('/api/studio-classes', () => {
       const loser = a.status === 409 ? a : b;
       expect((await loser.json()).error.code).toBe('DUPLICATE_STUDIO_SLOT');
 
-      const rows = await prisma.studioClass.findMany({
-        where: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: hhmmToTime('11:30') },
-      });
+      const rows = await prisma.studioClass.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: hhmmToTime('11:30') } }, include: { calendarEntry: true } });
       expect(rows).toHaveLength(1);
     });
   });
@@ -1680,8 +1653,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
     startTime: string;
     cancelledAt?: Date | null;
   }) =>
-    prisma.studioClass.create({
-      data: {
+    createStudioClassFixture(prisma, {
         teacherId: ownerId,
         classType: 'Removable',
         durationMinutes: 60,
@@ -1689,8 +1661,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
         hourlyRate: 45,
         startTime: hhmmToTime(startTime),
         ...data,
-      },
-    });
+      });
 
   const FUTURE = new Date('2099-07-01T00:00:00.000Z');
   const PAST = new Date('2020-07-01T00:00:00.000Z');
@@ -1699,14 +1670,14 @@ describe('DELETE /api/studio-classes/[id]', () => {
     const sc = await makeClass({ date: PAST, startTime: '05:00' });
     const res = await fetch(`${BASE_URL}/api/studio-classes/${sc.id}`, { method: 'DELETE' });
     expect(res.status).toBe(401);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).not.toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).not.toBeNull();
   });
 
   it("refuses another teacher's class with 403", async () => {
     const sc = await makeClass({ date: PAST, startTime: '05:15' });
     const res = await send('DELETE', otherToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(403);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).not.toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).not.toBeNull();
   });
 
   it('answers 404 for an id that is not there', async () => {
@@ -1727,7 +1698,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
     const body = (await res.json()) as { error: { message: string; code?: string } };
     expect(body.error.code).toBe('STUDIO_CLASS_REGENERATES');
     expect(body.error.message).toContain('Cancel it instead.');
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).not.toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).not.toBeNull();
   });
 
   /**
@@ -1745,7 +1716,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
 
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(409);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).not.toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).not.toBeNull();
   });
 
   it('removes a future manual class, because nothing regenerates it', async () => {
@@ -1755,7 +1726,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
     // respondOk wraps in `data` — the plan's predicted bare `{ deleted: true }`
     // did not match the helper's actual shape.
     expect(await res.json()).toEqual({ data: { deleted: true } });
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).toBeNull();
   });
 
   it('removes a past generated class', async () => {
@@ -1763,7 +1734,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
     const sc = await makeClass({ templateId: tpl.id, date: PAST, startTime: '06:15' });
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(200);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).toBeNull();
   });
 
   /**
@@ -1784,7 +1755,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
     });
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(200);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).toBeNull();
   });
 
   /** The double-click. P2025 must read as 404, not as a 500. */
@@ -1812,7 +1783,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
 
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(409);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).not.toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).not.toBeNull();
   });
 
   /**
@@ -1841,7 +1812,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: { message: string; code?: string } };
     expect(body.error.code).toBe('STUDIO_CLASS_REGENERATES');
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).not.toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).not.toBeNull();
   });
 
   /** The complement: one day earlier, the sweep cannot reach it and it goes. */
@@ -1855,7 +1826,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
 
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(200);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).toBeNull();
   });
 
   it('answers the second removal with 404 rather than a 500', async () => {

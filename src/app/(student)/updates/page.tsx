@@ -20,7 +20,13 @@ export default async function StudentUpdatesPage() {
     take: 50,
     include: {
       relatedClass: {
-        select: { id: true, status: true, teacher: { select: { pageSlug: true } } },
+        select: {
+          id: true,
+          status: true,
+          calendarEntry: {
+            select: { cancelledAt: true, teacher: { select: { pageSlug: true } } },
+          },
+        },
       },
     },
   });

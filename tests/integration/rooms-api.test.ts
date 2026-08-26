@@ -25,6 +25,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -147,8 +148,7 @@ beforeAll(async () => {
   const withClassTeacherRoom = await prisma.teacherRoom.create({
     data: { teacherId: creator.id, roomId: deleteWithClassRoomId, capacityOverride: 8, rentalRate: 15 },
   });
-  const blockingClass = await prisma.class.create({
-    data: {
+  const blockingClass = await createClassFixture(prisma, {
       teacherId: creator.id,
       teacherRoomId: withClassTeacherRoom.id,
       classType: 'Rooms API Delete Guard',
@@ -161,8 +161,7 @@ beforeAll(async () => {
       minStudents: 1,
       maxStudents: 8,
       status: 'draft',
-    },
-  });
+    });
   deleteClassId = blockingClass.id;
 
   // Private, with a TeacherRoom whose only reference is an ARCHIVED template:
@@ -215,8 +214,7 @@ beforeAll(async () => {
   const otherTeacherRoom = await prisma.teacherRoom.create({
     data: { teacherId: other.id, roomId: deleteCrossTeacherRoomId, capacityOverride: 8, rentalRate: 22 },
   });
-  const crossClass = await prisma.class.create({
-    data: {
+  const crossClass = await createClassFixture(prisma, {
       teacherId: other.id,
       teacherRoomId: otherTeacherRoom.id,
       classType: 'Rooms API Cross Teacher Guard',
@@ -229,8 +227,7 @@ beforeAll(async () => {
       minStudents: 1,
       maxStudents: 8,
       status: 'draft',
-    },
-  });
+    });
   crossTeacherClassId = crossClass.id;
 });
 

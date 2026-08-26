@@ -23,19 +23,19 @@ describe('studioClassEditability', () => {
   describe('the boundary matrix', () => {
     for (const zone of [NYC, AMS]) {
       it(`refuses a class dated yesterday in ${zone} — an income record`, () => {
-        expect(studioClassEditability({ templateId: null, date: d('2026-06-14') }, now, zone)).toEqual(
+        expect(studioClassEditability({ scheduleRuleId: null, date: d('2026-06-14') }, now, zone)).toEqual(
           INCOME_RECORD,
         );
       });
 
       it(`keeps a class dated today in ${zone} editable — attendance is logged after the fact`, () => {
-        expect(studioClassEditability({ templateId: null, date: d('2026-06-15') }, now, zone)).toEqual(
+        expect(studioClassEditability({ scheduleRuleId: null, date: d('2026-06-15') }, now, zone)).toEqual(
           EDITABLE,
         );
       });
 
       it(`keeps a class dated tomorrow in ${zone} editable`, () => {
-        expect(studioClassEditability({ templateId: null, date: d('2026-06-16') }, now, zone)).toEqual(
+        expect(studioClassEditability({ scheduleRuleId: null, date: d('2026-06-16') }, now, zone)).toEqual(
           EDITABLE,
         );
       });
@@ -46,27 +46,27 @@ describe('studioClassEditability', () => {
       // money. One hour either side of midnight would be a start-instant
       // question; the calendar-date rule has no such seam.
       expect(
-        studioClassEditability({ templateId: 'tpl-1', date: d('2026-06-15') }, now, NYC),
+        studioClassEditability({ scheduleRuleId: 'tpl-1', date: d('2026-06-15') }, now, NYC),
       ).toEqual({ scheduleEditable: true, dateEditable: false });
     });
   });
 
   describe('manual vs generated — only `date` moves differently', () => {
     it('a manual row may move its date', () => {
-      expect(studioClassEditability({ templateId: null, date: d('2026-06-16') }, now, AMS)).toEqual(
+      expect(studioClassEditability({ scheduleRuleId: null, date: d('2026-06-16') }, now, AMS)).toEqual(
         EDITABLE,
       );
     });
 
     it('a generated row keeps its schedule editable but its date pinned to the sweep', () => {
-      expect(studioClassEditability({ templateId: 'tpl-1', date: d('2026-06-16') }, now, AMS)).toEqual({
+      expect(studioClassEditability({ scheduleRuleId: 'tpl-1', date: d('2026-06-16') }, now, AMS)).toEqual({
         scheduleEditable: true,
         dateEditable: false,
       });
     });
 
     it('a generated income record loses both — the two gates compose', () => {
-      expect(studioClassEditability({ templateId: 'tpl-1', date: d('2026-06-14') }, now, AMS)).toEqual(
+      expect(studioClassEditability({ scheduleRuleId: 'tpl-1', date: d('2026-06-14') }, now, AMS)).toEqual(
         INCOME_RECORD,
       );
     });
@@ -86,17 +86,17 @@ describe('studioClassEditability', () => {
       // considers today's.
       const earlyUtcMorning = new Date('2026-06-15T02:30:00.000Z');
       expect(
-        studioClassEditability({ templateId: null, date: d('2026-06-14') }, earlyUtcMorning, NYC),
+        studioClassEditability({ scheduleRuleId: null, date: d('2026-06-14') }, earlyUtcMorning, NYC),
       ).toEqual(EDITABLE);
       expect(
-        studioClassEditability({ templateId: 'tpl-1', date: d('2026-06-14') }, earlyUtcMorning, NYC),
+        studioClassEditability({ scheduleRuleId: 'tpl-1', date: d('2026-06-14') }, earlyUtcMorning, NYC),
       ).toEqual({ scheduleEditable: true, dateEditable: false });
     });
 
     it('west of UTC: the actual NY-yesterday is already frozen', () => {
       const earlyUtcMorning = new Date('2026-06-15T02:30:00.000Z');
       expect(
-        studioClassEditability({ templateId: null, date: d('2026-06-13') }, earlyUtcMorning, NYC),
+        studioClassEditability({ scheduleRuleId: null, date: d('2026-06-13') }, earlyUtcMorning, NYC),
       ).toEqual(INCOME_RECORD);
     });
 
@@ -106,10 +106,10 @@ describe('studioClassEditability', () => {
       // this teacher's yesterday.
       const lateUtcNight = new Date('2026-06-15T22:30:00.000Z');
       expect(
-        studioClassEditability({ templateId: null, date: d('2026-06-15') }, lateUtcNight, AMS),
+        studioClassEditability({ scheduleRuleId: null, date: d('2026-06-15') }, lateUtcNight, AMS),
       ).toEqual(INCOME_RECORD);
       expect(
-        studioClassEditability({ templateId: null, date: d('2026-06-16') }, lateUtcNight, AMS),
+        studioClassEditability({ scheduleRuleId: null, date: d('2026-06-16') }, lateUtcNight, AMS),
       ).toEqual(EDITABLE);
     });
   });
@@ -133,11 +133,11 @@ describe('studioClassEditability', () => {
     for (const at of nows) {
       for (const zone of [NYC, AMS]) {
         for (const date of dates) {
-          for (const templateId of templateIds) {
-            const verdict = studioClassEditability({ templateId, date }, at, zone);
+          for (const scheduleRuleId of templateIds) {
+            const verdict = studioClassEditability({ scheduleRuleId, date }, at, zone);
             expect(
               verdict.dateEditable && !verdict.scheduleEditable,
-              `${zone} ${at.toISOString()} ${date.toISOString()} templateId=${templateId} → ${JSON.stringify(verdict)}`,
+              `${zone} ${at.toISOString()} ${date.toISOString()} scheduleRuleId=${scheduleRuleId} → ${JSON.stringify(verdict)}`,
             ).toBe(false);
           }
         }
@@ -153,10 +153,10 @@ describe('studioClassEditability', () => {
    */
   it('fails closed when the date cannot be read — manual or generated', () => {
     const unreadable = new Date('nonsense');
-    expect(studioClassEditability({ templateId: null, date: unreadable }, now, AMS)).toEqual(
+    expect(studioClassEditability({ scheduleRuleId: null, date: unreadable }, now, AMS)).toEqual(
       INCOME_RECORD,
     );
-    expect(studioClassEditability({ templateId: 'tpl-1', date: unreadable }, now, AMS)).toEqual(
+    expect(studioClassEditability({ scheduleRuleId: 'tpl-1', date: unreadable }, now, AMS)).toEqual(
       INCOME_RECORD,
     );
   });
@@ -185,7 +185,7 @@ describe('studioClassEditability', () => {
   it('refuses a widened row at the type level', () => {
     studioClassEditability(
       // @ts-expect-error cancellation is recoverable and must not reach the verdict
-      { templateId: null, date: d('2026-06-16'), cancelledAt: new Date() },
+      { scheduleRuleId: null, date: d('2026-06-16'), cancelledAt: new Date() },
       now,
       AMS,
     );

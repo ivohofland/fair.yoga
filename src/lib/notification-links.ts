@@ -32,7 +32,12 @@ export const STUDENT_INVITATION_LABEL = 'Review the invitation';
 /** The shape both student surfaces already select. */
 export interface StudentNotificationTarget {
   type: NotificationType;
-  relatedClass: { id: string; status: ClassStatus; teacher: { pageSlug: string } } | null;
+  relatedClass: {
+    id: string;
+    status: ClassStatus;
+    /** The teacher and the cancellation both hang off the entry since #327. */
+    calendarEntry: { cancelledAt: Date | null; teacher: { pageSlug: string } };
+  } | null;
 }
 
 /**
@@ -46,11 +51,18 @@ export interface StudentNotificationTarget {
  * A class links to its public booking page only while booking still makes
  * sense — a cancelled or completed class would otherwise send a student to
  * a page that cannot do anything for them.
+ *
+ * TWO reads for that since #327, not one: `completed` is still a status,
+ * `cancelled` is a column on the entry, and a cancelled class keeps whatever
+ * live status it had — so `status === 'open'` alone would start linking to the
+ * booking page of a class that is off, which is the one destination that page
+ * refuses to render.
  */
 export function studentNotificationHref(notification: StudentNotificationTarget): string | null {
   if (notification.type === 'teacher_invitation') return STUDENT_INVITATION_PATH;
-  if (notification.relatedClass && notification.relatedClass.status === 'open') {
-    return `/${notification.relatedClass.teacher.pageSlug}/book/${notification.relatedClass.id}`;
+  const cls = notification.relatedClass;
+  if (cls && cls.status === 'open' && cls.calendarEntry.cancelledAt === null) {
+    return `/${cls.calendarEntry.teacher.pageSlug}/book/${cls.id}`;
   }
   return null;
 }

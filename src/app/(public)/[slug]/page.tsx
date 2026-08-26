@@ -39,16 +39,24 @@ export default async function TeacherBookingPage({
   // deletedAt: erasure renames the slug, but never rely on that alone.
   if (!teacher || teacher.deletedAt) notFound();
 
-  // The teacher's calendar today, not UTC's. `Class.date` is `@db.Date`, so
+  // The teacher's calendar today, not UTC's. `CalendarEntry.date` is
+  // `@db.Date`, so
   // this compares a calendar date to a calendar date; a UTC start-of-day
   // would hide a class still hours from starting for any teacher west of UTC,
   // and is the boundary #86's archive rule is written to agree with.
   const today = startOfLocalDay(new Date(), teacher.defaultTimezone);
 
+  // `cancelledAt: null` beside `status: 'open'` (#327): a cancelled class
+  // keeps its `open` status, and this page is the public booking list — it is
+  // the one place a cancelled class must never appear.
   const classes = await prisma.class.findMany({
-    where: { teacherId: teacher.id, status: 'open', date: { gte: today } },
-    orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+    where: {
+      status: 'open',
+      calendarEntry: { teacherId: teacher.id, cancelledAt: null, date: { gte: today } },
+    },
+    orderBy: [{ calendarEntry: { date: 'asc' } }, { calendarEntry: { startTime: 'asc' } }],
     include: {
+      calendarEntry: true,
       teacherRoom: { include: { room: true } },
       registrations: {
         where: { status: { in: ['registered', 'attended', 'no_show', 'late_cancel'] } },
@@ -125,19 +133,19 @@ export default async function TeacherBookingPage({
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="type-label text-ink">
-                    {formatDayHeader(cls.date)} · {timeToHHmm(cls.startTime)}
+                    {formatDayHeader(cls.calendarEntry.date)} · {timeToHHmm(cls.calendarEntry.startTime)}
                   </span>
                   <StatusBadge variant={isFull ? 'full' : 'registering'}>
                     {isFull ? 'Full — join the waitlist' : 'Open'}
                   </StatusBadge>
                 </div>
                 <div className="flex items-center gap-3 mt-1">
-                  <span className="type-subtitle flex-1 min-w-0">{cls.classType}</span>
+                  <span className="type-subtitle flex-1 min-w-0">{cls.calendarEntry.classType}</span>
                   <Icon name="chevron-right" size={20} className="text-brown-light" />
                 </div>
                 <p className="type-caption mt-0.5">
                   {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
-                  {' · '}{cls.durationMinutes} min
+                  {' · '}{cls.calendarEntry.durationMinutes} min
                 </p>
                 <RegistrationProgress
                   registered={activeCount}

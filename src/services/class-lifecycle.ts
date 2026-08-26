@@ -2,13 +2,14 @@
  * Class Lifecycle State Machine — Pure logic, no side effects.
  *
  * Manages class status transitions with guards.
- * Classes move through: draft → open → in_progress → completed
- * with cancellation possible from most non-terminal states.
- * "Full" is derived (registrations >= maxStudents), not a stored state —
- * `services/capacity.ts` is where that derivation lives.
+ * Classes move through: draft → open → in_progress → completed.
+ * Cancellation is NOT one of them (#327): it is `CalendarEntry.cancelledAt`,
+ * written by `POST /api/classes/[id]/cancel`, and both families spell it that
+ * one way. "Full" is derived (registrations >= maxStudents), not a stored
+ * state — `services/capacity.ts` is where that derivation lives.
  */
 
-import type { PrismaClient, Prisma, ClassStatus, RegistrationStatus, Class } from '@prisma/client';
+import type { PrismaClient, Prisma, ClassStatus, RegistrationStatus } from '@prisma/client';
 import type { z } from 'zod';
 import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
@@ -17,6 +18,7 @@ import { toIncomeTierOrThrow } from '@/lib/tiers.server';
 import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
+import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
@@ -31,8 +33,13 @@ export { ECONOMIC_FIELDS, type EconomicField };
 // ---------------------------------------------------------------------------
 
 /**
- * All valid state transitions. Terminal states (completed, cancelled)
- * have empty arrays — no transitions out.
+ * All valid state transitions. The terminal state (`completed`) has an empty
+ * array — no transitions out.
+ *
+ * Cancellation is absent because it is not a status any more (#327). It is
+ * `CalendarEntry.cancelledAt`, reached through `POST /api/classes/[id]/cancel`
+ * rather than through `POST …/transition`, so this table describes only real
+ * status moves — which is what it is named for.
  *
  * The arrays are `readonly`. `VALID_TRANSITIONS.completed.push('open')`
  * compiled before, which would have desynchronised this table at runtime from
@@ -47,11 +54,10 @@ export { ECONOMIC_FIELDS, type EconomicField };
  * that most need to stay honest about their argument types.
  */
 export const VALID_TRANSITIONS: Record<ClassStatus, readonly ClassStatus[]> = {
-  draft: ['open', 'cancelled'],
-  open: ['in_progress', 'cancelled'],
+  draft: ['open'],
+  open: ['in_progress'],
   in_progress: ['completed'],
   completed: [],
-  cancelled: [],
 };
 
 /**
@@ -59,29 +65,28 @@ export const VALID_TRANSITIONS: Record<ClassStatus, readonly ClassStatus[]> = {
  *
  * Terminal means "no outgoing transition", which is exactly `[]` in the table
  * above — so this cannot disagree with `VALID_TRANSITIONS` the way a
- * hand-written pair would. `waitlist-retention.ts` (#238) is the consumer, and
- * its entire safety argument is that a row on such a class has no possible
- * writer.
+ * hand-written pair would. `updateClass` below is the consumer: it is what
+ * this set closes the `Class` half of the freeze with.
  *
- * That argument rests on TWO DB triggers, each hard-coding
- * `('completed','cancelled')` in an applied migration that cannot be edited,
- * because the reaper's predicate has two halves and a deletion needs both:
+ * TWO FROZEN TEXTS hard-code this set, both in
+ * `prisma/migrations/20260826080100_calendar_entry_rewire/`, and each writes
+ * it as a one-member `IN (...)` deliberately rather than as `=`:
  *
- * - `class_terminal_status_guard`
- *   (`prisma/migrations/20260805120000_class_terminal_status_trigger/`) — the
- *   class cannot leave a terminal status.
- * - `class_terminal_date_guard` (#247,
- *   `prisma/migrations/20260817120000_class_terminal_date_trigger/`) — a
- *   terminal class's `date` cannot move, which is what makes "more than 365
- *   days past" a fact rather than a snapshot.
+ * - `class_reject_terminal_status_change` — a terminal class cannot leave its
+ *   status.
+ * - `class_sync_entry_completed` — a class REACHING a terminal status stamps
+ *   `CalendarEntry.classCompletedAt`, which is the column
+ *   `entry_reject_frozen_schedule_change` then reads to freeze the entry's
+ *   `date`, `startTime` and `durationMinutes`.
  *
  * Deriving from a TABLE while depending on TRIGGERS is the one hazard here:
- * widen the table and this widens silently while neither trigger does.
- * `class-terminal-status.test.ts` and `class-terminal-date.test.ts` each
- * iterate this constant and each compare it against their OWN migration's SQL,
- * for exactly that reason — adding a terminal status a trigger does not cover
- * fails there, not in production. Two pins rather than one because the two
- * migrations are independent texts that nothing else forces to agree.
+ * widen the table and this widens silently while neither text does.
+ * `class-terminal-status.test.ts` re-derives the set out of both texts and
+ * compares it against this constant, for exactly that reason — adding a
+ * terminal status a trigger does not cover fails there, not in production. Two
+ * texts rather than one because the sync trigger is what carries terminality
+ * across to the entry, and a second frozen list this constant does not know
+ * about is precisely the drift a single pin would miss.
  *
  * Annotated and frozen, NOT `as const satisfies` — the same shape and reason as
  * `CLAIMABLE_WAITLIST_STATUSES` (`lib/waitlist-status.ts`, which explains it at
@@ -122,9 +127,11 @@ export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
  * because the bullets below do not run in that order, and "2/3/1" over them
  * reads as a mismatch:
  *
- * - SHARED: `NOT_FOUND`, and `ILLEGAL_TRANSITION` — both functions call
+ * - SHARED: `NOT_FOUND`, `ILLEGAL_TRANSITION` — both functions call
  *   `validateTransition`, `transitionClass` in the diagnostic read after a
- *   failed CAS.
+ *   failed CAS — and `CANCELLED`, since #327 made cancellation a column on the
+ *   entry rather than a status, so neither function's status check can see it
+ *   any more and each has to ask the entry.
  * - `completeClass` only: `NOT_ENDED_YET`.
  * - `transitionClass` only: `CONCURRENT_MODIFICATION` (its CAS is the only one
  *   that reports losing a race this way), `STARTS_IN_PAST` (#249, and only
@@ -142,7 +149,8 @@ export type TransitionFailureReason =
   | 'NOT_ENDED_YET'
   | 'CONCURRENT_MODIFICATION'
   | 'STARTS_IN_PAST'
-  | 'ROOM_ARCHIVED';
+  | 'ROOM_ARCHIVED'
+  | 'CANCELLED';
 
 export type TransitionResult =
   | { ok: true }
@@ -264,7 +272,12 @@ export async function transitionClass(
   targetStatus: ClassStatus,
 ): Promise<
   TransitionDbResult<
-    'NOT_FOUND' | 'ILLEGAL_TRANSITION' | 'CONCURRENT_MODIFICATION' | 'STARTS_IN_PAST' | 'ROOM_ARCHIVED'
+    | 'NOT_FOUND'
+    | 'ILLEGAL_TRANSITION'
+    | 'CONCURRENT_MODIFICATION'
+    | 'STARTS_IN_PAST'
+    | 'ROOM_ARCHIVED'
+    | 'CANCELLED'
   >
 > {
   // #249. A draft whose start has already passed cannot be published. This
@@ -317,10 +330,16 @@ export async function transitionClass(
       where: { id: classId },
       select: {
         status: true,
-        date: true,
-        startTime: true,
         teacherRoom: { select: { isArchived: true } },
-        teacher: { select: { defaultTimezone: true } },
+        // `date`, `startTime` and the teacher all hang off the entry since
+        // #327 — one nested read rather than three columns on this row.
+        calendarEntry: {
+          select: {
+            date: true,
+            startTime: true,
+            teacher: { select: { defaultTimezone: true } },
+          },
+        },
       },
     });
 
@@ -357,7 +376,11 @@ export async function transitionClass(
       cls &&
       sourceStatesFor(targetStatus).includes(cls.status) &&
       startsInPast(
-        { date: cls.date, startTime: cls.startTime, timeZone: cls.teacher.defaultTimezone },
+        {
+          date: cls.calendarEntry.date,
+          startTime: cls.calendarEntry.startTime,
+          timeZone: cls.calendarEntry.teacher.defaultTimezone,
+        },
         new Date(),
       )
     ) {
@@ -365,18 +388,19 @@ export async function transitionClass(
       // fields to tell them apart — see the longer note there. This route logs
       // nothing of its own, so without this the only record of a publish
       // refusal is a 409 body the teacher reads and no one keeps.
-      const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+      const entry = cls.calendarEntry;
+      const start = classStartInstant(entry.date, entry.startTime, entry.teacher.defaultTimezone);
       log.info(
         {
           classId,
-          timeZone: cls.teacher.defaultTimezone,
-          // `cls.date` is Prisma-sourced from a `@db.Date` column and cannot
+          timeZone: entry.teacher.defaultTimezone,
+          // `entry.date` is Prisma-sourced from a `@db.Date` column and cannot
           // be an Invalid Date, unlike `updateClass`'s, which arrives as a
           // service argument. Through `isoOrNull` anyway: the cost is a
           // function call, and the alternative is a reader having to re-derive
           // that distinction to know this line is safe.
-          date: isoOrNull(cls.date)?.slice(0, 10) ?? null,
-          startTime: timeToHHmm(cls.startTime),
+          date: isoOrNull(entry.date)?.slice(0, 10) ?? null,
+          startTime: timeToHHmm(entry.startTime),
           startInstant: isoOrNull(start),
         },
         'transitionClass refused: this draft start has already passed',
@@ -410,8 +434,17 @@ export async function transitionClass(
     // it does not add a lock.
     await setLockTimeout(tx);
 
+    // `calendarEntry: { cancelledAt: null }` is not decoration and it is not
+    // covered by the status conjunct beside it. Before #327 a cancelled class
+    // WAS `status: 'cancelled'`, so `sourceStatesFor` excluded it for free;
+    // now a cancelled class keeps whatever status it had, and this CAS would
+    // happily publish or start one. The liveness half has to be asked for.
     const updated = await tx.class.updateMany({
-      where: { id: classId, status: { in: sourceStatesFor(targetStatus) } },
+      where: {
+        id: classId,
+        status: { in: sourceStatesFor(targetStatus) },
+        calendarEntry: { cancelledAt: null },
+      },
       data: { status: targetStatus },
     });
     if (updated.count !== 1) return false;
@@ -426,8 +459,23 @@ export async function transitionClass(
   // Nothing was written, so this read decides nothing that gets persisted —
   // it only tells the caller which refusal happened, and the route maps both
   // to a 409.
-  const cls = await db.class.findUnique({ where: { id: classId }, select: { status: true } });
+  const cls = await db.class.findUnique({
+    where: { id: classId },
+    select: { status: true, calendarEntry: { select: { cancelledAt: true } } },
+  });
   if (!cls) return { ok: false, reason: 'NOT_FOUND', error: `Class not found: ${classId}` };
+
+  // Asked BEFORE `validateTransition`, because the status of a cancelled class
+  // is still a live one and the transition it names is still legal on paper —
+  // so the state machine alone would answer `CONCURRENT_MODIFICATION` for a
+  // class that is simply off.
+  if (cls.calendarEntry.cancelledAt !== null) {
+    return {
+      ok: false,
+      reason: 'CANCELLED',
+      error: `Class ${classId} is cancelled`,
+    };
+  }
 
   const validation = validateTransition(cls.status, targetStatus);
   if (!validation.ok) return validation;
@@ -506,7 +554,9 @@ export async function completeClass(
   db: PrismaClient,
   classId: string,
   timing: CompletionTiming,
-): Promise<TransitionDbResult<'NOT_FOUND' | 'ILLEGAL_TRANSITION' | 'NOT_ENDED_YET'>> {
+): Promise<
+  TransitionDbResult<'NOT_FOUND' | 'ILLEGAL_TRANSITION' | 'NOT_ENDED_YET' | 'CANCELLED'>
+> {
   return db.$transaction(async (tx) => {
     // Before the read, not with the first write. Everything below decides
     // from this row — the status gate, the registration set the pricing
@@ -515,14 +565,36 @@ export async function completeClass(
     // the decision is already made.
     await lockClassRow(tx, classId);
 
+    // The entry in the SAME `include` the teacher already came through — the
+    // shape this function already used — so `lockClassRow` above covers this
+    // read of `date`/`startTime`/`durationMinutes` too, which is the whole
+    // point of it locking both rows (`db-locks.ts`).
     const cls = await tx.class.findUnique({
       where: { id: classId },
       include: {
         registrations: true,
-        teacher: { select: { defaultTimezone: true } },
+        calendarEntry: {
+          select: {
+            teacherId: true,
+            classType: true,
+            date: true,
+            startTime: true,
+            durationMinutes: true,
+            cancelledAt: true,
+            teacher: { select: { defaultTimezone: true } },
+          },
+        },
       },
     });
     if (!cls) return { ok: false, reason: 'NOT_FOUND', error: `Class not found: ${classId}` };
+
+    // A cancelled class is never completed, and since #327 its status cannot
+    // say so — `validateTransition` below sees an ordinary `open` or
+    // `in_progress` row. Completion runs the pricing engine and writes
+    // `Payment` rows, so this is the refusal that must not be inferred.
+    if (cls.calendarEntry.cancelledAt !== null) {
+      return { ok: false, reason: 'CANCELLED', error: `Class ${classId} is cancelled` };
+    }
 
     // #182. The TIMING decision lives here, under the lock this function
     // already holds, rather than in the caller's pre-transaction snapshot.
@@ -547,8 +619,9 @@ export async function completeClass(
       if (Number.isNaN(timing.requireEndedBy.getTime())) {
         throw new TypeError('completeClass: requireEndedBy is not a valid Date');
       }
-      const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
-      const end = new Date(start.getTime() + cls.durationMinutes * 60 * 1000);
+      const entry = cls.calendarEntry;
+      const start = classStartInstant(entry.date, entry.startTime, entry.teacher.defaultTimezone);
+      const end = new Date(start.getTime() + entry.durationMinutes * 60 * 1000);
       if (timing.requireEndedBy < end) {
         return {
           ok: false,
@@ -630,16 +703,16 @@ export async function completeClass(
         recipientId: reg.studentId,
         type: 'payment_request' as const,
         title: 'Payment requested',
-        body: `Your price for ${cls.classType} is €${s.price.toFixed(2)}. Pay your teacher directly.`,
+        body: `Your price for ${cls.calendarEntry.classType} is €${s.price.toFixed(2)}. Pay your teacher directly.`,
         relatedClassId: cls.id,
       };
     });
     notifications.push({
       recipientType: 'teacher' as const,
-      recipientId: cls.teacherId,
+      recipientId: cls.calendarEntry.teacherId,
       type: 'payment_request' as const,
       title: 'Class completed',
-      body: `${cls.classType} completed — €${(pricing.totalCost - Number(cls.roomCost)).toFixed(2)} earnings, ${chargedRegistrations.length} payment ${chargedRegistrations.length === 1 ? 'request' : 'requests'} sent.`,
+      body: `${cls.calendarEntry.classType} completed — €${(pricing.totalCost - Number(cls.roomCost)).toFixed(2)} earnings, ${chargedRegistrations.length} payment ${chargedRegistrations.length === 1 ? 'request' : 'requests'} sent.`,
       relatedClassId: cls.id,
     });
     await createBulkNotifications(tx, notifications);
@@ -672,8 +745,22 @@ export type ClassUpdateData =
   Omit<z.infer<typeof updateClassSchema>, 'date' | 'startTime'> & { date?: Date; startTime?: Date };
 
 /**
+ * The half of an edit that lands on `CalendarEntry` rather than on `Class`
+ * (#327). Everything not named here goes to `Class`.
+ *
+ * A pure type, and the split it names is performed by a destructure inside
+ * `updateClass` rather than by iterating a runtime copy of this list — a
+ * destructure gives each half its own Prisma-checkable type and makes the
+ * `Class` half the REMAINDER by construction, so no field can fall into
+ * neither. The two are tied together by a pin at that destructure; the three
+ * pins below tie this list to the two tables' actual columns.
+ */
+type EntryUpdateField = 'classType' | 'date' | 'startTime' | 'durationMinutes';
+
+/**
  * Compile-time pin: every field the wire schema accepts must be a column
- * `updateMany` can actually write on `Class`.
+ * `updateMany` can actually write, on whichever of the two tables
+ * `ENTRY_UPDATE_FIELDS` routes it to.
  *
  * Because `ClassUpdateData` is derived, a new schema field lands in `keyof
  * ClassUpdateData`; if it has no matching column this pin resolves to that
@@ -681,15 +768,40 @@ export type ClassUpdateData =
  * with the offending field named in the error. A hand-declared type could not
  * do this — the unknown field would never appear in `keyof` at all.
  *
+ * TWO pins rather than one union of both tables' columns, and that is the
+ * point of splitting them: a union would accept `date` as a `Class` column
+ * because `CalendarEntry` has one, and the whole hazard of this extraction is
+ * a field written to the table it left.
+ *
  * The reference is the *Many* input deliberately: `ClassUncheckedUpdateInput`
  * (the single-record type) additionally accepts nested relation writes
  * (`registrations`, `notifications`, …) that `updateMany` rejects, so pinning
  * against it would wave through a schema field named after a relation.
  */
 const _classUpdateColumnsExist: NoneOf<
-  Exclude<keyof ClassUpdateData, keyof Prisma.ClassUncheckedUpdateManyInput>
+  Exclude<
+    Exclude<keyof ClassUpdateData, EntryUpdateField>,
+    keyof Prisma.ClassUncheckedUpdateManyInput
+  >
 > = true;
 void _classUpdateColumnsExist;
+
+/** Compile-time pin: the entry half must be columns of `CalendarEntry`. */
+const _entryUpdateColumnsExist: NoneOf<
+  Exclude<EntryUpdateField, keyof Prisma.CalendarEntryUncheckedUpdateManyInput>
+> = true;
+void _entryUpdateColumnsExist;
+
+/**
+ * Compile-time pin: the entry half must still be fields the wire schema
+ * accepts. Without it, dropping `durationMinutes` from `updateClassSchema`
+ * would leave a member here that `updateClass`'s split looks for and never
+ * finds — a silently dead branch rather than a build failure.
+ */
+const _entryUpdateFieldsAreSent: NoneOf<
+  Exclude<EntryUpdateField, keyof ClassUpdateData>
+> = true;
+void _entryUpdateFieldsAreSent;
 
 /**
  * The fields a teacher may change on their own class via `PUT /api/classes/[id]`.
@@ -836,13 +948,24 @@ const _classForbiddenListIsComplete: NoneOf<
 void _classForbiddenListIsComplete;
 
 /**
- * Compile-time pin: every name above must be a real `Class` column. Without
- * this, a typo (`statuss`) would sit in the forbidden list protecting nothing
- * while looking like protection — the same rot the reverse pin exists to stop,
- * one list over.
+ * Compile-time pin: every name above must be a real column of one of the two
+ * tables a class now spans. Without this, a typo (`statuss`) would sit in the
+ * forbidden list protecting nothing while looking like protection — the same
+ * rot the reverse pin exists to stop, one list over.
+ *
+ * A UNION here, unlike the split pin on the editable half above, because this
+ * list is about what a teacher may not write ANYWHERE on their class, not
+ * about which statement writes it: `teacherId` is a `CalendarEntry` column
+ * since #327 and `status` a `Class` one, and both are equally forbidden. The
+ * split pin's hazard — a field written to the table it left — does not arise
+ * for a list nothing is ever written from.
  */
 const _forbiddenColumnsExist: NoneOf<
-  Exclude<PlainUpdateForbiddenClassField, keyof Prisma.ClassUncheckedUpdateManyInput>
+  Exclude<
+    PlainUpdateForbiddenClassField,
+    | keyof Prisma.ClassUncheckedUpdateManyInput
+    | keyof Prisma.CalendarEntryUncheckedUpdateManyInput
+  >
 > = true;
 void _forbiddenColumnsExist;
 
@@ -864,6 +987,70 @@ void _allowlistHasNoForbiddenFields;
 export class UpdateClassInvariantError extends Error {}
 
 /**
+ * A class row together with the entry that carries its calendar identity —
+ * what `updateClass` hands back, and what `PUT /api/classes/[id]` flattens
+ * onto one wire object.
+ *
+ * Derived from the query rather than written out: `Class & { calendarEntry:
+ * CalendarEntry }` would be a second declaration of a shape Prisma already
+ * knows, and it would go on compiling after a column moved between the two.
+ */
+export type ClassWithEntry = Prisma.ClassGetPayload<{ include: { calendarEntry: true } }>;
+
+/**
+ * The two states that freeze a class, as one value.
+ *
+ * Not `ClassStatus`: since #327 a cancelled class keeps a live status and
+ * carries its cancellation on the entry, so the set the teacher needs named
+ * back to them is no longer a subset of the enum. `ClassStatus` rather than
+ * the literal `'completed'` on the other side, because
+ * `TERMINAL_CLASS_STATUSES` is derived — narrowing here would go stale the day
+ * a second terminal status is added, in the silent direction.
+ */
+export type TerminalClassState = ClassStatus | 'cancelled';
+
+/**
+ * Which freeze holds this class, or `null` if none does.
+ *
+ * One function rather than two conditions written out at the three sites that
+ * ask (the early return, the class CAS's miss branch, and `updateClass`'s own
+ * CAS filter's intent) — the two halves live on two different rows now, and a
+ * site that remembers only the status half is exactly the defect this
+ * extraction makes easy.
+ *
+ * `completed` is reported ahead of `cancelled` when a row somehow carries
+ * both: it is the state that also bills.
+ */
+function frozenStateOf(
+  status: ClassStatus,
+  cancelledAt: Date | null,
+): TerminalClassState | null {
+  if (TERMINAL_CLASS_STATUSES.includes(status)) return status;
+  if (cancelledAt !== null) return 'cancelled';
+  return null;
+}
+
+/**
+ * Carries a refusal out of `updateClass`'s transaction by throwing, so the
+ * transaction ROLLS BACK rather than committing whatever the other half
+ * already wrote.
+ *
+ * A returned value would not do: `db.$transaction`'s callback returning
+ * normally commits, and this function now issues up to two writes across two
+ * tables. Without this, a class-half write followed by an entry-half refusal
+ * would leave the teacher's economics applied and their reschedule silently
+ * dropped — half an edit, reported as a clean 409.
+ *
+ * Never escapes this module: the `catch` around the transaction converts it
+ * straight back into the `UpdateClassResult` it carries.
+ */
+class UpdateClassRefusal extends Error {
+  constructor(readonly result: UpdateClassResult) {
+    super('updateClass: refused, rolling back');
+  }
+}
+
+/**
  * Why an update did or did not happen.
  *
  * `locked` carries a NON-EMPTY tuple of offending fields deliberately. The bug
@@ -871,12 +1058,12 @@ export class UpdateClassInvariantError extends Error {}
  * all, for a request that touched none — the compiler now refuses to construct
  * that. Callers own the user-facing wording; this type owns the distinction.
  *
- * `terminal` carries the status for the same reason `locked` carries fields:
- * the caller owns the wording and needs to name what happened. It is plain
- * `ClassStatus` rather than a narrowed terminal union — the value is only ever
- * read into a message, and narrowing it would cost a type guard at each of the
- * two construction sites (the early return and the disambiguation branch,
- * below) for nothing.
+ * `terminal` carries the state for the same reason `locked` carries fields:
+ * the caller owns the wording and needs to name what happened. It is
+ * `TerminalClassState` rather than `ClassStatus` because since #327 one of the
+ * two things it can name is not a status at all — a cancelled class keeps
+ * whatever live status it had, and its cancellation is a column on the entry.
+ * The 409's sentence still has to say "cancelled", so the value has to.
  *
  * `past_start` carries NOTHING, and the asymmetry with its two neighbours is
  * deliberate. `locked` and `terminal` carry data because their callers' MESSAGE
@@ -892,11 +1079,19 @@ export class UpdateClassInvariantError extends Error {}
  * `UpdateClassInvariantError` instead.
  */
 export type UpdateClassResult =
-  | { ok: true; cls: Class }
+  | { ok: true; cls: ClassWithEntry }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'locked'; fields: readonly [EconomicField, ...EconomicField[]] }
-  | { ok: false; reason: 'terminal'; status: ClassStatus }
+  | { ok: false; reason: 'terminal'; state: TerminalClassState }
   | { ok: false; reason: 'no_fields' }
+  /**
+   * The ENTRY refused the write: its schedule is frozen. Distinct from
+   * `terminal`, which is the `Class` row's own refusal, because the two
+   * statements guard different rows and a teacher reading the 409 needs to
+   * know which half of their class said no — `terminal` is about the class,
+   * this is about when it sits in the calendar.
+   */
+  | { ok: false; reason: 'frozen' }
   | { ok: false; reason: 'slot_conflict' }
   /**
    * A LIVE row of the OTHER class family holds this slot (#296) — enforced by
@@ -916,8 +1111,20 @@ export type UpdateClassResult =
  * The FREEZES gate on different events and cover different things. The
  * ECONOMIC freeze (`settingsLocked`) starts at the first registration and
  * covers `ECONOMIC_FIELDS`. The TERMINAL freeze (#247) starts when the class
- * reaches `completed` or `cancelled` and covers EVERY field — it is the class
- * that is frozen, not a list of columns.
+ * completes or is cancelled and covers EVERY field — it is the class that is
+ * frozen, not a list of columns. Since #327 its two halves are read from two
+ * different rows (`Class.status`, `CalendarEntry.cancelledAt`), which is what
+ * `frozenStateOf` above exists to keep in one place.
+ *
+ * IT WRITES TWO TABLES, so it is an explicit transaction and it takes
+ * `lockClassRow` (`db-locks.ts`) rather than letting Prisma's statement order
+ * decide which row it holds first. `classType`, `date`, `startTime` and
+ * `durationMinutes` land on the entry; `description` and the five economic
+ * fields land on `Class`. Each half runs only if it HAS work — a request
+ * editing only `startTime` leaves the class half empty, and an `updateMany`
+ * with nothing to set is not a reliable count-of-1 — and each half has its own
+ * refusal, because a `Class` miss means terminal status and a `CalendarEntry`
+ * miss means a frozen schedule, which are two different sentences.
  *
  * THE SCHEDULING RULE (#249) IS NOT A THIRD FREEZE, and the distinction is why
  * this sentence used to say "two" and stop. A freeze is a property of the
@@ -993,9 +1200,12 @@ export type UpdateClassResult =
  * Everywhere else deleting it costs only round trips, and the CAS does
  * re-derive the same refusal.
  *
- * The terminal freeze additionally has a database backstop for `date` alone
- * (`class_terminal_date_guard`), because that is the column
- * `waitlist-retention.ts` reads before it deletes.
+ * The terminal freeze additionally has a database backstop, and since #327 it
+ * covers three columns rather than one: `entry_frozen_schedule_guard` refuses
+ * a `date`, `startTime` or `durationMinutes` change on a frozen entry, which
+ * is the span `waitlist-retention.ts` and the slot constraint both read. The
+ * CAS below is the path that returns a 409; the trigger is what reaches a
+ * client that never goes through this function.
  */
 export async function updateClass(
   db: PrismaClient,
@@ -1004,24 +1214,37 @@ export async function updateClass(
 ): Promise<UpdateClassResult> {
   const cls = await db.class.findUnique({
     where: { id: classId },
-    include: { teacher: { select: { defaultTimezone: true } } },
+    include: {
+      calendarEntry: {
+        select: {
+          id: true,
+          teacherId: true,
+          date: true,
+          startTime: true,
+          cancelledAt: true,
+          teacher: { select: { defaultTimezone: true } },
+        },
+      },
+    },
   });
   if (!cls) return { ok: false, reason: 'not_found' };
+  const entry = cls.calendarEntry;
 
   // Checked BEFORE #249's past-start guard, before the economic lock AND
   // before `hasEdit`, and the position is load-bearing in every direction. For
-  // most inputs this is an optimisation only — the CAS below re-derives the
-  // same refusal — but for THREE it is what produces the right answer at all,
-  // because each of the three early returns downstream would otherwise answer
-  // first: `past_start` for a terminal class sent a date that has passed,
+  // most inputs this is an optimisation only — the two CASes below re-derive
+  // the same refusal — but for THREE it is what produces the right answer at
+  // all, because each of the three early returns downstream would otherwise
+  // answer first: `past_start` for a frozen class sent a date that has passed,
   // `locked` for a class that is also settings-locked with an economic field
   // sent, and `no_fields` for an empty or all-undefined payload. The last is
-  // the one that gets forgotten, because the CAS cannot cover it: `hasEdit`
+  // the one that gets forgotten, because no CAS can cover it: `hasEdit`
   // returns before any write is attempted, so there is no compare-and-swap to
   // fall back on. `updateClass`'s docblock enumerates all three, each with the
   // test that pins it.
-  if (TERMINAL_CLASS_STATUSES.includes(cls.status)) {
-    return { ok: false, reason: 'terminal', status: cls.status };
+  const frozenState = frozenStateOf(cls.status, entry.cancelledAt);
+  if (frozenState !== null) {
+    return { ok: false, reason: 'terminal', state: frozenState };
   }
 
   // #249. A write may not newly place this class's start in the past.
@@ -1072,38 +1295,27 @@ export async function updateClass(
   // because a completion can commit between this read and the write. This one
   // does not need the same treatment. The incoming `date`/`startTime` are
   // fixed by the request, so the only movable input is the stored pair the
-  // `??` falls back to.
+  // `??` falls back to — and since this function now takes `lockClassRow`
+  // before either write, that pair cannot move under it either.
   //
-  // "AND THOSE CAN ONLY BE MOVED BY A WRITER THAT IS ITSELF THIS GUARD" is
-  // what this comment used to say. It was false when it was written — the
-  // template sync wrote `startTime` on a template's `draft`/`open` instances
-  // through a bare `updateMany` with no past-start check (measured in
-  // `waitlist-retention.ts`'s docblock) and could commit between this read and
-  // the write below. #194 deleted that function, so the sentence is true
-  // again: re-derived from the `class.` write sites in `src/` rather than
-  // recalled, this `updateMany` is the only one that moves an existing class's
-  // `date`/`startTime`. A claim that has already gone stale once is worth
-  // re-running the grep on rather than trusting.
-  //
-  // The conclusion never depended on it, which is why the smaller argument is
-  // kept. The fallback only matters for a field the request did NOT send, and
-  // losing such a race there would mean the guard judged an edit against a
-  // `startTime` another writer replaced a millisecond later — leaving a start
-  // in the past that this request did not put there and the next `updateClass`
-  // will refuse to move further. A wrong answer in a millisecond window, not a
-  // broken invariant: nothing downstream treats "no live class starts in the
-  // past" as a fact, precisely because the generator produces such classes
-  // routinely.
+  // The stored pair has exactly one writer, and it is this function. Re-derived
+  // from the `calendarEntry.` write sites in `src/` rather than recalled: the
+  // generators and the seed CREATE entries, `cancelClass` and the studio PUT
+  // write `cancelledAt`, and the entry `updateMany` below is the only statement
+  // that moves an existing entry's `date` or `startTime`. The equivalent claim
+  // about `Class` was false for a year — the template sync rewrote `startTime`
+  // past no such guard until #194 deleted it — so it is worth re-running the
+  // grep rather than trusting this sentence.
   if (data.date !== undefined || data.startTime !== undefined) {
-    const timeZone = cls.teacher.defaultTimezone;
-    const effectiveDate = data.date ?? cls.date;
-    const effectiveStartTime = data.startTime ?? cls.startTime;
+    const timeZone = entry.teacher.defaultTimezone;
+    const effectiveDate = data.date ?? entry.date;
+    const effectiveStartTime = data.startTime ?? entry.startTime;
     // Compared as instants through the same function, so a resend of the stored
     // values can never read as a move however it was serialised.
     const effectiveStart = classStartInstant(effectiveDate, effectiveStartTime, timeZone);
     const movesStart =
       effectiveStart.getTime() !==
-      classStartInstant(cls.date, cls.startTime, timeZone).getTime();
+      classStartInstant(entry.date, entry.startTime, timeZone).getTime();
     if (movesStart && startsInPast(
         { date: effectiveDate, startTime: effectiveStartTime, timeZone },
         new Date(),
@@ -1157,79 +1369,116 @@ export async function updateClass(
     return { ok: false, reason: 'locked', fields: sentEconomic };
   }
 
+  // The split, by destructuring rather than by iterating a name list, so the
+  // compiler types each half and `classFields` is the remainder BY
+  // CONSTRUCTION — nothing can fall into neither.
+  const { classType, date, startTime, durationMinutes, ...classFields } = data;
+  const entryFields = { classType, date, startTime, durationMinutes };
+
+  // Compile-time pin: the destructure above and `EntryUpdateField` name the
+  // same set. Without it the type could gain a member the destructure never
+  // takes, which would silently send that field to `Class` — the table it just
+  // left. Both directions, because either half alone passes vacuously.
+  const _splitMatchesEntryFields: NoneOf<
+    | Exclude<keyof typeof entryFields, EntryUpdateField>
+    | Exclude<EntryUpdateField, keyof typeof entryFields>
+  > = true;
+  void _splitMatchesEntryFields;
+
   // A key whose value is `undefined` is not an edit. Prisma agrees more
   // strongly than you might expect: given a `data` object whose every value is
   // undefined it issues no UPDATE at all and returns `{ count: 0 }` — with no
-  // regard for whether the row exists. Testing key *presence* here (rather
-  // than defined *values*, as `sentEconomic` above already does) let a
-  // no-op payload reach the compare-and-swap, come back with a zero count,
-  // and land in the "unreachable" branch below as a 500.
-  const hasEdit = Object.values(data).some((v) => v !== undefined);
-  if (!hasEdit) {
+  // regard for whether the row exists. Testing key *presence* (rather than
+  // defined *values*, as `sentEconomic` above already does) let a no-op
+  // payload reach the compare-and-swap, come back with a zero count, and land
+  // in the "unreachable" branch below as a 500.
+  //
+  // Asked PER HALF now, not once for the whole payload. A `startTime`-only
+  // edit leaves `classFields` all-undefined, and running the class CAS anyway
+  // would return `{ count: 0 }` for a request that asked it to do nothing —
+  // which this function would then read as a lost race.
+  const hasEntryEdit = Object.values(entryFields).some((v) => v !== undefined);
+  const hasClassEdit = Object.values(classFields).some((v) => v !== undefined);
+  if (!hasEntryEdit && !hasClassEdit) {
     return { ok: false, reason: 'no_fields' };
   }
 
-  // `date`/`startTime` are both teacher-editable (`TeacherEditableClassField`
-  // above), and `status` is not writable through this path — so every class
-  // reaching this write stays inside `Class_teacher_slot_unique`'s partial
-  // scope (`WHERE status <> 'cancelled'`, #196) across the edit. That used
-  // to read "any class ... that isn't already `cancelled`", which #247 made
-  // vacuous: the `notIn` conjunct below refuses a `cancelled` class outright,
-  // so no such class reaches this write to fall outside the scope, and the
-  // qualifier implied a live case there is not. Moving `date`/`startTime`
-  // onto a slot this teacher already occupies collides here exactly as a
-  // `POST` into that slot does.
-  //
-  // A second, older key is reachable here too, and only here: `date` is
-  // teacher-editable but no create route ever sets `templateId` (it is
-  // server-assigned, only ever by the generator), so `@@unique([templateId,
-  // date])` (`Class_templateId_date_key`, predates #196) can never fire from
-  // a create. It fires from THIS write: a template-generated class carries a
-  // real `templateId`, and moving its `date` onto a date a sibling instance
-  // of the same template already holds collides on that older key — even
-  // when the two classes' `startTime` differs enough that the slot key above
-  // never would. Postgres validates a multi-key violation in the indexes'
-  // OID order, and `Class_templateId_date_key` is older than
-  // `Class_teacher_slot_unique`, so this is the one Postgres reports first.
-  //
-  // Terminality re-checked in the filter for exactly the reason
-  // `settingsLocked` is: `completeClass` (this same file) takes a `Class` row
-  // lock and re-reads under it — the `lockClassRow` call, and the
-  // `requireEndedBy` comparison that decides against what it read — so a
-  // completion can commit between this function's opening read and this
-  // write. This function takes no lock at all.
-  //
-  // Cited by name, not by line — `CHARGED_STATUSES`' docblock above argues why.
-  //
-  // ONE THING NEITHER TRIGGER CATCHES, recorded here because the migration
-  // that would be the natural home for it is applied and therefore frozen:
-  // both triggers gate on `OLD.status`, so a SINGLE statement that writes
-  // `status` and `date` together (`SET status = 'completed', date = <past>`)
-  // sees `OLD.status = 'open'` and satisfies neither WHEN clause. No such
-  // writer exists — every status writer in `src/` writes status alone or
-  // status-plus-totals — and this function cannot become one, since `status`
-  // is not a `TeacherEditableClassField`. It is a shape to refuse in review,
-  // not a hole in the guard.
-  //
-  // Built as one object rather than two ternary arms so the terminal conjunct
-  // cannot be present in one filter shape and missing from the other: there
-  // is only one shape. `settingsLocked` is the part that varies, and it
-  // varies by conditional spread, the idiom `route.ts` already uses to build
-  // this function's `data`. Spread copy of the statuses because
-  // `TERMINAL_CLASS_STATUSES` is `readonly` and Prisma's `notIn` wants a
-  // mutable array — the same reason `gdpr.ts` spreads `CANCELLABLE_STATUSES`
-  // into its own status CAS.
-  const where: Prisma.ClassWhereInput = {
-    id: classId,
-    status: { notIn: [...TERMINAL_CLASS_STATUSES] },
-    ...(sentEconomic !== null ? { settingsLocked: false } : {}),
-  };
-
-  let result: Prisma.BatchPayload;
   try {
-    result = await db.class.updateMany({ where, data });
+    return await db.$transaction(async (tx) => {
+      // `Class`, then `CalendarEntry` — the order every writer of these two
+      // rows takes them in (`db-locks.ts`), and the order the two statements
+      // below then write them in. Taken deliberately rather than inherited
+      // from Prisma's statement emission: an entry-then-class emission order
+      // would deadlock against every other holder of this pair.
+      await lockClassRow(tx, classId);
+
+      // Both CASes carry the SAME freeze, expressed against whichever row
+      // they write — `frozenStateOf`'s two halves, one on each table. That
+      // symmetry is what makes a partial edit unreachable rather than merely
+      // unlikely: the entry's filter can only miss for a class that also fails
+      // the class filter, so a successful class write is never followed by an
+      // entry refusal. The `UpdateClassRefusal` throw below does not depend on
+      // that argument holding — it rolls back either way.
+      if (hasClassEdit) {
+        const written = await tx.class.updateMany({
+          where: {
+            id: classId,
+            status: { notIn: [...TERMINAL_CLASS_STATUSES] },
+            // The cancel half of the freeze, which no longer lives on this
+            // row. Without it a cancelled class would accept a description or
+            // an economic edit, because its status is still `draft` or `open`.
+            calendarEntry: { cancelledAt: null },
+            ...(sentEconomic !== null ? { settingsLocked: false } : {}),
+          },
+          data: classFields,
+        });
+        if (written.count !== 1) {
+          throw new UpdateClassRefusal(await explainClassCasMiss(tx, classId, sentEconomic));
+        }
+      }
+
+      if (hasEntryEdit) {
+        // The CAS moved with the columns. `status: { notIn: TERMINAL }` sat on
+        // `Class`, and four of the ten editable fields left that table, so
+        // this filter is the entry's OWN columns — the same predicate
+        // `entry_frozen_schedule_guard` enforces. The trigger is the backstop
+        // that reaches raw SQL; this is the path that returns a 409.
+        const written = await tx.calendarEntry.updateMany({
+          where: {
+            id: entry.id,
+            classCompletedAt: null,
+            NOT: { kind: 'regular', cancelledAt: { not: null } },
+          },
+          data: entryFields,
+        });
+        if (written.count !== 1) {
+          throw new UpdateClassRefusal({ ok: false, reason: 'frozen' });
+        }
+      }
+
+      // Re-read under the lock this transaction still holds, so what comes
+      // back cannot be a version another writer produced after the write.
+      // `findUnique`, not `findUniqueOrThrow`: nothing can delete this row
+      // while the lock is held, but `P2025` has no branch in
+      // `classifyApiError`, so a throw here would surface a bare 500 where a
+      // variant already exists.
+      const updated = await tx.class.findUnique({
+        where: { id: classId },
+        include: { calendarEntry: true },
+      });
+      if (!updated) return { ok: false, reason: 'not_found' };
+      return { ok: true, cls: updated };
+    });
   } catch (err) {
-    if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
+    if (err instanceof UpdateClassRefusal) return err.result;
+    // #327. The slot key became `CalendarEntry_teacher_slot_excl`, an
+    // `EXCLUDE USING gist` raising `23P01` — not a P2002 with a column list,
+    // so `isUniqueConflictOn` cannot see it at all and this is a different
+    // matcher (`exclusion-conflict.ts`). It is also RANGE-based rather than
+    // exact-start now: a reschedule that merely OVERLAPS another of this
+    // teacher's live entries collides, where before only an identical start
+    // time did.
+    if (isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')) {
       return { ok: false, reason: 'slot_conflict' };
     }
     // #296. The cross-family guard raises `YG001`, which is not a P2002 at all,
@@ -1246,72 +1495,78 @@ export async function updateClass(
     // this is the one worth being able to see.
     if (isCrossFamilySlotConflict(err)) {
       log.warn(
-        { err, classId, teacherId: cls.teacherId },
+        { err, classId, teacherId: entry.teacherId },
         'class reschedule refused: the studio family holds that slot',
       );
       return { ok: false, reason: 'cross_family_slot_conflict' };
     }
-    // `Class_templateId_date_key` — see the comment above the write for why
-    // this is reachable here and nowhere else. Without this arm the error
-    // rethrows and `classifyApiError`'s generic P2002 fallback
-    // (`src/lib/api-errors.ts`) answers "Resource already exists" for the
-    // ordinary act of moving this week's class to next Monday.
-    if (isUniqueConflictOn(err, ['templateId', 'date'])) {
+    // `CalendarEntry_scheduleRuleId_date_key` — the generator's one-per-week
+    // key, reachable only from a reschedule, and only when the entry carries a
+    // `scheduleRuleId`. Distinct message and code at the route: the slot 409
+    // names a date AND time; this collision can fire with the two entries'
+    // times entirely different, so naming the time back to the teacher there
+    // would describe a clash that didn't happen.
+    if (isUniqueConflictOn(err, ['scheduleRuleId', 'date'])) {
       return { ok: false, reason: 'template_date_conflict' };
     }
     throw err;
   }
+}
 
-  if (result.count === 0) {
-    // Both filter shapes constrain `id`, so a deleted row explains a zero
-    // count under either of them — find out which happened rather than
-    // assuming. #72 was this branch asserting a cause instead of checking it;
-    // the economic path had the identical defect, and a deleted class
-    // reported as "locked" is harder to spot than #72's empty list, because
-    // the field name it names looks entirely plausible.
-    const stillExists = await db.class.findUnique({
-      where: { id: classId },
-      select: { id: true, status: true },
-    });
-    if (!stillExists) return { ok: false, reason: 'not_found' };
+/**
+ * Which conjunct of the `Class` CAS failed — asked only after it has already
+ * failed, so this decides nothing that gets persisted.
+ *
+ * Split out of `updateClass` because the CAS now sits inside a transaction and
+ * its miss has to be turned into a value before the throw that rolls that
+ * transaction back; inlining it would put three `await`s inside a `throw`
+ * expression.
+ *
+ * Runs on `tx`, under the lock the caller holds, so the row it re-reads is the
+ * one the CAS just failed against rather than a later version of it.
+ */
+async function explainClassCasMiss(
+  tx: Prisma.TransactionClient,
+  classId: string,
+  sentEconomic: readonly EconomicField[] | null,
+): Promise<UpdateClassResult> {
+  // Every filter shape constrains `id`, so a deleted row explains a zero count
+  // under any of them — find out which happened rather than assuming. #72 was
+  // this branch asserting a cause instead of checking it; the economic path
+  // had the identical defect, and a deleted class reported as "locked" is
+  // harder to spot than #72's empty list, because the field name it names
+  // looks entirely plausible.
+  const stillExists = await tx.class.findUnique({
+    where: { id: classId },
+    select: { status: true, calendarEntry: { select: { cancelledAt: true } } },
+  });
+  if (!stillExists) return { ok: false, reason: 'not_found' };
 
-    // The class went terminal between the opening read and the write — the
-    // race the CAS above exists to lose. This branch is NOT optional cleanup:
-    // without it a `date`-only edit on a completed class reaches the throw
-    // below (the row exists, and `date` is not economic, so `sentEconomic` is
-    // null) and `withErrorHandler` answers 500 — for the single most likely
-    // request #247 is about. Adding the conjunct without adding this branch
-    // is strictly worse than adding neither.
-    if (TERMINAL_CLASS_STATUSES.includes(stillExists.status)) {
-      return { ok: false, reason: 'terminal', status: stillExists.status };
-    }
+  // The class froze between the opening read and the write — the race the CAS
+  // exists to lose. This branch is NOT optional cleanup: without it a
+  // `description`-only edit on a completed class reaches the throw below (the
+  // row exists, and `description` is not economic, so `sentEconomic` is null)
+  // and `withErrorHandler` answers 500 — for the single most likely request
+  // #247 is about.
+  const frozenState = frozenStateOf(stillExists.status, stillExists.calendarEntry.cancelledAt);
+  if (frozenState !== null) return { ok: false, reason: 'terminal', state: frozenState };
 
-    // The row survives, so the only other conjunct that can have failed is
-    // `settingsLocked: false` — which is only ever in the filter when
-    // economic fields were sent.
-    if (sentEconomic !== null) return { ok: false, reason: 'locked', fields: sentEconomic };
-
-    // Unreachable, and still actually so now that a third conjunct is in the
-    // filter: `hasEdit` above guarantees Prisma issues a real UPDATE, and
-    // every conjunct that UPDATE can fail on has just been re-read — the row
-    // exists, it is not terminal, and `settingsLocked: false` is only ever in
-    // the filter when economic fields were sent. Loud rather than silently
-    // returning a plausible-but-wrong reason.
-    throw new UpdateClassInvariantError(
-      `updateClass: class ${classId} matched no rows but still exists`,
-    );
+  // The row survives and is live, so the only other conjunct that can have
+  // failed is `settingsLocked: false` — which is only ever in the filter when
+  // economic fields were sent.
+  const [firstField, ...otherFields] = sentEconomic ?? [];
+  if (firstField !== undefined) {
+    return { ok: false, reason: 'locked', fields: [firstField, ...otherFields] };
   }
 
-  // `findUnique`, not `findUniqueOrThrow`. The write succeeded, but the row
-  // can still be gone by the time it is re-read: `archiveOrUnarchiveTemplate`
-  // deletes future instances, which is the same population being edited here.
-  // It was one of two until #194 deleted the template sync's wrong-day
-  // cleanup; one deleter is still one race. `P2025` has no
-  // branch in `classifyApiError`, so throwing would surface a bare 500 for a
-  // race — and `isRecordNotFound`'s own docblock states the rule this would
-  // break: losing the race should produce the same answer as never having had
-  // the row. That answer already exists as a variant.
-  const updated = await db.class.findUnique({ where: { id: classId } });
-  if (!updated) return { ok: false, reason: 'not_found' };
-  return { ok: true, cls: updated };
+  // Unreachable, and still actually so with a third conjunct in the filter:
+  // the caller only runs that statement when `classFields` holds a defined
+  // value, so Prisma issues a real UPDATE, and every conjunct that UPDATE can
+  // fail on has just been re-read — the row exists, it is neither completed
+  // nor cancelled, and `settingsLocked: false` is only ever in the filter when
+  // economic fields were sent. Loud rather than silently returning a
+  // plausible-but-wrong reason.
+  throw new UpdateClassInvariantError(
+    `updateClass: class ${classId} matched no rows but still exists`,
+  );
 }

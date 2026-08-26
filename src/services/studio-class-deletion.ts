@@ -11,7 +11,7 @@ import { startOfLocalDay } from '@/lib/timezone';
  * THE RULE: a studio class may be removed when removal is STABLE — when nothing
  * will create it again.
  *
- *   removable ⟺ templateId === null      (manual: no generator owns it)
+ *   removable ⟺ scheduleRuleId === null      (manual: no generator owns it)
  *             ∨ its calendar date is strictly before the teacher's today
  *
  * ── WHY A CALENDAR DATE AND NOT A START INSTANT ────────────────────────────
@@ -29,7 +29,7 @@ import { startOfLocalDay } from '@/lib/timezone';
  * Worked: template moved Wed 09:00 → 19:00; the standing class keeps 09:00. At
  * 10:30 its own start has passed, so the old rule allowed removal — and the
  * sweep, filtering on 19:00, found that instant still ahead, found
- * `(templateId, date)` released by the removal, and re-inserted on the same
+ * `(scheduleRuleId, date)` released by the removal, and re-inserted on the same
  * date within the hour. A delete that undid itself, which is precisely what
  * this file exists to prevent.
  *
@@ -45,7 +45,7 @@ import { startOfLocalDay } from '@/lib/timezone';
  * today, and the refusal names it. Refusing a removal the teacher could have
  * had is recoverable; granting one the sweep reverses is not.
  *
- * Removing a FUTURE GENERATED class would release its `(templateId, date)` key
+ * Removing a FUTURE GENERATED class would release its `(scheduleRuleId, date)` key
  * and the hourly sweep would recreate it — within the hour, silently, and again
  * on every sweep until that date's start passes. Bounded, not unbounded: the
  * generator's window is four occurrences, so at most ~4 weeks of a delete that
@@ -130,7 +130,7 @@ export type StudioClassDeletability =
  * can see.
  */
 export const STUDIO_CLASS_REMOVAL_FACTS_SELECT = {
-  templateId: true,
+  scheduleRuleId: true,
   date: true,
 } as const;
 
@@ -160,11 +160,11 @@ export const STUDIO_CLASS_REFUSALS: Record<
 };
 
 export function studioClassDeletability(
-  sc: { templateId: string | null; date: Date },
+  sc: { scheduleRuleId: string | null; date: Date },
   now: Date,
   timeZone: string,
 ): StudioClassDeletability {
-  if (sc.templateId === null) return { deletable: true };
+  if (sc.scheduleRuleId === null) return { deletable: true };
 
   // FAIL CLOSED, EXPLICITLY — and this line is REDUNDANT TODAY, on purpose.
   // Without it the refusal is still correct, but only by the polarity of the

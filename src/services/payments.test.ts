@@ -10,6 +10,7 @@ import {
   MANUAL_REMIND_COOLDOWN_MS,
 } from './payments';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -65,8 +66,7 @@ describe('Payment Service (DB)', () => {
     teacherRoomId = teacherRoom.id;
 
     // Create completed class
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
@@ -80,8 +80,7 @@ describe('Payment Service (DB)', () => {
         maxStudents: 12,
         status: 'completed',
         settingsLocked: true,
-      },
-    });
+      });
     classId = cls.id;
 
     // Create student — claimed, with a privacy row that shares the email and
@@ -155,7 +154,7 @@ describe('Payment Service (DB)', () => {
     await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
     await prisma.payment.deleteMany({ where: { registrationId } });
     await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.class.delete({ where: { id: classId } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: classId } } } });
     // StudentPrivacy cascades off the student; the account does not.
     await prisma.student.delete({ where: { id: studentId } });
     await prisma.account.delete({ where: { id: studentAccountId } });

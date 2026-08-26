@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 /**
  * Accessibility sweep: axe-core over the key screens, failing on any
@@ -75,8 +76,7 @@ test.describe('Accessibility sweep', () => {
       data: { teacherId, roomId, capacityOverride: 12, rentalRate: 30 },
     });
 
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'A11y Vinyasa',
@@ -89,8 +89,7 @@ test.describe('Accessibility sweep', () => {
         minStudents: 2,
         maxStudents: 10,
         status: 'open',
-      },
-    });
+      });
     classId = cls.id;
 
     const student = await prisma.student.create({
@@ -125,7 +124,7 @@ test.describe('Accessibility sweep', () => {
     await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
     await prisma.registration.deleteMany({ where: { classId } });
     await prisma.teacherStudent.deleteMany({ where: { teacherId } });
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.session.deleteMany({

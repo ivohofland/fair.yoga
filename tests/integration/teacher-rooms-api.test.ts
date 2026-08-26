@@ -21,6 +21,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -165,8 +166,7 @@ beforeAll(async () => {
   });
   linkWithClassId = linkWithClass.id;
   blockingClassId = (
-    await prisma.class.create({
-      data: {
+    await createClassFixture(prisma, {
         teacherId: ownerId,
         teacherRoomId: linkWithClass.id,
         classType: 'Teacher Rooms API Delete Guard',
@@ -179,8 +179,7 @@ beforeAll(async () => {
         minStudents: 1,
         maxStudents: 8,
         status: 'draft',
-      },
-    })
+      })
   ).id;
 
   const roomWithOpenClass = await makeRoom('With Open Class');
@@ -193,8 +192,7 @@ beforeAll(async () => {
     },
   });
   linkWithOpenClassId = linkWithOpenClass.id;
-  await prisma.class.create({
-    data: {
+  await createClassFixture(prisma, {
       teacherId: ownerId,
       teacherRoomId: linkWithOpenClass.id,
       classType: 'Teacher Rooms API Archive Guard',
@@ -207,8 +205,7 @@ beforeAll(async () => {
       minStudents: 1,
       maxStudents: 8,
       status: 'open',
-    },
-  });
+    });
 
   const archivedTemplateRoom = await makeRoom('Archived Template');
   const archivedTemplateLink = await prisma.teacherRoom.create({
@@ -270,7 +267,7 @@ beforeAll(async () => {
 afterAll(async () => {
   // FK order: class → classTemplate → teacherRoom → room. Both Class and
   // ClassTemplate.teacherRoom are Restrict, so both must go first.
-  await prisma.class.deleteMany({ where: { teacherId: { in: [ownerId, otherId] } } });
+  await prisma.class.deleteMany({ where: { calendarEntry: { teacherId: { in: [ownerId, otherId] } } } });
   // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298),
   // so deleting the rules removes the templates before the teacher-room
   // delete below — same ordering requirement, re-pointed.

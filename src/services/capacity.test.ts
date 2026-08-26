@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { readSeatCount } from './capacity';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -50,8 +51,7 @@ describe('readSeatCount (DB)', () => {
     });
     teacherRoomId = teacherRoom.id;
 
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Capacity Flow',
@@ -65,16 +65,14 @@ describe('readSeatCount (DB)', () => {
         maxStudents: 2,
         cancelDeadline: 'HOURS_24',
         status: 'open',
-      },
-    });
+      });
     classId = cls.id;
 
     // A SECOND class for the overbooked case, so that test needs nothing from
     // the one above and can be read (and run) alone. Same teacher and date is
     // legal because `Class_teacher_slot_unique` is on (teacherId, date,
     // startTime) — a different `startTime` is all it takes.
-    const over = await prisma.class.create({
-      data: {
+    const over = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Capacity Overbooked',
@@ -88,8 +86,7 @@ describe('readSeatCount (DB)', () => {
         maxStudents: 2,
         cancelDeadline: 'HOURS_24',
         status: 'open',
-      },
-    });
+      });
     overClassId = over.id;
 
     for (const label of ['a', 'b', 'c', 'd']) {

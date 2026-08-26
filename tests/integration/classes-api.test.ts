@@ -3,6 +3,7 @@ import { PrismaClient, type ClassStatus } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { formatDayHeader } from '@/lib/format';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -104,9 +105,11 @@ beforeAll(async () => {
   // sibling helpers in this directory (`templateBody` in
   // class-templates-api.test.ts, `makeTemplate` in studio-api.test.ts)
   // dropped their own defaults for the same reason.
-  function makeClass(classType: string, status: ClassStatus, startTime: string) {
-    return prisma.class.create({
-      data: {
+  // `state` is `ClassStatus` plus `'cancelled'` (#327): a cancelled class
+  // keeps a live status and carries `cancelledAt` on its entry, so the fixture
+  // takes the freeze the test wants and decides which row holds it.
+  function makeClass(classType: string, state: ClassStatus | 'cancelled', startTime: string) {
+    return createClassFixture(prisma, {
         teacherId: ownerId,
         teacherRoomId: teacherRoom.id,
         classType,
@@ -118,9 +121,9 @@ beforeAll(async () => {
         targetRate: 20,
         minStudents: 1,
         maxStudents: 8,
-        status,
-      },
-    });
+        status: state === 'cancelled' ? 'open' : state,
+        cancelledAt: state === 'cancelled' ? new Date() : null,
+      });
   }
 
   // Left in the default `draft` status deliberately: draft cannot transition
@@ -163,8 +166,7 @@ beforeAll(async () => {
   cancelledTerminalClassId = cancelledCls.id;
 
   // #249. Past-dated draft for the publish-guard test.
-  const pastLive = await prisma.class.create({
-    data: {
+  const pastLive = await createClassFixture(prisma, {
       teacherId: ownerId,
       teacherRoomId: teacherRoom.id,
       classType: 'Past Live',
@@ -177,8 +179,7 @@ beforeAll(async () => {
       minStudents: 1,
       maxStudents: 8,
       status: 'draft',
-    },
-  });
+    });
   pastDraftClassId = pastLive.id;
 
   // A student who books lockedClassId over HTTP — the same trigger path
@@ -289,8 +290,8 @@ afterAll(async () => {
   // nothing more — the actual FK risk below is the surviving `Class` row
   // against `teacherRoom`/`room`, which is what the ordering above guards.
   if (ownerId) {
-    await prisma.waitlistEntry.deleteMany({ where: { class: { teacherId: ownerId } } });
-    await prisma.class.deleteMany({ where: { teacherId: ownerId } });
+    await prisma.waitlistEntry.deleteMany({ where: { class: { calendarEntry: { teacherId: ownerId } } } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: ownerId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId: ownerId } });
   }
   if (roomId) {
@@ -352,7 +353,7 @@ describe('POST /api/classes/[id]/complete', () => {
     const res = await complete(otherTeacherToken, classId);
     expect(res.status).toBe(403);
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(unchanged.status).toBe('draft');
   });
 
@@ -365,7 +366,7 @@ describe('POST /api/classes/[id]/complete', () => {
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('cannot move from "draft" to "completed"');
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(unchanged.status).toBe('draft');
   });
 });
@@ -395,7 +396,7 @@ describe('POST /api/classes/[id]/transition', () => {
     const res = await transition(otherTeacherToken, classId, { status: 'open' });
     expect(res.status).toBe(403);
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(unchanged.status).toBe('draft');
   });
 
@@ -408,7 +409,7 @@ describe('POST /api/classes/[id]/transition', () => {
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('cannot move from "draft" to "in_progress"');
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(unchanged.status).toBe('draft');
   });
 
@@ -418,7 +419,7 @@ describe('POST /api/classes/[id]/transition', () => {
     const res = await transition(ownerToken, classId, { status: 'completed' });
     expect(res.status).toBe(400);
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(unchanged.status).toBe('draft');
   });
 
@@ -441,7 +442,7 @@ describe('POST /api/classes/[id]/transition', () => {
     expect(json.error.code).toBe('CLASS_STARTS_IN_PAST');
     expect(json.error.message).toMatch(/already passed/i);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: pastDraftClassId } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: pastDraftClassId }, include: { calendarEntry: true },});
     expect(after.status).toBe('draft');
   });
 
@@ -449,7 +450,7 @@ describe('POST /api/classes/[id]/transition', () => {
     const res = await transition(ownerToken, cancelClassId, { status: 'cancelled' });
     expect(res.status).toBe(200);
 
-    const cancelled = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId } });
+    const cancelled = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId }, include: { calendarEntry: true },});
     expect(cancelled.status).toBe('cancelled');
   });
 
@@ -488,13 +489,10 @@ describe('POST /api/classes/[id]/transition', () => {
     //   value the database actually returned is what would catch the route
     //   drifting off UTC midnight. Two independent literals agree with each
     //   other no matter what came back from the column.
-    const stored = await prisma.class.findUniqueOrThrow({
-      where: { id: noticeClassId },
-      select: { classType: true, date: true, startTime: true },
-    });
-    expect(note.body).toContain(stored.classType);
-    expect(note.body).toContain(formatDayHeader(stored.date));
-    expect(note.body).toContain(timeToHHmm(stored.startTime));
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: noticeClassId }, select: { calendarEntry: { select: { classType: true, date: true, startTime: true } } } });
+    expect(note.body).toContain(stored.calendarEntry.classType);
+    expect(note.body).toContain(formatDayHeader(stored.calendarEntry.date));
+    expect(note.body).toContain(timeToHHmm(stored.calendarEntry.startTime));
 
     // The sentence carrying those three, not just the three. Without this the
     // student body could be replaced wholesale by the teacher's — "was
@@ -529,8 +527,7 @@ describe('POST /api/classes/[id]/transition', () => {
   });
 
   it('names the class as it stands when cancelled, not as first read', async () => {
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId: ownerId,
         teacherRoomId,
         classType: 'Hatha',
@@ -543,8 +540,7 @@ describe('POST /api/classes/[id]/transition', () => {
         minStudents: 2,
         maxStudents: 4,
         status: 'open',
-      },
-    });
+      });
     await prisma.registration.create({
       data: { classId: cls.id, studentId: waitStudentId, status: 'registered', tierAtBooking: 3 },
     });
@@ -642,7 +638,7 @@ describe('POST /api/classes/[id]/transition', () => {
       // orphan them, the exact failure mode this block exists to close.
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
       await prisma.registration.deleteMany({ where: { classId: cls.id } });
-      await prisma.class.delete({ where: { id: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
     }
   });
 
@@ -668,8 +664,7 @@ describe('POST /api/classes/[id]/transition', () => {
    * which is what the lever provides.
    */
   it('404s when the class is deleted while the cancel is parked on its row', async () => {
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId: ownerId,
         teacherRoomId,
         classType: 'Hatha',
@@ -682,8 +677,7 @@ describe('POST /api/classes/[id]/transition', () => {
         minStudents: 2,
         maxStudents: 4,
         status: 'open',
-      },
-    });
+      });
     // No registrations, deliberately: this class has to be deletable, which is
     // also what makes the scenario real — the archive path only hard-deletes
     // instances carrying no charged registration.
@@ -754,7 +748,7 @@ describe('POST /api/classes/[id]/transition', () => {
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('Cannot cancel a class with status "cancelled"');
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId } });
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId }, include: { calendarEntry: true },});
     expect(unchanged.status).toBe('cancelled');
   });
 
@@ -768,8 +762,7 @@ describe('POST /api/classes/[id]/transition', () => {
    * this tail.
    */
   it('closes the waitlist when a teacher moves a class to in_progress', async () => {
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId: ownerId,
         teacherRoomId,
         classType: 'Queue Close',
@@ -782,8 +775,7 @@ describe('POST /api/classes/[id]/transition', () => {
         minStudents: 2,
         maxStudents: 4,
         status: 'open',
-      },
-    });
+      });
     const entry = await prisma.waitlistEntry.create({
       data: { classId: cls.id, studentId: waitStudentId, position: 1, status: 'waiting' },
     });
@@ -795,7 +787,7 @@ describe('POST /api/classes/[id]/transition', () => {
     expect(after.status).toBe('expired');
 
     await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
-    await prisma.class.delete({ where: { id: cls.id } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
 });
 
@@ -811,19 +803,19 @@ describe('PUT /api/classes/[id]', () => {
     });
 
   it('unlocked class: owner edits economic fields -> 200, the new values persist', async () => {
-    const before = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId } });
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId }, include: { calendarEntry: true },});
     expect(before.settingsLocked).toBe(false); // sanity: the control fixture for the locked-class cases below
 
     const res = await put(ownerToken, economicsClassId, { roomCost: 42, minStudents: 2 });
     expect(res.status).toBe(200);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId } });
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId }, include: { calendarEntry: true },});
     expect(Number(updated.roomCost)).toBe(42);
     expect(updated.minStudents).toBe(2);
   });
 
   it('locked class: economic edit is rejected with 409 naming the fields sent', async () => {
-    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
     expect(before.settingsLocked).toBe(true); // sanity: the beforeAll fixture registration locked it
 
     // Body order deliberately reversed from the `ECONOMIC_FIELDS` constant's
@@ -845,13 +837,13 @@ describe('PUT /api/classes/[id]', () => {
     expect(json.error.message).toContain('roomCost');
     expect(json.error.message).toContain('minRate');
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
     expect(Number(after.minRate)).toBe(Number(before.minRate));
   });
 
   it('locked class: a mixed economic + non-economic body is rejected atomically', async () => {
-    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
 
     // The lock check inside `updateClass` rejects before any write happens.
     // Nothing pinned that the rejection is all-or-nothing until this case — a
@@ -861,18 +853,18 @@ describe('PUT /api/classes/[id]', () => {
     const res = await put(ownerToken, lockedClassId, { description: 'x', roomCost: 999 });
     expect(res.status).toBe(409);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
     expect(after.description).toBe(before.description);
   });
 
   it('locked class: a non-economic edit still succeeds — the lock is scoped to economics', async () => {
-    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
 
     const res = await put(ownerToken, lockedClassId, { description: 'Updated after lock' });
     expect(res.status).toBe(200);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
     expect(after.description).toBe('Updated after lock');
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
     expect(Number(after.minRate)).toBe(Number(before.minRate));
@@ -882,7 +874,7 @@ describe('PUT /api/classes/[id]', () => {
   });
 
   it("403s another teacher's cookie on a locked class with an economic body — proves the ownership guard fires before the lock check", async () => {
-    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
 
     // An economic field, not `description`: a non-economic body can't tell
     // ownership-first from lock-first apart, because sentEconomicFields would
@@ -898,12 +890,12 @@ describe('PUT /api/classes/[id]', () => {
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('Not your class');
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
   });
 
   it('open class: a date edit into the past is refused with 409, not 500 (#249)', async () => {
-    const target = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId } });
+    const target = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId }, include: { calendarEntry: true },});
     expect(target.status).toBe('open'); // sanity: a LIVE class, so #247's freeze is not what refuses
 
     const res = await put(ownerToken, economicsClassId, { date: '2020-01-01' });
@@ -914,8 +906,8 @@ describe('PUT /api/classes/[id]', () => {
     // started" from "frozen" without matching on English.
     expect(json.error.code).toBe('CLASS_STARTS_IN_PAST');
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId } });
-    expect(after.date.toISOString().slice(0, 10)).toBe('2099-06-01');
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId }, include: { calendarEntry: true },});
+    expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-06-01');
   });
 
   // Task 6b (#196). `Class_teacher_slot_unique` is (teacherId, date,
@@ -925,13 +917,12 @@ describe('PUT /api/classes/[id]', () => {
   // here exactly as a `POST` into that slot does.
   describe('PUT /api/classes/[id] collides on the slot key (#196)', () => {
     afterAll(async () => {
-      await prisma.class.deleteMany({ where: { teacherId: ownerId, classType: 'Reschedule Slot' } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: ownerId, classType: 'Reschedule Slot' } });
     });
 
     it('refuses a reschedule onto a slot another live class already holds', async () => {
       const makeSlotClass = (startTime: string) =>
-        prisma.class.create({
-          data: {
+        createClassFixture(prisma, {
             teacherId: ownerId,
             teacherRoomId,
             classType: 'Reschedule Slot',
@@ -944,8 +935,7 @@ describe('PUT /api/classes/[id]', () => {
             minStudents: 1,
             maxStudents: 8,
             status: 'draft',
-          },
-        });
+          });
       const occupied = await makeSlotClass('08:00');
       const mover = await makeSlotClass('08:15');
 
@@ -954,15 +944,15 @@ describe('PUT /api/classes/[id]', () => {
       const json = (await res.json()) as { error: { code: string } };
       expect(json.error.code).toBe('DUPLICATE_CLASS_SLOT');
 
-      const after = await prisma.class.findUniqueOrThrow({ where: { id: mover.id } });
-      expect(timeToHHmm(after.startTime)).toBe('08:15');
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true },});
+      expect(timeToHHmm(after.calendarEntry.startTime)).toBe('08:15');
 
       // The test's premise is that this row is the one occupying the slot
       // the reschedule collided on, and that it is untouched by the failed
       // move — assert that rather than discarding the reference, so a route
       // that clobbered the wrong row would fail this test.
-      const stillOccupied = await prisma.class.findUniqueOrThrow({ where: { id: occupied.id } });
-      expect(timeToHHmm(stillOccupied.startTime)).toBe('08:00');
+      const stillOccupied = await prisma.class.findUniqueOrThrow({ where: { id: occupied.id }, include: { calendarEntry: true },});
+      expect(timeToHHmm(stillOccupied.calendarEntry.startTime)).toBe('08:00');
     });
   });
 
@@ -1004,7 +994,9 @@ describe('PUT /api/classes/[id]', () => {
     });
 
     afterAll(async () => {
-      await prisma.class.deleteMany({ where: { templateId: templateDateTemplateId } });
+      await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { classTemplates: { some: { id: templateDateTemplateId } } } },
+    });
       // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
       // 298) — deleting the child directly here would orphan its rule row.
       await prisma.scheduleRule.delete({ where: { id: templateDateScheduleRuleId } });
@@ -1012,11 +1004,10 @@ describe('PUT /api/classes/[id]', () => {
 
     it("refuses moving one instance onto a sibling instance's date, naming the recurring class rather than a generic conflict", async () => {
       const makeInstance = (date: string, startTime: string) =>
-        prisma.class.create({
-          data: {
+        createClassFixture(prisma, {
             teacherId: ownerId,
             teacherRoomId,
-            templateId: templateDateTemplateId,
+            scheduleRuleId: templateDateScheduleRuleId,
             classType: 'Template Date Clash',
             date: new Date(date),
             startTime: hhmmToTime(startTime),
@@ -1027,8 +1018,7 @@ describe('PUT /api/classes/[id]', () => {
             minStudents: 1,
             maxStudents: 8,
             status: 'open',
-          },
-        });
+          });
       const sibling = await makeInstance('2099-09-02', '07:00');
       // Distinct startTime from `sibling`'s, deliberately: the slot key
       // (teacherId, date, startTime) must NOT also fire here — this test
@@ -1042,18 +1032,18 @@ describe('PUT /api/classes/[id]', () => {
       expect(json.error.code).toBe('TEMPLATE_INSTANCE_DATE_CONFLICT');
       expect(json.error.message).toBe('That recurring class already has a class on that date.');
 
-      const after = await prisma.class.findUniqueOrThrow({ where: { id: mover.id } });
-      expect(after.date.toISOString().slice(0, 10)).toBe('2099-09-09');
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true },});
+      expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-09-09');
 
       // The test's premise is that this row is the one occupying the date
       // the move collided on, and that it is untouched by the failed move.
-      const stillThere = await prisma.class.findUniqueOrThrow({ where: { id: sibling.id } });
-      expect(stillThere.date.toISOString().slice(0, 10)).toBe('2099-09-02');
+      const stillThere = await prisma.class.findUniqueOrThrow({ where: { id: sibling.id }, include: { calendarEntry: true },});
+      expect(stillThere.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-09-02');
     });
   });
 
   it('completed class: the edit is refused with 409 and the stored date does not move (#247)', async () => {
-    const before = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId } });
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId }, include: { calendarEntry: true },});
     expect(before.status).toBe('completed'); // sanity: the fixture is the state under test
 
     // The exact payload from the issue. `isoDate` has no range bound, so this
@@ -1068,14 +1058,13 @@ describe('PUT /api/classes/[id]', () => {
 
     // The whole point: a refusal that still wrote the column would leave
     // waitlist-retention's sweep with a class dated 2020 to reap.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId } });
-    expect(after.date.toISOString().slice(0, 10)).toBe('2099-06-01');
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId }, include: { calendarEntry: true },});
+    expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-06-01');
   });
 
   it('cancelled class: the edit is refused with 409 naming cancelled, not completed (#247)', async () => {
     const before = await prisma.class.findUniqueOrThrow({
-      where: { id: cancelledTerminalClassId },
-    });
+      where: { id: cancelledTerminalClassId }, include: { calendarEntry: true },});
     expect(before.status).toBe('cancelled');
 
     // Not a duplicate of the `completed` case above. The route builds its
@@ -1096,9 +1085,8 @@ describe('PUT /api/classes/[id]', () => {
     expect(json.error.code).toBe('CLASS_TERMINAL');
 
     const after = await prisma.class.findUniqueOrThrow({
-      where: { id: cancelledTerminalClassId },
-    });
-    expect(after.date.toISOString().slice(0, 10)).toBe('2099-06-01');
+      where: { id: cancelledTerminalClassId }, include: { calendarEntry: true },});
+    expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-06-01');
   });
 });
 
@@ -1165,9 +1153,7 @@ describe('POST /api/classes', () => {
       () => {
         const roomIds = [teacherRoomId, victimRoomId].filter(Boolean);
         return roomIds.length > 0
-          ? prisma.class.deleteMany({
-              where: { teacherRoomId: { in: roomIds }, classType: 'Create Route' },
-            })
+          ? prisma.class.deleteMany({ where: { teacherRoomId: { in: roomIds }, calendarEntry: { classType: 'Create Route' } } })
           : Promise.resolve();
       },
       // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
@@ -1221,9 +1207,9 @@ describe('POST /api/classes', () => {
     const res = await post(ownerToken, baseBody());
     expect(res.status).toBe(201);
     const { data } = (await res.json()) as { data: { id: string } };
-    const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id } });
-    expect(created.teacherId).toBe(ownerId);
-    expect(created.templateId).toBeNull();
+    const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true },});
+    expect(created.calendarEntry.teacherId).toBe(ownerId);
+    expect(created.calendarEntry.scheduleRuleId).toBeNull();
   });
 
   // #146. templateId is server-set — class-generator.ts writes it when a
@@ -1246,8 +1232,8 @@ describe('POST /api/classes', () => {
     expect(res.status).toBe(201);
 
     const { data } = (await res.json()) as { data: { id: string } };
-    const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id } });
-    expect(created.templateId).toBeNull();
+    const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true },});
+    expect(created.calendarEntry.scheduleRuleId).toBeNull();
 
     // The victim's own generation window is untouched. Both assertions here
     // rest on an absence, and `Class.templateId` is `onDelete: SetNull` — so a
@@ -1256,7 +1242,7 @@ describe('POST /api/classes', () => {
     expect(
       await prisma.classTemplate.findUnique({ where: { id: victimTemplateId } }),
     ).not.toBeNull();
-    expect(await prisma.class.count({ where: { templateId: victimTemplateId } })).toBe(0);
+    expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: victimTemplateId } } } } } })).toBe(0);
   });
 
   // #327 stage B, Task 1: `startTime` becomes a `@db.Time` column. The wire
@@ -1335,7 +1321,7 @@ describe('POST /api/classes', () => {
     // Nested `afterAll`s run before their parent's, so this clears the way
     // in time.
     afterAll(async () => {
-      await prisma.class.deleteMany({ where: { teacherId: ownerId, classType: 'Slot Yoga' } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: ownerId, classType: 'Slot Yoga' } });
     });
 
     const slotBody = () => ({
@@ -1358,9 +1344,7 @@ describe('POST /api/classes', () => {
       expect(second.status).toBe(409);
       expect((await second.json()).error.code).toBe('DUPLICATE_CLASS_SLOT');
 
-      const rows = await prisma.class.findMany({
-        where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('07:15') },
-      });
+      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('07:15') } }, include: { calendarEntry: true },});
       expect(rows).toHaveLength(1);
     });
 
@@ -1372,9 +1356,7 @@ describe('POST /api/classes', () => {
       const loser = a.status === 409 ? a : b;
       expect((await loser.json()).error.code).toBe('DUPLICATE_CLASS_SLOT');
 
-      const rows = await prisma.class.findMany({
-        where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('07:45') },
-      });
+      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('07:45') } }, include: { calendarEntry: true },});
       expect(rows).toHaveLength(1);
     });
 
@@ -1393,14 +1375,12 @@ describe('POST /api/classes', () => {
       // Direct write, not `POST …/transition`: this test is about the slot
       // index's predicate, not the transition route, and a draft class can
       // reach `cancelled` in one step either way (`VALID_TRANSITIONS`).
-      await prisma.class.update({ where: { id: created.id }, data: { status: 'cancelled' } });
+      await prisma.calendarEntry.updateMany({ where: { classes: { some: { id: created.id } } }, data: { cancelledAt: new Date() } });
 
       const second = await post(body);
       expect(second.status).toBe(201);
 
-      const rows = await prisma.class.findMany({
-        where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('08:15') },
-      });
+      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('08:15') } }, include: { calendarEntry: true },});
       expect(rows).toHaveLength(2);
       expect(rows.find((r) => r.id === created.id)?.status).toBe('cancelled');
     });

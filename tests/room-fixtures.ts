@@ -30,8 +30,14 @@ import type { PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from './class-fixtures';
 
 export type RoomFixture = { teacherId: string; roomId: string; linkId: string };
+/**
+ * `ClassStatus` plus `'cancelled'`. Since #327 cancellation is a column on the
+ * entry rather than a status, so a fixture that wants a cancelled class asks
+ * for one here and `addClass` decides which of the two rows carries it.
+ */
 export type ClassFixtureStatus = 'draft' | 'open' | 'in_progress' | 'completed' | 'cancelled';
 
 export function fixtureRun(prefix: string) {
@@ -76,8 +82,7 @@ export function fixtureRun(prefix: string) {
     const date = new Date();
     date.setUTCHours(0, 0, 0, 0);
     date.setUTCDate(date.getUTCDate() + 14);
-    return db.class.create({
-      data: {
+    return createClassFixture(db, {
         teacherId: f.teacherId,
         teacherRoomId: f.linkId,
         classType: 'Vinyasa',
@@ -89,9 +94,9 @@ export function fixtureRun(prefix: string) {
         targetRate: new Prisma.Decimal(25),
         minStudents: 2,
         maxStudents: 10,
-        status,
-      },
-    });
+        status: status === 'cancelled' ? 'open' : status,
+        cancelledAt: status === 'cancelled' ? new Date() : null,
+      });
   }
 
   async function addTemplate(
@@ -126,7 +131,8 @@ export function fixtureRun(prefix: string) {
   /** Sweeps only rows created by THIS run's prefix. */
   async function cleanup(db: PrismaClient) {
     const mine = { teacher: { pageSlug: { startsWith: suffix } } };
-    await db.class.deleteMany({ where: mine });
+    // The ENTRY, which cascades to both families' children (#327).
+    await db.calendarEntry.deleteMany({ where: mine });
     // `ClassTemplate`/`StudioClassTemplate` are `onDelete: Cascade` from
     // `ScheduleRule` (issue 298) — deleting the rule removes both families'
     // templates, so this deletes the rule rather than nesting the filter.

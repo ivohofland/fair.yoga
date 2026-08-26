@@ -8,6 +8,7 @@ import {
   claimEmailFallback,
 } from './notifications';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -85,8 +86,7 @@ describe('createNotification', () => {
       },
     });
 
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'Hatha',
@@ -99,8 +99,7 @@ describe('createNotification', () => {
         minStudents: 4,
         maxStudents: 12,
         status: 'open',
-      },
-    });
+      });
 
     const notification = await createNotification(prisma, {
       recipientType: 'teacher',
@@ -115,7 +114,7 @@ describe('createNotification', () => {
 
     // Clean up class-related data
     await prisma.notification.delete({ where: { id: notification.id } });
-    await prisma.class.delete({ where: { id: cls.id } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
     await prisma.teacherRoom.delete({ where: { id: teacherRoom.id } });
     await prisma.room.delete({ where: { id: room.id } });
   });

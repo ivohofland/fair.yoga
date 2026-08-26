@@ -27,7 +27,11 @@ export const GET = withErrorHandler(async (
           id: true,
           status: true,
           student: { select: studentVisibilitySelect(session.teacherId) },
-          class: { select: { teacherId: true, classType: true, date: true } },
+          class: {
+            select: {
+              calendarEntry: { select: { teacherId: true, classType: true, date: true } },
+            },
+          },
         },
       },
     },
@@ -36,12 +40,12 @@ export const GET = withErrorHandler(async (
   if (!payment) return respondError('Payment not found', 404);
 
   // Verify teacher owns the class via registration chain
-  if (payment.registration.class.teacherId !== session.teacherId) {
+  if (payment.registration.class.calendarEntry.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 
-  // `class.teacherId` was only ever needed for the ownership check above —
-  // TeacherPaymentRow's `class` doesn't carry it, and it's built out
+  // `calendarEntry.teacherId` was only ever needed for the ownership check
+  // above — TeacherPaymentRow's `class` doesn't carry it, and it's built out
   // explicitly here (not spread) so it can't ride along into the response.
   const row: TeacherPaymentRow = {
     ...payment,
@@ -50,8 +54,8 @@ export const GET = withErrorHandler(async (
       status: payment.registration.status,
       student: projectStudentForTeacher(payment.registration.student, session.teacherId),
       class: {
-        classType: payment.registration.class.classType,
-        date: payment.registration.class.date,
+        classType: payment.registration.class.calendarEntry.classType,
+        date: payment.registration.class.calendarEntry.date,
       },
     },
   };

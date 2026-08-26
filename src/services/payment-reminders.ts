@@ -49,14 +49,14 @@ export async function sendPaymentReminders(
       // and a deleted teacher has no account details left to pay into.
       registration: {
         student: { deletedAt: null },
-        class: { teacher: { deletedAt: null } },
+        class: { calendarEntry: { teacher: { deletedAt: null } } },
       },
     },
     include: {
       registration: {
         select: {
           studentId: true,
-          class: { select: { id: true, classType: true } },
+          class: { select: { id: true, calendarEntry: { select: { classType: true } } } },
         },
       },
     },
@@ -87,7 +87,7 @@ export async function sendPaymentReminders(
           recipientId: payment.registration.studentId,
           type: 'reminder',
           title: 'Payment outstanding',
-          body: `€${Number(payment.amount).toFixed(2)} for ${payment.registration.class.classType} is still open. Pay your teacher directly.`,
+          body: `€${Number(payment.amount).toFixed(2)} for ${payment.registration.class.calendarEntry.classType} is still open. Pay your teacher directly.`,
           relatedClassId: payment.registration.class.id,
         },
       ];

@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
@@ -9,7 +10,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { createClassSchema } from '@/lib/schemas';
-import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
@@ -22,9 +23,12 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const from = url.searchParams.get('from');
   const to = url.searchParams.get('to');
 
-  const where: Record<string, unknown> = { teacherId: session.teacherId };
+  // `teacherId` and `date` both scope through the entry now (#327). Typed
+  // rather than `Record<string, unknown>`, which is what let the old shape
+  // build a filter Prisma would silently ignore.
+  const entryWhere: Prisma.CalendarEntryWhereInput = { teacherId: session.teacherId };
   if (from || to) {
-    const dateFilter: Record<string, Date> = {};
+    const dateFilter: Prisma.DateTimeFilter = {};
     if (from) {
       const fromDate = new Date(from);
       if (Number.isNaN(fromDate.getTime())) return respondError('Invalid "from" date', 400);
@@ -35,18 +39,33 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       if (Number.isNaN(toDate.getTime())) return respondError('Invalid "to" date', 400);
       dateFilter.lte = toDate;
     }
-    where.date = dateFilter;
+    entryWhere.date = dateFilter;
   }
 
   const classes = await prisma.class.findMany({
-    where,
+    where: { calendarEntry: entryWhere },
     include: {
+      calendarEntry: true,
       _count: { select: { registrations: true } },
     },
-    orderBy: { date: 'asc' },
+    orderBy: { calendarEntry: { date: 'asc' } },
   });
 
-  return respondOk(classes.map((cls) => ({ ...cls, startTime: timeToHHmm(cls.startTime) })));
+  // The wire shape is unchanged by #327: the entry's columns are flattened
+  // back onto the class, so a client still reads `classType`, `date`,
+  // `startTime` and `teacherId` where it always did. `cancelledAt` is new
+  // beside them, because `status` can no longer carry it.
+  return respondOk(
+    classes.map(({ calendarEntry, ...cls }) => ({
+      ...cls,
+      teacherId: calendarEntry.teacherId,
+      classType: calendarEntry.classType,
+      date: calendarEntry.date,
+      startTime: timeToHHmm(calendarEntry.startTime),
+      durationMinutes: calendarEntry.durationMinutes,
+      cancelledAt: calendarEntry.cancelledAt,
+    })),
+  );
 });
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
@@ -64,34 +83,60 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   try {
-    const cls = await prisma.class.create({
+    // The ENTRY is the row created, with its class nested (#327). `kind` is
+    // set once, on the parent: it is half of the composite foreign key, so
+    // Prisma omits it from the nested child input and fills it from here.
+    const entry = await prisma.calendarEntry.create({
       data: {
         teacherId: session.teacherId,
-        teacherRoomId: body.teacherRoomId,
+        kind: 'regular',
         classType: body.classType,
-        description: body.description ?? null,
         date: new Date(body.date),
         startTime: hhmmToTime(body.startTime),
         durationMinutes: body.durationMinutes,
-        roomCost: body.roomCost,
-        minRate: body.minRate,
-        targetRate: body.targetRate,
-        minStudents: body.minStudents,
-        maxStudents: body.maxStudents,
-        cancelDeadline: body.cancelDeadline,
-        autoCancelCheck: body.autoCancelCheck,
-        status: 'draft',
+        classes: {
+          create: {
+            teacherRoomId: body.teacherRoomId,
+            description: body.description ?? null,
+            roomCost: body.roomCost,
+            minRate: body.minRate,
+            targetRate: body.targetRate,
+            minStudents: body.minStudents,
+            maxStudents: body.maxStudents,
+            cancelDeadline: body.cancelDeadline,
+            autoCancelCheck: body.autoCancelCheck,
+            status: 'draft',
+          },
+        },
       },
+      include: { classes: true },
     });
-    return respondOk({ ...cls, startTime: timeToHHmm(cls.startTime) }, 201);
+    const cls = entry.classes[0];
+    if (!cls) throw new Error('class create: the nested class row did not come back');
+    return respondOk(
+      {
+        ...cls,
+        teacherId: entry.teacherId,
+        classType: entry.classType,
+        date: entry.date,
+        startTime: timeToHHmm(entry.startTime),
+        durationMinutes: entry.durationMinutes,
+        cancelledAt: entry.cancelledAt,
+      },
+      201,
+    );
   } catch (err) {
-    // The slot key, not the template key. `@@unique([templateId, date])`
-    // cannot raise P2002 here — this create never sets `templateId` (a
-    // manually created class never has one), so it is NULL, and Postgres
-    // treats NULLs as distinct. The column-list match still matters: it is
-    // what would tell the two keys apart the day this route starts
-    // accepting a `templateId`, not what tells them apart today.
-    if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
+    // The slot constraint, not the rule-date key. `@@unique([scheduleRuleId,
+    // date])` cannot raise here — this create never sets `scheduleRuleId` (a
+    // manually created class has no rule behind it), so it is NULL, and
+    // Postgres treats NULLs as distinct.
+    //
+    // `isExclusionConflictOn`, not `isUniqueConflictOn`: since #327 the slot
+    // is an `EXCLUDE USING gist` raising `23P01`, which has no `meta.target`
+    // column list for the unique matcher to compare. It is also RANGE-based,
+    // so a create that merely OVERLAPS a live class of this teacher collides
+    // where before only an identical start time did.
+    if (isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')) {
       return respondError(
         'You already have a class at that date and time.',
         409,

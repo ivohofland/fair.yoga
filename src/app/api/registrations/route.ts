@@ -124,19 +124,28 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // the ordinary 404 path rather than an impossible branch.
       const cls = await tx.class.findUnique({
         where: { id: body.classId },
-        include: { teacher: { select: { defaultTimezone: true } } },
+        include: {
+          calendarEntry: { include: { teacher: { select: { defaultTimezone: true } } } },
+        },
       });
       if (!cls) throw new ClassNotFoundError();
 
       // Teachers may only manage registrations for their own classes —
       // registering also locks the class's economic settings.
-      if (actingTeacherId && cls.teacherId !== actingTeacherId) {
+      if (actingTeacherId && cls.calendarEntry.teacherId !== actingTeacherId) {
         throw new NotYourClassError();
       }
 
       // Students book open classes; the teacher can also add someone who
       // shows up while the class is in progress.
       const allowedStatuses = isTeacher ? ['open', 'in_progress'] : ['open'];
+      // TWO conditions since #327: a cancelled class keeps whatever status it
+      // had, so the allowlist alone would let a student book one. Reported as
+      // the same refusal — from a booker's side "this class is off" is what
+      // both mean — with a word that says which.
+      if (cls.calendarEntry.cancelledAt !== null) {
+        throw new ClassStatusError('cancelled');
+      }
       if (!allowedStatuses.includes(cls.status)) {
         throw new ClassStatusError(cls.status);
       }
@@ -146,7 +155,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // rate stays capped at target; extra students lower prices). A teacher
       // adding a student well before class is a normal registration and
       // respects capacity like everyone else.
-      const classStart = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+      const classStart = classStartInstant(
+        cls.calendarEntry.date,
+        cls.calendarEntry.startTime,
+        cls.calendarEntry.teacher.defaultTimezone,
+      );
       const isWalkIn =
         isTeacher &&
         (cls.status === 'in_progress' || Date.now() >= classStart.getTime() - WALK_IN_WINDOW_MS);
@@ -220,9 +233,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // the CRM sees them and how per-teacher privacy gets its scope.
       if (!isTeacher) {
         await tx.teacherStudent.upsert({
-          where: { teacherId_studentId: { teacherId: cls.teacherId, studentId } },
+          where: { teacherId_studentId: { teacherId: cls.calendarEntry.teacherId, studentId } },
           update: {},
-          create: { teacherId: cls.teacherId, studentId },
+          create: { teacherId: cls.calendarEntry.teacherId, studentId },
         });
 
         // #166: only the student's own booking is consent — this call sits
@@ -231,7 +244,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         // of the two routes back from one (joining a waitlist,
         // `addToWaitlist` in services/waitlist.ts, is the other).
         await resolveInvitationOnLink(tx, {
-          teacherId: cls.teacherId,
+          teacherId: cls.calendarEntry.teacherId,
           studentEmail: student.email,
         });
 
@@ -243,15 +256,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
             recipientId: studentId,
             type: 'booking_confirmed',
             title: 'Booking confirmed',
-            body: `You're booked for ${cls.classType}. The final price settles after class.`,
+            body: `You're booked for ${cls.calendarEntry.classType}. The final price settles after class.`,
             relatedClassId: cls.id,
           },
           {
             recipientType: 'teacher',
-            recipientId: cls.teacherId,
+            recipientId: cls.calendarEntry.teacherId,
             type: 'booking_confirmed',
             title: 'New booking',
-            body: `${student.firstName} booked ${cls.classType}.`,
+            body: `${student.firstName} booked ${cls.calendarEntry.classType}.`,
             relatedClassId: cls.id,
           },
         ]);

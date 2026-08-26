@@ -6,6 +6,7 @@
 
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
+import { spansOverlap } from '@/lib/generation';
 import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { getNextOccurrences } from './class-generator';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
@@ -130,16 +131,17 @@ export async function claimStudioTemplateForGeneration(
  *   - the occupancy `findMany` below names the *reason* a date is skipped,
  *     which is what lets the teacher be told something true and an operator
  *     grep for it. It is a read-then-write and so is not race-safe on its own;
- *   - `createManyAndReturn({ skipDuplicates: true })` compiles to a BARE
- *     `ON CONFLICT DO NOTHING` — no conflict target, so it covers every unique
- *     constraint on the table, including `StudioClass_teacher_slot_unique` on
- *     (teacherId, date, startTime) WHERE "cancelledAt" IS NULL — the partial
- *     index #196 added. That is what makes a clash cost only its own date.
- *     Pinned by this file's "names a date lost to a concurrent insert as
- *     raced, not as filled" test: a holder row with `templateId: null` parks
- *     on a date/time this key covers, isolated from `@@unique([templateId,
- *     date])`, and the generator's own transaction still creates the other
- *     three dates and commits rather than aborting.
+ *   - `createManyAndReturn({ skipDuplicates: true })` on the ENTRY compiles to
+ *     a BARE `ON CONFLICT DO NOTHING` — no conflict target, so it covers every
+ *     conflict the row can raise, `CalendarEntry_teacher_slot_excl` (an
+ *     EXCLUSION constraint, which a targeted `DO UPDATE` could not name)
+ *     included alongside `@@unique([scheduleRuleId, date])`. That is what
+ *     makes a clash cost only its own date. Pinned by this file's "names a
+ *     date lost to a concurrent insert as raced, not as filled" test: a holder
+ *     entry with `scheduleRuleId: null` parks on a date/time the slot
+ *     constraint covers, isolated from the rule-date key, and the generator's
+ *     own transaction still creates the other three dates and commits rather
+ *     than aborting.
  *
  * This function's P2002 hedge used to document the same 25P02 trap the class
  * family's did (#164): a caught `P2002` inside an interactive transaction
@@ -177,54 +179,45 @@ export async function generateStudioInstancesForTemplate(
     )
     .slice(0, DEFAULT_WEEKS);
 
-  // One query for the whole window. Scoped to this teacher: #196's studio index
-  // is `(teacherId, date, startTime) WHERE "cancelledAt" IS NULL`.
-  const occupants = await db.studioClass.findMany({
+  // ONE query for the whole window, over `CalendarEntry` — which since #327 is
+  // where both families' occupancy lives, so the separate cross-family read
+  // that used to sit below this one is gone. Scoped to this teacher because
+  // `CalendarEntry_teacher_slot_excl` is `("teacherId" WITH =, span WITH &&)`,
+  // so another teacher's entry can never block this one and must not be read.
+  //
+  // `durationMinutes` comes back because that constraint is a RANGE, so the
+  // pre-check has to compare spans rather than start times.
+  const occupants = await db.calendarEntry.findMany({
     where: { teacherId: template.scheduleRule.teacherId, date: { in: dates } },
-    select: { templateId: true, date: true, startTime: true, cancelledAt: true },
-  });
-
-  // The OTHER family (#296). Mirrors the predicate
-  // `studio_class_reject_cross_family_slot` carries (`status <> 'cancelled'`);
-  // the trigger is what enforces it, this is what names the reason. Widen or
-  // narrow one without the other and this pre-check starts disagreeing with the
-  // guard that backs it — the same tripwire the same-family check below carries.
-  //
-  // `(teacherId, date)` is indexed on `Class` already (`schema.prisma`); the
-  // studio side gained its equivalent in this issue's migration, for the
-  // mirror-image read in `class-generator.ts`.
-  //
-  // known-open (#296): this pre-check and the trigger behind it are both
-  // unlocked reads, so two transactions writing opposite families at one slot
-  // can still both commit. Measured at 200 of 200 runs under a FORCED overlap
-  // — a rate conditional on racing, not a rate of races, which was never
-  // measured. Accepted rather than closed with an advisory lock because #298's
-  // recorded decision turns this invariant into a composite foreign key on an
-  // extracted `CalendarEntry`, where the second writer blocks on an
-  // uncommitted index entry instead. `docs/lock-order.md`, "The cross-family
-  // slot guard reads, and does not lock", carries the full argument and the
-  // condition for reopening it.
-  const foreign = await db.class.findMany({
-    where: {
-      teacherId: template.scheduleRule.teacherId,
-      date: { in: dates },
-      status: { not: 'cancelled' },
+    select: {
+      scheduleRuleId: true,
+      kind: true,
+      date: true,
+      startTime: true,
+      durationMinutes: true,
+      cancelledAt: true,
     },
-    select: { date: true, startTime: true },
   });
 
   const skipped: SkippedSlot[] = [];
   const free: Date[] = [];
 
-  for (const date of dates) {
-    const onDate = occupants.filter((c) => c.date.getTime() === date.getTime());
+  /** What every candidate in this window would occupy — the same for all of
+   * them, since a template has one start time and one duration. */
+  const candidateSpan = {
+    startTime,
+    durationMinutes: template.scheduleRule.durationMinutes,
+  };
 
-    const own = onDate.find((c) => c.templateId === template.id);
+  for (const date of dates) {
+    const onDate = occupants.filter((e) => e.date.getTime() === date.getTime());
+
+    const own = onDate.find((e) => e.scheduleRuleId === template.scheduleRuleId);
     if (own) {
-      // `@@unique([templateId, date])` ignores cancellation, so a cancelled own
-      // row makes the date permanently unfillable rather than already filled.
-      // This is the live path #192 was filed about: it runs on every sweep and,
-      // before this change, said nothing.
+      // `@@unique([scheduleRuleId, date])` is TOTAL rather than partial on
+      // liveness, so a cancelled own row makes the date permanently unfillable
+      // rather than already filled. This is the live path #192 was filed
+      // about: it runs on every sweep and, before that change, said nothing.
       skipped.push({
         date,
         reason: own.cancelledAt !== null ? 'blocked_by_cancelled' : 'already_generated',
@@ -232,28 +225,32 @@ export async function generateStudioInstancesForTemplate(
       continue;
     }
 
-    // Mirrors the predicate `StudioClass_teacher_slot_unique` carries (`WHERE
-    // "cancelledAt" IS NULL`); the index backs it since #196; this pre-check
-    // is what names the reason, not what enforces it.
-    // Widen or narrow one without the other and this pre-check starts
-    // disagreeing with the constraint that backs it — see the class family's
-    // equivalent tripwire (`class-generator.ts`) and the spec's §4.1.
-    if (onDate.some((c) => c.startTime.getTime() === startTime.getTime() && c.cancelledAt === null)) {
+    // Mirrors the partial predicate `CalendarEntry_teacher_slot_excl` carries
+    // (`WHERE "cancelledAt" IS NULL`); the constraint backs it since #327;
+    // this pre-check is what names the reason, not what enforces it. Widen or
+    // narrow one without the other and this pre-check starts disagreeing with
+    // the constraint that backs it — see the class family's equivalent
+    // tripwire (`class-generator.ts`) and the spec's §4.1.
+    const live = onDate.filter((e) => e.cancelledAt === null);
+
+    // Exact start, this family — the report a teacher can act on without
+    // leaving this half of their schedule.
+    if (
+      live.some((e) => e.kind === 'studio' && e.startTime.getTime() === startTime.getTime())
+    ) {
       skipped.push({ date, reason: 'slot_taken' });
       continue;
     }
 
     // AFTER `slot_taken`, deliberately: when this teacher holds the slot in
-    // BOTH families, the same-family cause is the one worth reporting, because
-    // it is the one they can act on without leaving this half of their
-    // schedule. A reporting preference like the week-versus-slot one above, not
-    // a guarantee — but unlike that one it costs nothing to state, since both
-    // branches `continue` and no row is created either way.
-    if (
-      foreign.some(
-        (c) => c.date.getTime() === date.getTime() && c.startTime.getTime() === startTime.getTime(),
-      )
-    ) {
+    // BOTH families, the same-family cause is the one worth reporting. A
+    // reporting preference, not a guarantee — but it costs nothing to state,
+    // since both branches `continue` and no row is created either way.
+    //
+    // WIDER THAN ITS NAME until #327's rename lands — the class twin carries
+    // the same note, and `SkipReason`'s own docblock (`@/lib/generation`) is
+    // where the reason lives rather than in either generator.
+    if (live.some((e) => spansOverlap(e, candidateSpan))) {
       skipped.push({ date, reason: 'blocked_by_other_family' });
       continue;
     }
@@ -261,8 +258,8 @@ export async function generateStudioInstancesForTemplate(
     free.push(date);
   }
 
-  // ONE STATEMENT, NO CATCH, and #296 is the second issue to reach for one here
-  // and be wrong. THIS FUNCTION'S OWN docblock already says it — not a sibling
+  // NO CATCH, and #296 is the second issue to reach for one here and be
+  // wrong. THIS FUNCTION'S OWN docblock already says it — not a sibling
   // function's, which makes the objection stronger rather than weaker: "Do not
   // reintroduce a `catch` here." The class twin's docblock adds the reason —
   // "there is nothing it can do that the constraint does not" — and this file
@@ -310,23 +307,37 @@ export async function generateStudioInstancesForTemplate(
   // the now-committed row and skips exactly that date, so it self-corrects
   // within the hour — and on the two POST routes the same `YG001` becomes the
   // 409 those routes were given a branch for.
+  // TWO STATEMENTS SINCE #327, and only the first can conflict — the class
+  // twin's own comment carries the argument. `skipDuplicates` belongs on the
+  // entry because the entry is what holds every constraint; the `StudioClass`
+  // rows below are keyed on the entry ids that actually landed.
   const inserted =
     free.length === 0
       ? []
-      : await db.studioClass.createManyAndReturn({
+      : await db.calendarEntry.createManyAndReturn({
           data: free.map((date) => ({
             teacherId: template.scheduleRule.teacherId,
-            templateId: template.id,
+            kind: 'studio' as const,
             classType: template.scheduleRule.classType,
             date,
             startTime,
             durationMinutes: template.scheduleRule.durationMinutes,
-            location: template.location,
-            hourlyRate: template.hourlyRate,
+            scheduleRuleId: template.scheduleRuleId,
           })),
           skipDuplicates: true,
-          select: { date: true },
+          select: { id: true, date: true },
         });
+
+  if (inserted.length > 0) {
+    await db.studioClass.createMany({
+      data: inserted.map((entry) => ({
+        calendarEntryId: entry.id,
+        kind: 'studio' as const,
+        location: template.location,
+        hourlyRate: template.hourlyRate,
+      })),
+    });
+  }
 
   const landed = new Set(inserted.map((r) => r.date.getTime()));
   for (const date of free) {

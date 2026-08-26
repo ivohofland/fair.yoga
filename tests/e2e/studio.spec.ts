@@ -144,7 +144,7 @@ test.describe('Studio class templates', () => {
     // `DELETE FROM "StudioClass"`. Playwright runs afterAll even when
     // beforeAll threw, which is exactly when `teacherId` is unset.
     if (teacherId) {
-      await prisma.studioClass.deleteMany({ where: { teacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
       // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule`
       // (issue 298), so deleting the rules removes the templates with them.
       await prisma.scheduleRule.deleteMany({ where: { teacherId } });
@@ -186,7 +186,7 @@ test.describe('Studio class templates', () => {
     expect(template.scheduleRule.isArchived).toBe(false);
 
     // Creation itself filled the window — no cron has fired.
-    expect(await prisma.studioClass.count({ where: { templateId } })).toBe(4);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } } } })).toBe(4);
   });
 
   test('the four generated classes are on the schedule, and refuse removal', async ({ page }) => {
@@ -201,16 +201,13 @@ test.describe('Studio class templates', () => {
 
     // Confirmed, not assumed: the second fixture template is `isActive:
     // false` and generates nothing, so it never inflates the count above.
-    expect(await prisma.studioClass.count({ where: { templateId: otherTemplateId } })).toBe(0);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: otherTemplateId } } } } } })).toBe(0);
 
     // A generated class dated today or later cannot be removed — the sweep
     // would recreate it within the hour, so the page draws no Remove control
     // (`studio-class-deletion.ts`, issue 279). Asserted HERE, before the
     // archive below deletes all four.
-    const first = await prisma.studioClass.findFirstOrThrow({
-      where: { templateId },
-      orderBy: { date: 'asc' },
-    });
+    const first = await prisma.studioClass.findFirstOrThrow({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     // The card asserted above and the page opened here are meant to be one
     // door. Nothing else in the suite pins `StudioClassCard`'s target, so
     // without this the two assertions only happen to agree.
@@ -239,14 +236,10 @@ test.describe('Studio class templates', () => {
     // Read the two ends of the window BEFORE pausing, so the assertion below
     // can tell "last" from "first". Every one of the four shares 08:15, so
     // the date is the only field that distinguishes them.
-    const scheduled = await prisma.studioClass.findMany({
-      where: { templateId },
-      orderBy: { date: 'asc' },
-      select: { date: true },
-    });
+    const scheduled = await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, select: { calendarEntry: { select: { date: true } } } });
     expect(scheduled).toHaveLength(4);
-    const lastDay = scheduled[3]!.date.getUTCDate();
-    const firstDay = scheduled[0]!.date.getUTCDate();
+    const lastDay = scheduled[3]!.calendarEntry.date.getUTCDate();
+    const firstDay = scheduled[0]!.calendarEntry.date.getUTCDate();
 
     const hydrated = hydrationSignal(page);
     await page.goto(`/settings/studio-classes/${templateId}`);
@@ -282,7 +275,7 @@ test.describe('Studio class templates', () => {
       page.getByRole('button', { name: 'Archive studio class', exact: true }),
     ).toBeVisible(SERVER_RENDER_TIMEOUT);
 
-    expect(await prisma.studioClass.count({ where: { templateId } })).toBe(4);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } } } })).toBe(4);
   });
 
   test('the paused row keeps its name on the list', async ({ page }) => {
@@ -353,7 +346,7 @@ test.describe('Studio class templates', () => {
       page.getByText('Deleted 4 scheduled studio classes. Nothing from this template is scheduled any more.'),
     ).toBeVisible();
 
-    expect(await prisma.studioClass.count({ where: { templateId } })).toBe(0);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } } } })).toBe(0);
     const t = await prisma.studioClassTemplate.findUniqueOrThrow({
       where: { id: templateId },
       include: { scheduleRule: true },
@@ -476,7 +469,7 @@ test.describe('One-off studio classes', () => {
     // Guarded for the same reason as the template block's teardown: an unset
     // id makes the where-clause vanish rather than match nothing.
     if (soloTeacherId) {
-      await prisma.studioClass.deleteMany({ where: { teacherId: soloTeacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: soloTeacherId } });
       await prisma.session.deleteMany({
         where: { accountId: await accountIdOfTeacher(prisma, soloTeacherId) },
       });
@@ -514,11 +507,9 @@ test.describe('One-off studio classes', () => {
     // `docs/superpowers/specs/2026-08-22-studio-family-e2e-design.md`, row 1.
     await page.waitForURL(/\/studio-class\/(?!new$)[\w-]+$/, { timeout: 10_000 });
 
-    const created = await prisma.studioClass.findFirstOrThrow({
-      where: { teacherId: soloTeacherId, classType: 'Cover Class' },
-    });
+    const created = await prisma.studioClass.findFirstOrThrow({ where: { calendarEntry: { teacherId: soloTeacherId, classType: 'Cover Class' } }, include: { calendarEntry: true } });
     expect(page.url()).toBe(`http://localhost:3000/studio-class/${created.id}`);
-    expect(created.templateId).toBeNull();
+    expect(created.calendarEntry.scheduleRuleId).toBeNull();
 
     // Issue 304, manual half: the page the log form lands on heads with the
     // class type just typed and keeps the venue on screen — both facts the
@@ -533,7 +524,7 @@ test.describe('One-off studio classes', () => {
     await expect(page.getByText('Saved')).toBeVisible();
     await expect
       .poll(async () =>
-        (await prisma.studioClass.findUniqueOrThrow({ where: { id: created.id } })).studentCount,
+        (await prisma.studioClass.findUniqueOrThrow({ where: { id: created.id }, include: { calendarEntry: true },})).studentCount,
       )
       .toBe(11);
 

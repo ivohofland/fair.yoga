@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 /**
  * The passkey journey, on a real (virtual) authenticator: a student adds
@@ -63,8 +64,7 @@ test.describe('Passkey sign-in', () => {
 
     const soon = new Date();
     soon.setUTCDate(soon.getUTCDate() + 7);
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'Passkey Vinyasa',
@@ -77,8 +77,7 @@ test.describe('Passkey sign-in', () => {
         minStudents: 2,
         maxStudents: 10,
         status: 'open',
-      },
-    });
+      });
     classId = cls.id;
 
     const student = await prisma.student.create({
@@ -103,7 +102,7 @@ test.describe('Passkey sign-in', () => {
       await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
     }
     if (teacherId) {
-      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     }
     await prisma.room.deleteMany({ where: { address: { contains: suffix } } });

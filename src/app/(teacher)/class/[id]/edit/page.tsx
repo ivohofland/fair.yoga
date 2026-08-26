@@ -16,10 +16,18 @@ export default async function ClassEditPage({
   const { id } = await params;
   const session = await requireTeacherSession();
 
-  const cls = await prisma.class.findUnique({ where: { id } });
-  if (!cls || cls.teacherId !== session.teacherId) redirect('/');
-  // Only mutable stages get an editor; everything else reads.
+  const cls = await prisma.class.findUnique({
+    where: { id },
+    include: { calendarEntry: true },
+  });
+  if (!cls || cls.calendarEntry.teacherId !== session.teacherId) redirect('/');
+  // Only mutable stages get an editor; everything else reads. Since #327 that
+  // is TWO reads, not one: a cancelled class keeps its `draft`/`open` status,
+  // and `updateClass` refuses every field on it — an editor that still
+  // rendered would be a form whose every save 409s.
+  if (cls.calendarEntry.cancelledAt !== null) redirect(`/class/${id}`);
   if (cls.status !== 'draft' && cls.status !== 'open') redirect(`/class/${id}`);
+  const entry = cls.calendarEntry;
 
   return (
     <div>
@@ -28,18 +36,18 @@ export default async function ClassEditPage({
         className="inline-flex items-center gap-1.5 type-label text-teal no-underline mb-2"
       >
         <Icon name="arrow-left" size={18} />
-        {cls.classType}
+        {entry.classType}
       </Link>
       <h1 className="type-title mb-6">Edit class</h1>
       <ClassEditForm
         classId={cls.id}
         settingsLocked={cls.settingsLocked}
         initial={{
-          classType: cls.classType,
+          classType: entry.classType,
           description: cls.description ?? '',
-          date: cls.date.toISOString().slice(0, 10),
-          startTime: timeToHHmm(cls.startTime),
-          durationMinutes: cls.durationMinutes,
+          date: entry.date.toISOString().slice(0, 10),
+          startTime: timeToHHmm(entry.startTime),
+          durationMinutes: entry.durationMinutes,
           roomCost: Number(cls.roomCost),
           minRate: Number(cls.minRate),
           targetRate: Number(cls.targetRate),

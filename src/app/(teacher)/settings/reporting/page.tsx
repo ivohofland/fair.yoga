@@ -16,7 +16,7 @@ function monthKey(date: Date): string {
 // shown to students — transparent, no charts, no growth talk.
 export default async function ReportingPage() {
   const session = await requireTeacherSession();
-  // #101. `StudioClass.date` is a `@db.Date` calendar date; `new Date()` is an
+  // #101. `CalendarEntry.date` is a `@db.Date` calendar date; `new Date()` is an
   // instant. Comparing them directly meant that west of UTC, in the teacher's
   // local evening, UTC had already rolled over and a studio class dated
   // *tomorrow* satisfied `lte` — putting a class they have not taught into
@@ -27,19 +27,38 @@ export default async function ReportingPage() {
   endOfToday.setUTCHours(23, 59, 59, 999);
 
   const [completedClasses, studioClasses, distinctStudents] = await Promise.all([
+    // `status: 'completed'` needs no `cancelledAt` conjunct of its own: a
+    // cancelled class never completes, because `completeClass` and both
+    // transition doors refuse one. It is the terminal fact this page reports
+    // on, not a liveness filter.
     prisma.class.findMany({
-      where: { teacherId: session.teacherId, status: 'completed' },
-      select: { date: true, totalRevenue: true, roomCost: true, totalStudents: true },
-      orderBy: { date: 'desc' },
+      where: { calendarEntry: { teacherId: session.teacherId }, status: 'completed' },
+      select: {
+        totalRevenue: true,
+        roomCost: true,
+        totalStudents: true,
+        calendarEntry: { select: { date: true } },
+      },
+      orderBy: { calendarEntry: { date: 'desc' } },
     }),
     prisma.studioClass.findMany({
-      where: { teacherId: session.teacherId, cancelledAt: null, date: { lte: endOfToday } },
-      select: { date: true, durationMinutes: true, hourlyRate: true, studentCount: true },
-      orderBy: { date: 'desc' },
+      where: {
+        calendarEntry: {
+          teacherId: session.teacherId,
+          cancelledAt: null,
+          date: { lte: endOfToday },
+        },
+      },
+      select: {
+        hourlyRate: true,
+        studentCount: true,
+        calendarEntry: { select: { date: true, durationMinutes: true } },
+      },
+      orderBy: { calendarEntry: { date: 'desc' } },
     }),
     prisma.registration.findMany({
       where: {
-        class: { teacherId: session.teacherId, status: 'completed' },
+        class: { calendarEntry: { teacherId: session.teacherId }, status: 'completed' },
         status: { in: ['registered', 'attended', 'no_show', 'late_cancel'] },
       },
       distinct: ['studentId'],
@@ -50,7 +69,7 @@ export default async function ReportingPage() {
   const classEarnings = (c: (typeof completedClasses)[number]) =>
     Number(c.totalRevenue ?? 0) - Number(c.roomCost);
   const studioEarnings = (s: (typeof studioClasses)[number]) =>
-    (Number(s.hourlyRate) * s.durationMinutes) / 60;
+    (Number(s.hourlyRate) * s.calendarEntry.durationMinutes) / 60;
 
   const totalClassEarnings = completedClasses.reduce((sum, c) => sum + classEarnings(c), 0);
   const totalStudioEarnings = studioClasses.reduce((sum, s) => sum + studioEarnings(s), 0);
@@ -59,7 +78,7 @@ export default async function ReportingPage() {
   // Last six calendar months, newest first
   const byMonth = new Map<string, { classes: number; students: number; earnings: number }>();
   for (const c of completedClasses) {
-    const key = monthKey(c.date);
+    const key = monthKey(c.calendarEntry.date);
     const entry = byMonth.get(key) ?? { classes: 0, students: 0, earnings: 0 };
     entry.classes += 1;
     entry.students += c.totalStudents ?? 0;
@@ -67,7 +86,7 @@ export default async function ReportingPage() {
     byMonth.set(key, entry);
   }
   for (const s of studioClasses) {
-    const key = monthKey(s.date);
+    const key = monthKey(s.calendarEntry.date);
     const entry = byMonth.get(key) ?? { classes: 0, students: 0, earnings: 0 };
     entry.classes += 1;
     entry.students += s.studentCount ?? 0;

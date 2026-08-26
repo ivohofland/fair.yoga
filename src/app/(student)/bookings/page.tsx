@@ -25,12 +25,22 @@ export default async function StudentBookingsPage() {
   const [registrations, waitlistEntries, unreadNotifications, notificationCount] = await Promise.all([
     prisma.registration.findMany({
       where: { studentId: session.studentId, status: { not: 'cancelled' } },
-      orderBy: { class: { date: 'desc' } },
+      orderBy: { class: { calendarEntry: { date: 'desc' } } },
       include: {
         class: {
           include: {
-            teacher: {
-              select: { firstName: true, lastName: true, pageSlug: true, bankIban: true, bankAccountName: true },
+            calendarEntry: {
+              include: {
+                teacher: {
+                  select: {
+                    firstName: true,
+                    lastName: true,
+                    pageSlug: true,
+                    bankIban: true,
+                    bankAccountName: true,
+                  },
+                },
+              },
             },
             teacherRoom: { include: { room: true } },
             _count: { select: { registrations: true } },
@@ -72,12 +82,28 @@ export default async function StudentBookingsPage() {
       //
       // Four drains now close a queue: `closeQueueOnStart` (#216, the class
       // starting) and the three cancel paths (#195).
-      where: { studentId: session.studentId, status: 'waiting', class: { status: 'open' } },
+      // `cancelledAt: null` beside the class's status (#327): a cancelled
+      // class keeps its `open` status, and a queue on a cancelled class is
+      // exactly what this predicate exists to hide.
+      where: {
+        studentId: session.studentId,
+        status: 'waiting',
+        class: { status: 'open', calendarEntry: { cancelledAt: null } },
+      },
       include: {
         class: {
           include: {
-            teacher: {
-              select: { firstName: true, lastName: true, pageSlug: true, defaultTimezone: true },
+            calendarEntry: {
+              include: {
+                teacher: {
+                  select: {
+                    firstName: true,
+                    lastName: true,
+                    pageSlug: true,
+                    defaultTimezone: true,
+                  },
+                },
+              },
             },
             _count: {
               select: {
@@ -98,7 +124,13 @@ export default async function StudentBookingsPage() {
       take: 5,
       include: {
         relatedClass: {
-          select: { id: true, status: true, teacher: { select: { pageSlug: true } } },
+          select: {
+            id: true,
+            status: true,
+            calendarEntry: {
+              select: { cancelledAt: true, teacher: { select: { pageSlug: true } } },
+            },
+          },
         },
       },
     }),
@@ -117,8 +149,14 @@ export default async function StudentBookingsPage() {
   }));
 
   const now = new Date();
+  // `cancelledAt` is NOT a filter here, deliberately: this splits the ledger
+  // into upcoming and past, and a cancelled class the student is registered
+  // for still belongs in whichever half its date puts it in. The badge below
+  // is what says it is off.
   const upcoming = registrations.filter(
-    (r) => r.class.status === 'open' || r.class.status === 'in_progress' || new Date(r.class.date) >= now,
+    (r) => r.class.status === 'open'
+      || r.class.status === 'in_progress'
+      || new Date(r.class.calendarEntry.date) >= now,
   );
   const past = registrations.filter((r) => !upcoming.includes(r));
 
@@ -149,19 +187,20 @@ export default async function StudentBookingsPage() {
             // whoever claims it first — show the claim button then.
             const canClaim =
               cls.status === 'open' &&
+              cls.calendarEntry.cancelledAt === null &&
               cls._count.registrations < cls.maxStudents &&
               getWaitlistWindow(
-                cls.date,
-                cls.startTime,
+                cls.calendarEntry.date,
+                cls.calendarEntry.startTime,
                 cls.cancelDeadline,
-                cls.teacher.defaultTimezone,
+                cls.calendarEntry.teacher.defaultTimezone,
               ) === 'first_come_first_claimed';
             return (
               <div key={entry.id} className="min-h-14 py-2 border-b border-border last:border-b-0">
-                <p className="text-base text-ink">{cls.classType}</p>
+                <p className="text-base text-ink">{cls.calendarEntry.classType}</p>
                 <p className="type-caption">
-                  {formatDayHeader(cls.date)} · {timeToHHmm(cls.startTime)} · position {entry.position} ·{' '}
-                  with {cls.teacher.firstName} {cls.teacher.lastName}
+                  {formatDayHeader(cls.calendarEntry.date)} · {timeToHHmm(cls.calendarEntry.startTime)} · position {entry.position} ·{' '}
+                  with {cls.calendarEntry.teacher.firstName} {cls.calendarEntry.teacher.lastName}
                 </p>
                 <WaitlistEntryActions entryId={entry.id} classId={cls.id} canClaim={canClaim} />
               </div>
@@ -176,8 +215,10 @@ export default async function StudentBookingsPage() {
           <div className="flex flex-col gap-3">
             {upcoming.map((reg) => {
               const cls = reg.class;
+              const cancelled = cls.calendarEntry.cancelledAt !== null;
               const variant = deriveBadgeVariant(
                 cls.status,
+                cancelled,
                 cls._count.registrations,
                 cls.minStudents,
                 cls.maxStudents,
@@ -186,21 +227,21 @@ export default async function StudentBookingsPage() {
                 <div key={reg.id} className="bg-sand-soft border border-border rounded-card p-5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="type-label text-ink">
-                      {formatDayHeader(cls.date)} · {timeToHHmm(cls.startTime)}
+                      {formatDayHeader(cls.calendarEntry.date)} · {timeToHHmm(cls.calendarEntry.startTime)}
                     </span>
                     <StatusBadge variant={variant} />
                   </div>
-                  <p className="type-subtitle mt-1">{cls.classType}</p>
+                  <p className="type-subtitle mt-1">{cls.calendarEntry.classType}</p>
                   <p className="type-caption mt-0.5">
                     {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
-                    {' · '}with {cls.teacher.firstName} {cls.teacher.lastName}
+                    {' · '}with {cls.calendarEntry.teacher.firstName} {cls.calendarEntry.teacher.lastName}
                   </p>
                   {reg.status === 'late_cancel' ? (
                     <p className="type-caption mt-2">
                       Cancelled after the deadline — this class is still charged.
                     </p>
                   ) : (
-                    cls.status === 'open' && (
+                    cls.status === 'open' && !cancelled && (
                       <div className="mt-3">
                         <CancelBookingButton
                           registrationId={reg.id}
@@ -227,9 +268,9 @@ export default async function StudentBookingsPage() {
               <div key={reg.id} className="min-h-14 py-3 border-b border-border last:border-b-0">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-base text-ink">{cls.classType}</p>
+                    <p className="text-base text-ink">{cls.calendarEntry.classType}</p>
                     <p className="type-caption">
-                      {formatDayHeader(cls.date)} · with {cls.teacher.firstName} {cls.teacher.lastName}
+                      {formatDayHeader(cls.calendarEntry.date)} · with {cls.calendarEntry.teacher.firstName} {cls.calendarEntry.teacher.lastName}
                     </p>
                   </div>
                   {payment && (
@@ -250,26 +291,26 @@ export default async function StudentBookingsPage() {
                       How to pay
                     </summary>
                     <div className="mt-2 bg-sand-soft border border-border rounded-field p-4">
-                      {cls.teacher.bankIban ? (
+                      {cls.calendarEntry.teacher.bankIban ? (
                         <>
                           <p className="type-body">
                             Transfer{' '}
                             <span className="type-number">€{Number(payment.amount).toFixed(2)}</span> to:
                           </p>
-                          <p className="type-body text-ink mt-1 tabular-nums">{cls.teacher.bankIban}</p>
+                          <p className="type-body text-ink mt-1 tabular-nums">{cls.calendarEntry.teacher.bankIban}</p>
                           <p className="type-caption">
-                            {cls.teacher.bankAccountName ??
-                              `${cls.teacher.firstName} ${cls.teacher.lastName}`}
-                            {' · '}mention &ldquo;{cls.classType} {formatDayHeader(cls.date)}&rdquo;
+                            {cls.calendarEntry.teacher.bankAccountName ??
+                              `${cls.calendarEntry.teacher.firstName} ${cls.calendarEntry.teacher.lastName}`}
+                            {' · '}mention &ldquo;{cls.calendarEntry.classType} {formatDayHeader(cls.calendarEntry.date)}&rdquo;
                           </p>
                           <PaymentQr
-                            iban={cls.teacher.bankIban}
+                            iban={cls.calendarEntry.teacher.bankIban}
                             beneficiary={
-                              cls.teacher.bankAccountName ??
-                              `${cls.teacher.firstName} ${cls.teacher.lastName}`
+                              cls.calendarEntry.teacher.bankAccountName ??
+                              `${cls.calendarEntry.teacher.firstName} ${cls.calendarEntry.teacher.lastName}`
                             }
                             amount={Number(payment.amount)}
-                            remittance={`${cls.classType} ${formatDayHeader(cls.date)}`}
+                            remittance={`${cls.calendarEntry.classType} ${formatDayHeader(cls.calendarEntry.date)}`}
                           />
                         </>
                       ) : (

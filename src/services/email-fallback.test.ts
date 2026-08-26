@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { processEmailFallback } from './email-fallback';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 // RESEND_API_KEY is unset in the test environment, so the service takes the
 // dev path (logs instead of sending) — what we assert is the bookkeeping:
@@ -97,8 +98,7 @@ describe('processEmailFallback (DB)', () => {
       const start = new Date(Date.now() + minutesFromNow * 60 * 1000);
       const date = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
       const startTime = `${String(start.getUTCHours()).padStart(2, '0')}:${String(start.getUTCMinutes()).padStart(2, '0')}`;
-      const cls = await prisma.class.create({
-        data: {
+      const cls = await createClassFixture(prisma, {
           teacherId,
           teacherRoomId: teacherRoom.id,
           classType: 'Vinyasa',
@@ -111,8 +111,7 @@ describe('processEmailFallback (DB)', () => {
           minStudents: 2,
           maxStudents: 10,
           status: 'open',
-        },
-      });
+        });
       classIds.push(cls.id);
       return cls;
     }
@@ -151,8 +150,7 @@ describe('processEmailFallback (DB)', () => {
     const parts = Object.fromEntries(
       dtf.formatToParts(amsStart).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]),
     );
-    const amsClass = await prisma.class.create({
-      data: {
+    const amsClass = await createClassFixture(prisma, {
         teacherId: amsTeacherId,
         teacherRoomId: amsTeacherRoom.id,
         classType: 'Vinyasa',
@@ -165,8 +163,7 @@ describe('processEmailFallback (DB)', () => {
         minStudents: 2,
         maxStudents: 10,
         status: 'open',
-      },
-    });
+      });
     classIds.push(amsClass.id);
     amsClassId = amsClass.id;
 

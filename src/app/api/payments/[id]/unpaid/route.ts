@@ -23,13 +23,13 @@ export const POST = withErrorHandler(async (
     where: { id },
     include: {
       registration: {
-        include: { class: { select: { teacherId: true } } },
+        include: { class: { select: { calendarEntry: { select: { teacherId: true } } } } },
       },
     },
   });
 
   if (!payment) return respondError('Payment not found', 404);
-  if (payment.registration.class.teacherId !== session.teacherId) {
+  if (payment.registration.class.calendarEntry.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 

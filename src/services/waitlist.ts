@@ -198,11 +198,19 @@ export async function addToWaitlist(
 
     const cls = await tx.class.findUniqueOrThrow({
       where: { id: classId },
-      select: { status: true, teacherId: true },
+      select: {
+        status: true,
+        calendarEntry: { select: { teacherId: true, cancelledAt: true } },
+      },
     });
-    if (cls.status !== 'open') {
+    // TWO conditions, not one, since #327: a cancelled class keeps whatever
+    // status it had, so `status !== 'open'` no longer covers it. Same reason
+    // and same shape at every `!== 'open'` gate in this file.
+    if (cls.status !== 'open' || cls.calendarEntry.cancelledAt !== null) {
       throw new WaitlistJoinError(
-        `Cannot join the waitlist for a class with status "${cls.status}"`,
+        cls.calendarEntry.cancelledAt !== null
+          ? 'Cannot join the waitlist for a cancelled class'
+          : `Cannot join the waitlist for a class with status "${cls.status}"`,
         'class_not_open',
       );
     }
@@ -257,9 +265,9 @@ export async function addToWaitlist(
     });
 
     await tx.teacherStudent.upsert({
-      where: { teacherId_studentId: { teacherId: cls.teacherId, studentId } },
+      where: { teacherId_studentId: { teacherId: cls.calendarEntry.teacherId, studentId } },
       update: {},
-      create: { teacherId: cls.teacherId, studentId },
+      create: { teacherId: cls.calendarEntry.teacherId, studentId },
     });
 
     // The student's own act at this instant, so it resolves whatever
@@ -268,7 +276,7 @@ export async function addToWaitlist(
     // on: permanent from the teacher's side, always reversible from the
     // student's. Booking is the other route back; this is the second.
     await resolveInvitationOnLink(tx, {
-      teacherId: cls.teacherId,
+      teacherId: cls.calendarEntry.teacherId,
       studentEmail: student.email,
     });
 
@@ -458,21 +466,27 @@ export async function promoteNext(
 
     const cls = await tx.class.findUniqueOrThrow({
       where: { id: classId },
-      include: { teacher: { select: { defaultTimezone: true } } },
+      include: {
+        calendarEntry: {
+          include: { teacher: { select: { defaultTimezone: true } } },
+        },
+      },
     });
 
-    if (cls.status !== 'open') {
+    if (cls.status !== 'open' || cls.calendarEntry.cancelledAt !== null) {
       throw new WaitlistPromotionError(
-        `Cannot promote into a class with status "${cls.status}"`,
+        cls.calendarEntry.cancelledAt !== null
+          ? 'Cannot promote into a cancelled class'
+          : `Cannot promote into a class with status "${cls.status}"`,
         'class_not_open',
       );
     }
 
     const window = getWaitlistWindow(
-      cls.date,
-      cls.startTime,
+      cls.calendarEntry.date,
+      cls.calendarEntry.startTime,
       cls.cancelDeadline,
-      cls.teacher.defaultTimezone,
+      cls.calendarEntry.teacher.defaultTimezone,
       opts.now,
     );
     if (window === 'frozen') {
@@ -530,9 +544,9 @@ export async function promoteNext(
     // without it such a promotion registers a student the teacher's CRM
     // cannot see.
     await tx.teacherStudent.upsert({
-      where: { teacherId_studentId: { teacherId: cls.teacherId, studentId: nextEntry.studentId } },
+      where: { teacherId_studentId: { teacherId: cls.calendarEntry.teacherId, studentId: nextEntry.studentId } },
       update: {},
-      create: { teacherId: cls.teacherId, studentId: nextEntry.studentId },
+      create: { teacherId: cls.calendarEntry.teacherId, studentId: nextEntry.studentId },
     });
 
     // No `resolveInvitationOnLink` here, deliberately. A promotion fires at
@@ -560,7 +574,7 @@ export async function promoteNext(
         recipientId: nextEntry.studentId,
         type: 'waitlist_promoted',
         title: 'You are in',
-        body: `A spot opened in ${cls.classType} and you moved off the waitlist.`,
+        body: `A spot opened in ${cls.calendarEntry.classType} and you moved off the waitlist.`,
         relatedClassId: classId,
       },
     ]);
@@ -588,21 +602,27 @@ export async function claimSpot(
 
     const cls = await tx.class.findUniqueOrThrow({
       where: { id: classId },
-      include: { teacher: { select: { defaultTimezone: true } } },
+      include: {
+        calendarEntry: {
+          include: { teacher: { select: { defaultTimezone: true } } },
+        },
+      },
     });
 
-    if (cls.status !== 'open') {
+    if (cls.status !== 'open' || cls.calendarEntry.cancelledAt !== null) {
       throw new WaitlistPromotionError(
-        `Cannot claim a spot in a class with status "${cls.status}"`,
+        cls.calendarEntry.cancelledAt !== null
+          ? 'Cannot claim a spot in a cancelled class'
+          : `Cannot claim a spot in a class with status "${cls.status}"`,
         'class_not_open',
       );
     }
 
     const window = getWaitlistWindow(
-      cls.date,
-      cls.startTime,
+      cls.calendarEntry.date,
+      cls.calendarEntry.startTime,
       cls.cancelDeadline,
-      cls.teacher.defaultTimezone,
+      cls.calendarEntry.teacher.defaultTimezone,
       now,
     );
     if (window === 'frozen') {
@@ -647,9 +667,9 @@ export async function claimSpot(
     // created it is what created the link and resolved the invitation.
     // There is nothing left here to resolve.
     await tx.teacherStudent.upsert({
-      where: { teacherId_studentId: { teacherId: cls.teacherId, studentId } },
+      where: { teacherId_studentId: { teacherId: cls.calendarEntry.teacherId, studentId } },
       update: {},
-      create: { teacherId: cls.teacherId, studentId },
+      create: { teacherId: cls.calendarEntry.teacherId, studentId },
     });
 
     const updatedEntry = await tx.waitlistEntry.update({
@@ -663,7 +683,7 @@ export async function claimSpot(
         recipientId: studentId,
         type: 'booking_confirmed',
         title: 'Spot claimed',
-        body: `You claimed the open spot in ${cls.classType}.`,
+        body: `You claimed the open spot in ${cls.calendarEntry.classType}.`,
         relatedClassId: classId,
       },
     ]);
@@ -714,15 +734,19 @@ export async function handleSpotFreed(
 ): Promise<SpotFreedResult> {
   const cls = await db.class.findUnique({
     where: { id: classId },
-    include: { teacher: { select: { defaultTimezone: true } } },
+    include: {
+      calendarEntry: { include: { teacher: { select: { defaultTimezone: true } } } },
+    },
   });
-  if (!cls || cls.status !== 'open') return { action: 'none' };
+  if (!cls || cls.status !== 'open' || cls.calendarEntry.cancelledAt !== null) {
+    return { action: 'none' };
+  }
 
   const window = getWaitlistWindow(
-    cls.date,
-    cls.startTime,
+    cls.calendarEntry.date,
+    cls.calendarEntry.startTime,
     cls.cancelDeadline,
-    cls.teacher.defaultTimezone,
+    cls.calendarEntry.teacher.defaultTimezone,
     now,
   );
 
@@ -816,7 +840,7 @@ export async function handleSpotFreed(
         recipientId: w.studentId,
         type: 'spot_available' as const,
         title: 'A spot opened up',
-        body: `A spot opened in ${cls.classType}. The first to claim it gets it.`,
+        body: `A spot opened in ${cls.calendarEntry.classType}. The first to claim it gets it.`,
         relatedClassId: classId,
       })),
     );
@@ -983,9 +1007,15 @@ export async function withdrawWaitingEntriesForTeacher(
   // `WaitlistEntry` rows, the 2s bound and the dedupe this call site used to
   // do itself. `FOR UPDATE OF c` locks the same rows `addToWaitlist`,
   // `promoteNext`, `claimSpot` and `removeFromWaitlist` lock singly.
+  //
+  // VERDICT (#327): this transaction reads and writes `WaitlistEntry` only —
+  // no entry column of any kind — so it takes the `Class` rows and stops
+  // there. The join reaches `CalendarEntry` because `teacherId` lives on it
+  // now, which is a predicate, not a lock.
   const classIds = await lockClassRowsOrdered(tx, {
-    join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`,
-    where: Prisma.sql`c."teacherId" = ${input.teacherId}
+    join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id
+      JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
+    where: Prisma.sql`e."teacherId" = ${input.teacherId}
       AND w."studentId" = ${input.studentId}
       AND w.status = 'waiting'`,
   });

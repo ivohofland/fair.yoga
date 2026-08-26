@@ -142,7 +142,7 @@ test.describe('Teacher journey', () => {
       await prisma.payment.deleteMany({ where: { registration: { classId } } });
       await prisma.registration.deleteMany({ where: { classId } });
     }
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.teacherStudent.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.deleteMany({ where: { createdById: teacherId } });
@@ -305,8 +305,11 @@ test.describe('Teacher journey', () => {
   test('check-in: a walk-in joins at the door', async ({ page, context }) => {
     // Move the class to "now" — check-in opens 15 minutes before start.
     slot = checkinSlot();
-    await prisma.class.update({
-      where: { id: classId },
+    await prisma.calendarEntry.update({
+      where: { id: (await prisma.class.findUniqueOrThrow({
+        where: { id: classId },
+        select: { calendarEntryId: true },
+      })).calendarEntryId },
       data: { date: slot.date, startTime: hhmmToTime(slot.startTime) },
     });
 

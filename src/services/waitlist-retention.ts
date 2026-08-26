@@ -24,23 +24,47 @@
  * became a booking, has no remaining purpose, and the Article 15 export
  * publishes every one of them verbatim.
  *
- * WHY IT IS SAFE. Two arguments — neither of which covers `date`, the sweep's
- * other filter column. That half has its own section, BOTH HALVES OF THE
- * PREDICATE ARE ENFORCED, below; it was the open residual until #247:
+ * WHY IT IS SAFE. Two arguments, and since #327 the first of them covers the
+ * whole predicate rather than half of it:
  *
- *  - `TERMINAL_CLASS_STATUSES` is derived from `VALID_TRANSITIONS`, and the DB
- *    trigger `class_terminal_status_guard` makes a terminal class's status
- *    physically unchangeable from any client, raw SQL included.
- *    `class-terminal-status.test.ts` pins the derived set against that trigger.
+ *  - BOTH HALVES OF THIS SWEEP'S PREDICATE ARE COLUMNS OF ONE ROW, and that
+ *    row's schedule is frozen by one trigger. `date` and terminality both live
+ *    on `CalendarEntry` now — terminality as `classCompletedAt IS NOT NULL OR
+ *    (kind = 'regular' AND cancelledAt IS NOT NULL)`, which is character for
+ *    character the predicate `entry_reject_frozen_schedule_change`
+ *    (`prisma/migrations/20260826080100_calendar_entry_rewire/`) evaluates
+ *    before it refuses. So on any row this sweep considers, `date` is
+ *    physically immovable from any client, raw SQL included: that is what
+ *    makes "more than 365 days past" a property of the row rather than a
+ *    snapshot something can move underneath it. The freeze covers
+ *    `startTime` and `durationMinutes` in the same trigger; this sweep reads
+ *    only `date`, and does not care about the other two.
+ *
+ *    THE TERMINALITY HALF IS HELD ONE STEP LESS FIRMLY THAN THE DATE HALF,
+ *    and the difference is worth stating rather than smoothing over.
+ *    `classCompletedAt` cannot be undone in practice — `class_sync_entry_
+ *    completed` is its only writer and only ever sets it, and its precondition
+ *    is a `completed` status that `class_reject_terminal_status_change`
+ *    refuses to let go of. `cancelledAt` has no equivalent trigger: nothing in
+ *    the database stops a REGULAR entry being un-cancelled, where before #327
+ *    the same act meant leaving a terminal `ClassStatus` and a trigger refused
+ *    it. What holds it today is that no such door exists in `src/` — the
+ *    studio family's PUT is the only writer that clears the column, and its
+ *    `kind` keeps it out of this disjunct. Re-derive rather than trust this
+ *    sentence:
+ *
+ *      grep -rn 'cancelledAt' src --include='*.ts' | grep -v '\.test\.'
+ *
  *  - Every `WaitlistEntry` write site falls into one of three buckets, and none
  *    of them can write a row this sweep would then wrongly reap. To re-derive
  *    the roster:
  *    `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`, excluding
  *    tests and the comment lines among the hits. Classify each:
  *
- *      1. GUARDED BY CLASS STATUS — requires the class to be `open` (or
- *         `open`/`in_progress` for the walk-in resolver), or runs inside the
- *         CAS that makes the class terminal. A terminal class is out of reach.
+ *      1. GUARDED BY CLASS LIVENESS — requires the class to be `open` (or
+ *         `open`/`in_progress` for the walk-in resolver) and its entry
+ *         uncancelled, or runs inside the write that makes the class terminal.
+ *         A frozen entry is out of reach.
  *      2. SCOPED TO `status: 'waiting'` — `removeFromWaitlist`,
  *         `withdrawWaitingEntriesForTeacher`, `reorderWaitingEntries`. On a
  *         terminal class a `waiting` row exists only as pre-#216 legacy, and
@@ -55,107 +79,24 @@
  *    very commit that added this sweep — the grep is self-updating, the
  *    arithmetic was not.
  *
- * BOTH HALVES OF THE PREDICATE ARE ENFORCED. This sweep filters on
- * `class.status` AND `class.date`. The status half is the trigger named above,
- * `class_terminal_status_guard` — a `BEFORE UPDATE OF status`, whose own SQL
- * says updates to other columns of a completed class are unaffected, so `date`
- * needed enforcement of its own. #247 gave it two layers, deliberately
- * different in width:
+ * THE SERVICE STILL HOLDS THE POLICY AND THE DATABASE THE INVARIANT, which is
+ * the asymmetry #247 designed and #327 preserved one table over. `updateClass`
+ * (`class-lifecycle.ts`) refuses EVERY edit to a frozen class — the class is
+ * frozen, not a list of columns — and returns `terminal` or `frozen`, which
+ * `PUT /api/classes/[id]` answers as 409; the trigger holds the one invariant
+ * this deleting sweep depends on, from clients that never go through that
+ * function.
  *
- *  - `updateClass` (`class-lifecycle.ts`) refuses EVERY edit to a class in
- *    `TERMINAL_CLASS_STATUSES` — the class is frozen, not a list of columns —
- *    and returns `{ ok: false, reason: 'terminal' }`, which
- *    `PUT /api/classes/[id]` answers as 409. The layer that holds against a
- *    race is the compare-and-swap: `status: { notIn: [...] }` sits in the
- *    `updateMany` filter, so a completion committing between that function's
- *    opening read and its write is still refused.
- *  - `class_terminal_date_guard` (#247,
- *    `prisma/migrations/20260817120000_class_terminal_date_trigger/`) is a
- *    `BEFORE UPDATE OF date` raising `23514` when a terminal class's `date`
- *    would move — from any client, raw SQL included, the same reach the status
- *    trigger has. `class-terminal-date.test.ts` pins it, and pins
- *    `TERMINAL_CLASS_STATUSES` against the statuses its SQL hard-codes.
- *
- * The asymmetry is the design, not an oversight, and it is worth keeping
- * straight: the SERVICE holds the POLICY (which fields a teacher may edit at
- * which lifecycle stage — a product question, and its answer here is "none"),
- * the DATABASE holds the one INVARIANT this deleting sweep depends on.
- *
- * ONE CORRECTION TO THE MIGRATION'S OWN COMMENT, recorded here because an
- * applied migration is checksummed and cannot be edited to carry it. That
- * comment justifies the narrowness partly on the grounds that a wider trigger
- * "would put `spotBroadcastAt` and the completion write at risk". It would
- * not, and the sentence immediately before it in the same comment is why: a
- * wider trigger keeps the same `WHEN (OLD.status IN ('completed',
- * 'cancelled'))` gate, `completeClass` writes its totals in the same
- * statement as the status flip so `OLD.status` is `in_progress` there, and
- * both `spotBroadcastAt` writers are behind an `open` check. Neither can trip
- * a gate keyed on a terminal OLD.status at any column width. The half of that
- * sentence that does hold is "would gain nothing" — the service already
- * refuses every field, so a wider trigger would duplicate policy in a file
- * that can never be edited, and would have to be re-derived every time a
- * column is added. That is the reason for `date` alone; the risk claim is
- * not. So the
- * trigger covers `date` and nothing else: the database still permits column
- * writes other than `status` and `date` on a terminal class — those two have
- * a trigger each — which `class-terminal-status.test.ts` asserts on purpose,
- * in a case whose name carries the exclusion ('leaves a non-status, non-date
- * update to a completed class alone'). Do not read the two guards as the same
- * rule stated twice.
- *
- * What this buys the sweep is that "more than 365 days past" is a property of
- * the row rather than a snapshot a client can move underneath it — ONCE THE
- * CLASS IS TERMINAL, and only then.
- *
- * THE PRE-TERMINAL PATH IS CLOSED TOO, as of #249, and this paragraph used to
- * say the opposite. A teacher could edit a still-live class's `date` into the
- * past, and the class would then reach a terminal status legitimately — by
- * whichever route came first. Naming one route here (the transition sweep, then
- * the completion sweep) understated it: a manual cancel gets there in a single
- * request with no sweep involved, `autoCancelClasses` is a third route, and
- * `POST …/complete` with `finishedEarly` a fourth. That mattered, because a
- * defence designed against the two sweeps would have left the one-request route
- * open while looking complete.
- *
- * #249 guards at the doors where a past start can be WRITTEN rather than at the
- * routes out of them, which covers all four routes equally: `updateClass`
- * refuses a `date`/`startTime` edit whose resulting start instant has already
- * passed, and `transitionClass` refuses a `draft -> open` publish of a class
- * whose start has passed. Both are service policy, deliberately not a trigger —
- * an `open` class whose start has passed is a state `generateClassInstances`
- * legitimately produces, so there is no invariant for the database to hold.
- * See `docs/superpowers/specs/2026-08-18-past-start-guard-design.md` §3.
- *
- * TWO DOORS, AND SINCE #194 THEY ARE ALL OF THEM — but the correction that
- * got here is worth keeping, because the sentence was wrong once in each
- * direction. It first went in as "the two doors where a past start can be
- * written", which was an inventory it had not earned: the template sync was a
- * third writer, rewriting `startTime` on every instance of a template with a
- * bare `updateMany`, past no such guard, selecting those instances with
- * `date: { gt: now }` — a `@db.Date` column compared against an instant, the
- * UTC-calendar mistake `timezone.ts` exists to name. That filter was not the
- * same predicate as "the start is still ahead". Measured: for a
- * `Pacific/Auckland` teacher at 2026-08-18T20:00Z, a class dated 2026-08-19 at
- * 00:30 local started at 12:30Z — eight hours earlier — and still satisfied
- * `date > now`. #194 deleted that function on 2026-08-20, and the two doors
- * became the inventory the first version claimed they were: re-derived from
- * the `class.` write sites in `src/`, `updateClass` is the only statement that
- * moves an existing class's `date`/`startTime`, and it is guarded. #257 is the
- * issue that recorded the third writer; it is moot rather than fixed, and the
- * measurement above is kept because the UTC-calendar trap it names outlived
- * the function that fell into it.
- *
- * WHAT THAT COST THIS SWEEP WAS NOTHING, which is why it was recorded here
- * rather than fixed here. This delete-safety argument needs the class's `date`
- * to be immovable once TERMINAL, and it gets that from
- * `class_terminal_date_guard`, a trigger — never from the door count above.
- * The sync wrote `startTime`, never `date`, and filtered to `draft`/`open`
- * besides, so it could not move the column this sweep reads on a class this
- * sweep would consider. The gap was in the #249 rule's coverage, not in this
- * one's, and it closed with the function rather than by being fixed: the
- * residual filed under `2026-08-18-past-start-guard-design.md` §11 asked what
- * a template edit should do to an instance that has already started, and #194
- * answered "nothing at all".
+ * A PAST START ON A LIVE CLASS IS NOT THIS SWEEP'S PROBLEM, and the reason is
+ * the freeze rather than the doors. #249 guards where a past start can be
+ * WRITTEN — `updateClass` refuses a `date`/`startTime` edit whose resulting
+ * start instant has already passed, and `transitionClass` refuses a
+ * `draft -> open` publish of a class whose start has passed. Both are service
+ * policy and deliberately not triggers, because an `open` class whose start
+ * has passed is a state `generateClassInstances` legitimately produces
+ * (`docs/superpowers/specs/2026-08-18-past-start-guard-design.md` §3). None of
+ * that is load-bearing here: this sweep only ever reads `date` on a FROZEN
+ * entry, and on those the trigger answers whatever the doors do.
  *
  * WHY IT CANNOT DEADLOCK AGAINST THE ERASURE. `deleteStudentAccount` deletes
  * waitlist entries with an UNSCOPED `deleteMany({ where: { studentId } })` —
@@ -182,16 +123,17 @@
  * classifies lock sites by MULTIPLICITY — a transaction holding two `Class` row
  * locks carries an ordering obligation, one holding a single row lock carries
  * none — and then withdraws that in the next breath: since #196 a single-row
- * write can be half of a slot-key deadlock without ever holding a second
- * `Class` row lock, `updateClass` being the example. Taking one row lock is
+ * write can be half of a slot deadlock without ever holding a second
+ * `Class` row lock, `updateClass` being the example — and since #327 that
+ * example holds a second row lock outright, on the entry. Taking one row lock is
  * therefore NOT on its own a safety argument. This is worth stating rather than
  * passing over, because the multiplicity reading is the one a future author is
  * most likely to copy from this file. What actually makes this sweep edge-free
  * is three mechanical facts:
  *
- *  - it never `INSERT`s or `UPDATE`s a `Class` row, so it takes no
- *    `Class_teacher_slot_unique` index-entry lock and cannot join a slot-key
- *    wait chain;
+ *  - it never `INSERT`s or `UPDATE`s a `Class` row or its `CalendarEntry`, so
+ *    it takes no `CalendarEntry_teacher_slot_excl` index-entry lock and cannot
+ *    join a slot wait chain;
  *  - deleting a CHILD row takes no FK lock on the parent (only inserting or
  *    updating one takes `FOR KEY SHARE`), so the `deleteMany` adds no `Class`
  *    edge beyond the `lockClassRow` this transaction took deliberately;
@@ -205,7 +147,6 @@
  */
 
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 import { FULFILLED_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { lockClassRow } from '@/lib/db-locks';
 import { isTransientDbError } from '@/lib/api-errors';
@@ -376,8 +317,17 @@ export async function reapClosedWaitlistEntries(
     registrationId: null,
     status: { notIn: [...FULFILLED_WAITLIST_STATUSES] },
     class: {
-      status: { in: [...TERMINAL_CLASS_STATUSES] },
-      date: { lt: cutoff },
+      calendarEntry: {
+        date: { lt: cutoff },
+        // Terminality, in the same shape `entry_frozen_schedule_guard`
+        // enforces: the entry is frozen iff its class completed, or it is a
+        // cancelled regular entry. One predicate, one row, one guard — where
+        // this used to be a status on one table and a date on another.
+        OR: [
+          { classCompletedAt: { not: null } },
+          { kind: 'regular', cancelledAt: { not: null } },
+        ],
+      },
     },
   } satisfies Prisma.WaitlistEntryWhereInput;
 

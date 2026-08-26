@@ -35,7 +35,9 @@ export default async function ClassDetailPage({
   const cls = await prisma.class.findUnique({
     where: { id },
     include: {
-      teacher: { select: { defaultTimezone: true, pageSlug: true } },
+      calendarEntry: {
+        include: { teacher: { select: { defaultTimezone: true, pageSlug: true } } },
+      },
       teacherRoom: { include: { room: true } },
       registrations: {
         include: {
@@ -67,9 +69,15 @@ export default async function ClassDetailPage({
     },
   });
 
-  if (!cls || cls.teacherId !== session.teacherId) {
+  if (!cls || cls.calendarEntry.teacherId !== session.teacherId) {
     redirect('/');
   }
+
+  // Read once, beside the status, because since #327 the two together are what
+  // liveness is: a cancelled class keeps whatever status it had, so every
+  // `status === 'open'` branch below would otherwise render a cancelled class
+  // as bookable.
+  const cancelled = cls.calendarEntry.cancelledAt !== null;
 
   // Two different questions, so two different reads.
   //
@@ -86,7 +94,7 @@ export default async function ClassDetailPage({
   // to reason about: `addToWaitlist` requires `status === 'open'`, so an
   // `in_progress` class has no `waiting` rows this would miss.
   const waitlistCount =
-    cls.status === 'in_progress'
+    !cancelled && cls.status === 'in_progress'
       ? await prisma.waitlistEntry.count({
           where: { classId: cls.id, status: { in: [...CLAIMABLE_WAITLIST_STATUSES] } },
         })
@@ -140,17 +148,22 @@ export default async function ClassDetailPage({
   // (`registrations/[id]/route.ts`) keeps `completed` writable precisely so
   // that gap can be closed without a lock-discipline change; this line is
   // where the UI fix has to start.
-  const classStart = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+  const classStart = classStartInstant(
+    cls.calendarEntry.date,
+    cls.calendarEntry.startTime,
+    cls.calendarEntry.teacher.defaultTimezone,
+  );
   const minutesToStart = (classStart.getTime() - now) / 60_000;
-  const showCheckin = cls.status === 'in_progress' || (cls.status === 'open' && minutesToStart <= 15);
+  const showCheckin = !cancelled
+    && (cls.status === 'in_progress' || (cls.status === 'open' && minutesToStart <= 15));
 
   return (
     <>
       <PageHeader
-        title={cls.classType}
+        title={cls.calendarEntry.classType}
         backHref="/" backLabel="Schedule"
         action={
-          cls.status === 'draft'
+          !cancelled && cls.status === 'draft'
             ? <PublishClassButton classId={cls.id} />
             : showCheckin
               ? <CompleteClassButton classId={cls.id} />
@@ -178,7 +191,7 @@ export default async function ClassDetailPage({
       )}
 
       {/* Open (not yet check-in): registered students + pricing preview */}
-      {cls.status === 'open' && !showCheckin && activeRegistrations.length > 0 && (
+      {!cancelled && cls.status === 'open' && !showCheckin && activeRegistrations.length > 0 && (
         <div className="py-6">
           <h2 className="type-subtitle mb-1">Registered students</h2>
           <div>
@@ -196,17 +209,17 @@ export default async function ClassDetailPage({
       )}
 
       {/* Draft: pricing preview */}
-      {cls.status === 'draft' && (
+      {!cancelled && cls.status === 'draft' && (
         <PricingPreview cls={cls} />
       )}
 
       {/* Open (not check-in): pricing preview */}
-      {cls.status === 'open' && !showCheckin && (
+      {!cancelled && cls.status === 'open' && !showCheckin && (
         <PricingPreview cls={cls} />
       )}
 
       {/* Completed: Show pricing breakdown + payment checklist */}
-      {cls.status === 'completed' && (
+      {!cancelled && cls.status === 'completed' && (
         <>
           <PricingBreakdown cls={cls} tierPrices={tierPrices} />
           <PaymentChecklist items={paymentItems} />
@@ -214,16 +227,18 @@ export default async function ClassDetailPage({
       )}
 
       {/* Cancelled */}
-      {cls.status === 'cancelled' && (
+      {cancelled && (
         <div className="py-8 text-center type-body">
           This class was cancelled.
         </div>
       )}
 
       {/* Actions: share while bookable, announce while it has students, cancel while upcoming */}
-      {cls.status !== 'cancelled' && (
+      {!cancelled && (
         <div className="mt-8 pt-6 border-t border-border flex flex-col items-start gap-5">
-          {cls.status === 'open' && <ShareBookingLink pageSlug={cls.teacher.pageSlug} />}
+          {cls.status === 'open' && (
+            <ShareBookingLink pageSlug={cls.calendarEntry.teacher.pageSlug} />
+          )}
           {activeRegistrations.length > 0 && (
             <SendAnnouncement classId={cls.id} recipientHint="everyone in this class" />
           )}

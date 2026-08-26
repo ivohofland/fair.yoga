@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = `slot-${Date.now()}`;
@@ -55,8 +56,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const teachers = [teacherId, otherTeacherId];
-  await prisma.class.deleteMany({ where: { teacherId: { in: teachers } } });
-  await prisma.studioClass.deleteMany({ where: { teacherId: { in: teachers } } });
+  await prisma.class.deleteMany({ where: { calendarEntry: { teacherId: { in: teachers } } } });
+  await prisma.studioClass.deleteMany({ where: { calendarEntry: { teacherId: { in: teachers } } } });
   // `ClassTemplate`/`StudioClassTemplate` are `onDelete: Cascade` from
   // `ScheduleRule` (issue 298), so deleting the rules removes both
   // families' templates with them.
@@ -84,8 +85,8 @@ afterAll(async () => {
  */
 describe('teacher slot unique indexes', () => {
   it('rejects a second live studio class at the same teacher/date/startTime', async () => {
-    await prisma.studioClass.create({ data: studio(teacherId, 4) });
-    const err = await prisma.studioClass.create({ data: studio(teacherId, 4) }).catch((e: unknown) => e);
+    await createStudioClassFixture(prisma, studio(teacherId, 4));
+    const err = await createStudioClassFixture(prisma, studio(teacherId, 4)).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
     expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P2002');
     expect((err as Prisma.PrismaClientKnownRequestError).meta?.target)
@@ -98,32 +99,32 @@ describe('teacher slot unique indexes', () => {
     // Step 9 mutation that drops `teacherId` from the index, this is what
     // makes the assertion actually exercise the guard instead of vacuously
     // passing when run in isolation.
-    await prisma.studioClass.create({ data: studio(teacherId, 6) });
-    await expect(prisma.studioClass.create({ data: studio(otherTeacherId, 6) })).resolves.toBeTruthy();
+    await createStudioClassFixture(prisma, studio(teacherId, 6));
+    await expect(createStudioClassFixture(prisma, studio(otherTeacherId, 6))).resolves.toBeTruthy();
   });
 
   it('a cancelled studio class does not block re-creating that slot', async () => {
-    await prisma.studioClass.create({ data: { ...studio(teacherId, 5), cancelledAt: new Date() } });
-    await expect(prisma.studioClass.create({ data: studio(teacherId, 5) })).resolves.toBeTruthy();
+    await createStudioClassFixture(prisma, { ...studio(teacherId, 5), cancelledAt: new Date() });
+    await expect(createStudioClassFixture(prisma, studio(teacherId, 5))).resolves.toBeTruthy();
   });
 });
 
 describe('Class_teacher_slot_unique', () => {
   it('rejects a second live class at the same teacher/date/startTime', async () => {
-    await prisma.class.create({ data: cls(teacherId, 4) });
-    const err = await prisma.class.create({ data: cls(teacherId, 4) }).catch((e: unknown) => e);
+    await createClassFixture(prisma, cls(teacherId, 4));
+    const err = await createClassFixture(prisma, cls(teacherId, 4)).catch((e: unknown) => e);
     expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P2002');
     expect((err as Prisma.PrismaClientKnownRequestError).meta?.target)
       .toEqual(['teacherId', 'date', 'startTime']);
   });
 
   it('a cancelled class does not block re-creating that slot', async () => {
-    const c = await prisma.class.create({ data: cls(teacherId, 5) });
+    const c = await createClassFixture(prisma, cls(teacherId, 5));
     // Created as `draft` then moved, because `class_terminal_status_guard`
     // governs status changes. If a direct `status: 'cancelled'` insert is
     // accepted, use it — but do not assume; run it and see.
-    await prisma.class.update({ where: { id: c.id }, data: { status: 'cancelled' } });
-    await expect(prisma.class.create({ data: cls(teacherId, 5) })).resolves.toBeTruthy();
+    await prisma.calendarEntry.updateMany({ where: { classes: { some: { id: c.id } } }, data: { cancelledAt: new Date() } });
+    await expect(createClassFixture(prisma, cls(teacherId, 5))).resolves.toBeTruthy();
   });
 
   // PR #208 review, E2. `StudioClass` and `Room_private` already had this
@@ -132,8 +133,8 @@ describe('Class_teacher_slot_unique', () => {
   // rather than relying on a preceding test's row — self-seeded, so it
   // cannot pass vacuously if `teacherId` is ever dropped from the index.
   it('does not block another teacher at the same date and time', async () => {
-    await prisma.class.create({ data: cls(teacherId, 6) });
-    await expect(prisma.class.create({ data: cls(otherTeacherId, 6) })).resolves.toBeTruthy();
+    await createClassFixture(prisma, cls(teacherId, 6));
+    await expect(createClassFixture(prisma, cls(otherTeacherId, 6))).resolves.toBeTruthy();
   });
 });
 
@@ -191,63 +192,53 @@ describe('cross-family slot exclusivity (#296)', () => {
   const D = new Date(Date.UTC(2027, 5, 1));
 
   it('rejects a live studio class on a live class slot', async () => {
-    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D } });
+    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D });
     await expect(
-      prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D } }),
+      createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D }),
     ).rejects.toThrow(/YG001/);
   });
 
   it('rejects a live class on a live studio class slot', async () => {
     const D2 = new Date(Date.UTC(2027, 5, 2));
-    await prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D2 } });
+    await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D2 });
     await expect(
-      prisma.class.create({ data: { ...cls(teacherId, 1), date: D2 } }),
+      createClassFixture(prisma, { ...cls(teacherId, 1), date: D2 }),
     ).rejects.toThrow(/YG001/);
   });
 
   it('a cancelled class does not block a studio class on that slot', async () => {
     const D3 = new Date(Date.UTC(2027, 5, 3));
-    await prisma.class.create({
-      data: { ...cls(teacherId, 1), date: D3, status: 'cancelled' },
-    });
-    const s = await prisma.studioClass.create({
-      data: { ...studio(teacherId, 1), date: D3 },
-    });
+    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D3, cancelledAt: new Date() });
+    const s = await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D3 });
     expect(s.id).toBeTruthy();
   });
 
   it('a cancelled studio class does not block a class on that slot', async () => {
     const D4 = new Date(Date.UTC(2027, 5, 4));
-    await prisma.studioClass.create({
-      data: { ...studio(teacherId, 1), date: D4, cancelledAt: new Date() },
-    });
-    const c = await prisma.class.create({ data: { ...cls(teacherId, 1), date: D4 } });
+    await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D4, cancelledAt: new Date() });
+    const c = await createClassFixture(prisma, { ...cls(teacherId, 1), date: D4 });
     expect(c.id).toBeTruthy();
   });
 
   it('un-cancelling a studio class into an occupied slot is rejected', async () => {
     const D5 = new Date(Date.UTC(2027, 5, 5));
-    const s = await prisma.studioClass.create({
-      data: { ...studio(teacherId, 1), date: D5, cancelledAt: new Date() },
-    });
-    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D5 } });
+    const s = await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D5, cancelledAt: new Date() });
+    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D5 });
     await expect(
-      prisma.studioClass.update({ where: { id: s.id }, data: { cancelledAt: null } }),
+      prisma.calendarEntry.update({ where: { id: s.calendarEntryId }, data: { cancelledAt: null } }),
     ).rejects.toThrow(/YG001/);
   });
 
   it('does not block another teacher at the same date and time', async () => {
     const D6 = new Date(Date.UTC(2027, 5, 6));
-    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D6 } });
-    const s = await prisma.studioClass.create({
-      data: { ...studio(otherTeacherId, 1), date: D6 },
-    });
+    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D6 });
+    const s = await createStudioClassFixture(prisma, { ...studio(otherTeacherId, 1), date: D6 });
     expect(s.id).toBeTruthy();
   });
 
   it('leaves a pre-existing violating pair editable on unrelated columns', async () => {
     const D7 = new Date(Date.UTC(2027, 5, 7));
-    const c = await prisma.class.create({ data: { ...cls(teacherId, 1), date: D7 } });
+    const c = await createClassFixture(prisma, { ...cls(teacherId, 1), date: D7 });
     await prisma.$executeRaw`ALTER TABLE "StudioClass" DISABLE TRIGGER USER`;
     try {
       await prisma.$executeRaw`
@@ -267,9 +258,9 @@ describe('cross-family slot exclusivity (#296)', () => {
     // Prove the guard still fires: the DISABLE/ENABLE bracket above must not
     // have leaked, or every other test in this file would be silently voided.
     const D7b = new Date(Date.UTC(2027, 5, 8));
-    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D7b } });
+    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D7b });
     await expect(
-      prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D7b } }),
+      createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D7b }),
     ).rejects.toThrow(/YG001/);
   });
 
@@ -283,8 +274,8 @@ describe('cross-family slot exclusivity (#296)', () => {
   // date/startTime.
   it('does not block a class from another teacher\'s studio class at the same slot', async () => {
     const D8 = new Date(Date.UTC(2027, 5, 9));
-    await prisma.studioClass.create({ data: { ...studio(otherTeacherId, 1), date: D8 } });
-    const c = await prisma.class.create({ data: { ...cls(teacherId, 1), date: D8 } });
+    await createStudioClassFixture(prisma, { ...studio(otherTeacherId, 1), date: D8 });
+    const c = await createClassFixture(prisma, { ...cls(teacherId, 1), date: D8 });
     expect(c.id).toBeTruthy();
   });
 
@@ -297,21 +288,22 @@ describe('cross-family slot exclusivity (#296)', () => {
   it('moving a class into an occupied cross-family slot is rejected', async () => {
     const D9 = new Date(Date.UTC(2027, 5, 10)); // resident StudioClass's date
     const D10 = new Date(Date.UTC(2027, 5, 11)); // mover Class's starting date
-    await prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D9 } });
-    const c = await prisma.class.create({ data: { ...cls(teacherId, 1), date: D10 } });
+    await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D9 });
+    const c = await createClassFixture(prisma, { ...cls(teacherId, 1), date: D10 });
     await expect(
-      prisma.class.update({ where: { id: c.id }, data: { date: D9 } }),
+      prisma.calendarEntry.update({
+      where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: c.id }, select: { calendarEntryId: true } })).calendarEntryId },
+      data: { date: D9 },
+    }),
     ).rejects.toThrow(/YG001/);
   });
 
   it('moving a studio class into an occupied cross-family slot is rejected', async () => {
     const D11 = new Date(Date.UTC(2027, 5, 12));
-    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D11 } });
-    const s = await prisma.studioClass.create({
-      data: { ...studio(teacherId, 1), date: D11, startTime: hhmmToTime('08:00') },
-    });
+    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D11 });
+    const s = await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D11, startTime: hhmmToTime('08:00') });
     await expect(
-      prisma.studioClass.update({ where: { id: s.id }, data: { startTime: hhmmToTime('09:00') } }),
+      prisma.calendarEntry.update({ where: { id: s.calendarEntryId }, data: { startTime: hhmmToTime('09:00') } }),
     ).rejects.toThrow(/YG001/);
   });
 
@@ -332,12 +324,10 @@ describe('cross-family slot exclusivity (#296)', () => {
   it('moving a studio class by DATE into an occupied cross-family slot is rejected', async () => {
     const D12 = new Date(Date.UTC(2027, 5, 13)); // resident Class's date
     const D13 = new Date(Date.UTC(2027, 5, 14)); // mover StudioClass's date
-    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D12, startTime: hhmmToTime('08:15') } });
-    const s = await prisma.studioClass.create({
-      data: { ...studio(teacherId, 1), date: D13, startTime: hhmmToTime('08:15') },
-    });
+    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D12, startTime: hhmmToTime('08:15') });
+    const s = await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D13, startTime: hhmmToTime('08:15') });
     await expect(
-      prisma.studioClass.update({ where: { id: s.id }, data: { date: D12 } }),
+      prisma.calendarEntry.update({ where: { id: s.calendarEntryId }, data: { date: D12 } }),
     ).rejects.toThrow(/YG001/);
   });
 
@@ -345,14 +335,13 @@ describe('cross-family slot exclusivity (#296)', () => {
     // The fourth cell of the family x field matrix, so no disjunct on either
     // instance trigger is left resting on the other family's coverage.
     const D14 = new Date(Date.UTC(2027, 5, 15));
-    await prisma.studioClass.create({
-      data: { ...studio(teacherId, 1), date: D14, startTime: hhmmToTime('08:30') },
-    });
-    const c = await prisma.class.create({
-      data: { ...cls(teacherId, 1), date: D14, startTime: hhmmToTime('08:45') },
-    });
+    await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D14, startTime: hhmmToTime('08:30') });
+    const c = await createClassFixture(prisma, { ...cls(teacherId, 1), date: D14, startTime: hhmmToTime('08:45') });
     await expect(
-      prisma.class.update({ where: { id: c.id }, data: { startTime: hhmmToTime('08:30') } }),
+      prisma.calendarEntry.update({
+      where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: c.id }, select: { calendarEntryId: true } })).calendarEntryId },
+      data: { startTime: hhmmToTime('08:30') },
+    }),
     ).rejects.toThrow(/YG001/);
   });
 
@@ -376,12 +365,10 @@ describe('cross-family slot exclusivity (#296)', () => {
   // into the terminal-status suite.
   it('un-cancelling a class into an occupied cross-family slot is rejected', async () => {
     const D12 = new Date(Date.UTC(2027, 5, 13));
-    await prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D12 } });
-    const c = await prisma.class.create({
-      data: { ...cls(teacherId, 1), date: D12, status: 'cancelled' },
-    });
+    await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D12 });
+    const c = await createClassFixture(prisma, { ...cls(teacherId, 1), date: D12, cancelledAt: new Date() });
     await expect(
-      prisma.class.update({ where: { id: c.id }, data: { status: 'draft' } }),
+      prisma.calendarEntry.update({ where: { id: c.calendarEntryId }, data: { cancelledAt: null } }),
     ).rejects.toThrow(/YG001/);
   });
 
@@ -398,10 +385,10 @@ describe('cross-family slot exclusivity (#296)', () => {
   // removes coverage those already exercise.
   it('leaves a pre-existing violating pair editable on unrelated columns (studio class)', async () => {
     const D13 = new Date(Date.UTC(2027, 5, 14));
-    const s = await prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D13 } });
+    const s = await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D13 });
     await prisma.$executeRaw`ALTER TABLE "Class" DISABLE TRIGGER USER`;
     try {
-      await prisma.class.create({ data: { ...cls(teacherId, 1), date: D13 } });
+      await createClassFixture(prisma, { ...cls(teacherId, 1), date: D13 });
     } finally {
       await prisma.$executeRaw`ALTER TABLE "Class" ENABLE TRIGGER USER`;
     }
@@ -414,9 +401,9 @@ describe('cross-family slot exclusivity (#296)', () => {
     // Prove the guard still fires: the DISABLE/ENABLE bracket above must not
     // have leaked.
     const D13b = new Date(Date.UTC(2027, 5, 15));
-    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D13b } });
+    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D13b });
     await expect(
-      prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D13b } }),
+      createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D13b }),
     ).rejects.toThrow(/YG001/);
   });
 });

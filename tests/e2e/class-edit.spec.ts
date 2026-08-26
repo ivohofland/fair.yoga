@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { uniqueSuffix, hashToken, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 
@@ -64,8 +65,7 @@ test.describe('Class edit screen', () => {
     });
 
     async function mkClass(status: 'draft' | 'open' | 'cancelled', locked: boolean, day: string) {
-      return prisma.class.create({
-        data: {
+      return createClassFixture(prisma, {
           teacherId,
           teacherRoomId: teacherRoom.id,
           classType: 'Editable Hatha',
@@ -77,10 +77,10 @@ test.describe('Class edit screen', () => {
           targetRate: 20,
           minStudents: 2,
           maxStudents: 10,
-          status,
+          status: status === 'cancelled' ? 'open' : status,
+          cancelledAt: status === 'cancelled' ? new Date() : null,
           settingsLocked: locked,
-        },
-      });
+        });
     }
     draftClassId = (await mkClass('draft', false, '2099-07-01')).id;
     lockedClassId = (await mkClass('open', true, '2099-07-08')).id;
@@ -139,10 +139,10 @@ test.describe('Class edit screen', () => {
     await page.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.getByText('Saved')).toBeVisible();
 
-    const cls = await prisma.class.findUniqueOrThrow({ where: { id: draftClassId } });
-    expect(cls.classType).toBe('Morning Hatha');
+    const cls = await prisma.class.findUniqueOrThrow({ where: { id: draftClassId }, include: { calendarEntry: true },});
+    expect(cls.calendarEntry.classType).toBe('Morning Hatha');
     expect(Number(cls.targetRate)).toBe(24);
-    expect(cls.date.toISOString().slice(0, 10)).toBe('2099-07-02');
+    expect(cls.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-07-02');
   });
 
   test('a registration landing mid-edit locks the save out, loudly', async ({ page }) => {
@@ -161,7 +161,7 @@ test.describe('Class edit screen', () => {
     await page.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.getByText(/Cannot update economic fields/)).toBeVisible();
 
-    const cls = await prisma.class.findUniqueOrThrow({ where: { id: draftClassId } });
+    const cls = await prisma.class.findUniqueOrThrow({ where: { id: draftClassId }, include: { calendarEntry: true },});
     expect(Number(cls.targetRate)).toBe(24); // untouched
   });
 
@@ -186,12 +186,12 @@ test.describe('Class edit screen', () => {
     await page.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.getByText('Saved')).toBeVisible();
 
-    const cls = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    const cls = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
     expect(cls.description).toBe('Bring your own mat.');
     expect(Number(cls.targetRate)).toBe(20); // untouched
     // The unchanged date round-trips exactly — a local-time prefill
     // refactor would shift this a day for west-of-UTC teachers.
-    expect(cls.date.toISOString().slice(0, 10)).toBe('2099-07-08');
+    expect(cls.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-07-08');
   });
 
   test('terminal stages have no editor', async ({ page }) => {

@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { ANNOUNCEMENT_DEDUPE_WINDOW_MS } from '@/lib/db-locks';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -86,8 +87,7 @@ describe('POST /api/announcements', () => {
       const date = new Date();
       date.setDate(date.getDate() + daysAhead);
       date.setUTCHours(0, 0, 0, 0);
-      return prisma.class.create({
-        data: {
+      return createClassFixture(prisma, {
           teacherId: ownerTeacherId,
           teacherRoomId: ownerRoomId,
           classType: 'Vinyasa',
@@ -100,8 +100,7 @@ describe('POST /api/announcements', () => {
           minStudents: 2,
           maxStudents: 10,
           status: 'open',
-        },
-      });
+        });
     }
     class1Id = (await makeClass(teacherId, teacherRoom.id, 7)).id;
     class2Id = (await makeClass(teacherId, teacherRoom.id, 14)).id;

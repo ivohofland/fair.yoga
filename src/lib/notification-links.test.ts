@@ -12,7 +12,7 @@ describe('studentNotificationHref', () => {
   const openClass = {
     id: 'class-1',
     status: 'open' as const,
-    teacher: { pageSlug: 'anna' },
+    calendarEntry: { cancelledAt: null, teacher: { pageSlug: 'anna' } },
   };
 
   it('sends a teacher invitation to the page that can answer it', () => {
@@ -33,7 +33,24 @@ describe('studentNotificationHref', () => {
     expect(
       studentNotificationHref({
         type: 'class_cancelled',
-        relatedClass: { ...openClass, status: 'cancelled' },
+        relatedClass: { ...openClass, status: 'completed' },
+      }),
+    ).toBeNull();
+  });
+
+  // #327 split the two halves of "no longer open" across two rows: a
+  // cancelled class keeps its `open` status and carries `cancelledAt` on its
+  // entry. Without this case the link would survive the split silently —
+  // `status === 'open'` still passes, and the student is sent to a booking
+  // page that `notFound()`s.
+  it('yields null for a class cancelled on its entry, status untouched', () => {
+    expect(
+      studentNotificationHref({
+        type: 'class_cancelled',
+        relatedClass: {
+          ...openClass,
+          calendarEntry: { ...openClass.calendarEntry, cancelledAt: new Date() },
+        },
       }),
     ).toBeNull();
   });

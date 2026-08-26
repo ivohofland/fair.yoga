@@ -1,10 +1,11 @@
-import type { Class, TeacherRoom, Room } from '@prisma/client';
+import type { CalendarEntry, Class, TeacherRoom, Room } from '@prisma/client';
 import { StatusBadge, deriveBadgeVariant } from '@/components/ui/status-badge';
 import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { formatRoomLocation, formatDateWithYear } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 
 type ClassWithRoom = Class & {
+  calendarEntry: CalendarEntry;
   teacherRoom: TeacherRoom & { room: Room };
 };
 
@@ -17,8 +18,18 @@ interface ClassInfoProps {
 // Class header block: when/where, count, status badge, and the
 // registration progress bar while registrations still matter.
 export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoProps) {
-  const variant = deriveBadgeVariant(cls.status, registrationCount, cls.minStudents, cls.maxStudents);
-  const showProgress = cls.status === 'open' || cls.status === 'in_progress';
+  const cancelled = cls.calendarEntry.cancelledAt !== null;
+  const variant = deriveBadgeVariant(
+    cls.status,
+    cancelled,
+    registrationCount,
+    cls.minStudents,
+    cls.maxStudents,
+  );
+  // `!cancelled` alongside the status on both windows below (#327): a
+  // cancelled class keeps its `open` status, and neither a progress bar nor a
+  // live-queue count means anything on a class that is off.
+  const showProgress = !cancelled && (cls.status === 'open' || cls.status === 'in_progress');
 
   // #199. `in_progress` is included, not `open` alone: `closeQueueOnStart`
   // (#216) closes the queue the moment a class starts, but a teacher can still
@@ -29,7 +40,7 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
   // windows coincide today for the same reason (registrations still matter),
   // but they are separate decisions and a change to one must not silently move
   // the other.
-  const queueIsLive = cls.status === 'open' || cls.status === 'in_progress';
+  const queueIsLive = !cancelled && (cls.status === 'open' || cls.status === 'in_progress');
 
   // Two different sets, so two different sentences — and the sentence has to
   // describe the set the caller actually counted, or it goes stale as the
@@ -54,7 +65,7 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
         <StatusBadge variant={variant} />
       </div>
       <p className="type-body text-ink">
-        {formatDateWithYear(cls.date)} &middot; {timeToHHmm(cls.startTime)} &middot; {cls.durationMinutes} min
+        {formatDateWithYear(cls.calendarEntry.date)} &middot; {timeToHHmm(cls.calendarEntry.startTime)} &middot; {cls.calendarEntry.durationMinutes} min
       </p>
       <p className="type-body">
         {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}

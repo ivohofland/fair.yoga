@@ -6,6 +6,7 @@ import { accountIdOfTeacher } from './account-helpers';
 import { hydrationSignal } from './page-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 /**
  * Visual regression: screenshot baselines for the design system's key
@@ -246,8 +247,7 @@ test.describe('Visual regression', () => {
     // masked — headers share type-subtitle with card titles).
     const soon = new Date();
     soon.setUTCDate(soon.getUTCDate() + (8 - (soon.getUTCDay() || 7)) + 1);
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'Visual Vinyasa',
@@ -260,8 +260,7 @@ test.describe('Visual regression', () => {
         minStudents: 2,
         maxStudents: 10,
         status: 'open',
-      },
-    });
+      });
     classId = cls.id;
 
     await prisma.notification.create({
@@ -314,7 +313,7 @@ test.describe('Visual regression', () => {
     // would add only a failure mode — Prisma drops an `undefined` where-clause
     // rather than matching nothing, and this hook still runs when beforeAll
     // threw before `teacherId` was assigned.
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });

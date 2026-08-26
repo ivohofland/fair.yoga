@@ -908,21 +908,30 @@ export type ArchiveStudioTemplateResult =
   | { ok: false; reason: 'busy' };
 
 /**
- * Studio classes still on the schedule for a template, from the given
+ * Studio entries still on the schedule for a template, from the given
  * calendar-date boundary onward. The studio analogue of `scheduledWhere` in
- * `class-template-lifecycle.ts`, but keyed on `cancelledAt` rather than
- * `status` because that is the only lifecycle column `StudioClass` has.
+ * `class-template-lifecycle.ts`, and since #327 the two differ only in the
+ * class-side conjunct that family adds: liveness is one column on the shared
+ * `CalendarEntry` for both.
+ *
+ * A `CalendarEntry` predicate, not a `StudioClass` one, and the shift is not
+ * cosmetic: THE ARCHIVE'S DELETE HAS TO DELETE THE ENTRY. Deleting the
+ * `StudioClass` alone would leave its entry standing, still holding
+ * `(scheduleRuleId, date)` against the hourly sweep and still occupying the
+ * slot. Cascade runs the other way (`StudioClass.calendarEntry` is
+ * `onDelete: Cascade`), so deleting the entry takes the class with it.
  *
  * The boundary is a parameter for the same reason as there: the delete uses
  * `gt` (today's class is spared) and the counts use `gte` (today's class is
  * the survivor they must report), against a calendar date from
  * `startOfLocalDay` rather than a raw instant.
  */
-const scheduledWhere = (templateId: string, date: { gt: Date } | { gte: Date }) => ({
-  templateId,
-  date,
-  cancelledAt: null,
-});
+const scheduledWhere = (scheduleRuleId: string, date: { gt: Date } | { gte: Date }) =>
+  ({
+    scheduleRuleId,
+    date,
+    cancelledAt: null,
+  }) satisfies Prisma.CalendarEntryWhereInput;
 
 /**
  * One arm per way `pauseOrResumeStudioTemplate`'s transaction can resolve.
@@ -1265,8 +1274,8 @@ export async function pauseOrResumeStudioTemplate(
         // came from `Pacific/Kiritimati` (UTC+14) would put the just-added row a
         // day outside `gte`. Do not "simplify" this to `template.teacher.…`.
         const today = startOfLocalDay(new Date(), claimed.scheduleRule.teacher.defaultTimezone);
-        const scheduled = await tx.studioClass.count({
-          where: scheduledWhere(templateId, { gte: today }),
+        const scheduled = await tx.calendarEntry.count({
+          where: scheduledWhere(claimed.scheduleRuleId, { gte: today }),
         });
 
         // The state the POST's own transaction exists to prevent — a template
@@ -1360,8 +1369,8 @@ export async function pauseOrResumeStudioTemplate(
   // spare-today carve-out to mirror here — today's class is still on the
   // schedule and must be reported as such.
   const today = startOfLocalDay(new Date(), template.scheduleRule.teacher.defaultTimezone);
-  const lastScheduledRow = await db.studioClass.findFirst({
-    where: scheduledWhere(templateId, { gte: today }),
+  const lastScheduledRow = await db.calendarEntry.findFirst({
+    where: scheduledWhere(template.scheduleRuleId, { gte: today }),
     orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
     select: { date: true, startTime: true },
   });
@@ -1561,8 +1570,8 @@ export async function archiveOrUnarchiveStudioTemplate(
         // re-evaluate it at execution time, and its returned `count` is the
         // number of rows that actually matched then — not a stale count from an
         // earlier read. Do not "optimise" this back into a read-then-delete.
-        const { count: deleted } = await tx.studioClass.deleteMany({
-          where: scheduledWhere(templateId, { gt: today }),
+        const { count: deleted } = await tx.calendarEntry.deleteMany({
+          where: scheduledWhere(template.scheduleRuleId, { gt: today }),
         });
 
         // `gte`, where the delete used `gt`: the delete spares a class dated
@@ -1570,8 +1579,8 @@ export async function archiveOrUnarchiveStudioTemplate(
         // survivor. No charged-status filter is needed here, unlike the class
         // sibling — `StudioClass` has no registrations to consult, so every
         // uncancelled row in scope counts.
-        const remaining = await tx.studioClass.count({
-          where: scheduledWhere(templateId, { gte: today }),
+        const remaining = await tx.calendarEntry.count({
+          where: scheduledWhere(template.scheduleRuleId, { gte: today }),
         });
 
         // Written from the delete's own `count`, inside the same transaction

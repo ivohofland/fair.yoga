@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, hashToken, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 
@@ -50,8 +51,7 @@ test.describe('Public booking flow', () => {
       data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
     });
 
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'E2E Vinyasa',
@@ -64,12 +64,10 @@ test.describe('Public booking flow', () => {
         minStudents: 2,
         maxStudents: 10,
         status: 'open',
-      },
-    });
+      });
     classId = cls.id;
 
-    const secondCls = await prisma.class.create({
-      data: {
+    const secondCls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'E2E Restorative',
@@ -82,8 +80,7 @@ test.describe('Public booking flow', () => {
         minStudents: 2,
         maxStudents: 10,
         status: 'open',
-      },
-    });
+      });
     secondClassId = secondCls.id;
 
     const student = await prisma.student.create({
@@ -107,7 +104,7 @@ test.describe('Public booking flow', () => {
     await prisma.teacherStudent.deleteMany({ where: { teacherId } });
     await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
     await prisma.magicLinkToken.deleteMany({ where: { email: { contains: suffix } } });
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.student.delete({ where: { id: studentId } });

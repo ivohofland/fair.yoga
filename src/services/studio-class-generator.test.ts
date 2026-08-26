@@ -17,6 +17,7 @@ import {
 import { getNextOccurrences } from './class-generator';
 import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
+import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -84,9 +85,7 @@ describe('generateStudioClassInstances (DB)', () => {
   });
 
   afterAll(async () => {
-    await prisma.studioClass.deleteMany({
-      where: { templateId: { in: [templateId, shelvedTemplateId] } },
-    });
+    await prisma.studioClass.deleteMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: { in: [templateId, shelvedTemplateId] } } } } } } });
     // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
     // 298), so deleting the rules removes the templates with them.
     await prisma.scheduleRule.deleteMany({ where: { teacherId } });
@@ -100,7 +99,7 @@ describe('generateStudioClassInstances (DB)', () => {
     const from = new Date('2099-01-01T00:00:00Z');
 
     await generateStudioClassInstances(prisma, from);
-    const afterFirst = await prisma.studioClass.count({ where: { templateId } });
+    const afterFirst = await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } } } });
     // Exactly the rolling 4-week window, not "at least most of it". The loose
     // bound this replaces would wave through a window that comes back a week
     // short. Note what it does *not* pin: this fixture's filter never drops
@@ -113,7 +112,7 @@ describe('generateStudioClassInstances (DB)', () => {
     expect(afterFirst).toBe(4);
 
     await generateStudioClassInstances(prisma, from);
-    const afterSecond = await prisma.studioClass.count({ where: { templateId } });
+    const afterSecond = await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } } } });
     expect(afterSecond).toBe(afterFirst);
   });
 
@@ -153,11 +152,8 @@ describe('generateStudioClassInstances (DB)', () => {
       generateStudioClassInstances(prisma, from),
     ]);
 
-    const instances = await prisma.studioClass.findMany({
-      where: { templateId, date: { gte: from } },
-      select: { date: true },
-    });
-    const dates = instances.map((i) => i.date.toISOString());
+    const instances = await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } }, date: { gte: from } } }, select: { calendarEntry: { select: { date: true } } } });
+    const dates = instances.map((i) => i.calendarEntry.date.toISOString());
     // Exactly the window, for the same reason as the test above — and with the
     // same caveat: this fixture's `from` is a Sunday against a `dayOfWeek: 1`
     // template, so the filter never drops anything here either.
@@ -168,7 +164,7 @@ describe('generateStudioClassInstances (DB)', () => {
   it('skips an archived template even when it is still flagged active', async () => {
     await generateStudioClassInstances(prisma);
 
-    expect(await prisma.studioClass.count({ where: { templateId: shelvedTemplateId } })).toBe(0);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: shelvedTemplateId } } } } } })).toBe(0);
   });
 
   describe('claimStudioTemplateForGeneration', () => {
@@ -461,7 +457,9 @@ describe('generateStudioClassInstances (DB)', () => {
 
   describe('generateStudioClassInstances — archive mid-sweep', () => {
     afterEach(async () => {
-      await prisma.studioClass.deleteMany({ where: { templateId } });
+      await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } },
+    });
       await prisma.scheduleRule.update({
         where: { id: templateScheduleRuleId },
         data: { isActive: true, isArchived: false },
@@ -478,8 +476,10 @@ describe('generateStudioClassInstances (DB)', () => {
       // leave stray rows for this templateId, which fails the baseline
       // assertion below for reasons unrelated to the lock. Clear first — the
       // final assertion still carries the teeth.
-      await prisma.studioClass.deleteMany({ where: { templateId } });
-      expect(await prisma.studioClass.count({ where: { templateId } })).toBe(0);
+      await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } },
+    });
+      expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } } } })).toBe(0);
 
       let commit!: () => void;
       const held = new Promise<void>((resolve) => {
@@ -519,7 +519,7 @@ describe('generateStudioClassInstances (DB)', () => {
       await archiving;
       await sweeping;
 
-      expect(await prisma.studioClass.count({ where: { templateId } })).toBe(0);
+      expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } } } })).toBe(0);
     });
   });
 
@@ -534,7 +534,9 @@ describe('generateStudioClassInstances (DB)', () => {
     });
 
     afterEach(async () => {
-      await prisma.studioClass.deleteMany({ where: { templateId } });
+      await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } },
+    });
       await prisma.scheduleRule.update({
         where: { id: templateScheduleRuleId },
         data: {
@@ -557,7 +559,9 @@ describe('generateStudioClassInstances (DB)', () => {
      * the old values and the template genuinely enters the loop.
      */
     it('writes the values committed while the sweep was waiting, not the ones it read', async () => {
-      await prisma.studioClass.deleteMany({ where: { templateId } });
+      await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } },
+    });
 
       let commit!: () => void;
       const held = new Promise<void>((resolve) => {
@@ -598,16 +602,13 @@ describe('generateStudioClassInstances (DB)', () => {
       await sweeping;
 
       // 4. Everything it created carries the post-edit values.
-      const created = await prisma.studioClass.findMany({
-        where: { templateId },
-        select: { date: true, startTime: true },
-      });
+      const created = await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } } }, select: { calendarEntry: { select: { date: true, startTime: true } } } });
       expect(created.length).toBeGreaterThan(0);
       for (const c of created) {
-        expect(timeToHHmm(c.startTime)).toBe('18:45');
+        expect(timeToHHmm(c.calendarEntry.startTime)).toBe('18:45');
         // dayOfWeek 5 in this schema's convention (0=Mon) is Saturday,
         // which is getUTCDay() === 6.
-        expect(c.date.getUTCDay()).toBe(6);
+        expect(c.calendarEntry.date.getUTCDay()).toBe(6);
       }
     });
   });
@@ -678,26 +679,18 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     });
 
   const datesFor = (templateId: string) =>
-    prisma.studioClass.findMany({
-      where: { templateId },
-      orderBy: { date: 'asc' },
-      select: { date: true },
-    });
+    prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, select: { calendarEntry: { select: { date: true } } } });
 
   // Slot-reporting tests generate and hand-cancel rows under these teachers.
   // Without this, one test's leftover classes occupy the next test's slots —
   // the generator's occupancy check is scoped per teacher (mirroring #196).
   afterEach(async () => {
-    await prisma.studioClass.deleteMany({
-      where: { teacherId: { in: [eastTeacherId, westTeacherId] } },
-    });
+    await prisma.studioClass.deleteMany({ where: { calendarEntry: { teacherId: { in: [eastTeacherId, westTeacherId] } } } });
     // #296: the cross-family cases create `Class` rows, and a leftover one
     // occupies the next test's slot exactly the way a leftover StudioClass
     // does — the whole point of the reason being added is that the generator
     // now reads that table too.
-    await prisma.class.deleteMany({
-      where: { teacherId: { in: [eastTeacherId, westTeacherId] } },
-    });
+    await prisma.class.deleteMany({ where: { calendarEntry: { teacherId: { in: [eastTeacherId, westTeacherId] } } } });
   });
 
   beforeAll(async () => {
@@ -730,9 +723,9 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
   });
 
   afterAll(async () => {
-    await prisma.studioClass.deleteMany({ where: { templateId: { in: templateIds } } });
+    await prisma.studioClass.deleteMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: { in: templateIds } } } } } } });
     await prisma.studioClassTemplate.deleteMany({ where: { id: { in: templateIds } } });
-    await prisma.class.deleteMany({ where: { teacherId: { in: [eastTeacherId, westTeacherId] } } });
+    await prisma.class.deleteMany({ where: { calendarEntry: { teacherId: { in: [eastTeacherId, westTeacherId] } } } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId: eastTeacherId } });
     await prisma.room.deleteMany({ where: { createdById: eastTeacherId } });
     await prisma.teacher.deleteMany({ where: { id: { in: [eastTeacherId, westTeacherId] } } });
@@ -752,7 +745,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     expect(first.created).toBe(4);
     expect(second.created).toBe(0);
-    expect(await prisma.studioClass.count({ where: { templateId: id } })).toBe(4);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: id } } } } } })).toBe(4);
   });
 
   /**
@@ -774,7 +767,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     const created = await generateStudioInstancesForTemplate(prisma, tpl, from);
 
     expect(created.created).toBe(4);
-    const dates = (await datesFor(id)).map((d) => d.date.toISOString().slice(0, 10));
+    const dates = (await datesFor(id)).map((d) => d.calendarEntry.date.toISOString().slice(0, 10));
     expect(dates).not.toContain('2026-08-05');
     expect(dates[0]).toBe('2026-08-12');
   });
@@ -797,8 +790,8 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     await generateStudioInstancesForTemplate(prisma, await withZone(eastId), from);
     await generateStudioInstancesForTemplate(prisma, await withZone(westId), from);
 
-    const east = (await datesFor(eastId)).map((d) => d.date.toISOString().slice(0, 10));
-    const west = (await datesFor(westId)).map((d) => d.date.toISOString().slice(0, 10));
+    const east = (await datesFor(eastId)).map((d) => d.calendarEntry.date.toISOString().slice(0, 10));
+    const west = (await datesFor(westId)).map((d) => d.calendarEntry.date.toISOString().slice(0, 10));
 
     expect(east).not.toContain('2026-08-05');
     expect(west).toContain('2026-08-05');
@@ -854,8 +847,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     const holding = holder.$transaction(
       async (tx) => {
-        await tx.studioClass.create({
-          data: {
+        await createStudioClassFixture(tx, {
             teacherId: eastTeacherId,
             // `null`, deliberately, not this template's own id: with the
             // template's `templateId` the holder also collides on the
@@ -865,15 +857,14 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
             // collision to the slot key — and is the production shape too: a
             // standalone class racing the nightly
             // `api/cron/generate-classes` sweep onto a template's slot.
-            templateId: null,
+            scheduleRuleId: null,
             classType: 'Holder',
             date: collide,
             startTime: hhmmToTime('07:30'),
             durationMinutes: 60,
             location: 'Elsewhere',
             hourlyRate: 40,
-          },
-        });
+          });
         parkedResolve();
         await released;
       },
@@ -902,7 +893,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     );
 
     expect(created.created).toBe(4);
-    expect(await prisma.studioClass.count({ where: { templateId: id } })).toBe(4);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: id } } } } } })).toBe(4);
   });
 
   /**
@@ -930,13 +921,9 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
       await generateStudioInstancesForTemplate(prisma, tpl, now);
       expect(spy).not.toHaveBeenCalled(); // four already_generated — the noise rule
 
-      const rows = await prisma.studioClass.findMany({
-        where: { templateId: id },
-        orderBy: { date: 'asc' },
-        select: { id: true, date: true },
-      });
-      await prisma.studioClass.update({
-        where: { id: rows[1]!.id },
+      const rows = await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, select: { id: true, calendarEntry: { select: { date: true } } } });
+      await prisma.calendarEntry.updateMany({
+        where: { studioClasses: { some: { id: rows[1]!.id } } },
         data: { cancelledAt: new Date() },
       });
 
@@ -947,7 +934,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
       // name today on every run.
       expect(spy.mock.calls[0]![0]).toMatchObject({
         templateId: id,
-        skipped: [{ date: rows[1]!.date.toISOString().slice(0, 10), reason: 'blocked_by_cancelled' }],
+        skipped: [{ date: rows[1]!.calendarEntry.date.toISOString().slice(0, 10), reason: 'blocked_by_cancelled' }],
       });
     } finally {
       spy.mockRestore();
@@ -972,20 +959,16 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     expect(first.created).toBe(4);
     expect(first.skipped).toEqual([]);
 
-    const rows = await prisma.studioClass.findMany({
-      where: { templateId: tpl.id },
-      orderBy: { date: 'asc' },
-      select: { id: true, date: true },
-    });
-    await prisma.studioClass.update({
-      where: { id: rows[1]!.id },
+    const rows = await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: tpl.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, select: { id: true, calendarEntry: { select: { date: true } } } });
+    await prisma.calendarEntry.updateMany({
+      where: { studioClasses: { some: { id: rows[1]!.id } } },
       data: { cancelledAt: new Date() },
     });
 
     const again = await generateStudioInstancesForTemplate(prisma, tpl, now);
     expect(again.created).toBe(0);
     expect(again.skipped).toContainEqual({
-      date: rows[1]!.date,
+      date: rows[1]!.calendarEntry.date,
       reason: 'blocked_by_cancelled',
     });
   });
@@ -1001,27 +984,23 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
     const dates = (
-      await prisma.studioClass.findMany({
-        where: { templateId: tpl.id },
-        orderBy: { date: 'asc' },
-        select: { date: true },
-      })
-    ).map((r) => r.date);
+      await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: tpl.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, select: { calendarEntry: { select: { date: true } } } })
+    ).map((r) => r.calendarEntry.date);
     expect(first.created).toBe(4);
-    await prisma.studioClass.deleteMany({ where: { templateId: tpl.id } });
+    await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { studioClassTemplates: { some: { id: tpl.id } } } },
+    });
 
-    await prisma.studioClass.create({
-      data: {
+    await createStudioClassFixture(prisma, {
         teacherId: tpl.scheduleRule.teacherId,
-        templateId: null,
+        scheduleRuleId: null,
         classType: 'Manual',
         date: dates[1]!,
         startTime: tpl.scheduleRule.startTime,
         durationMinutes: 60,
         location: 'Elsewhere',
         hourlyRate: 50,
-      },
-    });
+      });
 
     const result = await generateStudioInstancesForTemplate(prisma, tpl, now);
     expect(result.created).toBe(3);
@@ -1050,17 +1029,14 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
     const dates = (
-      await prisma.studioClass.findMany({
-        where: { templateId: tpl.id },
-        orderBy: { date: 'asc' },
-        select: { date: true },
-      })
-    ).map((r) => r.date);
+      await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: tpl.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, select: { calendarEntry: { select: { date: true } } } })
+    ).map((r) => r.calendarEntry.date);
     expect(first.created).toBe(4);
-    await prisma.studioClass.deleteMany({ where: { templateId: tpl.id } });
+    await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { studioClassTemplates: { some: { id: tpl.id } } } },
+    });
 
-    await prisma.class.create({
-      data: {
+    await createClassFixture(prisma, {
         teacherId: tpl.scheduleRule.teacherId,
         teacherRoomId: eastTeacherRoomId,
         classType: 'Cross Family',
@@ -1072,8 +1048,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
         targetRate: 60,
         minStudents: 3,
         maxStudents: 10,
-      },
-    });
+      });
 
     const result = await generateStudioInstancesForTemplate(prisma, tpl, now);
     expect(result.created).toBe(3);
@@ -1093,17 +1068,14 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
     const dates = (
-      await prisma.studioClass.findMany({
-        where: { templateId: tpl.id },
-        orderBy: { date: 'asc' },
-        select: { date: true },
-      })
-    ).map((r) => r.date);
+      await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: tpl.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, select: { calendarEntry: { select: { date: true } } } })
+    ).map((r) => r.calendarEntry.date);
     expect(first.created).toBe(4);
-    await prisma.studioClass.deleteMany({ where: { templateId: tpl.id } });
+    await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { studioClassTemplates: { some: { id: tpl.id } } } },
+    });
 
-    await prisma.class.create({
-      data: {
+    await createClassFixture(prisma, {
         teacherId: tpl.scheduleRule.teacherId,
         teacherRoomId: eastTeacherRoomId,
         classType: 'Cross Family Cancelled',
@@ -1115,9 +1087,9 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
         targetRate: 60,
         minStudents: 3,
         maxStudents: 10,
-        status: 'cancelled',
-      },
-    });
+        status: 'open',
+        cancelledAt: new Date(),
+      });
 
     const result = await generateStudioInstancesForTemplate(prisma, tpl, now);
     expect(result.created).toBe(4);
@@ -1134,19 +1106,16 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
     const dates = (
-      await prisma.studioClass.findMany({
-        where: { templateId: tpl.id },
-        orderBy: { date: 'asc' },
-        select: { date: true },
-      })
-    ).map((r) => r.date);
+      await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: tpl.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, select: { calendarEntry: { select: { date: true } } } })
+    ).map((r) => r.calendarEntry.date);
     expect(first.created).toBe(4);
-    await prisma.studioClass.deleteMany({ where: { templateId: tpl.id } });
+    await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { studioClassTemplates: { some: { id: tpl.id } } } },
+    });
 
-    await prisma.studioClass.create({
-      data: {
+    await createStudioClassFixture(prisma, {
         teacherId: tpl.scheduleRule.teacherId,
-        templateId: null,
+        scheduleRuleId: null,
         classType: 'Manual',
         date: dates[1]!,
         startTime: tpl.scheduleRule.startTime,
@@ -1154,8 +1123,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
         location: 'Elsewhere',
         hourlyRate: 50,
         cancelledAt: new Date(),
-      },
-    });
+      });
 
     // #196's studio index carries `WHERE "cancelledAt" IS NULL`.
     const result = await generateStudioInstancesForTemplate(prisma, tpl, now);
@@ -1172,6 +1140,7 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
   function tmpl(id: string, teacherId: string) {
     return {
       id,
+      scheduleRuleId: `rule-${id}`,
       location: 'Stub Studio',
       hourlyRate: 45,
       scheduleRule: {
@@ -1207,29 +1176,34 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
         // above already produced, keyed by the id the claim was given.
         findUniqueOrThrow: async ({ where: { id } }: { where: { id: string } }) => tmpl(id, 't1'),
       },
-      // #296: the generator now reads the OTHER family's occupancy too. Empty,
-      // because this test is about error isolation between templates and not
-      // about occupancy — but it has to EXIST, or every template fails on
-      // `Cannot read properties of undefined (reading 'findMany')` and the test
-      // passes its `rejects.toThrow` for a reason that has nothing to do with
-      // what it pins.
-      class: {
-        findMany: async () => [],
-      },
-      studioClass: {
+      // #327: occupancy is ONE read over `CalendarEntry` for both families
+      // (the separate `class` read this replaced is gone). Empty, because this
+      // test is about error isolation between templates and not about
+      // occupancy — but it has to EXIST, or every template fails on
+      // `Cannot read properties of undefined (reading 'findMany')` and the
+      // test passes its `rejects.toThrow` for a reason that has nothing to do
+      // with what it pins.
+      //
+      // The ENTRY is also what the generator creates now, keyed by
+      // `scheduleRuleId` rather than by a template id — so this is where the
+      // per-template failure is staged.
+      calendarEntry: {
         findMany: async () => [],
         createManyAndReturn: async ({
           data,
         }: {
-          data: Array<{ templateId: string; date: Date }>;
+          data: Array<{ scheduleRuleId: string; date: Date }>;
         }) => {
           for (const row of data) {
-            if (row.templateId === 'A') throw new Error('boom-A');
-            if (row.templateId === 'C') throw new Error('boom-C');
-            created.push(row.templateId);
+            if (row.scheduleRuleId === 'rule-A') throw new Error('boom-A');
+            if (row.scheduleRuleId === 'rule-C') throw new Error('boom-C');
+            created.push(row.scheduleRuleId.replace('rule-', ''));
           }
-          return data.map((row) => ({ date: row.date }));
+          return data.map((row) => ({ id: `entry-${row.scheduleRuleId}`, date: row.date }));
         },
+      },
+      studioClass: {
+        createMany: async () => ({ count: 0 }),
       },
       // The sweep now claims each template inside its own transaction before
       // generating. This stub has no real lock semantics to exercise (the DB

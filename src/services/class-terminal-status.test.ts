@@ -5,6 +5,7 @@ import { classifyApiError } from '@/lib/api-errors';
 import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 import { enforcedTerminalStatuses } from '../../tests/migration-sql';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 /**
  * A pure DB-invariant test — no HTTP surface, nothing here calls the app on
@@ -113,8 +114,7 @@ let makeClassCounter = 0;
 
 async function makeClass(opts: { status: ClassStatus }): Promise<{ classId: string }> {
   makeClassCounter += 1;
-  const cls = await prisma.class.create({
-    data: {
+  const cls = await createClassFixture(prisma, {
       teacherId,
       teacherRoomId,
       classType: 'Terminal Status Test',
@@ -127,8 +127,7 @@ async function makeClass(opts: { status: ClassStatus }): Promise<{ classId: stri
       minStudents: 1,
       maxStudents: 8,
       status: opts.status,
-    },
-  });
+    });
   classIds.push(cls.id);
   return { classId: cls.id };
 }
@@ -194,9 +193,9 @@ afterAll(async () => {
 describe('class terminal status trigger', () => {
   it('refuses to change the status of a cancelled class, and says so with a matchable code', async () => {
     const { classId } = await makeClass({ status: 'open' });
-    await prisma.class.updateMany({
-      where: { id: classId, status: 'open' },
-      data: { status: 'cancelled' },
+    await prisma.calendarEntry.updateMany({
+      where: { classes: { some: { id: classId } }, cancelledAt: null },
+      data: { cancelledAt: new Date() },
     });
 
     let caught: unknown;
@@ -229,7 +228,7 @@ describe('class terminal status trigger', () => {
     // green.
     expect(classifyApiError(caught).status).toBe(409);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(after.status).toBe('cancelled');
   });
 
@@ -280,7 +279,7 @@ describe('class terminal status trigger', () => {
 
     let caught: unknown;
     try {
-      await prisma.class.update({ where: { id: classId }, data: { status: 'cancelled' } });
+      await prisma.calendarEntry.updateMany({ where: { classes: { some: { id: classId } } }, data: { cancelledAt: new Date() } });
     } catch (err) {
       caught = err;
     }
@@ -295,7 +294,7 @@ describe('class terminal status trigger', () => {
     expect(String(caught)).toMatch(/is completed/);
     expect(classifyApiError(caught).status).toBe(409);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(after.status).toBe('completed');
 
     // The stakes, spelled out: the payment is still there, still pending, and
@@ -343,7 +342,7 @@ describe('class terminal status trigger', () => {
       },
     });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(after.status).toBe('completed');
     expect(Number(after.totalRevenue)).toBe(45);
     expect(after.totalStudents).toBe(1);
@@ -356,14 +355,14 @@ describe('class terminal status trigger', () => {
    */
   it('allows a no-op status write on a cancelled class', async () => {
     const { classId } = await makeClass({ status: 'open' });
-    await prisma.class.updateMany({
-      where: { id: classId, status: 'open' },
-      data: { status: 'cancelled' },
+    await prisma.calendarEntry.updateMany({
+      where: { classes: { some: { id: classId } }, cancelledAt: null },
+      data: { cancelledAt: new Date() },
     });
 
-    await prisma.class.update({ where: { id: classId }, data: { status: 'cancelled' } });
+    await prisma.calendarEntry.updateMany({ where: { classes: { some: { id: classId } } }, data: { cancelledAt: new Date() } });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(after.status).toBe('cancelled');
   });
 
@@ -384,7 +383,7 @@ describe('class terminal status trigger', () => {
 
     await prisma.class.update({ where: { id: classId }, data: { description: 'Edited after' } });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(after.description).toBe('Edited after');
     expect(after.status).toBe('completed');
   });
@@ -436,7 +435,7 @@ describe('class terminal status trigger', () => {
       expect(String(caught)).toMatch(/23514/);
       expect(String(caught)).toMatch(/which is terminal/);
 
-      const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
       expect(after.status).toBe(status);
     },
   );

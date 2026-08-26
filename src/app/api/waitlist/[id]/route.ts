@@ -25,8 +25,11 @@ export const DELETE = withErrorHandler(async (
   const isOwnEntry = entry.studentId === session.studentId;
   if (!isOwnEntry) {
     if (!session.teacherId) return respondError('Access denied', 403);
-    const cls = await prisma.class.findUnique({ where: { id: entry.classId } });
-    if (!cls || cls.teacherId !== session.teacherId) {
+    const cls = await prisma.class.findUnique({
+      where: { id: entry.classId },
+      include: { calendarEntry: { select: { teacherId: true } } },
+    });
+    if (!cls || cls.calendarEntry.teacherId !== session.teacherId) {
       return respondError('Access denied', 403);
     }
   }

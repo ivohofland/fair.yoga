@@ -9,7 +9,8 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateStudioClassSchema } from '@/lib/schemas';
-import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { Prisma } from '@prisma/client';
+import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { isRecordNotFound } from '@/lib/api-errors';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
@@ -35,12 +36,32 @@ export const GET = withErrorHandler(async (
 
   const studioClass = await prisma.studioClass.findUnique({
     where: { id },
-    include: { template: true },
+    include: {
+      calendarEntry: {
+        include: { scheduleRule: { include: { studioClassTemplates: true } } },
+      },
+    },
   });
   if (!studioClass) return respondError('Studio class not found', 404);
-  if (studioClass.teacherId !== session.teacherId) return respondError('Access denied', 403);
+  if (studioClass.calendarEntry.teacherId !== session.teacherId) {
+    return respondError('Access denied', 403);
+  }
 
-  return respondOk({ ...studioClass, startTime: timeToHHmm(studioClass.startTime) });
+  // The wire shape is unchanged by #327, `template` included: a studio class
+  // reaches its template through the entry's rule now, and a rule carries at
+  // most one template per family.
+  const { calendarEntry, ...sc } = studioClass;
+  return respondOk({
+    ...sc,
+    teacherId: calendarEntry.teacherId,
+    classType: calendarEntry.classType,
+    date: calendarEntry.date,
+    startTime: timeToHHmm(calendarEntry.startTime),
+    durationMinutes: calendarEntry.durationMinutes,
+    cancelledAt: calendarEntry.cancelledAt,
+    scheduleRuleId: calendarEntry.scheduleRuleId,
+    template: calendarEntry.scheduleRule?.studioClassTemplates[0] ?? null,
+  });
 });
 
 export const PUT = withErrorHandler(async (
@@ -51,9 +72,14 @@ export const PUT = withErrorHandler(async (
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const studioClass = await prisma.studioClass.findUnique({ where: { id } });
+  const studioClass = await prisma.studioClass.findUnique({
+    where: { id },
+    include: { calendarEntry: true },
+  });
   if (!studioClass) return respondError('Studio class not found', 404);
-  if (studioClass.teacherId !== session.teacherId) return respondError('Access denied', 403);
+  if (studioClass.calendarEntry.teacherId !== session.teacherId) {
+    return respondError('Access denied', 403);
+  }
 
   const parsed = await parseBody(request, updateStudioClassSchema);
   if ('error' in parsed) return parsed.error;
@@ -72,7 +98,10 @@ export const PUT = withErrorHandler(async (
   // todays, which is a state no test could reproduce and no reader expects.
   const now = new Date();
   const verdict = studioClassEditability(
-    { templateId: studioClass.templateId, date: studioClass.date },
+    {
+      scheduleRuleId: studioClass.calendarEntry.scheduleRuleId,
+      date: studioClass.calendarEntry.date,
+    },
     now,
     session.defaultTimezone,
   );
@@ -92,7 +121,7 @@ export const PUT = withErrorHandler(async (
     );
   }
 
-  // Gate 2 — a generated row holds its `(templateId, date)` key against the
+  // Gate 2 — a generated row holds its `(scheduleRuleId, date)` key against the
   // sweep (D2): moving it would free the date and the hourly sweep would
   // recreate the class there. Cancel plus manual re-create is the remedy the
   // refusal names. Presence, not difference: re-sending the unchanged date of
@@ -134,48 +163,78 @@ export const PUT = withErrorHandler(async (
   // `startTime` stays inside `gated` — Gate 1's `Object.keys(gated)` check
   // (above) needs its presence, not its wire shape — so the "HH:MM" → `Date`
   // conversion happens here instead of at the destructure, after the field
-  // has already done its job of tripping (or not tripping) that gate. Read
-  // off `gated.startTime` rather than mutating `updateData` after the fact:
-  // if a future change ever pulls `startTime` out of `gated` (the way `date`,
-  // `cancelledAt` and `studentCount` already are), `gated.startTime` stops
-  // compiling — a `typeof updateData.startTime === 'string'` runtime probe
-  // would instead just go quietly dead.
-  const updateData: Record<string, unknown> = {
-    ...gated,
+  // has already done its job of tripping (or not tripping) that gate. It is
+  // destructured OUT of `gated` below rather than probed at runtime: if a
+  // future change pulls it out of the parsed body the way `date`,
+  // `cancelledAt` and `studentCount` already are, that destructure stops
+  // compiling, where a `typeof ... === 'string'` probe would go quietly dead.
+  //
+  // SPLIT ACROSS THE TWO TABLES since #327. `location` and `hourlyRate` are
+  // the studio class's own economics; `classType`, `date`, `startTime`,
+  // `durationMinutes` and `cancelledAt` are the calendar identity and live on
+  // the entry. `studentCount` stays on the child, which is why the gate above
+  // could exempt it.
+  const { location, hourlyRate, classType, startTime, durationMinutes } = gated;
+  const studioData: Prisma.StudioClassUncheckedUpdateInput = {
+    location,
+    hourlyRate,
+    ...(studentCount !== undefined ? { studentCount } : {}),
+  };
+  const entryData: Prisma.CalendarEntryUncheckedUpdateInput = {
+    classType,
+    durationMinutes,
     // The schema validates `date` as a YYYY-MM-DD string; Prisma needs a Date
     // (UTC midnight, same as creation). Same transform as
     // src/app/api/classes/[id]/route.ts.
     ...(dateString !== undefined ? { date: new Date(dateString) } : {}),
-    ...(gated.startTime !== undefined ? { startTime: hhmmToTime(gated.startTime) } : {}),
+    ...(startTime !== undefined ? { startTime: hhmmToTime(startTime) } : {}),
+    ...(cancelledAt !== undefined
+      ? { cancelledAt: cancelledAt ? new Date(cancelledAt) : null }
+      : {}),
   };
-  if (studentCount !== undefined) {
-    updateData.studentCount = studentCount;
-  }
-  if (cancelledAt !== undefined) {
-    updateData.cancelledAt = cancelledAt ? new Date(cancelledAt) : null;
-  }
 
-  // `StudioClass_teacher_slot_unique` is (teacherId, date, startTime) WHERE
-  // cancelledAt IS NULL (#196). Three writes here re-enter that partial index
-  // and can collide with another live row at this teacher's (date, startTime):
-  // changing `startTime`, clearing `cancelledAt` back to null on a previously
-  // cancelled class, or moving `date`. The index does not care which kind of
-  // row moved; any live row holding the slot collides.
+  // `CalendarEntry_teacher_slot_excl` is `EXCLUDE USING gist ("teacherId"
+  // WITH =, span WITH &&) WHERE ("cancelledAt" IS NULL)` (#327). FOUR writes
+  // here re-enter it and can collide with another live entry of this teacher:
+  // changing `startTime`, changing `durationMinutes` (the span is generated
+  // from it), clearing `cancelledAt` back to null on a previously cancelled
+  // class, or moving `date`. The constraint does not care which family the
+  // holder belongs to — one table now — and it is RANGE-based, so an overlap
+  // collides where before only an identical start time did.
   //
-  // NO TEMPLATE-KEY CATCH ARM, deliberately (spec §D2) — but note WHICH
-  // premise carries that. `templateId` is never written here, and gate 2 lets
-  // `date` move only on rows whose `templateId` is null, which PostgreSQL
+  // NO RULE-DATE CATCH ARM, deliberately (spec §D2) — but note WHICH premise
+  // carries that. `scheduleRuleId` is never written here, and gate 2 lets
+  // `date` move only on rows whose `scheduleRuleId` is null, which PostgreSQL
   // treats as distinct. Both together are what make a P2002 on
-  // `@@unique([templateId, date])` unreachable; relax gate 2 and this arm
+  // `@@unique([scheduleRuleId, date])` unreachable; relax gate 2 and this arm
   // becomes necessary, or a real collision escapes as a 500.
   try {
-    const updated = await prisma.studioClass.update({
-      where: { id },
-      data: updateData,
+    // Child then parent, matching the direction `lockClassRow` fixes for the
+    // regular family (`db-locks.ts`): every writer that touches both takes the
+    // class row before its entry. Two statements in one transaction rather
+    // than a nested write, so the order is stated rather than left to Prisma's
+    // query emission.
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.studioClass.update({ where: { id }, data: studioData });
+      const entry = await tx.calendarEntry.update({
+        where: { id: studioClass.calendarEntryId },
+        data: entryData,
+      });
+      const sc = await tx.studioClass.findUniqueOrThrow({ where: { id } });
+      return { ...sc, entry };
     });
-    return respondOk({ ...updated, startTime: timeToHHmm(updated.startTime) });
+    const { entry, ...sc } = updated;
+    return respondOk({
+      ...sc,
+      teacherId: entry.teacherId,
+      classType: entry.classType,
+      date: entry.date,
+      startTime: timeToHHmm(entry.startTime),
+      durationMinutes: entry.durationMinutes,
+      cancelledAt: entry.cancelledAt,
+    });
   } catch (err) {
-    if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
+    if (isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')) {
       // LOGGED for the reason the cross-family arm below states in full:
       // `respondError` does not log, and `withErrorHandler` never sees a
       // response that was RETURNED rather than thrown, so catching here is
@@ -256,17 +315,25 @@ export const DELETE = withErrorHandler(async (
   // `teacherId` is added for gate 4 only, and is never passed on.
   const studioClass = await prisma.studioClass.findUnique({
     where: { id },
-    select: { teacherId: true, ...STUDIO_CLASS_REMOVAL_FACTS_SELECT },
+    select: {
+      calendarEntryId: true,
+      calendarEntry: { select: { teacherId: true, ...STUDIO_CLASS_REMOVAL_FACTS_SELECT } },
+    },
   });
   if (!studioClass) return respondError('Studio class not found', 404);
-  if (studioClass.teacherId !== session.teacherId) return respondError('Access denied', 403);
+  if (studioClass.calendarEntry.teacherId !== session.teacherId) {
+    return respondError('Access denied', 403);
+  }
 
   // A fresh two-field literal, not `studioClass`. Not for excess-property
   // checking — an optional widening defeats that — but so the predicate is
   // physically handed only what it may read, whatever this handler's `select`
   // grows to later.
   const verdict = studioClassDeletability(
-    { templateId: studioClass.templateId, date: studioClass.date },
+    {
+      scheduleRuleId: studioClass.calendarEntry.scheduleRuleId,
+      date: studioClass.calendarEntry.date,
+    },
     new Date(),
     session.defaultTimezone,
   );
@@ -276,7 +343,7 @@ export const DELETE = withErrorHandler(async (
       {
         studioClassId: id,
         teacherId: session.teacherId,
-        templateId: studioClass.templateId,
+        scheduleRuleId: studioClass.calendarEntry.scheduleRuleId,
         reason: verdict.reason,
       },
       'studio class removal refused',
@@ -285,7 +352,11 @@ export const DELETE = withErrorHandler(async (
   }
 
   try {
-    await prisma.studioClass.delete({ where: { id } });
+    // The ENTRY is what goes (#327), and the studio class rides its cascade.
+    // Deleting the child alone would leave the entry standing, still holding
+    // its slot and its `(scheduleRuleId, date)` key — a removed class that
+    // still blocks the calendar.
+    await prisma.calendarEntry.delete({ where: { id: studioClass.calendarEntryId } });
   } catch (err) {
     // The one outcome of this handler that used to leave no trace at all. The
     // docblock above argues no race can reach here; `studio-class-template-
@@ -312,7 +383,11 @@ export const DELETE = withErrorHandler(async (
   // because an ARCHIVE removes rows the teacher never sees, and a `deletedAt`
   // column would re-create the tombstone removal exists to clear.
   log.info(
-    { studioClassId: id, teacherId: session.teacherId, templateId: studioClass.templateId },
+    {
+      studioClassId: id,
+      teacherId: session.teacherId,
+      scheduleRuleId: studioClass.calendarEntry.scheduleRuleId,
+    },
     'studio class removed',
   );
   return respondOk({ deleted: true });

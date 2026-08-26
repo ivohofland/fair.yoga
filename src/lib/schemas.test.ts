@@ -22,9 +22,17 @@ import type { NoneOf } from './type-pins';
 
 describe('transitionClassSchema', () => {
   it('accepts legal manual transitions', () => {
-    for (const status of ['draft', 'open', 'in_progress', 'cancelled']) {
+    for (const status of ['draft', 'open', 'in_progress']) {
       expect(transitionClassSchema.safeParse({ status }).success).toBe(true);
     }
+  });
+
+  it("rejects 'cancelled' — it is not a status, and has a door of its own", () => {
+    // #327. Cancellation is `CalendarEntry.cancelledAt`, reached through
+    // `POST /api/classes/[id]/cancel`; there is no target status to transition
+    // to, and accepting the word here would name a value `ClassStatus` does
+    // not have.
+    expect(transitionClassSchema.safeParse({ status: 'cancelled' }).success).toBe(false);
   });
 
   it("rejects 'completed' — completion must run the pricing engine via /complete", () => {
@@ -409,7 +417,7 @@ const SERVER_OWNED_FIELDS = [
   'accountId', 'archivedAt', 'cancelledAt', 'claimedAt', 'createdAt',
   'createdById', 'date', 'effectiveTeacherRate', 'id', 'isActive', 'isArchived',
   'isPublic', 'kind', 'paidAt', 'photoUrl', 'scheduleRuleId', 'settingsLocked',
-  'status', 'studentId', 'teacherId', 'templateId', 'tierAtBooking',
+  'status', 'studentId', 'teacherId', 'tierAtBooking',
   'tierSelectedAt', 'totalRevenue', 'totalStudents', 'updatedAt',
   'withdrawnCount',
 ] as const;
@@ -444,7 +452,8 @@ type AnyModelKey =
   | keyof Prisma.StudentPrivacyUncheckedUpdateManyInput
   | keyof Prisma.StudioClassTemplateUncheckedUpdateManyInput
   | keyof Prisma.TeacherRoomUncheckedUpdateManyInput
-  | keyof Prisma.ScheduleRuleUncheckedUpdateManyInput;
+  | keyof Prisma.ScheduleRuleUncheckedUpdateManyInput
+  | keyof Prisma.CalendarEntryUncheckedUpdateManyInput;
 
 const _serverOwnedNamesExist: NoneOf<
   Exclude<(typeof SERVER_OWNED_FIELDS)[number], AnyModelKey>
@@ -501,10 +510,13 @@ const EXPECTED: Record<string, readonly string[]> = {
 
 describe('server-owned fields', () => {
   // The register is only as good as the list it walks, and the exact-equality
-  // assertion below cannot see a name that is gone: ten of these appear in no
-  // EXPECTED entry, so deleting one changes neither side of the comparison.
-  // templateId — the field #146 and #148 are about — is one of them. This pin
-  // is the only thing that makes shortening the list fail.
+  // assertion below cannot see a name that is gone: several of these appear in
+  // no EXPECTED entry, so deleting one changes neither side of the comparison.
+  // This pin is the only thing that makes shortening the list fail — and it
+  // did its job in #327, which dropped `templateId` (the field #146 and #148
+  // are about) from the register because the column left the schema with
+  // `Class.templateId`/`StudioClass.templateId`. `scheduleRuleId` is what a
+  // client must not set now, and it was already here.
   it('is the curated list, changed deliberately', () => {
     expect([...SERVER_OWNED_FIELDS].sort()).toEqual([
       'accountId',
@@ -527,7 +539,6 @@ describe('server-owned fields', () => {
       'status',
       'studentId',
       'teacherId',
-      'templateId',
       'tierAtBooking',
       'tierSelectedAt',
       'totalRevenue',
@@ -548,7 +559,9 @@ describe('server-owned fields', () => {
       // z.array). Conflating them made this guard blind in exactly the way the
       // three guards this repo has shipped were blind — measured: three
       // exported schemas declaring teacherId, studentId and templateId behind
-      // those wrappers left the suite fully green.
+      // those wrappers left the suite fully green. (`templateId` is no longer
+      // a column anywhere; the measurement is a record of what the blindness
+      // cost, not a claim about today's register.)
       if (!(schema instanceof z.ZodType)) continue;
       const shape = (schema as { shape?: Record<string, unknown> }).shape;
       expect(

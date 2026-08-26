@@ -245,7 +245,10 @@ export async function sendPaymentReminder(
       where: { id: paymentId },
       include: {
         registration: {
-          select: { studentId: true, class: { select: { id: true, classType: true } } },
+          select: {
+            studentId: true,
+            class: { select: { id: true, calendarEntry: { select: { classType: true } } } },
+          },
         },
       },
     });
@@ -256,7 +259,7 @@ export async function sendPaymentReminder(
         recipientId: registration.studentId,
         type: 'reminder',
         title: 'Payment outstanding',
-        body: `€${Number(payment.amount).toFixed(2)} for ${registration.class.classType} is still open. Pay your teacher directly.`,
+        body: `€${Number(payment.amount).toFixed(2)} for ${registration.class.calendarEntry.classType} is still open. Pay your teacher directly.`,
         relatedClassId: registration.class.id,
       },
     ]);
@@ -283,7 +286,7 @@ export async function getOutstandingPayments(
   const rows = await db.payment.findMany({
     where: {
       status: { in: ['pending', 'overdue'] },
-      registration: { class: { teacherId } },
+      registration: { class: { calendarEntry: { teacherId } } },
     },
     include: {
       registration: {
@@ -291,7 +294,11 @@ export async function getOutstandingPayments(
           id: true,
           status: true,
           student: { select: studentVisibilitySelect(teacherId) },
-          class: { select: { classType: true, date: true } },
+          // Reshaped onto `TeacherPaymentRow`'s flat `{ classType, date }`
+          // below: both moved to the entry in #327, and the projection is
+          // this service's own type rather than a Prisma payload, so its
+          // consumers are unaffected.
+          class: { select: { calendarEntry: { select: { classType: true, date: true } } } },
         },
       },
     },
@@ -302,6 +309,10 @@ export async function getOutstandingPayments(
     registration: {
       ...row.registration,
       student: projectStudentForTeacher(row.registration.student, teacherId),
+      class: {
+        classType: row.registration.class.calendarEntry.classType,
+        date: row.registration.class.calendarEntry.date,
+      },
     },
   }));
 }
@@ -327,14 +338,18 @@ export async function getPaymentsForClass(
   teacherId: string,
 ): Promise<TeacherPaymentRow[]> {
   const rows = await db.payment.findMany({
-    where: { registration: { classId, class: { teacherId } } },
+    where: { registration: { classId, class: { calendarEntry: { teacherId } } } },
     include: {
       registration: {
         select: {
           id: true,
           status: true,
           student: { select: studentVisibilitySelect(teacherId) },
-          class: { select: { classType: true, date: true } },
+          // Reshaped onto `TeacherPaymentRow`'s flat `{ classType, date }`
+          // below: both moved to the entry in #327, and the projection is
+          // this service's own type rather than a Prisma payload, so its
+          // consumers are unaffected.
+          class: { select: { calendarEntry: { select: { classType: true, date: true } } } },
         },
       },
     },
@@ -345,6 +360,10 @@ export async function getPaymentsForClass(
     registration: {
       ...row.registration,
       student: projectStudentForTeacher(row.registration.student, teacherId),
+      class: {
+        classType: row.registration.class.calendarEntry.classType,
+        date: row.registration.class.calendarEntry.date,
+      },
     },
   }));
 }

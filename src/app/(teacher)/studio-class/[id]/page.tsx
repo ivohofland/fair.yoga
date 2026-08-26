@@ -20,14 +20,24 @@ export default async function StudioClassDetailPage({
   const session = await requireTeacherSession();
   const { id } = await params;
 
+  // The template is reached through the entry's rule since #327 — a rule
+  // carries at most one template per family, which is why the array below is
+  // read at `[0]`.
   const studioClass = await prisma.studioClass.findUnique({
     where: { id },
-    include: { template: { include: { scheduleRule: true } } },
+    include: {
+      calendarEntry: {
+        include: { scheduleRule: { include: { studioClassTemplates: true } } },
+      },
+    },
   });
 
-  if (!studioClass || studioClass.teacherId !== session.teacherId) {
+  if (!studioClass || studioClass.calendarEntry.teacherId !== session.teacherId) {
     redirect('/');
   }
+
+  const entry = studioClass.calendarEntry;
+  const template = entry.scheduleRule?.studioClassTemplates[0] ?? null;
 
   // TWO PREDICATES, ON PURPOSE. They overlap almost everywhere and disagree in
   // the places that matter, so neither may be derived from the other. Both are
@@ -69,8 +79,8 @@ export default async function StudioClassDetailPage({
   // cases in both predicates' test files. (issue 276 added EDITABLE: not an
   // income record ⇒ the whole schedule may change, cancelled included.)
   const editFacts: Parameters<typeof studioClassEditability>[0] = {
-    templateId: studioClass.templateId,
-    date: studioClass.date,
+    scheduleRuleId: entry.scheduleRuleId,
+    date: entry.date,
   };
   const now = new Date();
   const { deletable } = studioClassDeletability(editFacts, now, session.defaultTimezone);
@@ -78,16 +88,15 @@ export default async function StudioClassDetailPage({
 
   const endOfToday = startOfLocalDay(new Date(), session.defaultTimezone);
   endOfToday.setUTCHours(23, 59, 59, 999);
-  const countsTowardEarnings =
-    studioClass.cancelledAt === null && studioClass.date <= endOfToday;
+  const countsTowardEarnings = entry.cancelledAt === null && entry.date <= endOfToday;
   const earningsAtRisk = countsTowardEarnings
-    ? (Number(studioClass.hourlyRate) * studioClass.durationMinutes) / 60
+    ? (Number(studioClass.hourlyRate) * entry.durationMinutes) / 60
     : null;
 
   return (
     <>
       <PageHeader
-        title={studioClass.classType || studioClass.location}
+        title={entry.classType || studioClass.location}
         backHref="/"
         backLabel="Schedule"
       />
@@ -95,12 +104,12 @@ export default async function StudioClassDetailPage({
       <div className="mb-6">
         <div className="min-h-14 py-2 border-b border-border">
           <span className="type-label">Date</span>
-          <p className="text-base text-ink">{formatDateWithYear(studioClass.date)}</p>
+          <p className="text-base text-ink">{formatDateWithYear(entry.date)}</p>
         </div>
 
         <div className="min-h-14 py-2 border-b border-border">
           <span className="type-label">Time</span>
-          <p className="text-base text-ink">{timeToHHmm(studioClass.startTime)} &middot; {studioClass.durationMinutes} min</p>
+          <p className="text-base text-ink">{timeToHHmm(entry.startTime)} &middot; {entry.durationMinutes} min</p>
         </div>
 
         <div className="min-h-14 py-2 border-b border-border">
@@ -113,12 +122,12 @@ export default async function StudioClassDetailPage({
           <p className="text-base text-ink">&euro;{Number(studioClass.hourlyRate).toFixed(2)}</p>
         </div>
 
-        {studioClass.template && (
+        {template && (
           <div className="min-h-14 py-2 border-b border-border">
             <span className="type-label">Template</span>
             <p>
-              <Link href={`/settings/studio-classes/${studioClass.template.id}`} className="text-teal text-sm">
-                {studioClass.template.scheduleRule.classType || studioClass.template.location}
+              <Link href={`/settings/studio-classes/${template.id}`} className="text-teal text-sm">
+                {entry.classType || template.location}
                 <span className="inline-block ml-1.5">&rarr;</span>
               </Link>
             </p>
@@ -126,7 +135,7 @@ export default async function StudioClassDetailPage({
         )}
       </div>
 
-      {studioClass.cancelledAt ? (
+      {entry.cancelledAt ? (
         <>
           <div className="py-8 text-center type-body">
             This class was cancelled.

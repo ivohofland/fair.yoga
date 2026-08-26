@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -772,8 +773,7 @@ describe('GET /api/students — overduePayments', () => {
       const date = new Date();
       date.setDate(date.getDate() - daysBack);
       date.setHours(0, 0, 0, 0);
-      const cls = await prisma.class.create({
-        data: {
+      const cls = await createClassFixture(prisma, {
           teacherId: ownerTeacherId,
           teacherRoomId: ownerTeacherRoomId,
           classType: 'Vinyasa',
@@ -787,8 +787,7 @@ describe('GET /api/students — overduePayments', () => {
           maxStudents: 10,
           status: 'completed',
           settingsLocked: true,
-        },
-      });
+        });
       overdueClassIds.push(cls.id);
       return cls;
     }

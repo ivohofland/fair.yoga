@@ -176,9 +176,13 @@ export async function getUnreadForEmailFallback(
     include: {
       relatedClass: {
         select: {
-          date: true,
-          startTime: true,
-          teacher: { select: { defaultTimezone: true } },
+          calendarEntry: {
+            select: {
+              date: true,
+              startTime: true,
+              teacher: { select: { defaultTimezone: true } },
+            },
+          },
         },
       },
     },
@@ -191,9 +195,9 @@ export async function getUnreadForEmailFallback(
         createdAt: n.createdAt,
         classStart: n.relatedClass
           ? classStartInstant(
-              n.relatedClass.date,
-              n.relatedClass.startTime,
-              n.relatedClass.teacher.defaultTimezone,
+              n.relatedClass.calendarEntry.date,
+              n.relatedClass.calendarEntry.startTime,
+              n.relatedClass.calendarEntry.teacher.defaultTimezone,
             )
           : null,
       },

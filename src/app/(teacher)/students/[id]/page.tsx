@@ -26,9 +26,13 @@ export default async function StudentDetailPage({
         select: { id: true, isArchived: true },
       },
       registrations: {
-        where: { class: { teacherId: session.teacherId } },
+        where: { class: { calendarEntry: { teacherId: session.teacherId } } },
         include: {
-          class: { select: { classType: true, date: true, startTime: true } },
+          class: {
+            select: {
+              calendarEntry: { select: { classType: true, date: true, startTime: true } },
+            },
+          },
           payment: true,
         },
         orderBy: { registeredAt: 'desc' },
@@ -124,10 +128,10 @@ export default async function StudentDetailPage({
               {student.registrations.map((reg) => (
                 <div key={reg.id} className="flex justify-between items-center py-3 border-b border-border last:border-b-0">
                   <div>
-                    <p className="text-base text-ink">{reg.class.classType}</p>
+                    <p className="text-base text-ink">{reg.class.calendarEntry.classType}</p>
                     <p className="type-caption">
-                      {formatDateWithYear(reg.class.date)}
-                      {' · '}{timeToHHmm(reg.class.startTime)}
+                      {formatDateWithYear(reg.class.calendarEntry.date)}
+                      {' · '}{timeToHHmm(reg.class.calendarEntry.startTime)}
                     </p>
                   </div>
                   <span className={`text-sm ${reg.status === 'attended' ? 'text-teal' : reg.status === 'cancelled' ? 'text-danger' : 'text-brown'}`}>
@@ -149,8 +153,8 @@ export default async function StudentDetailPage({
               .filter((r) => r.payment)
               .map((reg) => ({
                 paymentId: reg.payment!.id,
-                classType: reg.class.classType,
-                classDate: formatDateWithYear(reg.class.date),
+                classType: reg.class.calendarEntry.classType,
+                classDate: formatDateWithYear(reg.class.calendarEntry.date),
                 amount: Number(reg.payment!.amount),
                 status: reg.payment!.status,
               }))}

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -59,8 +60,7 @@ beforeAll(async () => {
     data: { teacherId, roomId, capacityOverride: 8, rentalRate: 15 },
   });
 
-  const cls = await prisma.class.create({
-    data: {
+  const cls = await createClassFixture(prisma, {
       teacherId,
       teacherRoomId: teacherRoom.id,
       classType: 'Reminder Flow',
@@ -73,8 +73,7 @@ beforeAll(async () => {
       minStudents: 1,
       maxStudents: 8,
       status: 'completed',
-    },
-  });
+    });
   classId = cls.id;
 
   const studentEmail = `pay-student-${suffix}@test.local`;
@@ -107,7 +106,7 @@ afterAll(async () => {
   await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
   await prisma.payment.deleteMany({ where: { registration: { classId } } });
   await prisma.registration.deleteMany({ where: { classId } });
-  await prisma.class.deleteMany({ where: { teacherId } });
+  await prisma.calendarEntry.deleteMany({ where: { teacherId } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId } });
   await prisma.room.delete({ where: { id: roomId } });
   await prisma.student.delete({ where: { id: studentId } });

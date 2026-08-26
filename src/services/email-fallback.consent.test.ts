@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { processEmailFallback } from './email-fallback';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 // The dry-run tests in email-fallback.test.ts can't tell "emailed" from
 // "skipped and marked" — both end in emailSent=true. This file makes the
@@ -100,8 +101,7 @@ describe('processEmailFallback consent wiring (mocked send)', () => {
     });
 
     const start = new Date(Date.now() + 60 * 60 * 1000);
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'Vinyasa',
@@ -114,14 +114,13 @@ describe('processEmailFallback consent wiring (mocked send)', () => {
         minStudents: 2,
         maxStudents: 10,
         status: 'open',
-      },
-    });
+      });
     soonClassId = cls.id;
   });
 
   afterAll(async () => {
     await prisma.notification.deleteMany({ where: { id: { in: notificationIds } } });
-    if (soonClassId) await prisma.class.delete({ where: { id: soonClassId } });
+    if (soonClassId) await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: soonClassId } } } });
     if (roomId) {
       await prisma.teacherRoom.deleteMany({ where: { roomId } });
       await prisma.room.delete({ where: { id: roomId } });

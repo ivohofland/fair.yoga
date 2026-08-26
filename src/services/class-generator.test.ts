@@ -15,6 +15,7 @@ import {
   pauseOrResumeTemplate,
   updateClassTemplate,
 } from './class-template-lifecycle';
+import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 
 type TransactionOptions = NonNullable<Parameters<PrismaClient['$transaction']>[1]>;
 
@@ -160,7 +161,9 @@ describe('generateClassInstances (DB)', () => {
     // Clean up in dependency order. `ClassTemplate` is `onDelete: Cascade`
     // from `ScheduleRule` (issue 298), so the rule delete removes the
     // template with it.
-    await prisma.class.deleteMany({ where: { templateId } });
+    await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+    });
     await prisma.scheduleRule.delete({ where: { id: templateScheduleRuleId } });
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
     await prisma.room.delete({ where: { id: roomId } });
@@ -176,27 +179,24 @@ describe('generateClassInstances (DB)', () => {
 
     expect(count).toBe(4);
 
-    const classes = await prisma.class.findMany({
-      where: { templateId },
-      orderBy: { date: 'asc' },
-    });
+    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
 
     expect(classes).toHaveLength(4);
 
     for (const cls of classes) {
-      expect(cls.classType).toBe('Vinyasa');
+      expect(cls.calendarEntry.classType).toBe('Vinyasa');
       expect(cls.status).toBe('open');
       expect(Number(cls.roomCost)).toBe(40);
       expect(Number(cls.minRate)).toBe(15);
       expect(Number(cls.targetRate)).toBe(30);
       expect(cls.minStudents).toBe(4);
       expect(cls.maxStudents).toBe(12);
-      expect(cls.teacherId).toBe(teacherId);
+      expect(cls.calendarEntry.teacherId).toBe(teacherId);
       expect(cls.teacherRoomId).toBe(teacherRoomId);
-      expect(cls.templateId).toBe(templateId);
+      expect(cls.calendarEntry.scheduleRuleId).toBe(templateScheduleRuleId);
       expect(cls.description).toBe('Tuesday morning flow');
-      expect(timeToHHmm(cls.startTime)).toBe('09:00');
-      expect(cls.durationMinutes).toBe(75);
+      expect(timeToHHmm(cls.calendarEntry.startTime)).toBe('09:00');
+      expect(cls.calendarEntry.durationMinutes).toBe(75);
       expect(cls.cancelDeadline).toBe('HOURS_24');
       expect(cls.autoCancelCheck).toBe('HOURS_2');
     }
@@ -208,9 +208,7 @@ describe('generateClassInstances (DB)', () => {
 
     expect(count).toBe(0);
 
-    const classes = await prisma.class.findMany({
-      where: { templateId },
-    });
+    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, include: { calendarEntry: true },});
     expect(classes).toHaveLength(4);
   });
 
@@ -220,16 +218,16 @@ describe('generateClassInstances (DB)', () => {
       where: { id: templateScheduleRuleId },
       data: { isActive: false },
     });
-    await prisma.class.deleteMany({ where: { templateId } });
+    await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+    });
 
     const from = new Date('2026-04-06T00:00:00.000Z');
     const count = await generateClassInstances(prisma, from, teacherId);
 
     expect(count).toBe(0);
 
-    const classes = await prisma.class.findMany({
-      where: { templateId },
-    });
+    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, include: { calendarEntry: true },});
     expect(classes).toHaveLength(0);
 
     // Re-activate for potential further tests
@@ -247,13 +245,15 @@ describe('generateClassInstances (DB)', () => {
       where: { id: templateScheduleRuleId },
       data: { isActive: true, isArchived: true },
     });
-    await prisma.class.deleteMany({ where: { templateId } });
+    await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+    });
 
     const from = new Date('2026-04-06T00:00:00.000Z');
     const count = await generateClassInstances(prisma, from, teacherId);
 
     expect(count).toBe(0);
-    expect(await prisma.class.count({ where: { templateId } })).toBe(0);
+    expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(0);
 
     // Restore for the tests that follow
     await prisma.scheduleRule.update({
@@ -266,16 +266,15 @@ describe('generateClassInstances (DB)', () => {
     // Tuesday 2026-04-07 at 18:00 UTC — hours after the template's 09:00
     // Amsterdam start. The run must not create a class earlier the same
     // day; the window slides to the next four Tuesdays instead.
-    await prisma.class.deleteMany({ where: { templateId } });
+    await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+    });
     const from = new Date('2026-04-07T18:00:00.000Z');
     const count = await generateClassInstances(prisma, from, teacherId);
 
     expect(count).toBe(4);
-    const classes = await prisma.class.findMany({
-      where: { templateId },
-      orderBy: { date: 'asc' },
-    });
-    expect(classes.map((c) => c.date.toISOString())).toEqual([
+    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    expect(classes.map((c) => c.calendarEntry.date.toISOString())).toEqual([
       '2026-04-14T00:00:00.000Z',
       '2026-04-21T00:00:00.000Z',
       '2026-04-28T00:00:00.000Z',
@@ -285,16 +284,15 @@ describe('generateClassInstances (DB)', () => {
 
   it("includes today's occurrence while its start is still ahead", async () => {
     // Tuesday 2026-04-07 at 05:00 UTC — before the 09:00 Amsterdam start.
-    await prisma.class.deleteMany({ where: { templateId } });
+    await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+    });
     const from = new Date('2026-04-07T05:00:00.000Z');
     const count = await generateClassInstances(prisma, from, teacherId);
 
     expect(count).toBe(4);
-    const classes = await prisma.class.findMany({
-      where: { templateId },
-      orderBy: { date: 'asc' },
-    });
-    expect(classes.map((c) => c.date.toISOString())).toEqual([
+    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    expect(classes.map((c) => c.calendarEntry.date.toISOString())).toEqual([
       '2026-04-07T00:00:00.000Z',
       '2026-04-14T00:00:00.000Z',
       '2026-04-21T00:00:00.000Z',
@@ -807,7 +805,9 @@ describe('generateClassInstances (DB)', () => {
 
   describe('generateClassInstances — archive mid-sweep', () => {
     afterEach(async () => {
-      await prisma.class.deleteMany({ where: { templateId } });
+      await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+    });
       await prisma.scheduleRule.update({
         where: { id: templateScheduleRuleId },
         data: { isActive: true, isArchived: false },
@@ -825,8 +825,10 @@ describe('generateClassInstances (DB)', () => {
       // Earlier tests in this file leave their own classes behind for this
       // template (they assert on them, then move on) — clear the slate so
       // this test's counts reflect only what happens below.
-      await prisma.class.deleteMany({ where: { templateId } });
-      expect(await prisma.class.count({ where: { templateId } })).toBe(0);
+      await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+    });
+      expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(0);
 
       let commit!: () => void;
       const held = new Promise<void>((resolve) => {
@@ -870,7 +872,7 @@ describe('generateClassInstances (DB)', () => {
       await sweeping;
 
       // 4. Nothing was materialised for a template the teacher shelved.
-      expect(await prisma.class.count({ where: { templateId } })).toBe(0);
+      expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(0);
     });
   });
 
@@ -885,7 +887,9 @@ describe('generateClassInstances (DB)', () => {
     });
 
     afterEach(async () => {
-      await prisma.class.deleteMany({ where: { templateId } });
+      await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+    });
       await prisma.scheduleRule.update({
         where: { id: templateScheduleRuleId },
         data: {
@@ -907,7 +911,9 @@ describe('generateClassInstances (DB)', () => {
      * the old values and the template genuinely enters the loop.
      */
     it('writes the values committed while the sweep was waiting, not the ones it read', async () => {
-      await prisma.class.deleteMany({ where: { templateId } });
+      await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+    });
 
       let commit!: () => void;
       const held = new Promise<void>((resolve) => {
@@ -949,16 +955,13 @@ describe('generateClassInstances (DB)', () => {
       await sweeping;
 
       // 4. Everything it created carries the post-edit values.
-      const created = await prisma.class.findMany({
-        where: { templateId },
-        select: { date: true, startTime: true },
-      });
+      const created = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, select: { calendarEntry: { select: { date: true, startTime: true } } } });
       expect(created.length).toBeGreaterThan(0);
       for (const c of created) {
-        expect(timeToHHmm(c.startTime)).toBe('18:45');
+        expect(timeToHHmm(c.calendarEntry.startTime)).toBe('18:45');
         // dayOfWeek 5 in this schema's convention (0=Mon) is Saturday,
         // which is getUTCDay() === 6.
-        expect(c.date.getUTCDay()).toBe(6);
+        expect(c.calendarEntry.date.getUTCDay()).toBe(6);
       }
     });
   });
@@ -1023,12 +1026,9 @@ describe('generateClassInstances (DB)', () => {
         });
         expect(created).toBe(4);
 
-        const beforeArchive = await prisma.class.findMany({
-          where: { templateId: template.id },
-          orderBy: { date: 'asc' },
-        });
+        const beforeArchive = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
         expect(beforeArchive).toHaveLength(4);
-        expect(beforeArchive[0]!.date.toISOString()).toBe(today.toISOString());
+        expect(beforeArchive[0]!.calendarEntry.date.toISOString()).toBe(today.toISOString());
 
         // 2. Archive, straight after the commit — no concurrency involved.
         const result = await archiveOrUnarchiveTemplate(prisma, template.id, teacherId, 'archived');
@@ -1040,12 +1040,14 @@ describe('generateClassInstances (DB)', () => {
         expect(result.deleted).toBe(3);
         expect(result.remaining).toBe(1);
 
-        const afterArchive = await prisma.class.findMany({ where: { templateId: template.id } });
+        const afterArchive = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, include: { calendarEntry: true },});
         expect(afterArchive).toHaveLength(1);
-        expect(afterArchive[0]!.date.toISOString()).toBe(today.toISOString());
+        expect(afterArchive[0]!.calendarEntry.date.toISOString()).toBe(today.toISOString());
         expect(afterArchive[0]!.status).toBe('open'); // still publicly bookable
       } finally {
-        await prisma.class.deleteMany({ where: { templateId: template.id } });
+        await prisma.calendarEntry.deleteMany({
+      where: { scheduleRule: { classTemplates: { some: { id: template.id } } } },
+    });
         // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
         // 298) — deleting the child directly here would orphan its rule row.
         await prisma.scheduleRule.delete({ where: { id: template.scheduleRuleId } });
@@ -1062,12 +1064,12 @@ describe('generateClassInstances (DB)', () => {
     }
 
     afterEach(async () => {
-      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
       // #296: the cross-family cases create `StudioClass` rows, and the
       // generator now READS that table — so a leftover one occupies the next
       // test's slot exactly the way a leftover `Class` does. Without this line
       // the two new cases turn eight later tests in this block red.
-      await prisma.studioClass.deleteMany({ where: { teacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     });
 
     it('reports an already-generated date rather than counting it', async () => {
@@ -1091,10 +1093,7 @@ describe('generateClassInstances (DB)', () => {
       const dates = candidates(now);
       const blocked = dates[1]!;
       await generateInstancesForTemplate(prisma, await freshTemplate(), now);
-      await prisma.class.updateMany({
-        where: { templateId, date: blocked },
-        data: { status: 'cancelled' },
-      });
+      await prisma.calendarEntry.updateMany({ where: { scheduleRule: { classTemplates: { some: { id: templateId } } }, date: blocked }, data: { cancelledAt: new Date() } });
 
       const again = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
       expect(again.created).toBe(0);
@@ -1107,11 +1106,10 @@ describe('generateClassInstances (DB)', () => {
       const taken = dates[1]!;
       // templateId: null — a class the teacher created by hand. The old probe
       // checked {templateId, date} and so could not see this at all.
-      await prisma.class.create({
-        data: {
+      await createClassFixture(prisma, {
           teacherId,
           teacherRoomId,
-          templateId: null,
+          scheduleRuleId: null,
           classType: 'Manual',
           date: taken,
           startTime: hhmmToTime('09:00'),
@@ -1124,14 +1122,13 @@ describe('generateClassInstances (DB)', () => {
           cancelDeadline: 'HOURS_24',
           autoCancelCheck: 'HOURS_2',
           status: 'open',
-        },
-      });
+        });
 
       const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
 
       expect(result.created).toBe(3);
       expect(result.skipped).toEqual([{ date: taken, reason: 'slot_taken' }]);
-      expect(await prisma.class.count({ where: { templateId } })).toBe(3);
+      expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(3);
     });
 
     /**
@@ -1148,24 +1145,22 @@ describe('generateClassInstances (DB)', () => {
       const now = new Date();
       const dates = candidates(now);
       const blocked = dates[1]!;
-      await prisma.studioClass.create({
-        data: {
+      await createStudioClassFixture(prisma, {
           teacherId,
-          templateId: null,
+          scheduleRuleId: null,
           classType: 'Cross Family',
           date: blocked,
           startTime: hhmmToTime('09:00'),
           durationMinutes: 60,
           location: 'Elsewhere',
           hourlyRate: 50,
-        },
-      });
+        });
 
       const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
 
       expect(result.created).toBe(3);
       expect(result.skipped).toEqual([{ date: blocked, reason: 'blocked_by_other_family' }]);
-      expect(await prisma.class.count({ where: { templateId } })).toBe(3);
+      expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(3);
     });
 
     it('does not skip a date held by a CANCELLED class from the other family', async () => {
@@ -1175,10 +1170,9 @@ describe('generateClassInstances (DB)', () => {
       const now = new Date();
       const dates = candidates(now);
       const notBlocked = dates[1]!;
-      await prisma.studioClass.create({
-        data: {
+      await createStudioClassFixture(prisma, {
           teacherId,
-          templateId: null,
+          scheduleRuleId: null,
           classType: 'Cross Family Cancelled',
           date: notBlocked,
           startTime: hhmmToTime('09:00'),
@@ -1186,8 +1180,7 @@ describe('generateClassInstances (DB)', () => {
           location: 'Elsewhere',
           hourlyRate: 50,
           cancelledAt: new Date(),
-        },
-      });
+        });
 
       const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
 
@@ -1240,18 +1233,16 @@ describe('generateClassInstances (DB)', () => {
 
       try {
         for (const date of dates) {
-          await prisma.studioClass.create({
-            data: {
+          await createStudioClassFixture(prisma, {
               teacherId: other.id,
-              templateId: null,
+              scheduleRuleId: null,
               classType: 'Someone else, studio',
               date,
               startTime: hhmmToTime('09:00'),
               durationMinutes: 60,
               location: 'Their studio',
               hourlyRate: 50,
-            },
-          });
+            });
         }
 
         const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
@@ -1259,7 +1250,7 @@ describe('generateClassInstances (DB)', () => {
         expect(result.created).toBe(4);
         expect(result.skipped).toEqual([]);
       } finally {
-        await prisma.studioClass.deleteMany({ where: { teacherId: other.id } });
+        await prisma.calendarEntry.deleteMany({ where: { teacherId: other.id } });
         await prisma.teacher.delete({ where: { id: other.id } });
         await prisma.account.delete({ where: { id: other.accountId } });
       }
@@ -1286,11 +1277,10 @@ describe('generateClassInstances (DB)', () => {
       try {
         // The other teacher occupies every candidate slot, same date and time.
         for (const date of dates) {
-          await prisma.class.create({
-            data: {
+          await createClassFixture(prisma, {
               teacherId: other.id,
               teacherRoomId: otherRoom.id,
-              templateId: null,
+              scheduleRuleId: null,
               classType: 'Someone else',
               date,
               startTime: hhmmToTime('09:00'),
@@ -1303,8 +1293,7 @@ describe('generateClassInstances (DB)', () => {
               cancelDeadline: 'HOURS_24',
               autoCancelCheck: 'HOURS_2',
               status: 'open',
-            },
-          });
+            });
         }
 
         const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
@@ -1312,7 +1301,7 @@ describe('generateClassInstances (DB)', () => {
         expect(result.created).toBe(4);
         expect(result.skipped).toEqual([]);
       } finally {
-        await prisma.class.deleteMany({ where: { teacherId: other.id } });
+        await prisma.calendarEntry.deleteMany({ where: { teacherId: other.id } });
         await prisma.teacherRoom.delete({ where: { id: otherRoom.id } });
         await prisma.teacher.delete({ where: { id: other.id } });
         await prisma.account.deleteMany({
@@ -1325,11 +1314,10 @@ describe('generateClassInstances (DB)', () => {
       const now = new Date();
       const dates = candidates(now);
       const free = dates[1]!;
-      await prisma.class.create({
-        data: {
+      await createClassFixture(prisma, {
           teacherId,
           teacherRoomId,
-          templateId: null,
+          scheduleRuleId: null,
           classType: 'Manual',
           date: free,
           startTime: hhmmToTime('09:00'),
@@ -1341,9 +1329,9 @@ describe('generateClassInstances (DB)', () => {
           maxStudents: 12,
           cancelDeadline: 'HOURS_24',
           autoCancelCheck: 'HOURS_2',
-          status: 'cancelled',
-        },
-      });
+          status: 'open',
+          cancelledAt: new Date(),
+        });
 
       // #196's index carries `WHERE "status" <> 'cancelled'`, so a cancelled
       // neighbour does not occupy the slot and must not block generation.
@@ -1362,10 +1350,7 @@ describe('generateClassInstances (DB)', () => {
         await generateInstancesForTemplate(prisma, await freshTemplate(), now);
         expect(spy).not.toHaveBeenCalled(); // 4 already_generated — the noise rule
 
-        await prisma.class.updateMany({
-          where: { templateId, date: candidates(now)[1]! },
-          data: { status: 'cancelled' },
-        });
+        await prisma.calendarEntry.updateMany({ where: { scheduleRule: { classTemplates: { some: { id: templateId } } }, date: candidates(now)[1]! }, data: { cancelledAt: new Date() } });
         await generateInstancesForTemplate(prisma, await freshTemplate(), now);
         expect(spy).toHaveBeenCalledTimes(1);
         expect(spy.mock.calls[0]![0]).toMatchObject({
@@ -1394,8 +1379,7 @@ describe('generateClassInstances (DB)', () => {
       const parked = new Promise<void>((r) => { collided = r; });
       const holding = holder.$transaction(
         async (tx) => {
-          await tx.class.create({
-            data: {
+          await createClassFixture(tx, {
               teacherId,
               teacherRoomId,
               // `null`, deliberately, not this template's own id: with the
@@ -1406,7 +1390,7 @@ describe('generateClassInstances (DB)', () => {
               // and is the production shape too: a standalone class racing
               // the nightly `api/cron/generate-classes` sweep onto a
               // template's slot.
-              templateId: null,
+              scheduleRuleId: null,
               classType: 'Vinyasa',
               date: collide,
               startTime: hhmmToTime('09:00'),
@@ -1419,8 +1403,7 @@ describe('generateClassInstances (DB)', () => {
               cancelDeadline: 'HOURS_24',
               autoCancelCheck: 'HOURS_2',
               status: 'open',
-            },
-          });
+            });
           collided();
           await released;
         },
@@ -1476,16 +1459,12 @@ describe('generateClassInstances (DB)', () => {
 
     /** Every date this template holds, oldest first — cancelled ones included. */
     async function heldDates(): Promise<string[]> {
-      const rows = await prisma.class.findMany({
-        where: { templateId },
-        orderBy: { date: 'asc' },
-        select: { date: true },
-      });
-      return rows.map((c) => c.date.toISOString());
+      const rows = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, select: { calendarEntry: { select: { date: true } } } });
+      return rows.map((c) => c.calendarEntry.date.toISOString());
     }
 
     beforeEach(async () => {
-      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
       await prisma.scheduleRule.update({
         where: { id: templateScheduleRuleId },
         data: { dayOfWeek: TUESDAY },
@@ -1498,7 +1477,7 @@ describe('generateClassInstances (DB)', () => {
     });
 
     afterEach(async () => {
-      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
       // Restored, not left on Thursday: `templateId` is the file's shared
       // fixture and several tests above assert its Tuesday window by date.
       await prisma.scheduleRule.update({
@@ -1540,10 +1519,7 @@ describe('generateClassInstances (DB)', () => {
       // `status: { not: 'cancelled' }` filter on the week read, week 2 alone
       // would move to Thursday while weeks 1, 3 and 4 stayed Tuesday.
       const cancelled = new Date(TUESDAYS[1]!);
-      await prisma.class.updateMany({
-        where: { templateId, date: cancelled },
-        data: { status: 'cancelled' },
-      });
+      await prisma.calendarEntry.updateMany({ where: { scheduleRule: { classTemplates: { some: { id: templateId } } }, date: cancelled }, data: { cancelledAt: new Date() } });
       await prisma.scheduleRule.update({
         where: { id: templateScheduleRuleId },
         data: { dayOfWeek: THURSDAY },
@@ -1648,12 +1624,12 @@ describe('generateClassInstances (DB)', () => {
 
   describe('pauseOrResumeTemplate — a clash during generation (#164)', () => {
     beforeEach(async () => {
-      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
       await prisma.scheduleRule.update({ where: { id: templateScheduleRuleId }, data: { isActive: false } });
     });
 
     afterEach(async () => {
-      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
       await prisma.scheduleRule.update({ where: { id: templateScheduleRuleId }, data: { isActive: true } });
     });
 
@@ -1666,7 +1642,9 @@ describe('generateClassInstances (DB)', () => {
     const classRow = (date: Date) => ({
       teacherId,
       teacherRoomId,
-      templateId,
+      // The RULE, not the template: the entry is what carries the key the
+      // generator collides on, and it hangs off `ScheduleRule` (#327).
+      scheduleRuleId: templateScheduleRuleId,
       classType: 'Vinyasa',
       date,
       startTime: hhmmToTime('09:00'),
@@ -1684,39 +1662,41 @@ describe('generateClassInstances (DB)', () => {
     /**
      * Runs the race and reports what the resume saw.
      *
-     * What the claim changed. The holder inserts its colliding row and holds
-     * it UNCOMMITTED, which takes `FOR KEY SHARE` on the template row for the
-     * FK check and leaves a pending unique-index entry on `(templateId,
-     * date)`. Before #116 the resume walked straight past that lock — its
-     * write was a plain `update({ where: { id } })`, which takes `FOR NO KEY
-     * UPDATE` and does not conflict with `FOR KEY SHARE`; there was no CAS
-     * here to credit, the CAS arrived on the same branch as the claim — and it
-     * only met the holder at its own insert, parking on the pending
-     * entry and finally taking an `ON CONFLICT DO NOTHING` skip classified
-     * `raced`. That is what `racedDates` was written to capture.
+     * WHERE THE RESUME WAITS MOVED IN #327, and the observable outcome moved
+     * with it. The holder inserts its colliding row and holds it UNCOMMITTED,
+     * leaving a pending index entry on the key the generator collides on.
      *
-     * With the claim, the resume never gets that far.
-     * `claimTemplateForGeneration` takes `FOR UPDATE`, which DOES conflict
-     * with the holder's `FOR KEY SHARE`, so the resume blocks there and stays
-     * blocked until the holder commits. By the time it generates, the
-     * colliding row is committed and visible: the date reads as
-     * `already_generated`, not `raced`. The claim converts a lost race into a
-     * wait.
+     * From #116 until #327 that insert ALSO took `FOR KEY SHARE` on the
+     * `ClassTemplate` row, for the FK a `Class` carried through `templateId`.
+     * `claimTemplateForGeneration`'s `FOR UPDATE` conflicts with that mode, so
+     * the resume blocked at the CLAIM, waited out the holder, and then saw the
+     * colliding row committed and visible — `already_generated`, not `raced`.
+     * The claim converted a lost race into a wait, and an empty `racedDates`
+     * is what said so.
+     *
+     * `Class.templateId` is gone. A class hangs off a `CalendarEntry` and the
+     * entry's FK reaches `ScheduleRule`, so an in-flight class insert no
+     * longer touches the `ClassTemplate` row the claim holds. The resume
+     * therefore walks past the claim and meets the holder at its OWN insert,
+     * parking on the pending entry and finally taking an `ON CONFLICT DO
+     * NOTHING` skip classified `raced` — the pre-#116 behaviour, restored by a
+     * schema change rather than by a code change. That is a real loss of
+     * coupling and is asserted rather than hidden: `racedDates` now names the
+     * collided date.
+     *
+     * What #164 is actually about survives untouched, and it is what the two
+     * callers below assert: the transaction is not poisoned, `isActive` stays
+     * committed, and a collision costs only its own date.
      *
      * Note the direction, because an earlier version of this docblock had it
      * backwards: the holder is never blocked. It inserts first and holds; the
-     * RESUME is the party that waits. Measured — the wait appears at
-     * `claimTemplateForGeneration` (`class-generator.ts`), and pushing the
-     * hold past the 2s `setLockTimeout` bound turns it into `busy`, which is
-     * what the third test in this block pins.
+     * RESUME is the party that waits. Pushing the hold past the 2s
+     * `setLockTimeout` bound turns that wait into `busy`, which is what the
+     * third test in this block pins — unchanged, because the bound reaches
+     * whichever statement does the waiting.
      *
-     * That the wait is at the CLAIM is measured, not asserted. `waitedMs`
-     * below proves only that the resume stayed blocked until the holder
-     * committed — remove the claim and it still clears the floor, because the
-     * resume then waits at its own insert instead. `racedDates` is what
-     * separates those two worlds. Read the pair together: the wait says a race
-     * happened at all, the empty `racedDates` says the claim is what absorbed
-     * it.
+     * `waitedMs` is what says a race happened at all; without it these tests
+     * pass against a pre-committed collision and prove nothing — measured.
      *
      * `waitedMs` is returned because it is the only evidence the two
      * transactions actually overlapped. An empty `racedDates` is equally true
@@ -1740,7 +1720,7 @@ describe('generateClassInstances (DB)', () => {
 
       const holding = holder.$transaction(
         async (tx) => {
-          await tx.class.create({ data: classRow(collide) });
+          await createClassFixture(tx, classRow(collide));
           collided();
           await released;
         },
@@ -1819,19 +1799,21 @@ describe('generateClassInstances (DB)', () => {
       const now = new Date();
       const dates = candidates(now);
       // Only the last date is free, so the resume issues exactly one insert.
-      for (const d of dates.slice(0, 3)) await prisma.class.create({ data: classRow(d) });
+      for (const d of dates.slice(0, 3)) await createClassFixture(prisma, classRow(d));
 
       const { racedDates, resumed, waitedMs, holderCommitted, holderError } =
         await raceResumeAgainst(dates[3]!);
 
       expect(holderError).toBeNull();
       expect(holderCommitted).toBe(true);
-      // The resume blocked at the claim until the holder committed. This is
-      // the assertion that says a race happened at all.
+      // The resume blocked until the holder committed. This is the assertion
+      // that says a race happened at all.
       expect(waitedMs).toBeGreaterThanOrEqual(HELD_FOR_MS);
-      // And having waited, it found the date committed rather than losing it:
-      // `already_generated`, which `logSkippedSlots` deliberately never logs.
-      expect(racedDates).toEqual([]);
+      // And having waited, it lost that one date to the holder's pending
+      // index entry — `raced`, not `already_generated`, since #327 moved the
+      // wait off the claim and onto the resume's own insert. See the helper's
+      // docblock; the date itself is the only thing the collision cost.
+      expect(racedDates).toEqual([dates[3]!.toISOString().slice(0, 10)]);
       // The action asserted, then narrowed — not narrowed and silently
       // skipped. `if (resumed.ok && resumed.action === 'active')` guarding the
       // only count assertion means an `unchanged` answer passes this test
@@ -1845,13 +1827,13 @@ describe('generateClassInstances (DB)', () => {
         include: { scheduleRule: true },
       });
       expect(after.scheduleRule.isActive).toBe(true);
-      expect(await prisma.class.count({ where: { templateId } })).toBe(4);
+      expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(4);
     });
 
     it('still fills the other free date when the clash lands on the first', async () => {
       const now = new Date();
       const dates = candidates(now);
-      for (const d of dates.slice(0, 2)) await prisma.class.create({ data: classRow(d) });
+      for (const d of dates.slice(0, 2)) await createClassFixture(prisma, classRow(d));
 
       const { racedDates, resumed, waitedMs, holderCommitted, holderError } =
         await raceResumeAgainst(dates[2]!);
@@ -1859,7 +1841,7 @@ describe('generateClassInstances (DB)', () => {
       expect(holderError).toBeNull();
       expect(holderCommitted).toBe(true);
       expect(waitedMs).toBeGreaterThanOrEqual(HELD_FOR_MS);
-      expect(racedDates).toEqual([]);
+      expect(racedDates).toEqual([dates[2]!.toISOString().slice(0, 10)]);
       expect(resumed.ok).toBe(true);
       expect(resumed.ok && resumed.action).toBe('active');
       // dates[3] is the one nothing collided with — the resume still filled it
@@ -1871,8 +1853,8 @@ describe('generateClassInstances (DB)', () => {
         include: { scheduleRule: true },
       });
       expect(after.scheduleRule.isActive).toBe(true);
-      expect(await prisma.class.count({ where: { templateId, date: dates[3]! } })).toBe(1);
-      expect(await prisma.class.count({ where: { templateId } })).toBe(4);
+      expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } }, date: dates[3]! } } })).toBe(1);
+      expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(4);
     });
 
     /**
@@ -1899,7 +1881,7 @@ describe('generateClassInstances (DB)', () => {
       async () => {
         const now = new Date();
         const dates = candidates(now);
-        for (const d of dates.slice(0, 3)) await prisma.class.create({ data: classRow(d) });
+        for (const d of dates.slice(0, 3)) await createClassFixture(prisma, classRow(d));
 
         const holder = new PrismaClient();
         let release!: () => void;
@@ -1913,7 +1895,7 @@ describe('generateClassInstances (DB)', () => {
 
         const holding = holder.$transaction(
           async (tx) => {
-            await tx.class.create({ data: classRow(dates[3]!) });
+            await createClassFixture(tx, classRow(dates[3]!));
             collided();
             await released;
           },
@@ -1998,11 +1980,11 @@ describe('generateClassInstances (DB)', () => {
    */
   describe('archiveOrUnarchiveTemplate — the bound reaches its pre-lock', () => {
     beforeEach(async () => {
-      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     });
 
     afterEach(async () => {
-      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
       await prisma.scheduleRule.update({
         where: { id: templateScheduleRuleId },
         data: { isActive: true, isArchived: false, archivedAt: null, withdrawnCount: 0 },
@@ -2018,10 +2000,7 @@ describe('generateClassInstances (DB)', () => {
         // The furthest-out instance, deliberately: the archive's `deleteMany`
         // is scoped `gt: today`, so today's class — which generation keeps
         // while its start is still ahead — is not one of the rows it locks.
-        const victim = await prisma.class.findFirstOrThrow({
-          where: { templateId },
-          orderBy: { date: 'desc' },
-        });
+        const victim = await prisma.class.findFirstOrThrow({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'desc' } }, include: { calendarEntry: true },});
 
         // Captured rather than assumed null: earlier tests in this file archive
         // this same fixture successfully, and their `afterEach` restores
@@ -2069,7 +2048,7 @@ describe('generateClassInstances (DB)', () => {
           expect(after.scheduleRule.withdrawnCount).toBe(before.scheduleRule.withdrawnCount);
 
           // And the window it was about to withdraw is still there.
-          expect(await prisma.class.count({ where: { templateId } })).toBe(generated.created);
+          expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(generated.created);
         } finally {
           release();
           await holding.catch(() => {});
@@ -2088,7 +2067,7 @@ describe('generateClassInstances (DB)', () => {
 describe('generateClassInstances (per-template isolation)', () => {
   function tmpl(id: string, teacherId: string) {
     return {
-      id, teacherRoomId: 'tr', description: null,
+      id, scheduleRuleId: `rule-${id}`, teacherRoomId: 'tr', description: null,
       roomCost: 10, minRate: 10, targetRate: 20, minStudents: 1, maxStudents: 8,
       cancelDeadline: 120, autoCancelCheck: 120,
       scheduleRule: {
@@ -2114,30 +2093,34 @@ describe('generateClassInstances (per-template isolation)', () => {
         // above already produced, keyed by the id the claim was given.
         findUniqueOrThrow: async ({ where: { id } }: { where: { id: string } }) => tmpl(id, 't1'),
       },
-      // #296: the generator now reads the OTHER family's occupancy too. Empty,
+      // #327: occupancy is ONE read over `CalendarEntry` for both families
+      // (the separate `studioClass` read this replaced is gone). Empty,
       // because this test is about error isolation between templates and not
       // about occupancy — but it has to EXIST, or every template fails on
-      // `Cannot read properties of undefined (reading 'findMany')` and the test
-      // passes its `rejects.toThrow` for a reason unrelated to what it pins.
-      studioClass: {
-        findMany: async () => [],
-      },
-      class: {
-        // The generator reads the whole window in one query; an empty result
-        // means every candidate date is free to create.
+      // `Cannot read properties of undefined (reading 'findMany')` and the
+      // test passes its `rejects.toThrow` for a reason unrelated to what it
+      // pins.
+      //
+      // The ENTRY is also what the generator creates now, keyed by
+      // `scheduleRuleId` rather than by a template id — so this is where the
+      // per-template failure is staged.
+      calendarEntry: {
         findMany: async () => [],
         createManyAndReturn: async ({
           data,
         }: {
-          data: Array<{ templateId: string; date: Date }>;
+          data: Array<{ scheduleRuleId: string; date: Date }>;
         }) => {
           for (const row of data) {
-            if (row.templateId === 'A') throw new Error('boom-A');
-            if (row.templateId === 'C') throw new Error('boom-C');
-            created.push(row.templateId);
+            if (row.scheduleRuleId === 'rule-A') throw new Error('boom-A');
+            if (row.scheduleRuleId === 'rule-C') throw new Error('boom-C');
+            created.push(row.scheduleRuleId.replace('rule-', ''));
           }
-          return data.map((row) => ({ date: row.date }));
+          return data.map((row) => ({ id: `entry-${row.scheduleRuleId}`, date: row.date }));
         },
+      },
+      class: {
+        createMany: async () => ({ count: 0 }),
       },
       // The sweep now claims each template inside its own transaction before
       // generating. This stub has no real lock semantics to exercise (the DB

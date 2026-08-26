@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import type { Class, TeacherRoom, Room, StudioClass, PaymentStatus } from '@prisma/client';
+import type { CalendarEntry, Class, TeacherRoom, Room, StudioClass, PaymentStatus } from '@prisma/client';
 import { StatusBadge, deriveBadgeVariant, type BadgeVariant } from '@/components/ui/status-badge';
 import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { Icon } from '@/components/ui/icon';
@@ -9,15 +9,19 @@ import { classStartInstant, startOfLocalWeek, mondayOf } from '@/lib/timezone';
 import { timeToHHmm } from '@/lib/time-of-day';
 
 type ClassWithDetails = Class & {
+  /** The calendar identity both card kinds render from since #327. */
+  calendarEntry: CalendarEntry;
   _count: { registrations: number };
   teacherRoom: TeacherRoom & { room: Room };
   /** Charged registrations' payment states — powers the completed-card rollup. */
   registrations?: { payment: { status: PaymentStatus } | null }[];
 };
 
+type StudioClassWithEntry = StudioClass & { calendarEntry: CalendarEntry };
+
 interface ClassListProps {
   classes: ClassWithDetails[];
-  studioClasses?: StudioClass[];
+  studioClasses?: StudioClassWithEntry[];
   timeZone: string;
   emptyMessage?: string;
   showAddLink?: boolean;
@@ -46,8 +50,10 @@ type RowState = {
 
 function deriveClassRowState(cls: ClassWithDetails, isPast: boolean): RowState {
   const reg = cls._count.registrations;
-  const variant = deriveBadgeVariant(cls.status, reg, cls.minStudents, cls.maxStudents);
-  const cancelled = cls.status === 'cancelled';
+  // Read from the entry since #327, where both card kinds now read it — the
+  // studio card below already did, one table over.
+  const cancelled = cls.calendarEntry.cancelledAt !== null;
+  const variant = deriveBadgeVariant(cls.status, cancelled, reg, cls.minStudents, cls.maxStudents);
   const past = !cancelled && (cls.status === 'completed' || isPast);
   // The signature bar appears while registrations still matter.
   const showProgress = !cancelled && !past && cls.status !== 'draft';
@@ -88,7 +94,7 @@ function ClassCard({ cls, isPast }: { cls: ClassWithDetails; isPast: boolean }) 
     >
       <div className="flex items-center justify-between gap-2">
         <span className="type-label text-ink">
-          {formatDayHeader(cls.date)} · {timeToHHmm(cls.startTime)}
+          {formatDayHeader(cls.calendarEntry.date)} · {timeToHHmm(cls.calendarEntry.startTime)}
         </span>
         <StatusBadge variant={variant} />
       </div>
@@ -96,7 +102,7 @@ function ClassCard({ cls, isPast }: { cls: ClassWithDetails; isPast: boolean }) 
         <span
           className={`type-subtitle flex-1 min-w-0${cancelled ? ' line-through decoration-brown decoration-[1.5px]' : ''}`}
         >
-          {cls.classType}
+          {cls.calendarEntry.classType}
         </span>
         <Icon name="chevron-right" size={20} className="text-brown-light" />
       </div>
@@ -119,8 +125,8 @@ function ClassCard({ cls, isPast }: { cls: ClassWithDetails; isPast: boolean }) 
 // Studio classes are visually lighter: dashed border on cream, no bar.
 // Their "done" state is text, not a badge (like payment states): a teal
 // ✓ once the student count is logged, a quiet nudge while it's missing.
-function StudioClassCard({ sc, isPast }: { sc: StudioClass; isPast: boolean }) {
-  const cancelled = Boolean(sc.cancelledAt);
+function StudioClassCard({ sc, isPast }: { sc: StudioClassWithEntry; isPast: boolean }) {
+  const cancelled = sc.calendarEntry.cancelledAt !== null;
   const past = !cancelled && isPast;
   const logged = sc.studentCount !== null;
 
@@ -133,12 +139,14 @@ function StudioClassCard({ sc, isPast }: { sc: StudioClass; isPast: boolean }) {
         <span
           className={`type-label text-ink${cancelled ? ' line-through decoration-brown' : ''}`}
         >
-          {formatDayHeader(sc.date)} · {timeToHHmm(sc.startTime)}
+          {formatDayHeader(sc.calendarEntry.date)} · {timeToHHmm(sc.calendarEntry.startTime)}
         </span>
         {cancelled && <StatusBadge variant="cancelled" />}
       </div>
       <p className="type-caption mt-0.5">
-        {sc.classType ? `${sc.classType} · ${sc.location}` : sc.location} · Studio class
+        {sc.calendarEntry.classType
+          ? `${sc.calendarEntry.classType} · ${sc.location}`
+          : sc.location} · Studio class
         {logged && (
           <span className="text-teal">
             {' '}· ✓ {sc.studentCount} {sc.studentCount === 1 ? 'student' : 'students'}
@@ -154,15 +162,23 @@ function StudioClassCard({ sc, isPast }: { sc: StudioClass; isPast: boolean }) {
 
 type ScheduleItem =
   | { type: 'class'; data: ClassWithDetails; dateTime: Date }
-  | { type: 'studio'; data: StudioClass; dateTime: Date };
+  | { type: 'studio'; data: StudioClassWithEntry; dateTime: Date };
 
 export function ClassList({ classes, studioClasses = [], timeZone, emptyMessage = 'No classes yet', showAddLink = true, dimPast = false, sortDesc = false }: ClassListProps) {
   const now = new Date();
   const thisMonday = startOfLocalWeek(now, timeZone).getTime();
 
   const items: ScheduleItem[] = [
-    ...classes.map((c) => ({ type: 'class' as const, data: c, dateTime: classStartInstant(c.date, c.startTime, timeZone) })),
-    ...studioClasses.map((sc) => ({ type: 'studio' as const, data: sc, dateTime: classStartInstant(sc.date, sc.startTime, timeZone) })),
+    ...classes.map((c) => ({
+      type: 'class' as const,
+      data: c,
+      dateTime: classStartInstant(c.calendarEntry.date, c.calendarEntry.startTime, timeZone),
+    })),
+    ...studioClasses.map((sc) => ({
+      type: 'studio' as const,
+      data: sc,
+      dateTime: classStartInstant(sc.calendarEntry.date, sc.calendarEntry.startTime, timeZone),
+    })),
   ].sort((a, b) => sortDesc
     ? b.dateTime.getTime() - a.dateTime.getTime()
     : a.dateTime.getTime() - b.dateTime.getTime(),
@@ -188,7 +204,7 @@ export function ClassList({ classes, studioClasses = [], timeZone, emptyMessage 
         (() => {
           const groups: { label: string; items: ScheduleItem[] }[] = [];
           for (const item of items) {
-            const label = weekLabel(item.data.date, thisMonday);
+            const label = weekLabel(item.data.calendarEntry.date, thisMonday);
             const last = groups[groups.length - 1];
             if (last && last.label === label) last.items.push(item);
             else groups.push({ label, items: [item] });

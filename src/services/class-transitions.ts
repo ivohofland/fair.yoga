@@ -32,13 +32,19 @@ const CANCEL_CHECK_HOURS: Record<string, number> = {
  * time, before the start. Shared by the sweep's pre-filter and the decision
  * under the lock, for the same reason the status set they filter on is named
  * once (`@/lib/registration-status`) — two spellings of one window is how a
- * stale-snapshot bug comes back. */
+ * stale-snapshot bug comes back.
+ *
+ * Two arguments rather than one row since #327: the window is computed from
+ * `date`/`startTime` on the `CalendarEntry` and `autoCancelCheck` on the
+ * `Class`, and no single row carries all three. Keeping them separate is what
+ * stops a caller passing a spread-together object that silently lost one. */
 function inCancelWindow(
-  cls: { date: Date; startTime: Date; autoCancelCheck: string },
+  entry: { date: Date; startTime: Date },
+  cls: { autoCancelCheck: string },
   timezone: string,
   at: Date,
 ): boolean {
-  const start = classStartInstant(cls.date, cls.startTime, timezone);
+  const start = classStartInstant(entry.date, entry.startTime, timezone);
   const checkHours = CANCEL_CHECK_HOURS[cls.autoCancelCheck] ?? 2;
   const checkTime = new Date(start.getTime() - checkHours * 60 * 60 * 1000);
   return at >= checkTime && at < start;
@@ -61,9 +67,19 @@ export async function autoTransitionToInProgress(
   // A class early in the teacher's local morning can start *before* its
   // stored UTC-midnight date, so include the next calendar day in the sweep.
   const dateCeiling = new Date(currentTime.getTime() + 24 * 60 * 60 * 1000);
+  // `cancelledAt: null` beside the status, not instead of it (#327). A
+  // cancelled class keeps its `open` status now, so the status filter alone
+  // selects exactly the classes this sweep must never start.
   const openClasses = await db.class.findMany({
-    where: { status: 'open', date: { lte: dateCeiling } },
-    include: { teacher: { select: { defaultTimezone: true } } },
+    where: {
+      status: 'open',
+      calendarEntry: { cancelledAt: null, date: { lte: dateCeiling } },
+    },
+    include: {
+      calendarEntry: {
+        select: { date: true, startTime: true, teacher: { select: { defaultTimezone: true } } },
+      },
+    },
   });
 
   let transitioned = 0;
@@ -77,7 +93,11 @@ export async function autoTransitionToInProgress(
       // pre-filter can only DELAY a transition to the next 60-second tick,
       // never cause a wrong one, because nothing here transitions: it only
       // decides whether to open a transaction and look properly.
-      const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+      const start = classStartInstant(
+        cls.calendarEntry.date,
+        cls.calendarEntry.startTime,
+        cls.calendarEntry.teacher.defaultTimezone,
+      );
       if (start > currentTime) continue;
 
       const didTransition = await db.$transaction(async (tx) => {
@@ -99,9 +119,14 @@ export async function autoTransitionToInProgress(
           where: { id: cls.id },
           select: {
             status: true,
-            date: true,
-            startTime: true,
-            teacher: { select: { defaultTimezone: true } },
+            calendarEntry: {
+              select: {
+                date: true,
+                startTime: true,
+                cancelledAt: true,
+                teacher: { select: { defaultTimezone: true } },
+              },
+            },
           },
         });
         // Deleted, or no longer open — a concurrent cancel, completion or
@@ -119,13 +144,20 @@ export async function autoTransitionToInProgress(
           );
           return false;
         }
+        // Re-read under the lock like the status beside it, and for the same
+        // reason: a cancellation committing between the snapshot and this lock
+        // is now invisible to `status`.
+        if (fresh.calendarEntry.cancelledAt !== null) {
+          log.debug({ classId: cls.id }, 'start sweep: cancelled before the lock');
+          return false;
+        }
 
         // Recomputed from `fresh`, not re-tested against the snapshot's
         // `start`. Re-testing the old instant is the defect wearing a lock.
         const freshStart = classStartInstant(
-          fresh.date,
-          fresh.startTime,
-          fresh.teacher.defaultTimezone,
+          fresh.calendarEntry.date,
+          fresh.calendarEntry.startTime,
+          fresh.calendarEntry.teacher.defaultTimezone,
         );
         if (freshStart > currentTime) {
           // The race the lock exists to catch: rescheduled between the snapshot
@@ -146,7 +178,7 @@ export async function autoTransitionToInProgress(
         // statement that has to run regardless, and it is the guard that
         // survives if someone later moves or drops the re-read.
         const updated = await tx.class.updateMany({
-          where: { id: cls.id, status: 'open' },
+          where: { id: cls.id, status: 'open', calendarEntry: { cancelledAt: null } },
           data: { status: 'in_progress' },
         });
         if (updated.count === 0) {
@@ -222,10 +254,15 @@ export async function autoCancelClasses(
   // pre-filter and the authoritative count under the lock must answer the
   // same question, or the pre-filter skips classes the locked check would
   // have cancelled.
+  // `cancelledAt: null` beside the status (#327): a cancelled class keeps its
+  // `open` status, so without it this sweep would re-cancel — and re-notify —
+  // classes a teacher has already called off.
   const openClasses = await db.class.findMany({
-    where: { status: 'open' },
+    where: { status: 'open', calendarEntry: { cancelledAt: null } },
     include: {
-      teacher: { select: { defaultTimezone: true } },
+      calendarEntry: {
+        select: { date: true, startTime: true, teacher: { select: { defaultTimezone: true } } },
+      },
       _count: {
         select: { registrations: { where: { status: { in: [...ACTIVE_REGISTRATION_STATUSES] } } } },
       },
@@ -257,7 +294,16 @@ export async function autoCancelClasses(
       // never cause a wrong one, because nothing here cancels: it only
       // decides whether to look properly.
       if (cls._count.registrations >= cls.minStudents) continue;
-      if (!inCancelWindow(cls, cls.teacher.defaultTimezone, currentTime)) continue;
+      if (
+        !inCancelWindow(
+          cls.calendarEntry,
+          cls,
+          cls.calendarEntry.teacher.defaultTimezone,
+          currentTime,
+        )
+      ) {
+        continue;
+      }
 
       // Cancel + notify atomically: a cancelled class nobody was told
       // about is worse than one that stays open one more sweep.
@@ -389,20 +435,37 @@ export async function autoCancelClasses(
           where: { id: cls.id },
           select: {
             status: true,
-            date: true,
-            startTime: true,
             autoCancelCheck: true,
             minStudents: true,
-            classType: true,
-            teacherId: true,
-            teacher: { select: { defaultTimezone: true } },
+            calendarEntry: {
+              select: {
+                id: true,
+                teacherId: true,
+                classType: true,
+                date: true,
+                startTime: true,
+                cancelledAt: true,
+                teacher: { select: { defaultTimezone: true } },
+              },
+            },
           },
         });
-        // Deleted, or no longer open — a concurrent cancel, completion or
-        // teacher action got here first. Not an error; the same outcome by
-        // a different route.
+        // Deleted, no longer open, or already cancelled — a concurrent cancel,
+        // completion or teacher action got here first. Not an error; the same
+        // outcome by a different route. The cancellation half is read from the
+        // entry since #327; `status` cannot answer it.
         if (!fresh || fresh.status !== 'open') return false;
-        if (!inCancelWindow(fresh, fresh.teacher.defaultTimezone, currentTime)) return false;
+        if (fresh.calendarEntry.cancelledAt !== null) return false;
+        if (
+          !inCancelWindow(
+            fresh.calendarEntry,
+            fresh,
+            fresh.calendarEntry.teacher.defaultTimezone,
+            currentTime,
+          )
+        ) {
+          return false;
+        }
 
         // Counted HERE, not from the sweep's outer `findMany` at the top of
         // this function. That read is a snapshot taken before this
@@ -414,13 +477,21 @@ export async function autoCancelClasses(
         });
         if (activeCount >= fresh.minStudents) return false;
 
-        // Redundant with the `fresh.status` check above, kept anyway: it
-        // costs nothing inside a statement that has to run regardless, and
-        // it is the guard that survives if someone later moves or drops the
+        // Cancellation writes the ENTRY now (#327), not a status — one
+        // spelling for both families. The class-side conjunct is carried
+        // through the relation so the CAS still says what it used to: cancel
+        // this class only while it is still open. Redundant with the two
+        // checks above, kept anyway for the same reason it always was — it
+        // costs nothing inside a statement that has to run regardless, and it
+        // is the guard that survives if someone later moves or drops the
         // re-read.
-        const updated = await tx.class.updateMany({
-          where: { id: cls.id, status: 'open' },
-          data: { status: 'cancelled' },
+        const updated = await tx.calendarEntry.updateMany({
+          where: {
+            id: fresh.calendarEntry.id,
+            cancelledAt: null,
+            classes: { some: { status: 'open' } },
+          },
+          data: { cancelledAt: new Date() },
         });
         if (updated.count === 0) return false;
 
@@ -475,15 +546,15 @@ export async function autoCancelClasses(
           recipientId: r.studentId,
           type: 'class_cancelled' as const,
           title: 'Class cancelled',
-          body: `${fresh.classType} class on ${formatDayHeader(fresh.date)} at ${timeToHHmm(fresh.startTime)} has been cancelled due to insufficient registrations.`,
+          body: `${fresh.calendarEntry.classType} class on ${formatDayHeader(fresh.calendarEntry.date)} at ${timeToHHmm(fresh.calendarEntry.startTime)} has been cancelled due to insufficient registrations.`,
           relatedClassId: cls.id,
         }));
         notifications.push({
           recipientType: 'teacher',
-          recipientId: fresh.teacherId,
+          recipientId: fresh.calendarEntry.teacherId,
           type: 'class_cancelled',
           title: 'Class auto-cancelled',
-          body: `${fresh.classType} class on ${formatDayHeader(fresh.date)} at ${timeToHHmm(fresh.startTime)} was cancelled — only ${activeCount} of ${fresh.minStudents} minimum students registered.`,
+          body: `${fresh.calendarEntry.classType} class on ${formatDayHeader(fresh.calendarEntry.date)} at ${timeToHHmm(fresh.calendarEntry.startTime)} was cancelled — only ${activeCount} of ${fresh.minStudents} minimum students registered.`,
           relatedClassId: cls.id,
         });
         await createBulkNotifications(tx, notifications);
@@ -514,9 +585,21 @@ export async function autoCompleteClasses(
 ): Promise<number> {
   const currentTime = now ?? new Date();
 
+  // `cancelledAt: null` beside the status (#327). Completion runs the pricing
+  // engine and writes `Payment` rows, so a cancelled class reaching this sweep
+  // would bill students for a class that is off.
   const inProgressClasses = await db.class.findMany({
-    where: { status: 'in_progress' },
-    include: { teacher: { select: { defaultTimezone: true } } },
+    where: { status: 'in_progress', calendarEntry: { cancelledAt: null } },
+    include: {
+      calendarEntry: {
+        select: {
+          date: true,
+          startTime: true,
+          durationMinutes: true,
+          teacher: { select: { defaultTimezone: true } },
+        },
+      },
+    },
   });
 
   let completed = 0;
@@ -529,8 +612,9 @@ export async function autoCompleteClasses(
       // timing check now lives inside `completeClass`, under the row lock it
       // already takes. A stale pre-filter can only DELAY a completion to the
       // next 60-second tick, never cause a wrong one.
-      const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
-      const endTime = new Date(start.getTime() + cls.durationMinutes * 60 * 1000);
+      const entry = cls.calendarEntry;
+      const start = classStartInstant(entry.date, entry.startTime, entry.teacher.defaultTimezone);
+      const endTime = new Date(start.getTime() + entry.durationMinutes * 60 * 1000);
 
       if (currentTime >= endTime) {
         // `requireEndedBy` is what makes the decision the locked row's, not
@@ -540,7 +624,7 @@ export async function autoCompleteClasses(
         const result = await completeClass(db, cls.id, { requireEndedBy: currentTime });
         if (result.ok) {
           completed++;
-        } else if (result.reason === 'NOT_ENDED_YET') {
+        } else if (result.reason === 'NOT_ENDED_YET' || result.reason === 'CANCELLED') {
           // The race `requireEndedBy` exists to catch: this class was
           // rescheduled to a later time between the `findMany` snapshot
           // above and `completeClass`'s locked re-read. Not a failure — the
@@ -548,6 +632,13 @@ export async function autoCompleteClasses(
           // re-evaluate the class's now-current end time. `warn`, not
           // `error`, so this expected, self-resolving outcome does not page
           // anyone; every OTHER refusal reason still logs at `error` below.
+          //
+          // `CANCELLED` shares this branch and shares the reason. The
+          // `findMany` above already excludes cancelled classes, so reaching
+          // this means one was cancelled in the same gap — the lock refusing
+          // to bill for it, which is the guard working rather than failing.
+          // It is also the terminal one of the two: the next tick will not
+          // see the class at all.
           log.warn({ classId: cls.id, reason: result.error }, 'class completion rejected');
         } else {
           log.error({ classId: cls.id, reason: result.error }, 'class completion rejected');

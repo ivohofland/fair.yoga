@@ -5,6 +5,7 @@ import { archiveOrUnarchiveTemplate } from './class-template-lifecycle';
 import { deleteStudentAccount } from './gdpr';
 import { log } from '@/lib/log';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 /**
  * Issue 180 had two halves, and this file covers the one that still has code
@@ -93,7 +94,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       await prisma.registration.deleteMany({ where: { studentId: { in: studentIds } } });
     }
     if (teacherIds.length) {
-      await prisma.class.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.class.deleteMany({ where: { calendarEntry: { teacherId: { in: teacherIds } } } });
       // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
       // 298), so deleting the rules removes the templates with them.
       await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: teacherIds } } });
@@ -214,13 +215,15 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         minStudents: 2,
         maxStudents: 10,
       },
-      select: { id: true },
+      select: { id: true, scheduleRuleId: true },
     });
 
     const classBase = {
       teacherId: teacher.id,
       teacherRoomId: teacherRoom.id,
-      templateId: template.id,
+      // The RULE, not the template: an entry hangs off `ScheduleRule` since
+      // #327, and it is `(scheduleRuleId, date)` the archive selects on.
+      scheduleRuleId: template.scheduleRuleId,
       classType: 'Lock Order Flow',
       startTime: hhmmToTime('09:00'),
       durationMinutes: 60,
@@ -240,9 +243,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
     // [HIGH, LOW] while
     // `deleteStudentAccount`'s sorted lock loop visits [LOW, HIGH]. Asserted
     // by each `it` below, not assumed.
-    await prisma.class.create({
-      data: { ...classBase, id: highClassId, date: futureDate(jsDayOfWeek, 2) },
-    });
+    await createClassFixture(prisma, { ...classBase, id: highClassId, date: futureDate(jsDayOfWeek, 2) });
     // LOW is `draft`, HIGH is `open` — one of each of `SCHEDULED_STATUSES`,
     // deliberately, and specifically `draft` on the row that must be locked
     // FIRST for the order to hold.
@@ -258,9 +259,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
     // this line: with two `open` rows, a `'open'`-only pre-lock locks exactly
     // what the full one locks. With LOW as `draft`, a narrowed list skips the
     // row the erasure takes first, and the archive `it` below fails.
-    await prisma.class.create({
-      data: { ...classBase, id: lowClassId, status: 'draft', date: futureDate(jsDayOfWeek, 3) },
-    });
+    await createClassFixture(prisma, { ...classBase, id: lowClassId, status: 'draft', date: futureDate(jsDayOfWeek, 3) });
 
     const student = await prisma.student.create({
       data: {
@@ -417,7 +416,10 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       // without that the race is not adversarial. Re-read per `it` because
       // each builds its own fixture with fresh ids, not a rerun of one read.
       const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
-        SELECT id FROM "Class" WHERE "templateId" = ${templateId}
+        SELECT c.id FROM "Class" c
+        JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+        JOIN "ClassTemplate" ct ON ct."scheduleRuleId" = e."scheduleRuleId"
+        WHERE ct."id" = ${templateId}
       `;
       expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
 
@@ -593,7 +595,10 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         await makeTemplateWithTwoWaitedInstances();
 
       const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
-        SELECT id FROM "Class" WHERE "templateId" = ${templateId}
+        SELECT c.id FROM "Class" c
+        JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+        JOIN "ClassTemplate" ct ON ct."scheduleRuleId" = e."scheduleRuleId"
+        WHERE ct."id" = ${templateId}
       `;
       expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
 

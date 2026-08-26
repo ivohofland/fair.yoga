@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -115,8 +116,7 @@ describe('tierSelectedAt stamping', () => {
       const date = new Date();
       date.setDate(date.getDate() + daysAhead);
       date.setUTCHours(0, 0, 0, 0);
-      return prisma.class.create({
-        data: {
+      return createClassFixture(prisma, {
           teacherId,
           teacherRoomId: teacherRoom.id,
           classType: 'Vinyasa',
@@ -129,8 +129,7 @@ describe('tierSelectedAt stamping', () => {
           minStudents: 1,
           maxStudents,
           status: 'open',
-        },
-      });
+        });
     }
     openClassId = (await mkClass(7, 10)).id;
     fullClassId = (await mkClass(14, 1)).id;

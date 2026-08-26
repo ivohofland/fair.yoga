@@ -9,7 +9,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { createStudioClassSchema } from '@/lib/schemas';
-import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
@@ -19,12 +19,24 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (isErrorResponse(session)) return session;
 
   const studioClasses = await prisma.studioClass.findMany({
-    where: { teacherId: session.teacherId },
-    orderBy: { date: 'desc' },
+    where: { calendarEntry: { teacherId: session.teacherId } },
+    include: { calendarEntry: true },
+    orderBy: { calendarEntry: { date: 'desc' } },
   });
 
+  // The wire shape is unchanged by #327: the entry's columns are flattened
+  // back onto the studio class, so a client still reads `classType`, `date`,
+  // `startTime`, `cancelledAt` and `teacherId` where it always did.
   return respondOk(
-    studioClasses.map((sc) => ({ ...sc, startTime: timeToHHmm(sc.startTime) })),
+    studioClasses.map(({ calendarEntry, ...sc }) => ({
+      ...sc,
+      teacherId: calendarEntry.teacherId,
+      classType: calendarEntry.classType,
+      date: calendarEntry.date,
+      startTime: timeToHHmm(calendarEntry.startTime),
+      durationMinutes: calendarEntry.durationMinutes,
+      cancelledAt: calendarEntry.cancelledAt,
+    })),
   );
 });
 
@@ -41,26 +53,56 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // make `templateId` and `studentCount` invisible: neither name appeared in
   // this handler, so grepping for them found nothing (#148).
   try {
-    const studioClass = await prisma.studioClass.create({
+    // The ENTRY is the row created, with its studio class nested (#327).
+    // `kind` is set once, on the parent: it is half of the composite foreign
+    // key, so Prisma omits it from the nested child input and fills it from
+    // here. `classType` moved with it, and `CalendarEntry.classType` carries
+    // no `@default("")` — every studio write supplies one now.
+    const entry = await prisma.calendarEntry.create({
       data: {
         teacherId: session.teacherId,
+        kind: 'studio',
         classType: body.classType,
         date: new Date(body.date),
         startTime: hhmmToTime(body.startTime),
         durationMinutes: body.durationMinutes,
-        location: body.location,
-        hourlyRate: body.hourlyRate,
+        studioClasses: {
+          create: {
+            location: body.location,
+            hourlyRate: body.hourlyRate,
+          },
+        },
       },
+      include: { studioClasses: true },
     });
-    return respondOk({ ...studioClass, startTime: timeToHHmm(studioClass.startTime) }, 201);
+    const studioClass = entry.studioClasses[0];
+    if (!studioClass) {
+      throw new Error('studio class create: the nested studio class row did not come back');
+    }
+    return respondOk(
+      {
+        ...studioClass,
+        teacherId: entry.teacherId,
+        classType: entry.classType,
+        date: entry.date,
+        startTime: timeToHHmm(entry.startTime),
+        durationMinutes: entry.durationMinutes,
+        cancelledAt: entry.cancelledAt,
+      },
+      201,
+    );
   } catch (err) {
-    // The slot key, not the template key. `@@unique([templateId, date])`
-    // cannot raise P2002 here — this create never sets `templateId` (a
-    // manually logged class never has one), so it is NULL, and Postgres
-    // treats NULLs as distinct. The column-list match still matters: it is
-    // what would tell the two keys apart the day this route starts
-    // accepting a `templateId`, not what tells them apart today.
-    if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
+    // The slot constraint, not the rule-date key. `@@unique([scheduleRuleId,
+    // date])` cannot raise here — this create never sets `scheduleRuleId` (a
+    // manually logged class has no rule behind it), so it is NULL, and
+    // Postgres treats NULLs as distinct.
+    //
+    // `isExclusionConflictOn`, not `isUniqueConflictOn`: since #327 the slot
+    // is an `EXCLUDE USING gist` raising `23P01`, which has no `meta.target`
+    // column list for the unique matcher to compare. It is also RANGE-based,
+    // so a create that merely OVERLAPS a live class of this teacher collides
+    // where before only an identical start time did.
+    if (isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')) {
       return respondError(
         'You already have a studio class at that date and time.',
         409,

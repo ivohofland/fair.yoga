@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 /**
  * The account-hybrid headline: a teacher attends another teacher's class
@@ -60,8 +61,7 @@ test.describe('Account hybrid: teacher joins a class', () => {
 
     const soon = new Date();
     soon.setUTCDate(soon.getUTCDate() + 7);
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId: hostTeacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'Hybrid Vinyasa',
@@ -74,8 +74,7 @@ test.describe('Account hybrid: teacher joins a class', () => {
         minStudents: 2,
         maxStudents: 10,
         status: 'open',
-      },
-    });
+      });
     classId = cls.id;
 
     // Guest: a teacher-only account, signed in, who wants to attend.
@@ -110,7 +109,7 @@ test.describe('Account hybrid: teacher joins a class', () => {
     await prisma.registration.deleteMany({ where: { classId } });
     await prisma.teacherStudent.deleteMany({ where: { teacherId: hostTeacherId } });
     await prisma.session.deleteMany({ where: { accountId: guestAccountId } });
-    await prisma.class.deleteMany({ where: { teacherId: hostTeacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: hostTeacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId: hostTeacherId } });
     await prisma.room.deleteMany({ where: { address: { contains: suffix } } });
     await prisma.student.deleteMany({ where: { email: { contains: suffix } } });

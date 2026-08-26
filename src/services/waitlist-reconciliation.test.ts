@@ -5,6 +5,7 @@ import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { addToWaitlist, claimSpot, getWaitlistWindow, handleSpotFreed } from './waitlist';
 import { ReconciliationFailedError, reconcileWaitlists } from './waitlist-reconciliation';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = `recon-${Date.now()}`;
@@ -71,14 +72,18 @@ describe('reconcileWaitlists (DB)', () => {
 
   async function makeClass(maxStudents: number): Promise<{ id: string; startTime: string }> {
     const startTime = nextSlot();
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
         date: CLASS_DATE,
         startTime: hhmmToTime(startTime),
-        durationMinutes: 60,
+        // ONE MINUTE (#327): `nextSlot` spaces fixtures a minute apart, and
+        // the slot constraint is a range overlap now — so a 60-minute fixture
+        // collides with the one before it. Nothing here reads the duration;
+        // the cancel-deadline window these tests turn on is computed from the
+        // START.
+        durationMinutes: 1,
         roomCost: 35,
         minRate: 15,
         targetRate: 25,
@@ -87,8 +92,7 @@ describe('reconcileWaitlists (DB)', () => {
         status: 'open',
         cancelDeadline: 'HOURS_24',
         settingsLocked: true,
-      },
-    });
+      });
     classIds.push(cls.id);
     return { id: cls.id, startTime };
   }
@@ -659,7 +663,10 @@ describe('reconcileWaitlists (DB)', () => {
     await prisma.waitlistEntry.create({
       data: { classId: cls.id, studentId: waiter, position: 1, status: 'waiting' },
     });
-    await prisma.class.update({ where: { id: cls.id }, data: { status: 'cancelled' } });
+    await prisma.calendarEntry.update({
+      where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, select: { calendarEntryId: true } })).calendarEntryId },
+      data: { cancelledAt: new Date() },
+    });
 
     const summary = await reconcileWaitlists(prisma, {
       now: windowClocks(cls.startTime).autoPromote,
@@ -703,14 +710,18 @@ describe('reconcileWaitlists (DB)', () => {
     const startTime = `${at('hour')}:${at('minute')}`;
     const date = new Date(`${at('year')}-${at('month')}-${at('day')}`);
 
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
         date,
         startTime: hhmmToTime(startTime),
-        durationMinutes: 60,
+        // ONE MINUTE (#327): `nextSlot` spaces fixtures a minute apart, and
+        // the slot constraint is a range overlap now — so a 60-minute fixture
+        // collides with the one before it. Nothing here reads the duration;
+        // the cancel-deadline window these tests turn on is computed from the
+        // START.
+        durationMinutes: 1,
         roomCost: 35,
         minRate: 15,
         targetRate: 25,
@@ -719,8 +730,7 @@ describe('reconcileWaitlists (DB)', () => {
         status: 'open',
         cancelDeadline: 'HOURS_24',
         settingsLocked: true,
-      },
-    });
+      });
     classIds.push(cls.id);
 
     // Precondition, asserted rather than assumed — and it caught the offset

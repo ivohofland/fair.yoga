@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -86,8 +87,7 @@ async function makeClass(
   status: 'open' | 'in_progress' | 'completed' | 'cancelled',
   slotIndex: number,
 ): Promise<string> {
-  const cls = await prisma.class.create({
-    data: {
+  const cls = await createClassFixture(prisma, {
       teacherId,
       teacherRoomId,
       classType,
@@ -99,9 +99,9 @@ async function makeClass(
       targetRate: 25,
       minStudents: 1,
       maxStudents: 2,
-      status,
-    },
-  });
+      status: status === 'cancelled' ? 'open' : status,
+      cancelledAt: status === 'cancelled' ? new Date() : null,
+    });
   classIds.push(cls.id);
   return cls.id;
 }

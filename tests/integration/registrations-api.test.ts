@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -53,8 +54,7 @@ let makeClassCounter = 0;
 
 async function makeClass(maxStudents: number): Promise<string> {
   const startTime = slotTime(makeClassCounter++);
-  const cls = await prisma.class.create({
-    data: {
+  const cls = await createClassFixture(prisma, {
       teacherId: ownerId,
       teacherRoomId,
       classType: 'Reg API',
@@ -67,8 +67,7 @@ async function makeClass(maxStudents: number): Promise<string> {
       minStudents: 1,
       maxStudents,
       status: 'open',
-    },
-  });
+    });
   classIds.push(cls.id);
   return cls.id;
 }
@@ -112,8 +111,7 @@ async function makeLateCancelClass(maxStudents: number, minuteOffset: number): P
       return acc;
     }, {});
 
-  const cls = await prisma.class.create({
-    data: {
+  const cls = await createClassFixture(prisma, {
       teacherId: ownerId,
       teacherRoomId,
       classType: 'Reg API Late Cancel',
@@ -126,8 +124,7 @@ async function makeLateCancelClass(maxStudents: number, minuteOffset: number): P
       minStudents: 1,
       maxStudents,
       status: 'open',
-    },
-  });
+    });
   classIds.push(cls.id);
   return cls.id;
 }
@@ -136,8 +133,7 @@ async function makeLateCancelClass(maxStudents: number, minuteOffset: number): P
 // an owner-roster student and an owner-teacher session can still collide with
 // it via studentId.
 async function makeOtherTeacherClass(maxStudents: number): Promise<string> {
-  const cls = await prisma.class.create({
-    data: {
+  const cls = await createClassFixture(prisma, {
       teacherId: otherTeacherId,
       teacherRoomId: otherTeacherRoomId,
       classType: 'Reg API (other teacher)',
@@ -150,8 +146,7 @@ async function makeOtherTeacherClass(maxStudents: number): Promise<string> {
       minStudents: 1,
       maxStudents,
       status: 'open',
-    },
-  });
+    });
   classIds.push(cls.id);
   return cls.id;
 }
@@ -288,7 +283,7 @@ describe('POST /api/registrations', () => {
     expect(json.error.message).toBe('Student is not in your roster');
 
     // And the victim's class must NOT have been settings-locked
-    const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(cls.settingsLocked).toBe(false);
   });
 
@@ -350,7 +345,7 @@ describe('POST /api/registrations', () => {
     const res = await post(studentTokens[0]!, { classId });
     expect(res.status).toBe(201);
 
-    const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
     expect(cls.settingsLocked).toBe(true);
   });
 
@@ -558,7 +553,10 @@ describe('POST /api/registrations', () => {
     // Cancel, uncommitted. Holds the class row lock; invisible to the server.
     const cancelling = prisma.$transaction(
       async (tx) => {
-        await tx.class.update({ where: { id: classId }, data: { status: 'cancelled' } });
+        await tx.calendarEntry.update({
+      where: { id: (await tx.class.findUniqueOrThrow({ where: { id: classId }, select: { calendarEntryId: true } })).calendarEntryId },
+      data: { cancelledAt: new Date() },
+    });
         await held;
       },
       { timeout: 15_000 },
@@ -990,8 +988,7 @@ describe('teacher-facing registration reads honour StudentPrivacy', () => {
       });
       dualTeacherRoomId = teacherRoom.id;
 
-      const cls = await prisma.class.create({
-        data: {
+      const cls = await createClassFixture(prisma, {
           teacherId: dualTeacherId,
           teacherRoomId: dualTeacherRoomId,
           classType: 'Reg API (dual)',
@@ -1004,8 +1001,7 @@ describe('teacher-facing registration reads honour StudentPrivacy', () => {
           minStudents: 1,
           maxStudents: 5,
           status: 'open',
-        },
-      });
+        });
       dualClassId = cls.id;
 
       // No studentId in the body: the dual account books itself, through the
@@ -1214,7 +1210,10 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
       data: { classId, studentId: studentIds[0]!, status: 'registered', tierAtBooking: 3 },
     });
     // Cancelled AFTER the registration exists: a cancelled class cannot be booked.
-    await prisma.class.update({ where: { id: classId }, data: { status: 'cancelled' } });
+    await prisma.calendarEntry.update({
+      where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: classId }, select: { calendarEntryId: true } })).calendarEntryId },
+      data: { cancelledAt: new Date() },
+    });
 
     const res = await fetch(`${BASE_URL}/api/registrations/${reg.id}`, {
       method: 'PUT',
@@ -1368,15 +1367,13 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     const date = target.toISOString().slice(0, 10);
     const startTime = target.toISOString().slice(11, 16);
 
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId: raceTeacherId, teacherRoomId: raceTeacherRoomId,
         classType: 'Race Cancel', date: new Date(`${date}T00:00:00Z`), startTime: hhmmToTime(startTime),
         durationMinutes: 60, roomCost: 20, minRate: 30, targetRate: 60,
         minStudents: 1, maxStudents: 1, cancelDeadline: 'HOURS_48',
         autoCancelCheck: 'HOURS_2', status: 'open',
-      },
-    });
+      });
     raceClassIds.push(cls.id);
     const reg = await prisma.registration.create({
       data: { classId: cls.id, studentId: cancellerId, status: 'registered', tierAtBooking: 3 },

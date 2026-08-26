@@ -10,6 +10,7 @@ import { getWaitlistWindow } from './waitlist';
 import { formatDayHeader } from '@/lib/format';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 // ===========================================================================
 // Automated class transitions (DB) — timezone-aware lifecycle sweeps.
@@ -114,7 +115,7 @@ describe('class transitions (DB, timezone-aware)', () => {
     await prisma.registration.deleteMany({
       where: { studentId: { in: [studentId, secondStudentId, waiterStudentId] } },
     });
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.student.deleteMany({
@@ -125,8 +126,7 @@ describe('class transitions (DB, timezone-aware)', () => {
   });
 
   function makeClass(overrides: Record<string, unknown> = {}) {
-    return prisma.class.create({
-      data: {
+    return createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
@@ -140,8 +140,7 @@ describe('class transitions (DB, timezone-aware)', () => {
         maxStudents: 12,
         status: 'open',
         ...overrides,
-      },
-    });
+      });
   }
 
   it('auto-transitions once the LOCAL start time has passed (16:00Z for 18:00 Amsterdam)', async () => {
@@ -151,9 +150,9 @@ describe('class transitions (DB, timezone-aware)', () => {
     // naive-UTC 18:00Z reading — the old UTC code would have skipped this.
     await autoTransitionToInProgress(prisma, new Date('2026-07-20T16:30:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(updated.status).toBe('in_progress');
-    await prisma.class.delete({ where: { id: cls.id } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
 
   it('does not transition before the local start time', async () => {
@@ -161,9 +160,9 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     await autoTransitionToInProgress(prisma, new Date('2026-07-20T15:30:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(updated.status).toBe('open');
-    await prisma.class.delete({ where: { id: cls.id } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
 
   it('catches early-local-morning classes that start before their UTC calendar date', async () => {
@@ -174,9 +173,9 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     await autoTransitionToInProgress(prisma, new Date('2026-07-19T23:00:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(updated.status).toBe('in_progress');
-    await prisma.class.delete({ where: { id: cls.id } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
 
   it('does not start a class rescheduled after the sweep read it', async () => {
@@ -189,18 +188,25 @@ describe('class transitions (DB, timezone-aware)', () => {
           async findMany({ args, query }) {
             // Shape-keyed, per this file's house rule. THIS sweep's read carries
             // a `date` filter; `autoCancelClasses`' carries a bare `status`.
-            const where = args.where as { status?: unknown; date?: unknown } | undefined;
-            if (where?.status !== 'open' || where.date === undefined) return query(args);
+            // The `date` bound moved onto `calendarEntry` in #327, so the
+            // shape that tells the two sweeps apart is a nested `date` rather
+            // than a top-level one.
+            const where = args.where as
+              | { status?: unknown; calendarEntry?: { date?: unknown } }
+              | undefined;
+            if (where?.status !== 'open' || where.calendarEntry?.date === undefined) {
+              return query(args);
+            }
 
             hookCalls += 1;
             const rows = await query(args);
             // A WEEK later, not minutes: 16:00Z on July 20 is nowhere near the
             // new start on July 27, so no rounding or timezone offset can make
             // the stale decision accidentally correct.
-            await prisma.class.update({
-              where: { id: cls.id },
-              data: { date: new Date('2026-07-27') },
-            });
+            await prisma.calendarEntry.update({
+      where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, select: { calendarEntryId: true } })).calendarEntryId },
+      data: { date: new Date('2026-07-27') },
+    });
             return rows;
           },
         },
@@ -224,7 +230,7 @@ describe('class transitions (DB, timezone-aware)', () => {
       expect(hookCalls).toBe(1);
       expect(transitioned).toBe(0);
 
-      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
       expect(updated.status).toBe('open');
 
       // Filtered to THIS class. `autoTransitionToInProgress` sweeps every open
@@ -246,7 +252,7 @@ describe('class transitions (DB, timezone-aware)', () => {
     } finally {
       warn.mockRestore();
       error.mockRestore();
-      await prisma.class.delete({ where: { id: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
     }
   });
 
@@ -280,10 +286,10 @@ describe('class transitions (DB, timezone-aware)', () => {
           await new Promise((r) => setTimeout(r, 700));
           // A WEEK later, the same margin the sibling test uses: no rounding or
           // timezone offset can make the stale decision accidentally correct.
-          await tx.class.update({
-            where: { id: cls.id },
-            data: { date: new Date('2026-07-27') },
-          });
+          await tx.calendarEntry.update({
+      where: { id: (await tx.class.findUniqueOrThrow({ where: { id: cls.id }, select: { calendarEntryId: true } })).calendarEntryId },
+      data: { date: new Date('2026-07-27') },
+    });
           holderCommitted = true;
         },
         { timeout: 10_000 },
@@ -308,7 +314,7 @@ describe('class transitions (DB, timezone-aware)', () => {
         await holder;
         expect(await sweeping).toBe(0);
 
-        const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+        const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
         expect(updated.status).toBe('open');
 
         // POSITIVE evidence that the locked re-read is what refused, and the
@@ -335,7 +341,7 @@ describe('class transitions (DB, timezone-aware)', () => {
         warn.mockRestore();
       }
     } finally {
-      await prisma.class.delete({ where: { id: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
     }
   }, 15_000);
 
@@ -362,7 +368,7 @@ describe('class transitions (DB, timezone-aware)', () => {
       // matters more here than usual: this project's review protocol is
       // mutation testing, whose whole signal is WHICH test failed.
       await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
-      await prisma.class.delete({ where: { id: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
     }
   });
 
@@ -380,8 +386,8 @@ describe('class transitions (DB, timezone-aware)', () => {
     try {
       await autoCancelClasses(prisma, new Date('2026-07-20T15:00:00Z'));
 
-      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-      expect(updated.status).toBe('cancelled');
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+      expect(updated.calendarEntry.cancelledAt).not.toBeNull();
 
       // `findFirstOrThrow`, not `findFirst` + a null check: the body
       // assertions below must be reported when they fail, not skipped past by
@@ -402,14 +408,14 @@ describe('class transitions (DB, timezone-aware)', () => {
       // equality assertion goes red on any rewording, which teaches the next
       // person to loosen it.
       expect(teacherNote.body).toContain('Hatha');
-      expect(teacherNote.body).toContain(formatDayHeader(cls.date));
+      expect(teacherNote.body).toContain(formatDayHeader(cls.calendarEntry.date));
       expect(teacherNote.body).toContain('18:00');
       // The clause that makes this body worth keeping distinct from the
       // student's — it says WHY, and only this path knows.
       expect(teacherNote.body).toContain('only 0 of 4 minimum students registered');
     } finally {
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
-      await prisma.class.delete({ where: { id: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
     }
   });
 
@@ -419,9 +425,9 @@ describe('class transitions (DB, timezone-aware)', () => {
     // 13:00Z is before the 14:00Z window opening.
     await autoCancelClasses(prisma, new Date('2026-07-20T13:00:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(updated.status).toBe('open');
-    await prisma.class.delete({ where: { id: cls.id } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
 
   /**
@@ -495,13 +501,13 @@ describe('class transitions (DB, timezone-aware)', () => {
         select: { defaultTimezone: true },
       });
       expect(
-        getWaitlistWindow(cls.date, cls.startTime, cls.cancelDeadline, defaultTimezone, at),
+        getWaitlistWindow(cls.calendarEntry.date, cls.calendarEntry.startTime, cls.cancelDeadline, defaultTimezone, at),
       ).toBe('frozen');
 
       await autoCancelClasses(prisma, at);
 
-      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-      expect(updated.status).toBe('cancelled');
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+      expect(updated.calendarEntry.cancelledAt).not.toBeNull();
 
       // `findFirstOrThrow`, not `findFirst` + `if` — the conditional silently
       // skipped the body assertions on failure instead of reporting them.
@@ -518,7 +524,7 @@ describe('class transitions (DB, timezone-aware)', () => {
       // the entry just closed to `removed` (dropped from /bookings) and a
       // cancelled class links nowhere in the inbox. Type, day AND time.
       expect(waiterNote.body).toContain('Hatha');
-      expect(waiterNote.body).toContain(formatDayHeader(cls.date));
+      expect(waiterNote.body).toContain(formatDayHeader(cls.calendarEntry.date));
       expect(waiterNote.body).toContain('18:00');
 
       // The REGISTERED audience is still told. Asserted here because nothing
@@ -558,7 +564,7 @@ describe('class transitions (DB, timezone-aware)', () => {
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
       await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
       await prisma.registration.deleteMany({ where: { classId: cls.id } });
-      await prisma.class.delete({ where: { id: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
     }
   });
 
@@ -620,9 +626,15 @@ describe('class transitions (DB, timezone-aware)', () => {
             // `autoCancelClasses`'s own read filters on `status: 'open'`
             // alone; `autoTransitionToInProgress`'s also filters `status:
             // 'open'` but adds a `date` bound, so checking for `date`'s
-            // absence is what tells the two apart by shape.
-            const where = args.where as { status?: unknown; date?: unknown } | undefined;
-            const isSweepRead = where?.status === 'open' && !('date' in (where ?? {}));
+            // absence is what tells the two apart by shape. Since #327 that
+            // bound sits under `calendarEntry`, alongside the `cancelledAt`
+            // conjunct BOTH sweeps carry — so the nested `date` is what
+            // discriminates, not the presence of `calendarEntry`.
+            const where = args.where as
+              | { status?: unknown; calendarEntry?: { date?: unknown } }
+              | undefined;
+            const isSweepRead =
+              where?.status === 'open' && where.calendarEntry?.date === undefined;
             if (!isSweepRead) return query(args);
 
             calls += 1;
@@ -647,14 +659,14 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     expect(calls).toBe(1);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(updated.status).toBe('open');
     expect(
       await prisma.notification.count({ where: { relatedClassId: cls.id, type: 'class_cancelled' } }),
     ).toBe(0);
 
     await prisma.registration.deleteMany({ where: { classId: cls.id } });
-    await prisma.class.delete({ where: { id: cls.id } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
 
   // #174 task 6, round 1 review, Important 1. Moving the count inside the
@@ -806,12 +818,12 @@ describe('class transitions (DB, timezone-aware)', () => {
       // the same reason.
       expect(String(competingWriteError)).toMatch(/55P03|lock timeout/);
 
-      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-      expect(updated.status).toBe('cancelled');
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+      expect(updated.calendarEntry.cancelledAt).not.toBeNull();
 
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
       await prisma.registration.deleteMany({ where: { classId: cls.id } });
-      await prisma.class.delete({ where: { id: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
     },
     10_000,
   );
@@ -859,10 +871,10 @@ describe('class transitions (DB, timezone-aware)', () => {
             // 14:00Z–16:00Z window on July 27. Committed before the sweep's
             // per-class transaction opens, so the snapshot it is walking is
             // stale by exactly one reschedule.
-            await prisma.class.update({
-              where: { id: cls.id },
-              data: { date: new Date('2026-07-27') },
-            });
+            await prisma.calendarEntry.update({
+      where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, select: { calendarEntryId: true } })).calendarEntryId },
+      data: { date: new Date('2026-07-27') },
+    });
             return rows;
           },
         },
@@ -875,7 +887,7 @@ describe('class transitions (DB, timezone-aware)', () => {
     expect(hookCalls).toBe(1);
     expect(cancelledCount).toBe(0);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(updated.status).toBe('open');
 
     // Nobody was told a class was cancelled that wasn't. Pre-fix this is 2 —
@@ -886,7 +898,7 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
     await prisma.registration.deleteMany({ where: { classId: cls.id } });
-    await prisma.class.delete({ where: { id: cls.id } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
 
   /**
@@ -943,11 +955,11 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     expect(decisionCounts).toBe(0);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(updated.status).toBe('open');
 
     await prisma.registration.deleteMany({ where: { classId: cls.id } });
-    await prisma.class.delete({ where: { id: cls.id } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
 
   /**
@@ -974,12 +986,12 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     await autoCancelClasses(prisma, new Date('2026-07-20T15:00:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(updated.status).toBe('cancelled');
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    expect(updated.calendarEntry.cancelledAt).not.toBeNull();
 
     await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
     await prisma.registration.deleteMany({ where: { classId: cls.id } });
-    await prisma.class.delete({ where: { id: cls.id } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
 
   // Ordered before 'auto-completes an in-progress class after its local end
@@ -1006,10 +1018,10 @@ describe('class transitions (DB, timezone-aware)', () => {
 
             hookCalls += 1;
             const rows = await query(args);
-            await prisma.class.update({
-              where: { id: cls.id },
-              data: { date: new Date('2026-07-27') },
-            });
+            await prisma.calendarEntry.update({
+      where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, select: { calendarEntryId: true } })).calendarEntryId },
+      data: { date: new Date('2026-07-27') },
+    });
             return rows;
           },
         },
@@ -1029,7 +1041,7 @@ describe('class transitions (DB, timezone-aware)', () => {
       expect(hookCalls).toBe(1);
       expect(completed).toBe(0);
 
-      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
       expect(updated.status).toBe('in_progress');
       // No payments for a class that has not happened. This is the assertion
       // that makes the defect concrete: completion creates Payment rows.
@@ -1049,7 +1061,7 @@ describe('class transitions (DB, timezone-aware)', () => {
       warn.mockRestore();
       error.mockRestore();
       await prisma.registration.deleteMany({ where: { classId: cls.id } });
-      await prisma.class.delete({ where: { id: cls.id } });
+      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
     }
   });
 
@@ -1062,7 +1074,7 @@ describe('class transitions (DB, timezone-aware)', () => {
     // Ends 17:00Z (16:00Z start + 60 min); 17:30Z is past that.
     await autoCompleteClasses(prisma, new Date('2026-07-20T17:30:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(updated.status).toBe('completed');
     expect(updated.totalRevenue).not.toBeNull();
   });

@@ -16,6 +16,7 @@ import {
   UpdateClassInvariantError,
   type EconomicField,
 } from './class-lifecycle';
+import { createClassFixture, slotDate } from '../../tests/class-fixtures';
 
 // We use string literals matching the Prisma ClassStatus enum values.
 // This keeps tests independent of the Prisma client being generated.
@@ -126,7 +127,6 @@ describe('VALID_TRANSITIONS', () => {
       'open',
       'in_progress',
       'completed',
-      'cancelled',
     ] as const;
 
     for (const status of allStatuses) {
@@ -135,18 +135,16 @@ describe('VALID_TRANSITIONS', () => {
     }
   });
 
-  it('draft can transition to open or cancelled', () => {
-    expect(VALID_TRANSITIONS['draft']).toEqual(
-      expect.arrayContaining(['open', 'cancelled']),
-    );
-    expect(VALID_TRANSITIONS['draft']).toHaveLength(2);
+  // #327: cancellation left the enum, so the table describes only real status
+  // moves and each live state has exactly one outgoing edge. The cancel door
+  // is `POST /api/classes/[id]/cancel`, which writes
+  // `CalendarEntry.cancelledAt` and never touches `status`.
+  it('draft can only transition to open', () => {
+    expect(VALID_TRANSITIONS['draft']).toEqual(['open']);
   });
 
-  it('open can transition to in_progress or cancelled', () => {
-    expect(VALID_TRANSITIONS['open']).toEqual(
-      expect.arrayContaining(['in_progress', 'cancelled']),
-    );
-    expect(VALID_TRANSITIONS['open']).toHaveLength(2);
+  it('open can only transition to in_progress', () => {
+    expect(VALID_TRANSITIONS['open']).toEqual(['in_progress']);
   });
 
   it('in_progress can only transition to completed', () => {
@@ -156,18 +154,12 @@ describe('VALID_TRANSITIONS', () => {
   it('completed is a terminal state with no transitions', () => {
     expect(VALID_TRANSITIONS['completed']).toEqual([]);
   });
-
-  it('cancelled is a terminal state with no transitions', () => {
-    expect(VALID_TRANSITIONS['cancelled']).toEqual([]);
-  });
 });
 
 describe('canTransition', () => {
   it('returns true for valid transitions', () => {
     expect(canTransition('draft', 'open')).toBe(true);
-    expect(canTransition('draft', 'cancelled')).toBe(true);
     expect(canTransition('open', 'in_progress')).toBe(true);
-    expect(canTransition('open', 'cancelled')).toBe(true);
     expect(canTransition('in_progress', 'completed')).toBe(true);
   });
 
@@ -178,16 +170,12 @@ describe('canTransition', () => {
     expect(canTransition('open', 'completed')).toBe(false);
     expect(canTransition('in_progress', 'draft')).toBe(false);
     expect(canTransition('in_progress', 'open')).toBe(false);
-    expect(canTransition('in_progress', 'cancelled')).toBe(false);
   });
 
   it('returns false for transitions out of terminal states', () => {
     expect(canTransition('completed', 'open')).toBe(false);
     expect(canTransition('completed', 'draft')).toBe(false);
-    expect(canTransition('completed', 'cancelled')).toBe(false);
-    expect(canTransition('cancelled', 'open')).toBe(false);
-    expect(canTransition('cancelled', 'draft')).toBe(false);
-    expect(canTransition('cancelled', 'completed')).toBe(false);
+    expect(canTransition('completed', 'in_progress')).toBe(false);
   });
 
   it('returns false for self-transitions', () => {
@@ -195,7 +183,6 @@ describe('canTransition', () => {
     expect(canTransition('open', 'open')).toBe(false);
     expect(canTransition('in_progress', 'in_progress')).toBe(false);
     expect(canTransition('completed', 'completed')).toBe(false);
-    expect(canTransition('cancelled', 'cancelled')).toBe(false);
   });
 });
 
@@ -226,7 +213,7 @@ describe('validateTransition', () => {
   });
 
   it('error message describes the invalid transition', () => {
-    const result = validateTransition('cancelled', 'draft');
+    const result = validateTransition('completed', 'draft');
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(typeof result.error).toBe('string');
@@ -267,8 +254,11 @@ describe('sourceStatesFor', () => {
     expect(sourceStatesFor('completed')).toEqual(['in_progress']);
   });
 
-  it('cancelled is reachable from draft and open', () => {
-    expect(sourceStatesFor('cancelled')).toEqual(['draft', 'open']);
+  // #327: cancellation is not a status, so no state is a source for it and
+  // `sourceStatesFor` has nothing to be asked. `open` is reachable from
+  // `draft` alone — the pair that replaced this case.
+  it('open is reachable only from draft', () => {
+    expect(sourceStatesFor('open')).toEqual(['draft']);
   });
 });
 
@@ -347,13 +337,14 @@ describe('transitionClass (DB)', () => {
    */
   const makeClass = ({ status }: { status: ClassStatus }) => {
     makeClassCounter += 1;
-    return prisma.class.create({
-      data: {
+    return createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Vinyasa',
-        date: new Date('2099-06-05'),
-        startTime: hhmmToTime(slotTime(makeClassCounter)),
+        // A DAY per call, not a minute (#327): the slot constraint is a range
+        // overlap now, so two 60-minute fixtures a minute apart collide.
+        date: slotDate('2099-06-05', makeClassCounter),
+        startTime: hhmmToTime(slotTime(0)),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -361,8 +352,7 @@ describe('transitionClass (DB)', () => {
         minStudents: 4,
         maxStudents: 12,
         status,
-      },
-    });
+      });
   };
 
   beforeAll(async () => {
@@ -426,9 +416,9 @@ describe('transitionClass (DB)', () => {
     // fail on the FK instead. Kept anyway: harmless, and mildly defensive.
     // Same shape as `completeClass (DB)`'s afterAll below and
     // `addToWaitlist + removeFromWaitlist (DB)`'s in waitlist.test.ts.
-    await prisma.waitlistEntry.deleteMany({ where: { class: { teacherId } } });
+    await prisma.waitlistEntry.deleteMany({ where: { class: { calendarEntry: { teacherId } } } });
     // Clean up all classes created during tests, then fixtures
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.student.delete({ where: { id: studentId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
@@ -437,8 +427,7 @@ describe('transitionClass (DB)', () => {
   });
 
   it('transitions draft to open', async () => {
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
@@ -451,8 +440,7 @@ describe('transitionClass (DB)', () => {
         minStudents: 4,
         maxStudents: 12,
         status: 'draft',
-      },
-    });
+      });
 
     const result = await transitionClass(prisma, cls.id, 'open');
     expect(result.ok).toBe(true);
@@ -460,13 +448,12 @@ describe('transitionClass (DB)', () => {
       expect(result.newStatus).toBe('open');
     }
 
-    const updated = await prisma.class.findUnique({ where: { id: cls.id } });
+    const updated = await prisma.class.findUnique({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(updated?.status).toBe('open');
   });
 
   it('rejects invalid transition (draft to completed)', async () => {
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
@@ -479,8 +466,7 @@ describe('transitionClass (DB)', () => {
         minStudents: 4,
         maxStudents: 12,
         status: 'draft',
-      },
-    });
+      });
 
     const result = await transitionClass(prisma, cls.id, 'completed');
     expect(result.ok).toBe(false);
@@ -489,7 +475,7 @@ describe('transitionClass (DB)', () => {
       expect(result.error).toContain('completed');
     }
 
-    const unchanged = await prisma.class.findUnique({ where: { id: cls.id } });
+    const unchanged = await prisma.class.findUnique({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(unchanged?.status).toBe('draft');
   });
 
@@ -521,8 +507,7 @@ describe('transitionClass (DB)', () => {
    * to refuse here, not a second read noticing the row moved.
    */
   it('refuses to write over a status that changed after the caller decided', async () => {
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
@@ -535,12 +520,12 @@ describe('transitionClass (DB)', () => {
         minStudents: 4,
         maxStudents: 12,
         status: 'open',
-      },
-    });
+      });
 
-    await prisma.class.updateMany({
-      where: { id: cls.id, status: 'open' },
-      data: { status: 'cancelled' },
+    // Cancellation writes the ENTRY since #327; the class keeps its status.
+    await prisma.calendarEntry.update({
+      where: { id: cls.calendarEntryId },
+      data: { cancelledAt: new Date() },
     });
 
     // Cast for the same reason as the interposition tests in
@@ -567,8 +552,12 @@ describe('transitionClass (DB)', () => {
     // means a read-then-write implementation's failure shows as the actual
     // overwrite ("expected 'in_progress' to be 'cancelled'"), not just a
     // wrong boolean.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(after.status).toBe('cancelled');
+    // Cancellation left `ClassStatus` in #327, so "did not overwrite" is
+    // read from the two rows together: the status untouched at `open`, the
+    // entry still cancelled.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    expect(after.status).toBe('open');
+    expect(after.calendarEntry.cancelledAt).not.toBeNull();
 
     // The error text is asserted, not just `ok === false`: after Task 8
     // lands a Postgres trigger, a bare `ok === false` would also be
@@ -577,12 +566,15 @@ describe('transitionClass (DB)', () => {
     // exactly this case (`updateMany` matched nothing, yet the read now
     // calls the move legal), not the trigger's.
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/Concurrent modification/);
+    // `CANCELLED`, not `CONCURRENT_MODIFICATION`, since #327: the stale read
+    // this test interposes reports a status the transition table calls legal,
+    // and it is the ENTRY that refuses. Still this function's own vocabulary
+    // rather than a trigger's, which is what the paragraph above is about.
+    if (!result.ok) expect(result.reason).toBe('CANCELLED');
   });
 
   it('reports a missing class differently from an illegal transition', async () => {
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
@@ -595,8 +587,7 @@ describe('transitionClass (DB)', () => {
         minStudents: 4,
         maxStudents: 12,
         status: 'completed',
-      },
-    });
+      });
 
     const illegal = await transitionClass(prisma, cls.id, 'open');
     expect(illegal.ok).toBe(false);
@@ -643,8 +634,7 @@ describe('transitionClass (DB)', () => {
     // No typo needed for this one — a draft written for last Friday and
     // published the following week is enough. `transitionClass` had no date
     // predicate at all before #249.
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Vinyasa',
@@ -657,15 +647,14 @@ describe('transitionClass (DB)', () => {
         minStudents: 4,
         maxStudents: 12,
         status: 'draft',
-      },
-    });
+      });
 
     const result = await transitionClass(prisma, cls.id, 'open');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('STARTS_IN_PAST');
 
     // Refused means not written.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(after.status).toBe('draft');
   });
 
@@ -684,8 +673,7 @@ describe('transitionClass (DB)', () => {
       Date.now(),
     );
 
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Zoned',
@@ -698,14 +686,13 @@ describe('transitionClass (DB)', () => {
         minStudents: 4,
         maxStudents: 12,
         status: 'draft',
-      },
-    });
+      });
 
     const result = await transitionClass(prisma, cls.id, 'open');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('STARTS_IN_PAST');
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(after.status).toBe('draft');
   });
 
@@ -714,8 +701,7 @@ describe('transitionClass (DB)', () => {
     // start instant being in the past is not merely allowed, it is the whole
     // precondition. A guard that fired on every target would stop every class
     // in the product from ever starting.
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Vinyasa',
@@ -728,8 +714,7 @@ describe('transitionClass (DB)', () => {
         minStudents: 4,
         maxStudents: 12,
         status: 'open',
-      },
-    });
+      });
 
     const result = await transitionClass(prisma, cls.id, 'in_progress');
     expect(result.ok).toBe(true);
@@ -738,7 +723,7 @@ describe('transitionClass (DB)', () => {
     // asserts the stored state because "refused" has to mean "did not write";
     // the permit case owes the same evidence in the other direction, or it
     // passes against an implementation that returns `ok` and writes nothing.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(after.status).toBe('in_progress');
   });
 });
@@ -766,13 +751,17 @@ describe('completeClass (DB)', () => {
   let makeClassCounter = 0;
   const makeClass = ({ status }: { status: ClassStatus }) => {
     makeClassCounter += 1;
-    return prisma.class.create({
-      data: {
+    return createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Vinyasa',
-        date: new Date('2026-06-01'),
-        startTime: hhmmToTime(slotTime(540 + makeClassCounter)),
+        // A DAY per call, not a minute (#327) — see `slotDate`. The two tests
+        // below that pass a literal `requireEndedBy` are written to hold for
+        // any offset: one needs an instant before every fixture's end (a date
+        // at or before the base does that), the other moves its own fixture a
+        // week earlier first.
+        date: slotDate('2026-06-01', makeClassCounter),
+        startTime: hhmmToTime(slotTime(540)),
         durationMinutes: 75,
         roomCost: 35,
         minRate: 15,
@@ -781,8 +770,7 @@ describe('completeClass (DB)', () => {
         maxStudents: 12,
         status,
         settingsLocked: true,
-      },
-    });
+      });
   };
 
   beforeAll(async () => {
@@ -823,8 +811,7 @@ describe('completeClass (DB)', () => {
     teacherRoomId = teacherRoom.id;
 
     // Create the in_progress class
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Vinyasa',
@@ -838,8 +825,7 @@ describe('completeClass (DB)', () => {
         maxStudents: 12,
         status: 'in_progress',
         settingsLocked: true,
-      },
-    });
+      });
     classId = cls.id;
 
     // Create 5 students with tiers 1-5
@@ -888,12 +874,12 @@ describe('completeClass (DB)', () => {
     // plain `Class.teacherRoomId` FK — `class.deleteMany` below has to run
     // before `teacherRoom.delete` further down, or that fails on the FK
     // instead. Kept anyway: harmless, and mildly defensive.
-    await prisma.waitlistEntry.deleteMany({ where: { class: { teacherId } } });
+    await prisma.waitlistEntry.deleteMany({ where: { class: { calendarEntry: { teacherId } } } });
     await prisma.payment.deleteMany({
-      where: { registration: { class: { teacherId } } },
+      where: { registration: { class: { calendarEntry: { teacherId } } } },
     });
-    await prisma.registration.deleteMany({ where: { class: { teacherId } } });
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.registration.deleteMany({ where: { class: { calendarEntry: { teacherId } } } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     for (const sid of studentIds) {
       await prisma.student.delete({ where: { id: sid } });
     }
@@ -911,7 +897,7 @@ describe('completeClass (DB)', () => {
     }
 
     // Verify class was updated
-    const cls = await prisma.class.findUnique({ where: { id: classId } });
+    const cls = await prisma.class.findUnique({ where: { id: classId }, include: { calendarEntry: true },});
     expect(cls?.status).toBe('completed');
     expect(cls?.totalStudents).toBe(4);
     expect(cls?.effectiveTeacherRate).not.toBeNull();
@@ -1024,9 +1010,9 @@ describe('completeClass (DB)', () => {
       async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
         await new Promise((r) => setTimeout(r, 900));
-        await tx.class.updateMany({
-          where: { id: cls.id, status: 'in_progress' },
-          data: { status: 'cancelled' },
+        await tx.calendarEntry.update({
+          where: { id: cls.calendarEntryId },
+          data: { cancelledAt: new Date() },
         });
         holderFinishedWork = true;
       },
@@ -1047,14 +1033,15 @@ describe('completeClass (DB)', () => {
     await holder;
     const result = await completingResult;
 
-    // Without the lock, this reads 'in_progress' — the value that was
+    // Without the lock, this reads an uncancelled entry — the state that was
     // current before the wait began — and reports success, having already
     // clobbered the holder's cancellation on the way out.
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/Invalid transition/);
+    if (!result.ok) expect(result.reason).toBe('CANCELLED');
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(after.status).toBe('cancelled');
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    expect(after.status).toBe('in_progress');
+    expect(after.calendarEntry.cancelledAt).not.toBeNull();
 
     // The registration was never priced and no Payment exists — the
     // pricing engine never ran, because the refusal happened before
@@ -1087,15 +1074,18 @@ describe('completeClass (DB)', () => {
    */
   it('refuses to complete a class that is already cancelled', async () => {
     const cls = await makeClass({ status: 'in_progress' });
-    await prisma.class.updateMany({
-      where: { id: cls.id, status: 'in_progress' },
-      data: { status: 'cancelled' },
+    await prisma.calendarEntry.update({
+      where: { id: cls.calendarEntryId },
+      data: { cancelledAt: new Date() },
     });
 
     const result = await completeClass(prisma, cls.id, { finishedEarly: true });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/Invalid transition/);
+    // `CANCELLED`, not `ILLEGAL_TRANSITION`: since #327 a cancelled class
+    // keeps a live status, so the state machine sees a legal move and it is
+    // the entry's own column that refuses.
+    if (!result.ok) expect(result.reason).toBe('CANCELLED');
     expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(0);
   });
 
@@ -1118,13 +1108,12 @@ describe('completeClass (DB)', () => {
 
   it('refuses to complete a class that has not ended when requireEndedBy is given', async () => {
     const cls = await makeClass({ status: 'in_progress' });
-    // This block's `makeClass` plants the class on 2026-06-01 at
-    // `slotTime(540 + counter)` — 18:01, 18:02, … — for 75 minutes, teacher
-    // timezone Europe/Amsterdam (schema default). June is CEST, so 18:01
-    // local is 16:01Z and the class ends at 17:16Z. The counter makes the
-    // exact minute depend on how many tests in this block called
-    // `makeClass` first, so this instant is safely inside the class for ANY
-    // counter value rather than derived from a specific start.
+    // This block's `makeClass` plants the class at 18:00 local (teacher
+    // timezone Europe/Amsterdam, the schema default) on 2026-06-01 PLUS one
+    // day per call, for 75 minutes. June is CEST, so the earliest possible
+    // fixture starts at 16:00Z and ends at 17:15Z. This instant is before
+    // every one of them, for ANY counter value, rather than derived from a
+    // specific start.
     const result = await completeClass(prisma, cls.id, {
       requireEndedBy: new Date('2026-06-01T16:30:00Z'),
     });
@@ -1136,7 +1125,7 @@ describe('completeClass (DB)', () => {
     // with `endsWith`, so appending anything to the producer's message kept this
     // green and silently desynced the sweep.
     if (!result.ok) expect(result.reason).toBe('NOT_ENDED_YET');
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(updated.status).toBe('in_progress');
   });
 
@@ -1163,20 +1152,22 @@ describe('completeClass (DB)', () => {
       completeClass(prisma, cls.id, { requireEndedBy: new Date('not-a-date') }),
     ).rejects.toThrow(TypeError);
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(unchanged.status).toBe('in_progress');
   });
 
   it('completes a class at exactly its end instant, not one tick later', async () => {
     const cls = await makeClass({ status: 'in_progress' });
-    const row = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const row = await prisma.calendarEntry.findUniqueOrThrow({
+      where: { id: cls.calendarEntryId },
+    });
     const start = classStartInstant(row.date, row.startTime, 'Europe/Amsterdam');
     const end = new Date(start.getTime() + row.durationMinutes * 60 * 1000);
 
     const result = await completeClass(prisma, cls.id, { requireEndedBy: end });
     expect(result.ok).toBe(true);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(updated.status).toBe('completed');
   });
 
@@ -1190,8 +1181,10 @@ describe('completeClass (DB)', () => {
    */
   it('completes a class rescheduled EARLIER, where the guard must not fire', async () => {
     const cls = await makeClass({ status: 'in_progress' });
-    await prisma.class.update({
-      where: { id: cls.id },
+    // A week before the block's base date, so it is behind every fixture
+    // offset `slotDate` can produce.
+    await prisma.calendarEntry.update({
+      where: { id: cls.calendarEntryId },
       data: { date: new Date('2026-05-25') },
     });
 
@@ -1200,7 +1193,7 @@ describe('completeClass (DB)', () => {
     });
     expect(result.ok).toBe(true);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(updated.status).toBe('completed');
   });
 
@@ -1246,7 +1239,7 @@ describe('completeClass (DB)', () => {
       expect(waited).toBeGreaterThan(1_000);
       expect(waited).toBeLessThan(4_000);
 
-      const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
       expect(unchanged.status).toBe('open');
     } finally {
       release();
@@ -1305,8 +1298,7 @@ describe('completeClass — billing path throws rather than mis-charging a bypas
     });
     teacherRoomId = teacherRoom.id;
 
-    const cls = await prisma.class.create({
-      data: {
+    const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Bad Tier Flow',
@@ -1320,8 +1312,7 @@ describe('completeClass — billing path throws rather than mis-charging a bypas
         maxStudents: 8,
         status: 'in_progress',
         settingsLocked: true,
-      },
-    });
+      });
     classId = cls.id;
 
     const student = await prisma.student.create({
@@ -1343,7 +1334,7 @@ describe('completeClass — billing path throws rather than mis-charging a bypas
   afterAll(async () => {
     await prisma.payment.deleteMany({ where: { registration: { classId } } });
     await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.class.delete({ where: { id: classId } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: classId } } } });
     await prisma.student.delete({ where: { id: studentId } });
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
     await prisma.room.delete({ where: { id: roomId } });
@@ -1381,7 +1372,7 @@ describe('completeClass — billing path throws rather than mis-charging a bypas
       ).rejects.toThrow(/outside 1-5/);
 
       // The transaction rolled back — the class must not have completed.
-      const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+      const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
       expect(cls.status).not.toBe('completed');
     } finally {
       // Restoring here, rather than after the assertions above, means a
@@ -1457,29 +1448,39 @@ describe('updateClass (DB)', () => {
    * injected `now`.
    */
   const PAST_FIXTURE_DATE = '2020-01-01';
+  /**
+   * `state` is `ClassStatus` PLUS `'cancelled'` since #327: cancellation left
+   * the enum, so the fixture takes the freeze the tests want to describe and
+   * decides which of the two rows carries it — a cancelled class is `open`
+   * with a `cancelledAt` on its entry, which is exactly what a real cancel
+   * produces.
+   */
   const makeClass = (
     settingsLocked: boolean,
-    status: ClassStatus = 'draft',
+    state: ClassStatus | 'cancelled' = 'draft',
     date: string = FIXTURE_DATE,
   ) => {
     makeClassCounter += 1;
-    return prisma.class.create({
-      data: {
+    return createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
-        date: new Date(date),
-        startTime: hhmmToTime(slotTime(makeClassCounter)),
+        // A DAY per call, not a minute (#327): the slot constraint is a range
+        // overlap now, so two 60-minute fixtures a minute apart collide. The
+        // date assertions below therefore compare against the fixture's OWN
+        // date rather than against the base literal.
+        date: slotDate(date, makeClassCounter),
+        startTime: hhmmToTime(slotTime(0)),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
         targetRate: 25,
         minStudents: 4,
         maxStudents: 12,
-        status,
+        status: state === 'cancelled' ? 'open' : state,
+        cancelledAt: state === 'cancelled' ? new Date() : null,
         settingsLocked,
-      },
-    });
+      });
   };
 
   beforeAll(async () => {
@@ -1519,7 +1520,7 @@ describe('updateClass (DB)', () => {
     // Guarded: an undefined filter turns deleteMany into an unfiltered
     // delete-all across the table.
     if (teacherId) {
-      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     }
     if (roomId) await prisma.room.delete({ where: { id: roomId } });
@@ -1539,7 +1540,7 @@ describe('updateClass (DB)', () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.cls.description).toBe('Updated');
 
-    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(stored.description).toBe('Updated');
   });
 
@@ -1558,7 +1559,7 @@ describe('updateClass (DB)', () => {
     // Every economic field, not a sample: these are the pricing engine's
     // inputs, and stripping any one of them from the write used to leave this
     // suite green.
-    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(Number(stored.roomCost)).toBe(42);
     expect(Number(stored.minRate)).toBe(5);
     expect(Number(stored.targetRate)).toBe(60);
@@ -1587,14 +1588,14 @@ describe('updateClass (DB)', () => {
     });
     expect(result.ok).toBe(true);
 
-    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(stored.classType).toBe('Vinyasa');
-    expect(timeToHHmm(stored.startTime)).toBe('18:30');
-    expect(stored.durationMinutes).toBe(75);
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    expect(stored.calendarEntry.classType).toBe('Vinyasa');
+    expect(timeToHHmm(stored.calendarEntry.startTime)).toBe('18:30');
+    expect(stored.calendarEntry.durationMinutes).toBe(75);
     expect(stored.description).toBeNull();
     // Compared as a date string, not with toEqual, so timezone handling on
     // this @db.Date column can't produce a false pass or fail around midnight.
-    expect(stored.date.toISOString().slice(0, 10)).toBe('2099-03-09');
+    expect(stored.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-03-09');
   });
 
   it('rejects an economic edit to a locked class, naming the fields sent', async () => {
@@ -1606,7 +1607,7 @@ describe('updateClass (DB)', () => {
     const result = await updateClass(prisma, cls.id, { minRate: 1, roomCost: 999 });
     expect(result).toEqual({ ok: false, reason: 'locked', fields: ['roomCost', 'minRate'] });
 
-    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(Number(stored.roomCost)).toBe(35);
     expect(Number(stored.minRate)).toBe(15);
   });
@@ -1617,7 +1618,7 @@ describe('updateClass (DB)', () => {
     const result = await updateClass(prisma, cls.id, { description: 'Still editable' });
     expect(result.ok).toBe(true);
 
-    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(stored.description).toBe('Still editable');
     expect(Number(stored.roomCost)).toBe(35);
   });
@@ -1628,7 +1629,7 @@ describe('updateClass (DB)', () => {
     const result = await updateClass(prisma, cls.id, { description: 'x', roomCost: 999 });
     expect(result).toEqual({ ok: false, reason: 'locked', fields: ['roomCost'] });
 
-    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(stored.description).toBeNull();
     expect(Number(stored.roomCost)).toBe(35);
   });
@@ -1656,37 +1657,37 @@ describe('updateClass (DB)', () => {
     const cls = await makeClass(false, 'completed');
 
     const result = await updateClass(prisma, cls.id, { date: new Date('2020-01-01') });
-    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+    expect(result).toEqual({ ok: false, reason: 'terminal', state: 'completed' });
 
     // "Refused" has to mean "did not write". #247 is a data-loss issue: the
     // wrong date is what makes waitlist-retention's sweep delete this class's
     // unfulfilled queue, so a refusal that still moved the column would close
     // nothing.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(after.date.toISOString().slice(0, 10)).toBe(FIXTURE_DATE);
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
   });
 
   it('refuses a date edit on a cancelled class too', async () => {
     const cls = await makeClass(false, 'cancelled');
 
     const result = await updateClass(prisma, cls.id, { date: new Date('2020-01-01') });
-    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'cancelled' });
+    expect(result).toEqual({ ok: false, reason: 'terminal', state: 'cancelled' });
 
     // Same "did not write" check as the completed case above, and not
     // optional here either: `reapClosedWaitlistEntries` reaps a `cancelled`
     // class's queue too, not only a `completed` one, so a refuse-but-write bug
     // on this path is the identical data-loss shape as T1's.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(after.date.toISOString().slice(0, 10)).toBe(FIXTURE_DATE);
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
   });
 
   it('freezes the whole class, not a field list — a description edit is refused', async () => {
     const cls = await makeClass(false, 'completed');
 
     const result = await updateClass(prisma, cls.id, { description: 'Annotated afterwards' });
-    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+    expect(result).toEqual({ ok: false, reason: 'terminal', state: 'completed' });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(after.description).toBeNull();
   });
 
@@ -1699,10 +1700,10 @@ describe('updateClass (DB)', () => {
     const cls = await makeClass(false, 'completed');
 
     const result = await updateClass(prisma, cls.id, { roomCost: 999 });
-    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+    expect(result).toEqual({ ok: false, reason: 'terminal', state: 'completed' });
 
     // Cheap and consistent with T1/T2: assert the economic column did not move.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(Number(after.roomCost)).toBe(35);
   });
 
@@ -1719,12 +1720,12 @@ describe('updateClass (DB)', () => {
     const cls = await makeClass(true, 'completed');
 
     const result = await updateClass(prisma, cls.id, { roomCost: 999 });
-    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+    expect(result).toEqual({ ok: false, reason: 'terminal', state: 'completed' });
 
     // Cheap and consistent with T1/T2/T4: assert the economic column did not
     // move — under either refusal reason this class would refuse the write,
     // but only `terminal` is the true one here.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(Number(after.roomCost)).toBe(35);
   });
 
@@ -1738,8 +1739,8 @@ describe('updateClass (DB)', () => {
     // make, for the same reason. A refusal that still moved the column is what
     // leaves `waitlist-retention`'s sweep a class dated 2020 to reap, and the
     // sweep is a `deleteMany`.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(after.date.toISOString().slice(0, 10)).toBe(FIXTURE_DATE);
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
   });
 
   it('answers past_start, not locked, when the class is both (#249)', async () => {
@@ -1764,9 +1765,9 @@ describe('updateClass (DB)', () => {
     // Under either refusal this class refuses the write, so the returned reason
     // is the only thing that distinguishes them — assert the column too, since
     // "refused" has meant "did not write" everywhere else on this branch.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(Number(after.roomCost)).toBe(35);
-    expect(after.date.toISOString().slice(0, 10)).toBe(FIXTURE_DATE);
+    expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
   });
 
   it("reads the start in the teacher's zone, not UTC, when rescheduling (#249)", async () => {
@@ -1783,8 +1784,8 @@ describe('updateClass (DB)', () => {
     expect(result).toEqual({ ok: false, reason: 'past_start' });
 
     // Refused means not written, as everywhere else on this branch.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(after.date.toISOString().slice(0, 10)).toBe(FIXTURE_DATE);
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
   });
 
   it('leaves a non-scheduling edit alone on a class that has already started (#249)', async () => {
@@ -1812,16 +1813,16 @@ describe('updateClass (DB)', () => {
 
     const result = await updateClass(prisma, cls.id, {
       description: 'Updated',
-      date: cls.date,
-      startTime: cls.startTime,
-      classType: cls.classType,
-      durationMinutes: cls.durationMinutes,
+      date: cls.calendarEntry.date,
+      startTime: cls.calendarEntry.startTime,
+      classType: cls.calendarEntry.classType,
+      durationMinutes: cls.calendarEntry.durationMinutes,
     });
     expect(result.ok).toBe(true);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(after.description).toBe('Updated');
-    expect(after.date.toISOString().slice(0, 10)).toBe(PAST_FIXTURE_DATE);
+    expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
   });
 
   it('still refuses a full-form save that MOVES a live class into the past (#249)', async () => {
@@ -1833,12 +1834,12 @@ describe('updateClass (DB)', () => {
     const result = await updateClass(prisma, cls.id, {
       description: 'Updated',
       date: new Date(PAST_FIXTURE_DATE),
-      startTime: cls.startTime,
+      startTime: cls.calendarEntry.startTime,
     });
     expect(result).toEqual({ ok: false, reason: 'past_start' });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(after.date.toISOString().slice(0, 10)).toBe(FIXTURE_DATE);
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
     expect(after.description).toBeNull();
   });
 
@@ -1861,8 +1862,8 @@ describe('updateClass (DB)', () => {
     const result = await updateClass(prisma, cls.id, { startTime: hhmmToTime('23:59') });
     expect(result).toEqual({ ok: false, reason: 'past_start' });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(timeToHHmm(after.startTime)).not.toBe('23:59');
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    expect(timeToHHmm(after.calendarEntry.startTime)).not.toBe('23:59');
   });
 
   /**
@@ -1892,7 +1893,7 @@ describe('updateClass (DB)', () => {
       const result = await updateClass(prisma, cls.id, { description: `Edited while ${status}` });
       expect(result.ok).toBe(true);
 
-      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
       expect(after.description).toBe(`Edited while ${status}`);
     },
   );
@@ -1941,7 +1942,7 @@ describe('updateClass (DB)', () => {
 
     const result = await updateClass(racing, cls.id, { description: 'Edited mid-completion' });
 
-    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+    expect(result).toEqual({ ok: false, reason: 'terminal', state: 'completed' });
     // The opening read, then the re-read in the `count === 0` branch. Three
     // would mean the write was retried; one would mean the early return
     // answered and the CAS never ran.
@@ -1950,7 +1951,7 @@ describe('updateClass (DB)', () => {
     // The assertion the stubs cannot make: the row is untouched. `description`
     // is not economic and not `date`, so no trigger and no `settingsLocked`
     // check was ever involved — this is the conjunct alone.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(after.description).toBeNull();
     expect(after.status).toBe('completed');
   });
@@ -1977,7 +1978,7 @@ describe('updateClass (DB)', () => {
     expect(await updateClass(prisma, cls.id, {})).toEqual({
       ok: false,
       reason: 'terminal',
-      status: 'completed',
+      state: 'completed',
     });
 
     // Both no-op shapes, because they are not the same code path until they
@@ -1988,7 +1989,7 @@ describe('updateClass (DB)', () => {
     expect(await updateClass(prisma, cls.id, { description: undefined })).toEqual({
       ok: false,
       reason: 'terminal',
-      status: 'completed',
+      state: 'completed',
     });
   });
 });
@@ -2017,53 +2018,83 @@ describe('updateClass — the count === 0 branches', () => {
     // The stored `startTime` the opening read reports. Defaults to a readable
     // one; the only caller that overrides it is the field-gate case below,
     // which needs a value `classStartInstant` cannot parse — an Invalid Date.
-    // Unreachable from validated input — `Class.startTime` is `@db.Time`, and
-    // no schema accepts a value `hhmmToTime` could turn into one — so a stub
-    // is the only way to stand it up at all.
+    // Unreachable from validated input — `CalendarEntry.startTime` is
+    // `@db.Time`, and no schema accepts a value `hhmmToTime` could turn into
+    // one — so a stub is the only way to stand it up at all.
     startTime?: Date;
+    // The entry's own cancellation, reported by both reads. Cancellation is a
+    // column rather than a status since #327, so a stub that only spoke
+    // `status` could no longer stage the frozen cases at all.
+    cancelledAt?: Date | null;
   }) {
     const updateManyCalls: UpdateManyArgs[] = [];
+    const entryUpdateManyCalls: UpdateManyArgs[] = [];
     // Resolved once rather than as a `??` chain at each use, so "statusAfter
     // defaults to status, which defaults to open" is a statement rather than
     // operator precedence, and `'open'` appears in one place.
     const statusOnRead = opts.status ?? 'open';
     const statusOnReRead = opts.statusAfter ?? statusOnRead;
+    const cancelledAt = opts.cancelledAt ?? null;
     let reads = 0;
-    const db = {
+    const entry = {
+      id: 'stub-entry',
+      teacherId: 'stub-teacher',
+      // #249's guard reads these. Future-dated and UTC so the cases in this
+      // block that predate the guard behave exactly as they did.
+      //
+      // NOT because "no stub test sends a past date" — one does, and an
+      // earlier version of this comment said otherwise. `'answers a
+      // visibly-terminal row from the read'` sends 2020-01-01. What spares it
+      // is the terminal check returning first, which is that test's whole
+      // point; the guard's own precedence is what makes the claim true, not
+      // the fixtures.
+      date: new Date('2099-06-01T00:00:00.000Z'),
+      startTime: opts.startTime ?? hhmmToTime('09:00'),
+      cancelledAt,
+      teacher: { defaultTimezone: 'UTC' },
+    };
+    const readClass = () => {
+      reads += 1;
+      if (reads === 1) {
+        return {
+          id: 'stub-class',
+          settingsLocked: opts.settingsLocked,
+          status: statusOnRead,
+          calendarEntry: entry,
+        };
+      }
+      return opts.rowSurvives
+        ? { id: 'stub-class', status: statusOnReRead, calendarEntry: { cancelledAt } }
+        : null;
+    };
+    // `updateClass` opens a transaction and takes `lockClassRow` since #327, so
+    // the stub has to answer `$transaction` and the two raw lock statements as
+    // well as the model calls. The lock reads return nothing and are not
+    // recorded: what this block is about is the WHERE of the writes.
+    const tx = {
+      $executeRawUnsafe: async () => 0,
+      $queryRaw: async () => [],
       class: {
-        findUnique: async () => {
-          reads += 1;
-          if (reads === 1) {
-            return {
-              id: 'stub-class',
-              settingsLocked: opts.settingsLocked,
-              status: statusOnRead,
-              // #249's guard reads these. Future-dated and UTC so the cases
-              // in this block that predate the guard behave exactly as they
-              // did.
-              //
-              // NOT because "no stub test sends a past date" — one does, and
-              // an earlier version of this comment said otherwise. `'answers a
-              // visibly-terminal row from the read'` sends 2020-01-01. What
-              // spares it is the terminal check returning first, which is that
-              // test's whole point; the guard's own precedence is what makes
-              // the claim true, not the fixtures.
-              date: new Date('2099-06-01T00:00:00.000Z'),
-              startTime: opts.startTime ?? hhmmToTime('09:00'),
-              teacher: { defaultTimezone: 'UTC' },
-            };
-          }
-          return opts.rowSurvives ? { id: 'stub-class', status: statusOnReRead } : null;
-        },
+        findUnique: readClass,
         updateMany: async (args: UpdateManyArgs) => {
           updateManyCalls.push(args);
           return { count: 0 };
         },
       },
+      calendarEntry: {
+        updateMany: async (args: UpdateManyArgs) => {
+          entryUpdateManyCalls.push(args);
+          return { count: 0 };
+        },
+      },
+    };
+    const db = {
+      class: { findUnique: readClass },
+      $transaction: async (cb: (t: typeof tx) => unknown) => cb(tx),
     } as unknown as PrismaClient;
     // A getter, not a snapshot: it must read the live `reads` closure
     // variable at assertion time, after updateClass has run.
-    return { db, updateManyCalls, get reads() { return reads; } };
+    return { db, updateManyCalls, entryUpdateManyCalls, get reads() { return reads; } };
   }
 
   it('reports locked when the row survives — the compare-and-swap lost its race', async () => {
@@ -2081,6 +2112,7 @@ describe('updateClass — the count === 0 branches', () => {
       id: 'stub-class',
       settingsLocked: false,
       status: { notIn: [...TERMINAL_CLASS_STATUSES] },
+      calendarEntry: { cancelledAt: null },
     });
 
     // Exactly the opening read plus one re-check — a spurious third
@@ -2115,6 +2147,7 @@ describe('updateClass — the count === 0 branches', () => {
     expect(updateManyCalls[0]?.where).toEqual({
       id: 'stub-class',
       status: { notIn: [...TERMINAL_CLASS_STATUSES] },
+      calendarEntry: { cancelledAt: null },
     });
 
     // Exactly the opening read plus one re-check — a spurious third
@@ -2155,16 +2188,47 @@ describe('updateClass — the count === 0 branches', () => {
     });
     const { db, updateManyCalls } = stub;
 
-    // A date-only edit, so `sentEconomic` is null. FUTURE-dated deliberately:
-    // #249's guard sits above this path and would answer a past date first,
-    // which would leave this branch untested while the test still looked green.
-    const result = await updateClass(db, 'stub-class', { date: new Date('2099-07-01') });
-    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+    // A DESCRIPTION-only edit, so `sentEconomic` is null and the write lands
+    // on `Class` — which is the row whose CAS answers `terminal`. A date-only
+    // edit takes the entry's CAS instead and answers `frozen`; that is the
+    // case immediately below, and the two are separate because #327 gave the
+    // two rows separate refusals.
+    const result = await updateClass(db, 'stub-class', { description: 'x' });
+    expect(result).toEqual({ ok: false, reason: 'terminal', state: 'completed' });
 
     // Proves the CAS path ran rather than the early return, which is
     // otherwise indistinguishable — it returns the same shape.
     expect(updateManyCalls).toHaveLength(1);
     expect(stub.reads).toBe(2);
+  });
+
+  /**
+   * #327. The ENTRY's half of the same race, and it must not collapse into
+   * the class's: a `Class` miss means terminal STATUS, a `CalendarEntry` miss
+   * means a frozen SCHEDULE, and they reach the teacher as different
+   * sentences (`CLASS_TERMINAL` versus `CLASS_SCHEDULE_FROZEN`).
+   */
+  it('reports frozen when the ENTRY refuses a reschedule it lost the race for', async () => {
+    const stub = stubDb({ settingsLocked: false, rowSurvives: true });
+    const { db, updateManyCalls, entryUpdateManyCalls } = stub;
+
+    // FUTURE-dated deliberately: #249's guard sits above this path and would
+    // answer a past date first, which would leave this branch untested while
+    // the test still looked green.
+    const result = await updateClass(db, 'stub-class', { date: new Date('2099-07-01') });
+    expect(result).toEqual({ ok: false, reason: 'frozen' });
+
+    // The CLASS half never ran — this request touches only entry columns —
+    // which is the "each side runs only if it has work" guard, and the reason
+    // an unconditional `updateMany` with nothing to set could not be read as a
+    // lost race.
+    expect(updateManyCalls).toHaveLength(0);
+    expect(entryUpdateManyCalls).toHaveLength(1);
+    expect(entryUpdateManyCalls[0]?.where).toEqual({
+      id: 'stub-entry',
+      classCompletedAt: null,
+      NOT: { kind: 'regular', cancelledAt: { not: null } },
+    });
   });
 
   it('constrains the write to non-terminal rows under both filter shapes', async () => {
@@ -2178,7 +2242,12 @@ describe('updateClass — the count === 0 branches', () => {
     // shapes individually; kept anyway as the only test whose name states the
     // property and the only one showing both arms side by side under the
     // derived constant.
-    const live = { status: { notIn: [...TERMINAL_CLASS_STATUSES] } };
+    // Both halves of the freeze, on the two rows that now carry them: the
+    // status conjunct on `Class`, the cancellation on its entry.
+    const live = {
+      status: { notIn: [...TERMINAL_CLASS_STATUSES] },
+      calendarEntry: { cancelledAt: null },
+    };
 
     const economic = stubDb({ settingsLocked: false, rowSurvives: false });
     await updateClass(economic.db, 'stub-class', { roomCost: 42 });
@@ -2268,7 +2337,7 @@ describe('updateClass — the count === 0 branches', () => {
     });
 
     const result = await updateClass(db, 'stub-class', { date: new Date('2020-01-01') });
-    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+    expect(result).toEqual({ ok: false, reason: 'terminal', state: 'completed' });
 
     // The point of this case, and the mirror of its `locked` sibling above:
     // the pre-check answered it WITHOUT attempting a write. That is the

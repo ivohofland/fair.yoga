@@ -42,9 +42,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { generateInstancesForTemplate, getNextOccurrences } from './class-generator';
 import { generateStudioInstancesForTemplate } from './studio-class-generator';
-import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = `gentx-${Date.now()}`;
@@ -66,7 +66,7 @@ const TIME = '08:45';
  * read and the week read all have to be genuine, or the test stops exercising
  * the transaction semantics that are the whole point.
  */
-function blindTo(tx: Prisma.TransactionClient, model: 'studioClass' | 'class') {
+function blindTo(tx: Prisma.TransactionClient, model: 'calendarEntry') {
   return new Proxy(tx, {
     get(target, prop, receiver) {
       if (prop !== model) return Reflect.get(target, prop, receiver);
@@ -113,8 +113,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.class.deleteMany({ where: { teacherId } });
-  await prisma.studioClass.deleteMany({ where: { teacherId } });
+  await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+  await prisma.calendarEntry.deleteMany({ where: { teacherId } });
   // `ClassTemplate`/`StudioClassTemplate` are `onDelete: Cascade` from
   // `ScheduleRule` (issue 298), so deleting the rules removes both
   // families' templates with them.
@@ -167,72 +167,90 @@ async function freshStudioTemplate() {
 }
 
 describe('generation inside a real $transaction (DB)', () => {
-  it('lets the class generator escape a cross-family collision as YG001, not 25P02', async () => {
+  /**
+   * WHAT #327 DID TO THIS PAIR, recorded rather than quietly re-pointed.
+   *
+   * These two cases used to prove that a cross-family collision reaching the
+   * INSERT escaped as a `YG001` — the SQLSTATE the two template POST catches
+   * recognise — rather than as the `25P02` a caught-and-retried error would
+   * have left behind. Both halves of that premise are gone:
+   *
+   *  - `YG001` had one raiser, the four cross-family triggers, and #327's
+   *    migration dropped all four. Occupancy is one `EXCLUDE USING gist` on
+   *    `CalendarEntry` now, which raises `23P01`.
+   *  - `ON CONFLICT DO NOTHING` — which `createManyAndReturn({ skipDuplicates:
+   *    true })` compiles to, with no conflict target — covers an EXCLUSION
+   *    constraint as well as a unique key. So the collision is ABSORBED at the
+   *    insert: the date is skipped, nothing is raised, and nothing escapes.
+   *
+   * That is strictly better than what it replaced (#301 was the 500 the
+   * escaping error produced at eight of the ten endpoints), and it is why
+   * these cases now assert absorption. What survives unchanged is the
+   * property this FILE is named for and the reason it drives a real
+   * `$transaction`: the transaction is never poisoned, so the other three
+   * dates commit and no `25P02` appears anywhere.
+   *
+   * `blindTo` now blinds `calendarEntry` rather than the per-family table:
+   * one table, one occupancy read.
+   */
+  it('absorbs a cross-family collision at the insert, without poisoning the transaction', async () => {
     const now = new Date();
     const blocked = candidates(now)[1]!;
-    await prisma.class.deleteMany({ where: { teacherId } });
-    await prisma.studioClass.deleteMany({ where: { teacherId } });
-    await prisma.studioClass.create({
-      data: {
-        teacherId, templateId: null, classType: 'Holder', date: blocked,
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await createStudioClassFixture(prisma, {
+        teacherId, scheduleRuleId: null, classType: 'Holder', date: blocked,
         startTime: hhmmToTime(TIME), durationMinutes: 60, location: 'Elsewhere', hourlyRate: 40,
-      },
-    });
+      });
     const template = await freshClassTemplate();
 
     let caught: unknown;
-    await prisma
-      .$transaction(async (tx) => {
-        await generateInstancesForTemplate(blindTo(tx, 'studioClass'), template, now);
-      })
+    const result = await prisma
+      .$transaction(async (tx) =>
+        generateInstancesForTemplate(blindTo(tx, 'calendarEntry'), template, now),
+      )
       .catch((err: unknown) => {
         caught = err;
+        return null;
       });
 
-    // THE assertion. `25P02` also fails `toBeUndefined`, so a count-based or
-    // truthiness-based check would pass against the defect this file exists
-    // for — what matters is that the escaping error is still the one the two
-    // template POST catches recognise. (Two, not ten: pass 2 corrected that
-    // conflation in this file's header and in both generators and missed this
-    // body comment, which is why the header now states the number once and
-    // this line points at it.)
-    expect(caught).toBeDefined();
-    expect(isCrossFamilySlotConflict(caught)).toBe(true);
-    expect((caught as Error).message).not.toContain('25P02');
+    // Nothing escaped — and `25P02` is named explicitly, because a poisoned
+    // transaction is the failure this file exists to keep out and it would
+    // also satisfy a bare `toBeNull`.
+    expect(caught === undefined || !String(caught).includes('25P02')).toBe(true);
+    expect(caught).toBeUndefined();
 
-    // The accepted cost, stated rather than implied: the transaction rolled
-    // back whole, so the window is lost for this run. The next sweep's
-    // pre-check sees the committed studio class and skips only that date.
-    expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(0);
+    // Blinded, the pre-check offers all four dates; the constraint declines
+    // the one the holder occupies and the insert skips it. Three commit.
+    expect(result?.created).toBe(3);
+    expect(result?.skipped.map((s) => s.reason)).toEqual(['raced']);
+    expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } } })).toBe(3);
   });
 
-  it('lets the studio generator escape the mirror collision the same way', async () => {
+  it('absorbs the mirror collision on the studio side the same way', async () => {
     const now = new Date();
     const blocked = candidates(now)[1]!;
-    await prisma.class.deleteMany({ where: { teacherId } });
-    await prisma.studioClass.deleteMany({ where: { teacherId } });
-    await prisma.class.create({
-      data: {
-        teacherId, teacherRoomId, templateId: null, classType: 'Holder', date: blocked,
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await createClassFixture(prisma, {
+        teacherId, teacherRoomId, scheduleRuleId: null, classType: 'Holder', date: blocked,
         startTime: hhmmToTime(TIME), durationMinutes: 60, roomCost: 20, minRate: 30,
         targetRate: 60, minStudents: 3, maxStudents: 10,
-      },
-    });
+      });
     const template = await freshStudioTemplate();
 
     let caught: unknown;
-    await prisma
-      .$transaction(async (tx) => {
-        await generateStudioInstancesForTemplate(blindTo(tx, 'class'), template, now);
-      })
+    const result = await prisma
+      .$transaction(async (tx) =>
+        generateStudioInstancesForTemplate(blindTo(tx, 'calendarEntry'), template, now),
+      )
       .catch((err: unknown) => {
         caught = err;
+        return null;
       });
 
-    expect(caught).toBeDefined();
-    expect(isCrossFamilySlotConflict(caught)).toBe(true);
-    expect((caught as Error).message).not.toContain('25P02');
-    expect(await prisma.studioClass.count({ where: { templateId: template.id } })).toBe(0);
+    expect(caught).toBeUndefined();
+    expect(result?.created).toBe(3);
+    expect(result?.skipped.map((s) => s.reason)).toEqual(['raced']);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: template.id } } } } } })).toBe(3);
   });
 
   it('does not reach the trigger at all when the pre-check can see the row', async () => {
@@ -241,14 +259,12 @@ describe('generation inside a real $transaction (DB)', () => {
     // transaction commits the other three. This is the realistic path.
     const now = new Date();
     const blocked = candidates(now)[1]!;
-    await prisma.class.deleteMany({ where: { teacherId } });
-    await prisma.studioClass.deleteMany({ where: { teacherId } });
-    await prisma.studioClass.create({
-      data: {
-        teacherId, templateId: null, classType: 'Holder', date: blocked,
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await createStudioClassFixture(prisma, {
+        teacherId, scheduleRuleId: null, classType: 'Holder', date: blocked,
         startTime: hhmmToTime(TIME), durationMinutes: 60, location: 'Elsewhere', hourlyRate: 40,
-      },
-    });
+      });
     const template = await freshClassTemplate();
 
     const result = await prisma.$transaction(async (tx) =>

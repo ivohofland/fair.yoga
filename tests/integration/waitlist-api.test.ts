@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { promoteNext } from '@/services/waitlist';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -92,8 +93,7 @@ beforeAll(async () => {
   // window" 409 branch. The window/state guard itself lives in
   // claimSpot/getWaitlistWindow (service); only the exception → 409
   // mapping is route-level.
-  const farFutureClass = await prisma.class.create({
-    data: {
+  const farFutureClass = await createClassFixture(prisma, {
       teacherId,
       teacherRoomId,
       classType: 'Waitlist API Far Future',
@@ -106,8 +106,7 @@ beforeAll(async () => {
       minStudents: 1,
       maxStudents: 2,
       status: 'open',
-    },
-  });
+    });
   farFutureClassId = farFutureClass.id;
   await prisma.waitlistEntry.create({
     data: { classId: farFutureClassId, studentId, position: 1, status: 'waiting' },
@@ -148,8 +147,7 @@ beforeAll(async () => {
     classStart.getUTCMinutes(),
   ).padStart(2, '0')}`;
 
-  const freedSpotClass = await prisma.class.create({
-    data: {
+  const freedSpotClass = await createClassFixture(prisma, {
       teacherId,
       teacherRoomId,
       classType: 'Waitlist API Freed Spot',
@@ -163,8 +161,7 @@ beforeAll(async () => {
       maxStudents: 1, // no active registrations below → the one spot reads as freed
       cancelDeadline: 'HOURS_6',
       status: 'open',
-    },
-  });
+    });
   freedSpotClassId = freedSpotClass.id;
   await prisma.waitlistEntry.create({
     data: { classId: freedSpotClassId, studentId, position: 1, status: 'waiting' },
@@ -331,8 +328,7 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
     // farFutureClassId: same teacher, and Class_teacher_slot_unique is
     // (teacherId, date, startTime) — reusing farFutureClassId's slot would
     // collide with that still-open class.
-    const promoteClass = await prisma.class.create({
-      data: {
+    const promoteClass = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Waitlist API Roster Promote',
@@ -345,8 +341,7 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
         minStudents: 1,
         maxStudents: 2,
         status: 'open',
-      },
-    });
+      });
     promoteClassId = promoteClass.id;
     await prisma.waitlistEntry.create({
       data: { classId: promoteClassId, studentId: waitlistStudentId, position: 1, status: 'waiting' },
@@ -384,8 +379,7 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
       classStart.getUTCMinutes(),
     ).padStart(2, '0')}`;
 
-    const claimClass = await prisma.class.create({
-      data: {
+    const claimClass = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Waitlist API Roster Claim',
@@ -399,8 +393,7 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
         maxStudents: 1,
         cancelDeadline: 'HOURS_6',
         status: 'open',
-      },
-    });
+      });
     claimClassId = claimClass.id;
     await prisma.waitlistEntry.create({
       data: { classId: claimClassId, studentId: claimStudentId, position: 1, status: 'waiting' },
@@ -585,8 +578,7 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
     // the lock is the only thing left that can change it. 2099-06-03 keeps
     // this off farFutureClassId's and promoteClassId's slots —
     // Class_teacher_slot_unique is (teacherId, date, startTime).
-    const joinClass = await prisma.class.create({
-      data: {
+    const joinClass = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Waitlist API Lock Join',
@@ -599,8 +591,7 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
         minStudents: 1,
         maxStudents: 1,
         status: 'open',
-      },
-    });
+      });
     joinClassId = joinClass.id;
     await prisma.registration.create({
       data: {
@@ -628,8 +619,7 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
       claimStart.getUTCMinutes(),
     ).padStart(2, '0')}`;
 
-    const lockClaimClass = await prisma.class.create({
-      data: {
+    const lockClaimClass = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
         classType: 'Waitlist API Lock Claim',
@@ -643,8 +633,7 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
         maxStudents: 1, // no active registrations → the one spot reads as freed
         cancelDeadline: 'HOURS_6',
         status: 'open',
-      },
-    });
+      });
     lockClaimClassId = lockClaimClass.id;
     await prisma.waitlistEntry.create({
       data: {

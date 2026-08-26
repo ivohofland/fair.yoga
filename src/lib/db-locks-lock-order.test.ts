@@ -3,6 +3,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { lockClassRowsOrdered } from './db-locks';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 
@@ -164,8 +165,8 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
       status: 'open' as const,
     };
     // Classes: HIGH first, so the `Class` scan's natural order is [HIGH, LOW].
-    await prisma.class.create({ data: { ...base, id: highClassId, date: new Date('2099-06-01') } });
-    await prisma.class.create({ data: { ...base, id: lowClassId, date: new Date('2099-06-02') } });
+    await createClassFixture(prisma, { ...base, id: highClassId, date: new Date('2099-06-01') });
+    await createClassFixture(prisma, { ...base, id: lowClassId, date: new Date('2099-06-02') });
 
     const student = await prisma.student.create({
       data: {
@@ -193,7 +194,7 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
 
   afterAll(async () => {
     await prisma.waitlistEntry.deleteMany({ where: { studentId } });
-    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.student.deleteMany({ where: { id: studentId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.deleteMany({ where: { id: roomId } });
@@ -205,7 +206,9 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
   it('serialises two callers whose natural orders disagree, instead of deadlocking', async () => {
     // Premise 1: the scan's natural order.
     const scanOrder = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT c.id FROM "Class" c WHERE c."teacherId" = ${teacherId}
+      SELECT c.id FROM "Class" c
+        JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+       WHERE e."teacherId" = ${teacherId}
     `;
     expect(scanOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
 
@@ -273,7 +276,8 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     const b = prisma.$transaction(
       async (tx) => {
         const ids = await lockClassRowsOrdered(tx, {
-          where: Prisma.sql`c."teacherId" = ${teacherId}`,
+          join: Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
+          where: Prisma.sql`e."teacherId" = ${teacherId}`,
         });
         await new Promise((r) => setTimeout(r, 250));
         return ids;

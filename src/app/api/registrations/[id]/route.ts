@@ -27,7 +27,11 @@ export const GET = withErrorHandler(async (
   const registration = await prisma.registration.findUnique({
     where: { id },
     include: {
-      class: { select: { teacherId: true, classType: true, date: true } },
+      class: {
+        select: {
+          calendarEntry: { select: { teacherId: true, classType: true, date: true } },
+        },
+      },
     },
   });
 
@@ -40,14 +44,14 @@ export const GET = withErrorHandler(async (
   //
   // Checked before the teacher-ownership check below: a dual-role account
   // reading its own booking in a class it also teaches is still a self-read.
-  // `isStudent` and `registration.class.teacherId === session.teacherId` can
+  // `isStudent` and `registration.class.calendarEntry.teacherId === session.teacherId` can
   // both be true for the same request — ordering the teacher check first
   // would route that request into the projected view and silently strip the
   // very tier and price this branch exists to protect.
   if (isStudent) return respondOk(registration);
 
   const { teacherId } = session;
-  if (teacherId === null || registration.class.teacherId !== teacherId) {
+  if (teacherId === null || registration.class.calendarEntry.teacherId !== teacherId) {
     return respondError('Access denied', 403);
   }
 
@@ -64,7 +68,7 @@ export const GET = withErrorHandler(async (
     registeredAt: registration.registeredAt,
     cancelledAt: registration.cancelledAt,
     isWalkIn: registration.isWalkIn,
-    class: registration.class,
+    class: registration.class.calendarEntry,
     student: projectStudentForTeacher(student, teacherId),
   });
 });
@@ -89,11 +93,11 @@ export const PUT = withErrorHandler(async (
   // own WHERE below and is deliberately absent from this select.
   const registration = await prisma.registration.findUnique({
     where: { id },
-    include: { class: { select: { teacherId: true } } },
+    include: { class: { select: { calendarEntry: { select: { teacherId: true } } } } },
   });
 
   if (!registration) return respondError('Registration not found', 404);
-  if (registration.class.teacherId !== session.teacherId) {
+  if (registration.class.calendarEntry.teacherId !== session.teacherId) {
     return respondError('Not your class', 403);
   }
 
@@ -144,7 +148,8 @@ export const PUT = withErrorHandler(async (
     where: {
       id,
       status: { not: 'cancelled' },
-      class: { status: { not: 'cancelled' } },
+      // The class's cancellation is an ENTRY column since #327, not a status.
+      class: { calendarEntry: { cancelledAt: null } },
       // NOT(late_cancel AND class open), written as its contrapositive so each
       // arm is a plain condition Prisma can compile without a nested relation
       // negation.
@@ -161,10 +166,13 @@ export const PUT = withErrorHandler(async (
     // read.
     const current = await prisma.registration.findUnique({
       where: { id },
-      select: { status: true, class: { select: { status: true } } },
+      select: {
+        status: true,
+        class: { select: { status: true, calendarEntry: { select: { cancelledAt: true } } } },
+      },
     });
     if (!current) return respondError('Registration not found', 404);
-    if (current.class.status === 'cancelled') {
+    if (current.class.calendarEntry.cancelledAt !== null) {
       return respondError('Cannot record attendance on a cancelled class', 409);
     }
     if (current.status === 'late_cancel') {
@@ -193,9 +201,16 @@ export const DELETE = withErrorHandler(async (
     include: {
       class: {
         select: {
-          teacherId: true, status: true, maxStudents: true, id: true,
-          date: true, startTime: true, cancelDeadline: true,
-          teacher: { select: { defaultTimezone: true } },
+          status: true, maxStudents: true, id: true, cancelDeadline: true,
+          calendarEntry: {
+            select: {
+              teacherId: true,
+              date: true,
+              startTime: true,
+              cancelledAt: true,
+              teacher: { select: { defaultTimezone: true } },
+            },
+          },
         },
       },
     },
@@ -205,17 +220,18 @@ export const DELETE = withErrorHandler(async (
 
   // Allow cancellation by the student themselves or the class teacher
   const isStudent = registration.studentId === session.studentId;
-  const isTeacher = registration.class.teacherId === session.teacherId;
+  const isTeacher = registration.class.calendarEntry.teacherId === session.teacherId;
 
   if (!isStudent && !isTeacher) return respondError('Access denied', 403);
 
   // A registration can only be cancelled while the class is still upcoming;
   // cancelling on a completed class would orphan its payment.
-  if (registration.class.status === 'completed' || registration.class.status === 'cancelled') {
-    return respondError(
-      `Cannot cancel a registration on a ${registration.class.status} class`,
-      409,
-    );
+  // TWO reads, not one, since #327 split them: `completed` is still a status,
+  // `cancelled` is a column on the entry.
+  if (registration.class.status === 'completed'
+      || registration.class.calendarEntry.cancelledAt !== null) {
+    const state = registration.class.status === 'completed' ? 'completed' : 'cancelled';
+    return respondError(`Cannot cancel a registration on a ${state} class`, 409);
   }
   if (registration.status === 'cancelled' || registration.status === 'late_cancel') {
     return respondError('Registration is already cancelled', 409);
@@ -226,9 +242,9 @@ export const DELETE = withErrorHandler(async (
   if (isStudent) {
     const hours = DEADLINE_HOURS[registration.class.cancelDeadline] ?? 24;
     const classStart = classStartInstant(
-      registration.class.date,
-      registration.class.startTime,
-      registration.class.teacher.defaultTimezone,
+      registration.class.calendarEntry.date,
+      registration.class.calendarEntry.startTime,
+      registration.class.calendarEntry.teacher.defaultTimezone,
     );
     const deadline = new Date(classStart.getTime() - hours * 60 * 60 * 1000);
 

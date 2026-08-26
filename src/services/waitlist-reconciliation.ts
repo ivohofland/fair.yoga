@@ -133,12 +133,15 @@ type ClassOutcome =
 /** The candidate shape the per-class body needs, and no more. */
 interface CandidateClass {
   id: string;
-  date: Date;
-  startTime: Date;
   cancelDeadline: CancelDeadline;
   maxStudents: number;
   spotBroadcastAt: Date | null;
-  teacher: { defaultTimezone: string };
+  /** `date`, `startTime` and the teacher all moved here in #327. */
+  calendarEntry: {
+    date: Date;
+    startTime: Date;
+    teacher: { defaultTimezone: string };
+  };
 }
 
 /**
@@ -223,9 +226,15 @@ export async function reconcileWaitlists(
   // into SQL. It selects the rows (plus `id`, which it needs to compare) and
   // dedupes in the query engine, so `distinct` would fetch one row per waiting
   // STUDENT to produce one id per CLASS. `groupBy` pushes it into Postgres.
+  // `calendarEntry: { cancelledAt: null }` beside the status (#327): a
+  // cancelled class keeps its `open` status, and reconciling one would
+  // broadcast an opened seat in a class that is off.
   const queued = await db.waitlistEntry.groupBy({
     by: ['classId'],
-    where: { status: 'waiting', class: { status: 'open' } },
+    where: {
+      status: 'waiting',
+      class: { status: 'open', calendarEntry: { cancelledAt: null } },
+    },
   });
   const candidateIds = queued.map((q) => q.classId);
   if (candidateIds.length === 0) {
@@ -233,25 +242,30 @@ export async function reconcileWaitlists(
     return emptySummary(0);
   }
 
-  // Re-read status here rather than trusting the join above: a class can
-  // complete between the two queries, and this is the filter `handleSpotFreed`
-  // itself applies through its own `cls.status !== 'open'` early return.
+  // Re-read liveness here rather than trusting the join above: a class can
+  // complete or be cancelled between the two queries, and this is the filter
+  // `handleSpotFreed` itself applies through its own early return — which
+  // since #327 asks the entry as well as the status.
   //
   // `orderBy` is not cosmetic. Without it Postgres may return these in any
   // order, which makes the position of a given class in the sweep depend on the
   // heap — and the two tests that hold a row lock against a wall clock then
   // race against however much work happens before their target is reached.
   const classes = await db.class.findMany({
-    where: { id: { in: candidateIds }, status: 'open' },
+    where: { id: { in: candidateIds }, status: 'open', calendarEntry: { cancelledAt: null } },
     orderBy: { id: 'asc' },
     select: {
       id: true,
-      date: true,
-      startTime: true,
       cancelDeadline: true,
       maxStudents: true,
       spotBroadcastAt: true,
-      teacher: { select: { defaultTimezone: true } },
+      calendarEntry: {
+        select: {
+          date: true,
+          startTime: true,
+          teacher: { select: { defaultTimezone: true } },
+        },
+      },
     },
   });
   if (classes.length === 0) {
@@ -322,10 +336,10 @@ async function reconcileOne(
   // current body happening to be infallible.
   try {
     const window = getWaitlistWindow(
-      cls.date,
-      cls.startTime,
+      cls.calendarEntry.date,
+      cls.calendarEntry.startTime,
       cls.cancelDeadline,
-      cls.teacher.defaultTimezone,
+      cls.calendarEntry.teacher.defaultTimezone,
       now,
     );
     if (window === 'frozen') return { kind: 'skipped', reason: 'frozen' };
@@ -454,7 +468,11 @@ async function reconcileOne(
 function broadcastStillStands(cls: CandidateClass): boolean {
   if (cls.spotBroadcastAt === null) return false;
 
-  const classStart = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+  const classStart = classStartInstant(
+      cls.calendarEntry.date,
+      cls.calendarEntry.startTime,
+      cls.calendarEntry.teacher.defaultTimezone,
+    );
   const claimWindowStart = new Date(
     classStart.getTime() - (DEADLINE_HOURS[cls.cancelDeadline] + 1) * 60 * 60 * 1000,
   );

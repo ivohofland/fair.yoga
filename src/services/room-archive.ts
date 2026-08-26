@@ -24,6 +24,12 @@ import { log } from '@/lib/log';
  * not block. A draft is a parked intention with no registrations; it is
  * stopped at the publish door instead (`transitionClass`, reason
  * `ROOM_ARCHIVED`), which is where the room's availability actually matters.
+ *
+ * A STATUS LIST IS NO LONGER THE WHOLE PREDICATE. Cancellation left
+ * `ClassStatus` in #327, so a cancelled class still matches both members here
+ * and the caller has to ask the entry as well — hand-declared lists like this
+ * one are exactly where an enum shrink changes what a filter MEANS without
+ * changing what it compiles to.
  */
 export const BLOCKING_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
   ['open', 'in_progress'] as ClassStatus[],
@@ -112,8 +118,17 @@ export async function setTeacherRoomArchived(
   // acquire a guard of its own.
   if (archiving) {
     const [classes, templates] = await Promise.all([
+      // `calendarEntry: { cancelledAt: null }` beside the statuses (#327). A
+      // cancelled class keeps its `open`/`in_progress` status now, and a class
+      // the teacher has already called off is not a commitment the room still
+      // has to honour — before this branch, cancelling was how a teacher
+      // cleared exactly this blocker.
       db.class.count({
-        where: { teacherRoomId, status: { in: [...BLOCKING_CLASS_STATUSES] } },
+        where: {
+          teacherRoomId,
+          status: { in: [...BLOCKING_CLASS_STATUSES] },
+          calendarEntry: { cancelledAt: null },
+        },
       }),
       db.classTemplate.count({ where: { teacherRoomId, ...ACTIVE_TEMPLATE_WHERE } }),
     ]);

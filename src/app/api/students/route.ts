@@ -69,15 +69,15 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       select: {
         ...studentVisibilitySelect(session.teacherId),
         registrations: {
-          where: { class: { teacherId: session.teacherId } },
+          where: { class: { calendarEntry: { teacherId: session.teacherId } } },
           orderBy: { registeredAt: 'desc' },
           take: 1,
-          select: { class: { select: { date: true } } },
+          select: { class: { select: { calendarEntry: { select: { date: true } } } } },
         },
         _count: {
           select: {
             registrations: {
-              where: { class: { teacherId: session.teacherId } },
+              where: { class: { calendarEntry: { teacherId: session.teacherId } } },
             },
           },
         },
@@ -92,7 +92,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
         by: ['studentId'],
         where: {
           studentId: { in: pageStudentIds },
-          class: { teacherId: session.teacherId },
+          class: { calendarEntry: { teacherId: session.teacherId } },
           payment: { status: 'overdue' },
         },
         _count: { _all: true },
@@ -104,7 +104,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 
   const result = students.map((s) => ({
     ...projectStudentForTeacher(s, session.teacherId),
-    lastClassDate: s.registrations[0]?.class.date ?? null,
+    lastClassDate: s.registrations[0]?.class.calendarEntry.date ?? null,
     classCount: s._count.registrations,
     overduePayments: overdueByStudent.get(s.id) ?? 0,
   }));

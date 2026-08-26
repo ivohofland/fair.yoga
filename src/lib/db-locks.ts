@@ -112,7 +112,26 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
 }
 
 /**
- * Takes the `Class` row lock with a bounded wait.
+ * Takes the `Class` row lock AND its `CalendarEntry` row lock, in that order,
+ * each with a bounded wait.
+ *
+ * BOTH, because #327 moved `date`, `startTime` and `durationMinutes` off
+ * `Class` and onto its entry. `completeClass` (`class-lifecycle.ts`) decides
+ * `NOT_ENDED_YET` from those three, and `updateClass` used to serialise
+ * against that decision for free — it took no lock, but its plain `UPDATE`
+ * landed on the same row the completion held. After the split that free lock
+ * covers the wrong table, and #182 comes back: a class completed against a
+ * start time it no longer had, with `Payment` rows to show for it. `updateClass`
+ * now calls this helper rather than relying on that emergent order.
+ *
+ * TWO STATEMENTS NAMING TWO TABLES, not one join. `FOR UPDATE OF e` on a joined
+ * query locks only `e`, and a statement that waited on the join's non-locked
+ * member has already evaluated its predicate against the pre-wait snapshot —
+ * `EvalPlanQual` re-fetches locked rows only. Stage A measured that 6/6.
+ *
+ * `Class` first, then `CalendarEntry`. Every writer that takes both must take
+ * them in this order, `class_sync_entry_completed` (the trigger, which fires on
+ * `Class` and writes the entry) included; `docs/lock-order.md` carries the rule.
  *
  * `tx`'s type carries an extra `{ $transaction?: never }` brand on top of
  * `Prisma.TransactionClient`, and that brand is load-bearing, not
@@ -168,24 +187,23 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * `claimStudioTemplateForGeneration`) — the only other bounded lock waits in
  * the codebase, and the ones this lock deadlocks against.
  *
- * Every `SELECT … FOR UPDATE` on a `Class` row goes through this function or
- * `lockClassRowsOrdered` below now — no site keeps its own inline statement.
- * The check, filters included, because an unfiltered grep returns roughly 70
- * lines of prose:
+ * Every `SELECT … FOR UPDATE` on a `Class` or `CalendarEntry` row goes through
+ * this function or `lockClassRowsOrdered` below now — no site keeps its own
+ * inline statement. The check, with the template tables filtered OUT rather
+ * than counted alongside, because they are what an unfiltered grep is mostly
+ * made of and a total over both was already wrong before this branch (it said
+ * FOUR; the real figure was 12):
  *
  *   grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" \
- *     | grep -vE ":[0-9]+: *(\*|//)"
+ *     | grep -vE ":[0-9]+: *(\*|//)" \
+ *     | grep -vE 'OF (ct|sct)`|"ClassTemplate"|"StudioClassTemplate"'
  *
- * Expect FOUR hits, and two of them are not violations: the two helpers in
- * this file, plus `claimTemplateForGeneration` (`class-generator.ts`) and
- * `claimStudioTemplateForGeneration` (`studio-class-generator.ts`), which lock
- * a `ClassTemplate` / `StudioClassTemplate` row and not a `Class` row at all —
- * so the claim above holds over them rather than being broken by them. They
- * are named here because otherwise the only way to discharge them is to open
- * both generators. A prose list of the CALL SITES would still go stale the way
- * the old one did, which is why that was deleted rather than rewritten to say
- * "zero remain"; this is a list of the grep's own noise, which changes only
- * when a new raw statement is added.
+ * Expect FOUR hits and expect every one of them to be in THIS FILE — this
+ * helper's two statements and `lockClassRowsOrdered`'s two. That is the whole
+ * claim, and it is a claim a grep can settle: a hit anywhere else is a site
+ * that took one of these two row locks without going through either helper.
+ * Deliberately not a list of the CALL SITES, which is what went stale the last
+ * time this paragraph carried one.
  *
  * `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) adopting
  * `lockClassRowsOrdered` below (#237) was a real behaviour change on the
@@ -218,6 +236,11 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
 export async function lockClassRow(tx: TransactionClientOnly, classId: string): Promise<void> {
   await setLockTimeout(tx);
   await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
+  await tx.$queryRaw`
+    SELECT e.id FROM "CalendarEntry" e
+    JOIN "Class" c ON c."calendarEntryId" = e.id
+    WHERE c.id = ${classId}
+    FOR UPDATE OF e`;
 }
 
 /**
@@ -302,6 +325,24 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
  * predicate when it runs. Callers that do
  * not need them may ignore the return value; the lock is the point.
  *
+ * `entries: true` ADDS the `CalendarEntry` rows, in a second statement, after
+ * every `Class` lock — the same order and for the same reason `lockClassRow`
+ * above takes its two. It is OPT-IN rather than automatic because widening all
+ * four call sites by reflex adds wait edges nothing needs, and because the
+ * answer is per-caller: ask it of the whole TRANSACTION, not of this
+ * statement — does anything in it read or write the entry's `date`,
+ * `startTime`, `durationMinutes` or `cancelledAt`? Two of the four say yes
+ * (`deleteTeacherAccount`, which writes `cancelledAt` to cancel; and
+ * `archiveOrUnarchiveTemplate`, whose delete re-evaluates a predicate over
+ * `date`), and each call site carries its own verdict.
+ *
+ * The second statement is scoped to the ids the FIRST one returned — a
+ * structural subset, not a predicate re-evaluated later — so its join member
+ * is a row this transaction already holds. That matters: `FOR UPDATE OF e`
+ * locks only `e`, and a joined predicate over a non-locked member is
+ * evaluated against a pre-wait snapshot that `EvalPlanQual` will not re-fetch.
+ * Here there is nothing to re-fetch, because the `Class` side cannot change.
+ *
  * NOT for single-row locks — use `lockClassRow` above. One row cannot be
  * ordered against itself, and that helper's signature says so.
  *
@@ -312,7 +353,7 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
  */
 export async function lockClassRowsOrdered(
   tx: TransactionClientOnly,
-  source: { join?: Prisma.Sql; where: Prisma.Sql },
+  source: { join?: Prisma.Sql; where: Prisma.Sql; entries?: boolean },
 ): Promise<string[]> {
   await setLockTimeout(tx);
   const rows = await tx.$queryRaw<Array<{ id: string }>>`
@@ -323,7 +364,18 @@ export async function lockClassRowsOrdered(
     ORDER BY c.id
     FOR UPDATE OF c
   `;
-  return [...new Set(rows.map((row) => row.id))];
+  const ids = [...new Set(rows.map((row) => row.id))];
+  if (source.entries === true && ids.length > 0) {
+    await tx.$queryRaw`
+      SELECT e.id
+      FROM "CalendarEntry" e
+      JOIN "Class" c ON c."calendarEntryId" = e.id
+      WHERE c.id IN (${Prisma.join(ids)})
+      ORDER BY e.id
+      FOR UPDATE OF e
+    `;
+  }
+  return ids;
 }
 
 /**

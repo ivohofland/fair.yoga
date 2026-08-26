@@ -10,6 +10,7 @@ import {
   WAITLIST_RETENTION_DAYS,
 } from './waitlist-retention';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createClassFixture } from '../../tests/class-fixtures';
 
 /**
  * A pure DB-invariant suite — nothing here calls the app on `:3000` — so it
@@ -106,29 +107,36 @@ function slotTime(): string {
  * Distinct classes is also what makes the sweep's per-class loop observable.
  */
 async function makeClassWithEntry(opts: {
-  classStatus: ClassStatus;
+  /**
+   * `ClassStatus` plus `'cancelled'`: since #327 a cancelled class keeps a
+   * live status and carries `cancelledAt` on its entry, which is the shape a
+   * real cancel produces and the one this sweep's predicate reads.
+   */
+  classStatus: ClassStatus | 'cancelled';
   date: Date;
   entryStatus: WaitlistStatus;
   withRegistration?: boolean;
   id?: string;
 }): Promise<{ classId: string; entryId: string }> {
-  const cls = await prisma.class.create({
-    data: {
+  const cls = await createClassFixture(prisma, {
       ...(opts.id ? { id: opts.id } : {}),
       teacherId,
       teacherRoomId,
       classType: 'Retention Test',
       date: opts.date,
       startTime: hhmmToTime(slotTime()),
-      durationMinutes: 60,
+      // ONE MINUTE (#327): `slotTime` spaces fixtures a minute apart, and the
+      // slot constraint is a range overlap now. This sweep reads `date`, never
+      // the duration.
+      durationMinutes: 1,
       roomCost: 20,
       minRate: 15,
       targetRate: 25,
       minStudents: 1,
       maxStudents: 8,
-      status: opts.classStatus,
-    },
-  });
+      status: opts.classStatus === 'cancelled' ? 'open' : opts.classStatus,
+      cancelledAt: opts.classStatus === 'cancelled' ? new Date() : null,
+    });
   classIds.push(cls.id);
 
   let registrationId: string | null = null;
@@ -689,7 +697,15 @@ describe('reapClosedWaitlistEntries', () => {
         where: {
           registrationId: null,
           status: { notIn: ['promoted', 'claimed'] },
-          class: { status: { in: ['completed', 'cancelled'] }, date: { lt: CUTOFF } },
+          class: {
+            calendarEntry: {
+              date: { lt: CUTOFF },
+              OR: [
+                { classCompletedAt: { not: null } },
+                { kind: 'regular', cancelledAt: { not: null } },
+              ],
+            },
+          },
         },
       })
     ).length;

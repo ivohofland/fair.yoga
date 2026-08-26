@@ -40,7 +40,7 @@ describe('transitionClass — door 2: publishing into an archived room', () => {
     expect(result.reason).toBe('ROOM_ARCHIVED');
     expect(result.error).toBe('This room is archived. Unarchive it to publish classes here.');
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(after.status).toBe('draft');
   });
 
@@ -51,7 +51,7 @@ describe('transitionClass — door 2: publishing into an archived room', () => {
     const result = await transitionClass(prisma, cls.id, 'open');
 
     expect(result.ok).toBe(true);
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
     expect(after.status).toBe('open');
   });
 });
@@ -71,7 +71,7 @@ describe('pauseOrResumeTemplate — door 3: resuming into an archived room', () 
       include: { scheduleRule: true },
     });
     expect(after.scheduleRule.isActive).toBe(false);
-    expect(await prisma.class.count({ where: { templateId: tpl.id } })).toBe(0);
+    expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: tpl.id } } } } } })).toBe(0);
   });
 
   // Pausing is the safe direction and must stay unguarded — otherwise a
@@ -100,8 +100,8 @@ describe('transitionClass — door 2: what the refusal must lose to', () => {
     const cls = await addClass(f, 'draft');
     // `addClass` hard-codes today+14; a draft is not terminal, so its `date`
     // is not frozen by the #247 trigger and can be moved into the past here.
-    await prisma.class.update({
-      where: { id: cls.id },
+    await prisma.calendarEntry.update({
+      where: { id: cls.calendarEntryId },
       data: { date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
     });
     await prisma.teacherRoom.update({ where: { id: f.linkId }, data: { isArchived: true } });
@@ -117,7 +117,31 @@ describe('transitionClass — door 2: what the refusal must lose to', () => {
   // — its `STARTS_IN_PAST` sibling carries the identical clause and IS pinned.
   // Without it, republishing a cancelled class in an archived room tells the
   // teacher to unarchive the room, when the transition is illegal regardless.
+  // `completed`, not `cancelled`: since #327 a cancelled class keeps a live
+  // status, so `ILLEGAL_TRANSITION` is no longer the refusal it earns — that
+  // case is the one below, and it earns `CANCELLED`. `completed` is what is
+  // left that cannot reach `open` through the state machine at all.
   it('yields to ILLEGAL_TRANSITION for a class that cannot reach open at all', async () => {
+    const f = await makeFixture();
+    const cls = await addClass(f, 'completed');
+    await prisma.teacherRoom.update({ where: { id: f.linkId }, data: { isArchived: true } });
+
+    const result = await transitionClass(prisma, cls.id, 'open');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.reason).toBe('ILLEGAL_TRANSITION');
+  });
+
+  /**
+   * The cancelled half of the same precedence question (#327). A cancelled
+   * class carries a live `draft` status, so the state machine calls the move
+   * legal and the CAS's own liveness conjunct is what refuses — reported as
+   * `CANCELLED` rather than as the archived room, which is the same ordering
+   * this block's other cases assert: the permanent reason outranks the
+   * clearable one.
+   */
+  it('yields to CANCELLED for a cancelled class in an archived room', async () => {
     const f = await makeFixture();
     const cls = await addClass(f, 'cancelled');
     await prisma.teacherRoom.update({ where: { id: f.linkId }, data: { isArchived: true } });
@@ -126,7 +150,7 @@ describe('transitionClass — door 2: what the refusal must lose to', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
-    expect(result.reason).toBe('ILLEGAL_TRANSITION');
+    expect(result.reason).toBe('CANCELLED');
   });
 });
 
