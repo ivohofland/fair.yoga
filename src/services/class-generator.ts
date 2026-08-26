@@ -8,6 +8,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { spansOverlap } from '@/lib/generation';
+import { probeOverlappingCandidates } from '@/lib/entry-conflict';
 import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
 import { classStartInstant, mondayOf } from '@/lib/timezone';
@@ -552,12 +553,56 @@ export async function generateInstancesForTemplate(
     });
   }
 
-  // A free date that did not come back lost a race with a concurrent insert.
-  // Before #164 this was the P2002 that poisoned the transaction; it is now an
-  // ordinary skipped date, and the only one whose cause is not in `occupants`.
+  // A free date that did not come back was refused by a constraint the
+  // pre-check said nothing about, and `ON CONFLICT DO NOTHING` swallowed the
+  // `23P01`/`23505` rather than raising it. Before #164 this was the P2002 that
+  // poisoned the transaction; it is an ordinary skipped date now, and the only
+  // one whose cause is not in `occupants`.
+  //
+  // SO IT IS ASKED FOR, and that second look is not an optimisation. `raced` is
+  // one of the two `SkipReason`s `countSkipReasons` drops, and it is dropped on
+  // the argument that a race is TRANSIENT — "its date will simply be picked up
+  // on the next run". A neighbour spilling past midnight makes that false: the
+  // pre-check is minutes-since-midnight on one date and cannot see it, the
+  // constraint can and refuses forever, and the date came back short every hour
+  // while `anyBlocked` reduced over a `SkipCounts` that never heard about it.
+  // `template-form.tsx` then navigated a teacher away from a window that
+  // generated nothing, saying nothing — #196's silence, one reason further
+  // over, for the third time.
+  //
+  // TWO OUTCOMES, NOT FOUR. `probeOverlappingCandidates` asks only the
+  // constraint's own question — does a live entry of this teacher's still
+  // overlap this span — so a still-held date is reported as `blocked_by_overlap`
+  // and reaches the teacher through the clause that reason already owns. It
+  // does NOT re-run the loop's finer classification, and the fidelity that
+  // costs is bounded to genuine races: an own row on the date, or a same-family
+  // neighbour at exactly this minute, is visible to the pre-check above unless
+  // it committed while this function was running, so a short date is either a
+  // midnight spill (where `blocked_by_overlap` is exactly right) or a race
+  // (where it is coarser than `already_generated`/`slot_taken` would be, and
+  // still true). Reporting a blocked date coarsely beats reporting it as
+  // transient when it is not.
+  //
+  // `raced` survives, narrowed to what it always claimed to be: a short date
+  // nothing live overlaps any more. The rule-date key
+  // (`CalendarEntry_scheduleRuleId_date_key`) reaches it — a concurrent insert
+  // of this rule's own row at a non-overlapping start refuses the date without
+  // occupying the span.
   const landed = new Set(inserted.map((r) => r.date.getTime()));
-  for (const date of free) {
-    if (!landed.has(date.getTime())) skipped.push({ date, reason: 'raced' });
+  const short = free.filter((date) => !landed.has(date.getTime()));
+  if (short.length > 0) {
+    const stillHeld = await probeOverlappingCandidates(
+      db,
+      template.scheduleRule.teacherId,
+      short,
+      candidateSpan,
+    );
+    for (const date of short) {
+      skipped.push({
+        date,
+        reason: stillHeld.has(date.getTime()) ? 'blocked_by_overlap' : 'raced',
+      });
+    }
   }
 
   skipped.sort((a, b) => a.date.getTime() - b.date.getTime());

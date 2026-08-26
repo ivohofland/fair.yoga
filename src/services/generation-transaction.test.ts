@@ -220,8 +220,16 @@ describe('generation inside a real $transaction (DB)', () => {
 
     // Blinded, the pre-check offers all four dates; the constraint declines
     // the one the holder occupies and the insert skips it. Three commit.
+    //
+    // `blocked_by_overlap`, not `raced`, and `blindTo` is what makes this the
+    // right assertion rather than an incidental one. It blinds the MODEL
+    // delegate, so the pre-check reads nothing while the post-insert probe —
+    // `$queryRaw` through `probeOverlappingCandidates` — still sees the holder.
+    // That is the midnight-spill shape exactly: a pre-check that cannot see a
+    // neighbour the constraint can. `raced` here was the defect, since
+    // `countSkipReasons` drops it and the date reached no teacher.
     expect(result?.created).toBe(3);
-    expect(result?.skipped.map((s) => s.reason)).toEqual(['raced']);
+    expect(result?.skipped.map((s) => s.reason)).toEqual(['blocked_by_overlap']);
     expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } } })).toBe(3);
   });
 
@@ -248,7 +256,7 @@ describe('generation inside a real $transaction (DB)', () => {
 
     expect(caught).toBeUndefined();
     expect(result?.created).toBe(3);
-    expect(result?.skipped.map((s) => s.reason)).toEqual(['raced']);
+    expect(result?.skipped.map((s) => s.reason)).toEqual(['blocked_by_overlap']);
     expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: template.id } } } } } })).toBe(3);
   });
 

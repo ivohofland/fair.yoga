@@ -7,6 +7,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { spansOverlap } from '@/lib/generation';
+import { probeOverlappingCandidates } from '@/lib/entry-conflict';
 import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { getNextOccurrences } from './class-generator';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
@@ -346,9 +347,25 @@ export async function generateStudioInstancesForTemplate(
     });
   }
 
+  // The class twin carries the argument — a short date is re-asked of the
+  // database rather than assumed transient, because a neighbour spilling past
+  // midnight is invisible to the pre-check above and permanent, and `raced` is
+  // a reason `countSkipReasons` drops.
   const landed = new Set(inserted.map((r) => r.date.getTime()));
-  for (const date of free) {
-    if (!landed.has(date.getTime())) skipped.push({ date, reason: 'raced' });
+  const short = free.filter((date) => !landed.has(date.getTime()));
+  if (short.length > 0) {
+    const stillHeld = await probeOverlappingCandidates(
+      db,
+      template.scheduleRule.teacherId,
+      short,
+      candidateSpan,
+    );
+    for (const date of short) {
+      skipped.push({
+        date,
+        reason: stillHeld.has(date.getTime()) ? 'blocked_by_overlap' : 'raced',
+      });
+    }
   }
 
   skipped.sort((a, b) => a.date.getTime() - b.date.getTime());

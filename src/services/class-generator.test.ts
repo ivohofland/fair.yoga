@@ -16,6 +16,7 @@ import {
   updateClassTemplate,
 } from './class-template-lifecycle';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
+import { anyBlocked, countSkipReasons } from '@/lib/generation';
 
 type TransactionOptions = NonNullable<Parameters<PrismaClient['$transaction']>[1]>;
 
@@ -1363,7 +1364,125 @@ describe('generateClassInstances (DB)', () => {
       }
     });
 
-    it('names a date lost to a concurrent insert as raced, not as filled', async () => {
+    /**
+     * THE TWO HALVES, JOINED. `calendar-entry.test.ts` pins that
+     * `CalendarEntry_teacher_slot_excl` catches a collision ACROSS MIDNIGHT;
+     * the case below pins what a generator reports when it does. Nothing
+     * connected them, and the gap was a live user-facing defect.
+     *
+     * The chain: both generators read occupancy as `date: { in: dates }` and
+     * compare with `spansOverlap`, which is minutes-since-midnight on ONE date.
+     * A neighbour carried into a candidate from the previous calendar date is
+     * therefore invisible to the pre-check; the date goes to `free`; the
+     * constraint refuses the insert; `ON CONFLICT DO NOTHING` absorbs it; and
+     * the date came back as `raced` — one of the two reasons
+     * `countSkipReasons` DROPS. `anyBlocked` reduces over `SkipCounts` only, so
+     * `template-form.tsx` took its `router.push` and navigated the teacher away
+     * from a window that generated nothing, saying nothing. Not once: the
+     * pre-check says free forever and the constraint refuses forever, so every
+     * hourly sweep reproduced it.
+     *
+     * The assertions run the whole chain rather than stopping at the reason,
+     * because the reason was never the defect — `raced` was a truthful label
+     * for a date nobody would ever be told about. `countSkipReasons` and
+     * `anyBlocked` are the two hops between the generator and the gate.
+     *
+     * 22:00 + 700 minutes = 09:40 the next day, against a template at
+     * 09:00 + 75. The CONTROL below cuts the neighbour to 660 minutes — 09:00
+     * exactly, back-to-back — and all four dates fill, which is what says this
+     * fixture blocks by overlapping rather than by existing.
+     */
+    it('names a date blocked by a neighbour spilling past midnight, which the pre-check cannot see', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+      const collide = dates[1]!;
+      const eve = new Date(collide.getTime() - 24 * 60 * 60 * 1000);
+
+      await createClassFixture(prisma, {
+        teacherId,
+        teacherRoomId,
+        scheduleRuleId: null,
+        classType: 'Late night, spilling over',
+        date: eve,
+        startTime: hhmmToTime('22:00'),
+        durationMinutes: 700,
+        roomCost: 40,
+        minRate: 15,
+        targetRate: 30,
+        minStudents: 4,
+        maxStudents: 12,
+        cancelDeadline: 'HOURS_24',
+        autoCancelCheck: 'HOURS_2',
+        status: 'open',
+      });
+
+      // The pre-check's own read cannot have seen it: the neighbour is not on
+      // any candidate date. Asserted rather than assumed, because a fixture
+      // that accidentally landed ON a candidate would pass every line below
+      // for the ordinary same-date reason and prove nothing about midnight.
+      expect(dates.map((d) => d.getTime())).not.toContain(eve.getTime());
+
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+
+      expect(result.created).toBe(3);
+      expect(result.skipped).toEqual([{ date: collide, reason: 'blocked_by_overlap' }]);
+
+      // The two hops that decide whether a teacher hears about it at all.
+      const counts = countSkipReasons(result.skipped);
+      expect(counts.blockedByOverlap).toBe(1);
+      expect(anyBlocked(counts)).toBe(true);
+    });
+
+    it('fills every date when the spilling neighbour ends exactly at the start — the half-open bound', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+      const eve = new Date(dates[1]!.getTime() - 24 * 60 * 60 * 1000);
+
+      // 22:00 + 660 = 09:00, the template's own start. `[)` on both sides, so
+      // this touches without overlapping and the constraint admits it.
+      await createClassFixture(prisma, {
+        teacherId,
+        teacherRoomId,
+        scheduleRuleId: null,
+        classType: 'Late night, ending on the hour',
+        date: eve,
+        startTime: hhmmToTime('22:00'),
+        durationMinutes: 660,
+        roomCost: 40,
+        minRate: 15,
+        targetRate: 30,
+        minStudents: 4,
+        maxStudents: 12,
+        cancelDeadline: 'HOURS_24',
+        autoCancelCheck: 'HOURS_2',
+        status: 'open',
+      });
+
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+
+      expect(result.created).toBe(4);
+      expect(result.skipped).toEqual([]);
+    });
+
+    /**
+     * A lost race whose winner IS STILL THERE — reported for what still holds
+     * the date, not as transient.
+     *
+     * The reason moved with #327's second look. The `ON CONFLICT DO NOTHING`
+     * skip is the same one it always was; what changed is that the generator
+     * now re-asks the database whether anything live still overlaps the short
+     * date, and here something does — the holder committed and is sitting on
+     * the slot. `raced` used to be the answer, and `countSkipReasons` drops it,
+     * so the date reached no teacher at all. The case below it is the `raced`
+     * pin now: a short date nothing live overlaps.
+     *
+     * The coarseness is deliberate and bounded. A fresh pre-check would call
+     * this holder `slot_taken` — same family, same minute — and the probe does
+     * not distinguish. It cannot arise except from a race, because the
+     * pre-check sees every committed same-minute neighbour; see the note above
+     * `landed` in `class-generator.ts`.
+     */
+    it('names a date lost to a concurrent insert by what still holds it', async () => {
       const now = new Date();
       const dates = candidates(now);
       const collide = dates[1]!;
@@ -1414,6 +1533,71 @@ describe('generateClassInstances (DB)', () => {
       // The generator starts with the holder's row in flight, so its occupancy
       // read cannot see the colliding date and its insert parks on the pending
       // entry; the other three dates insert cleanly.
+      await parked;
+      const generating = generateInstancesForTemplate(prisma, await freshTemplate(), now);
+      await new Promise((r) => setTimeout(r, 400));
+      release();
+      await holding;
+      const result = await generating;
+      await holder.$disconnect();
+
+      expect(result.created).toBe(3);
+      expect(result.skipped).toEqual([{ date: collide, reason: 'blocked_by_overlap' }]);
+    });
+
+    /**
+     * `raced`, and the only shape left that produces it: a short date nothing
+     * live overlaps.
+     *
+     * `CalendarEntry_scheduleRuleId_date_key` is what refuses here, not the
+     * slot exclusion — the holder takes this rule's own `(scheduleRuleId,
+     * date)` pair at a start time 5 hours clear of the template's. So the
+     * insert is refused, `ON CONFLICT DO NOTHING` absorbs it, and the second
+     * look finds no overlapping live entry, which is exactly the transience
+     * `countSkipReasons`'s exclusion of `raced` assumes.
+     *
+     * `14:00` against the template's `09:00 + 75`, deliberately far apart:
+     * anything overlapping would be answered `blocked_by_overlap` by the case
+     * above and this test would pass for the wrong reason.
+     */
+    it('names a short date nothing live overlaps as raced', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+      const collide = dates[1]!;
+
+      const holder = new PrismaClient();
+      let release!: () => void;
+      let collided!: () => void;
+      const released = new Promise<void>((r) => { release = r; });
+      const parked = new Promise<void>((r) => { collided = r; });
+      const holding = holder.$transaction(
+        async (tx) => {
+          await createClassFixture(tx, {
+              teacherId,
+              teacherRoomId,
+              // This rule's own id, which is what makes the rule-date key the
+              // constraint that refuses. The slot exclusion cannot: 14:00 is
+              // nowhere near 09:00-10:15.
+              scheduleRuleId: templateScheduleRuleId,
+              classType: 'Same rule, other hour',
+              date: collide,
+              startTime: hhmmToTime('14:00'),
+              durationMinutes: 60,
+              roomCost: 40,
+              minRate: 15,
+              targetRate: 30,
+              minStudents: 4,
+              maxStudents: 12,
+              cancelDeadline: 'HOURS_24',
+              autoCancelCheck: 'HOURS_2',
+              status: 'open',
+            });
+          collided();
+          await released;
+        },
+        { timeout: 20_000 },
+      );
+
       await parked;
       const generating = generateInstancesForTemplate(prisma, await freshTemplate(), now);
       await new Promise((r) => setTimeout(r, 400));
@@ -1682,10 +1866,21 @@ describe('generateClassInstances (DB)', () => {
      * longer touches the `ClassTemplate` row the claim holds. The resume
      * therefore walks past the claim and meets the holder at its OWN insert,
      * parking on the pending entry and finally taking an `ON CONFLICT DO
-     * NOTHING` skip classified `raced` — the pre-#116 behaviour, restored by a
-     * schema change rather than by a code change. That is a real loss of
-     * coupling and is asserted rather than hidden: `racedDates` now names the
-     * collided date.
+     * NOTHING` skip — the pre-#116 behaviour, restored by a schema change
+     * rather than by a code change. That is a real loss of coupling and is
+     * asserted rather than hidden: `collidedDates` names the collided date.
+     *
+     * WHICH REASON it is named under moved once more, inside #327. The skip was
+     * reported `raced` until the generator started re-asking the database about
+     * a short date; the holder here has COMMITTED by then and is sitting on the
+     * slot, so the answer is `blocked_by_overlap` — a reason that reaches the
+     * teacher, where `raced` is one of the two `countSkipReasons` drops. That
+     * is coarser than the truth (the holder is this rule's own row, so a fresh
+     * pre-check would say `already_generated`) and it is deliberately not
+     * refined: see the note above `landed` in `class-generator.ts`. The filter
+     * below takes every reason but `already_generated`, which is what
+     * `logSkippedSlots` logs, so it cannot go quietly empty if the
+     * classification moves again.
      *
      * What #164 is actually about survives untouched, and it is what the two
      * callers below assert: the transaction is not poisoned, `isActive` stays
@@ -1708,7 +1903,7 @@ describe('generateClassInstances (DB)', () => {
      * unchanged — so the callers assert the wait as well.
      */
     async function raceResumeAgainst(collide: Date): Promise<{
-      racedDates: string[];
+      collidedDates: string[];
       resumed: Awaited<ReturnType<typeof pauseOrResumeTemplate>>;
       waitedMs: number;
       holderCommitted: boolean;
@@ -1776,13 +1971,13 @@ describe('generateClassInstances (DB)', () => {
         const resumed = await resuming;
         const waitedMs = settledAt - startedAt;
 
-        const racedDates = warn.mock.calls.flatMap((call) => {
+        const collidedDates = warn.mock.calls.flatMap((call) => {
           const payload = call[0] as { skipped?: Array<{ date: string; reason: string }> };
           return (payload.skipped ?? [])
-            .filter((s) => s.reason === 'raced')
+            .filter((s) => s.reason !== 'already_generated')
             .map((s) => s.date);
         });
-        return { racedDates, resumed, waitedMs, holderCommitted, holderError };
+        return { collidedDates, resumed, waitedMs, holderCommitted, holderError };
       } finally {
         release();
         warn.mockRestore();
@@ -1804,7 +1999,7 @@ describe('generateClassInstances (DB)', () => {
       // Only the last date is free, so the resume issues exactly one insert.
       for (const d of dates.slice(0, 3)) await createClassFixture(prisma, classRow(d));
 
-      const { racedDates, resumed, waitedMs, holderCommitted, holderError } =
+      const { collidedDates, resumed, waitedMs, holderCommitted, holderError } =
         await raceResumeAgainst(dates[3]!);
 
       expect(holderError).toBeNull();
@@ -1813,10 +2008,10 @@ describe('generateClassInstances (DB)', () => {
       // that says a race happened at all.
       expect(waitedMs).toBeGreaterThanOrEqual(HELD_FOR_MS);
       // And having waited, it lost that one date to the holder's pending
-      // index entry — `raced`, not `already_generated`, since #327 moved the
-      // wait off the claim and onto the resume's own insert. See the helper's
-      // docblock; the date itself is the only thing the collision cost.
-      expect(racedDates).toEqual([dates[3]!.toISOString().slice(0, 10)]);
+      // index entry, since #327 moved the wait off the claim and onto the
+      // resume's own insert. See the helper's docblock; the date itself is the
+      // only thing the collision cost.
+      expect(collidedDates).toEqual([dates[3]!.toISOString().slice(0, 10)]);
       // The action asserted, then narrowed — not narrowed and silently
       // skipped. `if (resumed.ok && resumed.action === 'active')` guarding the
       // only count assertion means an `unchanged` answer passes this test
@@ -1838,13 +2033,13 @@ describe('generateClassInstances (DB)', () => {
       const dates = candidates(now);
       for (const d of dates.slice(0, 2)) await createClassFixture(prisma, classRow(d));
 
-      const { racedDates, resumed, waitedMs, holderCommitted, holderError } =
+      const { collidedDates, resumed, waitedMs, holderCommitted, holderError } =
         await raceResumeAgainst(dates[2]!);
 
       expect(holderError).toBeNull();
       expect(holderCommitted).toBe(true);
       expect(waitedMs).toBeGreaterThanOrEqual(HELD_FOR_MS);
-      expect(racedDates).toEqual([dates[2]!.toISOString().slice(0, 10)]);
+      expect(collidedDates).toEqual([dates[2]!.toISOString().slice(0, 10)]);
       expect(resumed.ok).toBe(true);
       expect(resumed.ok && resumed.action).toBe('active');
       // dates[3] is the one nothing collided with — the resume still filled it

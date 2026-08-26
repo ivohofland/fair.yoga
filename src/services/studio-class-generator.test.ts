@@ -823,14 +823,21 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
   });
 
   /**
-   * The studio twin of the class family's `raced` test. Without it, deleting
+   * The studio twin of the class family's short-date test. Without it, deleting
    * the `landed` diff loop in this file passes — the ledger's row 6 mutated
    * only the class generator, so half of that guard was untested.
    *
    * Same lever: the holder's row is in flight, so the occupancy read cannot see
    * it while its pending unique entry already blocks the insert.
+   *
+   * `blocked_by_overlap` rather than `raced` since #327's second look: by the
+   * time the generator re-asks the database about the short date, the holder
+   * has committed and still occupies the span. `raced` is now reserved for a
+   * short date nothing live overlaps, because `countSkipReasons` drops it and
+   * that exclusion only holds for something genuinely transient — the class
+   * twin's own tests carry the argument and pin both sides.
    */
-  it('names a date lost to a concurrent insert as raced, not as filled', async () => {
+  it('names a date lost to a concurrent insert by what still holds it', async () => {
     const now = new Date();
     const id = await makeTemplate(eastTeacherId, 6, '07:30');
     const tpl = await withZone(id);
@@ -879,7 +886,45 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     await holder.$disconnect();
 
     expect(result.created).toBe(3);
-    expect(result.skipped).toEqual([{ date: collide, reason: 'raced' }]);
+    expect(result.skipped).toEqual([{ date: collide, reason: 'blocked_by_overlap' }]);
+  });
+
+  /**
+   * The studio twin of the class family's midnight-spill case, and the reason
+   * BOTH families need one: the fix is per-generator, so a revert of either
+   * one alone must redden.
+   *
+   * 23:00 + 540 minutes = 08:00 the next day, against a template at
+   * 07:30 + 60 — the neighbour's tail lands inside the candidate's span from a
+   * date the pre-check never reads.
+   */
+  it('names a date blocked by a neighbour spilling past midnight', async () => {
+    const now = new Date();
+    const id = await makeTemplate(eastTeacherId, 0, '07:30');
+    const tpl = await withZone(id);
+    const dates = getNextOccurrences(0, now, 5)
+      .filter((d) => classStartInstant({ date: d, startTime: hhmmToTime('07:30') }, tpl.scheduleRule.teacher.defaultTimezone) > now)
+      .slice(0, 4);
+    const collide = dates[2]!;
+    const eve = new Date(collide.getTime() - 24 * 60 * 60 * 1000);
+
+    await createStudioClassFixture(prisma, {
+      teacherId: eastTeacherId,
+      scheduleRuleId: null,
+      classType: 'Late night, spilling over',
+      date: eve,
+      startTime: hhmmToTime('23:00'),
+      durationMinutes: 540,
+      location: 'Elsewhere',
+      hourlyRate: 40,
+    });
+
+    expect(dates.map((d) => d.getTime())).not.toContain(eve.getTime());
+
+    const result = await generateStudioInstancesForTemplate(prisma, tpl, now);
+
+    expect(result.created).toBe(3);
+    expect(result.skipped).toEqual([{ date: collide, reason: 'blocked_by_overlap' }]);
   });
 
   it('accepts a transaction client, so a caller can compose it', async () => {

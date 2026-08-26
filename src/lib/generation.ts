@@ -113,8 +113,10 @@ export type SkipReason =
    */
   | 'already_this_week'
   /**
-   * A LIVE entry of this teacher's OVERLAPS the candidate, and did not start
-   * at the same minute (#296, widened and renamed by #327).
+   * A LIVE entry of this teacher's OVERLAPS the candidate (#296, widened and
+   * renamed by #327). From the PRE-CHECK, also not at the same minute — that
+   * qualifier belongs to the two conditions below rather than to the member,
+   * because the post-insert probe further down reaches it without asking.
    *
    * With both families in one `CalendarEntry` table behind one RANGE
    * constraint, what a generator's pre-check can see is an overlap, and an
@@ -133,20 +135,32 @@ export type SkipReason =
    * a teacher can act on it — `lib/entry-conflict.ts` probes for the actual
    * row.
    *
-   * A MIDNIGHT SPILL IS NOT A THIRD CONDITION and cannot produce this member.
-   * Both generators read occupancy as `date: { in: dates }` and compare with
-   * `spansOverlap` below, which is minutes-since-midnight on ONE date, so a
-   * neighbour carried into a candidate from the PREVIOUS calendar date is
-   * invisible to the pre-check — `spansOverlap`'s own docblock says so. The
-   * constraint catches it at insert, the `ON CONFLICT DO NOTHING` there
-   * absorbs it, and the date reaches the teacher as `raced`.
+   * A THIRD CONDITION REACHES IT, AND NOT FROM THE PRE-CHECK. A neighbour
+   * spilling past midnight is invisible to both generators' occupancy read —
+   * that read is `date: { in: dates }` and compares with `spansOverlap` below,
+   * which is minutes-since-midnight on ONE date, so a neighbour carried into a
+   * candidate from the PREVIOUS calendar date cannot be seen there
+   * (`spansOverlap`'s own docblock says so). The constraint catches it at
+   * insert and `ON CONFLICT DO NOTHING` absorbs it, so the date comes back
+   * short; `probeOverlappingCandidates` (`@/lib/entry-conflict`) then re-asks
+   * the constraint's own question about it and the date reaches the teacher
+   * here rather than as `raced`. It used to reach them as `raced`, which
+   * `countSkipReasons` drops — silently discarding a window that generated
+   * nothing, forever, since a midnight spill is not the transient thing that
+   * exclusion assumes.
+   *
+   * That post-insert probe answers only "does a live entry still overlap", so
+   * it does NOT tell an own row or an exact-start same-family neighbour apart
+   * from any other holder. Both of those are visible to the pre-check unless
+   * they committed mid-generation, so the coarseness is bounded to genuine
+   * races — see the generators' own note above their `landed` set.
    *
    * Distinct from `slot_taken`, which means one of this teacher's own
    * SAME-family classes starts at exactly that minute. Kept separate because
    * the remedy differs: `slot_taken` is answered inside this family.
    */
   | 'blocked_by_overlap'
-  /** The pre-check said free and `ON CONFLICT DO NOTHING` skipped it anyway — a concurrent insert landed in between (#164). */
+  /** The pre-check said free, `ON CONFLICT DO NOTHING` skipped it anyway, AND the post-insert probe found nothing live overlapping it — a concurrent insert landed in between and left no standing holder (#164). Both conjuncts, since #327: without the second this member also absorbed the permanent midnight-spill case, and `countSkipReasons` drops it. */
   | 'raced';
 
 export interface SkippedSlot {
@@ -177,9 +191,21 @@ export interface GenerationResult {
  * excluded, for different reasons: `already_generated` is the expected,
  * steady-state outcome of an idempotent re-run and saying so would be noise
  * (`logSkippedSlots` in `class-generator.ts` already treats it the same
- * way); `raced` is "a free date that did not come back" — a lost contention
- * race whose date will simply be picked up on the next run, and today
- * reaches no user anywhere.
+ * way); `raced` is "a free date that did not come back AND that nothing live
+ * overlaps any more" — a lost contention race whose date will simply be picked
+ * up on the next run.
+ *
+ * THE SECOND HALF OF THAT SENTENCE IS LOAD-BEARING, and #327 is why it is
+ * spelled out. The exclusion of `raced` rests entirely on a race being
+ * TRANSIENT. A neighbour spilling past midnight is not: the pre-check cannot
+ * see it and the constraint refuses it every hour, forever. While `raced` meant
+ * only "did not come back", that permanent case landed in the one reason
+ * nothing surfaces, and `template-form.tsx` navigated a teacher away from a
+ * window that generated nothing without a word. Both generators now re-ask the
+ * database about a short date (`probeOverlappingCandidates`,
+ * `@/lib/entry-conflict`) and report a still-held one as `blocked_by_overlap`,
+ * so what is left under `raced` is transient by construction rather than by
+ * assumption. Do not widen it back.
  */
 /**
  * A `type` rather than an `interface`, and the one word is load-bearing.
@@ -345,7 +371,12 @@ export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
  * whose duration carries it past midnight overlaps a candidate on the NEXT
  * calendar date, and neither the caller's filter nor this function sees that —
  * the constraint still does, so such a candidate is refused at insert rather
- * than named here.
+ * than named here. What names it is the second look both generators take
+ * afterwards (`probeOverlappingCandidates`, `@/lib/entry-conflict`), which asks
+ * the database with the constraint's own range instead of re-deriving one here.
+ * Widening this function to reach across midnight is NOT the fix: it would need
+ * the previous date's occupancy, which the caller's single read does not
+ * fetch, and it would still be a second spelling of the constraint.
  */
 export function spansOverlap(
   a: { startTime: Date; durationMinutes: number },

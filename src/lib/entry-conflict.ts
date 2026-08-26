@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import type { ClassFamily, PrismaClient } from '@prisma/client';
 import { formatDateWithYear } from './format';
 import { log } from './log';
@@ -69,24 +70,120 @@ function toFamily(kind: string): ClassFamily | null {
 }
 
 /**
- * Builds the candidate range in SQL from the same three columns the generated
- * `span` is built from, rather than re-deriving an instant in TypeScript, so
- * this probe cannot disagree with the constraint about what a span IS. `span`
- * is `Unsupported("tsrange")` on the model and therefore absent from the
- * generated client — no `where` clause can reach it, which is why this is
+ * The predicate BOTH probes below ask, as one fragment: this teacher's live
+ * entries whose occupancy overlaps the given span.
+ *
+ * Built in SQL from the same three columns the generated `span` is built from,
+ * rather than re-deriving an instant in TypeScript, so neither probe can
+ * disagree with the constraint about what a span IS. `span` is
+ * `Unsupported("tsrange")` on the model and therefore absent from the generated
+ * client — no `where` clause can reach it, which is why the callers are
  * `$queryRaw` rather than a typed `findFirst`, the same concession
  * `ruleSlotHolder` makes for `ScheduleRule.slot`.
  *
- * The `'[)'` duplicates `CalendarEntry_teacher_slot_excl`'s own half-open bound
- * (`prisma/migrations/20260826080000_calendar_entry/migration.sql`). That
- * duplication is the one thing here that can silently drift if the constraint
- * is ever redefined with a different bound — `entry-conflict.test.ts`'s
- * boundary case is what holds it.
+ * ONE FRAGMENT, TWO CALLERS, and that is the point rather than tidiness. The
+ * `'[)'` duplicates `CalendarEntry_teacher_slot_excl`'s own half-open bound
+ * (`prisma/migrations/20260826080000_calendar_entry/migration.sql`); a second
+ * copy of it would be a second thing to keep in step with the constraint, and
+ * this one appears once. `entry-conflict.test.ts`'s boundary case is what holds
+ * the remaining copy.
  *
  * `cancelledAt IS NULL` mirrors the constraint's partial predicate, and is also
  * why finding nothing is an ordinary outcome rather than a failure: a cancelled
- * entry releases its slot, so the row that refused the write can genuinely be
- * gone by the time this runs.
+ * entry releases its slot, so the row that refused a write can genuinely be
+ * gone by the time either probe runs.
+ *
+ * `date` is read with UTC accessors (via `toISOString`), matching
+ * `formatDateWithYear` and for the same reason: a `@db.Date` value is pinned to
+ * midnight UTC, and a local read moves the calendar day back one day west of
+ * UTC.
+ */
+function liveOverlapOf(
+  teacherId: string,
+  span: { date: Date; startTime: Date; durationMinutes: number },
+): Prisma.Sql {
+  const startsAt = `${span.date.toISOString().slice(0, 10)} ${timeToHHmm(span.startTime)}`;
+  return Prisma.sql`
+             "teacherId" = ${teacherId}
+         AND "cancelledAt" IS NULL
+         AND "span" && tsrange(
+               ${startsAt}::timestamp,
+               ${startsAt}::timestamp + (${span.durationMinutes}::int * interval '1 minute'),
+               '[)')
+  `;
+}
+
+/**
+ * Which of a generator's candidate dates a live entry of this teacher's still
+ * overlaps — asked AFTER `createManyAndReturn`'s `ON CONFLICT DO NOTHING` has
+ * silently absorbed the refusal, about the dates that did not come back.
+ *
+ * WHY A SECOND LOOK IS NEEDED AT ALL, which is the whole of this function.
+ * Both generators pre-check occupancy with `spansOverlap` (`@/lib/generation`)
+ * over a `date: { in: dates }` read — minutes-since-midnight on ONE calendar
+ * date. A neighbour whose duration carries it past midnight overlaps a
+ * candidate on the NEXT date, and that read cannot see it. The constraint can,
+ * refuses the insert, `ON CONFLICT DO NOTHING` absorbs it, and before this the
+ * date was reported as `'raced'` — a reason `countSkipReasons` drops on the
+ * argument that a race is transient. For a midnight spill it is not: the
+ * pre-check says free forever and the constraint refuses forever, so the
+ * teacher was navigated away from a window that generated nothing, in silence,
+ * every hour, for good.
+ *
+ * This asks the DATABASE the question the pre-check could not, using the
+ * constraint's own range so the two cannot disagree, and its answer is what
+ * lets the caller report `blocked_by_overlap` instead.
+ *
+ * ONE STATEMENT PER SHORT DATE, deliberately. `free` is at most one window
+ * (four dates today), the short set is a subset of it, and this runs only when
+ * something was actually refused — which outside a midnight spill is a lost
+ * race and therefore rare. A single statement over a date array would need an
+ * array binding and a correlated `EXISTS` to keep each candidate's answer
+ * separate; that is more SQL to be wrong in than the loop saves.
+ *
+ * THROWS, unlike `probeConflictingEntry` above, and the contracts differ
+ * because the moments do. That one runs after its caller's transaction has
+ * closed and after the 409 is already decided — a throw there would report a
+ * correctly refused write as one that may have happened. This one runs INSIDE
+ * the generating transaction, before the result exists, and its answer is the
+ * result: swallowing a failure here would hand back the very `'raced'` that
+ * silently discards the window, which is the defect this exists to close. Both
+ * generators state "NO CATCH" as doctrine for the same reason. Either sweep
+ * isolates a throwing template and carries on (`class-generator.ts`,
+ * `studio-class-generator.ts`); the two template POSTs roll their create back,
+ * and a teacher who retries gets an honest answer rather than a quiet one.
+ *
+ * Takes `PrismaClient | Prisma.TransactionClient`, where `probeConflictingEntry`
+ * takes only the former — the same difference, from the other side: this one is
+ * MEANT to run on the caller's transaction, which is still healthy because
+ * `ON CONFLICT DO NOTHING` completed rather than raised.
+ *
+ * Returns `date.getTime()` values rather than `Date`s, because a caller matching
+ * these against its own candidates has `Date` objects that are equal by value
+ * and never by identity.
+ */
+export async function probeOverlappingCandidates(
+  db: PrismaClient | Prisma.TransactionClient,
+  teacherId: string,
+  candidates: readonly Date[],
+  shape: { startTime: Date; durationMinutes: number },
+): Promise<Set<number>> {
+  const blocked = new Set<number>();
+  for (const date of candidates) {
+    const rows = await db.$queryRaw<Array<{ blocked: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1 FROM "CalendarEntry"
+         WHERE ${liveOverlapOf(teacherId, { date, ...shape })}
+      ) AS blocked
+    `;
+    if (rows[0]?.blocked === true) blocked.add(date.getTime());
+  }
+  return blocked;
+}
+
+/**
+ * The single live entry occupying a refused span, for the sentence a 409
+ * carries. `liveOverlapOf` above owns the predicate and the bound.
  *
  * `ORDER BY "date", "startTime"` before the `LIMIT 1` because a candidate span
  * can overlap more than one live entry, and naming which one is a choice this
@@ -104,11 +201,6 @@ function toFamily(kind: string): ClassFamily | null {
  *
  *   grep -rn "probeConflictingEntry(" src/services/ src/app/api/
  *
- * `date` is read with UTC accessors (via `toISOString`), matching
- * `formatDateWithYear` and for the same reason: a `@db.Date` value is pinned to
- * midnight UTC, and a local read moves the calendar day back one day west of
- * UTC.
- *
  * NEVER THROWS, and that is a guarantee about the refusal rather than about
  * this query. Every caller has already been refused by the database and has
  * already decided on 409; this only decides how specific the sentence is. A
@@ -124,7 +216,6 @@ export async function probeConflictingEntry(
   teacherId: string,
   span: EntrySpan,
 ): Promise<ConflictingEntry | null> {
-  const startsAt = `${span.date.toISOString().slice(0, 10)} ${timeToHHmm(span.startTime)}`;
   const exclude = span.excludeEntryId ?? null;
   try {
     const rows = await db.$queryRaw<Array<{
@@ -136,12 +227,7 @@ export async function probeConflictingEntry(
     }>>`
       SELECT "id", "kind"::text AS kind, "date", "startTime", "durationMinutes"
         FROM "CalendarEntry"
-       WHERE "teacherId" = ${teacherId}
-         AND "cancelledAt" IS NULL
-         AND "span" && tsrange(
-               ${startsAt}::timestamp,
-               ${startsAt}::timestamp + (${span.durationMinutes}::int * interval '1 minute'),
-               '[)')
+       WHERE ${liveOverlapOf(teacherId, span)}
          AND (${exclude}::text IS NULL OR "id" <> ${exclude}::text)
        ORDER BY "date", "startTime"
        LIMIT 1
