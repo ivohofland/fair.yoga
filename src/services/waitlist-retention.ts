@@ -30,9 +30,9 @@
  *  - BOTH HALVES OF THIS SWEEP'S PREDICATE ARE COLUMNS OF ONE ROW, and that
  *    row's schedule is frozen by one trigger. `date` and terminality both live
  *    on `CalendarEntry` now — terminality as `classCompletedAt IS NOT NULL OR
- *    (kind = 'regular' AND cancelledAt IS NOT NULL)`, which is character for
- *    character the predicate `entry_reject_frozen_schedule_change` evaluates
- *    before it refuses. That function's live definition comes from
+ *    (kind = 'regular' AND cancelledAt IS NOT NULL)`, which is the same
+ *    predicate `entry_reject_frozen_schedule_change` evaluates before it
+ *    refuses, over that function's `OLD` row. Its live definition comes from
  *    `prisma/migrations/20260826140000_entry_guard_restorations/`, which
  *    replaced the one the rewire installed; the predicate is unchanged, and
  *    what the replacement added is an early return when none of the three
@@ -58,8 +58,10 @@
  *    freeze's own input is as immovable as what it protects.
  *
  *    BOTH HALVES OF TERMINALITY ARE HELD BY TRIGGERS, which they were not when
- *    the rewire landed. `classCompletedAt` cannot be undone —
- *    `class_sync_entry_completed` is its only writer, only ever sets it, and
+ *    the rewire landed. `classCompletedAt` cannot be undone — the function
+ *    `class_sync_entry_completed` is its only writer (two triggers run it, one
+ *    per event; `prisma/schema.prisma` carries the query that re-derives the
+ *    set), it only ever sets the column, and
  *    `entry_completion_marker_guard` now refuses every departure from a value
  *    it has set; its precondition is a `completed` status that
  *    `class_reject_terminal_status_change` refuses to let go of. `cancelledAt`

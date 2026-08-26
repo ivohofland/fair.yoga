@@ -18,12 +18,13 @@ type can prevent the cycle forming — only the order can.
 than one of these tables also holds `Class`'s row lock before touching any of
 the others, *when it touches `Class` at all*. Two different statements take
 that lock and both count: `lockClassRow` (or `lockClassRowsOrdered`), and a
-compare-and-swap `class.updateMany` (an `UPDATE` locks the rows it matches —
-`transitionClass` (`class-lifecycle.ts`) takes its `Class` lock this way and
-no other, so a version of this sentence that names only the first writes it
-out of the rule it is subject to; `deleteTeacherAccount` used to be this
-example, until #237 folded its per-class CAS behind its own
-`lockClassRowsOrdered` pre-lock). Those are the two that take it
+compare-and-swap `class.updateMany` (an `UPDATE` locks the rows it matches).
+No site in `src/` relies on the second alone any more — `transitionClass`
+(`class-lifecycle.ts`) was the last, until #327 gave its CAS a second table and
+`lockClassRow` with it, and `deleteTeacherAccount` before that, until #237
+folded its per-class CAS behind its own `lockClassRowsOrdered` pre-lock. The
+sentence still names both, because a CAS added tomorrow takes the lock whether
+or not its author meant to. Those are the two that take it
 *deliberately*, which is not the same as being the only two statements that
 take it: plain DML on `Class` locks the rows it matches as well, and
 `archiveOrUnarchiveTemplate`'s `class.deleteMany` is the example. It is not a
@@ -421,19 +422,21 @@ holds a stronger lock on, in the same ascending sequence. Every other
 child-insert in `src/` is scoped to one class per transaction.
 
 That was checked across every `createBulkNotifications` call site, and "every"
-is the word this passage exists to earn: an earlier version of it asserted
-completeness and then listed **seven**, where `grep -rn 'createBulkNotifications('
-src/` (minus the definition in `notifications.ts`) returns **eleven**. Three
-were missing — `autoCancelClasses` (`class-transitions.ts`),
-`sendPaymentReminder` (`payments.ts`), and `handleSpotFreed`'s broadcast, a THIRD site in
-`waitlist.ts` beyond the two "both waitlist paths" covered. Re-derived here in
-full, with the class each one's notifications carry:
+is the word this passage exists to earn — a completeness claim here has been
+short before, and a table of names cannot say so about itself. So the table is
+re-derived rather than remembered, and it ships the command that re-derives it:
+run this and it should return one line per row below, with no row unaccounted
+for and no line unlisted.
+
+    grep -rn 'createBulkNotifications(' src/ \
+      | grep -v 'services/notifications.ts:' | grep -v '\.test\.'
+
+Against each, the class its notifications carry:
 
 | Call site | Classes per transaction |
 |---|---|
 | `deleteTeacherAccount` (`gdpr.ts`) | one — the loop's current class (the named exception above) |
 | `autoCancelClasses` (`class-transitions.ts`) | one — `cls.id`, and one transaction per class |
-| `autoTransitionToInProgress` (`class-transitions.ts`) | one — `cls.id`, and one transaction per class |
 | `completeClass` (`class-lifecycle.ts`) | one — `cls.id` |
 | `promoteNext` (`waitlist.ts`) | one — `classId` |
 | `claimSpot` (`waitlist.ts`) | one — `classId` |
@@ -442,7 +445,7 @@ full, with the class each one's notifications carry:
 | `sendPaymentReminders` (`payment-reminders.ts`) | one — per-payment, one transaction each |
 | `POST /api/registrations` | one — the class being booked |
 | `POST /api/announcements` | one — the announcement's class, inside the dedupe transaction (#196; it ran outside any transaction until then) |
-| `POST /api/classes/[id]/transition` | one — the class being transitioned |
+| `POST /api/classes/[id]/cancel` | one — the class being cancelled, under `lockClassRow` (#327; this is where the transition route's cancel branch went) |
 | `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | **many** — every class the archive withdrew (#112) |
 
 > **#212 moved the broadcast inside a transaction, and the order is unchanged.**
@@ -470,7 +473,9 @@ Five stands — but a future sweep that notifies across classes in one
 transaction would be a sixth site, and none of the four checks above would
 surface it.
 
-**That sweep arrived, and it is the twelfth row above.** #112 made
+**That sweep arrived, and it is the `archiveOrUnarchiveTemplate` row above**
+— named rather than numbered, because every insertion into that table moved the
+number and none of them moved this sentence. #112 made
 `archiveOrUnarchiveTemplate` notify the waiting students of every class its
 `deleteMany` took, in one `createMany`, inside the archive transaction — the
 first site in `src/` that notifies across more than one class at a time, and
@@ -1422,23 +1427,38 @@ pre-298 shape again.
   `StudentPrivacy`, `TeacherStudent`, `Invitation` (deleted, not anonymized —
   the teacher is soft-deleted, not scrubbed like a student's identity is). Was
   already `StudentPrivacy` before `TeacherStudent`; not the outlier.
-- **`transitionClass`** (`src/services/class-lifecycle.ts`) — takes its
-  `Class` lock a different way than every other site on this list: not
-  through `lockClassRow` or `lockClassRowsOrdered`, but a bare CAS
-  `class.updateMany` on the outer client, opened as an interactive
-  transaction since #216/#182 (it was a single autocommit `UPDATE` before).
-  It calls `setLockTimeout` as its first statement, so its CAS gets the same
-  bounded 2s `55P03` every `lockClassRow` site gets rather than Prisma's 5s
-  `P2028` — added in the same review, because an interactive transaction with
-  no per-statement bound is a worse failure mode than the autocommit statement
-  it replaced.
+- **`transitionClass`** (`src/services/class-lifecycle.ts`) — `Class` via
+  `lockClassRow`, then its CAS `class.updateMany` on the same row. It took the
+  lock through the CAS alone until #327, which is the one thing about this site
+  that used to be different from every other on this list; the extraction gave
+  the CAS a conjunct on `CalendarEntry` and `EvalPlanQual` re-fetches only the
+  locked row, so the second table's subplan kept a pre-wait snapshot and a
+  cancel committing mid-transition was invisible. `lockClassRow` also carries
+  the `setLockTimeout` this site used to issue itself, so its CAS still gets
+  the bounded 2s `55P03` every `lockClassRow` site gets rather than Prisma's 5s
+  `P2028`.
   When the CAS succeeds and the target is `in_progress`, it writes
   `WaitlistEntry` next, via `closeQueueOnStart` — `Class → WaitlistEntry`,
   conformant with the order above, and the whole write set is the two
   tables and nothing else: the refusal-diagnosis reads below the
   transaction decide nothing that gets persisted. The only production
   caller left since #216/#182 removed the sweep's is
-  `POST /api/classes/[id]/transition`'s generic branch.
+  `POST /api/classes/[id]/transition`, which now does nothing but call it.
+- **`POST /api/classes/[id]/cancel`** (#327) — `Class` then `CalendarEntry`
+  via `lockClassRow`, then the CAS `calendarEntry.updateMany` that writes
+  `cancelledAt` on a row this transaction already holds, then `Registration`
+  (read only — who gets the notice), then `WaitlistEntry` (closed to
+  `removed`), then `Notification` via `createBulkNotifications`. This is the
+  transition route's cancel branch, moved to its own door when `cancelled` left
+  `ClassStatus`, and the move is what gave it a deliberate lock: the old branch
+  let its CAS `class.updateMany` take the `Class` row for free, and the CAS now
+  writes the ENTRY, so the free lock would have landed on the wrong row. It
+  reads `Registration` before writing `WaitlistEntry`, which the canonical line
+  orders the other way — no edge either way, because a plain `findMany` takes
+  no row lock; the WRITE order is `Class → CalendarEntry → WaitlistEntry →
+  Notification`. The `relatedClassId` on those notifications takes
+  `FOR KEY SHARE` on the class row this transaction is already holding
+  `FOR UPDATE`, one class per transaction, exactly as the table above records.
 - **`completeClass`** (`src/services/class-lifecycle.ts`) — `Class` via
   `lockClassRow`, then `WaitlistEntry` (via `closeQueueOnStart`, #216/#182 —
   only on the inline `open → in_progress` bump this function does when a

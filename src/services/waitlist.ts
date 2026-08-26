@@ -15,9 +15,18 @@ import { resolveInvitationOnLink } from './link-consent';
 import { lockClassRow, lockClassRowsOrdered, type TransactionClientOnly } from '@/lib/db-locks';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { readSeatCount } from './capacity';
-// pino, and server-only. Safe here and checked rather than assumed: no
-// `'use client'` component imports this module — the eleven importers are
-// route handlers, services, tests and two server components.
+// pino, and server-only. Safe here and CHECKED rather than assumed: no
+// `'use client'` file imports this module. Re-derived rather than carried, so
+// no roster here can go stale — the first command's output IS the census, one
+// line per importer, and the second's EMPTY output is the claim:
+//
+//   grep -rlE "from '(@/services|\.)/waitlist'" src --include='*.ts' --include='*.tsx'
+//   grep -rlE "from '(@/services|\.)/waitlist'" src --include='*.ts' --include='*.tsx' \
+//     | xargs grep -l 'use client'
+//
+// The needle is anchored on the import specifier, not on the word: a bare
+// `/waitlist'` also matches `fetch('/api/waitlist')` in a client component,
+// which is not an importer of this module.
 import { log } from '@/lib/log';
 
 /** Raised when a promotion/claim is not allowed in the current class state. */
@@ -943,30 +952,39 @@ async function hasActiveRegistration(
  * takes the same bounded 2s wait, through `lockClassRow` or
  * `lockClassRowsOrdered` (`src/lib/db-locks.ts`).
  *
- * A narrower, still-open gap: three writers flip `WaitlistEntry.status` out
- * of `waiting` — never touching `position`, so "renumbering writer" above
- * does not cover them — without calling `lockClassRow` themselves: the
- * cancel branch of `POST /api/classes/[id]/transition` (its
- * `waitlistEntry.updateMany` on `status: 'waiting'`, to `removed`),
- * `deleteTeacherAccount`'s own cancel loop (`gdpr.ts`, near its
- * `class.updateMany` CAS, also to `removed`), and `closeQueueOnStart` below
- * (to `expired` — see its own docblock for the detail). The first two take a
- * conflicting lock on the Class row themselves, via that CAS `UPDATE`;
- * `closeQueueOnStart` takes none of its own and instead trusts its caller to
- * have already taken one — `lockClassRow` from `autoTransitionToInProgress`
- * and `completeClass`, or the CAS `UPDATE` from `transitionClass`. Either
- * way, none of the three can race a `lockClassRow` holder into corrupting
- * anything. Only the FIRST of those two is still unbounded: the transition
- * route's cancel branch issues its CAS `class.updateMany` with no
- * `setLockTimeout` ahead of it, so it waits as long as it takes. (Its service
- * sibling `transitionClass` DOES bound its own CAS, as of #216/#182 — but the
- * route intercepts `cancelled` and never reaches it.) `deleteTeacherAccount`
- * is bounded: it calls `lockClassRowsOrdered` (`gdpr.ts`) immediately before
- * that cancel loop, and that helper issues `setLockTimeout`, which governs
- * every statement left in the transaction. This paragraph claimed both were
- * unbounded until #104's review found otherwise; `docs/lock-order.md`'s
- * version of the same claim was corrected a round before this one was, which
- * is the twin-artifact failure this file keeps hitting.
+ * A narrower gap: some writers flip `WaitlistEntry.status` out of `waiting`
+ * — never touching `position`, so "renumbering writer" above does not cover
+ * them — without calling `lockClassRow` themselves. Which ones is a census,
+ * so re-derive it rather than trusting a roster. The writers are every model
+ * call that sets the column, and the lock is whether the transaction the hit
+ * sits in opened with `lockClassRow` or `lockClassRowsOrdered`
+ * (`src/lib/db-locks.ts`):
+ *
+ *     grep -rnE '(tx|db)\.waitlistEntry\.update' src --include='*.ts' \
+ *       | grep -v '\.test\.'
+ *
+ * The needle carries its client prefix so this line does not match itself —
+ * both prefixes, because `reorderWaitingEntries` below takes either.
+ *
+ * Two answer today. `deleteTeacherAccount`'s cancel loop (`gdpr.ts`, near its
+ * `class.updateMany` CAS, to `removed`) holds a conflicting `Class` lock
+ * anyway, through the ordered `lockClassRowsOrdered` pre-lock its loop runs
+ * behind. `closeQueueOnStart` below (to `expired` — see its own docblock)
+ * takes none of its own and instead trusts its caller to have already taken
+ * one; every caller does, via `lockClassRow`, `transitionClass` included since
+ * #327 gave it a lock of its own. Neither can race a `lockClassRow` holder
+ * into corrupting anything.
+ *
+ * NEITHER IS UNBOUNDED, and the one that used to be is the one that moved.
+ * The transition route's cancel branch is `POST /api/classes/[id]/cancel`
+ * since #327, a door that opens with `lockClassRow` — so its
+ * `waitlistEntry.updateMany` runs under the same bounded 2s wait as every
+ * other site, where the branch it replaced reached the `Class` row through a
+ * bare CAS `class.updateMany` with no `setLockTimeout` ahead of it.
+ * `deleteTeacherAccount` is bounded one helper over: `lockClassRowsOrdered`
+ * issues `setLockTimeout`, which governs every statement left in the
+ * transaction.
+ *
  * `deleteStudentAccount`'s `reorderWaitingEntries`
  * loop runs under the 2s bound its own transaction sets unconditionally
  * (`setLockTimeout` as that transaction's first statement, `gdpr.ts`) for

@@ -44,8 +44,12 @@ export { ECONOMIC_FIELDS, type EconomicField };
  * compiled before, which would have desynchronised this table at runtime from
  * both `TERMINAL_CLASS_STATUSES` (frozen at module load, so it would NOT have
  * followed) and the DB trigger that enforces the same thing — the exact drift
- * the derivation below exists to make impossible. All four read sites
- * (`.length`, `.includes` ×2, `.join`) are readonly-safe, so this costs nothing.
+ * the derivation below exists to make impossible. Nothing anywhere reads these
+ * arrays in a way `readonly` refuses — `.length`, `.includes` and `.join` are
+ * all readonly-safe — so the annotation costs nothing, and the ANNOTATION is
+ * what keeps that true: a read site added anywhere that mutates one fails to
+ * compile. No count is kept here for that reason; `grep -rn VALID_TRANSITIONS
+ * src` is the census, and it spans this file and its test.
  *
  * `readonly ClassStatus[]` rather than `as const satisfies`: the latter would
  * narrow the values to literal unions and force `as readonly ClassStatus[]`
@@ -309,14 +313,14 @@ export type TransitionDbResult<
  * itself is the same problem one level down. See `docs/lock-order.md`.
  *
  * Since #216 this also closes the class's waitlist when the target is
- * `in_progress`, which is why the CAS now sits in a transaction. That does not
- * weaken the no-lock argument above: the close's own predicate (`classId`,
- * `status: 'waiting'`) is re-evaluated by Postgres at execution time, and the
- * CAS `UPDATE` has already taken the `Class` row lock that every
- * `WaitlistEntry` writer conflicts on — so a concurrent join or promotion is
- * either committed before this transaction's CAS or blocked behind it. This is
- * the same shape the manual-cancel branch of
- * `POST /api/classes/[id]/transition` has used since #112.
+ * `in_progress`, which is why the CAS sits in a transaction. The close's own
+ * predicate (`classId`, `status: 'waiting'`) is re-evaluated by Postgres at
+ * execution time, and the `lockClassRow` above is already holding the `Class`
+ * row lock that every `WaitlistEntry` writer conflicts on — so a concurrent
+ * join or promotion is either committed before this transaction opened or
+ * blocked behind it. `POST /api/classes/[id]/cancel` (#327) closes the same
+ * queue in the same shape, having inherited it from the transition route's
+ * cancel branch when that branch became its own door.
  */
 export async function transitionClass(
   db: PrismaClient,
@@ -516,8 +520,9 @@ export async function transitionClass(
     });
     if (updated.count !== 1) return false;
     // #216. Predicated on the TARGET: `draft -> open` must not expire a queue,
-    // and `-> cancelled` never reaches here (the route intercepts it, and no
-    // other caller passes it).
+    // and `cancelled` is not a `ClassStatus` since #327 — it cannot be named
+    // here at all. Cancelling closes the queue in its own door,
+    // `POST /api/classes/[id]/cancel`.
     if (targetStatus === 'in_progress') await closeQueueOnStart(tx, classId);
     return true;
   });
@@ -827,7 +832,7 @@ type EntryUpdateField = 'classType' | 'date' | 'startTime' | 'durationMinutes';
 /**
  * Compile-time pin: every field the wire schema accepts must be a column
  * `updateMany` can actually write, on whichever of the two tables
- * `ENTRY_UPDATE_FIELDS` routes it to.
+ * `EntryUpdateField` routes it to.
  *
  * Because `ClassUpdateData` is derived, a new schema field lands in `keyof
  * ClassUpdateData`; if it has no matching column this pin resolves to that
@@ -1183,22 +1188,22 @@ export type UpdateClassResult =
  * IT WRITES TWO TABLES, so it is an explicit transaction and it takes
  * `lockClassRow` (`db-locks.ts`) rather than letting Prisma's statement order
  * decide which row it holds first. `classType`, `date`, `startTime` and
- * `durationMinutes` land on the entry; `description` and the five economic
- * fields land on `Class`. Each half runs only if it HAS work — a request
+ * `durationMinutes` land on the entry; `description` and every
+ * `ECONOMIC_FIELDS` member land on `Class`. Each half runs only if it HAS
+ * work — a request
  * editing only `startTime` leaves the class half empty, and an `updateMany`
  * with nothing to set is not a reliable count-of-1 — and each half has its own
  * refusal, because a `Class` miss means terminal status and a `CalendarEntry`
  * miss means a frozen schedule, which are two different sentences.
  *
- * THE SCHEDULING RULE (#249) IS NOT A THIRD FREEZE, and the distinction is why
- * this sentence used to say "two" and stop. A freeze is a property of the
- * CLASS: once it holds, some set of columns is shut for good. The past-start
- * rule is a property of the WRITE — it refuses a `date`/`startTime` edit whose
- * resulting start instant has already passed, and refuses nothing else. The
- * same class, in the same state, accepts a description edit, and accepts a
- * reschedule to next week. Counting it among the freezes would predict a
- * permanence it does not have; leaving it out of the docblock entirely, which
- * is what happened, left the function's inventory one refusal short of what it
+ * THE SCHEDULING RULE (#249) IS NOT A THIRD FREEZE, and it still belongs in
+ * this inventory. A freeze is a property of the CLASS: once it holds, some set
+ * of columns is shut for good. The past-start rule is a property of the WRITE
+ * — it refuses a `date`/`startTime` edit whose resulting start instant has
+ * already passed, and refuses nothing else. The same class, in the same state,
+ * accepts a description edit, and accepts a reschedule to next week. Counting
+ * it among the freezes would predict a permanence it does not have; leaving it
+ * out altogether leaves the function's inventory one refusal short of what it
  * enforces.
  *
  * NEITHER LIFTS. They differ in SCOPE, not in permanence. An earlier revision
@@ -1217,10 +1222,7 @@ export type UpdateClassResult =
  * annotations at all. The conclusion held on a tally that did not, which is
  * the failure a grep is there to prevent.
  *
- * The sentence used to cite `template-sync.ts` as leaning on exactly that
- * latch to choose the instances it could rewrite; #194 deleted that function,
- * and the latch is unchanged. A terminal status, in turn, has no outgoing
- * transition.
+ * A terminal status, in turn, has no outgoing transition.
  *
  * Both are checked twice, for the same reason. The first check, against the
  * row we just read, is an optimisation: it answers the common case in one
@@ -1231,12 +1233,10 @@ export type UpdateClassResult =
  * round trips, not correctness, for exactly that reason.
  *
  * DELETING THE TERMINAL CHECK IS NOT AS FREE, AND IT CHANGES THE ANSWER IN
- * THREE CASES. This count has now been wrong twice — it said one, then two,
- * and each revision was written on a branch that had already shipped the test
- * disproving it. Measured rather than reasoned this time: stubbing the check
- * out reddens exactly five tests, covering the three cases below. All three
- * are questions of ORDER — the terminal check sits above three other early
- * returns, and each would answer first without it:
+ * THREE CASES. Measured rather than reasoned: stubbing the check out reddens
+ * exactly five tests, covering the three cases below. All three are questions
+ * of ORDER — the terminal check sits above three other early returns, and each
+ * would answer first without it:
  *
  *  1. A class that is BOTH terminal and settings-locked with an economic
  *     field sent. `cls.settingsLocked && sentEconomic !== null` fires next and

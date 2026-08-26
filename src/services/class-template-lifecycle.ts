@@ -1353,13 +1353,9 @@ const SCHEDULED_STATUSES: readonly ClassStatus[] = Object.freeze(['draft', 'open
  * dropping a status from `SCHEDULED_STATUSES` above left this one stale, and
  * measurement during issue 180 task 4's review showed exactly that: dropping
  * `'draft'` from the raw list left every test covering this function green,
- * silently re-opening the deadlock the pre-lock exists to close. (A count and
- * a file count stood here — "all 102 tests across the four files" — with the
- * files unnamed and the number already stale by the time the branch ended.
- * The measurement is real and scoped to that moment; the number was doing no
- * work except going out of date.) Deriving this from the same array makes the
- * desync un-representable — there is only one list to edit now, not two to
- * keep in sync.
+ * silently re-opening the deadlock the pre-lock exists to close. Deriving this
+ * from the same array makes the desync un-representable — there is only one
+ * list to edit now, not two to keep in sync.
  *
  * `Prisma.raw`, not `Prisma.join`: `Prisma.join` would bind each status as a
  * separate parameter, and a bound text parameter compared against the

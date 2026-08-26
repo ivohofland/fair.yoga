@@ -53,9 +53,11 @@ export const POST = withErrorHandler(async (
     // (`db-locks.ts`). The old branch relied on its CAS `UPDATE` to take the
     // `Class` lock for free; the CAS now writes the ENTRY, so the free lock
     // would land on the wrong row — the same shape `updateClass` was rewritten
-    // for. It also brings this path the 2s bound it never had:
-    // `waitlist.ts`'s docblock recorded the transition route's cancel CAS as
-    // the one unbounded `WaitlistEntry`-adjacent writer left.
+    // for. It also brings this path the 2s bound it never had — the branch
+    // this replaced reached the `Class` row through a bare CAS with no
+    // `setLockTimeout` ahead of it, so it waited as long as it took.
+    // `waitlist.ts`'s docblock carries that among the `WaitlistEntry`-adjacent
+    // writers and their bounds.
     await lockClassRow(tx, id);
 
     // The CAS moved to the entry with the column. The class-side conjunct is

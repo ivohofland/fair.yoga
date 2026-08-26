@@ -136,10 +136,13 @@ beforeAll(async () => {
   const cls = await makeClass('Classes API', 'draft', '09:00');
   classId = cls.id;
 
-  // Separate draft fixture for the /transition cancel-branch tests: cancelling
-  // mutates status away from `draft`, which the tests above depend on staying
-  // put. No registrations/waitlist entries here, so the cancel transaction's
-  // notification fan-out has nothing to notify (see the cancel test below).
+  // Separate draft fixture for the `POST …/cancel` tests. Cancellation is a
+  // column on the entry since #327 and leaves `status` at `draft`, but every
+  // status writer's CAS carries `calendarEntry: { cancelledAt: null }` — so a
+  // cancelled class refuses every transition, which is what the tests above
+  // need `classId` to stay available for. No registrations/waitlist entries
+  // here, so the cancel transaction's notification fan-out has nothing to
+  // notify (see the cancel test below).
   const cancelCls = await makeClass('Classes API Cancel', 'draft', '09:15');
   cancelClassId = cancelCls.id;
 
@@ -161,11 +164,14 @@ beforeAll(async () => {
   const completedCls = await makeClass('Classes API Terminal (#247)', 'completed', '10:15');
   completedClassId = completedCls.id;
 
-  // The OTHER terminal status. `updateClass` returns `reason: 'terminal'`
-  // with the status attached and the route interpolates it, so a fixture in
-  // only one of the two states leaves half the rendered message unasserted
-  // — and `TERMINAL_CLASS_STATUSES` has exactly two members, so covering
-  // both is cheap rather than combinatorial.
+  // The cancelled side of the freeze. `updateClass` answers `reason:
+  // 'terminal'` carrying a `TerminalClassState` (`class-lifecycle.ts`) —
+  // `ClassStatus | 'cancelled'` rather than a `ClassStatus` since #327,
+  // because a cancelled class keeps whatever live status it had and carries
+  // `cancelledAt` on its entry — and the route interpolates that value
+  // straight into the 409. `frozenStateOf` picks between a
+  // `TERMINAL_CLASS_STATUSES` member and `'cancelled'`; one fixture per side
+  // of that choice, so neither half of the rendered message goes unasserted.
   const cancelledCls = await makeClass('Classes API Terminal cancelled (#247)', 'cancelled', '10:30');
   cancelledTerminalClassId = cancelledCls.id;
 
@@ -436,8 +442,10 @@ describe('POST /api/classes/[id]/transition', () => {
   });
 
   it('400s a transition to "completed" — the enum deliberately excludes it', async () => {
-    // transitionClassSchema's status enum is ['draft','open','in_progress',
-    // 'cancelled'] — completion only happens via /complete, never /transition.
+    // `transitionClassSchema` (`lib/schemas.ts`) does not accept `completed`:
+    // completion happens through `/complete`, never through `/transition`. The
+    // 400 below is the pin. The enum's membership is not restated here — a
+    // roster in a comment cannot fail when the enum it copies changes.
     const res = await transition(ownerToken, classId, { status: 'completed' });
     expect(res.status).toBe(400);
 

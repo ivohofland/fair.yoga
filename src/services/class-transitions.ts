@@ -504,8 +504,9 @@ export async function autoCancelClasses(
         // first. A student in this queue was told the class was full and has
         // been waiting for a seat; the class not happening at all is the one
         // outcome they most need to hear about, and until now this sweep never
-        // told them. The manual-cancel route (`transition/route.ts:47-58`) is
-        // the shape being copied.
+        // told them. The manual-cancel route
+        // (`api/classes/[id]/cancel/route.ts`, its own door since #327) is the
+        // shape being copied.
         const waiting = await tx.waitlistEntry.findMany({
           where: { classId: cls.id, status: 'waiting' },
           select: { studentId: true },

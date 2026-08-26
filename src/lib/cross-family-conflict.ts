@@ -49,8 +49,10 @@
  *        Raw query failed. Code: `YG001`. Message: `ERROR: Teacher <id>
  *        already has a live class (<id>) at 2029-06-06 09:00`
  *
- * Nothing in `src/` writes these four tables raw today, so shape 2 is
- * unreachable as the code stands. It is matched anyway, and deliberately:
+ * Nothing in `src/` wrote the four tables those triggers sat on — `Class`,
+ * `StudioClass`, `ClassTemplate`, `StudioClassTemplate` — with raw SQL when
+ * this was measured, so shape 2 was unreachable as the code then stood. It was
+ * matched anyway, and deliberately:
  * `isTerminalStatusViolation`'s docblock records an earlier revision that
  * admitted only shape 1 and argued the raw one was unreachable — which made a
  * 409-vs-500 hinge on a whole-repo census nothing could keep honest, and the

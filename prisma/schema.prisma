@@ -347,7 +347,16 @@ model ClassTemplate {
 /// entry has a `cancelledAt`, not a `status`.
 ///
 /// What Prisma cannot show here instead, none of it visible to
-/// `migrate diff` and therefore none of it ever showing as drift:
+/// `migrate diff` and therefore none of it ever showing as drift — and equally
+/// none of it reappearing if this list stops being kept. RE-DERIVE THE SET
+/// rather than trusting the list below; only the annotations need prose, and
+/// the same query answers for `CalendarEntry` with its own table name:
+///
+///     SELECT conname FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+///      WHERE t.relname = 'Class' AND c.contype IN ('c', 'x')
+///     UNION ALL
+///     SELECT tgname FROM pg_trigger g JOIN pg_class t ON t.oid = g.tgrelid
+///      WHERE t.relname = 'Class' AND NOT g.tgisinternal;
 ///
 ///   - `Class_kind_check`, `CHECK ("kind" = 'regular')`. Paired with
 ///     `StudioClass`'s own `'studio'` check below, it is what makes the
@@ -356,11 +365,20 @@ model ClassTemplate {
 ///     "the pair agrees".
 ///   - `class_terminal_status_guard`, which refuses any status change on a
 ///     terminal class.
-///   - `class_sync_entry_completed_guard`, which writes
-///     `CalendarEntry.classCompletedAt` when a class completes. That marker is
-///     what lets the entry's freeze guard read only its own row instead of
-///     reaching back here for a status — see the field's docblock on
-///     `CalendarEntry` for the lock-order argument.
+///   - `class_sync_entry_completed_guard` and
+///     `class_sync_entry_completed_insert_guard`, TWO triggers running the one
+///     function `class_sync_entry_completed`, which writes
+///     `CalendarEntry.classCompletedAt` when a class completes. One per event,
+///     and the INSERT half is not redundant: the UPDATE trigger is
+///     `AFTER UPDATE OF status`, so a `Class` inserted already at
+///     `status = 'completed'` fired nothing and left its entry unmarked and
+///     its `date` editable — which is the guarantee `waitlist-retention.ts`
+///     permanently DELETEs queue rows on the strength of.
+///     `20260826140000_entry_guard_restorations` carries why it is a second
+///     trigger rather than a widened first. That marker is also what lets the
+///     entry's freeze guard read only its own row instead of reaching back
+///     here for a status — see the field's docblock on `CalendarEntry` for the
+///     lock-order argument.
 model Class {
   id                   String          @id @default(uuid())
   calendarEntryId      String          @unique
@@ -557,15 +575,17 @@ model ScheduleRule {
 /// teacher is teaching, and for how long. `Class` and `StudioClass` keep only
 /// their own economics and hang off this by a composite foreign key.
 ///
-/// Carries FOUR constraints this file cannot express, all hand-authored in the
-/// migrations and all invisible to `migrate diff` — so none shows as drift,
-/// and equally none reappears if this list stops being kept:
+/// Carries constraints AND triggers this file cannot express, all
+/// hand-authored in the migrations and all invisible to `migrate diff` — so
+/// none shows as drift, and equally none reappears if this list stops being
+/// kept. Same scope as `Class`'s list above, and re-derived by the same query
+/// with `'CalendarEntry'` for `'Class'`; run it rather than trusting the list:
 ///
-///   - an `EXCLUDE USING gist` over the generated `span` column below. It is
-///     what replaced the two partial slot indexes and the four cross-family
-///     triggers of #296 — one range constraint, index-backed and race-free by
-///     construction, where those were a per-table key plus an unlocked
-///     cross-table read. `docs/lock-order.md` carries the argument.
+///   - `CalendarEntry_teacher_slot_excl`, an `EXCLUDE USING gist` over the
+///     generated `span` column below. It is what replaced the two partial
+///     slot indexes and the four cross-family triggers of #296 — one range
+///     constraint, index-backed and race-free by construction, where those
+///     were a per-table key plus an unlocked cross-table read. `docs/lock-order.md` carries the argument.
 ///   - `CalendarEntry_duration_positive`, `CHECK ("durationMinutes" > 0)`.
 ///     It is the ZERO case that needs it, and quietly: `tsrange(t, t, '[)')`
 ///     is EMPTY, an empty range `&&` overlaps nothing, so a zero-duration
@@ -584,6 +604,22 @@ model ScheduleRule {
 ///     of one row now, so it needs no cross-table read.
 ///     `20260826200000_entry_marker_exclusivity` carries both, with the
 ///     argument for each.
+///   - `entry_frozen_schedule_guard`, which refuses a `date`, `startTime` or
+///     `durationMinutes` change on a terminal entry — the freeze
+///     `waitlist-retention.ts` rests on.
+///   - `entry_completion_marker_guard`, which makes `classCompletedAt`
+///     write-once, so the freeze above cannot be walked around by clearing its
+///     own input first.
+///   - `entry_terminal_liveness_guard`, which refuses to un-cancel a regular
+///     entry and refuses to cancel a completed one — the arms of
+///     `CalendarEntry_not_cancelled_and_completed` that can be expressed
+///     against the row being written.
+///
+/// The three guards' own functions are named
+/// `entry_reject_frozen_schedule_change`,
+/// `entry_reject_completion_marker_change` and
+/// `entry_reject_terminal_liveness_change`; the query above returns the
+/// TRIGGER names, which is what `pg_trigger` and the migrations spell.
 model CalendarEntry {
   id        String      @id @default(uuid())
   teacherId String

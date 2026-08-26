@@ -327,14 +327,20 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
  *
  * `entries: true` ADDS the `CalendarEntry` rows, in a second statement, after
  * every `Class` lock — the same order and for the same reason `lockClassRow`
- * above takes its two. It is OPT-IN rather than automatic because widening all
- * four call sites by reflex adds wait edges nothing needs, and because the
+ * above takes its two. It is OPT-IN rather than automatic because widening
+ * every call site by reflex adds wait edges nothing needs, and because the
  * answer is per-caller: ask it of the whole TRANSACTION, not of this
  * statement — does anything in it read or write the entry's `date`,
- * `startTime`, `durationMinutes` or `cancelledAt`? Two of the four say yes
- * (`deleteTeacherAccount`, which writes `cancelledAt` to cancel; and
- * `archiveOrUnarchiveTemplate`, whose delete re-evaluates a predicate over
- * `date`), and each call site carries its own verdict.
+ * `startTime`, `durationMinutes` or `cancelledAt`?
+ *
+ * NO ROSTER HERE, for the reason the register above spends a paragraph on:
+ * a caller list kept in this file goes stale, and nothing that counts can
+ * catch it. Every call site instead carries its own written verdict, beside
+ * the transaction the question is actually about. Re-derive the set —
+ *
+ *     grep -rn 'VERDICT (#327)' src
+ *
+ * — one hit per call site, plus the line above quoting its own needle.
  *
  * The second statement is scoped to the ids the FIRST one returned — a
  * structural subset, not a predicate re-evaluated later — so its join member
