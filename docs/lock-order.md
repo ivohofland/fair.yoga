@@ -150,10 +150,16 @@ Three things take both, and all three take them in this order:
   unlocked read cannot see an uncommitted sibling. A guard is not a substitute
   for a constraint.
 
-  That is why one terminality arm is carried `known-open` rather than closed
-  with a trigger: a cancelled class's `Class.status` is not frozen at the
-  database, and freezing it needs exactly that read. The marker and the full
-  argument sit beside `TERMINAL_CLASS_STATUSES` in
+  That is why one terminality arm was never closed with a trigger: a cancelled
+  class's `Class.status` is still not frozen at the database, and freezing it
+  needs exactly that read. It is closed by a CONSTRAINT instead —
+  `CalendarEntry_not_cancelled_and_completed`
+  (`20260826200000_entry_marker_exclusivity`), a single-row `CHECK` that takes
+  no lock and reads no second table, because the extraction put both markers on
+  one row. The completing `UPDATE "Class"` still runs; the sync trigger's own
+  write to the entry is what violates the CHECK and aborts the transaction, so
+  the refusal lands `Class` then entry like every other writer here. The full
+  argument sits beside `TERMINAL_CLASS_STATUSES` in
   `src/services/class-lifecycle.ts`; what belongs here is the mechanism it
   turns on.
 
@@ -1441,7 +1447,9 @@ pre-298 shape again.
   then `Registration`, `Payment`. `transitionClass`'s own
   docblock names this and `autoCancelClasses`
   as the two sites that read more state than a bare status under the
-  decision, and take the lock instead of a plain CAS for that reason. Since
+  decision, and take the lock instead of a plain CAS for that reason — the
+  older of the two reasons to take it, which since #327 no longer
+  distinguishes them from `transitionClass` itself. Since
   #216/#182 this is also where `autoCompleteClasses`' timing decision lives:
   `autoCompleteClasses` itself takes no lock of its own — its optional
   `requireEndedBy` is compared against the fresh, locked row's recomputed end

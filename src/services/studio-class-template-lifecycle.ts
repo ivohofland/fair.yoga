@@ -926,10 +926,28 @@ export type ArchiveStudioTemplateResult =
  * `gt` (today's class is spared) and the counts use `gte` (today's class is
  * the survivor they must report), against a calendar date from
  * `startOfLocalDay` rather than a raw instant.
+ *
+ * `kind: 'studio'` IS NOT DECORATION, and the class-family twin is why it looks
+ * like one. That predicate restricts to `kind = 'regular'` structurally, via
+ * the `classes: { some: { status: … } }` conjunct it needs anyway; this one has
+ * no such conjunct — `StudioClass` has no status to filter on — so without the
+ * word it restricts to nothing but the rule and the date. It then feeds a hard
+ * `deleteMany` that cascades `CalendarEntry -> Class ->
+ * Registration/Payment/WaitlistEntry`.
+ *
+ * What made that safe was a property of two OTHER files: both generators take
+ * `scheduleRuleId` from a template they already hold, so a rule's `kind` and
+ * its entries' always agree. `CalendarEntry.scheduleRuleId`'s own docblock
+ * records that the schema does NOT enforce it (issue 328) and says outright:
+ * "Anyone writing one is standing here: check the rule's `kind` against the
+ * entry's yourself, because nothing below will." A deleting path is the last
+ * place to rest on a property nothing enforces, and one word makes it immune
+ * by construction instead.
  */
 const scheduledWhere = (scheduleRuleId: string, date: { gt: Date } | { gte: Date }) =>
   ({
     scheduleRuleId,
+    kind: 'studio',
     date,
     cancelledAt: null,
   }) satisfies Prisma.CalendarEntryWhereInput;

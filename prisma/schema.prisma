@@ -557,9 +557,9 @@ model ScheduleRule {
 /// teacher is teaching, and for how long. `Class` and `StudioClass` keep only
 /// their own economics and hang off this by a composite foreign key.
 ///
-/// Carries TWO constraints this file cannot express, both hand-authored in the
-/// migration and both invisible to `migrate diff` — so neither shows as drift,
-/// and equally neither reappears if this list stops being kept:
+/// Carries FOUR constraints this file cannot express, all hand-authored in the
+/// migrations and all invisible to `migrate diff` — so none shows as drift,
+/// and equally none reappears if this list stops being kept:
 ///
 ///   - an `EXCLUDE USING gist` over the generated `span` column below. It is
 ///     what replaced the two partial slot indexes and the four cross-family
@@ -573,6 +573,17 @@ model ScheduleRule {
 ///     at all. A negative duration needs no guarding — the generated column's
 ///     own expression raises `range lower bound must be less than or equal to
 ///     range upper bound` before any constraint is consulted. Both measured.
+///   - `CalendarEntry_completion_marker_regular_only`,
+///     `CHECK ("kind" = 'regular' OR "classCompletedAt" IS NULL)`. The
+///     AUTHORSHIP half of `classCompletedAt`'s contract, which the trigger
+///     beside it enforces nothing of — see that column's own comment.
+///   - `CalendarEntry_not_cancelled_and_completed`,
+///     `CHECK (NOT ("classCompletedAt" IS NOT NULL AND "cancelledAt" IS NOT
+///     NULL))`. Cancelled and completed are mutually exclusive, and this is
+///     the invariant the extraction made expressible: both markers are columns
+///     of one row now, so it needs no cross-table read.
+///     `20260826200000_entry_marker_exclusivity` carries both, with the
+///     argument for each.
 model CalendarEntry {
   id        String      @id @default(uuid())
   teacherId String
@@ -620,18 +631,30 @@ model CalendarEntry {
   /// raw `UPDATE "Class" SET status='completed'`, which is the client the
   /// trigger exists to reach.
   ///
-  /// THAT IS ENFORCED, not conventional. This is a plain nullable `DateTime`
-  /// in the generated client, so
+  /// THAT IS ENFORCED, not conventional — and it takes TWO OBJECTS, because
+  /// each covers a half the other structurally cannot. This is a plain
+  /// nullable `DateTime` in the generated client, so
   /// `prisma.calendarEntry.update({ data: { classCompletedAt: null } })`
-  /// type-checks; `entry_completion_marker_guard`
-  /// (`20260826182710_entry_completion_marker_guard`) is what makes it a 409
-  /// instead of a cleared marker. The column is write-once: NULL → NOT NULL is
-  /// the sync trigger's own stamp, and every departure from a set value is
-  /// refused. Why it has to be: `entry_frozen_schedule_guard` is
+  /// type-checks.
+  ///
+  /// `entry_completion_marker_guard`
+  /// (`20260826182710_entry_completion_marker_guard`) makes the column
+  /// WRITE-ONCE: every departure from a set value is a 409 rather than a
+  /// cleared marker. Why it has to be: `entry_frozen_schedule_guard` is
   /// `BEFORE UPDATE OF date, "startTime", "durationMinutes"` and reads `OLD`
   /// here, so clearing this column in one statement unfroze the schedule in the
   /// next — and `waitlist-retention.ts` permanently DELETES on the strength of
   /// that freeze.
+  ///
+  /// What that guard does NOT enforce is AUTHORSHIP. Its body is
+  /// `IF OLD."classCompletedAt" IS NOT NULL THEN RAISE`, so NULL → NOT NULL
+  /// passes for any client, and it is `BEFORE UPDATE OF` — an INSERT carrying a
+  /// marker fires it not at all. `CalendarEntry_completion_marker_regular_only`
+  /// (`20260826200000_entry_marker_exclusivity`) is the static CHECK that
+  /// closes the family half of it on both events: a `kind = 'studio'` entry can
+  /// never carry a marker, so a stray stamp can no longer freeze a class whose
+  /// cancellation is reversible, nor make a never-completed class's queue rows
+  /// reapable.
   ///
   /// Two triggers stamp it, both running that one function: `AFTER UPDATE OF
   /// status` and, since `20260826140000_entry_guard_restorations`, `AFTER
@@ -653,10 +676,20 @@ model CalendarEntry {
   /// acquires Class then Entry, which composes. See `docs/lock-order.md`.
   ///
   /// Populated for `kind = 'regular'` only, because only that family has a
-  /// `status`. That is not a gap: the freeze's cancel half is expressed
-  /// directly from `kind` and `cancelledAt` in `entry_frozen_schedule_guard`,
-  /// and a cancelled STUDIO entry is deliberately not frozen — that
-  /// cancellation is reversible.
+  /// `status` — and since `20260826200000_entry_marker_exclusivity` that is a
+  /// CONSTRAINT rather than a consequence. It is not a gap either way: the
+  /// freeze's cancel half is expressed directly from `kind` and `cancelledAt`
+  /// in `entry_frozen_schedule_guard`, and a cancelled STUDIO entry is
+  /// deliberately not frozen — that cancellation is reversible.
+  ///
+  /// NEVER SET ALONGSIDE `cancelledAt`, likewise a constraint
+  /// (`CalendarEntry_not_cancelled_and_completed`, same migration). Cancelled
+  /// and completed are mutually exclusive states of one class, and expressing
+  /// that took the extraction: before it, liveness lived on `Class.status` and
+  /// completion on the same column, so the pair was unreachable by
+  /// construction — then #327 split them across two tables and the invariant
+  /// briefly had nowhere to sit. Both are columns of THIS row, so it is a
+  /// single-row CHECK.
   ///
   /// Not a general "is this row editable" flag. #276's studio editability rule
   /// is date-derived and lives in `studio-class-editability.ts`.

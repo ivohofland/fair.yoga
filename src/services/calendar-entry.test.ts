@@ -558,11 +558,147 @@ describe('entry_completion_marker_guard', () => {
   });
 
   // A studio entry never carries a marker (only a `Class` has a `status`), so
-  // the guard's `OLD IS NOT NULL` scopes it to the regular family without a
-  // `kind` conjunct — unlike its two siblings, whose asymmetry is real. This
-  // pins that the scoping is a consequence rather than an omission.
-  it('does not stand in the way of a studio entry, which never carries one', async () => {
+  // this guard needs no `kind` conjunct — its `OLD IS NOT NULL` scopes it to
+  // the regular family for free, unlike its two siblings whose asymmetry is
+  // real. What refuses the studio write is the CHECK next door, and the
+  // difference in WHICH object answers is the point: this guard would have let
+  // the stamp through.
+  it('does not stand in the way of a studio entry — the CHECK is what refuses', async () => {
     const { entryId } = await studioEntryWithClass();
-    await expect(setMarker(entryId, 'now()')).resolves.toBeDefined();
+    await expect(setMarker(entryId, 'now()'))
+      .rejects.toThrow(/CalendarEntry_completion_marker_regular_only/);
+  });
+});
+
+/**
+ * The two static CHECKs on the completion marker
+ * (`20260826200000_entry_marker_exclusivity`).
+ *
+ * WHY THEY ARE NOT TRIGGERS, and why the trigger next door is not enough.
+ * `entry_completion_marker_guard` is `BEFORE UPDATE OF "classCompletedAt"`
+ * with `IF OLD."classCompletedAt" IS NOT NULL THEN RAISE`, so it enforces
+ * MONOTONICITY, not authorship: `NULL -> NOT NULL` passes for every client, and
+ * an INSERT carrying a marker is not an UPDATE and fires nothing at all.
+ * `schema.prisma` says the column is "Written ONLY by
+ * `class_sync_entry_completed`" and that "THAT IS ENFORCED, not conventional",
+ * and before these two constraints it was neither.
+ *
+ * Every case below is a MUTATION with a verdict, and each pass-case is what
+ * stops a constraint mutated to refuse everything from satisfying the
+ * refusals.
+ *
+ * These raise a PLAIN `23514` with no `USING ERRCODE` override and no
+ * `which is terminal` clause, deliberately — they are not terminality guards
+ * and `classifyApiError` must not read them as one. `api-errors.test.ts`'s
+ * contract sweep is scoped to `RAISE EXCEPTION ... USING ERRCODE = '23514'`
+ * and so does not see them, which is correct: nothing reaches these from a
+ * route, because no writer in `src/` sets `classCompletedAt` at all.
+ */
+describe('the completion marker CHECKs', () => {
+  /** Both raise a plain check violation, so the name is what says which. */
+  const REGULAR_ONLY = /CalendarEntry_completion_marker_regular_only/;
+  const NOT_BOTH = /CalendarEntry_not_cancelled_and_completed/;
+
+  const insertEntry = (
+    teacherId: string,
+    kind: 'regular' | 'studio',
+    columns: string,
+    values: string,
+  ) =>
+    prisma.$executeRawUnsafe(
+      `INSERT INTO "CalendarEntry" (id,"teacherId",kind,"classType",date,"startTime","durationMinutes","createdAt","updatedAt"${columns})
+       VALUES (gen_random_uuid()::text,$1,'${kind}','Vinyasa','2027-10-01','09:00',75,now(),now()${values})`,
+      teacherId,
+    );
+
+  // THE INSERT EVENT, which the trigger structurally cannot reach: it is
+  // `BEFORE UPDATE OF`, and a row born with a marker never fires it.
+  it('refuses a studio entry INSERTED with a marker', async () => {
+    const teacherId = await freshTeacher();
+    await expect(
+      insertEntry(teacherId, 'studio', ',"classCompletedAt"', ",now()"),
+    ).rejects.toThrow(REGULAR_ONLY);
+  });
+
+  it('admits a regular entry INSERTED with a marker — the writer this scopes to', async () => {
+    const teacherId = await freshTeacher();
+    await expect(
+      insertEntry(teacherId, 'regular', ',"classCompletedAt"', ",now()"),
+    ).resolves.toBeDefined();
+  });
+
+  // The `kind` flip, which no trigger on `classCompletedAt` sees at all: the
+  // marker column is not in the SET list, so `BEFORE UPDATE OF
+  // "classCompletedAt"` does not fire.
+  it('refuses turning a marked regular entry into a studio one', async () => {
+    const teacherId = await freshTeacher();
+    await insertEntry(teacherId, 'regular', ',"classCompletedAt"', ",now()");
+    await expect(prisma.$executeRawUnsafe(
+      `UPDATE "CalendarEntry" SET kind='studio' WHERE "teacherId" = $1`, teacherId,
+    )).rejects.toThrow(REGULAR_ONLY);
+  });
+
+  it('refuses an entry INSERTED both cancelled and completed', async () => {
+    const teacherId = await freshTeacher();
+    await expect(
+      insertEntry(teacherId, 'regular', ',"classCompletedAt","cancelledAt"', ",now(),now()"),
+    ).rejects.toThrow(NOT_BOTH);
+  });
+
+  it('admits either marker alone', async () => {
+    const withMarker = await freshTeacher();
+    await expect(
+      insertEntry(withMarker, 'regular', ',"classCompletedAt"', ",now()"),
+    ).resolves.toBeDefined();
+    const withCancel = await freshTeacher();
+    await expect(
+      insertEntry(withCancel, 'regular', ',"cancelledAt"', ",now()"),
+    ).resolves.toBeDefined();
+  });
+
+  /**
+   * P17, RETIRED — the state `class-lifecycle.ts` carried as known-open.
+   *
+   * `class_reject_terminal_status_change` refuses only a class LEAVING
+   * `completed`, and cancellation stopped being a `ClassStatus` with #327, so
+   * nothing refused raw SQL walking a cancelled class up to `completed`. It
+   * still does not: the `UPDATE "Class"` is unguarded. What refuses is
+   * `class_sync_entry_completed`'s OWN `UPDATE "CalendarEntry"`, which violates
+   * the CHECK and aborts the completing transaction — the refusal lands on the
+   * statement that reached for the state.
+   *
+   * The row is re-read afterwards because "the statement threw" and "the state
+   * did not happen" are different claims, and only the second is the one this
+   * constraint exists to make.
+   */
+  it('refuses completing a CANCELLED class, which the status guard cannot see', async () => {
+    const { entryId, classId } = await regularEntryWithClass();
+    await prisma.$executeRawUnsafe(
+      `UPDATE "CalendarEntry" SET "cancelledAt"=now() WHERE id=$1`, entryId,
+    );
+
+    await expect(prisma.$executeRawUnsafe(
+      `UPDATE "Class" SET status='completed' WHERE id=$1`, classId,
+    )).rejects.toThrow(NOT_BOTH);
+
+    const [row] = await prisma.$queryRawUnsafe<Array<{ s: string; m: Date | null }>>(
+      `SELECT c.status::text AS s, e."classCompletedAt" AS m
+         FROM "Class" c JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+        WHERE c.id = $1`, classId);
+    expect(row?.s).toBe('draft');
+    expect(row?.m).toBeNull();
+  });
+
+  // The pass-case for the same path: an UNcancelled class completes, the sync
+  // trigger stamps, and the CHECK stands aside. Without this a constraint
+  // mutated to refuse every completion would satisfy the case above.
+  it('leaves an uncancelled completion alone', async () => {
+    const { entryId, classId } = await regularEntryWithClass();
+    await expect(prisma.$executeRawUnsafe(
+      `UPDATE "Class" SET status='completed' WHERE id=$1`, classId,
+    )).resolves.toBeDefined();
+    const [e] = await prisma.$queryRawUnsafe<Array<{ m: Date | null }>>(
+      `SELECT "classCompletedAt" AS m FROM "CalendarEntry" WHERE id=$1`, entryId);
+    expect(e?.m).toBeInstanceOf(Date);
   });
 });

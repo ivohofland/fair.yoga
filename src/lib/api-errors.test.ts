@@ -1,7 +1,16 @@
-import { existsSync, readdirSync, readFileSync } from 'fs';
 import { describe, it, expect } from 'vitest';
 import { Prisma } from '@prisma/client';
-import { classifyApiError, isRestrictViolationOn, isTransientDbError } from './api-errors';
+import {
+  classifyApiError,
+  isRestrictViolationOn,
+  isTransientDbError,
+  TERMINAL_TRIGGER_TAILS,
+} from './api-errors';
+import {
+  liveFunctions,
+  migrationSqlFiles,
+  type MigrationFunction,
+} from '../../tests/migration-sql';
 
 /**
  * Matches the construction used in src/services/studio-class-generator.test.ts
@@ -14,6 +23,86 @@ function prismaError(code: string, meta?: Record<string, unknown>) {
     meta,
   });
 }
+
+
+/** The declaration that puts a trigger function under the contract below. */
+const RAISES_23514 = "USING ERRCODE = '23514'";
+
+/** Why one function fails the contract. `compliant` never appears in a result. */
+type ContractBreach = {
+  reason: 'no_terminal_clause' | 'no_known_tail' | 'compliant';
+  message: string;
+};
+
+/**
+ * The contract, as a function over parsed bodies rather than as assertions
+ * inside one test.
+ *
+ * A function so the three cases below can share it — one against the real
+ * migration directory, two against synthetic migrations that make the rule
+ * fail on demand. The predecessor sweep inlined its assertions and was
+ * therefore never observed failing, which is how it stayed green against a
+ * migration carrying the exact defect it claimed to cover.
+ */
+function nonCompliantRaisers(raisers: readonly MigrationFunction[]): ContractBreach[] {
+  const tails = Object.values(TERMINAL_TRIGGER_TAILS);
+  const breaches: ContractBreach[] = [];
+  for (const fn of raisers) {
+    if (!fn.body.includes('which is terminal')) {
+      breaches.push({
+        reason: 'no_terminal_clause',
+        message:
+          `${fn.migration}: ${fn.functionName} raises SQLSTATE 23514 but its message omits ` +
+          '"which is terminal", so classifyApiError will answer 500 instead of 409. Add the ' +
+          'clause, or give the trigger a SQLSTATE of its own and a branch to match.',
+      });
+      continue;
+    }
+    if (!tails.some((tail) => fn.body.includes(tail))) {
+      breaches.push({
+        reason: 'no_known_tail',
+        message:
+          `${fn.migration}: ${fn.functionName} raises SQLSTATE 23514 with the terminality ` +
+          'clause but no tail TERMINAL_TRIGGER_TAILS (src/lib/api-errors.ts) knows, so every ' +
+          "fire of it logs as detail.trigger 'unknown'. Add its tail to that roster.",
+      });
+    }
+  }
+  return breaches;
+}
+
+/** A body carrying the SQLSTATE and NOT the clause — the rewire's own defect. */
+const OFFENDING_FUNCTION_SQL = `
+CREATE OR REPLACE FUNCTION synthetic_guard()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'CalendarEntry % is frozen; cannot change its date', OLD.id
+    USING ERRCODE = '23514';
+END;
+$$ LANGUAGE plpgsql;
+`;
+
+/** The same function, replaced by a compliant body. */
+const COMPLIANT_FUNCTION_SQL = `
+CREATE OR REPLACE FUNCTION synthetic_guard()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'CalendarEntry % is completed, which is terminal; cannot change its date', OLD.id
+    USING ERRCODE = '23514';
+END;
+$$ LANGUAGE plpgsql;
+`;
+
+/** Clause present, tail unplaceable — a 409 an operator cannot facet. */
+const UNPLACEABLE_TAIL_SQL = `
+CREATE OR REPLACE FUNCTION synthetic_other_guard()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'CalendarEntry % is completed, which is terminal; cannot change its room', OLD.id
+    USING ERRCODE = '23514';
+END;
+$$ LANGUAGE plpgsql;
+`;
 
 /**
  * Built from the real message `src/services/class-terminal-status.test.ts`
@@ -79,6 +168,29 @@ const terminalCompletionErrorFixture = new Prisma.PrismaClientUnknownRequestErro
   `Invalid \`prisma.calendarEntry.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "CalendarEntry 33d69dc9-6cf5-4fd1-bb72-4da83761b059 is completed, which is terminal; cannot change its completion", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
   { clientVersion: 'test' },
 );
+
+/**
+ * The FIFTH shape, and the one that is not a trigger: a `23514` terminality
+ * fire whose tail `TERMINAL_TRIGGER_TAILS` does not carry.
+ *
+ * It answers `unknown` at `error`, and both halves are the correction #327's
+ * review forced. The tail chain used to FALL BACK to `status` — a real facet
+ * with a meaning of its own, at `warn` — so an unplaceable fire landed in the
+ * bucket an operator queries for "which status CAS is losing races", at the
+ * level that pages nobody. The `date` and `completion` facets are `error`
+ * because they mean an unguarded writer of the column the retention sweep
+ * reads has appeared; a guard nobody has classified at all reads the same way,
+ * so it gets the same level.
+ *
+ * Hand-written rather than transcribed, and it has to be: no such trigger
+ * exists, which is the point. The sweep further down is what keeps it that way
+ * — every live `23514` function must own one of the four known tails.
+ */
+const terminalUnplaceableErrorFixture = new Prisma.PrismaClientUnknownRequestError(
+  `Invalid \`prisma.calendarEntry.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "CalendarEntry 4b0a1f3e-9c2d-4f51-8a7b-1d6e5c0f2a93 is completed, which is terminal; cannot change its room", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+  { clientVersion: 'test' },
+);
+
 
 /**
  * The measured shape of a `23P01` through Prisma Client (`exclusion-
@@ -155,6 +267,7 @@ describe('classifyApiError', () => {
     ['date', terminalDateErrorFixture, 'error'],
     ['liveness', terminalLivenessErrorFixture, 'warn'],
     ['completion', terminalCompletionErrorFixture, 'error'],
+    ['unknown', terminalUnplaceableErrorFixture, 'error'],
   ] as const)('maps the terminal-%s trigger to a 409 logged at %s', (column, fixture, level) => {
     const failure = classifyApiError(fixture);
 
@@ -299,43 +412,96 @@ describe('classifyApiError', () => {
    * THE CONTRACT FOR THE NEXT TRIGGER, made mechanical.
    *
    * `isTerminalStatusViolation` needs two things at once: SQLSTATE `23514`
-   * AND the literal clause `which is terminal`. The sweep below re-derives
-   * which migrations satisfy both rather than naming them, so this docblock
-   * carries no roster to go stale. A NEW one that declares the SQLSTATE and
-   * phrases its message
-   * differently — the overwhelmingly likely mistake, since the SQLSTATE is
-   * the part a copy-paste carries and the sentence is the part an author
-   * rewrites — classifies 500 for a request that should be a 409, and before
-   * this test nothing anywhere reddened. The author would have had to already
-   * know an undocumented requirement.
+   * AND the literal clause `which is terminal`. `classifyApiError` then needs a
+   * third — a message tail it can place, or the fire is filed under `unknown`.
+   * The sweep below re-derives which functions must satisfy all three rather
+   * than naming them, so this docblock carries no roster to go stale. A NEW
+   * guard that declares the SQLSTATE and phrases its message differently — the
+   * overwhelmingly likely mistake, since the SQLSTATE is the part a copy-paste
+   * carries and the sentence is the part an author rewrites — classifies 500
+   * for a request that should be a 409.
    *
-   * Sweeps the migration directory rather than naming the known files, so
-   * it covers migrations that do not exist yet — which is the entire point.
-   * The length assertion keeps it from going vacuously green if the directory
-   * layout changes or the declaration is ever spelled differently.
+   * PER FUNCTION, NOT PER FILE, and that is the correction #327 forced. The
+   * predecessor filtered migration FILES containing the SQLSTATE and then
+   * asserted the clause over the whole file string. That is satisfiable by a
+   * sibling function a hundred lines away — or by a comment mentioning the
+   * words — and it is exactly how the rewire's own
+   * `entry_reject_frozen_schedule_change` shipped raising `23514` with no
+   * `which is terminal` clause at all, answering 500 where its predecessor
+   * answered 409. Nothing reddened, because
+   * `class_reject_terminal_status_change` sat above it in the same file
+   * carrying the clause. This branch is also what made that shape ordinary:
+   * three of the five migrations declaring the SQLSTATE now hold two or more
+   * functions.
+   *
+   * LAST WRITE WINS (`liveFunctions`, `tests/migration-sql.ts`), which is the
+   * other half and pulls the opposite way. Per-function alone would redden
+   * against the rewire's superseded body — text no database is running, since
+   * `20260826140000_entry_guard_restorations` replaced it with a compliant
+   * one. A pin failing on dead text is no better than one passing on it. The
+   * same rule drops `class_reject_terminal_date_change`, which the rewire
+   * DROPPED outright along with `Class.date`.
+   *
+   * Measured, in both directions, before this replaced the file sweep:
+   * per-function without supersession reports
+   * `entry_reject_frozen_schedule_change in 20260826080100_calendar_entry_rewire`
+   * — the defect the file sweep could not see — and with supersession reports
+   * nothing, which is correct. The two cases after this one are the standing
+   * verdict: they feed the same rule synthetic migrations and watch it accept
+   * a superseded offender and reject a live one.
    *
    * Reads files; touches no database. The inverse direction (a migration
    * carrying the phrase without the SQLSTATE) is pinned by the P0001 fixture
    * above, at the matcher rather than at the migration.
    */
-  it('every migration declaring SQLSTATE 23514 also carries the phrase the matcher requires', () => {
-    const migrations = new URL('../../prisma/migrations/', import.meta.url);
-    const declaring = readdirSync(migrations)
-      .map((name) => ({ name, sqlPath: new URL(`${name}/migration.sql`, migrations) }))
-      .filter(({ sqlPath }) => existsSync(sqlPath))
-      .map(({ name, sqlPath }) => ({ name, sql: readFileSync(sqlPath, 'utf8') }))
-      .filter(({ sql }) => sql.includes("USING ERRCODE = '23514'"));
+  it('every LIVE function declaring SQLSTATE 23514 carries the clause and a tail the classifier knows', () => {
+    const raisers = [...liveFunctions(migrationSqlFiles()).values()].filter((fn) =>
+      fn.body.includes(RAISES_23514),
+    );
 
-    expect(declaring.length).toBeGreaterThan(0);
+    // Not vacuous: the four live terminality guards are what this covers, and
+    // a parser change that stopped finding any of them would otherwise pass.
+    expect(raisers.length).toBeGreaterThan(0);
 
-    for (const { name, sql } of declaring) {
-      expect(
-        sql.includes('which is terminal'),
-        `${name} raises SQLSTATE 23514 but its message omits "which is terminal", so ` +
-          'classifyApiError will answer 500 instead of 409. Add the clause, or give the ' +
-          'trigger a SQLSTATE of its own and a branch to match.',
-      ).toBe(true);
+    for (const offender of nonCompliantRaisers(raisers)) {
+      expect(offender.reason, offender.message).toBe('compliant');
     }
+  });
+
+  /**
+   * The rule's own verdict, half one: a SUPERSEDED offender is not reported.
+   *
+   * Without this the supersession half is an assertion about the tree rather
+   * than about the rule — the live tree has no superseded offender left to
+   * demonstrate it on, because the one it had is the defect this sweep was
+   * built to catch and it has been fixed.
+   */
+  it('does not report a 23514 function a later migration replaced', () => {
+    const raisers = [...liveFunctions([
+      { name: '20990101000000_first', sql: OFFENDING_FUNCTION_SQL },
+      { name: '20990102000000_second', sql: COMPLIANT_FUNCTION_SQL },
+    ]).values()].filter((fn) => fn.body.includes(RAISES_23514));
+
+    expect(raisers.map((fn) => fn.migration)).toEqual(['20990102000000_second']);
+    expect(nonCompliantRaisers(raisers)).toEqual([]);
+  });
+
+  /**
+   * The rule's own verdict, half two: a LIVE offender IS reported, one entry
+   * per way of being wrong.
+   *
+   * A guard that cannot be observed failing certifies nothing, and the file
+   * sweep this replaced is the standing example — it was green against a
+   * migration that shipped the exact defect it claimed to cover.
+   */
+  it('reports a live 23514 function missing the clause, and one missing a known tail', () => {
+    const raisers = [...liveFunctions([
+      { name: '20990101000000_no_clause', sql: OFFENDING_FUNCTION_SQL },
+      { name: '20990102000000_no_tail', sql: UNPLACEABLE_TAIL_SQL },
+    ]).values()].filter((fn) => fn.body.includes(RAISES_23514));
+
+    const reasons = nonCompliantRaisers(raisers).map((o) => o.reason).sort();
+    expect(reasons).toEqual(['no_known_tail', 'no_terminal_clause']);
   });
 
   /**

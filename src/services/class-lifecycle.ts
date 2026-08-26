@@ -15,7 +15,7 @@ import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { ECONOMIC_FIELDS, type EconomicField } from '@/lib/class-fields';
 import { toIncomeTierOrThrow } from '@/lib/tiers.server';
-import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
+import { lockClassRow } from '@/lib/db-locks';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { calculateClassPricing } from './pricing';
@@ -90,29 +90,41 @@ export const VALID_TRANSITIONS: Record<ClassStatus, readonly ClassStatus[]> = {
  * because both texts now live in one migration file, so nothing but the
  * function name tells them apart (`tests/migration-sql.ts`).
  *
- * KNOWN-OPEN, and deliberate: A CANCELLED CLASS'S `status` IS NOT FROZEN AT
- * THE DATABASE. This constant has one member, so
+ * A CANCELLED CLASS'S `status` IS STILL NOT FROZEN AT THE DATABASE, and the
+ * outcome it used to produce IS. This constant has one member, so
  * `class_reject_terminal_status_change` refuses only a completed class leaving
  * `completed`. Before #327 cancellation was a `ClassStatus` and the same
  * trigger refused every status change on a cancelled class; liveness moved to
- * `CalendarEntry.cancelledAt`, and that arm did not move with it. Raw SQL can
- * still walk a cancelled class up to `completed`, at which point the sync
- * trigger stamps the marker and the row is both cancelled and completed.
+ * `CalendarEntry.cancelledAt`, and that arm did not move with it — so raw SQL
+ * could walk a cancelled class up to `completed`, the sync trigger stamped the
+ * marker, and the row was both cancelled and completed.
  *
- * Not restored, and the reason is a mechanism rather than an oversight: the
- * guard would have to sit on `Class` and read `CalendarEntry.cancelledAt`, a
- * cross-table read inside a trigger. `docs/lock-order.md` prices that under
- * "Ordering BETWEEN `Class` and its `CalendarEntry`": the ordering is fine,
- * the unlocked `SELECT` is the cost, and this project has been removing guards
- * of that shape rather than adding them — the template half in #298, the
- * cross-family class half in #327, both replaced by exclusion constraints.
+ * `CalendarEntry_not_cancelled_and_completed`
+ * (`20260826200000_entry_marker_exclusivity`) is what refuses that now, and
+ * where the refusal lands is the whole of why it is a CHECK. The status
+ * `UPDATE` itself is still unguarded; it is `class_sync_entry_completed`'s own
+ * `UPDATE "CalendarEntry"` that violates the constraint, which aborts the
+ * completing transaction. The bad state is unreachable, and the statement that
+ * reached for it is the one that fails.
+ *
+ * Recorded here as known-open until this branch, on the ground that a guard
+ * "would have to sit on `Class` and read `CalendarEntry.cancelledAt`" — the
+ * cross-table read `docs/lock-order.md` prices under "Ordering BETWEEN `Class`
+ * and its `CalendarEntry`", and which this project has been REMOVING rather
+ * than adding (the template half in #298, the cross-family class half in
+ * #327, both replaced by constraints). That was true before the extraction and
+ * stopped being true with it: `cancelledAt` and `classCompletedAt` are two
+ * columns of ONE row, so the invariant is a single-row CHECK with no read, no
+ * lock and no ordering cost. The extraction is what made it expressible.
+ *
  * `entry_terminal_liveness_guard`
- * (`20260826140000_entry_guard_restorations`) restored the two arms that CAN
- * be expressed on the row being written: un-cancelling a regular entry, and
+ * (`20260826140000_entry_guard_restorations`) covers the arms that can be
+ * expressed on the entry row being written: un-cancelling a regular entry, and
  * cancelling a completed one.
  *
- * What holds it meanwhile is the service layer: every status writer's CAS
- * carries `calendarEntry: { cancelledAt: null }` beside its status predicate.
+ * The service layer says the same thing one layer up rather than being what
+ * holds it: every status writer's CAS carries
+ * `calendarEntry: { cancelledAt: null }` beside its status predicate.
  * Re-derive rather than trust that sentence —
  *
  *     grep -rn 'cancelledAt: null' src --include='*.ts' | grep -v '\.test\.'
@@ -271,19 +283,30 @@ export type TransitionDbResult<
 /**
  * Transition a class to a new status in the database.
  *
- * Compare-and-swap, not read-then-write. The predicate IS the guard: under
- * READ COMMITTED the `UPDATE` re-evaluates `status` after it acquires the row
- * lock, so a cancel that commits between a caller's read and this write is
- * seen rather than written over. No `FOR UPDATE`, because the status is the
- * only thing this decision depends on — the same reason `POST
- * /api/classes/[id]/transition`'s cancel branch doesn't need one for its own
- * conditional cancel-update either, even though it additionally wraps it in
- * a transaction — for an unrelated reason, to keep its notification write
- * atomic with the status change, not because the conditional update itself
- * needs one. Sites that read more state under the decision (`completeClass`,
- * and `autoCancelClasses` since #174 Task 6 started deciding from a
- * registration count read under its own cancel decision) take the lock
- * instead; see `docs/lock-order.md`.
+ * Compare-and-swap AND a row lock, which was one thing until #327. The
+ * predicate is still the guard: under READ COMMITTED the `UPDATE`
+ * re-evaluates its qual after acquiring the row lock, so a status change that
+ * commits between a caller's read and this write is seen rather than written
+ * over.
+ *
+ * `FOR UPDATE`, via `lockClassRow`, BECAUSE THE CAS STOPPED BEING
+ * SINGLE-TABLE. It used to be `{ id, status: { in: sourceStatesFor(…) } }` and
+ * needed no lock for free: every conjunct sat on the row the `UPDATE` itself
+ * locks, and `EvalPlanQual` re-checks exactly those against the freshly
+ * committed tuple. Liveness moved to `CalendarEntry.cancelledAt`, the CAS
+ * gained `calendarEntry: { cancelledAt: null }`, and `EvalPlanQual` re-fetches
+ * only the LOCKED row — the second table's subplan keeps its pre-wait
+ * snapshot. Without the lock a cancel committing mid-transition is invisible
+ * and the class ends up live-and-cancelled. This is the mechanism `db-locks.ts`
+ * and the spec's §2.3 both measure; every other status writer already took the
+ * lock (`completeClass`, `updateClass`, the cancel route, and both sweeps in
+ * `class-transitions.ts`) and this was the one left out.
+ *
+ * That subsumes the older reason for locking, which was about how much state a
+ * decision reads: `completeClass` and `autoCancelClasses` (since #174 Task 6
+ * started deciding from a registration count) take the lock because they read
+ * more than a status under the decision. Reading a second TABLE inside the CAS
+ * itself is the same problem one level down. See `docs/lock-order.md`.
  *
  * Since #216 this also closes the class's waitlist when the target is
  * `in_progress`, which is why the CAS now sits in a transaction. That does not
@@ -452,16 +475,31 @@ export async function transitionClass(
   // stay outside it, because they decide nothing that gets persisted and would
   // only hold the transaction open on the failure path.
   const moved = await db.$transaction(async (tx) => {
-    // Bounded, like every other transaction in this codebase that ends up
-    // holding a `Class` row lock. This one takes its lock through the CAS
-    // rather than through `lockClassRow`, so it used to inherit no bound at
-    // all — and once the CAS moved inside an interactive transaction, an
-    // unbounded wait became Prisma's 5s budget expiring mid-transaction
-    // (`P2028`, a 503 the caller cannot act on) instead of the 2s `55P03` its
-    // siblings get, which `classifyApiError` answers with a retry. Still no
-    // `FOR UPDATE` — the argument above is unchanged; this bounds the wait,
-    // it does not add a lock.
-    await setLockTimeout(tx);
+    // `lockClassRow`, not the bare `setLockTimeout` this used to be, AND THE
+    // REASON CHANGED WITH THE CAS BELOW. It was lock-free for free while its
+    // only conjunct sat on the row the `UPDATE` itself locks: a writer that
+    // blocked on that row and then unblocked had its qual re-checked by
+    // `EvalPlanQual` against the freshly committed tuple. #327 gave the CAS a
+    // SECOND table — `calendarEntry: { cancelledAt: null }` — and
+    // `EvalPlanQual` re-fetches only the locked row. The `calendarEntry`
+    // subplan is evaluated in the PRE-WAIT snapshot, where `cancelledAt` is
+    // still NULL, so a cancel committing mid-transition is invisible and the
+    // class ends up live-and-cancelled. `db-locks.ts` documents that mechanism
+    // and the spec's §2.3 measures it; this was the one status writer left
+    // without the lock, where the cancel route, `completeClass`, `updateClass`
+    // and both sweeps all take it.
+    //
+    // It still bounds the wait — `lockClassRow` issues `setLockTimeout` itself
+    // — which is what keeps an unbounded wait from becoming Prisma's 5s budget
+    // expiring mid-transaction (`P2028`, a 503 the caller cannot act on)
+    // instead of the 2s `55P03` its siblings get, which `classifyApiError`
+    // answers with a retry. That is now a side effect of taking the lock
+    // rather than the whole of what this line does.
+    //
+    // `Class` then `CalendarEntry`, the order every writer of the pair takes
+    // (`docs/lock-order.md`) — the same order the trigger that writes the entry
+    // from a `Class` update acquires them in.
+    await lockClassRow(tx, classId);
 
     // `calendarEntry: { cancelledAt: null }` is not decoration and it is not
     // covered by the status conjunct beside it. Before #327 a cancelled class

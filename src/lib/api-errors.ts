@@ -319,6 +319,49 @@ export function isRestrictViolationOn(error: unknown, constraints: readonly stri
 }
 
 /**
+ * Which terminality trigger fired, as a log facet — read off the message tail
+ * each one owns.
+ *
+ * A ROSTER RATHER THAN A CHAIN OF `includes`, and the one that pays for itself
+ * is not `classifyApiError`. `api-errors.test.ts` sweeps the live migration
+ * bodies against these values, so a new `23514` guard whose message ends in a
+ * sentence this object does not carry reddens at the migration rather than
+ * degrading into somebody else's bucket at runtime.
+ *
+ * Each value is the SUBSTRING, not the whole message: the messages carry a row
+ * id and, in three cases, a state word, so only the tail is stable.
+ *
+ * `satisfies Record<..., string>` with the keys spelled out is the tether: a
+ * facet added to the union below without a tail here is a compile error, which
+ * is the direction that matters — a facet with no tail can never be reached.
+ */
+export const TERMINAL_TRIGGER_TAILS = {
+  /** `class_terminal_status_guard` — a completed class cannot leave its status. */
+  status: 'cannot change status to',
+  /** `entry_frozen_schedule_guard` — a frozen entry cannot move in the calendar. */
+  date: 'cannot change its date',
+  /** `entry_terminal_liveness_guard` — a terminal regular entry cannot change its cancellation. */
+  liveness: 'cannot change its cancellation',
+  /** `entry_completion_marker_guard` — the completion marker is write-once. */
+  completion: 'cannot change its completion',
+} as const satisfies Record<'status' | 'date' | 'liveness' | 'completion', string>;
+
+/**
+ * The facet `detail.trigger` carries. `'unknown'` is not a trigger — it is what
+ * a `23514` terminality violation whose tail matches no known guard is filed
+ * under, and it is logged at `error` for that reason.
+ */
+export type TerminalTriggerFacet = keyof typeof TERMINAL_TRIGGER_TAILS | 'unknown';
+
+/**
+ * Read off the object so the two cannot disagree about membership — the same
+ * move `FAMILIES` makes in `entry-conflict.ts`.
+ */
+const TERMINAL_TRIGGER_FACETS = Object.keys(
+  TERMINAL_TRIGGER_TAILS,
+) as ReadonlyArray<keyof typeof TERMINAL_TRIGGER_TAILS>;
+
+/**
  * Classify anything thrown out of a route handler. Total: every input,
  * including non-Error throwables, yields an ApiFailure.
  *
@@ -371,16 +414,24 @@ export function classifyApiError(error: unknown): ApiFailure {
     // before it permanently DELETEs a class's queue — the precondition for the
     // data loss #247 exists to prevent. That must not land in the log at the
     // level a lock timeout lands at.
-    // Four values, one per trigger, read off the message tail each one owns.
-    // `status` is the fallback rather than a fourth test, so a trigger added
-    // without a tail of its own lands on the level that pages nobody.
-    const trigger = error.message.includes('cannot change its date')
-      ? 'date'
-      : error.message.includes('cannot change its completion')
-        ? 'completion'
-        : error.message.includes('cannot change its cancellation')
-          ? 'liveness'
-          : 'status';
+    // FIVE values, four of them a trigger's own tail and the fifth the absence
+    // of any. `status` used to be the fallback — a real facet with a meaning of
+    // its own, at `warn`, the level that pages nobody — so a trigger added with
+    // a tail this list does not know about degraded into the bucket an operator
+    // queries for something else, silently and at the wrong level. It is now
+    // its own test like the rest, and an unrecognised tail answers `unknown` at
+    // `error`: an unplaceable terminality fire is a guard nobody has classified,
+    // which is the same "someone added an unguarded writer" reading the `date`
+    // and `completion` facets get.
+    //
+    // `TERMINAL_TRIGGER_TAILS` is the roster, and it is a roster rather than a
+    // chain so `api-errors.test.ts` can sweep the live migration bodies against
+    // it — every function raising `23514` must own one of these tails, or this
+    // branch cannot place it.
+    const trigger: TerminalTriggerFacet =
+      TERMINAL_TRIGGER_FACETS.find((facet) =>
+        error.message.includes(TERMINAL_TRIGGER_TAILS[facet]),
+      ) ?? 'unknown';
     return {
       status: 409,
       // Deliberately names no column. Every trigger that reaches this branch
@@ -388,7 +439,7 @@ export function classifyApiError(error: unknown): ApiFailure {
       // wording that names one column is wrong for the others.
       message: 'That class can no longer be changed',
       logMessage: 'terminal class write reached a DB trigger',
-      level: trigger === 'date' || trigger === 'completion' ? 'error' : 'warn',
+      level: trigger === 'status' || trigger === 'liveness' ? 'warn' : 'error',
       // `withErrorHandler` always logs `err: error`, so the trigger's own
       // message is already in the line. What it is not is GROUPABLE: it lives
       // inside a several-hundred-character driver string that no log filter
