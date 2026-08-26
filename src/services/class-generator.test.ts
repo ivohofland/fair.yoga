@@ -1333,8 +1333,9 @@ describe('generateClassInstances (DB)', () => {
           cancelledAt: new Date(),
         });
 
-      // #196's index carries `WHERE "status" <> 'cancelled'`, so a cancelled
-      // neighbour does not occupy the slot and must not block generation.
+      // `CalendarEntry_teacher_slot_excl` is partial on `"cancelledAt" IS
+      // NULL`, so a cancelled neighbour does not occupy the slot and must not
+      // block generation.
       const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
       expect(result.created).toBe(4);
       expect(result.skipped).toEqual([]);
@@ -1382,14 +1383,14 @@ describe('generateClassInstances (DB)', () => {
           await createClassFixture(tx, {
               teacherId,
               teacherRoomId,
-              // `null`, deliberately, not this template's own id: with the
-              // template's `templateId` the holder also collides on the
-              // pre-existing `@@unique([templateId, date])`, so this test
-              // would pass byte-identically with `Class_teacher_slot_unique`
-              // dropped. `null` isolates the collision to the slot key —
-              // and is the production shape too: a standalone class racing
-              // the nightly `api/cron/generate-classes` sweep onto a
-              // template's slot.
+              // `null`, deliberately, not this rule's own id: with the
+              // rule's `scheduleRuleId` the holder also collides on the
+              // pre-existing `@@unique([scheduleRuleId, date])`, so this test
+              // would pass byte-identically with
+              // `CalendarEntry_teacher_slot_excl` dropped. `null` isolates the
+              // collision to the slot constraint — and is the production shape
+              // too: a standalone class racing the nightly
+              // `api/cron/generate-classes` sweep onto a template's slot.
               scheduleRuleId: null,
               classType: 'Vinyasa',
               date: collide,

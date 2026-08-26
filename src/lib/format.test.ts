@@ -42,7 +42,7 @@ describe('formatDayHeader', () => {
    * The reason every accessor in this function is `getUTC*`, and the case that
    * would break silently if someone "simplified" them to local-time accessors.
    *
-   * `Class.date` is a `@db.Date` column, so Prisma hands back midnight UTC and
+   * `CalendarEntry.date` is a `@db.Date` column, so Prisma hands back midnight UTC and
    * the time of day lives separately in `startTime`. Read in local time, a
    * midnight-UTC date renders as the *previous* day for anyone west of UTC —
    * a class on the 12th would show as the 11th on a student's bookings page.
@@ -132,7 +132,8 @@ describe('formatDateShort', () => {
   });
 
   /**
-   * Reads its argument with UTC accessors. `Class.date` is a `@db.Date` stored
+   * Reads its argument with UTC accessors. `CalendarEntry.date` is a `@db.Date`
+   * stored
    * at midnight UTC, so a local read renders the previous day west of UTC —
    * which the suite's `TZ` pin makes visible rather than theoretical. Unlike
    * the two cases above, this fixture crosses a month (and would cross a

@@ -157,8 +157,8 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * rather than a silently-passing suite.
  *
  * `SET LOCAL` scopes the timeout to the calling transaction: it governs
- * every statement left in that transaction, not just the `FOR UPDATE`
- * immediately below it, and resets on `COMMIT` or `ROLLBACK` regardless of
+ * every statement left in that transaction, not just the two `FOR UPDATE`s
+ * below it, and resets on `COMMIT` or `ROLLBACK` regardless of
  * how the transaction ends — the same effect `studio-class-template-
  * lifecycle.ts` documents around its own `SET LOCAL lock_timeout`. In
  * `completeClass` that also caps the `registration.update` / `payment.create`

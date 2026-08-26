@@ -236,19 +236,48 @@ Class instances are generated on a rolling 4-week basis. Runs indefinitely
 until the rule is paused or archived — see ScheduleRule above for day/time,
 active/archived state, and the cross-family slot rule.
 
-### Class (single class instance)
+### CalendarEntry (shared calendar identity, #327)
 
 | Field | Type | Notes |
 |---|---|---|
 | **id** (PK) | uuid | |
 | *teacher_id* (FK) | → Teacher | |
-| *teacher_room_id* (FK) | → TeacherRoom | |
-| *template_id* (FK) | → ClassTemplate, nullable | Null for one-off classes |
+| kind | enum: regular, studio | Pins which entry family this row belongs to. `Class`/`StudioClass` attach by the composite `(calendar_entry_id, kind)`, so a `CHECK` on each child pins its own literal and the pair can only ever mean "regular child ↔ regular entry" |
 | class_type | string | |
-| description | text, nullable | |
 | date | date | |
 | start_time | time | |
 | duration_minutes | int | |
+| cancelled_at | datetime, nullable | Liveness, for both families — one column where `Class.status = 'cancelled'` and `StudioClass.cancelled_at` used to be two spellings |
+| class_completed_at | datetime, nullable | The owning class completed. Written only by the `class_sync_entry_completed` triggers, never from TypeScript |
+| *schedule_rule_id* (FK) | → ScheduleRule, nullable | Null for one-off entries. Unique with `date` |
+| **Timestamps** | | |
+| created_at | datetime | |
+| updated_at | datetime | |
+
+One teacher, one slot, across both entry families (#296, #327): an
+`EXCLUDE USING gist` constraint over `(teacher_id, span)` — `span` a generated
+`tsrange` covering `[date + start_time, date + start_time + duration_minutes)`
+— partial on `cancelled_at IS NULL`, refusing two live entries of either kind
+whose windows overlap for one teacher. Range, not exact-start: two entries a
+minute apart are no longer both legal, and an entry running past midnight
+conflicts with one on the following date.
+
+A cancelled entry releases its SLOT but keeps its DATE: `(schedule_rule_id,
+date)` is unique regardless of `cancelled_at`, so the hourly sweep does not
+refill a date the teacher deliberately cancelled.
+
+`Class` and `StudioClass` below hold only their own economics now — they reach
+their teacher, and everything calendar-shaped, through this row.
+
+### Class (single class instance)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | |
+| *calendar_entry_id* (FK) | → CalendarEntry, unique | The calendar identity — teacher, date/time, cancellation — moved to the entry (#327); this row reaches Teacher through it, not directly, and a generated class reaches its ClassTemplate through the entry's ScheduleRule |
+| kind | enum: regular, studio | Always `regular` here, pinned by a `CHECK`; half of the composite FK above |
+| *teacher_room_id* (FK) | → TeacherRoom | |
+| description | text, nullable | |
 | **Economics** | | Locked after first registration |
 | room_cost | decimal | |
 | min_rate | decimal | |
@@ -259,8 +288,9 @@ active/archived state, and the cross-family slot rule.
 | cancel_deadline | enum: 48h, 24h, 12h, 6h | |
 | auto_cancel_check | enum: 4h, 2h, 1h | |
 | **State** | | |
-| status | enum | draft → open → full → in_progress → completed → cancelled |
+| status | enum | draft → open → in_progress → completed. `full` is derived, not stored; cancellation is the entry's `cancelled_at`, not a member |
 | settings_locked | boolean | Flips to true on first registration |
+| spot_broadcast_at | datetime, nullable | When the first-come-first-claimed broadcast last went out for the seat that is currently free (#220) |
 | **Calculated** | | Populated after class ends |
 | effective_teacher_rate | decimal, nullable | What the teacher actually earned per student |
 | total_students | int, nullable | Final attendance count |
@@ -274,10 +304,8 @@ active/archived state, and the cross-family slot rule.
 | Field | Type | Notes |
 |---|---|---|
 | **id** (PK) | uuid | |
-| *teacher_id* (FK) | → Teacher | |
-| date | date | |
-| start_time | time | |
-| duration_minutes | int | |
+| *calendar_entry_id* (FK) | → CalendarEntry, unique | Same arrangement as `Class` above (#327): the calendar identity, cancellation included, lives on the entry |
+| kind | enum: regular, studio | Always `studio` here, pinned by a `CHECK`; half of the composite FK above |
 | location | string | Free text (not linked to Room) |
 | student_count | int, nullable | |
 | hourly_rate | decimal | Teacher's rate at this studio |
@@ -285,7 +313,7 @@ active/archived state, and the cross-family slot rule.
 | created_at | datetime | |
 | updated_at | datetime | |
 
-No pricing engine. No individual registration. No link to Room or Student. This is purely a calendar + income tracking entry for classes the teacher gives at someone else's studio.
+No pricing engine. No individual registration. No link to Room or Student. No `status`. This is income tracking for classes the teacher gives at someone else's studio; the calendar half is the entry above.
 
 ---
 
@@ -406,14 +434,14 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
 - Account → has one Teacher (optional)
 - Account → has one Student (optional)
 - Teacher → has many TeacherRooms
-- Teacher → has many Classes
 - Teacher → has many ScheduleRules
 - ScheduleRule → has one ClassTemplate (kind: regular) or one StudioClassTemplate (kind: studio)
-- Teacher → has many StudioClasses
+- Teacher → has many CalendarEntries
+- CalendarEntry → has one Class (kind: regular) or one StudioClass (kind: studio)
+- ScheduleRule → has many CalendarEntries (generated instances), unique per date
 - Teacher → has many Announcements
 - Room → has many TeacherRooms
 - TeacherRoom → has many Classes
-- ClassTemplate → has many Classes (generated instances)
 - Class → has many Registrations
 - Class → has many WaitlistEntries
 - Student → has many Registrations
@@ -431,7 +459,7 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
 - **A `Teacher` hard-delete cascades through `ScheduleRule`, not directly to `ClassTemplate`/`StudioClassTemplate`** (#298) — one hop further out than `TeacherRoom`, whose `ClassTemplate_teacherRoomId_fkey` is `ON DELETE RESTRICT`. Measured in a rolled-back transaction against the real constraints: a single `DELETE FROM "Teacher"` still succeeds cleanly and every dependent row goes, because PostgreSQL defers a `NOT DEFERRABLE` foreign-key check to the end of the enclosing statement, and by then the sibling `ON DELETE CASCADE` from `Teacher` through `ScheduleRule` has already removed the `ClassTemplate`/`StudioClassTemplate` row the RESTRICT check would otherwise block on. That deferral is a property of one statement, not of the transaction: nothing in `src/` issues a hard `teacher.delete` today (erasure soft-deletes, per `deleteTeacherAccount`), but wherever tests tear a teacher down by hand across separate `deleteMany` calls, `scheduleRule.deleteMany` must run before `teacherRoom.deleteMany` — reversed, the `teacherRoom.deleteMany` hits the still-live `ClassTemplate`/`StudioClassTemplate` row and fails on `ClassTemplate_teacherRoomId_fkey`, measured the same way.
 - **tier_at_booking** on Registration captures the student's income tier at the moment they booked. The student's global tier on the Student table can change anytime, but pricing uses the tier at booking time. This also serves as income history — no separate tracking table needed.
 - **settings_locked** on Class flips to true when the first Registration is created. After that, economic fields (room_cost, min_rate, target_rate, min_students, max_students) are immutable.
-- **Terminal status is the second, wider freeze** (#247). Once a Class is `completed` or `cancelled`, `updateClass` refuses every field edit — the class, not a column list — and `PUT /api/classes/[id]` answers 409. It never lifts. `date` is additionally frozen in the database by the `class_terminal_date_guard` trigger, because the waitlist retention sweep above deletes on a status-plus-date predicate and reads that column before it does. The trigger is narrower than the service on purpose: it guards `date` alone, so the two layers are not the same rule twice.
+- **Terminal status is the second, wider freeze** (#247). Once a Class is `completed` or `cancelled`, `updateClass` refuses every field edit — the class, not a column list — and `PUT /api/classes/[id]` answers 409. It never lifts. The entry's schedule is additionally frozen in the database by `entry_frozen_schedule_guard`, because the waitlist retention sweep above deletes on a terminality-plus-date predicate and reads that column before it does; since #327 it covers `date`, `start_time` and `duration_minutes`, all three of which moved to `CalendarEntry` together. `entry_terminal_liveness_guard` freezes `cancelled_at` beside it, for regular entries only — a studio cancellation is reversible. Both triggers are narrower than the service on purpose, so the two layers are not the same rule twice, and both decide from the entry's own columns (`cancelled_at`, `class_completed_at`) rather than reaching back for `Class.status` — see `docs/lock-order.md` for why that direction matters.
 - **WaitlistEntry** is a separate entity from Registration to cleanly model the hybrid promotion rules. When promoted, a new Registration is created and linked via registration_id.
 - **StudioClass** is intentionally disconnected from Room and Student entities. It's a simple log entry for the teacher's calendar and income reporting.
 - **Notification** uses a polymorphic recipient (teacher or student) so both user types share the same inbox infrastructure.

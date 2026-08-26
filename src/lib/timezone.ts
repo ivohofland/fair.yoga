@@ -64,10 +64,10 @@ function timeZoneOffsetMs(instant: Date, timeZone: string): number {
 }
 
 /**
- * The teacher's current calendar date, expressed the way `Class.date` and
- * `StudioClass.date` store one: midnight UTC of the local day.
+ * The teacher's current calendar date, expressed the way `CalendarEntry.date`
+ * stores one: midnight UTC of the local day.
  *
- * Those columns are `@db.Date` — they hold a *calendar date*, not an instant.
+ * That column is `@db.Date` — it holds a *calendar date*, not an instant.
  * The only sound comparison against them is another calendar date. Comparing
  * one to `new Date()` silently treats the teacher's calendar as UTC's, which
  * is true only at offset 0: east of UTC the teacher's today still reads as
@@ -244,7 +244,8 @@ export function isoOrNull(date: Date): string | null {
  * Thin on purpose. It exists so the rule has one name, one docblock and one
  * place to pin timezone behaviour, rather than two call sites that drift — and
  * so the wrong implementation has somewhere to be refused. That wrong
- * implementation is comparing `Class.date` (stored at UTC midnight) against
+ * implementation is comparing `CalendarEntry.date` (stored at UTC midnight)
+ * against
  * `now`: it agrees with this one at most hours of most days, which is precisely
  * why `timezone.test.ts` pins a case where the two disagree.
  *

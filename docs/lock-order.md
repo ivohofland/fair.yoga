@@ -144,10 +144,11 @@ Three things take both, and all three take them in this order:
   that consulted `CalendarEntry` would take Class then entry, which composes
   with everything above — so the objection to it is not the ordering, it is
   what the read costs. A guard's sibling read is an unlocked `SELECT`, and
-  "What it costs: a residual race, measured" below prices that mechanism: two
-  transactions writing opposite sides of one slot both committed in 200 of 200
-  forced-overlap runs, because an unlocked read cannot see an uncommitted
-  sibling. A guard is not a substitute for a constraint.
+  "One teacher, one slot" below prices that mechanism where it was measured:
+  under the cross-family triggers, two transactions writing opposite sides of
+  one slot both committed in 200 of 200 forced-overlap runs, because an
+  unlocked read cannot see an uncommitted sibling. A guard is not a substitute
+  for a constraint.
 
   That is why one terminality arm is carried `known-open` rather than closed
   with a trigger: a cancelled class's `Class.status` is not frozen at the
@@ -214,9 +215,11 @@ is gone rather than narrowed, and its budget moved 15s → 10s with the four
 statements it lost.
 
 See "The slot key is a wait edge" below before assuming `id` is the only thing
-that orders two `Class` rows: since #196 a unique index on
-`(teacherId, date, startTime)` makes plain INSERTs take part too, which is a
-case a site enumeration is built not to find.
+that orders these rows: a slot constraint makes plain INSERTs take part too,
+which is a case a site enumeration is built not to find. Since #327 the
+constraint is `CalendarEntry_teacher_slot_excl` and the statements that join
+that wait chain are entry writes, not `Class` writes — so the rows it orders
+are one hop from the ones this section is about.
 
 ### How that enumeration was derived
 
@@ -496,14 +499,24 @@ A per-row `lockClassRow` loop over a sorted read also works and is what `deleteS
 
 ### The slot key is a wait edge, and the ascending-by-`id` rule cannot see it (#196)
 
-`Class_teacher_slot_unique` — `(teacherId, date, startTime) WHERE status <>
-'cancelled'` — is a lock in every sense that matters here. Two transactions
+A slot key is a lock in every sense that matters here. Two transactions
 writing the same key make the second wait on the first's uncommitted index
 entry, as a `ShareLock` on the first's transaction id, which the deadlock
 detector reads exactly like a row lock. The upsert-quirk section below already
-says this in one line about `TeacherStudent`. On `Class` it has two
-consequences a site enumeration over `FOR UPDATE`/`UPDATE`/`DELETE` is shaped
-to miss.
+says this in one line about `TeacherStudent`. It has two consequences a site
+enumeration over `FOR UPDATE`/`UPDATE`/`DELETE` is shaped to miss.
+
+**The key moved twice, and the mechanism did not.** Everything measured in this
+section was measured against `Class_teacher_slot_unique`, `(teacherId, date,
+startTime) WHERE status <> 'cancelled'`, which #327 dropped along with the three
+columns it keyed on. The slot now lives on `CalendarEntry_teacher_slot_excl`, an
+`EXCLUDE USING gist` over the generated `span`, partial on `cancelledAt IS
+NULL`. An exclusion constraint waits the same way a unique index does — the
+second writer blocks on the first's uncommitted index entry until it
+commits or rolls back — so read the transcripts below as evidence about a
+mechanism this database still has, on a different object, and read every
+`Class` statement in them as the `CalendarEntry` statement that carries the
+columns now.
 
 **It falsifies a stated premise of "How that enumeration was derived".** Check 1
 excuses `create`/`createMany`/`createManyAndReturn` — "a freshly inserted row's
@@ -516,14 +529,14 @@ function #194 has since deleted). The generator's own `createManyAndReturn` is
 not what was reproduced here: measured against that same sync it came back
 clean, 6 of 6, in the shipped configuration (see "The pairing that looks worst
 is unreachable" below), and only deadlocked — 3 of 3 — once
-`ClassTemplate_teacher_slot_unique` was dropped. For `Class` the candidate set
-is no longer "statements that can lock an existing row" but **"statements that write `(teacherId, date,
-startTime)`"** — every
-`Class` insert, and every update of those three columns or of `status` across
-the `cancelled` boundary. `updateClass` (`class-lifecycle.ts`) joins on that
-basis: its `class.updateMany` accepts `date` and `startTime` from
-`updateClassSchema`, and a single-row autocommit `UPDATE` turns out to be
-perfectly capable of being half a cycle.
+`ClassTemplate_teacher_slot_unique` was dropped. The candidate set is no longer
+"statements that can lock an existing row" but **"statements that write the
+slot"** — since #327 every `CalendarEntry` insert, and every update of `date`,
+`startTime` or `durationMinutes`, or of `cancelledAt` across the null boundary.
+`updateClass` (`class-lifecycle.ts`) joins on that basis: it accepts `date`,
+`startTime` and `durationMinutes` from `updateClassSchema` and writes them to
+the entry, and a single-row autocommit `UPDATE` turns out to be perfectly
+capable of being half a cycle.
 
 **And unlike the ascending-by-`id` rule, this one has no order to take.** A
 transaction that moves a class from one slot to another *vacates* one key and
@@ -859,79 +872,91 @@ lock-taking node to the ordering `template-lock-order.test.ts` defends, for a
 few seconds in a window that needs a concurrent template creation — the same
 trade `room-archive.ts:146-147` refused.
 
-## The cross-family slot guard reads, and does not lock (#296)
+## One teacher, one slot: two exclusion constraints (#296, #298, #327)
 
-One teacher holds at most one live row per slot ACROSS the two class
-families. Since #298 the two halves of that invariant are different KINDS of
-mechanism, not just different counts of the same kind:
+One teacher holds at most one live row per slot ACROSS the two families, at
+both layers. Since #327 both halves are the same KIND of mechanism, and neither
+is a trigger:
 
-- **`Class`/`StudioClass`, unchanged.** Four triggers — this branch does not
-  touch the entry layer: `class_cross_family_slot_insert_guard`,
-  `class_cross_family_slot_update_guard`,
-  `studio_class_cross_family_slot_insert_guard`,
-  `studio_class_cross_family_slot_update_guard`.
-- **`ClassTemplate`/`StudioClassTemplate`, now index-backed.**
-  `ScheduleRule_teacher_slot_excl`, one `EXCLUDE USING gist` constraint on
-  `ScheduleRule`, partial on `isArchived = false`. RANGE, not exact-start: it
-  rejects any two live rules of either kind whose
-  `[startTime, startTime+durationMinutes)` windows overlap for one teacher on
-  one weekday, where the trigger it replaced required an identical start time.
+- **`CalendarEntry`, since #327.** `CalendarEntry_teacher_slot_excl`, one
+  `EXCLUDE USING gist` over `("teacherId" WITH =, span WITH &&)`, partial on
+  `"cancelledAt" IS NULL`. `span` is a generated `tsrange` over
+  `[date + startTime, date + startTime + durationMinutes)`, so it is RANGE, not
+  exact-start: two live entries of either kind whose windows overlap now
+  conflict even when their start times differ, and an entry running past
+  midnight conflicts with one on the following date.
+- **`ScheduleRule`, since #298.** `ScheduleRule_teacher_slot_excl`, the same
+  shape one layer up — `(teacherId, dayOfWeek, slot)`, partial on
+  `isArchived = false`, RANGE rather than exact-start for the same reason.
 
-Named rather than counted, on purpose — a bare count is exactly what rotted
-here (this was eight triggers, two each on all four tables, until #298 folded
-the template half into the constraint above). Both halves are re-derivable
-rather than remembered: the trigger roster is
+Both are index-backed and therefore **race-free by construction**: the second
+writer blocks on the first's uncommitted index entry — the `ShareLock` "The
+slot key is a wait edge" above describes — and is refused with `23P01` once
+that transaction commits. Neither needs a lock of its own, for the same reason
+within-family exclusivity never did.
 
-    grep -rn "cross_family_slot" prisma/migrations/
+Re-derivable rather than remembered:
 
-(a hit inside `20260825065109_schedule_rule_backfill` is the migration that
-DROPS the four template triggers, not a live one — see the pg_depend note
-below, right after this section's migration-comment history), and
-the exclusion constraint is `\d+ "ScheduleRule"` or its own `ADD CONSTRAINT`.
+```sql
+SELECT conrelid::regclass AS "table", conname, pg_get_constraintdef(oid)
+  FROM pg_constraint WHERE contype = 'x' ORDER BY 1;
+```
 
-The four SLOT partial unique indexes in `20260811202634` each enforced
-within-family exclusivity for one table (that migration declared six; the
-other two are the `Room` identity pair), and nothing spanned them — which is
-why the cross-family invariant needed triggers at all, historically, on every
-table it touched. Two of those four
-(`ClassTemplate_teacher_slot_unique`, `StudioClassTemplate_teacher_slot_unique`)
-are gone now too, folded into the same `ScheduleRule_teacher_slot_excl` that
-replaced the template triggers — a teacher's within-family and cross-family
-template exclusivity are one constraint now, not two mechanisms layered on
-each other. `Class_teacher_slot_unique` and `StudioClass_teacher_slot_unique`
-are untouched; the entry layer's within-family and cross-family checks are
-still two separate mechanisms (index, then trigger), exactly as before.
+**`YG001` has no raiser left, and the matcher for it is still in the tree.**
+Both halves of this invariant used to be trigger functions running a plain
+`SELECT … LIMIT 1` against the SIBLING table and raising the user-defined
+SQLSTATE `YG001`: one function per table, fired by an INSERT trigger and an
+UPDATE trigger each. #298 folded the template half into
+`ScheduleRule_teacher_slot_excl` and #327 the entry half into
+`CalendarEntry_teacher_slot_excl`, so what is left is a number rather than a
+roster — and it is a query, not a memory:
 
-That clarification lives here rather than beside the indexes it describes, and
-the reason is worth one line: it was briefly added as a comment inside
-`20260821120000_cross_family_slot_guard/migration.sql`, which is an APPLIED
-migration. A comment-only edit still changes the file's SHA-256, and
-`_prisma_migrations` stores that checksum — measured, `861bd46…` against
-`3867657…`. `prisma migrate status` compares NAMES and passes regardless, so
-nothing catches it until the next `prisma migrate dev` reports the migration as
-modified and demands a reset. Applied migrations are immutable including their
-comments; prose about a migration belongs in prose. The invariant spans two tables, so no
-unique index can express it; a trigger is what is left.
+```sql
+SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE n.nspname = 'public' AND p.prosrc LIKE '%YG001%';
+```
 
-**A second migration comment is stranded the same way, and this document
-becomes its owner too.** `20260825065109_schedule_rule_backfill/migration.sql`,
-block 4, drops the four TEMPLATE-half triggers this section describes above —
+It returns **0** — measured against `ethical_yoga_test` on 2026-08-26. The
+earlier values are deliberately not written down here: nobody ran this query
+before those extractions, and a number nobody measured does not become true by
+being plausible. `src/lib/cross-family-conflict.ts` still exports
+`isCrossFamilySlotConflict`, and the two template `POST` routes still carry an
+arm that calls it; all three are dead and each says so where it stands.
+Removing them changes what those two endpoints answer, so it is a decision to
+take deliberately rather than inside a documentation sweep.
+
+**The migration comments that this document owns.** Two of them, both stranded
+in APPLIED migrations, which is why they live here instead.
+
+The first was briefly added as a comment inside
+`20260821120000_cross_family_slot_guard/migration.sql`. A comment-only edit
+still changes the file's SHA-256, and `_prisma_migrations` stores that checksum
+— measured, `861bd46…` against `3867657…`. `prisma migrate status` compares
+NAMES and passes regardless, so nothing catches it until the next
+`prisma migrate dev` reports the migration as modified and demands a reset.
+Applied migrations are immutable including their comments; prose about a
+migration belongs in prose. What it said: the invariant spans two tables, so no
+unique index could express it, and a trigger was what was left. That premise is
+what #298 and #327 removed — a *generated range column* on a single shared
+table is an expression a unique-style constraint can carry, and the two
+extractions are what created the shared table to put it on.
+
+The second is `20260825065109_schedule_rule_backfill/migration.sql`, block 4,
+which drops the four TEMPLATE-half triggers —
 `class_template_cross_family_slot_insert_guard`,
 `class_template_cross_family_slot_update_guard`,
 `studio_class_template_cross_family_slot_insert_guard`,
 `studio_class_template_cross_family_slot_update_guard` — ahead of dropping the
-columns their `WHEN` clauses name, and its own comment there reads:
+columns their `WHEN` clauses name, and whose own comment there reads:
 
 > Measured: 10 dependencies across the four triggers, on teacherId,
 > dayOfWeek, startTime and isArchived.
 
 That is a prose count and a member roster reaching into the previous
 migration ("since the previous migration"), both of which CLAUDE.md's Comment
-Discipline forbids, and the migration is applied — a comment-only edit
-changes the checksum `prisma migrate status` never checks (NAMES only), so
-nothing would catch the fix until the next `prisma migrate dev` demanded a
-reset. The comment stays wrong where it sits. This document is the live copy,
-re-derivable rather than remembered:
+Discipline forbids, and the migration is applied — so the comment stays wrong
+where it sits. This document is the live copy, re-derivable rather than
+remembered:
 
 ```sql
 SELECT count(*) FROM pg_depend d
@@ -941,169 +966,108 @@ WHERE d.refclassid = 'pg_class'::regclass AND d.refobjsubid > 0
   AND c.relname IN ('ClassTemplate','StudioClassTemplate');
 ```
 
-It returned 10 before this branch (the count the stranded comment records) and
-returns 0 after — measured against both `ethical_yoga_test` and `ethical_yoga`
-on 2026-08-25, once the migration above had run. A reader who finds the
-migration comment first should believe this paragraph, not that one: the
-triggers it counted dependencies for no longer exist, on either table.
+It returned 10 before #298 (the count the stranded comment records) and returns
+0 after — measured against both `ethical_yoga_test` and `ethical_yoga` on
+2026-08-25. A reader who finds the migration comment first should believe this
+paragraph, not that one: the triggers it counted dependencies for no longer
+exist, on either table.
 
-Each surviving `BEFORE INSERT`/`BEFORE UPDATE` function — the
-`Class`/`StudioClass` half only, now — runs a plain `SELECT … LIMIT 1` against
-the SIBLING table and raises `YG001` if it finds a live row. **No source line
-in `src/` issues that `SELECT`**, which is the
-property the #103 section above is about — so the check that finds it is a grep
-of `prisma/migrations/`, not of `src/`:
+**The four SLOT partial unique indexes of `20260811202634` are all gone too.**
+That migration declared six; the other two are the `Room` identity pair.
+`ClassTemplate_teacher_slot_unique` and
+`StudioClassTemplate_teacher_slot_unique` folded into
+`ScheduleRule_teacher_slot_excl` at #298; `Class_teacher_slot_unique` and
+`StudioClass_teacher_slot_unique` folded into
+`CalendarEntry_teacher_slot_excl` at #327. Each layer's within-family and
+cross-family exclusivity is now ONE constraint rather than two mechanisms
+layered on each other, which is what removed the residual race this section
+used to price — an unlocked cross-table `SELECT` cannot see an uncommitted
+sibling insert, and there is no longer an unlocked cross-table `SELECT`.
+Two transactions writing opposite families at one slot were measured
+committing in **200 of 200** forced-overlap runs under the trigger design; the
+constraint that replaced it cannot produce that outcome at all, because the
+second writer waits on the first's index entry rather than reading past it.
 
-    grep -rn "cross_family_slot" prisma/migrations/
+### What keeps the realistic path away from the constraint
 
-**It adds no node to the ordering above, and that is a claim about the locking
-clause rather than about triggers in general.** The `SELECT` carries none — no
-`FOR SHARE`, no `FOR KEY SHARE` — so under READ COMMITTED it takes nothing that
-is held to commit and cannot be half of a cycle. Contrast the RESTRICT trigger
-one section up, whose `SELECT 1 … FOR KEY SHARE` is a real wait edge and did
-produce a `40P01`. The difference is one clause.
+Both generators pre-check — there is ONE entry table now, so the pre-check
+reads it directly rather than reaching across to a sibling — and decline the
+date as `blocked_by_overlap` (`class-generator.ts`, `studio-class-generator.ts`)
+rather than letting `CalendarEntry_teacher_slot_excl` refuse the insert. Behind
+them, **ten write endpoints across eight route files** answer 409, in two
+groups that answer differently because the two layers can say different things:
 
-**The `UPDATE` triggers are narrowed by a `WHEN`, which is a lock-order fact
-and not only a performance one.** They fire only when the row is live AND the
-slot moved or the row became live. An unrelated update — `spotBroadcastAt`, the
-completion totals, `settingsLocked` — pays for no sibling read at all, so the
-overwhelming majority of writes to these two tables touch the sibling table
-zero times.
+| Layer | How it reaches the 409 | Endpoints |
+|---|---|---|
+| entry, `CalendarEntry_teacher_slot_excl` | a `catch` on `isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')`, then `probeConflictingEntry` for WHICH entry — four call sites, `grep -rn "probeConflictingEntry(" src/services/ src/app/api/` | `POST /api/classes`, `POST /api/studio-classes`, `PUT /api/studio-classes/[id]`; and `PUT /api/classes/[id]`, whose service returns `slot_conflict` and whose route runs the same probe |
+| rule, `ScheduleRule_teacher_slot_excl` | `SLOT_TAKEN[heldBy]`, keyed on `ruleSlotHolder`'s `RuleSlotHolder` — six call sites, `grep -rn "ruleSlotHolder(" src/services/ src/app/api/` | `POST /api/class-templates`, `POST /api/studio-class-templates`, `PUT /api/class-templates/[id]`, `PUT /api/studio-class-templates/[id]`, `PATCH /api/class-templates/[id]?state=unarchived`, `PATCH /api/studio-class-templates/[id]?state=unarchived` |
 
-### What it costs: a residual race, measured
-
-An unlocked read cannot see an uncommitted sibling insert, so two transactions
-writing opposite tables at one slot may both commit.
-
-Measured against `ethical_yoga_test` on the real trigger functions: 200 runs,
-each opening two interactive transactions at one identical
-`(teacherId, date, startTime)` — one `Class.create`, one `StudioClass.create` —
-each holding 40ms after its `INSERT` so both triggers' sibling `SELECT`s
-necessarily run before either commits. **Both committed in 200 of 200 runs.** A
-control with the two guards dropped also measured 200 of 200: under a forced
-overlap the guard makes no measurable difference, which is exactly what an
-unlocked `SELECT`'s inability to see an uncommitted row predicts.
-
-**Read that number for what it is.** The harness FORCES the overlap, so
-`200/200` is a rate conditional on two writes racing, not a rate of races. How
-often two slot writes for one teacher actually overlap was never measured, and
-nothing here should be read as if it were. What is established is narrower and
-still worth stating: once two such writes overlap, the guard contributes
-nothing.
-
-### Why no advisory lock, and what would change that
-
-Both forms were derived and rejected — see
-`docs/superpowers/specs/2026-08-21-cross-family-slot-exclusivity-design.md`
-§4.2.1 for the full argument. In this document's terms:
-
-- **At the call sites.** Four of the claiming sites issue no transaction at all
-  (`prisma.class.create`, `prisma.studioClass.create`,
-  `prisma.studioClass.update`, and `updateClass`'s bare `db.class.updateMany`,
-  whose first parameter is a full `PrismaClient`), and an `xact` advisory lock
-  in autocommit is taken and released by its own implicit transaction before
-  the caller's next statement runs. So this design means introducing an
-  interactive transaction at four hot paths — one of which is already half of
-  the 32-of-100 `40P01` in "The slot key is a wait edge" above. It would also
-  add a second advisory namespace beside `lockAnnouncementSlot`'s, whose own
-  section warns that **"the thing to check is a second call site"**; this would
-  add roughly ten.
-- **Inside the trigger functions.** Cheaper, and it works in autocommit because
-  the statement's implicit transaction is exactly the right scope. Rejected on
-  the ordering derivation rather than the lines: the lock would be taken by a
-  line no `grep` over `src/` can find, which is this document's own #103
-  lesson, and a `BEFORE UPDATE` trigger fires with the row lock ALREADY held —
-  so it would order `Class → advisory` where a call-site design orders
-  `advisory → Class`. The two cannot coexist.
-
-**Neither is dormant work.** #298's recorded decision extracts `CalendarEntry`
-and makes this invariant a composite foreign key, at which point the second
-writer blocks on an uncommitted INDEX ENTRY — the `ShareLock` "The slot key is
-a wait edge" describes — and gets `23505` rather than racing past an unlocked
-read. That is why the residual is accepted rather than bridged: an index-backed
-constraint is race-free by construction, which is why within-family exclusivity
-has never needed a lock either.
-
-**Reopen this section if #298 slips materially past #283 and #276**, which is
-the sequencing recorded on that issue. The trigger-internal form is the one to
-take.
-
-### What keeps the realistic path away from the guard
-
-Both generators pre-check the sibling table and decline the date as
-`blocked_by_overlap` (`class-generator.ts`, `studio-class-generator.ts`),
-and **ten endpoints across eight route files** answer 409:
-
-| How it reaches the 409 | Endpoints |
-|---|---|
-| a `catch` beside their own within-family-conflict branch — `isUniqueConflictOn` for the three entry-level writes, `isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')` for the two template `POST`s since #298 replaced their slot index | `POST /api/classes`, `POST /api/studio-classes`, `PUT /api/studio-classes/[id]`, `POST /api/class-templates`, `POST /api/studio-class-templates` |
-| a service-returned reason, because they issue no write of their own — `cross_family_slot_conflict` for the one entry-level route, still probing the sibling table directly; `slot_conflict` carrying a `heldBy` (`RuleSlotHolder`) for the four template routes, since #298 replaced the sibling-table probe with a single `ScheduleRule` exclusion constraint that cannot itself say which family it refused | `PUT /api/classes/[id]`; `PUT /api/class-templates/[id]`, `PUT /api/studio-class-templates/[id]`, `PATCH /api/class-templates/[id]?state=unarchived`, `PATCH /api/studio-class-templates/[id]?state=unarchived` |
-
-Five and five. An earlier version of this paragraph said "all eight routes …
+Four and six. An earlier version of this paragraph said "all eight routes …
 five catch, three return", counting FILES on one side of the sentence and
 ENDPOINTS on the other, and so undercounted the reason-based side by the two
-`PATCH` unarchive arms this same issue added. It closed by saying "named rather
-than counted", which is the right instinct and was defeated by naming an
-incomplete set — so the table above is the naming.
+`PATCH` unarchive arms. It closed by saying "named rather than counted", which
+is the right instinct and was defeated by naming an incomplete set — so the
+table above is the naming, and each row ships the grep that re-derives its
+half.
 
-**The grep does not agree with the table, and should not.**
-`grep -rn "CROSS_FAMILY_" src/app/api/ | wc -l` returned 12 before #298 and
-returns **11** now (re-measured 2026-08-25): ten endpoints, of which the two
-template `POST`s still carry TWO branches each — that count did not move —
-but **only one of the two is a trigger any more.** Before #298, both were
-`YG001` from two different triggers reading two different sibling tables (the
-template's own insert, and generation's), disambiguated by a `conflict.level`
-flag on a shared failure object. Since #298 the template insert's own slot
-conflict — either family, because `ScheduleRule_teacher_slot_excl` spans both
-kinds — is `23P01` from that exclusion constraint, caught by
-`isExclusionConflictOn` earlier in the same `catch` and never reaching the
-`YG001` branch below it. Only generation's `Class`/`StudioClass` insert can
-still raise a `YG001` there. With one of the two raisers gone, the flag that
-told them apart has nothing left to disambiguate and is gone with it —
-`src/app/api/class-templates/cross-family-conflict-level.test.ts` is the
-record of that removal, and the reason its own mocked case survives: the
-generator's race is still real and still untested anywhere else. The two
-branches still answer `CROSS_FAMILY_*_TEMPLATE_SLOT` and `CROSS_FAMILY_*_SLOT`
-respectively — chosen now by WHICH matcher catches the error, not by a flag
-read off it.
+**The two layers name different things, and that is a deliberate asymmetry.**
+The rule layer can only say which FAMILY holds the weekday slot, because a
+recurring rule has no single date to point at, and `'unknown'` is a real third
+answer there — the holder can be archived between the refusal and the read.
+The entry layer names the holder itself: family, start time and date, because
+a range overlap need share neither a start time nor, across midnight, a date,
+so "you already have something at that time" would describe a clash the teacher
+cannot find. `src/lib/entry-conflict.ts` carries that argument; `heldBy` falls
+out of the same row as a projection.
 
-So: 11 branches, 10 endpoints, 8 files, as of the measurement above. Three
-numbers, none of them derivable from either of the others, which is why all
-three are written down rather than assumed to have held.
+**The `CROSS_FAMILY_` grep no longer measures this.**
+`grep -rn "CROSS_FAMILY_" src/app/api/` returned 12 before #298, 11 after, and
+returns **6** now (re-measured 2026-08-26, excluding tests): four in the
+template routes' `SLOT_TAKEN` maps, and two in the dead `YG001` arms the
+section above describes. The entry layer dropped out of it entirely — with both
+families in one table, a refusal there is `DUPLICATE_CLASS_SLOT` or
+`DUPLICATE_STUDIO_SLOT` named for the ASKING surface, and the family of the
+holder rides in the message rather than in the code.
 
 That is the same division of labour `countRoomDeleteBlockers` has with the
-RESTRICT trigger one section up: the guard is the backstop, the pre-check is
-what means it almost never fires.
+RESTRICT trigger one section up: the constraint is the backstop, the pre-check
+is what means it almost never fires.
 
 ### How the pre-check must be tested, and the mutation that lied
 
-Removing the pre-check makes the batch insert hit the trigger, which aborts the
-statement — so the generator THROWS. There is no longer a `result` to read a
-count from at all, which is a stronger failure than the count moving: every
-assertion in the case fails, not just the one about the reason. (An earlier
-draft of this paragraph said "`created` drops to 0 **and** the generator
-throws"; those are mutually exclusive, and only the second happens.) The suite
-asserts the reason regardless, which is the stricter assertion in the cases
-where the generator does return.
+Removing the pre-check no longer makes the batch insert fail at all, and that
+is a change worth stating plainly: since #327 the entry insert is
+`createManyAndReturn` with `skipDuplicates: true` — a bare
+`ON CONFLICT DO NOTHING`, no conflict target, which covers an exclusion
+constraint as well as a unique key. A date the pre-check would have declined is
+simply not returned, so it falls into the `'raced'` arm instead of
+`blocked_by_overlap`. The mutation therefore shows up as the REASON moving, not
+as a throw and not as `created` moving, and the suite asserts the reason for
+exactly that purpose.
 
-**That is not what this section said first, and the way it was wrong is the
-part worth keeping.** #296 originally shipped a `catch` around
-`createManyAndReturn` that retried per date, and the mutation was recorded as
-*masked*: the trigger fires, the fallback retries, the date is reclassified
-`'raced'`, `result.created` does not move. Every word of that was observed —
-in the **unit tests**, which call both generators with a bare `PrismaClient`,
-where each statement is its own transaction and a retry after an abort is
-perfectly legal.
+**That is not what this section said first, twice over, and both ways of being
+wrong are worth keeping.**
 
+The first was #296's own: it shipped a `catch` around `createManyAndReturn`
+that retried per date, and the mutation was recorded as *masked* — the trigger
+fires, the fallback retries, the date is reclassified `'raced'`,
+`result.created` does not move. Every word of that was observed, in the **unit
+tests**, which call both generators with a bare `PrismaClient`, where each
+statement is its own transaction and a retry after an abort is perfectly legal.
 Every PRODUCTION caller passes a transaction client (both sweeps, both POST
-routes, both pause/resume services). Prisma takes no savepoint per statement,
-so `RAISE EXCEPTION` leaves the transaction aborted and the first retried
-`create` returns `25P02`, which `isCrossFamilySlotConflict` correctly declines
-— costing the whole window, and turning the `YG001` those ten endpoints match
-into a `25P02` they cannot, so a wordable 409 became a 500. The fallback was
-deleted in review.
+routes, both pause/resume services), Prisma takes no savepoint per statement,
+so `RAISE EXCEPTION` left the transaction aborted and the first retried
+`create` returned `25P02` — costing the whole window, and turning a wordable
+409 into a 500. The fallback was deleted in review.
 
-The lesson generalises past this issue: **a mutation is only evidence about the
+The second was this document's, and it survived the trigger it described: a
+paragraph here said the mutation makes the generator THROW, which was true
+while a `RAISE EXCEPTION` aborted the statement and stopped being true when
+`ON CONFLICT DO NOTHING` replaced it. (An earlier draft before that said
+"`created` drops to 0 **and** the generator throws"; those were mutually
+exclusive, and only the second happened.)
+
+The lesson generalises past both: **a mutation is only evidence about the
 configuration it ran in.** The guard reported honestly; the harness asked it
 the wrong question, because the test client and the production client differ in
 exactly the property under test. `generation-transaction.test.ts` now drives
@@ -1466,9 +1430,10 @@ pre-298 shape again.
   since #196 a single-row write can be half of a slot-key deadlock while holding
   exactly one `Class` row lock, and `updateClass` is that case. Anyone citing
   this bullet as precedent needs the mechanism, not the count. The conclusion
-  survives on three mechanical facts: this sweep never `INSERT`s or `UPDATE`s a
-  `Class` row, so it takes no `Class_teacher_slot_unique` index-entry lock and
-  joins no slot-key wait chain; deleting a CHILD row takes no FK lock on the
+  survives on three mechanical facts: this sweep never writes a `Class` row and
+  never writes a `CalendarEntry` row, so it takes no
+  `CalendarEntry_teacher_slot_excl` index-entry lock and joins no slot-key wait
+  chain; deleting a CHILD row takes no FK lock on the
   parent (only an `INSERT`/`UPDATE` of one takes `FOR KEY SHARE`), so its
   `deleteMany` adds no `Class` edge past the `lockClassRow` it took on purpose;
   and no production writer holds a `WaitlistEntry` row lock while requesting a

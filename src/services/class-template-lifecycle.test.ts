@@ -26,8 +26,9 @@ const uniqueSuffix = Date.now();
  * fail — but a fixed-width literal (`` `09:${30 + counter}` ``) can't make
  * the same guarantee: Task 6d's review found `archiveOrUnarchiveTemplate`'s
  * `makeTemplate` counter reaching its old ceiling at exactly its own call
- * count (29 calls, `'09:59'`), one call short of `'09:60'`. `Class.startTime`
- * is `@db.Time` and would now refuse such a value outright at the DB, which
+ * count (29 calls, `'09:59'`), one call short of `'09:60'`.
+ * `CalendarEntry.startTime` is `@db.Time` and would now refuse such a value
+ * outright at the DB, which
  * is a less useful failure here than this guard's message naming the fixture
  * counter that produced it.
  */
@@ -626,9 +627,9 @@ describe('updateClassTemplate (DB)', () => {
   });
 
   it('does not decline a date a CANCELLED studio class holds', async () => {
-    // The liveness half: `cancelledAt IS NULL` is `StudioClass`'s spelling of
-    // the `status <> 'cancelled'` the same-family read uses. Widen the probe's
-    // third read past liveness and this goes red.
+    // The liveness half: since #327 `cancelledAt IS NULL` is the ONE spelling
+    // both families use, on the entry, and it is the constraint's own partial
+    // predicate. Widen the pre-check past liveness and this goes red.
     const solo = await seedTeacher('cross-family-probe-cancelled');
     const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
     const template = await prisma.classTemplate.create({
@@ -1041,10 +1042,12 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   // tests, and several recurring `date` values (`future()` especially) are
   // reused across tests whose class deliberately survives the archive (a
   // kept/registered/late_cancel class, or a forbidden request that touches
-  // nothing) — so under Class_teacher_slot_unique a later test's create at
-  // the same date collided with an earlier test's still-open leftover. This
-  // was masked in the original baseline: those tests never even reached this
-  // call, because the template-level collision fixed above threw first.
+  // nothing) — so without a counter a later test's create at the same date
+  // collides with an earlier test's still-live leftover, under whichever slot
+  // constraint is in force (`Class_teacher_slot_unique` when this was written,
+  // `CalendarEntry_teacher_slot_excl` since #327). This was masked in the
+  // original baseline: those tests never even reached this call, because the
+  // template-level collision fixed above threw first.
   // Routed through `slotTime` (see its docblock), like `makeTemplate`'s own
   // counter above: the raw `09:${counter}` this replaced had only 21 minutes
   // of headroom at this call count — the tightest margin of any counter on

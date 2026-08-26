@@ -743,7 +743,7 @@ describe('POST /api/rooms dedupes both branches (#196)', () => {
 });
 
 /**
- * Task 6b (#196), narrowed by #73. The six indexes constrain every write, not
+ * Task 6b (#196), narrowed by #73. A unique index constrains every write, not
  * just creates. `PUT /api/rooms/[id]` never touches a currently-shared room —
  * the guard in the route refuses it — and since #73 it cannot make a room
  * shared either, so the only identity index it can collide on is

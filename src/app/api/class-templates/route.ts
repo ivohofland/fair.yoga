@@ -102,17 +102,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // 298) — `ScheduleRule`'s auto-generated `id`/`kind` and the child's
   // auto-generated `scheduleRuleId` cannot collide.
   //
-  // `YG001` (#296) reaches this catch only from generation now. Generation
-  // shares this transaction, and its `Class` insert fires the entry-level
-  // cross-family trigger (`class_cross_family_slot_insert_guard`) — the ONE
-  // `YG001` source left in this transaction. The template insert used to be
-  // a second: two template-level triggers raised it before issue 298
-  // replaced both with `ScheduleRule_teacher_slot_excl` below, a single
-  // exclusion constraint that raises `23P01` instead, for either family. A
-  // `conflict.level` object used to sit here disambiguating which statement
-  // raised a `YG001` — the template's own insert, or generation's — because
-  // both could. That question no longer has two answers, so the object that
-  // asked it is gone with the second answer.
+  // NO `YG001` reaches this catch either, and since #327 nothing raises one at
+  // all — the entry-level cross-family triggers went the way the template-level
+  // ones went in #298, replaced by an exclusion constraint. The census and its
+  // re-derivation live in `docs/lock-order.md` ("One teacher, one slot" —
+  // *`YG001` has no raiser left*); the branch below is what is left of that
+  // arm and says so where it stands.
+  //
+  // Generation cannot reach this catch under the entry constraint either. Its
+  // entry insert is `createManyAndReturn` with `skipDuplicates: true`, a bare
+  // `ON CONFLICT DO NOTHING` — no conflict target, so it covers
+  // `CalendarEntry_teacher_slot_excl` as well as the unique key — and the
+  // `Class` rows that follow are keyed on the entry ids that landed.
   let template: {
     created: Prisma.ClassTemplateGetPayload<{
       include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } };
@@ -267,17 +268,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       const [message, code] = SLOT_TAKEN[heldBy];
       return respondError(message, 409, code);
     }
-    // The OTHER family's INSTANCE holds it (#296) — a `YG001` from the
-    // entry-level cross-family trigger, which generation's own `Class` insert
-    // can raise and the branch above cannot: the template's own collision is
-    // caught there now, by the exclusion constraint, not by this trigger.
-    // LOGGED before responding: the pre-checks mirror the trigger predicates
-    // exactly, so this is reachable ONLY through the cross-family race this
-    // design knowingly accepts. `docs/lock-order.md` records that race as
-    // "measured at 200 of 200 runs under a FORCED overlap — a rate
-    // conditional on racing, not a rate of races, which was never measured".
-    // A silent 409 would guarantee it stays unmeasured forever, because
-    // production would emit nothing when one happened.
+    // DEAD ARM. It matches a `YG001` from the entry-level cross-family
+    // triggers, and #327 replaced those with
+    // `CalendarEntry_teacher_slot_excl`; nothing in the schema raises `YG001`
+    // now. `docs/lock-order.md` ("One teacher, one slot") carries that census
+    // and the query that re-derives it. Kept rather than deleted because
+    // removing it changes what this endpoint answers, which is a decision to
+    // take deliberately.
     if (isCrossFamilySlotConflict(err)) {
       log.warn(
         { err, teacherId: session.teacherId },

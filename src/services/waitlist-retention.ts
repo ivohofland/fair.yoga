@@ -295,7 +295,7 @@ export class RetentionFailedError extends Error {
 /**
  * The UTC midnight of `now` minus the retention window.
  *
- * UTC midnight on BOTH sides, deliberately. `Class.date` is `@db.Date` — a
+ * UTC midnight on BOTH sides, deliberately. `CalendarEntry.date` is `@db.Date` — a
  * calendar day pinned to midnight UTC — so comparing it against a bare
  * `now - 365 days` would carry the caller's time of day into the comparison and
  * make the boundary depend on the hour the scheduler happened to tick.

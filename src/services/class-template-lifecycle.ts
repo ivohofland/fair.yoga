@@ -1124,8 +1124,8 @@ export async function updateClassTemplate(
  * drifted): that policy is about shared *implementation*, and this is two
  * fields with no logic to drift.
  *
- * `date` is `Class.date` or `StudioClass.date` straight through — both
- * producers supply one — and both columns are `@db.Date`: a calendar date
+ * `date` is `CalendarEntry.date` straight through — one column for both
+ * producers since #327 — and it is `@db.Date`: a calendar date
  * pinned to midnight UTC, never an instant. That is the one
  * property of this type a producer can actually violate, and it is what
  * licenses `pauseMessage` to render it through `formatDayHeader`, which reads
@@ -2126,7 +2126,7 @@ export async function archiveOrUnarchiveTemplate(
         }
 
         // One clock reading serves both the calendar boundary and the
-        // timestamp recorded below. `Class.date` is `@db.Date`, so both sides
+        // timestamp recorded below. `CalendarEntry.date` is `@db.Date`, so both sides
         // of every comparison below are calendar dates — the comparison the
         // generator that created these rows already makes (`class-generator.ts`
         // filters on `classStartInstant`). Comparing the column to a raw

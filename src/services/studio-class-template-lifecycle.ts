@@ -19,8 +19,8 @@
  *     teacher cancelled deliberately must not be refilled on the next resume.
  *     Archiving leaves it standing for that reason — structurally like the
  *     class family leaving a charged registration standing, but not for the
- *     same reason. Corrected under issue 279; see `StudioClass.cancelledAt` in
- *     `prisma/schema.prisma` for the cancel-versus-remove split.
+ *     same reason. Corrected under issue 279; see `CalendarEntry.cancelledAt`
+ *     in `prisma/schema.prisma` for the cancel-versus-remove split.
  *   - Where the class family excludes any class with a registration in a
  *     CHARGED status, the studio family has no registrations to consult at
  *     all — `studentCount` is a plain, unconnected `Int?`. So every future
@@ -1553,7 +1553,7 @@ export async function archiveOrUnarchiveStudioTemplate(
         }
 
         // One clock reading serves both the calendar boundary and the
-        // timestamp recorded below. `StudioClass.date` is `@db.Date`, so both
+        // timestamp recorded below. `CalendarEntry.date` is `@db.Date`, so both
         // sides of every comparison below are calendar dates. See
         // `archiveOrUnarchiveTemplate` for what comparing the column to a raw
         // instant costs in each direction.

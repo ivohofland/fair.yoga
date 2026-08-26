@@ -27,8 +27,8 @@ const classIds: string[] = [];
  * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
  * the next hour rather than ever emitting an invalid minute like `'09:60'`
  * once the counter below crosses 60 — a raw `09:${counter}` literal would
- * build exactly that. `Class.startTime` is `@db.Time` and would refuse the
- * row outright at the DB, which is a less useful failure here than this
+ * build exactly that. `CalendarEntry.startTime` is `@db.Time` and would refuse
+ * the row outright at the DB, which is a less useful failure here than this
  * guard's message naming the counter that produced it.
  * Mirrors `class-template-lifecycle.test.ts`'s `slotTime`.
  */
@@ -45,11 +45,13 @@ function slotTime(totalMinutesFrom9am: number): string {
 // Every class this helper creates shares ownerId, the same 2099-06-01 date,
 // and `status: 'open'` — none of that is what any test here cares about,
 // it is just "a class far enough out that cancel-deadline logic never
-// triggers". Class_teacher_slot_unique is (teacherId, date, startTime)
-// WHERE status <> 'cancelled', though, and this file calls makeClass 23
-// times, so a shared literal startTime would let only the first through.
-// A counter-derived minute keeps every call on its own slot without any
-// caller needing to know or care what time its class landed on.
+// triggers". `CalendarEntry_teacher_slot_excl` excludes overlapping spans per
+// teacher (WHERE "cancelledAt" IS NULL), though, and this file calls makeClass
+// 23 times, so a shared literal startTime would let only the first through.
+// A counter-derived minute keeps every call on its own slot — the fixtures it
+// builds are one minute long, so a minute of separation is genuinely disjoint
+// under a range overlap — without any caller needing to know or care what time
+// its class landed on.
 let makeClassCounter = 0;
 
 async function makeClass(maxStudents: number): Promise<string> {

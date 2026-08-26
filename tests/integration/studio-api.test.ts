@@ -1239,12 +1239,11 @@ describe('/api/studio-classes', () => {
     });
   });
 
-  // `StudioClass_teacher_slot_unique` is (teacherId, date, startTime) WHERE
-  // cancelledAt IS NULL — the six indexes #196 added constrain every write,
-  // not just creates (Task 6b). This route's own `prisma.studioClass.update`
-  // has two independent ways back into that partial scope: changing
-  // `startTime` on an already-live row, or clearing `cancelledAt` back to
-  // null on a row that was cancelled. Both cases below hold one fixed date and
+  // `CalendarEntry_teacher_slot_excl` excludes overlapping spans per teacher
+  // WHERE "cancelledAt" IS NULL, and constrains every write, not just creates
+  // (Task 6b). This route's own entry update has two independent ways back
+  // into that partial scope: changing `startTime` on an already-live row, or
+  // clearing `cancelledAt` back to null on a row that was cancelled. Both cases below hold one fixed date and
   // vary only `startTime`/`cancelledAt`, so each isolates its own door; the
   // THIRD way in — a `date` move, opened by #276 — is exercised in that
   // issue's own block below.

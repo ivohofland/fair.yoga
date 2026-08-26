@@ -89,7 +89,8 @@ export const FULL_MONTHS = [
  * Day-first is the international convention, which `CLAUDE.md`'s "international
  * from day one" implies and which will not need undoing when i18n arrives.
  *
- * UTC accessors throughout: `Class.date` is a `@db.Date` (midnight UTC) and the
+ * UTC accessors throughout: `CalendarEntry.date` is a `@db.Date` (midnight UTC)
+ * and the
  * time of day lives separately in `startTime`, so reading it in local time would
  * shift the date across the boundary for anyone west of UTC.
  */

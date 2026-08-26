@@ -168,8 +168,13 @@ This function is pure — no side effects, no database calls. It's the most test
 Manages the class state machine:
 
 ```
-draft → open → full → in_progress → completed → cancelled
+draft → open → in_progress → completed        (+ cancelled, off to one side)
 ```
+
+`full` is derived from the registration count, never stored. `cancelled` left
+`ClassStatus` in issue 327: it is `CalendarEntry.cancelledAt`, so a cancelled
+class keeps whatever status it held and cancellation is not a transition — see
+`api/classes/[id]/cancel/route.ts`, which is its own endpoint for that reason.
 
 ```typescript
 interface ClassTransition {
@@ -180,12 +185,12 @@ interface ClassTransition {
 }
 
 // Key transitions:
-// open → full:          when registrations reach maxStudents
-// full → open:          when a student cancels and spots open
-// open/full → cancelled: when auto_cancel_check fires and count < minStudents
-// open/full → in_progress: when class start_time is reached
+// open → in_progress:      when the class start instant is reached
 // in_progress → completed: when teacher marks class as done (or auto after duration)
-// completed triggers:    pricing calculation → payment creation → notifications
+// completed triggers:      pricing calculation → payment creation → notifications
+//
+// Not a transition: cancellation. `auto_cancel_check` firing below minStudents
+// writes `cancelledAt` on the entry and leaves `status` alone.
 ```
 
 ### Waitlist (`services/waitlist.ts`)
@@ -197,10 +202,17 @@ Implements the hybrid promotion model:
 // Final hour BEFORE the deadline: first-come-first-claimed broadcast
 // At or after the deadline: frozen — nothing happens
 async function handleSpotFreed(db, classId, now?): Promise<SpotFreedResult> {
-  const cls = await db.class.findUnique({ where: { id: classId }, ... });
-  if (!cls || cls.status !== 'open') return { action: 'none' };
+  const cls = await db.class.findUnique({
+    where: { id: classId }, include: { calendarEntry: true }, ...
+  });
+  // Liveness is TWO reads since #327: the status, and the entry's cancelledAt.
+  if (!cls || cls.status !== 'open' || cls.calendarEntry.cancelledAt !== null) {
+    return { action: 'none' };
+  }
 
-  const window = getWaitlistWindow(cls.date, cls.startTime, cls.cancelDeadline, tz, now);
+  const window = getWaitlistWindow(
+    cls.calendarEntry.date, cls.calendarEntry.startTime, cls.cancelDeadline, tz, now,
+  );
   if (window === 'frozen') return { action: 'frozen' };
 
   if (window === 'auto_promote') {
@@ -247,41 +259,55 @@ Runs hourly as part of the in-process scheduler (see Background Jobs below). For
 // `dayOfWeek`, `startTime` and `teacherId` left `ClassTemplate` for
 // `ScheduleRule` in issue 298, so they're reached through `template.scheduleRule.*`.
 // `startTime` is `ScheduleRule.startTime` itself (a `@db.Time` `Date`) — no
-// `timeToHHmm` round trip, since `classStartInstant` and `Class.startTime`
-// (issue 327 Task 1) both want that type directly.
+// `timeToHHmm` round trip, since `classStartInstant` and
+// `CalendarEntry.startTime` (issue 327 Task 1) both want that type directly.
 const startTime = template.scheduleRule.startTime;
 const dates = getNextOccurrences(template.scheduleRule.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
   .filter((d) => classStartInstant(d, startTime, tz) > startDate)
   .slice(0, DEFAULT_WEEKS);
 
-// ONE query per question, and since #194 there are two. This one classifies
-// each candidate DATE: already generated, blocked by a cancelled instance of
-// this template, or the teacher's slot taken by another class.
-const occupants = await db.class.findMany({
+// ONE query per question, and since #194 there are two. Both read
+// `CalendarEntry`, not `Class`: issue 327 moved the calendar identity there,
+// so a teacher's occupancy is one table spanning both families. This one
+// classifies each candidate DATE: already generated, blocked by a cancelled
+// instance of this template, or the teacher's slot taken by another entry —
+// of either family, which is why the pre-check needs no sibling read.
+const occupants = await db.calendarEntry.findMany({
   where: { teacherId: template.scheduleRule.teacherId, date: { in: dates } },
+  select: { scheduleRuleId: true, kind: true, date: true, startTime: true,
+            durationMinutes: true, cancelledAt: true },
 });
 
 // And this one classifies its WEEK — `already_this_week`. Keyed on
-// `templateId`, not `teacherId`: it rides `@@unique([templateId, date])`, and
-// the date-scoped read above structurally cannot see the class that holds a
-// week from a DIFFERENT day, which is the whole case it exists for. No status
-// filter, deliberately — a cancelled class holds its week.
+// `scheduleRuleId`, not `teacherId`: it rides `@@unique([scheduleRuleId,
+// date])`, and the date-scoped read above structurally cannot see the class
+// that holds a week from a DIFFERENT day, which is the whole case it exists
+// for. No liveness filter, deliberately — a cancelled entry holds its week.
 const heldWeeks = new Set(
-  (await db.class.findMany({
-    where: { templateId: template.id, date: { gte: weekStart, lt: weekEnd } },
+  (await db.calendarEntry.findMany({
+    where: { scheduleRuleId: template.scheduleRuleId, date: { gte: weekStart, lt: weekEnd } },
     select: { date: true },
-  })).map((c) => mondayOf(c.date)),
+  })).map((e) => mondayOf(e.date)),
 );
 
 // The reasons are what the teacher and the operator get told.
 
-// ONE insert. `skipDuplicates` compiles to a bare `ON CONFLICT DO NOTHING`,
-// so a date lost to a concurrent insert costs that date and nothing else.
-const inserted = await db.class.createManyAndReturn({
-  data: free.map((date) => ({ /* template's fields + date */ })),
+// TWO inserts since #327, and only the first can conflict. `skipDuplicates`
+// compiles to a bare `ON CONFLICT DO NOTHING` — no conflict target, so it
+// covers `CalendarEntry_teacher_slot_excl` as well as the unique key — and a
+// date lost to a concurrent insert costs that date and nothing else. The
+// `Class` rows below are keyed on the entry ids that landed, so nothing is
+// left for a second `ON CONFLICT` to catch.
+const inserted = await db.calendarEntry.createManyAndReturn({
+  data: free.map((date) => ({ /* rule's calendar fields + date */ })),
   skipDuplicates: true,
-  select: { date: true },
+  select: { id: true, date: true },
 });
+if (inserted.length > 0) {
+  await db.class.createMany({
+    data: inserted.map((entry) => ({ /* template's economics + entry.id */ })),
+  });
+}
 
 return { created: inserted.length, skipped }; // GenerationResult
 ```
@@ -333,8 +359,9 @@ Single PostgreSQL instance alongside the Next.js application. For a donation-fun
 ### Key Indexes
 
 ```sql
--- Teacher schedule view (most frequent query)
-CREATE INDEX idx_class_teacher_date ON "Class" (teacher_id, date);
+-- Teacher schedule view (most frequent query). On "CalendarEntry" since
+-- issue 327: both class families share one calendar table.
+CREATE INDEX "CalendarEntry_teacherId_date_idx" ON "CalendarEntry" ("teacherId", date);
 
 -- Student's upcoming bookings
 CREATE INDEX idx_registration_student_status ON "Registration" (student_id, status);

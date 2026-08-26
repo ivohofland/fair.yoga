@@ -385,8 +385,10 @@ describe('classifyApiError', () => {
 
   /**
    * Task 6c (#196) set out to add a 409 branch for the deadlock
-   * `Class_teacher_slot_unique` measures against real `updateClass` writes
-   * (`docs/lock-order.md`, "The slot key is a wait edge") — on the premise
+   * `Class_teacher_slot_unique` measured against real `updateClass` writes
+   * (`docs/lock-order.md`, "The slot key is a wait edge", which records both
+   * the measurement and the move of that key onto
+   * `CalendarEntry_teacher_slot_excl` in #327) — on the premise
    * that `classifyApiError` had no branch for `40P01` at all. Reproduced
    * directly rather than trusting that premise (two real concurrent
    * `updateClass(prisma, ...)` calls swapping slots, throwaway database,

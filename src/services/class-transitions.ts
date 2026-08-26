@@ -363,7 +363,8 @@ export async function autoCancelClasses(
         // Scope note, the same one `gdpr.ts` and `waitlist.ts`'s
         // `removeFromWaitlist` each carry at their own `lockClassRow` call:
         // `SET LOCAL lock_timeout = '2s'` bounds every statement left in
-        // this transaction, not just the `FOR UPDATE` inside the helper. So
+        // this transaction, not just the two `FOR UPDATE`s inside the helper
+        // (`Class` then its `CalendarEntry`, since #327). So
         // the 2s also governs the `registration.count`, the CAS, the
         // recipient `findMany`, and — since #112 — the `waitlistEntry`
         // `findMany`, the `waitlistEntry.updateMany` that closes the queue,

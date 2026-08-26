@@ -331,9 +331,9 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
     // auto_promote window — same "far in the future" trick as
     // farFutureClassId above, so promoteNext's own window check never
     // trips: nowhere near the cancel deadline. Distinct date from
-    // farFutureClassId: same teacher, and Class_teacher_slot_unique is
-    // (teacherId, date, startTime) — reusing farFutureClassId's slot would
-    // collide with that still-open class.
+    // farFutureClassId: same teacher, and `CalendarEntry_teacher_slot_excl`
+    // excludes overlapping spans per teacher — reusing farFutureClassId's slot
+    // would collide with that still-live class.
     const promoteClass = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
@@ -360,8 +360,8 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
     // freedSpotClassId's — floored to the minute, two independent reads
     // this close together (this beforeAll runs right after the
     // describe-block-1 tests that consume freedSpotClassId) could land in
-    // the same minute and collide on Class_teacher_slot_unique; that this
-    // never fired in practice was luck, not a guarantee. Anchoring both to
+    // the same minute and collide on `CalendarEntry_teacher_slot_excl`; that
+    // this never fired in practice was luck, not a guarantee. Anchoring both to
     // one instant makes it a guarantee instead: 6h49m here vs
     // freedSpotClassId's 6h50m is a fixed one-minute difference from a
     // shared clock read, so the two floored minutes are exactly one apart

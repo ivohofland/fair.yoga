@@ -4,7 +4,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
 /**
- * The boundary #86's archive rule compares `Class.date` against. These are
+ * The boundary #86's archive rule compares `CalendarEntry.date` against. These are
  * the deterministic teeth for that fix: the service tests seed a teacher and
  * ask whether today's class survived, but "today" there is whatever the clock
  * says at run time. Here the instants are fixed, so both directions of the
@@ -176,7 +176,7 @@ describe('classStartInstant', () => {
  * #249. The predicate both past-start guards share.
  *
  * The Auckland case is the one that matters and the one that can be written so
- * it cannot fail. `Class.date` is stored at UTC midnight, so a guard that
+ * it cannot fail. `CalendarEntry.date` is stored at UTC midnight, so a guard that
  * compared the stored column against `now` — the obvious wrong implementation —
  * agrees with the correct answer at most hours of most days. These numbers are
  * chosen so the two disagree: 2026-06-15 23:00 NZST is 2026-06-15T11:00Z, which

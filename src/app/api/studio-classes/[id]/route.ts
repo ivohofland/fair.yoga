@@ -240,9 +240,14 @@ export const PUT = withErrorHandler(async (
       // WHICH entry, asked of the database, because the `23P01` does not say —
       // and either family can be the answer, since both live in one table now.
       //
-      // Built from the same merge the write used: whichever of the three span
-      // columns the body carried, over the stored row for the rest. On
-      // `prisma`, never on `tx`: the `$transaction` above has already rolled
+      // The span is the three columns `CalendarEntry.span` is generated from:
+      // the body's value where this request sent one, the row this handler read
+      // above where it did not. The same MERGE RULE the write used, over a copy
+      // of the stored row that was read before the transaction opened — so the
+      // two agree on the rule and not necessarily on the values, which is
+      // enough for a sentence that only has to name a plausible holder.
+      //
+      // On `prisma`, never on `tx`: the `$transaction` above has already rolled
       // back and closed, and a probe issued on the aborted one would answer
       // `25P02`.
       //
@@ -258,10 +263,10 @@ export const PUT = withErrorHandler(async (
         durationMinutes: durationMinutes ?? studioClass.calendarEntry.durationMinutes,
         excludeEntryId: studioClass.calendarEntryId,
       });
-      // LOGGED for the reason the five SERVICE sites carry: `respondError` does
-      // not log, and `withErrorHandler` never sees a response that was RETURNED
-      // rather than thrown, so catching here is what removes the server-side
-      // record.
+      // LOGGED for the reason every refusal returned from a service carries:
+      // `respondError` does not log, and `withErrorHandler` never sees a response
+      // that was RETURNED rather than thrown, so catching here is what removes the
+      // server-side record.
       //
       // `studioClassId` too: a row identifier is in scope here, and every
       // service-side sibling logs one. The stated purpose of these lines is

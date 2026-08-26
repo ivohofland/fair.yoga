@@ -30,15 +30,20 @@
  * NINE non-test importers outside this file, split three ways — plus
  * `generation.test.ts` by relative path, for ten in all. Stated as nine-plus-one
  * rather than ten, because the parenthetical counts below add to nine and a
- * reader doing the arithmetic the docblock invites should not land short:
+ * reader doing the arithmetic the docblock invites should not land short.
+ * The grep prints more lines than that: two importers take two lines each,
+ * a value import beside a `import type`, and this docblock quotes its own
+ * needle.
  *
  *   VALUE, client (2)  `template-form.tsx`, `studio-template-form.tsx`
- *   VALUE, server (4)  `api/class-templates/route.ts`,
+ *   VALUE, server (6)  `api/class-templates/route.ts`,
  *                      `api/studio-class-templates/route.ts`,
  *                      `class-template-lifecycle.ts`,
- *                      `studio-class-template-lifecycle.ts`
- *   TYPE-ONLY (3)      `class-generator.ts`, `studio-class-generator.ts`,
- *                      `template-action-messages.ts` (erased at build, so it
+ *                      `studio-class-template-lifecycle.ts`,
+ *                      `class-generator.ts`, `studio-class-generator.ts`
+ *                      (the last two since #327 gave this module
+ *                      `spansOverlap`; they were type-only before it)
+ *   TYPE-ONLY (1)      `template-action-messages.ts` (erased at build, so it
  *                      adds nothing to any bundle)
  *
  * plus `generation.test.ts`, by relative path; a test is not a bundle. There
@@ -239,8 +244,9 @@ export function anyBlocked(counts: SkipCounts): boolean {
  * (#194 deleted `template-sync.ts` — check with the grep in this file's header
  * docblock, which is also where its hits are split into value-imports,
  * type-only imports and the one test — note that is FOUR CALL SITES OF THIS
- * FUNCTION, not the six value importers the header now counts, since the two
- * forms value-import `anyBlocked` and never call this), SIX `SkipReason`
+ * FUNCTION, not the eight value importers the header now counts: the two forms
+ * value-import `anyBlocked` and the two generators value-import
+ * `spansOverlap`, and none of the four calls this), SIX `SkipReason`
  * members and FOUR
  * `SkipCounts` fields. So the member that would vanish without the `switch`
  * below is now the SEVENTH, and

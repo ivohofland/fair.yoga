@@ -996,7 +996,7 @@ describe('class transitions (DB, timezone-aware)', () => {
 
   // Ordered before 'auto-completes an in-progress class after its local end
   // time' below on purpose: that test reuses the default `makeClass` slot
-  // (`teacherId`+`2026-07-20`+`18:00`, `Class_teacher_slot_unique`) and,
+  // (`teacherId`+`2026-07-20`+`18:00`, `CalendarEntry_teacher_slot_excl`) and,
   // being the block's original last test, relies on this block's `afterAll`
   // (teacherId sweep) rather than an inline delete — so it must run AFTER
   // this test's own inline cleanup frees that slot, not before.

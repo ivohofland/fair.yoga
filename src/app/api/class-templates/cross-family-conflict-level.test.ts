@@ -2,36 +2,32 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 /**
- * ONE thing: that `POST /api/class-templates` still answers `YG001` from
- * generation's own `Class` insert with the instance-level sentence, even
- * though issue 298 removed the only OTHER thing this file used to test.
+ * ONE thing: that if a `YG001` reached `POST /api/class-templates`'s catch, it
+ * would still map to the instance-level sentence rather than the template-level
+ * one.
  *
- * WHY THIS IS MOCKED, and why that is the point — the same argument
- * `api/cron/daily-cleanup/route.test.ts` makes, for a stronger reason.
+ * NOTHING RAISES `YG001` SINCE #327, so this pins a mapping the app can no
+ * longer exercise. The route's own comment beside that arm says the same, and
+ * `docs/lock-order.md` ("One teacher, one slot") carries the census and the
+ * query that re-derives it. This file lives or dies with the arm: removing the
+ * arm is a change to what the endpoint answers, and this test goes with it.
  *
+ * WHY IT IS MOCKED, kept because the argument is what made the mock legitimate
+ * rather than lazy — the same one `api/cron/daily-cleanup/route.test.ts` makes.
  * Before issue 298 this catch could be reached by `YG001` from TWO different
  * statements — the template's own insert (a live studio TEMPLATE holds this
  * weekday slot) or generation's `Class` insert (a live studio CLASS holds one
  * of the dates) — and a `conflict.level` object told them apart so each got
- * its own sentence. The template-level trigger that raised the FIRST one is
- * gone: issue 298 replaced it with `ScheduleRule_teacher_slot_excl`, which
- * raises `23P01`, not `YG001` — caught by `isExclusionConflictOn` earlier in
- * this same catch, never reaching the branch below. So `conflict.level` had
- * only one value left to carry, and the object that carried it is gone too
- * (see the route's own comment where it stood).
- *
- * What is left, and why it still needs a mock: generation's race is covered
- * end-to-end nowhere else. The generator pre-checks the sibling table with
- * the same predicate the trigger carries, so a pre-existing studio class is
- * SKIPPED (`blocked_by_overlap`) and never reaches the insert. The only
- * way generation raises is a row committing inside the window between that
- * pre-check's `findMany` and its `createManyAndReturn` — the race
- * `docs/lock-order.md` records as knowingly accepted. An integration test
- * cannot stage it against a live app; this file forces it instead.
+ * its own sentence. Issue 298 replaced the template-level trigger with
+ * `ScheduleRule_teacher_slot_excl`, which raises `23P01`, caught by
+ * `isExclusionConflictOn` earlier in this same catch; #327 replaced the
+ * entry-level ones with `CalendarEntry_teacher_slot_excl` and left generation
+ * unable to raise anything at all, its entry insert being an
+ * `ON CONFLICT DO NOTHING`. So `conflict.level` lost its second value at #298
+ * and its first at #327.
  *
  * Nothing here asserts wiring — not that the route calls the generator, not
- * what the generator did. Only that a `YG001` reaching this catch still maps
- * to the instance-level sentence.
+ * what the generator did. Only the mapping.
  */
 
 const generateInstancesForTemplate = vi.fn();
@@ -98,7 +94,7 @@ beforeEach(() => {
   classTemplateCreate.mockResolvedValue({ id: 'tpl-1', teacher: { defaultTimezone: 'UTC' } });
 });
 
-describe('POST /api/class-templates — the race integration cannot stage', () => {
+describe('POST /api/class-templates — the arm no error can reach any more', () => {
   it('words a GENERATION-time conflict for the instance family, and logs it', async () => {
     generateInstancesForTemplate.mockRejectedValue(
       yg001('Teacher teacher-1 already has a live studio class (sc-1) at 2031-05-06 09:00'),
@@ -113,9 +109,9 @@ describe('POST /api/class-templates — the race integration cannot stage', () =
     expect(payload.error.message).not.toMatch(/recurring/i);
     expect(payload.error.message).toMatch(/studio class/i);
 
-    // Logged so the accepted race stays countable in production — no
-    // `conflictLevel` any more: with only one reachable raiser left, a field
-    // whose entire job was telling two apart has nothing left to say.
+    // Logged rather than answered silently — no `conflictLevel` any more: a
+    // field whose entire job was telling two raisers apart has nothing to say
+    // once there is at most one.
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ teacherId: 'teacher-1' }),
       'recurring class create refused: the studio family holds that slot',

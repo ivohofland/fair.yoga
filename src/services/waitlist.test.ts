@@ -167,7 +167,8 @@ const uniqueSuffix = Date.now();
  * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
  * the next hour rather than ever emitting an invalid minute like `'09:60'`
  * once a block's fixture counter crosses 30 — a raw `HH:${counter}` literal
- * would build exactly that. `Class.startTime` is `@db.Time` and would refuse
+ * would build exactly that. `CalendarEntry.startTime` is `@db.Time` and would
+ * refuse
  * the row outright at the DB, which is a less useful failure here than this
  * guard's message naming the fixture counter that produced it. The two
  * blocks below that use this each pick their own hour offset (`slotTime(60 +
@@ -198,7 +199,9 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
   // 3 times, and the nested `closeQueueOnStart` describe below calls it more
   // — none of these tests read or assert a created row's literal startTime,
   // so a distinct minute per call is enough to keep every create legal under
-  // Class_teacher_slot_unique. Routed through the module-level `slotTime`
+  // `CalendarEntry_teacher_slot_excl`, whose RANGE overlap a `durationMinutes:
+  // 1` fixture keeps down to that minute. Routed through the module-level
+  // `slotTime`
   // rather than a raw `09:${counter}` literal. Hoisted to describe scope
   // (rather than declared inside `beforeAll`, as it originally was) so the
   // nested describe can call it too, after `teacherId`/`teacherRoomId` are
@@ -1005,15 +1008,15 @@ describe('claimSpot (DB)', () => {
    * date/startTime are load-bearing for the deadline-window comment above
    * (BEFORE_CUTOFF/IN_CLAIM_WINDOW/AT_DEADLINE are all computed against this
    * exact 2026-06-01 09:00 UTC start) — moving either to dodge
-   * Class_teacher_slot_unique across this describe's 6 calls would shift
-   * every boundary those constants were pinned against. So every call after
-   * the first gets its own teacher (defaultTimezone UTC, matching the
+   * `CalendarEntry_teacher_slot_excl` across this describe's 6 calls would
+   * shift every boundary those constants were pinned against. So every call
+   * after the first gets its own teacher (defaultTimezone UTC, matching the
    * fixture teacher below, since claimSpot reads the deadline off
-   * `cls.teacher.defaultTimezone`) instead — the index is scoped per
+   * `cls.teacher.defaultTimezone`) instead — the constraint is scoped per
    * teacher, so a different owner keeps the same slot legal.
    * `teacherRoomId` is reused across those teachers deliberately: claimSpot
    * never reads it, and slot-constraints.test.ts already establishes that
-   * Class.teacherRoomId need not belong to Class.teacherId.
+   * Class.teacherRoomId need not belong to the entry's teacherId.
    */
   let makeFullClassCounter = 0;
   const makeFullClass = async (): Promise<string> => {
@@ -1429,7 +1432,9 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
     // Counter-derived startTime: this beforeAll calls makeClass 3 times for
     // one teacher/date, and none of this describe's tests read or assert the
     // created rows' literal startTime — so a distinct minute per call is
-    // enough to keep every create legal under Class_teacher_slot_unique.
+    // enough to keep every create legal under
+    // `CalendarEntry_teacher_slot_excl`, whose RANGE overlap a
+    // `durationMinutes: 1` fixture keeps down to that minute.
     // Routed through the module-level `slotTime` at a `10:xx` offset
     // (`slotTime(60 + counter)`) rather than a raw `10:${counter}` literal.
     let makeClassCounter = 0;

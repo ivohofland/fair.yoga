@@ -296,16 +296,19 @@ const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
 
 /**
- * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
- * the next hour rather than ever emitting an invalid minute like `'09:60'`
- * once a block's fixture counter crosses 30 — a raw `HH:${counter}` literal
- * would build exactly that. `Class.startTime` is `@db.Time` and would refuse
- * the row outright at the DB, which is a less useful failure here than this
- * guard's message naming the fixture counter that produced it. Both
- * blocks below use it, one at a `9 + n` hour offset (`slotTime(counter)`
- * itself), the other at an `18:xx` offset (`slotTime(540 + counter)`) so
- * neither counter's values can ever land in the other's hour. Mirrors
- * `class-template-lifecycle.test.ts`'s `slotTime`.
+ * Turns total-minutes-from-9am into a valid `HH:MM`, wrapping into the next
+ * hour rather than ever emitting an invalid minute like `'09:60'` — a raw
+ * `HH:${n}` literal would build exactly that, and
+ * `CalendarEntry.startTime` is `@db.Time` and would refuse the row outright at
+ * the DB, which is a less useful failure than this guard's message naming the
+ * value that produced it. Mirrors `class-template-lifecycle.test.ts`'s
+ * `slotTime`.
+ *
+ * Called with a CONSTANT at both blocks below (`slotTime(0)` and
+ * `slotTime(540)`), not a running counter: since #327 the slot constraint is a
+ * range overlap, so two 60-minute fixtures a minute apart collide. What varies
+ * per call is the DATE — `slotDate` (`tests/class-fixtures.ts`) — and the two
+ * blocks keep their own hours so neither can land in the other's window.
  */
 function slotTime(totalMinutesFrom9am: number): string {
   const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
@@ -740,14 +743,13 @@ describe('completeClass (DB)', () => {
   // 'completed'. Mirrors `updateClass (DB)`'s `makeClass` closure — reuses
   // the shared teacher/room fixture from `beforeAll` instead of standing up
   // a fresh one per test.
-  // Counter-derived startTime: the beforeAll below plants a class at
-  // 18:00 for this same teacher/date, and both call sites in this block
-  // (the lock test and the already-cancelled test) need their own slot too
-  // — under Class_teacher_slot_unique none of these tests read or assert
-  // the literal startTime, only the id, so a distinct minute per call is
-  // enough to keep every create legal without touching any assertion.
-  // Routed through the module-level `slotTime` at an `18:xx` offset
-  // (`slotTime(540 + counter)`) rather than a raw `18:${counter}` literal.
+  // Counter-derived DATE: the beforeAll below plants a class at 18:00 for
+  // this same teacher, and both call sites in this block (the lock test and
+  // the already-cancelled test) need their own slot too. None of these tests
+  // reads or asserts the literal startTime, only the id, so the fixture keeps
+  // one `slotTime(540)` start and walks the date instead — see `slotDate` at
+  // the call site below, and the `#327` note beside it for why a minute per
+  // call stopped being enough.
   let makeClassCounter = 0;
   const makeClass = ({ status }: { status: ClassStatus }) => {
     makeClassCounter += 1;
@@ -1415,15 +1417,15 @@ describe('updateClass (DB)', () => {
   // A test that claims to cover a class actually REACHING a terminal status —
   // as opposed to what updateClass does once it is already sitting in one —
   // needs to drive it through those, not through this fixture.
-  // Counter-derived startTime: every test in this block shares one teacher and
-  // one date, and none of them reads or asserts the created row's literal
+  // Counter-derived DATE: every test in this block shares one teacher and one
+  // start time, and none of them reads or asserts the created row's literal
   // startTime (the one test that changes it does so via an updateClass() call,
-  // asserted against its new value, not this one) — so a distinct minute per
-  // call is enough to keep every create legal under Class_teacher_slot_unique
-  // without touching any assertion. Deliberately stated without a call count:
-  // the previous wording named one ("8 times"), and #247 adding tests here
-  // falsified it silently. Routed through the module-level `slotTime` rather
-  // than a raw `09:${counter}` literal.
+  // asserted against its new value, not this one) — so a distinct date per
+  // call is what keeps every create legal under
+  // `CalendarEntry_teacher_slot_excl` without touching any assertion. See the
+  // `#327` note at the call site for why a minute per call stopped being
+  // enough. Deliberately stated without a call count: the previous wording
+  // named one ("8 times"), and #247 adding tests here falsified it silently.
   let makeClassCounter = 0;
   /**
    * FAR-FUTURE ON PURPOSE, and it is not cosmetic.
@@ -2282,7 +2284,7 @@ describe('updateClass — the count === 0 branches', () => {
    * and a payload carrying no scheduling field places nothing.
    *
    * So the gate is load-bearing, and this is the test that says so — delete
-   * either and this reddens. It has to be a stub: `Class.startTime` is
+   * either and this reddens. It has to be a stub: `CalendarEntry.startTime` is
    * `@db.Time`, so no DB row can be stood up in this state.
    */
   it('lets a non-scheduling edit through even when the stored startTime is unreadable', async () => {

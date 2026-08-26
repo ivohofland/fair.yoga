@@ -849,13 +849,12 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
       async (tx) => {
         await createStudioClassFixture(tx, {
             teacherId: eastTeacherId,
-            // `null`, deliberately, not this template's own id: with the
-            // template's `templateId` the holder also collides on the
-            // pre-existing `@@unique([templateId, date])`, so this test
-            // would pass byte-identically with
-            // `StudioClass_teacher_slot_unique` dropped. `null` isolates the
-            // collision to the slot key — and is the production shape too: a
-            // standalone class racing the nightly
+            // `null`, deliberately, not this rule's own id: with the rule's
+            // `scheduleRuleId` the holder also collides on the pre-existing
+            // `@@unique([scheduleRuleId, date])`, so this test would pass
+            // byte-identically with `CalendarEntry_teacher_slot_excl` dropped.
+            // `null` isolates the collision to the slot constraint — and is
+            // the production shape too: a standalone class racing the nightly
             // `api/cron/generate-classes` sweep onto a template's slot.
             scheduleRuleId: null,
             classType: 'Holder',
@@ -1057,7 +1056,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
   it('does not skip a date held by a CANCELLED class from the other family', async () => {
     // The mirror of the same-family cancelled case below, and it pins the same
-    // predicate the trigger carries (`status <> 'cancelled'`). Widen the
+    // predicate the constraint carries (`"cancelledAt" IS NULL`). Widen the
     // pre-check past liveness and this goes red.
     const now = new Date();
     // 15:15: one more hour past the "skips a date held by a live class..."

@@ -81,8 +81,10 @@ let studentId2 = '';
 const classIds: string[] = [];
 
 /**
- * Distinct `startTime` per class. `Class_teacher_slot_unique` is on
- * (teacherId, date, startTime), and several classes here share a date.
+ * Distinct `startTime` per class. `CalendarEntry_teacher_slot_excl` excludes
+ * on RANGE OVERLAP per teacher, and several classes here share a date — which
+ * is why every fixture below is `durationMinutes: 1`, so a minute of
+ * separation is genuinely disjoint.
  * Routed through a wrapping helper rather than a raw `09:${counter}`
  * literal, which would emit `09:60` once the counter crosses 60 — the same
  * trap `class-terminal-status.test.ts`'s `slotTime` documents.

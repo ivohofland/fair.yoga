@@ -82,21 +82,22 @@ The heart of the app. Income-based pricing with compressed tier spread and scali
 
 ### Class Lifecycle
 
-Classes move through states: `draft → open → in_progress → completed → cancelled` (the five members of the `ClassStatus` enum). `full` is a DERIVED display state, not a stored status — it means registrations have reached `max_students`
+Classes move through states: `draft → open → in_progress → completed` (every member of the `ClassStatus` enum). `full` is a DERIVED display state, not a stored status — it means registrations have reached `max_students`. **Cancellation is not a status** (#327): it is `CalendarEntry.cancelledAt`, one column spelling liveness for both families, so a cancelled class keeps whatever status it held. `TerminalClassState` (`class-lifecycle.ts`) is the union that names the two terminal outcomes together
 
 - `settings_locked` flips true on first registration — economic fields become immutable
-- A write may not newly place a class's start instant in the past — `updateClass` refuses a `date`/`startTime` edit that would (409), and `transitionClass` refuses a `draft → open` publish of a class whose start has passed. Service policy, not a constraint: the generator legitimately produces an `open` class whose start has already gone. Two doors, and since #194 they are all of them — `template-sync` was a third writer that rewrote `startTime` past no such guard, and deleting it leaves `updateClass` as the only statement that moves an existing class's `date`/`startTime`
-- Terminal status (`completed`/`cancelled`) freezes the whole class — `updateClass` refuses every field, 409; `date` alone is additionally frozen by a DB trigger the retention sweep depends on
+- A write may not newly place a class's start instant in the past — `updateClass` refuses a `date`/`startTime` edit that would (409), and `transitionClass` refuses a `draft → open` publish of a class whose start has passed. Service policy, not a constraint: the generator legitimately produces an `open` class whose start has already gone. Two doors, and since #194 they are all of them — `template-sync` was a third writer that rewrote `startTime` past no such guard, and deleting it leaves `updateClass` as the only statement that moves an existing class's schedule. Those three columns live on `CalendarEntry` since #327, so `updateClass` writes two rows and takes their locks in the order `docs/lock-order.md` fixes: `Class` first, then its entry
+- Terminal (`completed` or cancelled) freezes the whole class — `updateClass` refuses every field, 409. The database freezes a narrower set on its own: `entry_frozen_schedule_guard` refuses a change to the entry's `date`, `startTime` or `durationMinutes`, which is what the retention sweep depends on, and `entry_terminal_liveness_guard` refuses a change to `cancelledAt` on a terminal REGULAR entry — a studio cancellation is reversible, so it is not frozen. The trigger reads a marker on its own row (`classCompletedAt`, written by `class_sync_entry_completed`), never `Class.status`, because a guard that reached back for the status would take the two rows in the opposite order
 - Recurring classes: template generates instances on a rolling 4-week basis, runs indefinitely — **one class per week per template**, so a candidate date whose week already holds one of that template's classes (a cancelled one counts) is skipped rather than filled
 - **A template is a stamp, not a live link** (#194): editing one changes nothing that already exists — not the day, time, room, rates or capacity of any generated class, ever. The edit answers with the first week the new schedule can reach — or, for a paused or archived template, with that state instead, because the sweep skips those and no week could be named honestly; the hourly sweep is what lays a reachable one down. The studio family likewise propagates nothing on edit and always did; it does **not** yet key generation per week — `studio-class-generator.ts` has no week predicate, so a studio template moved Tuesday→Thursday generates four Thursdays beside the four standing Tuesdays. #284 carries that half
 - **Removal, and the two doors it is not** (#279): a studio class may be
   removed outright only where the hourly sweep cannot undo it — a manually
   logged one, or one whose **calendar date is strictly before the teacher's
   today**. A generated class dated today or later is refused with 409 and told
-  to cancel instead, because removing it releases `(templateId, date)` and the
-  sweep recreates it within the hour. Deliberately *not* "one whose start has
-  passed": the class's `startTime` is a stamp and the generator filters on the
-  template's current one, so after a template time edit a started class can
+  to cancel instead, because removing it releases its entry's
+  `(scheduleRuleId, date)` and the sweep recreates it within the hour.
+  Deliberately *not* "one whose start has passed": the class's `startTime` is
+  a stamp and the generator filters on the template's current one, so after a
+  template time edit a started class can
   still be a candidate that same day — the date rule is immune, since no start
   time on a past date is still ahead. A `StudioClassTemplate` is never removed
   at all: archiving withdraws its future window and records what it withdrew
@@ -112,9 +113,10 @@ Classes move through states: `draft → open → in_progress → completed → c
   beside a gated field. Today or later the whole schedule is editable,
   cancelled or not: a studio cancellation is recoverable, so it gates nothing.
   `date` is narrower still — it moves only on a **manual** row (a generated one
-  holds its `(templateId, date)` against the sweep, which would otherwise
-  recreate the class on the freed date within the hour) and only **forwards**,
-  because a move landing before today freezes the row on arrival and the typo
+  holds its entry's `(scheduleRuleId, date)` against the sweep, which would
+  otherwise recreate the class on the freed date within the hour) and only
+  **forwards**, because a move landing before today freezes the row on arrival
+  and the typo
   that caused it could not then be undone through the editor. Same shape as the
   `Class` family's #249 rule; logging a class that already happened stays open
   at `/studio-class/new`, which bounds its date field at neither end. The
@@ -122,34 +124,33 @@ Classes move through states: `draft → open → in_progress → completed → c
   it answers about the STORED row — the forward-only rule is the route's own
   third gate, because nothing reading the stored row can see a write that ends
   that row's editability
-- **One teacher, one slot, across both families** (#296): a teacher holds at
-  most one LIVE class per `(date, startTime)` counting `Class` and
-  `StudioClass` together, and at most one live template per
+- **One teacher, one slot, across both families** (#296, #298, #327): a
+  teacher holds at most one LIVE entry per overlapping time window counting
+  `Class` and `StudioClass` together, and at most one live template per
   `(dayOfWeek, overlapping time window)` counting `ClassTemplate` and
-  `StudioClassTemplate` together. Cancelled classes and archived rules do not
-  participate — each family keeps its own spelling of "live" (`status <>
-  'cancelled'` versus `cancelledAt IS NULL` for classes; `isArchived = false`
-  on the shared rule), and a PAUSED template still holds its slot. The two
-  halves are enforced differently, and #298 is why: the class half is still
-  four triggers reading the sibling table with an unlocked `SELECT`, because
-  the rule spans two tables and PostgreSQL has no cross-table unique key —
-  the residual race the unlocked read leaves open still survives there,
-  documented in `docs/lock-order.md`. The template half is now one
-  `EXCLUDE USING gist` constraint on `ScheduleRule`, scoped per teacher per
-  weekday — index-backed and race-free by construction, the way within-family
-  exclusivity always was — and it is RANGE-based, not exact-start: two
-  templates whose `[startTime, startTime+durationMinutes)` windows overlap
-  now conflict even when their start times differ, where before only an
-  identical start time did. Two `Data Model` consequences follow:
-  `ScheduleRule` now holds the calendar identity both template families
+  `StudioClassTemplate` together. Cancelled entries and archived rules do not
+  participate — liveness is `cancelledAt IS NULL` on the entry and
+  `isArchived = false` on the rule — and a PAUSED template still holds its
+  slot. **Both halves are now one `EXCLUDE USING gist` constraint each**,
+  `CalendarEntry_teacher_slot_excl` and `ScheduleRule_teacher_slot_excl`:
+  index-backed and race-free by construction, the way within-family
+  exclusivity always was, where each half used to be a per-table unique key
+  plus a pair of triggers reading the sibling table with an unlocked `SELECT`.
+  Both are RANGE-based, not exact-start — two windows that overlap conflict
+  even when their start times differ, and an entry running past midnight
+  conflicts with one on the following date. Two `Data Model` consequences
+  follow: `ScheduleRule` holds the calendar identity both TEMPLATE families
   share (`teacherId`, `classType`, `dayOfWeek`, `startTime`,
   `durationMinutes`, `isActive`, `isArchived`, `archivedAt`,
-  `withdrawnCount`), and `ClassTemplate`/`StudioClassTemplate` hold only
-  their own economics, reaching their teacher through the rule rather than
-  directly. Both generators pre-check and skip (`blocked_by_overlap`);
-  ten write endpoints across eight route files answer 409 — usually naming
-  which family holds the slot, except the template routes' `heldBy: 'unknown'`
-  case, which deliberately names neither
+  `withdrawnCount`) and `CalendarEntry` holds the one both ENTRY families
+  share (`teacherId`, `classType`, `date`, `startTime`, `durationMinutes`,
+  `cancelledAt`, `scheduleRuleId`), while the four children hold only their
+  own economics and reach their teacher through their parent. Both generators
+  pre-check and skip (`blocked_by_overlap`); ten write endpoints across eight
+  route files answer 409 — the four entry-level ones naming the conflicting
+  entry itself (family, time and date, via `probeConflictingEntry`), the six
+  rule-level ones naming only which family holds the weekday slot, except
+  their `heldBy: 'unknown'` case, which deliberately names neither
 - Auto-cancel: system checks at configured time, cancels if below min_students
 - Walk-ins can exceed max_students — teacher rate stays capped at target, extra students lower everyone's price
 - After completion: pricing engine runs → payments created → notifications sent
@@ -160,7 +161,7 @@ Classes move through states: `draft → open → in_progress → completed → c
 - Final hour before the *cancel deadline* (not before the class): switch to first-come-first-claimed broadcast
 - Frozen after deadline — no more promotions
 - Retention: an entry that never became a registration is reaped once its class
-  is terminal and *more than* 365 days past its date — a daily sweep, no migration of its own (the `date` half of that predicate is held by a trigger from #247, see Class Lifecycle)
+  is terminal and *more than* 365 days past its date — a daily sweep, no migration of its own (the `date` half of that predicate is held by `entry_frozen_schedule_guard`, see Class Lifecycle)
 
 ### Payment Model
 
@@ -185,7 +186,8 @@ Key design decisions:
 - `tier_at_booking` on Registration captures income tier at booking time — serves as income history, no separate tracking needed
 - `StudentPrivacy` is per-teacher — students control what each teacher can see, default is maximum privacy
 - `TeacherRoom` holds private rental rate per teacher — never shared between teachers
-- `StudioClass` is disconnected from Room/Student — pure calendar + income tracking
+- `CalendarEntry` is the calendar (#327): when a teacher is teaching and for how long, one table for both entry families, keyed by `kind`. `Class` and `StudioClass` hang off it by the composite `(calendarEntryId, kind)` and hold only their own economics — a `CHECK` pins each child's own `kind` literal, which is what makes that key mean "this family's children hang off this family's entries" rather than merely "the pair agrees". `ScheduleRule` is the same arrangement one layer up for the two template families (#298)
+- `StudioClass` is disconnected from Room/Student — income tracking only; its calendar half is the entry above, and it has no registrations, no pricing engine and no `status`
 - `Account` owns auth (email identity, sessions, passkeys); `Teacher`/`Student` are optionally-linked profiles — one login serves both hats, teacher pages require a teacher profile and student pages a student one. A teacher may not link a student unilaterally: adding a CRM contact creates only an `Invitation`, and the `TeacherStudent` link forms only once the invitee accepts it (or books a class) — nothing creates an unclaimed `Student` row any more, though pre-existing unclaimed rows (created before this rule) still claim their account on first sign-in. A student who unlinks after being linked leaves a `TeacherBlock`, which keeps that teacher from re-adding them; a plain decline does not — the declined `Invitation` row is itself the tombstone that blocks a re-invite
 - Session/passkey tables managed by auth layer, keyed by account
 
@@ -199,7 +201,7 @@ Key design decisions:
 
 - The tab bar renders only on the four tab roots; active tab = teal icon + label in a teal-tint pill, gold dot on Inbox when unread.
 - **Detail views are separate pages** — tapping a class, student, or notification opens a full page with a back link; the tab bar hides there.
-- Class detail is one adaptive page that transforms based on lifecycle stage (draft → open → full → in_progress → completed → cancelled) — `full` here is the derived at-capacity view of `open`, not a stored status
+- Class detail is one adaptive page that transforms based on lifecycle stage (draft → open → full → in_progress → completed, plus cancelled) — `full` here is the derived at-capacity view of `open`, and cancelled is the entry's `cancelledAt`; neither is a stored status
 - Dashboard IS the schedule — the Schedule tab at `/` is the home base (`/schedule` redirects there)
 - Rooms are in Settings (set-up-once infrastructure)
 - Studio classes are a quick entry in the schedule list (visually lighter dashed cards)

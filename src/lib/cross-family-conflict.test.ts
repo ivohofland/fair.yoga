@@ -10,6 +10,13 @@ import { isCrossFamilySlotConflict } from './cross-family-conflict';
  * matters here more than usual: this matcher reads a substring of a message
  * Prisma composes, so a fixture that merely looks plausible would pin the
  * matcher to a framing the database never emits.
+ *
+ * NO DATABASE EMITS ANY OF THEM NOW. #327 replaced the last `YG001` raisers
+ * with `CalendarEntry_teacher_slot_excl`, so this file pins a matcher for a
+ * SQLSTATE nothing produces — see the module's own docblock, and
+ * `docs/lock-order.md` ("One teacher, one slot") for the census. The fixtures
+ * stay verbatim regardless: they are the record of what those triggers said,
+ * and the matcher goes when its two call sites do.
  */
 
 /** The shape a typed model call produces: no Prisma code of its own. */
@@ -50,14 +57,14 @@ describe('isCrossFamilySlotConflict', () => {
   });
 
   it('matches the Class-side message, worded differently from the StudioClass-side one above', () => {
-    // The surviving triggers word their message from whichever side fired:
-    // `studio_class_reject_cross_family_slot()` (above) says "a live class";
+    // The triggers worded their message from whichever side fired:
+    // `studio_class_reject_cross_family_slot()` (above) said "a live class";
     // `class_reject_cross_family_slot()` — the one this case exercises —
-    // says "a live studio class"
-    // (`20260821120000_cross_family_slot_guard/migration.sql`). Nothing here
-    // may depend on the tail — the SQLSTATE is the whole discriminator. The
-    // roster of what still emits `YG001` is `docs/lock-order.md`'s to keep,
-    // not a count in this comment.
+    // said "a live studio class"
+    // (`20260821120000_cross_family_slot_guard/migration.sql`, which still
+    // carries both texts). Nothing here may depend on the tail — the SQLSTATE
+    // is the whole discriminator. The roster of what emits `YG001` is
+    // `docs/lock-order.md`'s to keep, not a count in this comment.
     const err = modelCallError(
       'Teacher 00a3eaac-747f-4616-a0c7-656daf7aa136 already has a live studio ' +
         'class (17c40177-a4bd-4a63-8901-9cec56427bb6) at 2029-04-03 09:00',

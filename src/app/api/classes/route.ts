@@ -147,10 +147,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         startTime: hhmmToTime(body.startTime),
         durationMinutes: body.durationMinutes,
       });
-      // LOGGED before responding, for the reason the five SERVICE sites carry:
-      // `respondError` does not log and `withErrorHandler` never sees a response
-      // that was RETURNED rather than thrown, so catching here is what removes
-      // the server-side record.
+      // LOGGED before responding, for the reason every refusal returned from a
+      // service carries: `respondError` does not log and `withErrorHandler` never
+      // sees a response that was RETURNED rather than thrown, so catching here is
+      // what removes the server-side record.
       log.warn(
         { err, teacherId: session.teacherId, conflictEntryId: conflict?.id ?? null },
         'class create refused: another live entry holds that slot',

@@ -584,11 +584,17 @@ model CalendarEntry {
   /// raw `UPDATE "Class" SET status='completed'`, which is the client the
   /// trigger exists to reach.
   ///
-  /// It records a TRANSITION, not a state. The trigger is `AFTER UPDATE OF
-  /// status`, so a row INSERTed already carrying `status = 'completed'`
-  /// produces no marker, and its entry's date, start time and duration stay
-  /// editable. `prisma/seed.ts` creates its completed classes live and then
-  /// transitions them for exactly this reason, and says so.
+  /// Two triggers stamp it, both running that one function: `AFTER UPDATE OF
+  /// status` and, since `20260826140000_entry_guard_restorations`, `AFTER
+  /// INSERT`. The UPDATE half alone recorded a TRANSITION rather than a state,
+  /// so a row INSERTed already carrying `status = 'completed'` produced no
+  /// marker and left its entry's date, start time and duration editable —
+  /// which is the guarantee `waitlist-retention.ts` rests on when it
+  /// permanently deletes queue rows. The migration's own comment carries why
+  /// it is a second trigger rather than a widened `WHEN`.
+  ///
+  /// Stamping twice is a no-op: the function writes only where
+  /// `classCompletedAt IS NULL`.
   ///
   /// A marker rather than a read, for lock order: a guard here that consulted
   /// `Class.status` would acquire Entry then Class, against `lockClassRow`'s

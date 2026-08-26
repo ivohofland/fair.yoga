@@ -341,11 +341,16 @@ order, **naming both tables explicitly**.
   ```
 
   `5 waitlist.ts + 2 class-transitions.ts + 1 class-lifecycle.ts +
-  1 api/registrations/route.ts + 1 waitlist-retention.ts = 10`. Match on
-  `lockClassRow(tx` rather than the bare name: the looser pattern returns 11,
-  and the extra is a prose mention in `waitlist-retention.ts:170`.
-  `registrations/route.ts:115` independently asserts the `waitlist.ts` five, so
-  that term is cross-checked rather than counted once.
+  1 api/registrations/route.ts + 1 waitlist-retention.ts = 10`. **The grep
+  returns 11, and the eleventh has to be read rather than filtered out.**
+  `waitlist-retention.ts:170` is a prose mention that writes the full call form
+  `lockClassRow(tx, classId)` inside backticks, so no tightening of the pattern
+  separates it from a call site — the bare name is worse still (71 lines, this
+  codebase discusses the helper far more often than it calls it), but tightening
+  to `lockClassRow(tx` does not reach 10 either. Ten is the count of call sites;
+  eleven is what the grep prints. `registrations/route.ts:115` independently
+  asserts the `waitlist.ts` five, so that term is cross-checked rather than
+  counted once.
 - **Explicit, because stage A measured the trap.** A joined `FOR UPDATE OF c`
   locks only `c`; a waiting statement's joined predicate was already evaluated
   against the pre-wait snapshot and `EvalPlanQual` never re-fetches a non-locked
@@ -487,11 +492,15 @@ probe, and a cancelled entry releases its slot. Naming nothing beats naming
 wrongly.
 
 **Precondition, to verify per site in the plan.** A statement that fails inside
-a transaction aborts it, so the probe must not run on `tx`. The four entry-level
-route files open no `$transaction` of their own — the services do — so the
-question is per service, not per route, and `api/classes/[id]/route.ts` is
-already the shape where the *service* classifies and the route maps a typed
-reason.
+a transaction aborts it, so the probe must not run on `tx`. Three of the four
+entry-level route files open no `$transaction` of their own — the services do —
+so for those the question is per service, not per route, and
+`api/classes/[id]/route.ts` is already the shape where the *service* classifies
+and the route maps a typed reason. `api/studio-classes/[id]/route.ts` is the
+exception: its `PUT` opens one around the update itself, and the probe call sits
+after that transaction's closing `)`, on `prisma`. Two things keep it there —
+the placement, and `probeConflictingEntry`'s `PrismaClient` parameter type,
+which a `Prisma.TransactionClient` is not assignable to.
 
 ---
 

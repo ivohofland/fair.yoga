@@ -215,7 +215,7 @@ describe('isoDate (via updateClassSchema.date)', () => {
    * `PUT /api/classes/[id]` answered 200 having moved the class three days
    * past the date the caller sent, reporting that as success.
    *
-   * `Class.date` is the column `reapClosedWaitlistEntries` reads before it
+   * `CalendarEntry.date` is the column `reapClosedWaitlistEntries` reads before
    * permanently deletes a class's waitlist, so a silently rewritten value here
    * is not a cosmetic wrong answer — it is a date nobody chose deciding what
    * gets deleted.

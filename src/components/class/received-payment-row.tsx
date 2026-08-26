@@ -58,7 +58,7 @@ export function ReceivedPaymentRow({
             UTC-accessor formatter sees it. Without that, a payment marked at
             18:00 Pacific on the 12th renders as the 13th.
 
-            `classContext`'s date is the opposite case: `Class.date` is a
+            `classContext`'s date is the opposite case: `CalendarEntry.date` is a
             `@db.Date` calendar value already at midnight UTC, so it must *not*
             be converted. Two kinds of date in this one caption — see
             `src/lib/timezone.ts` for the rule.

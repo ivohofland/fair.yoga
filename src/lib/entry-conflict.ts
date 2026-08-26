@@ -88,6 +88,13 @@ function toFamily(kind: string): ClassFamily | null {
  * entry releases its slot, so the row that refused the write can genuinely be
  * gone by the time this runs.
  *
+ * `ORDER BY "date", "startTime"` before the `LIMIT 1` because a candidate span
+ * can overlap more than one live entry, and naming which one is a choice this
+ * query would otherwise leave to the plan. Either holder is a truthful answer,
+ * so the ordering buys determinism rather than correctness: a test that plants
+ * two holders gets the earlier one every run instead of whichever the index
+ * happened to reach first.
+ *
  * Called on the failure path once the refused statement's transaction has
  * closed, always against `db`, never `tx`: a statement that fails inside a
  * Postgres transaction aborts it, so a probe issued on the aborted `tx` answers
@@ -136,6 +143,7 @@ export async function probeConflictingEntry(
                ${startsAt}::timestamp + (${span.durationMinutes}::int * interval '1 minute'),
                '[)')
          AND (${exclude}::text IS NULL OR "id" <> ${exclude}::text)
+       ORDER BY "date", "startTime"
        LIMIT 1
     `;
     const row = rows[0];

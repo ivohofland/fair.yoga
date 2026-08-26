@@ -169,7 +169,7 @@ export async function generateStudioInstancesForTemplate(
   // `template.scheduleRule.startTime` is already a `@db.Time` `Date` — passed
   // straight through rather than round-tripped via `timeToHHmm`, which exists
   // for the wire boundary, not for a value that already carries the type
-  // `classStartInstant` and `StudioClass.startTime` both want.
+  // `classStartInstant` and `CalendarEntry.startTime` both want.
   const startTime = template.scheduleRule.startTime;
   const dates = getNextOccurrences(template.scheduleRule.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
     .filter(

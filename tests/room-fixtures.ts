@@ -2,26 +2,25 @@
  * Shared fixtures for the room-archive unit tests (issue 76).
  *
  * A FRESH teacher, room and link per case. Two constraints make shared-teacher
- * fixtures collide: `ScheduleRule_teacher_slot_excl` (issue 298) — an
- * `EXCLUDE USING gist` over (teacherId, dayOfWeek, slot) WHERE isArchived =
- * false, spanning BOTH template families and matching on RANGE OVERLAP rather
- * than an exact start time, so it is strictly wider than the two exact-start
- * partial unique indexes it replaced — and `Class_teacher_slot_unique` on
- * (teacherId, date, startTime) WHERE status <> 'cancelled'. A fresh teacher
- * per case sidesteps both — but only ACROSS fixtures, not within one.
+ * fixtures collide, and since #327 they are the same shape at both layers —
+ * an `EXCLUDE USING gist` matching on RANGE OVERLAP rather than an exact start
+ * time, spanning both families of its layer:
+ * `ScheduleRule_teacher_slot_excl` (issue 298) over (teacherId, dayOfWeek,
+ * slot) WHERE isArchived = false, and `CalendarEntry_teacher_slot_excl` over
+ * (teacherId, span) WHERE "cancelledAt" IS NULL. A fresh teacher per case
+ * sidesteps both — but only ACROSS fixtures, not within one.
  *
  * `addClass` derives `startTime` from `seq`, and `seq` advances only in
  * `makeFixture`, never in `addClass` itself; `date` is fixed at today+14. So
- * two `addClass` calls against the SAME fixture produce the identical
- * (teacherId, date, startTime) triple `Class_teacher_slot_unique` keys on —
- * the index still applies, this file just doesn't vary the columns it keys on
- * per call. The existing `completed` + `cancelled` two-class case
- * (`room-archive.test.ts`) survives only because the index is partial on
- * `status <> 'cancelled'`, not because two classes on one fixture are safe in
- * general. An obvious-looking "two upcoming classes on one fixture" case —
- * `open` + `open`, or `draft` + `open` — hits the live index and raises
- * P2002; if you need that, pass distinct fixtures, not distinct `addClass`
- * calls on the same one.
+ * two `addClass` calls against the SAME fixture produce the identical span,
+ * which the constraint refuses — this file just doesn't vary the columns that
+ * span is generated from per call. The existing `completed` + `cancelled`
+ * two-class case (`room-archive.test.ts`) survives only because the constraint
+ * is partial on `"cancelledAt" IS NULL`, not because two classes on one
+ * fixture are safe in general. An obvious-looking "two upcoming classes on one
+ * fixture" case — `open` + `open`, or `draft` + `open` — hits the live
+ * constraint and raises `23P01`; if you need that, pass distinct fixtures, not
+ * distinct `addClass` calls on the same one.
  *
  * Each test file passes its own `prefix` so its afterAll sweep cannot delete
  * another file's rows.

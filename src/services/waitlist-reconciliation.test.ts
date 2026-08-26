@@ -62,7 +62,11 @@ describe('reconcileWaitlists (DB)', () => {
   const studentIds: string[] = [];
   let slotCounter = 0;
 
-  /** Distinct `HH:MM` per class — `Class_teacher_slot_unique` is string equality. */
+  /**
+   * Distinct `HH:MM` per class. `CalendarEntry_teacher_slot_excl` is a RANGE
+   * overlap per teacher, so a minute apart is only disjoint because every
+   * fixture here is `durationMinutes: 1` — see the call site, which says why.
+   */
   function nextSlot(): string {
     slotCounter += 1;
     return `${String(10 + Math.floor(slotCounter / 60)).padStart(2, '0')}:${String(

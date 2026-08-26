@@ -133,7 +133,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
   // uncancelled at a recurring `future()`/`futureOn(n)` date (an
   // already-cancelled one, a kept survivor, or a forbidden request that
   // touches nothing), so a later test's create at the same date can collide
-  // under StudioClass_teacher_slot_unique once the template-level collision
+  // under `CalendarEntry_teacher_slot_excl` once the template-level collision
   // above stops masking it. No test here reads or asserts the created
   // class's literal startTime. Routed through `slotTime` (see its docblock)
   // rather than a raw `09:${counter}` literal, matching `makeTemplate`'s own
@@ -768,9 +768,10 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     // '08:01', not '08:00': the earlier "pausing deletes nothing..." test
     // above leaves its own `soon` class at futureOn(3)/'08:00' standing
     // (pausing never deletes), which would otherwise collide under
-    // StudioClass_teacher_slot_unique. The exact minute is arbitrary here —
-    // see the comment above — so this is a same-family repair, not a
-    // change to what the test proves.
+    // `CalendarEntry_teacher_slot_excl`. The exact minute is arbitrary here —
+    // see the comment above, and the one-minute durations that make a minute
+    // of separation disjoint under a range overlap — so this is a same-family
+    // repair, not a change to what the test proves.
     const c = await makeClass(t.scheduleRuleId, futureOn(3), '08:01');
 
     const paused = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');

@@ -1585,9 +1585,9 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } } })).toBe(4);
 
     // Not this template's row — `templateId` stays null, which is the whole
-    // point: it is invisible to a `templateId`-keyed read and fatal to the
-    // date all the same. Same teacher, same startTime, not cancelled, exactly
-    // the predicate `Class_teacher_slot_unique` carries.
+    // point: it is invisible to a `scheduleRuleId`-keyed read and fatal to
+    // the date all the same. Same teacher, overlapping span, not cancelled,
+    // exactly the predicate `CalendarEntry_teacher_slot_excl` carries.
     await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
@@ -1740,12 +1740,12 @@ describe('PUT /api/class-templates/[id]', () => {
    * other side, and the reason it is an asymmetry rather than an
    * inconsistency.
    *
-   * `Class_teacher_slot_unique` is PARTIAL (`WHERE "status" <> 'cancelled'`),
-   * so a cancelled class takes no slot and the slot read mirrors that
+   * `CalendarEntry_teacher_slot_excl` is PARTIAL (`WHERE "cancelledAt" IS
+   * NULL`), so a cancelled entry takes no slot and the slot read mirrors that
    * predicate rather than the week read beside it. Delete
-   * `status: { not: 'cancelled' }` from it and the whole suite stays green —
-   * mutated and measured — because the slot case above puts a LIVE class in
-   * the blocked slot and nothing anywhere puts a cancelled one there.
+   * `cancelledAt: null` from it and the whole suite stays green — mutated and
+   * measured — because the slot case above puts a LIVE class in the blocked
+   * slot and nothing anywhere puts a cancelled one there.
    *
    * Wrong in the OPPOSITE direction to its sibling above, which is what makes
    * it look harmless: an unfiltered slot read names a LATER week than the
@@ -2056,7 +2056,8 @@ describe('PUT /api/class-templates/[id]', () => {
   // `TEMPLATE_SYNC_SLOT_CONFLICT`.
   //
   // #194 deleted the propagation, so this PUT writes no `Class` row and that
-  // index cannot be reached from here. The teacher's experience is the point
+  // index could not be reached from here; #327 then dropped the index itself,
+  // its columns having left the table. The teacher's experience is the point
   // of keeping the fixture: an unrelated draft sitting at 01:00 on one of the
   // generated dates no longer blocks them from moving their recurring class
   // to 01:00. Their existing classes stay at 00:00 next to it, and they move

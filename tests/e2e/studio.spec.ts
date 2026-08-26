@@ -134,10 +134,12 @@ test.describe('Studio class templates', () => {
   test.afterAll(async () => {
     // Order doesn't matter here the way it does in recurring.spec.ts: this
     // fixture creates no Room, so #290's hazard (a regenerated class
-    // stranding TeacherRoom under Restrict) cannot arise. StudioClass.templateId
-    // is SetNull (`StudioClass_templateId_fkey`) and Teacher -> StudioClass is
-    // Cascade, and this spec fires no cron and leaves both templates paused,
-    // so nothing can regenerate a class behind this teardown either.
+    // stranding TeacherRoom under Restrict) cannot arise.
+    // `CalendarEntry.scheduleRuleId` is SetNull
+    // (`CalendarEntry_scheduleRuleId_fkey`) and Teacher -> CalendarEntry ->
+    // StudioClass is Cascade throughout, and this spec fires no cron and leaves
+    // both templates paused, so nothing can regenerate a class behind this
+    // teardown either.
     //
     // Guarded because an unset `teacherId` is not a filter that matches
     // nothing — Prisma DROPS an `undefined` where-clause, making this

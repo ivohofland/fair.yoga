@@ -10,7 +10,7 @@ const prisma = new PrismaClient();
  * A calendar date `days` from today, as midnight UTC.
  *
  * UTC accessors, not local ones. These values go into `@db.Date` columns
- * (`Class.date`, `StudioClass.date`, `Student.birthday`), which store a
+ * (`CalendarEntry.date`, `Student.birthday`), which store a
  * calendar date and take it from the *UTC* portion of the timestamp — so
  * building local midnight lands a day early for anyone east of UTC. On
  * `Europe/Amsterdam` this returned `2026-07-30T22:00:00Z` for "today",

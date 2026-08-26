@@ -96,11 +96,11 @@ beforeAll(async () => {
   // module-level let.
   //
   // startTime has no default: all five calls below land on the same ownerId
-  // + date, and `Class_teacher_slot_unique` (Task 1, #196) now rejects a
-  // second live (teacherId, date, startTime) row, where "live" excludes only
-  // `cancelled` — `draft` and `open` both count. Measured: five calls at a
-  // shared default collide on the second one, `prisma.class.create` throwing
-  // P2002 before a single test in this file runs. A required parameter is
+  // + date, and the slot constraint rejects a second live entry whose span
+  // overlaps — `CalendarEntry_teacher_slot_excl` since #327, where "live" is
+  // `"cancelledAt" IS NULL` and every status counts. Measured under its
+  // predecessor: five calls at a shared default collide on the second one,
+  // throwing before a single test in this file runs. A required parameter is
   // what stops a forgetful sixth caller reopening that collision — the
   // sibling helpers in this directory (`templateBody` in
   // class-templates-api.test.ts, `makeTemplate` in studio-api.test.ts)
@@ -948,11 +948,10 @@ describe('PUT /api/classes/[id]', () => {
     expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-06-01');
   });
 
-  // Task 6b (#196). `Class_teacher_slot_unique` is (teacherId, date,
-  // startTime) WHERE status <> 'cancelled' — the six indexes constrain every
-  // write, not just creates, so a reschedule that moves `date`/`startTime`
-  // onto a slot another of the teacher's live classes already holds collides
-  // here exactly as a `POST` into that slot does.
+  // Task 6b (#196). `CalendarEntry_teacher_slot_excl` constrains every write,
+  // not just creates, so a reschedule that moves `date`/`startTime` onto a
+  // span another of the teacher's live entries already covers collides here
+  // exactly as a `POST` into that slot does.
   describe('PUT /api/classes/[id] collides on the slot key (#196)', () => {
     afterAll(async () => {
       await prisma.calendarEntry.deleteMany({ where: { teacherId: ownerId, classType: 'Reschedule Slot' } });
@@ -999,14 +998,14 @@ describe('PUT /api/classes/[id]', () => {
     });
   });
 
-  // PR #208 review, D1. `Class` carries two unique keys —
-  // `Class_templateId_date_key` (predates #196) and `Class_teacher_slot_unique`
-  // (#196) — and Postgres validates a multi-key violation in the indexes' OID
-  // order, the older key first. The slot-key coverage above always leaves
-  // `startTime` identical between the two rows, which also collides on the
-  // newer key and can never exercise this. This block deliberately gives its
-  // two instances DIFFERENT `startTime`s, so only the older
-  // `(templateId, date)` key fires.
+  // PR #208 review, D1. `CalendarEntry` carries two slot-shaped constraints —
+  // `CalendarEntry_scheduleRuleId_date_key` and
+  // `CalendarEntry_teacher_slot_excl` — and Postgres validates a multi-key
+  // violation in the indexes' OID order, the older key first. The slot
+  // coverage above always leaves `startTime` identical between the two rows,
+  // which also collides on the exclusion constraint and can never exercise
+  // this. This block deliberately gives its two instances
+  // non-overlapping spans, so only the `(scheduleRuleId, date)` key fires.
   describe("PUT /api/classes/[id] collides on the template's own (templateId, date) key (#196)", () => {
     let templateDateTemplateId: string;
     let templateDateScheduleRuleId: string;
@@ -1269,8 +1268,8 @@ describe('POST /api/classes', () => {
   //
   // startTime overridden away from baseBody()'s '10:00': the previous test
   // ('creates a class against the calling teacher') already created a real row
-  // at ownerId/2099-08-01/10:00, and `Class_teacher_slot_unique` (#196) now
-  // refuses a second live row at that same slot. Not the concern this test
+  // at ownerId/2099-08-01/10:00, and `CalendarEntry_teacher_slot_excl` refuses
+  // a second live entry whose span overlaps it. Not the concern this test
   // pins, so it moves to a slot of its own rather than sharing one.
   it("ignores another teacher's templateId instead of attaching it", async () => {
     const res = await post(ownerToken, {

@@ -70,8 +70,9 @@ describe('readSeatCount (DB)', () => {
 
     // A SECOND class for the overbooked case, so that test needs nothing from
     // the one above and can be read (and run) alone. Same teacher and date is
-    // legal because `Class_teacher_slot_unique` is on (teacherId, date,
-    // startTime) — a different `startTime` is all it takes.
+    // legal because `CalendarEntry_teacher_slot_excl` excludes on RANGE
+    // OVERLAP per teacher — a `startTime` far enough from the first that the
+    // two 60-minute windows are disjoint is all it takes.
     const over = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId,
