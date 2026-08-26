@@ -62,6 +62,25 @@ const terminalLivenessErrorFixture = new Prisma.PrismaClientUnknownRequestError(
 );
 
 /**
+ * The FOURTH, `entry_completion_marker_guard` (#327,
+ * `20260826182710_entry_completion_marker_guard`) — a completed entry refusing
+ * to have its completion marker cleared. Transcribed from a real fire through
+ * `prisma.calendarEntry.update({ data: { classCompletedAt: null } })`, which
+ * is a call the generated client accepts: the column is a plain nullable
+ * `DateTime`, so this fire is reachable from TypeScript and not only from raw
+ * SQL.
+ *
+ * The one fixture here whose level is `error` alongside the date one, and the
+ * pairing is the point: clearing this marker is what unfreezes a `date`, so
+ * the two guards defend one guarantee from its two ends and an operator must
+ * read them the same way.
+ */
+const terminalCompletionErrorFixture = new Prisma.PrismaClientUnknownRequestError(
+  `Invalid \`prisma.calendarEntry.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "CalendarEntry 33d69dc9-6cf5-4fd1-bb72-4da83761b059 is completed, which is terminal; cannot change its completion", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+  { clientVersion: 'test' },
+);
+
+/**
  * The measured shape of a `23P01` through Prisma Client (`exclusion-
  * conflict.test.ts`'s own fixture): `code` and `meta` are both undefined, and
  * the SQLSTATE and constraint name survive only in `message`.
@@ -125,7 +144,9 @@ describe('classifyApiError', () => {
    * at all while `updateClass` is the only writer that moves an existing
    * entry's `date` and its entry CAS re-asks what the guard asks — so if it
    * happens, an unguarded writer of the column `reapClosedWaitlistEntries`
-   * reads before it DELETEs has appeared. That is `error`, and pinning it here
+   * reads before it DELETEs has appeared. A completion fire says the same
+   * thing one column earlier: clearing the marker is what would unfreeze that
+   * `date`. Both are `error`, and pinning them here
    * is what stops a future tidy-up from collapsing the levels back to one on
    * the grounds that the branch "returns the same thing anyway".
    */
@@ -133,6 +154,7 @@ describe('classifyApiError', () => {
     ['status', terminalStatusErrorFixture, 'warn'],
     ['date', terminalDateErrorFixture, 'error'],
     ['liveness', terminalLivenessErrorFixture, 'warn'],
+    ['completion', terminalCompletionErrorFixture, 'error'],
   ] as const)('maps the terminal-%s trigger to a 409 logged at %s', (column, fixture, level) => {
     const failure = classifyApiError(fixture);
 
@@ -169,7 +191,7 @@ describe('classifyApiError', () => {
    * "candidate" are the same trap. `\b` makes the test forbid what it says it
    * forbids.
    */
-  it('does not name a single column in the message shared by both terminality triggers', () => {
+  it('does not name a single column in the message every terminality trigger shares', () => {
     const message = classifyApiError(terminalDateErrorFixture).message;
 
     expect(message).not.toMatch(/\bstatus\b/i);
@@ -185,9 +207,9 @@ describe('classifyApiError', () => {
    * work and no test could tell.
    *
    * This is the shape that makes the code load-bearing. plpgsql's bare `RAISE
-   * EXCEPTION` defaults to `P0001` (raise_exception); both terminality
-   * migrations override it with `USING ERRCODE = '23514'`, and a third one
-   * copied from either — the likely way this arrives — would produce exactly
+   * EXCEPTION` defaults to `P0001` (raise_exception); every terminality
+   * migration overrides it with `USING ERRCODE = '23514'`, and one copied from
+   * another — the likely way this arrives — would produce exactly
    * this if the override were dropped along the way.
    *
    * It classifies 500, and that is the recorded choice rather than an
@@ -277,15 +299,17 @@ describe('classifyApiError', () => {
    * THE CONTRACT FOR THE NEXT TRIGGER, made mechanical.
    *
    * `isTerminalStatusViolation` needs two things at once: SQLSTATE `23514`
-   * AND the literal clause `which is terminal`. Two migrations satisfy both
-   * today. A third that declares the SQLSTATE and phrases its message
+   * AND the literal clause `which is terminal`. The sweep below re-derives
+   * which migrations satisfy both rather than naming them, so this docblock
+   * carries no roster to go stale. A NEW one that declares the SQLSTATE and
+   * phrases its message
    * differently — the overwhelmingly likely mistake, since the SQLSTATE is
    * the part a copy-paste carries and the sentence is the part an author
    * rewrites — classifies 500 for a request that should be a 409, and before
    * this test nothing anywhere reddened. The author would have had to already
    * know an undocumented requirement.
    *
-   * Sweeps the migration directory rather than naming the two known files, so
+   * Sweeps the migration directory rather than naming the known files, so
    * it covers migrations that do not exist yet — which is the entire point.
    * The length assertion keeps it from going vacuously green if the directory
    * layout changes or the declaration is ever spelled differently.

@@ -476,3 +476,93 @@ describe('entry_terminal_liveness_guard', () => {
     expect(e?.c).toBeNull();
   });
 });
+
+/**
+ * The completion marker is write-once, which is what makes the freeze above
+ * hold across TWO statements rather than only within one.
+ *
+ * `entry_frozen_schedule_guard` is `BEFORE UPDATE OF date, "startTime",
+ * "durationMinutes"` and reads `OLD."classCompletedAt"`. `UPDATE OF` fires on
+ * a column's PRESENCE IN THE SET LIST, so
+ * `UPDATE "CalendarEntry" SET "classCompletedAt" = NULL` fired nothing, and the
+ * next statement's `OLD` then read NULL and the date moved. Measured before
+ * `20260826182710_entry_completion_marker_guard`: the two statements below
+ * left the row dated 2027-12-01. Measured after: 2027-10-01.
+ *
+ * Why that mattered enough to spend a migration on. `waitlist-retention.ts`
+ * permanently DELETES a terminal class's unfulfilled queue rows once the class
+ * is more than 365 days past its date, and it says so on the premise that the
+ * date is immovable from every client. The symmetric hole on `cancelledAt` was
+ * closed by `20260826140000_entry_guard_restorations`; this was the arm left
+ * open beside it.
+ *
+ * Not raw-SQL-only, unlike most of this file's threat model:
+ * `classCompletedAt` is a plain nullable `DateTime` in the generated client,
+ * so `prisma.calendarEntry.update({ data: { classCompletedAt: null } })`
+ * type-checks. That call is what the fixture in `src/lib/api-errors.test.ts`
+ * was transcribed from.
+ */
+describe('entry_completion_marker_guard', () => {
+  const setMarker = (entryId: string, value: string) =>
+    prisma.$executeRawUnsafe(
+      `UPDATE "CalendarEntry" SET "classCompletedAt"=${value} WHERE id=$1`, entryId,
+    );
+
+  /** Completes the class, so the sync trigger stamps the marker. */
+  async function completedEntry(): Promise<string> {
+    const { entryId, classId } = await regularEntryWithClass();
+    await prisma.$executeRawUnsafe(`UPDATE "Class" SET status='completed' WHERE id=$1`, classId);
+    return entryId;
+  }
+
+  it('refuses clearing the marker', async () => {
+    const entryId = await completedEntry();
+    await expect(setMarker(entryId, 'NULL')).rejects.toThrow(TERMINAL_REFUSAL);
+  });
+
+  it('refuses moving the marker to a different timestamp', async () => {
+    const entryId = await completedEntry();
+    await expect(setMarker(entryId, `'2020-01-01 00:00:00'`)).rejects.toThrow(TERMINAL_REFUSAL);
+  });
+
+  // The whole point of the guard, as the attack rather than as a predicate:
+  // without it these two statements together move a frozen entry's date, and
+  // neither of them on its own looks like a schedule write.
+  it('leaves the freeze standing across the two-statement attempt', async () => {
+    const entryId = await completedEntry();
+    await expect(setMarker(entryId, 'NULL')).rejects.toThrow(TERMINAL_REFUSAL);
+    await expect(prisma.$executeRawUnsafe(
+      `UPDATE "CalendarEntry" SET date='2027-12-01' WHERE id=$1`, entryId,
+    )).rejects.toThrow(TERMINAL_REFUSAL);
+    const [e] = await prisma.$queryRawUnsafe<Array<{ d: Date }>>(
+      `SELECT date AS d FROM "CalendarEntry" WHERE id=$1`, entryId);
+    expect(e?.d.toISOString().slice(0, 10)).toBe('2027-10-01');
+  });
+
+  // The pass-cases, without which a predicate mutated to refuse every write to
+  // the column would still satisfy all three cases above.
+  it('allows the first stamp — which is the sync trigger\'s own write', async () => {
+    const { entryId } = await regularEntryWithClass();
+    await expect(setMarker(entryId, 'now()')).resolves.toBeDefined();
+  });
+
+  // The actual-change half, which `BEFORE UPDATE OF "classCompletedAt"` cannot
+  // state on its own: it fires on the column's presence in the SET list.
+  it('allows a write that repeats a completed entry\'s own marker', async () => {
+    const entryId = await completedEntry();
+    await expect(prisma.$executeRawUnsafe(
+      `UPDATE "CalendarEntry" e
+          SET "classCompletedAt"=e."classCompletedAt", "classType"='Re-asserted'
+        WHERE id=$1`, entryId,
+    )).resolves.toBeDefined();
+  });
+
+  // A studio entry never carries a marker (only a `Class` has a `status`), so
+  // the guard's `OLD IS NOT NULL` scopes it to the regular family without a
+  // `kind` conjunct — unlike its two siblings, whose asymmetry is real. This
+  // pins that the scoping is a consequence rather than an omission.
+  it('does not stand in the way of a studio entry, which never carries one', async () => {
+    const { entryId } = await studioEntryWithClass();
+    await expect(setMarker(entryId, 'now()')).resolves.toBeDefined();
+  });
+});

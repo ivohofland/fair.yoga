@@ -45,12 +45,25 @@
  *    trigger; this sweep reads only `date`, and does not care about the other
  *    two.
  *
+ *    THAT IMMOVABILITY IS A CLAIM ABOUT TWO TRIGGERS, NOT ONE, and the second
+ *    one is why the first cannot be walked around in two statements. Every
+ *    trigger here is `BEFORE UPDATE OF <columns>`, and `UPDATE OF` fires on a
+ *    column's PRESENCE IN THE SET LIST — so a guard reading `OLD` is only as
+ *    immovable as the columns its `OLD` depends on. Until
+ *    `20260826182710_entry_completion_marker_guard`,
+ *    `UPDATE "CalendarEntry" SET "classCompletedAt" = NULL` named none of the
+ *    freeze guard's three columns, fired nothing, and left the next statement's
+ *    `OLD` reading NULL: measured, the date then moved on a completed class.
+ *    `entry_completion_marker_guard` makes the marker write-once, so the
+ *    freeze's own input is as immovable as what it protects.
+ *
  *    BOTH HALVES OF TERMINALITY ARE HELD BY TRIGGERS, which they were not when
  *    the rewire landed. `classCompletedAt` cannot be undone —
- *    `class_sync_entry_completed` is its only writer and only ever sets it,
- *    and its precondition is a `completed` status that
+ *    `class_sync_entry_completed` is its only writer, only ever sets it, and
+ *    `entry_completion_marker_guard` now refuses every departure from a value
+ *    it has set; its precondition is a `completed` status that
  *    `class_reject_terminal_status_change` refuses to let go of. `cancelledAt`
- *    on a REGULAR entry is now equally immovable: `entry_terminal_liveness_
+ *    on a REGULAR entry is equally immovable: `entry_terminal_liveness_
  *    guard` refuses to clear it, and refuses to set it on a completed entry.
  *    The studio family's PUT is still the only writer in `src/` that clears the
  *    column, and both that trigger's `kind` conjunct and this disjunct's keep

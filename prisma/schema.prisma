@@ -615,10 +615,23 @@ model CalendarEntry {
   /// cancel-versus-remove rule is in `studio-class-deletion.ts`.
   cancelledAt DateTime?
 
-  /// The owning class completed. Written ONLY by `class_sync_entry_completed`,
-  /// never from TypeScript — a marker synced by application code would miss a
+  /// The owning class completed. Written ONLY by `class_sync_entry_completed`
+  /// — a marker synced by application code would miss a
   /// raw `UPDATE "Class" SET status='completed'`, which is the client the
   /// trigger exists to reach.
+  ///
+  /// THAT IS ENFORCED, not conventional. This is a plain nullable `DateTime`
+  /// in the generated client, so
+  /// `prisma.calendarEntry.update({ data: { classCompletedAt: null } })`
+  /// type-checks; `entry_completion_marker_guard`
+  /// (`20260826182710_entry_completion_marker_guard`) is what makes it a 409
+  /// instead of a cleared marker. The column is write-once: NULL → NOT NULL is
+  /// the sync trigger's own stamp, and every departure from a set value is
+  /// refused. Why it has to be: `entry_frozen_schedule_guard` is
+  /// `BEFORE UPDATE OF date, "startTime", "durationMinutes"` and reads `OLD`
+  /// here, so clearing this column in one statement unfroze the schedule in the
+  /// next — and `waitlist-retention.ts` permanently DELETES on the strength of
+  /// that freeze.
   ///
   /// Two triggers stamp it, both running that one function: `AFTER UPDATE OF
   /// status` and, since `20260826140000_entry_guard_restorations`, `AFTER

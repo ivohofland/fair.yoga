@@ -70,12 +70,27 @@ export type ApiFailure = {
  * - `entry_terminal_liveness_guard`, BEFORE UPDATE OF "cancelledAt" on
  *   `CalendarEntry`, refuses to un-cancel a terminal regular entry or to
  *   cancel a completed one.
+ * - `entry_completion_marker_guard`, BEFORE UPDATE OF "classCompletedAt" on
+ *   `CalendarEntry`, refuses every departure from a marker already set. It
+ *   guards the column the guard above it READS: `UPDATE OF` fires on presence
+ *   in the SET list, so clearing the marker named none of that guard's three
+ *   columns, fired nothing, and unfroze the schedule for the next statement.
  *
- * ADDING A FOURTH TRIGGER: it joins this branch only by doing BOTH — declaring
+ * Re-derive the roster rather than trusting it — from the DATABASE, not from
+ * the migrations, which also hold every trigger since dropped:
+ *
+ *     SELECT t.tgname, c.relname
+ *       FROM pg_trigger t
+ *       JOIN pg_proc  p ON p.oid = t.tgfoid
+ *       JOIN pg_class c ON c.oid = t.tgrelid
+ *      WHERE NOT t.tgisinternal AND p.prosrc LIKE '%23514%'
+ *      ORDER BY t.tgname;
+ *
+ * ADDING ANOTHER TRIGGER: it joins this branch only by doing BOTH — declaring
  * `USING ERRCODE = '23514'` *and* carrying the literal clause `which is
  * terminal` in its message. Either one alone classifies 500 for a request
  * that should be a 409. That requirement used to be undocumented and
- * unenforced, so the author of a fourth trigger would have had to already know
+ * unenforced, so the author of a new trigger would have had to already know
  * it; `api-errors.test.ts` now sweeps `prisma/migrations/` and reddens on the
  * commit that adds a `23514` trigger without the phrase. Mechanical, not
  * remembered.
@@ -335,32 +350,37 @@ export function classifyApiError(error: unknown): ApiFailure {
     // deliberately ignores. Classification is shared; the operator's reading
     // is not, and `level` is the only field that can say so.
     //
-    // Anything but a DATE fire is a lost race. Every status and liveness
+    // A STATUS or LIVENESS fire is a lost race. Every status and liveness
     // writer has had a CAS or a row lock since #174, so a trigger catching one
     // means a guard was bypassed under contention — expected-but-notable, the
     // same reading as the P2002 branch below, and `warn` is right for it.
-    // `status` and `liveness` are told apart anyway: they are different rows on
+    // The two are told apart anyway: they are different rows on
     // different tables, and an operator narrowing "which CAS is losing races"
     // to one of them cannot do it from a facet that calls both `status`.
     //
-    // A DATE fire is not a race, because there is no race to lose:
+    // A DATE or COMPLETION fire is not a race, because there is no race to
+    // lose, and both name the same guarantee from its two ends.
     // `updateClass` is the only writer in `src/` that moves an existing
     // entry's `date`, and its entry CAS (`classCompletedAt: null` plus the
     // regular-and-cancelled exclusion) re-asks exactly what
-    // `entry_frozen_schedule_guard` asks, so the guard can never fire for it.
-    // If it fires, someone has added an unguarded writer of the exact column
-    // `reapClosedWaitlistEntries` reads before it permanently DELETEs a
-    // class's queue — the precondition for the data loss #247 exists to
-    // prevent. That must not land in the log at the level a lock timeout lands
-    // at.
-    // Three values, one per trigger, read off the message tail each one owns.
-    // `status` is the fallback rather than a third test, so a trigger added
+    // `entry_frozen_schedule_guard` asks, so that guard can never fire for it.
+    // `entry_completion_marker_guard` sits behind it on the column that guard
+    // READS: no writer in `src/` clears `classCompletedAt`, and clearing it is
+    // what unfreezes a `date`. Either fire means someone has added an
+    // unguarded writer reaching the column `reapClosedWaitlistEntries` trusts
+    // before it permanently DELETEs a class's queue — the precondition for the
+    // data loss #247 exists to prevent. That must not land in the log at the
+    // level a lock timeout lands at.
+    // Four values, one per trigger, read off the message tail each one owns.
+    // `status` is the fallback rather than a fourth test, so a trigger added
     // without a tail of its own lands on the level that pages nobody.
     const trigger = error.message.includes('cannot change its date')
       ? 'date'
-      : error.message.includes('cannot change its cancellation')
-        ? 'liveness'
-        : 'status';
+      : error.message.includes('cannot change its completion')
+        ? 'completion'
+        : error.message.includes('cannot change its cancellation')
+          ? 'liveness'
+          : 'status';
     return {
       status: 409,
       // Deliberately names no column. Every trigger that reaches this branch
@@ -368,7 +388,7 @@ export function classifyApiError(error: unknown): ApiFailure {
       // wording that names one column is wrong for the others.
       message: 'That class can no longer be changed',
       logMessage: 'terminal class write reached a DB trigger',
-      level: trigger === 'date' ? 'error' : 'warn',
+      level: trigger === 'date' || trigger === 'completion' ? 'error' : 'warn',
       // `withErrorHandler` always logs `err: error`, so the trigger's own
       // message is already in the line. What it is not is GROUPABLE: it lives
       // inside a several-hundred-character driver string that no log filter
