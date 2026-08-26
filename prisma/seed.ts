@@ -40,6 +40,86 @@ const thisWeekSaturday = daysFromNow(3);
 const nextWeek = daysFromNow(7);
 
 // ---------------------------------------------------------------------------
+// Helper: a class and the calendar entry it hangs off
+// ---------------------------------------------------------------------------
+/**
+ * The calendar half of a class — what `CalendarEntry` owns for both families.
+ *
+ * `kind` is absent on purpose: it is the field that says which family is
+ * being created, so each creator below supplies its own literal.
+ */
+type EntrySchedule = {
+  teacherId: string;
+  classType: string;
+  date: Date;
+  startTime: Date;
+  durationMinutes: number;
+  scheduleRuleId?: string;
+  /** Cancellation is spelled here for BOTH families, never on the child. */
+  cancelledAt?: Date;
+};
+
+/**
+ * A `CalendarEntry` and its one `Class`, in a single statement.
+ *
+ * The child input carries no `kind`: it is half of the composite relation
+ * `(calendarEntryId, kind)`, so Prisma fills it from the parent and its
+ * create type has no such field to set.
+ */
+async function createClass(
+  entry: EntrySchedule,
+  klass: Prisma.ClassUncheckedCreateWithoutCalendarEntryInput,
+): Promise<{ id: string }> {
+  const created = await prisma.calendarEntry.create({
+    data: { ...entry, kind: 'regular', classes: { create: klass } },
+    include: { classes: true },
+  });
+  // Exactly one, by construction: the nested create above makes one and
+  // `Class_calendarEntryId_key` admits no second.
+  return created.classes[0]!;
+}
+
+/**
+ * A class that has already been taught.
+ *
+ * Created live and then TRANSITIONED, rather than inserted at `completed`:
+ * `class_sync_entry_completed_guard` fires AFTER UPDATE OF status, and it is
+ * what writes `CalendarEntry.classCompletedAt`. An insert straight to
+ * `completed` would leave the entry with no marker and therefore unfrozen —
+ * seeding a state the application cannot reach.
+ *
+ * The totals go in the same statement as the flip, as `completeClass` writes
+ * them.
+ */
+async function createCompletedClass(
+  entry: EntrySchedule,
+  klass: Prisma.ClassUncheckedCreateWithoutCalendarEntryInput,
+  totals: { effectiveTeacherRate: string; totalStudents: number; totalRevenue: string },
+): Promise<{ id: string }> {
+  const created = await createClass(entry, { ...klass, status: 'open' });
+  await prisma.class.update({
+    where: { id: created.id },
+    data: {
+      status: 'completed',
+      effectiveTeacherRate: new Prisma.Decimal(totals.effectiveTeacherRate),
+      totalStudents: totals.totalStudents,
+      totalRevenue: new Prisma.Decimal(totals.totalRevenue),
+    },
+  });
+  return created;
+}
+
+/** A `CalendarEntry` and its one `StudioClass`, in a single statement. */
+async function createStudioClass(
+  entry: EntrySchedule,
+  studioClass: Prisma.StudioClassUncheckedCreateWithoutCalendarEntryInput,
+): Promise<void> {
+  await prisma.calendarEntry.create({
+    data: { ...entry, kind: 'studio', studioClasses: { create: studioClass } },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main seed function
 // ---------------------------------------------------------------------------
 async function main() {
@@ -55,6 +135,10 @@ async function main() {
   await prisma.class.deleteMany();
   await prisma.classTemplate.deleteMany();
   await prisma.studioClass.deleteMany();
+  // After `class` and `studioClass` above, not before them. The composite FK
+  // cascades parent -> child, so deleting entries first would take both child
+  // tables with them and leave those two calls with nothing to delete.
+  await prisma.calendarEntry.deleteMany();
   await prisma.studioClassTemplate.deleteMany();
   await prisma.teacherRoom.deleteMany();
   await prisma.room.deleteMany();
@@ -459,15 +543,17 @@ async function main() {
   // ==========================================================================
 
   // 1. DRAFT — next week, Hatha, not published
-  await prisma.class.create({
-    data: {
+  await createClass(
+    {
       teacherId: ivo.id,
-      teacherRoomId: ivoCommunity.id,
       classType: 'Hatha',
-      description: 'Gentle Hatha class for beginners.',
       date: nextWeek,
       startTime: hhmmToTime('18:00'),
       durationMinutes: 60,
+    },
+    {
+      teacherRoomId: ivoCommunity.id,
+      description: 'Gentle Hatha class for beginners.',
       roomCost: new Prisma.Decimal('25.00'),
       minRate: new Prisma.Decimal('12.00'),
       targetRate: new Prisma.Decimal('20.00'),
@@ -477,19 +563,21 @@ async function main() {
       autoCancelCheck: 'HOURS_2',
       status: 'draft',
     },
-  });
+  );
 
   // 2. OPEN — this week, 3 registrations
-  const openClass = await prisma.class.create({
-    data: {
+  const openClass = await createClass(
+    {
       teacherId: ivo.id,
-      teacherRoomId: ivoYogaschool.id,
-      templateId: vinyasaTemplate.id,
       classType: 'Vinyasa',
-      description: 'Dynamic flow class suitable for all levels.',
       date: thisWeekThursday,
       startTime: hhmmToTime('09:00'),
       durationMinutes: 75,
+      scheduleRuleId: vinyasaTemplate.scheduleRuleId,
+    },
+    {
+      teacherRoomId: ivoYogaschool.id,
+      description: 'Dynamic flow class suitable for all levels.',
       roomCost: new Prisma.Decimal('35.00'),
       minRate: new Prisma.Decimal('15.00'),
       targetRate: new Prisma.Decimal('25.00'),
@@ -500,19 +588,21 @@ async function main() {
       status: 'open',
       settingsLocked: true,
     },
-  });
+  );
 
   // 3. OPEN (full) — this week, 12 registrations (all spots filled, status stays open)
-  const fullClass = await prisma.class.create({
-    data: {
+  const fullClass = await createClass(
+    {
       teacherId: ivo.id,
-      teacherRoomId: ivoYogaschool.id,
-      templateId: vinyasaTemplate.id,
       classType: 'Vinyasa',
-      description: 'Dynamic flow class suitable for all levels.',
       date: thisWeekSaturday,
       startTime: hhmmToTime('09:00'),
       durationMinutes: 75,
+      scheduleRuleId: vinyasaTemplate.scheduleRuleId,
+    },
+    {
+      teacherRoomId: ivoYogaschool.id,
+      description: 'Dynamic flow class suitable for all levels.',
       roomCost: new Prisma.Decimal('35.00'),
       minRate: new Prisma.Decimal('15.00'),
       targetRate: new Prisma.Decimal('25.00'),
@@ -523,19 +613,21 @@ async function main() {
       status: 'open',
       settingsLocked: true,
     },
-  });
+  );
 
   // 4. IN_PROGRESS — today, 8 registrations
-  const inProgressClass = await prisma.class.create({
-    data: {
+  const inProgressClass = await createClass(
+    {
       teacherId: ivo.id,
-      teacherRoomId: ivoYogaschool.id,
-      templateId: vinyasaTemplate.id,
       classType: 'Vinyasa',
-      description: 'Dynamic flow class suitable for all levels.',
       date: today,
       startTime: hhmmToTime('09:00'),
       durationMinutes: 75,
+      scheduleRuleId: vinyasaTemplate.scheduleRuleId,
+    },
+    {
+      teacherRoomId: ivoYogaschool.id,
+      description: 'Dynamic flow class suitable for all levels.',
       roomCost: new Prisma.Decimal('35.00'),
       minRate: new Prisma.Decimal('15.00'),
       targetRate: new Prisma.Decimal('25.00'),
@@ -546,7 +638,7 @@ async function main() {
       status: 'in_progress',
       settingsLocked: true,
     },
-  });
+  );
 
   // 5. COMPLETED — last week, 10 registrations, pricing calculated
   //
@@ -559,16 +651,18 @@ async function main() {
   //   tier 1: 6.11 * 0.65 = 3.97, tier 2: 6.11 * 0.80 = 4.89
   //   tier 3: 6.11 * 1.00 = 6.11, tier 4: 6.11 * 1.20 = 7.34
   //   tier 5: 6.11 * 1.35 = 8.25
-  const completedClass = await prisma.class.create({
-    data: {
+  const completedClass = await createCompletedClass(
+    {
       teacherId: ivo.id,
-      teacherRoomId: ivoYogaschool.id,
-      templateId: vinyasaTemplate.id,
       classType: 'Vinyasa',
-      description: 'Dynamic flow class suitable for all levels.',
       date: lastWeek,
       startTime: hhmmToTime('09:00'),
       durationMinutes: 75,
+      scheduleRuleId: vinyasaTemplate.scheduleRuleId,
+    },
+    {
+      teacherRoomId: ivoYogaschool.id,
+      description: 'Dynamic flow class suitable for all levels.',
       roomCost: new Prisma.Decimal('35.00'),
       minRate: new Prisma.Decimal('15.00'),
       targetRate: new Prisma.Decimal('25.00'),
@@ -576,25 +670,29 @@ async function main() {
       maxStudents: 12,
       cancelDeadline: 'HOURS_24',
       autoCancelCheck: 'HOURS_2',
-      status: 'completed',
       settingsLocked: true,
-      effectiveTeacherRate: new Prisma.Decimal('21.25'),
-      totalStudents: 9,
-      totalRevenue: new Prisma.Decimal('56.25'),
     },
-  });
+    { effectiveTeacherRate: '21.25', totalStudents: 9, totalRevenue: '56.25' },
+  );
 
   // 6. CANCELLED — last week, 2 registrations (below min_students of 4)
-  const cancelledClass = await prisma.class.create({
-    data: {
+  //
+  // The cancellation is on the ENTRY, and the class keeps the status it had
+  // when it was called off: `cancelled` is no longer a `ClassStatus`, and
+  // both families now spell liveness as `CalendarEntry.cancelledAt`.
+  const cancelledClass = await createClass(
+    {
       teacherId: ivo.id,
-      teacherRoomId: ivoYogaschool.id,
-      templateId: vinyasaTemplate.id,
       classType: 'Vinyasa',
-      description: 'Dynamic flow class suitable for all levels.',
       date: lastWeek2,
       startTime: hhmmToTime('09:00'),
       durationMinutes: 75,
+      scheduleRuleId: vinyasaTemplate.scheduleRuleId,
+      cancelledAt: lastWeek2,
+    },
+    {
+      teacherRoomId: ivoYogaschool.id,
+      description: 'Dynamic flow class suitable for all levels.',
       roomCost: new Prisma.Decimal('35.00'),
       minRate: new Prisma.Decimal('15.00'),
       targetRate: new Prisma.Decimal('25.00'),
@@ -602,10 +700,10 @@ async function main() {
       maxStudents: 12,
       cancelDeadline: 'HOURS_24',
       autoCancelCheck: 'HOURS_2',
-      status: 'cancelled',
+      status: 'open',
       settingsLocked: true,
     },
-  });
+  );
 
   // --------------------------------------------------------------------------
   // Maya's classes — the ones that make the timezone boundary visible
@@ -629,15 +727,17 @@ async function main() {
   // hours the row looks correct either way, so a developer checking at 10:00
   // Pacific — or from Europe, where these bugs do not manifest at all — will
   // see nothing wrong and should not conclude the seed is pointless.
-  await prisma.class.create({
-    data: {
+  await createClass(
+    {
       teacherId: maya.id,
-      teacherRoomId: mayaPortland.id,
       classType: 'Slow Flow',
-      description: 'Evening slow flow. Bring a blanket.',
       date: today,
       startTime: hhmmToTime('19:00'),
       durationMinutes: 75,
+    },
+    {
+      teacherRoomId: mayaPortland.id,
+      description: 'Evening slow flow. Bring a blanket.',
       roomCost: new Prisma.Decimal('30.00'),
       minRate: new Prisma.Decimal('10.00'),
       targetRate: new Prisma.Decimal('18.00'),
@@ -647,19 +747,21 @@ async function main() {
       autoCancelCheck: 'HOURS_2',
       status: 'open',
     },
-  });
+  );
 
   // Yesterday, completed: gives Past classes something that genuinely belongs
   // there, so the page is not empty and the boundary has two sides to get right.
-  await prisma.class.create({
-    data: {
+  await createCompletedClass(
+    {
       teacherId: maya.id,
-      teacherRoomId: mayaPortland.id,
       classType: 'Breathwork',
-      description: 'Pranayama and long holds.',
       date: daysAgo(1),
       startTime: hhmmToTime('07:00'),
       durationMinutes: 45,
+    },
+    {
+      teacherRoomId: mayaPortland.id,
+      description: 'Pranayama and long holds.',
       roomCost: new Prisma.Decimal('30.00'),
       minRate: new Prisma.Decimal('10.00'),
       targetRate: new Prisma.Decimal('18.00'),
@@ -667,24 +769,23 @@ async function main() {
       maxStudents: 8,
       cancelDeadline: 'HOURS_12',
       autoCancelCheck: 'HOURS_2',
-      status: 'completed',
-      effectiveTeacherRate: new Prisma.Decimal('14.00'),
-      totalStudents: 4,
-      totalRevenue: new Prisma.Decimal('44.00'),
     },
-  });
+    { effectiveTeacherRate: '14.00', totalStudents: 4, totalRevenue: '44.00' },
+  );
 
   // Next week, so the Schedule tab has a "Next week" heading to render for her
   // and the week grouping is exercised, not just the day boundary.
-  await prisma.class.create({
-    data: {
+  await createClass(
+    {
       teacherId: maya.id,
-      teacherRoomId: mayaPortland.id,
       classType: 'Slow Flow',
-      description: 'Evening slow flow. Bring a blanket.',
       date: nextWeek,
       startTime: hhmmToTime('19:00'),
       durationMinutes: 75,
+    },
+    {
+      teacherRoomId: mayaPortland.id,
+      description: 'Evening slow flow. Bring a blanket.',
       roomCost: new Prisma.Decimal('30.00'),
       minRate: new Prisma.Decimal('10.00'),
       targetRate: new Prisma.Decimal('18.00'),
@@ -694,7 +795,7 @@ async function main() {
       autoCancelCheck: 'HOURS_2',
       status: 'open',
     },
-  });
+  );
 
   // ==========================================================================
   // STUDIO CLASS TEMPLATE + INSTANCES
@@ -718,48 +819,54 @@ async function main() {
   });
 
   // Past studio class (with student count)
-  await prisma.studioClass.create({
-    data: {
+  await createStudioClass(
+    {
       teacherId: ivo.id,
-      templateId: studioTemplate.id,
+      classType: 'Vinyasa',
       date: lastWeek,
       startTime: hhmmToTime('11:00'),
       durationMinutes: 60,
-      classType: 'Vinyasa',
+      scheduleRuleId: studioTemplate.scheduleRuleId,
+    },
+    {
       location: 'Yoga Studio Centrum, Amsterdam',
       studentCount: 18,
       hourlyRate: new Prisma.Decimal('35.00'),
     },
-  });
+  );
 
   // Upcoming studio class (no student count yet)
-  await prisma.studioClass.create({
-    data: {
+  await createStudioClass(
+    {
       teacherId: ivo.id,
-      templateId: studioTemplate.id,
+      classType: 'Vinyasa',
       date: thisWeekThursday,
       startTime: hhmmToTime('11:00'),
       durationMinutes: 60,
-      classType: 'Vinyasa',
+      scheduleRuleId: studioTemplate.scheduleRuleId,
+    },
+    {
       location: 'Yoga Studio Centrum, Amsterdam',
       studentCount: null,
       hourlyRate: new Prisma.Decimal('35.00'),
     },
-  });
+  );
 
   // One-off studio class at a different studio
-  await prisma.studioClass.create({
-    data: {
+  await createStudioClass(
+    {
       teacherId: ivo.id,
+      classType: 'Bikram',
       date: nextWeek,
       startTime: hhmmToTime('14:00'),
       durationMinutes: 90,
-      classType: 'Bikram',
+    },
+    {
       location: 'Bikram Amsterdam, Keizersgracht',
       studentCount: null,
       hourlyRate: new Prisma.Decimal('45.00'),
     },
-  });
+  );
 
   // ==========================================================================
   // REGISTRATIONS
@@ -960,16 +1067,18 @@ async function main() {
   ];
 
   for (const spec of overdueClassSpecs) {
-    const overdueClass = await prisma.class.create({
-      data: {
+    const overdueClass = await createCompletedClass(
+      {
         teacherId: ivo.id,
-        teacherRoomId: ivoYogaschool.id,
-        templateId: vinyasaTemplate.id,
         classType: 'Vinyasa',
-        description: 'Dynamic flow class suitable for all levels.',
         date: spec.date,
         startTime: hhmmToTime('09:00'),
         durationMinutes: 75,
+        scheduleRuleId: vinyasaTemplate.scheduleRuleId,
+      },
+      {
+        teacherRoomId: ivoYogaschool.id,
+        description: 'Dynamic flow class suitable for all levels.',
         roomCost: new Prisma.Decimal('35.00'),
         minRate: new Prisma.Decimal('15.00'),
         targetRate: new Prisma.Decimal('25.00'),
@@ -977,13 +1086,14 @@ async function main() {
         maxStudents: 12,
         cancelDeadline: 'HOURS_24',
         autoCancelCheck: 'HOURS_2',
-        status: 'completed',
         settingsLocked: true,
-        effectiveTeacherRate: new Prisma.Decimal(spec.effectiveTeacherRate),
-        totalStudents: spec.roster.length,
-        totalRevenue: new Prisma.Decimal(spec.totalRevenue),
       },
-    });
+      {
+        effectiveTeacherRate: spec.effectiveTeacherRate,
+        totalStudents: spec.roster.length,
+        totalRevenue: spec.totalRevenue,
+      },
+    );
 
     for (const { student, payment } of spec.roster) {
       const reg = await prisma.registration.create({

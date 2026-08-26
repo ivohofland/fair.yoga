@@ -52,7 +52,6 @@ enum ClassStatus {
   open
   in_progress
   completed
-  cancelled
 }
 
 enum RegistrationStatus {
@@ -146,8 +145,7 @@ model Teacher {
 
   account         Account          @relation(fields: [accountId], references: [id])
   teacherRooms    TeacherRoom[]
-  classes         Class[]
-  studioClasses         StudioClass[]
+  calendarEntries CalendarEntry[]
   announcements   Announcement[]
   studentPrivacy  StudentPrivacy[]
   createdRooms    Room[]           @relation("RoomCreator")
@@ -177,7 +175,7 @@ model Student {
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
-  account         Account?        @relation(fields: [accountId], references: [id])
+  account         Account?         @relation(fields: [accountId], references: [id])
   registrations   Registration[]
   waitlistEntries WaitlistEntry[]
   studentPrivacy  StudentPrivacy[]
@@ -324,7 +322,7 @@ model TeacherRoom {
 model ClassTemplate {
   id              String          @id @default(uuid())
   scheduleRuleId  String          @unique
-  kind            RuleKind
+  kind            ClassFamily
   teacherRoomId   String
   description     String?         @db.Text
   roomCost        Decimal         @db.Decimal(10, 2)
@@ -339,33 +337,36 @@ model ClassTemplate {
 
   scheduleRule ScheduleRule @relation(fields: [scheduleRuleId, kind], references: [id, kind], onDelete: Cascade)
   teacherRoom  TeacherRoom  @relation(fields: [teacherRoomId], references: [id])
-  classes      Class[]
 }
 
-/// Carries a partial unique index Prisma cannot express and therefore cannot
-/// show: `Class_teacher_slot_unique` on (teacherId, date, startTime) WHERE
-/// status <> 'cancelled' (#196). It is invisible to `migrate diff`, so it
-/// will not appear as drift and will not be dropped — and equally will not
-/// appear in this file unless someone keeps this comment true.
+/// Since #327, carries neither a slot index nor a cross-family trigger: the
+/// calendar identity that `Class_teacher_slot_unique` and the
+/// `class_cross_family_slot_*_guard` triggers used to enforce moved to
+/// `CalendarEntry`, whose own docblock carries the `EXCLUDE USING gist` that
+/// replaced them. Cancellation moved with it — a cancelled class is one whose
+/// entry has a `cancelledAt`, not a `status`.
 ///
-/// Since #296 it also carries TWO TRIGGERS, invisible for the same reason and
-/// worse: `migrate diff` cannot see a trigger at all, so they will never show
-/// as drift. `class_cross_family_slot_insert_guard` and
-/// `class_cross_family_slot_update_guard` reject a row that would make this
-/// teacher live at a slot the OTHER class family already holds — the invariant
-/// no unique index can express, because it spans two tables. They read the
-/// sibling table with a plain unlocked `SELECT` and take no lock; see
-/// `docs/lock-order.md`, "The cross-family slot guard".
+/// What Prisma cannot show here instead, none of it visible to
+/// `migrate diff` and therefore none of it ever showing as drift:
+///
+///   - `Class_kind_check`, `CHECK ("kind" = 'regular')`. Paired with
+///     `StudioClass`'s own `'studio'` check below, it is what makes the
+///     composite foreign key `(calendarEntryId, kind) → CalendarEntry(id,
+///     kind)` mean "regular children hang off regular entries" — not merely
+///     "the pair agrees".
+///   - `class_terminal_status_guard`, which refuses any status change on a
+///     terminal class.
+///   - `class_sync_entry_completed_guard`, which writes
+///     `CalendarEntry.classCompletedAt` when a class completes. That marker is
+///     what lets the entry's freeze guard read only its own row instead of
+///     reaching back here for a status — see the field's docblock on
+///     `CalendarEntry` for the lock-order argument.
 model Class {
   id                   String          @id @default(uuid())
-  teacherId            String
+  calendarEntryId      String          @unique
+  kind                 ClassFamily
   teacherRoomId        String
-  templateId           String?
-  classType            String
   description          String?         @db.Text
-  date                 DateTime        @db.Date
-  startTime            DateTime        @db.Time
-  durationMinutes      Int
   roomCost             Decimal         @db.Decimal(10, 2)
   minRate              Decimal         @db.Decimal(10, 2)
   targetRate           Decimal         @db.Decimal(10, 2)
@@ -402,16 +403,12 @@ model Class {
   /// cannot make that mistake, because a claim clears it.
   spotBroadcastAt DateTime?
 
-  teacher         Teacher         @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  calendarEntry   CalendarEntry   @relation(fields: [calendarEntryId, kind], references: [id, kind], onDelete: Cascade)
   teacherRoom     TeacherRoom     @relation(fields: [teacherRoomId], references: [id])
-  template        ClassTemplate?  @relation(fields: [templateId], references: [id], onDelete: SetNull)
   registrations   Registration[]
   waitlistEntries WaitlistEntry[]
   notifications   Notification[]
   announcements   Announcement[]
-
-  @@index([teacherId, date])
-  @@unique([templateId, date])
 }
 
 /// Since #298, carries neither a slot index nor a trigger: the calendar
@@ -426,31 +423,34 @@ model Class {
 /// `(scheduleRuleId, kind) → ScheduleRule(id, kind)` mean "studio children
 /// hang off studio rules" — not merely "the pair agrees".
 model StudioClassTemplate {
-  id             String   @id @default(uuid())
-  scheduleRuleId String   @unique
-  kind           RuleKind
+  id             String      @id @default(uuid())
+  scheduleRuleId String      @unique
+  kind           ClassFamily
   location       String
-  hourlyRate     Decimal  @db.Decimal(10, 2)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  hourlyRate     Decimal     @db.Decimal(10, 2)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
 
-  scheduleRule  ScheduleRule  @relation(fields: [scheduleRuleId, kind], references: [id, kind], onDelete: Cascade)
-  studioClasses StudioClass[]
+  scheduleRule ScheduleRule @relation(fields: [scheduleRuleId, kind], references: [id, kind], onDelete: Cascade)
 }
 
-/// A child table's own `kind` column is not enough to make the composite FK
-/// `(scheduleRuleId, kind) → ScheduleRule(id, kind)` mean "this family's
-/// children hang off this family's rules" — without more, it only means "the
-/// pair agrees", which a row of the wrong family could still satisfy by
-/// carrying its own `kind` alongside it. What closes that gap is a `CHECK
-/// ("kind" = '<this table's literal>')` on the child table, invisible to
-/// Prisma and therefore hand-authored in the migration rather than declared
-/// here — see `ClassTemplate`'s and `StudioClassTemplate`'s own docblocks for
-/// where each one's lives. A future variant of this enum needs a child table
-/// carrying the same pattern: a `CHECK` pinning that table's `kind` column to
-/// its own literal, or the composite FK it joins through means less than it
+/// The discriminator both layers share: `ScheduleRule` holds the recurring
+/// rule, `CalendarEntry` the dated entry, and each has one child table per
+/// family hanging off it by `(parentId, kind)`.
+///
+/// A child table's own `kind` column is not enough to make such a foreign key
+/// mean "this family's children hang off this family's parents" — without
+/// more, it only means "the pair agrees", which a row of the wrong family
+/// could still satisfy by carrying its own `kind` alongside it. What closes
+/// that gap is a `CHECK ("kind" = '<this table's literal>')` on the child
+/// table, invisible to Prisma and therefore hand-authored in the migration
+/// rather than declared here; each child model's docblock records where its
+/// own lives.
+///
+/// So any new child of either parent — and a future variant of this enum —
+/// needs that CHECK, or the composite key it joins through means less than it
 /// appears to.
-enum RuleKind {
+enum ClassFamily {
   regular
   studio
 }
@@ -461,21 +461,21 @@ enum RuleKind {
 /// USING gist` over a generated `slot` column, hand-authored in the
 /// migration. `docs/lock-order.md` carries the argument.
 model ScheduleRule {
-  id              String    @id @default(uuid())
+  id              String      @id @default(uuid())
   teacherId       String
-  kind            RuleKind
+  kind            ClassFamily
   classType       String
   dayOfWeek       Int
-  startTime       DateTime  @db.Time
+  startTime       DateTime    @db.Time
   durationMinutes Int
 
   /// The generated occupancy range. Declared so `prisma migrate dev` does not
   /// read it as drift; `Unsupported` keeps it out of the generated client, so
   /// it can be neither read nor written from TypeScript.
-  slot            Unsupported("int4range")? @default(dbgenerated())
+  slot Unsupported("int4range")? @default(dbgenerated())
 
-  isActive        Boolean   @default(true)
-  isArchived      Boolean   @default(false)
+  isActive   Boolean @default(true)
+  isArchived Boolean @default(false)
 
   /// When this rule was last archived (#97). Issue 298 moved this column
   /// here from `ClassTemplate`/`StudioClassTemplate` — the semantics are
@@ -496,7 +496,7 @@ model ScheduleRule {
   /// overwrites rather than accumulating — a teacher asking what archiving
   /// removed means the archive in force, not every archive this rule has
   /// had.
-  archivedAt      DateTime?
+  archivedAt DateTime?
 
   /// How many future classes that same archive withdrew: the owning child's
   /// `deleteMany`'s own returned count, written inside its transaction, so it
@@ -516,8 +516,9 @@ model ScheduleRule {
   /// survives, not because it is an income record (it is not: the sole
   /// `studioClass.findMany` in `settings/reporting/page.tsx` queries with
   /// `cancelledAt: null` and excludes it from earnings and the month rollup
-  /// outright), but because it holds `(templateId, date)`, and a date the
-  /// teacher cancelled deliberately must not be refilled on the next resume.
+  /// outright), but because its entry holds `(scheduleRuleId, date)`, and a
+  /// date the teacher cancelled deliberately must not be refilled on the next
+  /// resume.
   ///
   /// What is still scheduled is deliberately not stored beside it. The
   /// archive PATCH returns a `remaining` count once, for the confirmation
@@ -525,11 +526,11 @@ model ScheduleRule {
   /// recomputes it on load. Only the deletion is unrecoverable, so only the
   /// deletion is recorded — and a frozen copy would go stale the moment a
   /// teacher cancels one of the survivors.
-  withdrawnCount  Int?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  withdrawnCount Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  teacher              Teacher                @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  teacher              Teacher               @relation(fields: [teacherId], references: [id], onDelete: Cascade)
   // Plural despite 0-or-1 cardinality, matching every other array relation in
   // this schema (`teacherRooms`, `classes`, `TeacherRoom.classTemplates`).
   // Still arrays, not `ClassTemplate?`: Prisma requires a `@@unique` matching
@@ -542,82 +543,112 @@ model ScheduleRule {
   // single-column constraint.
   classTemplates       ClassTemplate[]
   studioClassTemplates StudioClassTemplate[]
+  calendarEntries      CalendarEntry[]
 
   @@unique([id, kind])
   @@index([teacherId, dayOfWeek])
 }
 
-/// Carries a partial unique index Prisma cannot express and therefore cannot
-/// show: `StudioClass_teacher_slot_unique` on (teacherId, date, startTime)
-/// WHERE cancelledAt IS NULL (#196). It is invisible to `migrate diff`, so it
-/// will not appear as drift and will not be dropped — and equally will not
-/// appear in this file unless someone keeps this comment true.
+/// The calendar identity shared by the two entry families (#327): when a
+/// teacher is teaching, and for how long. `Class` and `StudioClass` keep only
+/// their own economics and hang off this by a composite foreign key.
 ///
-/// "Live" is spelled differently than `Class_teacher_slot_unique` does, and
-/// that is the model, not a drift between two indexes meant to match:
-/// `StudioClass` has no `status` enum at all, only this nullable
-/// `cancelledAt` — the same field `withdrawnCount`'s comment above already
-/// treats as the uncancelled filter everywhere else on this model. `Class`
-/// spells the same idea as `status <> 'cancelled'` because that is the column
-/// it has.
-///
-/// Since #296 it also carries TWO TRIGGERS, invisible for the same reason and
-/// worse: `migrate diff` cannot see a trigger at all, so they will never show
-/// as drift. `studio_class_cross_family_slot_insert_guard` and
-/// `studio_class_cross_family_slot_update_guard` reject a row that would make this
-/// teacher live at a slot the OTHER class family already holds — the invariant
-/// no unique index can express, because it spans two tables. They read the
-/// sibling table with a plain unlocked `SELECT` and take no lock; see
-/// `docs/lock-order.md`, "The cross-family slot guard".
-model StudioClass {
-  id              String    @id @default(uuid())
+/// Carries an invisible constraint this file cannot express: an `EXCLUDE
+/// USING gist` over the generated `span` column below, hand-authored in the
+/// migration. It is what replaced the two partial slot indexes and the four
+/// cross-family triggers of #296 — one range constraint, index-backed and
+/// race-free by construction, where those were a per-table key plus an
+/// unlocked cross-table read. `docs/lock-order.md` carries the argument.
+model CalendarEntry {
+  id              String      @id @default(uuid())
   teacherId       String
-  templateId      String?
-  classType       String    @default("")
-  date            DateTime  @db.Date
-  startTime       DateTime  @db.Time
+  kind            ClassFamily
+  classType       String
+  date            DateTime    @db.Date
+  startTime       DateTime    @db.Time
   durationMinutes Int
+
+  /// Liveness, for both families. A cancelled entry releases its SLOT (the
+  /// exclusion constraint is partial on this) but keeps its DATE against the
+  /// hourly sweep, so a date a teacher cancelled is not refilled.
+  ///
+  /// One column where there were two spellings: `Class.status = 'cancelled'`
+  /// and `StudioClass.cancelledAt` both ended here. What each family does with
+  /// a cancellation still differs and still lives with that family — a `Class`
+  /// cancellation is terminal, a `StudioClass` one is reversible, and #279's
+  /// cancel-versus-remove rule is in `studio-class-deletion.ts`.
+  cancelledAt DateTime?
+
+  /// The owning class completed. Written ONLY by `class_sync_entry_completed`,
+  /// never from TypeScript — a marker synced by application code would miss a
+  /// raw `UPDATE "Class" SET status='completed'`, and the freeze exists
+  /// precisely to reach clients that bypass the services.
+  ///
+  /// A marker rather than a read, for lock order: a guard here that consulted
+  /// `Class.status` would acquire Entry then Class, against `lockClassRow`'s
+  /// Class then Entry. The trigger writes in the completing transaction and
+  /// acquires Class then Entry, which composes. See `docs/lock-order.md`.
+  ///
+  /// Populated for `kind = 'regular'` only, because only that family has a
+  /// `status`. That is not a gap: the freeze's cancel half is expressed
+  /// directly from `kind` and `cancelledAt` in `entry_frozen_schedule_guard`,
+  /// and a cancelled STUDIO entry is deliberately not frozen — that
+  /// cancellation is reversible.
+  ///
+  /// Not a general "is this row editable" flag. #276's studio editability rule
+  /// is date-derived and lives in `studio-class-editability.ts`.
+  classCompletedAt DateTime?
+
+  scheduleRuleId String?
+
+  /// The generated occupancy range. Declared so `prisma migrate dev` does not
+  /// read it as drift; `Unsupported` keeps it out of the generated client, so
+  /// it can be neither read nor written from TypeScript.
+  span Unsupported("tsrange")? @default(dbgenerated())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  teacher       Teacher       @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  scheduleRule  ScheduleRule? @relation(fields: [scheduleRuleId], references: [id], onDelete: SetNull)
+  // Plural despite 0-or-1 cardinality, for the reason `ScheduleRule`'s own
+  // comment on `classTemplates` gives: Prisma needs a `@@unique` on the exact
+  // [calendarEntryId, kind] field pair to model a to-one back-relation, and
+  // the constraint the migration installs is `UNIQUE (calendarEntryId)`
+  // alone. Runtime cardinality is still 0-or-1, enforced by that
+  // single-column constraint.
+  classes       Class[]
+  studioClasses StudioClass[]
+
+  @@unique([id, kind])
+  @@unique([scheduleRuleId, date])
+  @@index([teacherId, date])
+}
+
+/// Since #327, carries neither a slot index nor a cross-family trigger, and no
+/// liveness column of its own: the calendar identity that
+/// `StudioClass_teacher_slot_unique` and the
+/// `studio_class_cross_family_slot_*_guard` triggers used to enforce moved to
+/// `CalendarEntry`, and `cancelledAt` went with it. Both families now spell
+/// liveness once, as `CalendarEntry.cancelledAt`.
+///
+/// What Prisma cannot show here instead, and what `migrate diff` therefore
+/// never reports as drift: `StudioClass_kind_check`, `CHECK ("kind" =
+/// 'studio')`. Paired with `Class`'s own `'regular'` check above, it is what
+/// makes the composite foreign key `(calendarEntryId, kind) →
+/// CalendarEntry(id, kind)` mean "studio children hang off studio entries" —
+/// not merely "the pair agrees".
+model StudioClass {
+  id              String      @id @default(uuid())
+  calendarEntryId String      @unique
+  kind            ClassFamily
   location        String
   studentCount    Int?
-  hourlyRate      Decimal   @db.Decimal(10, 2)
-  /// Cancelled, as opposed to removed — the two doors, and which is which
-  /// (issue 279).
-  ///
-  /// CANCEL says "this was scheduled and did not happen". It withholds the row
-  /// from earnings (the sole `studioClass.findMany` in
-  /// `settings/reporting/page.tsx`), drops it out of the
-  /// partial slot index `(teacherId, date, startTime) WHERE "cancelledAt" IS
-  /// NULL`, and keeps `@@unique([templateId, date])` — so a generated class
-  /// goes on holding its date against the sweep, which is the point when a
-  /// teacher cancelled in order to teach something else in that slot.
-  ///
-  /// REMOVE (`DELETE /api/studio-classes/[id]`) takes the row away entirely,
-  /// and is allowed only where the sweep cannot undo it: a manual class, or one
-  /// whose CALENDAR DATE is strictly before the teacher's today.
-  /// `studio-class-deletion.ts` holds the rule and the reasoning. A generated
-  /// class dated today or later is refused there, with cancel named as the
-  /// remedy.
-  ///
-  /// Not "one whose start has passed", which is what this said until PR #295's
-  /// review: a class's `startTime` is a stamp and the generator filters on the
-  /// TEMPLATE's current one, so after a template time edit the two disagree and
-  /// a started class could still be regenerated the same day. The date rule is
-  /// immune to that — no start time on a past date can still be ahead of now.
-  ///
-  /// Cancellation is NOT a precondition of removal, and the removability
-  /// predicate is not given this column: it is fetched through
-  /// `STUDIO_CLASS_REMOVAL_FACTS_SELECT`, which both call sites use. Requiring
-  /// a cancel first would force the teacher to create the litter before they
-  /// could clear it.
-  cancelledAt     DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  hourlyRate      Decimal     @db.Decimal(10, 2)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
-  teacher  Teacher              @relation(fields: [teacherId], references: [id], onDelete: Cascade)
-  template StudioClassTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
-
-  @@index([teacherId, date])
-  @@unique([templateId, date])
+  calendarEntry CalendarEntry @relation(fields: [calendarEntryId, kind], references: [id, kind], onDelete: Cascade)
 }
 
 // ============================================================================
