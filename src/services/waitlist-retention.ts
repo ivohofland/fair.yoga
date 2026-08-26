@@ -71,13 +71,19 @@
  *    column, and both that trigger's `kind` conjunct and this disjunct's keep
  *    the studio family out of the question either way.
  *
- *    ONE THING IS STILL NOT FROZEN, and it does not reach this sweep. A
- *    cancelled class's `Class.status` can still be walked to `completed` from
- *    raw SQL — the KNOWN-OPEN beside `TERMINAL_CLASS_STATUSES`
- *    (`class-lifecycle.ts`) states why it was not closed. The row it produces
- *    is one this sweep would already have considered: a cancelled regular
- *    entry satisfies the second disjunct on its own, so a status walk adds
- *    nothing to reapability and takes nothing away from the freeze, which
+ *    ONE THING IS STILL NOT FROZEN, and it does not reach this sweep. Raw SQL
+ *    can still walk a cancelled class's `Class.status` among the LIVE
+ *    statuses: `class_reject_terminal_status_change` refuses only a class
+ *    leaving `completed`, and a cancelled one has not got there. It cannot be
+ *    walked TO `completed` —
+ *    `CalendarEntry_not_cancelled_and_completed`
+ *    (`20260826200000_entry_marker_exclusivity`) aborts that transaction, on
+ *    the sync trigger's own write to the entry rather than on the status
+ *    `UPDATE`. The walk that remains carries a `KNOWN-OPEN` beside
+ *    `TERMINAL_CLASS_STATUSES` (`class-lifecycle.ts`) with its bounds. The row
+ *    it produces is one this sweep would already have considered: a cancelled
+ *    regular entry satisfies the second disjunct on its own, so a status walk
+ *    adds nothing to reapability and takes nothing away from the freeze, which
  *    reads the entry's own columns and not the class's status.
  *
  *  - Every `WaitlistEntry` write site falls into one of three buckets, and none

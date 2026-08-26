@@ -431,8 +431,11 @@ describe('classifyApiError', () => {
    * answered 409. Nothing reddened, because
    * `class_reject_terminal_status_change` sat above it in the same file
    * carrying the clause. This branch is also what made that shape ordinary:
-   * three of the five migrations declaring the SQLSTATE now hold two or more
-   * functions.
+   * before it, every migration declaring this SQLSTATE held a single function,
+   * so a file sweep and a function sweep could not disagree. This branch's
+   * migrations bundle guards, and the two came apart. No figure is kept here —
+   * the sweep below is the tether, and this docblock opens by refusing to
+   * carry a roster.
    *
    * LAST WRITE WINS (`liveFunctions`, `tests/migration-sql.ts`), which is the
    * other half and pulls the opposite way. Per-function alone would redden

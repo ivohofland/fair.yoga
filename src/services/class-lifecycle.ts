@@ -126,6 +126,22 @@ export const VALID_TRANSITIONS: Record<ClassStatus, readonly ClassStatus[]> = {
  * expressed on the entry row being written: un-cancelling a regular entry, and
  * cancelling a completed one.
  *
+ * KNOWN-OPEN (#327), and a smaller residual than the one it succeeds: only the
+ * `completed` walk is refused. Raw SQL can still move a CANCELLED class among
+ * the LIVE statuses — `draft → open → in_progress` — because this constant's
+ * one member is the only OLD status the guard rejects, and none of those three
+ * is it. Recorded rather than closed because it is bounded three ways. Nothing
+ * in `src/` can reach it: every status writer's CAS carries the liveness
+ * conjunct named below. It cannot become a completion: `autoCompleteClasses`
+ * (`class-transitions.ts`) selects on `calendarEntry: { cancelledAt: null }`,
+ * and a hand-written completion trips the CHECK above. And it cannot unfreeze
+ * the entry: `entry_reject_frozen_schedule_change` reads `cancelledAt` and
+ * never the class's status, so `waitlist-retention.ts`'s date guarantee is
+ * untouched by the walk. What it produces is a cancelled class carrying a live
+ * status — a display state, with nothing downstream acting on it. The token is
+ * here so a sweep for open residuals finds it; prose saying the same thing is
+ * not searchable.
+ *
  * The service layer says the same thing one layer up rather than being what
  * holds it: every status writer's CAS carries
  * `calendarEntry: { cancelledAt: null }` beside its status predicate.
