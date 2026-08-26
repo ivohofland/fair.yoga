@@ -200,7 +200,82 @@ describe('probeConflictingEntry', () => {
       spy.mockRestore();
     }
   });
+
+  /**
+   * THE `ORDER BY`, which had a comment and no test.
+   *
+   * A candidate span can overlap more than one live entry, and the query's own
+   * docblock says the ordering exists so "a test that plants two holders gets
+   * the earlier one every run instead of whichever the index happened to reach
+   * first". No such test existed, so dropping `ORDER BY "date", "startTime"`
+   * cost nothing.
+   *
+   * TWO HOLDERS ON DIFFERENT DATES, not two on one, and that is what makes the
+   * `date` half of the ordering observable at all: the earlier holder spills
+   * past midnight into the probed day. Planted in the WRONG order — the later
+   * one first — so an unordered `LIMIT 1` that simply followed insertion or the
+   * index would be as likely to answer the other.
+   *
+   * The spans: the earlier holder runs 22:00 + 780 minutes, ending 11:00 the
+   * next day; the later starts at 11:00 that day for an hour. They meet
+   * exactly on the half-open bound, so both are live and
+   * `CalendarEntry_teacher_slot_excl` admits the pair — which it must, since
+   * two holders that could not coexist could not both be found. The probe is
+   * 10:00 + 120 minutes on the second day, which reaches into both.
+   */
+  it('names the EARLIER of two overlapping holders, every run', async () => {
+    const later = await plant({
+      date: day('2033-03-11'), startTime: hhmmToTime('11:00'), durationMinutes: 60,
+    });
+    const earlier = await plant({
+      date: day('2033-03-10'), startTime: hhmmToTime('22:00'), durationMinutes: 780,
+    });
+
+    // The premise: both really do overlap the probe, so the ordering is what
+    // chooses between them rather than one of them simply not matching.
+    const probe = {
+      date: day('2033-03-11'), startTime: hhmmToTime('10:00'), durationMinutes: 120,
+    };
+    const withoutEarlier = await probeConflictingEntry(prisma, teacherId, {
+      ...probe, excludeEntryId: earlier.id,
+    });
+    expect(withoutEarlier?.id).toBe(later.id);
+
+    const conflict = await probeConflictingEntry(prisma, teacherId, probe);
+    expect(conflict?.id).toBe(earlier.id);
+  });
 });
+
+/**
+ * `probeConflictingEntry` takes a `PrismaClient` and NOT a
+ * `Prisma.TransactionClient`, and that is a contract rather than a preference:
+ * a statement that fails inside a Postgres transaction aborts it, so a probe
+ * issued on the caller's aborted `tx` answers `25P02` rather than answering.
+ * Every call site has to sit after its own transaction's closing `)`.
+ *
+ * It is true today only by the shape of `Omit`: `Prisma.TransactionClient` is
+ * `Omit<PrismaClient, ITXClientDenyList>`, so it is MISSING `$transaction` and
+ * friends and is therefore not assignable to the full client. Nothing keeps
+ * that true — a signature widened to `PrismaClient | Prisma.TransactionClient`
+ * (which `probeOverlappingCandidates` beside it deliberately IS) would compile
+ * every call site unchanged and break only in production, under contention.
+ *
+ * The same device `db-locks.test.ts` keeps eight of, and for the same reason:
+ * `tsconfig.json` includes every `.ts` file in the repo, so weakening the
+ * parameter makes `tsc --noEmit` fail on an unused `@ts-expect-error` rather
+ * than leaving a green suite. Never called, so it costs nothing at runtime.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _theProbeRejectsATransactionClient(tx: Prisma.TransactionClient): Promise<void> {
+  // @ts-expect-error A transaction client must never satisfy this parameter:
+  // the probe runs AFTER its caller's transaction closed, and on an aborted
+  // one it would answer 25P02 instead of naming the holder.
+  await probeConflictingEntry(tx, 'never-called', {
+    date: new Date('2033-01-01T00:00:00.000Z'),
+    startTime: new Date('1970-01-01T09:00:00.000Z'),
+    durationMinutes: 60,
+  });
+}
 
 describe('entryConflictMessage', () => {
   const conflict = {

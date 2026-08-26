@@ -277,15 +277,54 @@ describe('CalendarEntry_scheduleRuleId_date_key', () => {
     await expect(onRule(teacherId, rule.id, '14:00', false))
       .rejects.toThrow(/Code: `23505`[\s\S]*Key \("scheduleRuleId", date\)/);
   });
+
+  // THE SHAPE OF THE KEY, not only that it fires. Both inserts above share a
+  // date, so a key mutated down to `UNIQUE ("scheduleRuleId")` refuses them
+  // exactly the same way — and a template would then get ONE class ever
+  // instead of one per week, which is the whole rolling window. This is the
+  // case that goes red for that mutation.
+  //
+  // `08:00`, clear of the 09:00 row's own hour, so the slot exclusion cannot
+  // be what admits it: the point is that the DATE is what differs.
+  it('lets one rule hold a second date', async () => {
+    const teacherId = await freshTeacher();
+    const rule = await prisma.scheduleRule.create({
+      data: {
+        teacherId, kind: 'regular', classType: 'Vinyasa', dayOfWeek: 1,
+        startTime: new Date('1970-01-01T09:00:00Z'), durationMinutes: 60,
+      },
+    });
+    await onRule(teacherId, rule.id, '09:00', false);
+    await expect(prisma.$executeRawUnsafe(
+      `INSERT INTO "CalendarEntry" (id,"teacherId",kind,"classType",date,"startTime","durationMinutes","scheduleRuleId","createdAt","updatedAt")
+       VALUES (gen_random_uuid()::text,$1,'regular','Vinyasa','2027-11-15','08:00',60,$2,now(),now())`,
+      teacherId, rule.id,
+    )).resolves.toBeDefined();
+  });
 });
 
 describe('disjoint occupancy — one entry, one child', () => {
+  /**
+   * EVERY REFUSAL BELOW NAMES ITS OBJECT, and three of them used to match on
+   * the object's CLASS instead — `/foreign key/i`, `/check constraint/i`. Those
+   * cannot tell `Class_kind_check` from `StudioClass_kind_check`, nor either
+   * from `CalendarEntry_duration_positive` next door, so a fixture that started
+   * tripping a different constraint of the same class would keep passing while
+   * testing something else. The exclusion cases above already name theirs via
+   * `isExclusionConflictOn`; this brings the rest into line.
+   *
+   * The two `@unique` keys are the exception and the reason is PostgreSQL's,
+   * not a preference: Prisma surfaces only the DETAIL line for a raw `23505`
+   * and that line carries no constraint name. The SQLSTATE and the key COLUMNS
+   * are what identify it, the same way `CalendarEntry_scheduleRuleId_date_key`
+   * is pinned above.
+   */
   it('refuses a studio child on a regular entry (composite FK)', async () => {
     const { entryId } = await regularEntryWithClass();
     await expect(prisma.$executeRawUnsafe(
       `INSERT INTO "StudioClass" (id,"calendarEntryId",kind,location,"hourlyRate","createdAt","updatedAt")
        VALUES (gen_random_uuid()::text,$1,'studio','Probe',50,now(),now())`, entryId,
-    )).rejects.toThrow(/foreign key/i);
+    )).rejects.toThrow(/StudioClass_calendarEntryId_kind_fkey/);
   });
 
   it('refuses forging the child kind to satisfy that FK (CHECK)', async () => {
@@ -293,20 +332,56 @@ describe('disjoint occupancy — one entry, one child', () => {
     await expect(prisma.$executeRawUnsafe(
       `INSERT INTO "StudioClass" (id,"calendarEntryId",kind,location,"hourlyRate","createdAt","updatedAt")
        VALUES (gen_random_uuid()::text,$1,'regular','Probe',50,now(),now())`, entryId,
-    )).rejects.toThrow(/check constraint/i);
+    )).rejects.toThrow(/StudioClass_kind_check/);
   });
 
-  // NOT /foreign key/i. Both composite FKs carry ON UPDATE CASCADE, so flipping
-  // the parent's kind cascades into the child's kind column FIRST and the
-  // child's own CHECK raises. The FK never gets a chance to reject anything.
-  // Measured at stage A, on the twin structure over `ScheduleRule`
-  // (`schedule-rule-constraints.test.ts`), where the parent design had
-  // recorded 23503 and was corrected.
+  // NOT the FK, and now the assertion says so by name. Both composite FKs carry
+  // ON UPDATE CASCADE, so flipping the parent's kind cascades into the CHILD's
+  // kind column first and `Class_kind_check` — the child's own — raises. The FK
+  // never gets a chance to reject anything. Measured at stage A on the twin
+  // structure over `ScheduleRule` (`schedule-rule-constraints.test.ts`), where
+  // the parent design had recorded 23503 and was corrected; matching on
+  // `/check constraint/i` could not have shown which of the two tables answered.
   it('refuses flipping the parent kind while a child is attached', async () => {
     const { entryId } = await regularEntryWithClass();
     await expect(prisma.$executeRawUnsafe(
       `UPDATE "CalendarEntry" SET kind = 'studio' WHERE id = $1`, entryId,
-    )).rejects.toThrow(/check constraint/i);
+    )).rejects.toThrow(/Class_kind_check/);
+  });
+
+  /**
+   * ONE CHILD, which is the half of "one entry, one child" that had no case at
+   * all. Everything above pins DISJOINTNESS — that the wrong FAMILY's child
+   * cannot attach. Nothing inserted a second child of the RIGHT family, so
+   * dropping `@unique` from either `calendarEntryId` left the whole suite
+   * green — while `prisma/seed.ts` cites the constraint as its licence to write
+   * `created.classes[0]!`, and `schema.prisma` says of both relations that
+   * "Runtime cardinality is still 0-or-1, enforced by that single-column
+   * constraint".
+   *
+   * Raw SQL, like everything else here: `prisma.class.create` would be refused
+   * by the client's own relation typing before PostgreSQL saw it, which is the
+   * layer these cases exist to bypass.
+   */
+  it('refuses a second Class on one entry', async () => {
+    const { entryId } = await regularEntryWithClass();
+    const teacherRoom = await prisma.teacherRoom.findFirstOrThrow({
+      where: { classes: { some: { calendarEntryId: entryId } } },
+      select: { id: true },
+    });
+    await expect(prisma.$executeRawUnsafe(
+      `INSERT INTO "Class" (id,"calendarEntryId",kind,"teacherRoomId","roomCost","minRate","targetRate","minStudents","maxStudents",status,"createdAt","updatedAt")
+       VALUES (gen_random_uuid()::text,$1,'regular',$2,35,15,25,4,12,'draft',now(),now())`,
+      entryId, teacherRoom.id,
+    )).rejects.toThrow(/Code: `23505`[\s\S]*Key \("calendarEntryId"\)/);
+  });
+
+  it('refuses a second StudioClass on one entry', async () => {
+    const { entryId } = await studioEntryWithClass();
+    await expect(prisma.$executeRawUnsafe(
+      `INSERT INTO "StudioClass" (id,"calendarEntryId",kind,location,"hourlyRate","createdAt","updatedAt")
+       VALUES (gen_random_uuid()::text,$1,'studio','Second',50,now(),now())`, entryId,
+    )).rejects.toThrow(/Code: `23505`[\s\S]*Key \("calendarEntryId"\)/);
   });
 });
 

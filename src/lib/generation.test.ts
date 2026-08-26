@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { anyBlocked, countSkipReasons, type SkipCounts, type SkippedSlot } from './generation';
+import {
+  anyBlocked,
+  countSkipReasons,
+  spansOverlap,
+  type SkipCounts,
+  type SkippedSlot,
+} from './generation';
 
 const at = (iso: string, reason: SkippedSlot['reason']): SkippedSlot => ({
   date: new Date(iso),
@@ -94,5 +100,47 @@ describe('countSkipReasons', () => {
       alreadyThisWeek: 0,
       blockedByOverlap: 0,
     });
+  });
+});
+
+/**
+ * `spansOverlap`'s HALF-OPEN BOUNDARY, which nothing pinned.
+ *
+ * Non-exact-start overlap is pinned behaviourally by both generators' suites,
+ * but every fixture there overlaps by a comfortable margin — no live entry sits
+ * exactly back-to-back with a candidate. So mutating `<` to `<=` survived the
+ * whole tree, and that mutation makes both generators skip dates
+ * `CalendarEntry_teacher_slot_excl` would have ADMITTED: a pre-check STRICTER
+ * than the guard it mirrors, which the stage B spec §4.1 calls the only real
+ * defect, because a window silently comes back short and nothing raises.
+ *
+ * Two assertions close it, one on each end, because `<=` on either comparison
+ * alone is a mutation and the two ends are different comparisons.
+ *
+ * `@db.Time` values arrive as `Date`s pinned to 1970-01-01 UTC, which is what
+ * these fixtures are — the function reads them with UTC accessors for exactly
+ * that reason, and a local-accessor mutation would move every one of these by
+ * the suite's `TZ=America/New_York` offset.
+ */
+describe('spansOverlap', () => {
+  const span = (hhmm: string, durationMinutes: number) => ({
+    startTime: new Date(`1970-01-01T${hhmm}:00.000Z`),
+    durationMinutes,
+  });
+
+  // 09:00-10:00 then 10:00-11:00. `[)` on both sides: the first ends where the
+  // second begins, and the constraint admits the pair (`calendar-entry.test.ts`
+  // measures that against the real database). `<=` for the FIRST comparison
+  // makes this true and the pre-check refuses a date PostgreSQL would take.
+  it('is false for two spans that touch, in either argument order', () => {
+    expect(spansOverlap(span('09:00', 60), span('10:00', 60))).toBe(false);
+    expect(spansOverlap(span('10:00', 60), span('09:00', 60))).toBe(false);
+  });
+
+  // One minute over the same boundary, in both directions, which is what stops
+  // a mutation that simply returns `false` from satisfying the case above.
+  it('is true one minute inside that boundary, in either argument order', () => {
+    expect(spansOverlap(span('09:00', 61), span('10:00', 60))).toBe(true);
+    expect(spansOverlap(span('10:00', 60), span('09:00', 61))).toBe(true);
   });
 });
