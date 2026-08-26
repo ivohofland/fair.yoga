@@ -60,6 +60,21 @@ const EXPECTED_JS_DAY = (DAY_OF_WEEK + 1) % 7;
  * own and was simply not needed), so every one differs from DAY_OF_WEEK and
  * from every other ALT_DAY on every day of the week, by construction rather
  * than by luck.
+ *
+ * That construction only proves mutual distinctness, not distinctness from
+ * TODAY. DAY_OF_WEEK is itself today plus 2 (see above), so today is
+ * DAY_OF_WEEK plus 5 mod 7 — exactly ALT_DAY_4's offset. Pigeonhole makes
+ * this unavoidable: 7 weekdays, and DAY_OF_WEEK plus five ALT_DAYs already
+ * name 6 of them, so the 7th (today) has nowhere left to be but one of the
+ * six offsets already claimed — and offset 2 (today's own) is the one this
+ * file reserves for `NEW_DAY_OF_WEEK`, forcing today onto an ALT_DAY instead.
+ * ALT_DAY_4 is that one, every day of the year. (ALT_DAY_5, one offset over,
+ * is by the same arithmetic always tomorrow.) A fixture whose test cares
+ * whether its window is strictly in the future — e.g. anything read against
+ * an archive's `date > today` withdrawal — cannot use ALT_DAY_4 for that
+ * reason and cannot be fixed by picking a different offset for ALT_DAY_4
+ * itself; some offset is always today, by the same pigeonhole. Move that
+ * fixture to a different ALT_DAY instead.
  */
 const ALT_DAY_1 = (DAY_OF_WEEK + 1) % 7;
 const ALT_DAY_2 = (DAY_OF_WEEK + 3) % 7;
@@ -270,7 +285,7 @@ describe('POST /api/class-templates', () => {
           data: {
             scheduleRule: {
               create: {
-                teacherId, kind: 'regular', classType: 'Rollback', dayOfWeek: 2,
+                teacherId, kind: 'regular', classType: 'Rollback', dayOfWeek: ALT_DAY_4,
                 startTime: hhmmToTime('09:00'), durationMinutes: 60,
               },
             },
@@ -619,7 +634,7 @@ describe('PATCH /api/class-templates/[id]', () => {
       data: {
         scheduleRule: {
           create: {
-            teacherId, kind: 'regular', classType: 'Scope A', dayOfWeek: 4,
+            teacherId, kind: 'regular', classType: 'Scope A', dayOfWeek: ALT_DAY_1,
             startTime: hhmmToTime('10:00'), durationMinutes: 60, isActive: false,
           },
         },
@@ -640,7 +655,7 @@ describe('PATCH /api/class-templates/[id]', () => {
       data: {
         scheduleRule: {
           create: {
-            teacherId, kind: 'regular', classType: 'Scope B', dayOfWeek: 5,
+            teacherId, kind: 'regular', classType: 'Scope B', dayOfWeek: ALT_DAY_2,
             startTime: hhmmToTime('10:00'), durationMinutes: 60, isActive: true,
           },
         },
@@ -1877,7 +1892,12 @@ describe('PUT /api/class-templates/[id]', () => {
   // classes. Kept rather than deleted precisely for that reason — it fails
   // if the PUT ever starts generating again, from any direction.
   it('editing an archived template materializes no classes', async () => {
-    const id = await createTemplate('Shelved Flow', '06:00', ALT_DAY_4);
+    // ALT_DAY_4 is unavoidably today (see the ALT_DAY docblock) and today's
+    // occurrence survives archiving's `date > today` withdrawal by design —
+    // that would make this case fail to prove what it claims on its own
+    // fixture's day. ALT_DAY_5 (tomorrow) is not today on any date, so the
+    // whole window this test creates is always in the future.
+    const id = await createTemplate('Shelved Flow', '06:00', ALT_DAY_5);
     expect(await prisma.class.count({ where: { templateId: id } })).toBeGreaterThan(0);
 
     const archive = await fetch(`${BASE_URL}/api/class-templates/${id}?state=archived`, {
