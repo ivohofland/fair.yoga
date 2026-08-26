@@ -7,6 +7,7 @@ import {
   getUnreadForEmailFallback,
   claimEmailFallback,
 } from './notifications';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -90,7 +91,7 @@ describe('createNotification', () => {
         teacherRoomId: teacherRoom.id,
         classType: 'Hatha',
         date: new Date('2026-06-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,

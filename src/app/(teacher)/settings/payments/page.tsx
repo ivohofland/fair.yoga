@@ -6,6 +6,7 @@ import { OutstandingPaymentRow } from '@/components/class/outstanding-payment-ro
 import { ReceivedPaymentRow } from '@/components/class/received-payment-row';
 import { formatDateShort } from '@/lib/format';
 import { teacherVisibleName, studentNameSelect } from '@/lib/student-visibility';
+import { timeToHHmm } from '@/lib/time-of-day';
 
 export const dynamic = 'force-dynamic';
 
@@ -71,7 +72,7 @@ export default async function PaymentsOverviewPage() {
               paymentId={p.id}
               studentName={studentName(p)}
               classId={p.registration.class.id}
-              classContext={`${p.registration.class.classType} · ${formatDateShort(p.registration.class.date)} · ${p.registration.class.startTime}`}
+              classContext={`${p.registration.class.classType} · ${formatDateShort(p.registration.class.date)} · ${timeToHHmm(p.registration.class.startTime)}`}
               amount={Number(p.amount)}
               status={p.status}
               reminderSentAt={p.reminderSentAt}
@@ -90,7 +91,7 @@ export default async function PaymentsOverviewPage() {
               key={p.id}
               paymentId={p.id}
               studentName={studentName(p)}
-              classContext={`${p.registration.class.classType} · ${formatDateShort(p.registration.class.date)} · ${p.registration.class.startTime}`}
+              classContext={`${p.registration.class.classType} · ${formatDateShort(p.registration.class.date)} · ${timeToHHmm(p.registration.class.startTime)}`}
               paidAt={p.paidAt}
               timeZone={session.defaultTimezone}
               amount={Number(p.amount)}

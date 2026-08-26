@@ -11,6 +11,7 @@ import {
 import { createClassSchema } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
+import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
@@ -45,7 +46,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     orderBy: { date: 'asc' },
   });
 
-  return respondOk(classes);
+  return respondOk(classes.map((cls) => ({ ...cls, startTime: timeToHHmm(cls.startTime) })));
 });
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
@@ -70,7 +71,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         classType: body.classType,
         description: body.description ?? null,
         date: new Date(body.date),
-        startTime: body.startTime,
+        startTime: hhmmToTime(body.startTime),
         durationMinutes: body.durationMinutes,
         roomCost: body.roomCost,
         minRate: body.minRate,
@@ -82,7 +83,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         status: 'draft',
       },
     });
-    return respondOk(cls, 201);
+    return respondOk({ ...cls, startTime: timeToHHmm(cls.startTime) }, 201);
   } catch (err) {
     // The slot key, not the template key. `@@unique([templateId, date])`
     // cannot raise P2002 here — this create never sets `templateId` (a

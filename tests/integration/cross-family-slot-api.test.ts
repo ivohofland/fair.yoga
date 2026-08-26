@@ -213,7 +213,7 @@ async function expect409(res: Response, code: string, messagePattern: RegExp) {
 describe('the class family refuses a slot the studio family holds', () => {
   it('POST /api/classes', async () => {
     await prisma.studioClass.create({
-      data: { teacherId, ...studioBody('09:00'), date: dateAt(DATE) },
+      data: { teacherId, ...studioBody('09:00'), date: dateAt(DATE), startTime: hhmmToTime('09:00') },
     });
 
     const res = await send('POST', '/api/classes', classBody('09:00'));
@@ -223,7 +223,7 @@ describe('the class family refuses a slot the studio family holds', () => {
 
   it('PUT /api/classes/[id] — moved onto a held slot', async () => {
     await prisma.studioClass.create({
-      data: { teacherId, ...studioBody('09:00'), date: dateAt(DATE) },
+      data: { teacherId, ...studioBody('09:00'), date: dateAt(DATE), startTime: hhmmToTime('09:00') },
     });
     const created = await send('POST', '/api/classes', classBody('11:00'));
     expect(created.status).toBe(201);
@@ -276,7 +276,7 @@ describe('the class family refuses a slot the studio family holds', () => {
 describe('the studio family refuses a slot the class family holds', () => {
   it('POST /api/studio-classes', async () => {
     await prisma.class.create({
-      data: { teacherId, ...classBody('09:00'), date: dateAt(DATE) },
+      data: { teacherId, ...classBody('09:00'), date: dateAt(DATE), startTime: hhmmToTime('09:00') },
     });
 
     const res = await send('POST', '/api/studio-classes', studioBody('09:00'));
@@ -286,7 +286,7 @@ describe('the studio family refuses a slot the class family holds', () => {
 
   it('PUT /api/studio-classes/[id] — moved onto a held slot', async () => {
     await prisma.class.create({
-      data: { teacherId, ...classBody('09:00'), date: dateAt(DATE) },
+      data: { teacherId, ...classBody('09:00'), date: dateAt(DATE), startTime: hhmmToTime('09:00') },
     });
     const created = await send('POST', '/api/studio-classes', studioBody('11:00'));
     expect(created.status).toBe(201);
@@ -301,10 +301,10 @@ describe('the studio family refuses a slot the class family holds', () => {
     // `cancelledAt: null` re-enters the partial index and re-fires the guard,
     // which is the #275 Restore door this invariant governs.
     const studio = await prisma.studioClass.create({
-      data: { teacherId, ...studioBody('09:00'), date: dateAt(DATE), cancelledAt: new Date() },
+      data: { teacherId, ...studioBody('09:00'), date: dateAt(DATE), cancelledAt: new Date(), startTime: hhmmToTime('09:00') },
     });
     await prisma.class.create({
-      data: { teacherId, ...classBody('09:00'), date: dateAt(DATE) },
+      data: { teacherId, ...classBody('09:00'), date: dateAt(DATE), startTime: hhmmToTime('09:00') },
     });
 
     const res = await send('PUT', `/api/studio-classes/${studio.id}`, { cancelledAt: null });
@@ -378,7 +378,7 @@ describe('the count reaches the teacher, not just the reducer', () => {
           templateId: null,
           classType: 'Window Holder',
           date,
-          startTime: TIME,
+          startTime: hhmmToTime(TIME),
           durationMinutes: 60,
           location: 'Elsewhere',
           hourlyRate: 40,
@@ -430,7 +430,7 @@ describe('the count reaches the teacher, not just the reducer', () => {
   it('POST /api/studio-class-templates carries the mirror', async () => {
     for (const date of window()) {
       await prisma.class.create({
-        data: { teacherId, ...classBody(TIME), date },
+        data: { teacherId, ...classBody(TIME), date, startTime: hhmmToTime(TIME) },
       });
     }
 
@@ -453,14 +453,14 @@ describe('the two sentences are not interchangeable', () => {
    */
   it('names the studio family to a class caller and the class family to a studio caller', async () => {
     await prisma.studioClass.create({
-      data: { teacherId, ...studioBody('09:00'), date: dateAt(DATE) },
+      data: { teacherId, ...studioBody('09:00'), date: dateAt(DATE), startTime: hhmmToTime('09:00') },
     });
     const toClass = await send('POST', '/api/classes', classBody('09:00'));
     const classBody409 = await expect409(toClass, 'CROSS_FAMILY_STUDIO_SLOT', /studio class/i);
 
     await prisma.studioClass.deleteMany({ where: { teacherId } });
     await prisma.class.create({
-      data: { teacherId, ...classBody('09:00'), date: dateAt(DATE) },
+      data: { teacherId, ...classBody('09:00'), date: dateAt(DATE), startTime: hhmmToTime('09:00') },
     });
     const toStudio = await send('POST', '/api/studio-classes', studioBody('09:00'));
     const studioBody409 = await expect409(toStudio, 'CROSS_FAMILY_CLASS_SLOT', /already have a class/i);
@@ -472,7 +472,7 @@ describe('the two sentences are not interchangeable', () => {
 
   it('leaves the WITHIN-family 409 saying something different again', async () => {
     await prisma.class.create({
-      data: { teacherId, ...classBody('09:00'), date: dateAt(DATE) },
+      data: { teacherId, ...classBody('09:00'), date: dateAt(DATE), startTime: hhmmToTime('09:00') },
     });
 
     const res = await send('POST', '/api/classes', classBody('09:00'));

@@ -364,7 +364,7 @@ model Class {
   classType            String
   description          String?         @db.Text
   date                 DateTime        @db.Date
-  startTime            String
+  startTime            DateTime        @db.Time
   durationMinutes      Int
   roomCost             Decimal         @db.Decimal(10, 2)
   minRate              Decimal         @db.Decimal(10, 2)
@@ -575,7 +575,7 @@ model StudioClass {
   templateId      String?
   classType       String    @default("")
   date            DateTime  @db.Date
-  startTime       String
+  startTime       DateTime  @db.Time
   durationMinutes Int
   location        String
   studentCount    Int?

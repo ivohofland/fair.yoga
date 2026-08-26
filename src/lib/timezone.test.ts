@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { classStartInstant, startsInPast, startOfLocalDay, startOfLocalWeek, mondayOf } from './timezone';
+import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
 /**
@@ -66,8 +67,9 @@ describe('startOfLocalDay', () => {
   });
 });
 
-// Class rows store a calendar date (UTC midnight) + HH:mm wall-clock startTime.
-// classStartInstant interprets that wall clock in the teacher's timezone.
+// Class rows store a calendar date (UTC midnight) + a wall-clock startTime
+// (`@db.Time`). classStartInstant interprets that wall clock in the teacher's
+// timezone.
 describe('classStartInstant', () => {
   const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 
@@ -76,34 +78,34 @@ describe('classStartInstant', () => {
   });
 
   it('converts Amsterdam summer time (CEST, +2) to UTC', () => {
-    const start = classStartInstant(day('2026-07-20'), '18:00', 'Europe/Amsterdam');
+    const start = classStartInstant(day('2026-07-20'), hhmmToTime('18:00'), 'Europe/Amsterdam');
     expect(start.toISOString()).toBe('2026-07-20T16:00:00.000Z');
   });
 
   it('converts Amsterdam winter time (CET, +1) to UTC', () => {
-    const start = classStartInstant(day('2026-01-20'), '18:00', 'Europe/Amsterdam');
+    const start = classStartInstant(day('2026-01-20'), hhmmToTime('18:00'), 'Europe/Amsterdam');
     expect(start.toISOString()).toBe('2026-01-20T17:00:00.000Z');
   });
 
   it('handles zones behind UTC', () => {
-    const start = classStartInstant(day('2026-07-20'), '18:00', 'America/New_York');
+    const start = classStartInstant(day('2026-07-20'), hhmmToTime('18:00'), 'America/New_York');
     expect(start.toISOString()).toBe('2026-07-20T22:00:00.000Z');
   });
 
   it('an early-morning class can start on the previous UTC day', () => {
-    const start = classStartInstant(day('2026-07-20'), '00:30', 'Europe/Amsterdam');
+    const start = classStartInstant(day('2026-07-20'), hhmmToTime('00:30'), 'Europe/Amsterdam');
     expect(start.toISOString()).toBe('2026-07-19T22:30:00.000Z');
   });
 
   it('UTC zone is the identity', () => {
-    const start = classStartInstant(day('2026-07-20'), '09:15', 'UTC');
+    const start = classStartInstant(day('2026-07-20'), hhmmToTime('09:15'), 'UTC');
     expect(start.toISOString()).toBe('2026-07-20T09:15:00.000Z');
   });
 
   it('resolves a time on the EU spring-forward day (02:30 does not exist)', () => {
     // 2026-03-29 02:00 CET jumps to 03:00 CEST. The helper must return a
     // deterministic instant on the right day, not NaN.
-    const start = classStartInstant(day('2026-03-29'), '02:30', 'Europe/Amsterdam');
+    const start = classStartInstant(day('2026-03-29'), hhmmToTime('02:30'), 'Europe/Amsterdam');
     expect(Number.isNaN(start.getTime())).toBe(false);
     // Either interpretation (+1 → 01:30Z, +2 → 00:30Z) is acceptable.
     const iso = start.toISOString();
@@ -111,13 +113,13 @@ describe('classStartInstant', () => {
   });
 
   it('falls back to UTC interpretation for an unknown timezone', () => {
-    const start = classStartInstant(day('2026-07-20'), '18:00', 'Not/AZone');
+    const start = classStartInstant(day('2026-07-20'), hhmmToTime('18:00'), 'Not/AZone');
     expect(start.toISOString()).toBe('2026-07-20T18:00:00.000Z');
   });
 
   it('warns when falling back to UTC so the bad zone is observable', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    classStartInstant(day('2026-07-20'), '18:00', 'Not/AZone');
+    classStartInstant(day('2026-07-20'), hhmmToTime('18:00'), 'Not/AZone');
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ timeZone: 'Not/AZone' }),
       expect.stringContaining('falling back to UTC'),
@@ -129,21 +131,22 @@ describe('classStartInstant', () => {
    * had to be said here.
    *
    * `Date.UTC` returns NaN if the hour is NaN OR if the year is, and an Invalid
-   * `classDate` makes `getUTCFullYear()` NaN just as an unparseable `startTime`
-   * makes the hour NaN. The first version of the NaN guard tested only the
-   * combined `wallUtc` and blamed `startTime` unconditionally — so
-   * `classStartInstant(new Date('nonsense'), '09:00', 'Europe/Amsterdam')`
-   * logged `startTime: '09:00'` against a message saying it was unparseable.
-   * Measured. That is the same misattribution the guard was added to remove,
-   * moved one level rather than fixed: before it, a bad `startTime` was blamed
-   * on the timezone; after it, a bad date was blamed on the `startTime`.
+   * `classDate` makes `getUTCFullYear()` NaN just as an Invalid `startTime`
+   * makes `getUTCHours()` NaN. The first version of the NaN guard tested only
+   * the combined `wallUtc` and blamed `startTime` unconditionally — so
+   * `classStartInstant(new Date('nonsense'), hhmmToTime('09:00'),
+   * 'Europe/Amsterdam')` logged the valid `startTime` against a message saying
+   * it was unparseable. Measured. That is the same misattribution the guard
+   * was added to remove, moved one level rather than fixed: before it, a bad
+   * `startTime` was blamed on the timezone; after it, a bad date was blamed on
+   * the `startTime`.
    *
    * On a VPS whose observability is grep over pino, each wrong name sends
    * whoever is on call to the wrong column.
    */
   it('names the date when the date is what broke, not the startTime', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    classStartInstant(new Date('nonsense'), '09:00', 'Europe/Amsterdam');
+    classStartInstant(new Date('nonsense'), hhmmToTime('09:00'), 'Europe/Amsterdam');
 
     expect(warn).toHaveBeenCalledTimes(1);
     const [payload, message] = warn.mock.calls[0] as [Record<string, unknown>, string];
@@ -153,15 +156,19 @@ describe('classStartInstant', () => {
     expect(payload).toMatchObject({ classDate: null });
   });
 
+  // `startTime` is a `Date` now, not a raw string — so the only way for it to
+  // be the thing that broke is an Invalid Date, rather than a wrongly-shaped
+  // "HH:mm" string. `timeHHmm` (`@/lib/schemas`) is what keeps a bad string
+  // from ever reaching `hhmmToTime` in the first place.
   it('names the startTime when the startTime is what broke, not the date', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    classStartInstant(day('2026-07-20'), 'garbage', 'Europe/Amsterdam');
+    classStartInstant(day('2026-07-20'), new Date('garbage'), 'Europe/Amsterdam');
 
     expect(warn).toHaveBeenCalledTimes(1);
     const [payload, message] = warn.mock.calls[0] as [Record<string, unknown>, string];
     expect(message).toMatch(/startTime/i);
     expect(message).not.toMatch(/timezone/i);
-    expect(payload).toMatchObject({ startTime: 'garbage' });
+    expect(payload).toMatchObject({ startTime: null });
   });
 });
 
@@ -198,7 +205,7 @@ describe('startsInPast', () => {
   it('is false for a class still to come in a zone far ahead of UTC', () => {
     expect(
       startsInPast(
-        { date: day('2026-06-15'), startTime: '23:00', timeZone: 'Pacific/Auckland' },
+        { date: day('2026-06-15'), startTime: hhmmToTime('23:00'), timeZone: 'Pacific/Auckland' },
         new Date('2026-06-15T06:00:00.000Z'),
       ),
     ).toBe(false);
@@ -208,7 +215,7 @@ describe('startsInPast', () => {
     // 09:00 CEST = 07:00Z, and `now` is five hours later.
     expect(
       startsInPast(
-        { date: day('2026-06-15'), startTime: '09:00', timeZone: 'Europe/Amsterdam' },
+        { date: day('2026-06-15'), startTime: hhmmToTime('09:00'), timeZone: 'Europe/Amsterdam' },
         new Date('2026-06-15T12:00:00.000Z'),
       ),
     ).toBe(true);
@@ -218,7 +225,7 @@ describe('startsInPast', () => {
     // Strictly `<`: a class starting this instant has not started in the past.
     expect(
       startsInPast(
-        { date: day('2026-06-15'), startTime: '09:00', timeZone: 'Europe/Amsterdam' },
+        { date: day('2026-06-15'), startTime: hhmmToTime('09:00'), timeZone: 'Europe/Amsterdam' },
         new Date('2026-06-15T07:00:00.000Z'),
       ),
     ).toBe(false);
@@ -249,7 +256,7 @@ describe('startsInPast', () => {
   it('reads the wall clock in the zone, not as UTC — the west-of-UTC case', () => {
     expect(
       startsInPast(
-        { date: day('2026-06-15'), startTime: '02:00', timeZone: 'America/Los_Angeles' },
+        { date: day('2026-06-15'), startTime: hhmmToTime('02:00'), timeZone: 'America/Los_Angeles' },
         new Date('2026-06-15T05:00:00.000Z'),
       ),
     ).toBe(false);
@@ -258,7 +265,7 @@ describe('startsInPast', () => {
     // answering `false`: one hour past the true start, it is `true`.
     expect(
       startsInPast(
-        { date: day('2026-06-15'), startTime: '02:00', timeZone: 'America/Los_Angeles' },
+        { date: day('2026-06-15'), startTime: hhmmToTime('02:00'), timeZone: 'America/Los_Angeles' },
         new Date('2026-06-15T10:00:00.000Z'),
       ),
     ).toBe(true);
@@ -267,35 +274,28 @@ describe('startsInPast', () => {
   /**
    * FAILING CLOSED, and the direction is the entire point.
    *
-   * An unparseable `startTime` makes `classStartInstant` return an Invalid
-   * Date, and every comparison against one is `false` — so the obvious
+   * An Invalid `startTime` makes `classStartInstant` return an Invalid Date,
+   * and every comparison against one is `false` — so the obvious
    * implementation (`classStartInstant(...) < now`) answered "no, it has not
    * started" for a value it could not read at all, in a predicate whose only
    * two callers use a `true` to REFUSE a write. Measured before this test
-   * existed: `startsInPast(2020-01-01, 'garbage', 'Europe/Amsterdam', now)`
-   * returned `false`, letting a 2020 date through both guards.
+   * existed: `startsInPast(2020-01-01, new Date('garbage'), 'Europe/Amsterdam',
+   * now)` returned `false`, letting a 2020 date through both guards.
    *
    * `completeClass` (`class-lifecycle.ts`) already `Number.isNaN`-guards this
    * exact shape on `requireEndedBy`; this is the same defence one file over.
    *
-   * A stored `startTime` can only be `HH:mm` — the schema validates it on
-   * every write — so reaching this branch means the column has been corrupted
-   * by something outside the app. Refusing the edit and logging is the right
-   * answer to that; silently permitting it is not.
+   * A stored `startTime` can only be a valid `@db.Time` value — Postgres
+   * enforces the column type, and `timeHHmm` validates the wire format before
+   * `hhmmToTime` ever produces one — so reaching this branch means the value
+   * was constructed outside that path entirely. Refusing the edit and logging
+   * is the right answer to that; silently permitting it is not.
    */
   it('fails closed on an unparseable startTime rather than permitting the write', () => {
     vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     expect(
       startsInPast(
-        { date: day('2026-06-15'), startTime: 'garbage', timeZone: 'Europe/Amsterdam' },
-        new Date(),
-      ),
-    ).toBe(true);
-    // Not only the obviously-broken shape: an hour that parses as a number but
-    // is not a time reaches `Date.UTC` and comes back NaN just the same.
-    expect(
-      startsInPast(
-        { date: day('2026-06-15'), startTime: '', timeZone: 'Europe/Amsterdam' },
+        { date: day('2026-06-15'), startTime: new Date('garbage'), timeZone: 'Europe/Amsterdam' },
         new Date(),
       ),
     ).toBe(true);
@@ -310,7 +310,7 @@ describe('startsInPast', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     expect(
       startsInPast(
-        { date: new Date(NaN), startTime: 'garbage', timeZone: 'Europe/Amsterdam' },
+        { date: new Date(NaN), startTime: new Date('garbage'), timeZone: 'Europe/Amsterdam' },
         new Date(),
       ),
     ).toBe(true);
@@ -327,11 +327,11 @@ describe('startsInPast', () => {
     // that sends whoever is on call to the wrong column.
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     startsInPast(
-        { date: day('2026-06-15'), startTime: 'garbage', timeZone: 'Europe/Amsterdam' },
+        { date: day('2026-06-15'), startTime: new Date('garbage'), timeZone: 'Europe/Amsterdam' },
         new Date(),
       );
     expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ startTime: 'garbage' }),
+      expect.objectContaining({ startTime: null }),
       expect.stringContaining('startTime'),
     );
     for (const [, msg] of warn.mock.calls) {

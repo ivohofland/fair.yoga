@@ -604,7 +604,7 @@ describe('generateStudioClassInstances (DB)', () => {
       });
       expect(created.length).toBeGreaterThan(0);
       for (const c of created) {
-        expect(c.startTime).toBe('18:45');
+        expect(timeToHHmm(c.startTime)).toBe('18:45');
         // dayOfWeek 5 in this schema's convention (0=Mon) is Saturday,
         // which is getUTCDay() === 6.
         expect(c.date.getUTCDay()).toBe(6);
@@ -842,7 +842,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     const id = await makeTemplate(eastTeacherId, 6, '07:30');
     const tpl = await withZone(id);
     const dates = getNextOccurrences(6, now, 5)
-      .filter((d) => classStartInstant(d, '07:30', tpl.scheduleRule.teacher.defaultTimezone) > now)
+      .filter((d) => classStartInstant(d, hhmmToTime('07:30'), tpl.scheduleRule.teacher.defaultTimezone) > now)
       .slice(0, 4);
     const collide = dates[2]!;
 
@@ -868,7 +868,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
             templateId: null,
             classType: 'Holder',
             date: collide,
-            startTime: '07:30',
+            startTime: hhmmToTime('07:30'),
             durationMinutes: 60,
             location: 'Elsewhere',
             hourlyRate: 40,
@@ -1016,7 +1016,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
         templateId: null,
         classType: 'Manual',
         date: dates[1]!,
-        startTime: timeToHHmm(tpl.scheduleRule.startTime),
+        startTime: tpl.scheduleRule.startTime,
         durationMinutes: 60,
         location: 'Elsewhere',
         hourlyRate: 50,
@@ -1065,7 +1065,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
         teacherRoomId: eastTeacherRoomId,
         classType: 'Cross Family',
         date: dates[1]!,
-        startTime: timeToHHmm(tpl.scheduleRule.startTime),
+        startTime: tpl.scheduleRule.startTime,
         durationMinutes: 60,
         roomCost: 20,
         minRate: 30,
@@ -1108,7 +1108,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
         teacherRoomId: eastTeacherRoomId,
         classType: 'Cross Family Cancelled',
         date: dates[1]!,
-        startTime: timeToHHmm(tpl.scheduleRule.startTime),
+        startTime: tpl.scheduleRule.startTime,
         durationMinutes: 60,
         roomCost: 20,
         minRate: 30,
@@ -1149,7 +1149,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
         templateId: null,
         classType: 'Manual',
         date: dates[1]!,
-        startTime: timeToHHmm(tpl.scheduleRule.startTime),
+        startTime: tpl.scheduleRule.startTime,
         durationMinutes: 60,
         location: 'Elsewhere',
         hourlyRate: 50,

@@ -2,6 +2,7 @@ import { test, expect, type BrowserContext } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
  * The student's side of a contested class, end to end through the UI:
@@ -75,7 +76,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
         teacherRoomId: teacherRoom.id,
         classType: 'One Seat Yin',
         date: new Date('2099-06-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,

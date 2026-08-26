@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -91,7 +92,7 @@ async function makeClass(
       teacherRoomId,
       classType,
       date: CLASS_DATE,
-      startTime: slot(slotIndex),
+      startTime: hhmmToTime(slot(slotIndex)),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,

@@ -124,7 +124,7 @@ beforeAll(async () => {
         teacherId: ownerId,
         classType: 'Owner Studio Class',
         date: new Date('2099-06-03'),
-        startTime: '18:00',
+        startTime: hhmmToTime('18:00'),
         durationMinutes: 60,
         location: 'Community Studio',
         hourlyRate: 45,
@@ -750,7 +750,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
           templateId: template.id,
           classType: 'Archive Window',
           date: new Date(date),
-          startTime: '18:00',
+          startTime: hhmmToTime('18:00'),
           durationMinutes: 60,
           location: 'Community Studio',
           hourlyRate: 45,
@@ -780,7 +780,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
         templateId: template.id,
         classType: 'Pause Window',
         date: new Date('2099-09-01'),
-        startTime: '19:00',
+        startTime: hhmmToTime('19:00'),
         durationMinutes: 60,
         location: 'Community Studio',
         hourlyRate: 45,
@@ -854,7 +854,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
         templateId: template.id,
         classType: 'Twice Archived',
         date: new Date('2099-10-01'),
-        startTime: '18:00',
+        startTime: hhmmToTime('18:00'),
         durationMinutes: 60,
         location: 'Community Studio',
         hourlyRate: 45,
@@ -1037,6 +1037,29 @@ describe('/api/studio-classes', () => {
     expect(data.teacherId).toBe(ownerId);
   });
 
+  // #327 stage B, Task 1: `startTime` becomes a `@db.Time` column. The wire
+  // format is unchanged — this pins that boundary at the create route, and
+  // reads the column directly to prove the type actually changed rather than
+  // trusting the route's own round trip.
+  it('accepts and returns startTime as "HH:MM" while the column is time', async () => {
+    const res = await send('POST', ownerToken, '/api/studio-classes', {
+      classType: 'Wire Format Studio',
+      date: '2027-03-02',
+      startTime: '19:30',
+      durationMinutes: 60,
+      location: 'Guest Studio',
+      hourlyRate: 55,
+    });
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string; startTime: string } };
+    expect(data.startTime).toBe('19:30');
+
+    // The column, not the wire: a text column would come back as a string here.
+    const [row] = await prisma.$queryRaw<Array<{ t: Date }>>`
+      SELECT "startTime" AS t FROM "StudioClass" WHERE id = ${data.id}`;
+    expect(row?.t).toBeInstanceOf(Date);
+  });
+
   // #148. Both keys reached prisma.studioClass.create through a `{ date, ...rest }`
   // spread, so neither name appeared anywhere in the handler — a grep for the
   // key names found nothing, which is how this stayed hidden.
@@ -1145,7 +1168,7 @@ describe('/api/studio-classes', () => {
           teacherId: ownerId,
           classType: 'PUT Persistence',
           date: PIN_DATE,
-          startTime,
+          startTime: hhmmToTime(startTime),
           durationMinutes: 75,
           location: 'Harbour Studio',
           hourlyRate: 80,
@@ -1216,7 +1239,7 @@ describe('/api/studio-classes', () => {
           teacherId: ownerId,
           classType: 'PUT Slot',
           date: SLOT_DATE,
-          startTime,
+          startTime: hhmmToTime(startTime),
           durationMinutes: 60,
           location: 'Some Studio',
           hourlyRate: 45,
@@ -1242,7 +1265,7 @@ describe('/api/studio-classes', () => {
       expect(json.error.code).toBe('DUPLICATE_STUDIO_SLOT');
 
       const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id } });
-      expect(after.startTime).toBe('12:15');
+      expect(timeToHHmm(after.startTime)).toBe('12:15');
     });
 
     // The two rows can coexist at creation: `cancelled` starts outside the
@@ -1290,7 +1313,7 @@ describe('/api/studio-classes', () => {
           teacherId: ownerId,
           classType: 'PUT Policy',
           date,
-          startTime,
+          startTime: hhmmToTime(startTime),
           durationMinutes: 60,
           location: 'Policy Studio',
           hourlyRate: 45,
@@ -1436,7 +1459,7 @@ describe('/api/studio-classes', () => {
           teacherRoomId: teacherRoom.id,
           classType: 'Policy Cross Family Holder',
           date: new Date('2031-05-06'),
-          startTime: '09:00',
+          startTime: hhmmToTime('09:00'),
           durationMinutes: 60,
           roomCost: 20,
           minRate: 30,
@@ -1602,7 +1625,7 @@ describe('/api/studio-classes', () => {
       expect((await second.json()).error.code).toBe('DUPLICATE_STUDIO_SLOT');
 
       const rows = await prisma.studioClass.findMany({
-        where: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: '11:00' },
+        where: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: hhmmToTime('11:00') },
       });
       expect(rows).toHaveLength(1);
     });
@@ -1619,7 +1642,7 @@ describe('/api/studio-classes', () => {
       expect((await loser.json()).error.code).toBe('DUPLICATE_STUDIO_SLOT');
 
       const rows = await prisma.studioClass.findMany({
-        where: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: '11:30' },
+        where: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: hhmmToTime('11:30') },
       });
       expect(rows).toHaveLength(1);
     });
@@ -1627,7 +1650,7 @@ describe('/api/studio-classes', () => {
 });
 
 describe('DELETE /api/studio-classes/[id]', () => {
-  const makeClass = (data: {
+  const makeClass = ({ startTime, ...data }: {
     templateId?: string | null;
     date: Date;
     startTime: string;
@@ -1640,6 +1663,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
         durationMinutes: 60,
         location: 'Community Studio',
         hourlyRate: 45,
+        startTime: hhmmToTime(startTime),
         ...data,
       },
     });

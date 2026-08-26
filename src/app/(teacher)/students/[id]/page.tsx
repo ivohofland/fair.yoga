@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { formatDateWithYear, formatDateShort } from '@/lib/format';
+import { timeToHHmm } from '@/lib/time-of-day';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
@@ -126,7 +127,7 @@ export default async function StudentDetailPage({
                     <p className="text-base text-ink">{reg.class.classType}</p>
                     <p className="type-caption">
                       {formatDateWithYear(reg.class.date)}
-                      {' · '}{reg.class.startTime}
+                      {' · '}{timeToHHmm(reg.class.startTime)}
                     </p>
                   </div>
                   <span className={`text-sm ${reg.status === 'attended' ? 'text-teal' : reg.status === 'cancelled' ? 'text-danger' : 'text-brown'}`}>

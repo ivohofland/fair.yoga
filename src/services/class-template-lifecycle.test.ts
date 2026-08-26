@@ -25,10 +25,10 @@ const uniqueSuffix = Date.now();
  * fail — but a fixed-width literal (`` `09:${30 + counter}` ``) can't make
  * the same guarantee: Task 6d's review found `archiveOrUnarchiveTemplate`'s
  * `makeTemplate` counter reaching its old ceiling at exactly its own call
- * count (29 calls, `'09:59'`), one call short of `'09:60'` — a value that a
- * plain `String` column, a string-equality occupancy check, and a
- * string-comparing partial index would all have accepted silently, with
- * the test no longer exercising the constraint this branch exists for.
+ * count (29 calls, `'09:59'`), one call short of `'09:60'`. `Class.startTime`
+ * is `@db.Time` and would now refuse such a value outright at the DB, which
+ * is a less useful failure here than this guard's message naming the fixture
+ * counter that produced it.
  */
 function slotTime(totalMinutesFrom9am: number): string {
   const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
@@ -604,7 +604,7 @@ describe('updateClassTemplate (DB)', () => {
         templateId: null,
         classType: 'Cross Family Holder',
         date: blocked,
-        startTime: '23:59',
+        startTime: hhmmToTime('23:59'),
         durationMinutes: 60,
         location: 'Elsewhere',
         hourlyRate: 50,
@@ -662,7 +662,7 @@ describe('updateClassTemplate (DB)', () => {
         templateId: null,
         classType: 'Cross Family Cancelled Holder',
         date: notBlocked,
-        startTime: '23:58',
+        startTime: hhmmToTime('23:58'),
         durationMinutes: 60,
         location: 'Elsewhere',
         hourlyRate: 50,
@@ -759,7 +759,7 @@ describe('updateClassTemplate (DB)', () => {
         templateId: template.id,
         classType: 'Stamp Only',
         date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-        startTime: timeToHHmm(template.scheduleRule.startTime),
+        startTime: template.scheduleRule.startTime,
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -781,7 +781,7 @@ describe('updateClassTemplate (DB)', () => {
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: instance.id } });
     expect(after.date.toISOString()).toBe(instance.date.toISOString());
-    expect(after.startTime).toBe(instance.startTime);
+    expect(after.startTime.getTime()).toBe(instance.startTime.getTime());
     expect(after.roomCost.toString()).toBe(instance.roomCost.toString());
     expect(after.maxStudents).toBe(instance.maxStudents);
     expect(after.teacherRoomId).toBe(instance.teacherRoomId);
@@ -1072,7 +1072,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
         templateId,
         classType: opts.classType ?? 'Archive Rule',
         date: opts.date,
-        startTime: opts.startTime ?? slotTime(makeClassCounter),
+        startTime: hhmmToTime(opts.startTime ?? slotTime(makeClassCounter)),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -1787,7 +1787,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
           templateId: t.id,
           classType: 'Zone Boundary',
           date: localToday,
-          startTime: '19:00',
+          startTime: hhmmToTime('19:00'),
           durationMinutes: 60,
           roomCost: 15,
           minRate: 10,
@@ -2240,7 +2240,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
         templateId,
         classType: 'Pause Rule',
         date,
-        startTime,
+        startTime: hhmmToTime(startTime),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -2339,7 +2339,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
     await pauseOrResumeTemplate(prisma, t.id, teacherId, 'paused');
 
     const candidates = getNextOccurrences(3, new Date(), 5)
-      .filter((d) => classStartInstant(d, '09:30', 'UTC') > new Date())
+      .filter((d) => classStartInstant(d, hhmmToTime('09:30'), 'UTC') > new Date())
       .slice(0, 4);
     await prisma.class.create({
       data: {
@@ -2348,7 +2348,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
         templateId: null,
         classType: 'Manual',
         date: candidates[0]!,
-        startTime: '09:30',
+        startTime: hhmmToTime('09:30'),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -2726,7 +2726,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
               templateId: t.id,
               classType: 'Claim Blocks Insert',
               date: futureOn(60),
-              startTime: '20:00',
+              startTime: hhmmToTime('20:00'),
               durationMinutes: 60,
               roomCost: 15,
               minRate: 10,

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -777,7 +778,7 @@ describe('GET /api/students — overduePayments', () => {
           teacherRoomId: ownerTeacherRoomId,
           classType: 'Vinyasa',
           date,
-          startTime: '09:00',
+          startTime: hhmmToTime('09:00'),
           durationMinutes: 60,
           roomCost: 30,
           minRate: 15,

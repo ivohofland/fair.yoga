@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -24,11 +25,10 @@ const classIds: string[] = [];
 /**
  * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
  * the next hour rather than ever emitting an invalid minute like `'09:60'`
- * once the counter below crosses 60. `startTime` is a plain `String` with no
- * CHECK constraint, occupancy is string equality, and
- * `Class_teacher_slot_unique` compares strings too — so a raw `09:${counter}`
- * literal would accept an out-of-range value silently instead of exercising
- * the constraint this file's counter exists to dodge collisions with.
+ * once the counter below crosses 60 — a raw `09:${counter}` literal would
+ * build exactly that. `Class.startTime` is `@db.Time` and would refuse the
+ * row outright at the DB, which is a less useful failure here than this
+ * guard's message naming the counter that produced it.
  * Mirrors `class-template-lifecycle.test.ts`'s `slotTime`.
  */
 function slotTime(totalMinutesFrom9am: number): string {
@@ -59,7 +59,7 @@ async function makeClass(maxStudents: number): Promise<string> {
       teacherRoomId,
       classType: 'Reg API',
       date: new Date('2099-06-01'),
-      startTime,
+      startTime: hhmmToTime(startTime),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,
@@ -118,7 +118,7 @@ async function makeLateCancelClass(maxStudents: number, minuteOffset: number): P
       teacherRoomId,
       classType: 'Reg API Late Cancel',
       date: new Date(`${parts.year}-${parts.month}-${parts.day}`),
-      startTime: `${parts.hour}:${parts.minute}`,
+      startTime: hhmmToTime(`${parts.hour}:${parts.minute}`),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,
@@ -142,7 +142,7 @@ async function makeOtherTeacherClass(maxStudents: number): Promise<string> {
       teacherRoomId: otherTeacherRoomId,
       classType: 'Reg API (other teacher)',
       date: new Date('2099-06-01'),
-      startTime: '09:00',
+      startTime: hhmmToTime('09:00'),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,
@@ -996,7 +996,7 @@ describe('teacher-facing registration reads honour StudentPrivacy', () => {
           teacherRoomId: dualTeacherRoomId,
           classType: 'Reg API (dual)',
           date: new Date('2099-06-01'),
-          startTime: '09:00',
+          startTime: hhmmToTime('09:00'),
           durationMinutes: 60,
           roomCost: 20,
           minRate: 15,
@@ -1371,7 +1371,7 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     const cls = await prisma.class.create({
       data: {
         teacherId: raceTeacherId, teacherRoomId: raceTeacherRoomId,
-        classType: 'Race Cancel', date: new Date(`${date}T00:00:00Z`), startTime,
+        classType: 'Race Cancel', date: new Date(`${date}T00:00:00Z`), startTime: hhmmToTime(startTime),
         durationMinutes: 60, roomCost: 20, minRate: 30, targetRate: 60,
         minStudents: 1, maxStudents: 1, cancelDeadline: 'HOURS_48',
         autoCancelCheck: 'HOURS_2', status: 'open',

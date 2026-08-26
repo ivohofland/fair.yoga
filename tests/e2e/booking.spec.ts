@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, hashToken, seedSession, sessionCookie } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 
@@ -55,7 +56,7 @@ test.describe('Public booking flow', () => {
         teacherRoomId: teacherRoom.id,
         classType: 'E2E Vinyasa',
         date: new Date('2099-06-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 20,
         minRate: 15,
@@ -73,7 +74,7 @@ test.describe('Public booking flow', () => {
         teacherRoomId: teacherRoom.id,
         classType: 'E2E Restorative',
         date: new Date('2099-06-08'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 20,
         minRate: 15,

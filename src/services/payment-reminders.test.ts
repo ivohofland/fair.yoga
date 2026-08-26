@@ -6,6 +6,7 @@ import {
   sendPaymentReminders,
   processPaymentReminders,
 } from './payment-reminders';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -76,7 +77,7 @@ describe('payment reminders (DB)', () => {
         teacherRoomId,
         classType: 'PayRem Hatha',
         date: new Date('2026-06-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 20,
         minRate: 15,

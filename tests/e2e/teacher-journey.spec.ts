@@ -2,6 +2,7 @@ import { test, expect, type BrowserContext } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
  * The core product loop, end to end through the UI:
@@ -306,7 +307,7 @@ test.describe('Teacher journey', () => {
     slot = checkinSlot();
     await prisma.class.update({
       where: { id: classId },
-      data: { date: slot.date, startTime: slot.startTime },
+      data: { date: slot.date, startTime: hhmmToTime(slot.startTime) },
     });
 
     await signInTeacher(context);

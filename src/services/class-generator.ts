@@ -217,14 +217,19 @@ export async function generateInstancesForTemplate(
   // the guard below: `classStartInstant` warns on every unreadable input, so
   // asking it a second time would double the log lines for the one case the
   // guard exists to report.
-  const startTimeStr = timeToHHmm(template.scheduleRule.startTime);
+  //
+  // `template.scheduleRule.startTime` is already a `@db.Time` `Date` — passed
+  // straight through rather than round-tripped via `timeToHHmm`, which exists
+  // for the wire boundary, not for a value that already carries the type
+  // `classStartInstant` and `Class.startTime` both want.
+  const startTime = template.scheduleRule.startTime;
   const starts = getNextOccurrences(
     template.scheduleRule.dayOfWeek,
     startDate,
     DEFAULT_WEEKS + 1,
   ).map((date) => ({
     date,
-    start: classStartInstant(date, startTimeStr, template.scheduleRule.teacher.defaultTimezone),
+    start: classStartInstant(date, startTime, template.scheduleRule.teacher.defaultTimezone),
   }));
   const dates = starts
     .filter(({ start }) => start > startDate)
@@ -270,7 +275,7 @@ export async function generateInstancesForTemplate(
         {
           templateId: template.id,
           teacherId: template.scheduleRule.teacherId,
-          startTime: startTimeStr,
+          startTime: timeToHHmm(startTime),
         },
         'recurring class generation found no candidate dates because their start instants could not be read',
       );
@@ -417,7 +422,7 @@ export async function generateInstancesForTemplate(
     // pre-check is what names the reason, not what enforces it.
     // Widen or narrow one without the other and this pre-check starts
     // disagreeing with the constraint that backs it — see the spec's §4.1.
-    if (onDate.some((c) => c.startTime === startTimeStr && c.status !== 'cancelled')) {
+    if (onDate.some((c) => c.startTime.getTime() === startTime.getTime() && c.status !== 'cancelled')) {
       skipped.push({ date, reason: 'slot_taken' });
       continue;
     }
@@ -430,7 +435,9 @@ export async function generateInstancesForTemplate(
     // `continue` and no row is created either way. The studio generator orders
     // its own pair the same way.
     if (
-      foreign.some((c) => c.date.getTime() === date.getTime() && c.startTime === startTimeStr)
+      foreign.some(
+        (c) => c.date.getTime() === date.getTime() && c.startTime.getTime() === startTime.getTime(),
+      )
     ) {
       skipped.push({ date, reason: 'blocked_by_other_family' });
       continue;
@@ -493,7 +500,7 @@ export async function generateInstancesForTemplate(
             classType: template.scheduleRule.classType,
             description: template.description,
             date,
-            startTime: startTimeStr,
+            startTime,
             durationMinutes: template.scheduleRule.durationMinutes,
             roomCost: template.roomCost,
             minRate: template.minRate,

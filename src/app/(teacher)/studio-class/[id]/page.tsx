@@ -10,6 +10,7 @@ import { studioClassDeletability } from '@/services/studio-class-deletion';
 import { studioClassEditability } from '@/services/studio-class-editability';
 import { startOfLocalDay } from '@/lib/timezone';
 import { formatDateWithYear } from '@/lib/format';
+import { timeToHHmm } from '@/lib/time-of-day';
 
 export default async function StudioClassDetailPage({
   params,
@@ -99,7 +100,7 @@ export default async function StudioClassDetailPage({
 
         <div className="min-h-14 py-2 border-b border-border">
           <span className="type-label">Time</span>
-          <p className="text-base text-ink">{studioClass.startTime} &middot; {studioClass.durationMinutes} min</p>
+          <p className="text-base text-ink">{timeToHHmm(studioClass.startTime)} &middot; {studioClass.durationMinutes} min</p>
         </div>
 
         <div className="min-h-14 py-2 border-b border-border">

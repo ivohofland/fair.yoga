@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import { ClassEditForm } from '@/components/class/class-edit-form';
+import { timeToHHmm } from '@/lib/time-of-day';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,7 +38,7 @@ export default async function ClassEditPage({
           classType: cls.classType,
           description: cls.description ?? '',
           date: cls.date.toISOString().slice(0, 10),
-          startTime: cls.startTime,
+          startTime: timeToHHmm(cls.startTime),
           durationMinutes: cls.durationMinutes,
           roomCost: Number(cls.roomCost),
           minRate: Number(cls.minRate),

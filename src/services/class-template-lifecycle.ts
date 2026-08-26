@@ -681,7 +681,7 @@ async function probeFirstEffectiveWeek(
       db.class.findMany({
         where: {
           teacherId: template.teacherId,
-          startTime: template.startTime,
+          startTime: hhmmToTime(template.startTime),
           status: { not: 'cancelled' },
           date: { in: [...horizon] },
         },
@@ -703,7 +703,7 @@ async function probeFirstEffectiveWeek(
       db.studioClass.findMany({
         where: {
           teacherId: template.teacherId,
-          startTime: template.startTime,
+          startTime: hhmmToTime(template.startTime),
           cancelledAt: null,
           date: { in: [...horizon] },
         },
@@ -1090,7 +1090,9 @@ export async function updateClassTemplate(
   // land EARLIER than predicted, never later.
   const now = new Date();
   const horizon = getNextOccurrences(updated.dayOfWeek, now, DEFAULT_WEEKS * 2).filter(
-    (date) => classStartInstant(date, updated.startTime, template.scheduleRule.teacher.defaultTimezone) > now,
+    (date) =>
+      classStartInstant(date, hhmmToTime(updated.startTime), template.scheduleRule.teacher.defaultTimezone) >
+      now,
   );
 
   // The gate the probe cannot apply for itself, because it is not about a
@@ -1829,11 +1831,15 @@ export async function pauseOrResumeTemplate(
       // today's class is still on it. Pause deletes nothing, so there is no
       // spare-today carve-out here to mirror.
       const today = startOfLocalDay(new Date(), template.scheduleRule.teacher.defaultTimezone);
-      const lastScheduled = await db.class.findFirst({
+      const lastScheduledRow = await db.class.findFirst({
         where: scheduledWhere(templateId, { gte: today }),
         orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
         select: { date: true, startTime: true },
       });
+      const lastScheduled: LastScheduledClass | null = lastScheduledRow && {
+        date: lastScheduledRow.date,
+        startTime: timeToHHmm(lastScheduledRow.startTime),
+      };
       return { ok: true, action: 'paused', template: result.template, lastScheduled };
     }
     case 'active':
@@ -2364,7 +2370,7 @@ export async function archiveOrUnarchiveTemplate(
               recipientId: c.studentId,
               type: 'class_cancelled' as const,
               title: 'Class cancelled',
-              body: `The ${c.class.classType} class on ${formatDayHeader(c.class.date)} at ${c.class.startTime} has been withdrawn by your teacher. You were on its waiting list.`,
+              body: `The ${c.class.classType} class on ${formatDayHeader(c.class.date)} at ${timeToHHmm(c.class.startTime)} has been withdrawn by your teacher. You were on its waiting list.`,
             }));
             await createBulkNotifications(tx, notifications);
           }

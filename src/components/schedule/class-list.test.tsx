@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import type { PaymentStatus } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
+import { hhmmToTime } from '@/lib/time-of-day';
 import { ClassList } from './class-list';
 
 /**
@@ -84,7 +85,7 @@ function classRow(
     classType: 'Vinyasa',
     description: null,
     date: overrides?.date ?? new Date('2026-06-12T00:00:00.000Z'),
-    startTime: overrides?.startTime ?? '09:30',
+    startTime: hhmmToTime(overrides?.startTime ?? '09:30'),
     durationMinutes: 60,
     roomCost: new Decimal(20),
     minRate: new Decimal(40),

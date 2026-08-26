@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { readSeatCount } from './capacity';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -55,7 +56,7 @@ describe('readSeatCount (DB)', () => {
         teacherRoomId,
         classType: 'Capacity Flow',
         date: new Date('2026-06-02'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -78,7 +79,7 @@ describe('readSeatCount (DB)', () => {
         teacherRoomId,
         classType: 'Capacity Overbooked',
         date: new Date('2026-06-02'),
-        startTime: '10:00',
+        startTime: hhmmToTime('10:00'),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,

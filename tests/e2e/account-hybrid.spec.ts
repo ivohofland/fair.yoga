@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
  * The account-hybrid headline: a teacher attends another teacher's class
@@ -65,7 +66,7 @@ test.describe('Account hybrid: teacher joins a class', () => {
         teacherRoomId: teacherRoom.id,
         classType: 'Hybrid Vinyasa',
         date: new Date(Date.UTC(soon.getUTCFullYear(), soon.getUTCMonth(), soon.getUTCDate())),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 20,
         minRate: 15,

@@ -6,6 +6,7 @@ import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatRoomLocation, formatDayHeader, FULL_MONTHS } from '@/lib/format';
 import { classStartInstant, startOfLocalWeek, mondayOf } from '@/lib/timezone';
+import { timeToHHmm } from '@/lib/time-of-day';
 
 type ClassWithDetails = Class & {
   _count: { registrations: number };
@@ -87,7 +88,7 @@ function ClassCard({ cls, isPast }: { cls: ClassWithDetails; isPast: boolean }) 
     >
       <div className="flex items-center justify-between gap-2">
         <span className="type-label text-ink">
-          {formatDayHeader(cls.date)} · {cls.startTime}
+          {formatDayHeader(cls.date)} · {timeToHHmm(cls.startTime)}
         </span>
         <StatusBadge variant={variant} />
       </div>
@@ -132,7 +133,7 @@ function StudioClassCard({ sc, isPast }: { sc: StudioClass; isPast: boolean }) {
         <span
           className={`type-label text-ink${cancelled ? ' line-through decoration-brown' : ''}`}
         >
-          {formatDayHeader(sc.date)} · {sc.startTime}
+          {formatDayHeader(sc.date)} · {timeToHHmm(sc.startTime)}
         </span>
         {cancelled && <StatusBadge variant="cancelled" />}
       </div>

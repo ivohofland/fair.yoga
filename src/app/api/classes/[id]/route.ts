@@ -10,6 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { updateClassSchema } from '@/lib/schemas';
 import { updateClass, type ClassUpdateData } from '@/services/class-lifecycle';
+import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -30,7 +31,7 @@ export const GET = withErrorHandler(async (
   if (!cls) return respondError('Class not found', 404);
   if (cls.teacherId !== session.teacherId) return respondError('Not your class', 403);
 
-  return respondOk(cls);
+  return respondOk({ ...cls, startTime: timeToHHmm(cls.startTime) });
 });
 
 export const PUT = withErrorHandler(async (
@@ -48,17 +49,21 @@ export const PUT = withErrorHandler(async (
 
   const parsed = await parseBody(request, updateClassSchema);
   if ('error' in parsed) return parsed.error;
-  // The schema validates date as a YYYY-MM-DD string; Prisma needs a Date
-  // (UTC midnight, same as class creation). Latent until the edit UI —
-  // nothing ever PUT a date before.
-  const { date: dateString, ...rest } = parsed.data;
+  // The schema validates date as a YYYY-MM-DD string and startTime as
+  // "HH:MM"; Prisma needs a Date for each (`@db.Date` UTC midnight,
+  // `@db.Time` respectively). Latent until the edit UI — nothing ever PUT
+  // either field before.
+  const { date: dateString, startTime: startTimeString, ...rest } = parsed.data;
   const data: ClassUpdateData = {
     ...rest,
     ...(dateString !== undefined ? { date: new Date(dateString) } : {}),
+    ...(startTimeString !== undefined ? { startTime: hhmmToTime(startTimeString) } : {}),
   };
 
   const result = await updateClass(prisma, id, data);
-  if (result.ok) return respondOk(result.cls);
+  if (result.ok) {
+    return respondOk({ ...result.cls, startTime: timeToHHmm(result.cls.startTime) });
+  }
 
   // Narrowed one reason at a time so the `locked` branch below can read
   // `result.fields` without a cast.

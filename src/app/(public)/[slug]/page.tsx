@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { estimateTierPrices } from '@/lib/tier-estimates';
 import { formatRoomLocation, formatDayHeader } from '@/lib/format';
 import { startOfLocalDay } from '@/lib/timezone';
+import { timeToHHmm } from '@/lib/time-of-day';
 import { PriceRange } from '@/components/booking/price-range';
 import { toIncomeTier } from '@/lib/tiers.server';
 
@@ -124,7 +125,7 @@ export default async function TeacherBookingPage({
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="type-label text-ink">
-                    {formatDayHeader(cls.date)} · {cls.startTime}
+                    {formatDayHeader(cls.date)} · {timeToHHmm(cls.startTime)}
                   </span>
                   <StatusBadge variant={isFull ? 'full' : 'registering'}>
                     {isFull ? 'Full — join the waitlist' : 'Open'}

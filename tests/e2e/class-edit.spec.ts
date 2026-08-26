@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { uniqueSuffix, hashToken, seedSession, sessionCookie } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 
@@ -69,7 +70,7 @@ test.describe('Class edit screen', () => {
           teacherRoomId: teacherRoom.id,
           classType: 'Editable Hatha',
           date: new Date(day),
-          startTime: '10:00',
+          startTime: hhmmToTime('10:00'),
           durationMinutes: 60,
           roomCost: 30,
           minRate: 12,

@@ -222,7 +222,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       teacherRoomId: teacherRoom.id,
       templateId: template.id,
       classType: 'Lock Order Flow',
-      startTime: '09:00',
+      startTime: hhmmToTime('09:00'),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,

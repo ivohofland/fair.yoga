@@ -155,7 +155,7 @@ test.describe('Recurring classes', () => {
     expect(instances.length).toBe(4);
     for (const instance of instances) {
       expect(instance.status).toBe('open');
-      expect(instance.startTime).toBe('08:15');
+      expect(timeToHHmm(instance.startTime)).toBe('08:15');
       expect(instance.date.getUTCDay()).toBe(templateJsDay);
       expect(instance.date.getTime()).toBeGreaterThan(Date.now() - 24 * 3600 * 1000);
     }
@@ -205,7 +205,7 @@ test.describe('Recurring classes', () => {
       orderBy: { date: 'asc' },
     });
     expect(before.length).toBe(4);
-    expect(before.every((c) => c.startTime === '08:15')).toBe(true);
+    expect(before.every((c) => timeToHHmm(c.startTime) === '08:15')).toBe(true);
 
     await page.goto(`/settings/recurring/${templateId}`);
     await page.getByLabel('Start time').fill('10:00');
@@ -244,6 +244,6 @@ test.describe('Recurring classes', () => {
       orderBy: { date: 'asc' },
     });
     expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
-    expect(after.every((c) => c.startTime === '08:15')).toBe(true);
+    expect(after.every((c) => timeToHHmm(c.startTime) === '08:15')).toBe(true);
   });
 });

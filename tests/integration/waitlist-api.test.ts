@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { promoteNext } from '@/services/waitlist';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -97,7 +98,7 @@ beforeAll(async () => {
       teacherRoomId,
       classType: 'Waitlist API Far Future',
       date: new Date('2099-06-01'),
-      startTime: '09:00',
+      startTime: hhmmToTime('09:00'),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,
@@ -153,7 +154,7 @@ beforeAll(async () => {
       teacherRoomId,
       classType: 'Waitlist API Freed Spot',
       date: freedSpotDate,
-      startTime: freedSpotStartTime,
+      startTime: hhmmToTime(freedSpotStartTime),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,
@@ -336,7 +337,7 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
         teacherRoomId,
         classType: 'Waitlist API Roster Promote',
         date: new Date('2099-06-02'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 20,
         minRate: 15,
@@ -389,7 +390,7 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
         teacherRoomId,
         classType: 'Waitlist API Roster Claim',
         date: claimDate,
-        startTime: claimStartTime,
+        startTime: hhmmToTime(claimStartTime),
         durationMinutes: 60,
         roomCost: 20,
         minRate: 15,
@@ -590,7 +591,7 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
         teacherRoomId,
         classType: 'Waitlist API Lock Join',
         date: new Date('2099-06-03'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 20,
         minRate: 15,
@@ -633,7 +634,7 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
         teacherRoomId,
         classType: 'Waitlist API Lock Claim',
         date: lockClaimDate,
-        startTime: lockClaimStartTime,
+        startTime: hhmmToTime(lockClaimStartTime),
         durationMinutes: 60,
         roomCost: 20,
         minRate: 15,

@@ -9,6 +9,7 @@ import {
   getPaymentsForClass,
   MANUAL_REMIND_COOLDOWN_MS,
 } from './payments';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -70,7 +71,7 @@ describe('Payment Service (DB)', () => {
         teacherRoomId,
         classType: 'Hatha',
         date: new Date('2026-06-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,

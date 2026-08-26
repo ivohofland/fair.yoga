@@ -12,6 +12,7 @@ import { transitionClass, type TransitionFailureReason } from '@/services/class-
 import { transitionClassSchema } from '@/lib/schemas';
 import { formatDayHeader } from '@/lib/format';
 import { createBulkNotifications, type CreateNotificationInput } from '@/services/notifications';
+import { timeToHHmm } from '@/lib/time-of-day';
 
 /**
  * How each refusal reaches the client, as a table rather than a ternary.
@@ -159,7 +160,7 @@ export const POST = withErrorHandler(async (
         recipientId: r.studentId,
         type: 'class_cancelled' as const,
         title: 'Class cancelled',
-        body: `${fresh.classType} class on ${formatDayHeader(fresh.date)} at ${fresh.startTime} has been cancelled by your teacher.`,
+        body: `${fresh.classType} class on ${formatDayHeader(fresh.date)} at ${timeToHHmm(fresh.startTime)} has been cancelled by your teacher.`,
         relatedClassId: id,
       }));
       if (notifications.length > 0) {

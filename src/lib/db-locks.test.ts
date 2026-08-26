@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
+import { hhmmToTime } from '@/lib/time-of-day';
 import {
   ANNOUNCEMENT_DEDUPE_WINDOW_MS,
   LOCK_TIMEOUT_SQL,
@@ -333,7 +334,7 @@ describe('lockClassRowsOrdered', () => {
       teacherId,
       teacherRoomId: teacherRoom.id,
       classType: 'Ordered lock class',
-      startTime: '09:00',
+      startTime: hhmmToTime('09:00'),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { ANNOUNCEMENT_DEDUPE_WINDOW_MS } from '@/lib/db-locks';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -91,7 +92,7 @@ describe('POST /api/announcements', () => {
           teacherRoomId: ownerRoomId,
           classType: 'Vinyasa',
           date,
-          startTime: '09:00',
+          startTime: hhmmToTime('09:00'),
           durationMinutes: 60,
           roomCost: 30,
           minRate: 15,

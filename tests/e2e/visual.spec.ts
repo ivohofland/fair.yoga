@@ -252,7 +252,7 @@ test.describe('Visual regression', () => {
         teacherRoomId: teacherRoom.id,
         classType: 'Visual Vinyasa',
         date: new Date(Date.UTC(soon.getUTCFullYear(), soon.getUTCMonth(), soon.getUTCDate())),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 20,
         minRate: 15,

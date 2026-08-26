@@ -9,6 +9,7 @@ import {
   retentionCutoff,
   WAITLIST_RETENTION_DAYS,
 } from './waitlist-retention';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
  * A pure DB-invariant suite — nothing here calls the app on `:3000` — so it
@@ -79,9 +80,9 @@ let studentId2 = '';
 const classIds: string[] = [];
 
 /**
- * Distinct `startTime` per class. `Class_teacher_slot_unique` compares
- * (teacherId, date, startTime) as strings, and several classes here share a
- * date. Routed through a wrapping helper rather than a raw `09:${counter}`
+ * Distinct `startTime` per class. `Class_teacher_slot_unique` is on
+ * (teacherId, date, startTime), and several classes here share a date.
+ * Routed through a wrapping helper rather than a raw `09:${counter}`
  * literal, which would emit `09:60` once the counter crosses 60 — the same
  * trap `class-terminal-status.test.ts`'s `slotTime` documents.
  */
@@ -118,7 +119,7 @@ async function makeClassWithEntry(opts: {
       teacherRoomId,
       classType: 'Retention Test',
       date: opts.date,
-      startTime: slotTime(),
+      startTime: hhmmToTime(slotTime()),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,

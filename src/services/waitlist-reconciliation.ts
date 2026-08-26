@@ -134,7 +134,7 @@ type ClassOutcome =
 interface CandidateClass {
   id: string;
   date: Date;
-  startTime: string;
+  startTime: Date;
   cancelDeadline: CancelDeadline;
   maxStudents: number;
   spotBroadcastAt: Date | null;

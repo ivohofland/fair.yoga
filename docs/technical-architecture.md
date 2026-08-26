@@ -240,15 +240,18 @@ Runs hourly as part of the in-process scheduler (see Background Jobs below). For
 
 ```typescript
 // generateInstancesForTemplate — one template, one window.
-// Real identifiers, bodies elided: `dates`, `free` and `startTimeStr` are the
+// Real identifiers, bodies elided: `dates`, `free` and `startTime` are the
 // actual locals, `getNextOccurrences` and `classStartInstant` the actual
 // helpers. A sketch that invents names is a sketch nobody can grep, which is
 // how the loop this replaced went on being documented after it was gone.
 // `dayOfWeek`, `startTime` and `teacherId` left `ClassTemplate` for
 // `ScheduleRule` in issue 298, so they're reached through `template.scheduleRule.*`.
-const startTimeStr = timeToHHmm(template.scheduleRule.startTime);
+// `startTime` is `ScheduleRule.startTime` itself (a `@db.Time` `Date`, issue
+// 327 Task 1) — no `timeToHHmm` round trip, since `classStartInstant` and
+// `Class.startTime` both want that type directly.
+const startTime = template.scheduleRule.startTime;
 const dates = getNextOccurrences(template.scheduleRule.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
-  .filter((d) => classStartInstant(d, startTimeStr, tz) > startDate)
+  .filter((d) => classStartInstant(d, startTime, tz) > startDate)
   .slice(0, DEFAULT_WEEKS);
 
 // ONE query per question, and since #194 there are two. This one classifies

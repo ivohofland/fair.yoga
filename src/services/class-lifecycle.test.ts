@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, ClassStatus } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
+import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import {
   VALID_TRANSITIONS,
   TERMINAL_CLASS_STATUSES,
@@ -307,11 +308,10 @@ const uniqueSuffix = Date.now();
 /**
  * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
  * the next hour rather than ever emitting an invalid minute like `'09:60'`
- * once a block's fixture counter crosses 30. `startTime` is a plain `String`
- * with no CHECK constraint, occupancy is string equality, and
- * `Class_teacher_slot_unique` compares strings too — so a raw `HH:${counter}`
- * literal would accept an out-of-range value silently instead of exercising
- * the constraint a fixture counter exists to dodge collisions with. Both
+ * once a block's fixture counter crosses 30 — a raw `HH:${counter}` literal
+ * would build exactly that. `Class.startTime` is `@db.Time` and would refuse
+ * the row outright at the DB, which is a less useful failure here than this
+ * guard's message naming the fixture counter that produced it. Both
  * blocks below use it, one at a `9 + n` hour offset (`slotTime(counter)`
  * itself), the other at an `18:xx` offset (`slotTime(540 + counter)`) so
  * neither counter's values can ever land in the other's hour. Mirrors
@@ -353,7 +353,7 @@ describe('transitionClass (DB)', () => {
         teacherRoomId,
         classType: 'Vinyasa',
         date: new Date('2099-06-05'),
-        startTime: slotTime(makeClassCounter),
+        startTime: hhmmToTime(slotTime(makeClassCounter)),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -443,7 +443,7 @@ describe('transitionClass (DB)', () => {
         teacherRoomId,
         classType: 'Hatha',
         date: new Date('2099-06-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -471,7 +471,7 @@ describe('transitionClass (DB)', () => {
         teacherRoomId,
         classType: 'Hatha',
         date: new Date('2026-06-02'),
-        startTime: '10:00',
+        startTime: hhmmToTime('10:00'),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -527,7 +527,7 @@ describe('transitionClass (DB)', () => {
         teacherRoomId,
         classType: 'Hatha',
         date: new Date('2026-06-03'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -587,7 +587,7 @@ describe('transitionClass (DB)', () => {
         teacherRoomId,
         classType: 'Hatha',
         date: new Date('2026-06-04'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -649,7 +649,7 @@ describe('transitionClass (DB)', () => {
         teacherRoomId,
         classType: 'Vinyasa',
         date: new Date('2020-01-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -680,7 +680,7 @@ describe('transitionClass (DB)', () => {
     // exceeding 30 minutes this fixture would silently stop discriminating and
     // the test below would pass for the wrong reason.
     expect(utcMisreading.getTime()).toBeGreaterThan(Date.now());
-    expect(classStartInstant(date, startTime, 'Europe/Amsterdam').getTime()).toBeLessThan(
+    expect(classStartInstant(date, hhmmToTime(startTime), 'Europe/Amsterdam').getTime()).toBeLessThan(
       Date.now(),
     );
 
@@ -690,7 +690,7 @@ describe('transitionClass (DB)', () => {
         teacherRoomId,
         classType: 'Zoned',
         date,
-        startTime,
+        startTime: hhmmToTime(startTime),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -720,7 +720,7 @@ describe('transitionClass (DB)', () => {
         teacherRoomId,
         classType: 'Vinyasa',
         date: new Date('2020-01-01'),
-        startTime: '10:00',
+        startTime: hhmmToTime('10:00'),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -772,7 +772,7 @@ describe('completeClass (DB)', () => {
         teacherRoomId,
         classType: 'Vinyasa',
         date: new Date('2026-06-01'),
-        startTime: slotTime(540 + makeClassCounter),
+        startTime: hhmmToTime(slotTime(540 + makeClassCounter)),
         durationMinutes: 75,
         roomCost: 35,
         minRate: 15,
@@ -829,7 +829,7 @@ describe('completeClass (DB)', () => {
         teacherRoomId,
         classType: 'Vinyasa',
         date: new Date('2026-06-01'),
-        startTime: '18:00',
+        startTime: hhmmToTime('18:00'),
         durationMinutes: 75,
         roomCost: 35,
         minRate: 15,
@@ -1311,7 +1311,7 @@ describe('completeClass — billing path throws rather than mis-charging a bypas
         teacherRoomId,
         classType: 'Bad Tier Flow',
         date: new Date('2026-06-01'),
-        startTime: '18:00',
+        startTime: hhmmToTime('18:00'),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -1469,7 +1469,7 @@ describe('updateClass (DB)', () => {
         teacherRoomId,
         classType: 'Hatha',
         date: new Date(date),
-        startTime: slotTime(makeClassCounter),
+        startTime: hhmmToTime(slotTime(makeClassCounter)),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -1580,7 +1580,7 @@ describe('updateClass (DB)', () => {
     // have gone red that afternoon.
     const result = await updateClass(prisma, cls.id, {
       classType: 'Vinyasa',
-      startTime: '18:30',
+      startTime: hhmmToTime('18:30'),
       durationMinutes: 75,
       description: null,
       date: new Date('2099-03-09'),
@@ -1589,7 +1589,7 @@ describe('updateClass (DB)', () => {
 
     const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
     expect(stored.classType).toBe('Vinyasa');
-    expect(stored.startTime).toBe('18:30');
+    expect(timeToHHmm(stored.startTime)).toBe('18:30');
     expect(stored.durationMinutes).toBe(75);
     expect(stored.description).toBeNull();
     // Compared as a date string, not with toEqual, so timezone handling on
@@ -1779,7 +1779,7 @@ describe('updateClass (DB)', () => {
 
     expect(utcMisreading.getTime()).toBeGreaterThan(Date.now());
 
-    const result = await updateClass(prisma, cls.id, { date, startTime });
+    const result = await updateClass(prisma, cls.id, { date, startTime: hhmmToTime(startTime) });
     expect(result).toEqual({ ok: false, reason: 'past_start' });
 
     // Refused means not written, as everywhere else on this branch.
@@ -1858,11 +1858,11 @@ describe('updateClass (DB)', () => {
     // returns ok, and the test goes red as it should.
     const cls = await makeClass(false, 'open', PAST_FIXTURE_DATE);
 
-    const result = await updateClass(prisma, cls.id, { startTime: '23:59' });
+    const result = await updateClass(prisma, cls.id, { startTime: hhmmToTime('23:59') });
     expect(result).toEqual({ ok: false, reason: 'past_start' });
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(after.startTime).not.toBe('23:59');
+    expect(timeToHHmm(after.startTime)).not.toBe('23:59');
   });
 
   /**
@@ -2016,10 +2016,11 @@ describe('updateClass — the count === 0 branches', () => {
     statusAfter?: ClassStatus;
     // The stored `startTime` the opening read reports. Defaults to a readable
     // one; the only caller that overrides it is the field-gate case below,
-    // which needs a value `classStartInstant` cannot parse. Unreachable from
-    // validated input — no schema accepts it — so a stub is the only way to
-    // stand it up at all.
-    startTime?: string;
+    // which needs a value `classStartInstant` cannot parse — an Invalid Date.
+    // Unreachable from validated input — `Class.startTime` is `@db.Time`, and
+    // no schema accepts a value `hhmmToTime` could turn into one — so a stub
+    // is the only way to stand it up at all.
+    startTime?: Date;
   }) {
     const updateManyCalls: UpdateManyArgs[] = [];
     // Resolved once rather than as a `??` chain at each use, so "statusAfter
@@ -2048,7 +2049,7 @@ describe('updateClass — the count === 0 branches', () => {
               // test's whole point; the guard's own precedence is what makes
               // the claim true, not the fixtures.
               date: new Date('2099-06-01T00:00:00.000Z'),
-              startTime: opts.startTime ?? '09:00',
+              startTime: opts.startTime ?? hhmmToTime('09:00'),
               teacher: { defaultTimezone: 'UTC' },
             };
           }
@@ -2212,14 +2213,14 @@ describe('updateClass — the count === 0 branches', () => {
    * and a payload carrying no scheduling field places nothing.
    *
    * So the gate is load-bearing, and this is the test that says so — delete
-   * either and this reddens. It has to be a stub: `startTime` is `HH:mm` by
-   * schema on every write, so no DB row can be stood up in this state.
+   * either and this reddens. It has to be a stub: `Class.startTime` is
+   * `@db.Time`, so no DB row can be stood up in this state.
    */
   it('lets a non-scheduling edit through even when the stored startTime is unreadable', async () => {
     const { db, updateManyCalls } = stubDb({
       settingsLocked: false,
       rowSurvives: false,
-      startTime: 'garbage',
+      startTime: new Date('garbage'),
     });
 
     const result = await updateClass(db, 'stub-class', { description: 'x' });

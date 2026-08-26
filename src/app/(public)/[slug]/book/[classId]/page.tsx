@@ -5,6 +5,7 @@ import { getSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import { estimateTierPrices, estimateAttendanceSpread } from '@/lib/tier-estimates';
 import { formatRoomLocation, formatDayHeader } from '@/lib/format';
+import { timeToHHmm } from '@/lib/time-of-day';
 import { PriceRange, PersonalPriceRange } from '@/components/booking/price-range';
 import { BookingFlow } from '@/components/booking/booking-flow';
 import { BookingSignIn } from '@/components/booking/booking-sign-in';
@@ -103,7 +104,7 @@ export default async function BookClassPage({
       </Link>
       <h1 className="type-title">{cls.classType}</h1>
       <p className="type-body mt-1">
-        {formatDayHeader(cls.date)} &middot; {cls.startTime} &middot; {cls.durationMinutes} min
+        {formatDayHeader(cls.date)} &middot; {timeToHHmm(cls.startTime)} &middot; {cls.durationMinutes} min
       </p>
       <p className="type-caption mt-0.5">
         {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}

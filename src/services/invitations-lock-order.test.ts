@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { acceptInvitation, unlinkTeacher } from './invitations';
 import { resolveInvitationOnLink } from './link-consent';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
  * Lock-ORDER invariants for the two table pairs #174 task 7 fixed:
@@ -100,7 +101,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
         teacherRoomId: teacherRoom.id,
         classType: 'Lock Order Flow',
         date: new Date('2099-06-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 20,
         minRate: 15,

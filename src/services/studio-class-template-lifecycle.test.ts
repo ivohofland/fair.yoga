@@ -146,7 +146,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
         templateId,
         classType: 'Archive Rule',
         date: opts.date,
-        startTime: slotTime(makeClassCounter),
+        startTime: hhmmToTime(slotTime(makeClassCounter)),
         durationMinutes: 60,
         location: 'Studio Loft',
         hourlyRate: 45,
@@ -620,7 +620,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
         templateId,
         classType: 'Pause Rule',
         date,
-        startTime,
+        startTime: hhmmToTime(startTime),
         durationMinutes: 60,
         location: 'Studio Loft',
         hourlyRate: 45,
@@ -1066,7 +1066,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
         templateId: t.id,
         classType: 'Pause Rule',
         date: futureOn(1),
-        startTime: '07:30',
+        startTime: hhmmToTime('07:30'),
         durationMinutes: 60,
         location: 'Studio Loft',
         hourlyRate: 45,
@@ -1670,7 +1670,7 @@ describe('updateStudioClassTemplate (DB)', () => {
         templateId: t.id,
         classType: 'No Sync On Edit',
         date: futureOn(7),
-        startTime: timeToHHmm(t.scheduleRule.startTime),
+        startTime: t.scheduleRule.startTime,
         durationMinutes: 60,
         location: 'Update Studio',
         hourlyRate: 45,
@@ -1693,7 +1693,7 @@ describe('updateStudioClassTemplate (DB)', () => {
     // it, and each would be a different product answer to #194.
     const after = await prisma.studioClass.findUnique({ where: { id: instance.id } });
     expect(after).not.toBeNull();
-    expect(after?.startTime).toBe(instance.startTime);
+    expect(after?.startTime.getTime()).toBe(instance.startTime.getTime());
     expect(after?.location).toBe('Update Studio');
     expect(after?.cancelledAt).toBeNull();
     expect(after?.templateId).toBe(t.id);

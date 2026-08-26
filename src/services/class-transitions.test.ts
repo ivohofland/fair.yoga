@@ -8,6 +8,7 @@ import {
 import { lockClassRow } from '@/lib/db-locks';
 import { getWaitlistWindow } from './waitlist';
 import { formatDayHeader } from '@/lib/format';
+import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
 // ===========================================================================
@@ -130,7 +131,7 @@ describe('class transitions (DB, timezone-aware)', () => {
         teacherRoomId,
         classType: 'Hatha',
         date: new Date('2026-07-20'),
-        startTime: '18:00',
+        startTime: hhmmToTime('18:00'),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -169,7 +170,7 @@ describe('class transitions (DB, timezone-aware)', () => {
     // 00:30 Amsterdam on July 20 = 22:30Z on July 19 — earlier than the
     // stored date (July 20 00:00Z). The sweep's date prefilter must not
     // exclude it.
-    const cls = await makeClass({ startTime: '00:30' });
+    const cls = await makeClass({ startTime: hhmmToTime('00:30') });
 
     await autoTransitionToInProgress(prisma, new Date('2026-07-19T23:00:00Z'));
 

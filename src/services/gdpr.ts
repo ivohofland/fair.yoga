@@ -14,6 +14,7 @@ import { Prisma } from '@prisma/client';
 import type { PrismaClient, ClassStatus } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { formatDayHeader } from '@/lib/format';
+import { timeToHHmm } from '@/lib/time-of-day';
 import { completeClass } from './class-lifecycle';
 import { handleSpotFreed, reorderWaitingEntries } from './waitlist';
 import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
@@ -124,7 +125,7 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
       class: r.class.classType,
       teacher: `${r.class.teacher.firstName} ${r.class.teacher.lastName}`,
       date: r.class.date,
-      startTime: r.class.startTime,
+      startTime: timeToHHmm(r.class.startTime),
       status: r.status,
       tierAtBooking: r.tierAtBooking,
       price: r.price,
@@ -209,13 +210,16 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
     classes: teacher.classes.map((c) => ({
       classType: c.classType,
       date: c.date,
-      startTime: c.startTime,
+      startTime: timeToHHmm(c.startTime),
       status: c.status,
       registrations: c._count.registrations,
       totalRevenue: c.totalRevenue,
       effectiveTeacherRate: c.effectiveTeacherRate,
     })),
-    studioClasses: teacher.studioClasses,
+    studioClasses: teacher.studioClasses.map((sc) => ({
+      ...sc,
+      startTime: timeToHHmm(sc.startTime),
+    })),
     studioClassTemplates: teacher.scheduleRules.flatMap((r) =>
       r.studioClassTemplates.map((sct) => withStudioSlot(sct, r)),
     ),
@@ -1148,7 +1152,7 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
             recipientId: r.studentId,
             type: 'class_cancelled' as const,
             title: 'Class cancelled',
-            body: `${cls.classType} class on ${formatDayHeader(cls.date)} at ${cls.startTime} has been cancelled — the teacher closed their account.`,
+            body: `${cls.classType} class on ${formatDayHeader(cls.date)} at ${timeToHHmm(cls.startTime)} has been cancelled — the teacher closed their account.`,
             relatedClassId: cls.id,
           }));
           await createBulkNotifications(tx, notifications);

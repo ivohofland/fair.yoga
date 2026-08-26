@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -247,7 +248,7 @@ describe('DELETE /api/account', () => {
         teacherRoomId: teacherRoom.id,
         classType: `Flow ${label}`,
         date: new Date('2099-06-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -388,7 +389,7 @@ describe('DELETE /api/account', () => {
         teacherRoomId: teacherRoom.id,
         classType: 'Erasure Flow',
         date: new Date('2026-06-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -597,7 +598,7 @@ describe('DELETE /api/account', () => {
         teacherRoomId: teacherRoom.id,
         classType: 'Busy Flow',
         date: new Date('2099-06-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,

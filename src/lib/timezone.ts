@@ -1,8 +1,8 @@
 /**
  * Timezone-aware class time computation.
  *
- * Class rows store a calendar date (UTC midnight) plus an HH:mm wall-clock
- * startTime. That wall clock belongs to the teacher's timezone
+ * Class rows store a calendar date (UTC midnight) plus a wall-clock
+ * `startTime` (`@db.Time`). That wall clock belongs to the teacher's timezone
  * (Teacher.defaultTimezone) — computing deadlines and lifecycle transitions
  * in raw UTC would shift every decision by the UTC offset and drift across
  * DST transitions.
@@ -153,12 +153,17 @@ export function mondayOf(date: Date): number {
  * The UTC instant at which a class starts: the stored calendar date's
  * wall-clock startTime interpreted in the given IANA timezone.
  *
+ * `startTime` is a `@db.Time` value (read the way `timeToHHmm` reads one, with
+ * UTC accessors — a `time` column carries no zone of its own, so the hour and
+ * minute it reports are exactly the wall-clock digits stored).
+ *
  * Unknown timezones fall back to UTC interpretation rather than throwing —
  * a wrong-but-bounded answer beats a crashed cron run.
  */
-export function classStartInstant(classDate: Date, startTime: string, timeZone: string): Date {
+export function classStartInstant(classDate: Date, startTime: Date, timeZone: string): Date {
   const d = new Date(classDate);
-  const [hours, minutes] = startTime.split(':').map(Number) as [number, number];
+  const hours = startTime.getUTCHours();
+  const minutes = startTime.getUTCMinutes();
   const wallUtc = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hours, minutes, 0, 0);
 
   // THREE WAYS TO FAIL, THREE MESSAGES, and the checks are separate for that
@@ -173,10 +178,10 @@ export function classStartInstant(classDate: Date, startTime: string, timeZone: 
   //
   // The date and the time are then checked apart from each other, because
   // `wallUtc` is NaN if EITHER is bad — `getUTCFullYear()` on an Invalid Date
-  // is NaN just as an unparseable `startTime` gives a NaN hour. Testing only
+  // is NaN just as an Invalid `startTime` gives a NaN hour. Testing only
   // the combination and blaming `startTime` relocated the misattribution
   // instead of removing it: measured, `classStartInstant(new Date('nonsense'),
-  // '09:00', …)` logged `startTime: '09:00'` under "unparseable startTime".
+  // …)` logged the date's own `startTime` value under "unparseable startTime".
   //
   // Returning early keeps the same Invalid Date this has always returned —
   // callers that compare it are unchanged — while making the cause greppable,
@@ -187,13 +192,16 @@ export function classStartInstant(classDate: Date, startTime: string, timeZone: 
     // `isoOrNull` is hoisted; it is declared below only to keep it beside its
     // other callers.
     log.warn(
-      { classDate: isoOrNull(d), startTime },
+      { classDate: isoOrNull(d), startTime: isoOrNull(startTime) },
       'unreadable class date, cannot compute class start instant',
     );
     return new Date(NaN);
   }
   if (Number.isNaN(wallUtc)) {
-    log.warn({ startTime }, 'unparseable startTime, cannot compute class start instant');
+    log.warn(
+      { startTime: isoOrNull(startTime) },
+      'unparseable startTime, cannot compute class start instant',
+    );
     return new Date(NaN);
   }
 
@@ -255,28 +263,23 @@ export function isoOrNull(date: Date): string | null {
  * `completeClass` guards `requireEndedBy` against with `Number.isNaN`.
  *
  * Unparseable is not reachable from validated input — `startTime` is `HH:mm`
- * by schema on every write — so this branch means the column has been
- * corrupted outside the app, and a loud refusal is the correct response to
- * that. Note the asymmetry with an unknown TIMEZONE one function up, which
+ * by schema on every write, converted to the `@db.Time` `Date` this function
+ * takes before it ever reaches Prisma — so this branch means the column has
+ * been corrupted outside the app, and a loud refusal is the correct response
+ * to that. Note the asymmetry with an unknown TIMEZONE one function up, which
  * falls back to UTC and proceeds: that yields a wrong-but-bounded answer for
  * a value the guard can still reason about, where this one has no start
  * instant at all.
  *
- * THE SCHEDULING TRIPLE IS ONE OBJECT, not three positional arguments, because
- * `startTime` and `timeZone` are adjacent `string`s and swapping them compiles
- * silently. Feeding `'Europe/Amsterdam'` to the `HH:mm` parser yields NaN,
- * which since the fail-closed rule above means the guard refuses everything —
- * a caller-side typo turned into a total outage of class editing, with the
- * only clue a log line blaming a `startTime` nobody passed. Naming the fields
- * removes the whole failure mode at the type level.
- *
- * `classStartInstant` above keeps its positional signature. The same swap is
- * possible there, but it has twenty call sites against this one's two, and it
- * does not gate a write — so the churn buys much less. Worth revisiting on its
- * own rather than as a rider here.
+ * THE SCHEDULING TRIPLE IS STILL ONE OBJECT, not positional arguments, though
+ * the original reason for it — `startTime` and `timeZone` were adjacent
+ * `string`s, so swapping them compiled silently — no longer holds now that
+ * `startTime` is a `Date`: a swap would fail to compile. Left as a named
+ * object anyway rather than un-done, since restructuring this signature is
+ * outside what changing `startTime`'s type needs to touch.
  */
 export function startsInPast(
-  cls: { date: Date; startTime: string; timeZone: string },
+  cls: { date: Date; startTime: Date; timeZone: string },
   now: Date,
 ): boolean {
   const { date: classDate, startTime, timeZone } = cls;
@@ -286,7 +289,7 @@ export function startsInPast(
       // Through `isoOrNull`, because this is the one branch reached by inputs
       // already known to be broken — a bare `toISOString()` here would raise
       // the 500 the refusal exists to avoid.
-      { startTime, timeZone, classDate: isoOrNull(classDate) },
+      { startTime: isoOrNull(startTime), timeZone, classDate: isoOrNull(classDate) },
       // NAMES THE START, NOT ONE OF ITS TWO HALVES. Either the date or the
       // `startTime` can be the unreadable one, and this frame cannot tell them
       // apart — `classStartInstant` already logged which, immediately above

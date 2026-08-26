@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = `slot-${Date.now()}`;
@@ -24,12 +25,12 @@ let teacherRoomId: string;
 
 const studio = (teacher: string, day: number) => ({
   teacherId: teacher, classType: 'Yoga', date: new Date(Date.UTC(2027, 0, day)),
-  startTime: '09:00', durationMinutes: 60, location: 'Studio', hourlyRate: 40,
+  startTime: hhmmToTime('09:00'), durationMinutes: 60, location: 'Studio', hourlyRate: 40,
 });
 
 const cls = (teacher: string, day: number) => ({
   teacherId: teacher, teacherRoomId, classType: 'Yoga',
-  date: new Date(Date.UTC(2027, 1, day)), startTime: '09:00', durationMinutes: 60,
+  date: new Date(Date.UTC(2027, 1, day)), startTime: hhmmToTime('09:00'), durationMinutes: 60,
   roomCost: 20, minRate: 30, targetRate: 60, minStudents: 3, maxStudents: 10,
 });
 
@@ -307,10 +308,10 @@ describe('cross-family slot exclusivity (#296)', () => {
     const D11 = new Date(Date.UTC(2027, 5, 12));
     await prisma.class.create({ data: { ...cls(teacherId, 1), date: D11 } });
     const s = await prisma.studioClass.create({
-      data: { ...studio(teacherId, 1), date: D11, startTime: '08:00' },
+      data: { ...studio(teacherId, 1), date: D11, startTime: hhmmToTime('08:00') },
     });
     await expect(
-      prisma.studioClass.update({ where: { id: s.id }, data: { startTime: '09:00' } }),
+      prisma.studioClass.update({ where: { id: s.id }, data: { startTime: hhmmToTime('09:00') } }),
     ).rejects.toThrow(/YG001/);
   });
 
@@ -331,9 +332,9 @@ describe('cross-family slot exclusivity (#296)', () => {
   it('moving a studio class by DATE into an occupied cross-family slot is rejected', async () => {
     const D12 = new Date(Date.UTC(2027, 5, 13)); // resident Class's date
     const D13 = new Date(Date.UTC(2027, 5, 14)); // mover StudioClass's date
-    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D12, startTime: '08:15' } });
+    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D12, startTime: hhmmToTime('08:15') } });
     const s = await prisma.studioClass.create({
-      data: { ...studio(teacherId, 1), date: D13, startTime: '08:15' },
+      data: { ...studio(teacherId, 1), date: D13, startTime: hhmmToTime('08:15') },
     });
     await expect(
       prisma.studioClass.update({ where: { id: s.id }, data: { date: D12 } }),
@@ -345,13 +346,13 @@ describe('cross-family slot exclusivity (#296)', () => {
     // instance trigger is left resting on the other family's coverage.
     const D14 = new Date(Date.UTC(2027, 5, 15));
     await prisma.studioClass.create({
-      data: { ...studio(teacherId, 1), date: D14, startTime: '08:30' },
+      data: { ...studio(teacherId, 1), date: D14, startTime: hhmmToTime('08:30') },
     });
     const c = await prisma.class.create({
-      data: { ...cls(teacherId, 1), date: D14, startTime: '08:45' },
+      data: { ...cls(teacherId, 1), date: D14, startTime: hhmmToTime('08:45') },
     });
     await expect(
-      prisma.class.update({ where: { id: c.id }, data: { startTime: '08:30' } }),
+      prisma.class.update({ where: { id: c.id }, data: { startTime: hhmmToTime('08:30') } }),
     ).rejects.toThrow(/YG001/);
   });
 

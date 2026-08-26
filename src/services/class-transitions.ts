@@ -11,6 +11,7 @@ import type { PrismaClient } from '@prisma/client';
 import { completeClass } from './class-lifecycle';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { classStartInstant } from '@/lib/timezone';
+import { timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { log } from '@/lib/log';
 import { lockClassRow } from '@/lib/db-locks';
@@ -33,7 +34,7 @@ const CANCEL_CHECK_HOURS: Record<string, number> = {
  * once (`@/lib/registration-status`) — two spellings of one window is how a
  * stale-snapshot bug comes back. */
 function inCancelWindow(
-  cls: { date: Date; startTime: string; autoCancelCheck: string },
+  cls: { date: Date; startTime: Date; autoCancelCheck: string },
   timezone: string,
   at: Date,
 ): boolean {
@@ -474,7 +475,7 @@ export async function autoCancelClasses(
           recipientId: r.studentId,
           type: 'class_cancelled' as const,
           title: 'Class cancelled',
-          body: `${fresh.classType} class on ${formatDayHeader(fresh.date)} at ${fresh.startTime} has been cancelled due to insufficient registrations.`,
+          body: `${fresh.classType} class on ${formatDayHeader(fresh.date)} at ${timeToHHmm(fresh.startTime)} has been cancelled due to insufficient registrations.`,
           relatedClassId: cls.id,
         }));
         notifications.push({
@@ -482,7 +483,7 @@ export async function autoCancelClasses(
           recipientId: fresh.teacherId,
           type: 'class_cancelled',
           title: 'Class auto-cancelled',
-          body: `${fresh.classType} class on ${formatDayHeader(fresh.date)} at ${fresh.startTime} was cancelled — only ${activeCount} of ${fresh.minStudents} minimum students registered.`,
+          body: `${fresh.classType} class on ${formatDayHeader(fresh.date)} at ${timeToHHmm(fresh.startTime)} was cancelled — only ${activeCount} of ${fresh.minStudents} minimum students registered.`,
           relatedClassId: cls.id,
         });
         await createBulkNotifications(tx, notifications);

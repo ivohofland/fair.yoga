@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, type ClassStatus } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { formatDayHeader } from '@/lib/format';
-import { hhmmToTime } from '@/lib/time-of-day';
+import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -111,7 +111,7 @@ beforeAll(async () => {
         teacherRoomId: teacherRoom.id,
         classType,
         date: new Date('2099-06-01'),
-        startTime,
+        startTime: hhmmToTime(startTime),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -169,7 +169,7 @@ beforeAll(async () => {
       teacherRoomId: teacherRoom.id,
       classType: 'Past Live',
       date: new Date('2020-01-01'),
-      startTime: '09:00',
+      startTime: hhmmToTime('09:00'),
       durationMinutes: 60,
       roomCost: 15,
       minRate: 10,
@@ -494,7 +494,7 @@ describe('POST /api/classes/[id]/transition', () => {
     });
     expect(note.body).toContain(stored.classType);
     expect(note.body).toContain(formatDayHeader(stored.date));
-    expect(note.body).toContain(stored.startTime);
+    expect(note.body).toContain(timeToHHmm(stored.startTime));
 
     // The sentence carrying those three, not just the three. Without this the
     // student body could be replaced wholesale by the teacher's — "was
@@ -535,7 +535,7 @@ describe('POST /api/classes/[id]/transition', () => {
         teacherRoomId,
         classType: 'Hatha',
         date: new Date('2099-01-01'),
-        startTime: '10:00',
+        startTime: hhmmToTime('10:00'),
         durationMinutes: 60,
         roomCost: 30,
         minRate: 15,
@@ -674,7 +674,7 @@ describe('POST /api/classes/[id]/transition', () => {
         teacherRoomId,
         classType: 'Hatha',
         date: new Date('2099-01-02'),
-        startTime: '11:00',
+        startTime: hhmmToTime('11:00'),
         durationMinutes: 60,
         roomCost: 30,
         minRate: 15,
@@ -774,7 +774,7 @@ describe('POST /api/classes/[id]/transition', () => {
         teacherRoomId,
         classType: 'Queue Close',
         date: new Date('2099-01-01'),
-        startTime: '10:00',
+        startTime: hhmmToTime('10:00'),
         durationMinutes: 60,
         roomCost: 30,
         minRate: 15,
@@ -936,7 +936,7 @@ describe('PUT /api/classes/[id]', () => {
             teacherRoomId,
             classType: 'Reschedule Slot',
             date: new Date('2099-08-01'),
-            startTime,
+            startTime: hhmmToTime(startTime),
             durationMinutes: 60,
             roomCost: 15,
             minRate: 10,
@@ -955,14 +955,14 @@ describe('PUT /api/classes/[id]', () => {
       expect(json.error.code).toBe('DUPLICATE_CLASS_SLOT');
 
       const after = await prisma.class.findUniqueOrThrow({ where: { id: mover.id } });
-      expect(after.startTime).toBe('08:15');
+      expect(timeToHHmm(after.startTime)).toBe('08:15');
 
       // The test's premise is that this row is the one occupying the slot
       // the reschedule collided on, and that it is untouched by the failed
       // move — assert that rather than discarding the reference, so a route
       // that clobbered the wrong row would fail this test.
       const stillOccupied = await prisma.class.findUniqueOrThrow({ where: { id: occupied.id } });
-      expect(stillOccupied.startTime).toBe('08:00');
+      expect(timeToHHmm(stillOccupied.startTime)).toBe('08:00');
     });
   });
 
@@ -1019,7 +1019,7 @@ describe('PUT /api/classes/[id]', () => {
             templateId: templateDateTemplateId,
             classType: 'Template Date Clash',
             date: new Date(date),
-            startTime,
+            startTime: hhmmToTime(startTime),
             durationMinutes: 60,
             roomCost: 15,
             minRate: 10,
@@ -1259,6 +1259,27 @@ describe('POST /api/classes', () => {
     expect(await prisma.class.count({ where: { templateId: victimTemplateId } })).toBe(0);
   });
 
+  // #327 stage B, Task 1: `startTime` becomes a `@db.Time` column. The wire
+  // format is unchanged — this pins that boundary at the create route, and
+  // reads the column directly to prove the type actually changed rather than
+  // trusting the route's own round trip.
+  it('accepts and returns startTime as "HH:MM" while the column is time', async () => {
+    const res = await post(ownerToken, {
+      ...baseBody(),
+      date: '2027-03-01',
+      startTime: '19:00',
+      durationMinutes: 90,
+    });
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string; startTime: string } };
+    expect(data.startTime).toBe('19:00');
+
+    // The column, not the wire: a text column would come back as a string here.
+    const [row] = await prisma.$queryRaw<Array<{ t: Date }>>`
+      SELECT "startTime" AS t FROM "Class" WHERE id = ${data.id}`;
+    expect(row?.t).toBeInstanceOf(Date);
+  });
+
   // The route's `teacherRoom.teacherId !== session.teacherId` check is this
   // endpoint's only ownership guard, and the server-owned-fields register
   // explicitly disclaims `teacherRoomId` — so nothing else covers it. Weakened
@@ -1314,7 +1335,7 @@ describe('POST /api/classes', () => {
       expect((await second.json()).error.code).toBe('DUPLICATE_CLASS_SLOT');
 
       const rows = await prisma.class.findMany({
-        where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: '07:15' },
+        where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('07:15') },
       });
       expect(rows).toHaveLength(1);
     });
@@ -1328,7 +1349,7 @@ describe('POST /api/classes', () => {
       expect((await loser.json()).error.code).toBe('DUPLICATE_CLASS_SLOT');
 
       const rows = await prisma.class.findMany({
-        where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: '07:45' },
+        where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('07:45') },
       });
       expect(rows).toHaveLength(1);
     });
@@ -1354,7 +1375,7 @@ describe('POST /api/classes', () => {
       expect(second.status).toBe(201);
 
       const rows = await prisma.class.findMany({
-        where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: '08:15' },
+        where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('08:15') },
       });
       expect(rows).toHaveLength(2);
       expect(rows.find((r) => r.id === created.id)?.status).toBe('cancelled');

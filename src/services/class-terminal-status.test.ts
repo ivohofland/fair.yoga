@@ -4,6 +4,7 @@ import type { ClassStatus } from '@prisma/client';
 import { classifyApiError } from '@/lib/api-errors';
 import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 import { enforcedTerminalStatuses } from '../../tests/migration-sql';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
  * A pure DB-invariant test — no HTTP surface, nothing here calls the app on
@@ -77,11 +78,10 @@ const uniqueSuffix = Date.now();
 /**
  * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
  * the next hour rather than ever emitting an invalid minute like `'09:60'`
- * once the counter below crosses 60. `startTime` is a plain `String` with no
- * CHECK constraint, occupancy is string equality, and
- * `Class_teacher_slot_unique` compares strings too — so a raw `09:${counter}`
- * literal would accept an out-of-range value silently instead of exercising
- * the constraint this file's counter exists to dodge collisions with.
+ * once the counter below crosses 60 — a raw `09:${counter}` literal would
+ * build exactly that. `Class.startTime` is `@db.Time` and would refuse the
+ * row outright at the DB, which is a less useful failure here than this
+ * guard's message naming the counter that produced it.
  * Mirrors `class-template-lifecycle.test.ts`'s `slotTime`.
  */
 function slotTime(totalMinutesFrom9am: number): string {
@@ -119,7 +119,7 @@ async function makeClass(opts: { status: ClassStatus }): Promise<{ classId: stri
       teacherRoomId,
       classType: 'Terminal Status Test',
       date: new Date('2099-06-01'),
-      startTime: slotTime(makeClassCounter),
+      startTime: hhmmToTime(slotTime(makeClassCounter)),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,

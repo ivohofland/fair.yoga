@@ -2,6 +2,7 @@ import { describe, it, beforeAll, afterAll, expect, vi, onTestFinished } from 'v
 import { Prisma, PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
 import { classStartInstant } from '@/lib/timezone';
+import { hhmmToTime } from '@/lib/time-of-day';
 import { addToWaitlist, claimSpot, getWaitlistWindow, handleSpotFreed } from './waitlist';
 import { ReconciliationFailedError, reconcileWaitlists } from './waitlist-reconciliation';
 
@@ -18,7 +19,7 @@ const H = 60 * 60 * 1000;
  * window is `[classStart - 25h, classStart - 24h)`.
  */
 function windowClocks(startTime: string) {
-  const classStart = classStartInstant(CLASS_DATE, startTime, TZ);
+  const classStart = classStartInstant(CLASS_DATE, hhmmToTime(startTime), TZ);
   return {
     classStart,
     autoPromote: new Date(classStart.getTime() - 48 * H),
@@ -76,7 +77,7 @@ describe('reconcileWaitlists (DB)', () => {
         teacherRoomId,
         classType: 'Hatha',
         date: CLASS_DATE,
-        startTime,
+        startTime: hhmmToTime(startTime),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -708,7 +709,7 @@ describe('reconcileWaitlists (DB)', () => {
         teacherRoomId,
         classType: 'Hatha',
         date,
-        startTime,
+        startTime: hhmmToTime(startTime),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -727,7 +728,7 @@ describe('reconcileWaitlists (DB)', () => {
     // `[start − 25h, start − 24h)`, so `now` must sit inside it: the class
     // starts 24.5h out, not 25.5h, which is half an hour the wrong side of the
     // opening edge. Resolved with no `now`, like the sweep.
-    expect(getWaitlistWindow(date, startTime, 'HOURS_24', TZ)).toBe('first_come_first_claimed');
+    expect(getWaitlistWindow(date, hhmmToTime(startTime), 'HOURS_24', TZ)).toBe('first_come_first_claimed');
 
     const staying = await makeStudent('RealStaying');
     const filler = await makeStudent('RealFiller');

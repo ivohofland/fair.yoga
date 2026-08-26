@@ -21,6 +21,7 @@ import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
 import { classStartInstant, startsInPast, isoOrNull } from '@/lib/timezone';
+import { timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
 export { ECONOMIC_FIELDS, type EconomicField };
@@ -375,7 +376,7 @@ export async function transitionClass(
           // function call, and the alternative is a reader having to re-derive
           // that distinction to know this line is safe.
           date: isoOrNull(cls.date)?.slice(0, 10) ?? null,
-          startTime: cls.startTime,
+          startTime: timeToHHmm(cls.startTime),
           startInstant: isoOrNull(start),
         },
         'transitionClass refused: this draft start has already passed',
@@ -654,9 +655,9 @@ export async function completeClass(
 /**
  * The fields a teacher may change on an existing class.
  *
- * Derived from `updateClassSchema` rather than hand-declared. `date` is the one
- * genuine difference — a `YYYY-MM-DD` string on the wire, a `Date` by the time
- * it reaches Prisma.
+ * Derived from `updateClassSchema` rather than hand-declared. `date` and
+ * `startTime` are the two differences — `YYYY-MM-DD` / `HH:MM` strings on the
+ * wire, a `Date` (`@db.Date` / `@db.Time`) by the time either reaches Prisma.
  *
  * Deriving alone buys no safety: the route builds its payload with
  * `{ ...rest }`, and spreading defeats TypeScript's excess-property check, so
@@ -668,7 +669,7 @@ export async function completeClass(
  * allowlist pin fails the build with the field named.
  */
 export type ClassUpdateData =
-  Omit<z.infer<typeof updateClassSchema>, 'date'> & { date?: Date };
+  Omit<z.infer<typeof updateClassSchema>, 'date' | 'startTime'> & { date?: Date; startTime?: Date };
 
 /**
  * Compile-time pin: every field the wire schema accepts must be a column
@@ -1135,7 +1136,7 @@ export async function updateClass(
           // keeps the route from producing one, but this is a service and
           // takes a `Date`.
           date: isoOrNull(effectiveDate)?.slice(0, 10) ?? null,
-          startTime: effectiveStartTime,
+          startTime: timeToHHmm(effectiveStartTime),
           startInstant: isoOrNull(effectiveStart),
         },
         'updateClass refused: the edit would move this class start into the past',

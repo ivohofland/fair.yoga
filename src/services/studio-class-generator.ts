@@ -10,7 +10,6 @@ import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { getNextOccurrences } from './class-generator';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
 import { classStartInstant } from '@/lib/timezone';
-import { timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
 const DEFAULT_WEEKS = 4;
@@ -164,11 +163,16 @@ export async function generateStudioInstancesForTemplate(
   // The next 4 occurrences whose start is still ahead of startDate. Ported from
   // the class family in #94 — the studio side had no such filter, so the hourly
   // sweep could materialise a class that had already started.
-  const startTimeStr = timeToHHmm(template.scheduleRule.startTime);
+  //
+  // `template.scheduleRule.startTime` is already a `@db.Time` `Date` — passed
+  // straight through rather than round-tripped via `timeToHHmm`, which exists
+  // for the wire boundary, not for a value that already carries the type
+  // `classStartInstant` and `StudioClass.startTime` both want.
+  const startTime = template.scheduleRule.startTime;
   const dates = getNextOccurrences(template.scheduleRule.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
     .filter(
       (date) =>
-        classStartInstant(date, startTimeStr, template.scheduleRule.teacher.defaultTimezone) >
+        classStartInstant(date, startTime, template.scheduleRule.teacher.defaultTimezone) >
         startDate,
     )
     .slice(0, DEFAULT_WEEKS);
@@ -234,7 +238,7 @@ export async function generateStudioInstancesForTemplate(
     // Widen or narrow one without the other and this pre-check starts
     // disagreeing with the constraint that backs it — see the class family's
     // equivalent tripwire (`class-generator.ts`) and the spec's §4.1.
-    if (onDate.some((c) => c.startTime === startTimeStr && c.cancelledAt === null)) {
+    if (onDate.some((c) => c.startTime.getTime() === startTime.getTime() && c.cancelledAt === null)) {
       skipped.push({ date, reason: 'slot_taken' });
       continue;
     }
@@ -246,7 +250,9 @@ export async function generateStudioInstancesForTemplate(
     // a guarantee — but unlike that one it costs nothing to state, since both
     // branches `continue` and no row is created either way.
     if (
-      foreign.some((c) => c.date.getTime() === date.getTime() && c.startTime === startTimeStr)
+      foreign.some(
+        (c) => c.date.getTime() === date.getTime() && c.startTime.getTime() === startTime.getTime(),
+      )
     ) {
       skipped.push({ date, reason: 'blocked_by_other_family' });
       continue;
@@ -313,7 +319,7 @@ export async function generateStudioInstancesForTemplate(
             templateId: template.id,
             classType: template.scheduleRule.classType,
             date,
-            startTime: startTimeStr,
+            startTime,
             durationMinutes: template.scheduleRule.durationMinutes,
             location: template.location,
             hourlyRate: template.hourlyRate,

@@ -132,7 +132,7 @@ export const DEADLINE_HOURS: Record<CancelDeadline, number> = {
 /**
  * Determines which promotion window the waitlist is currently in.
  *
- * Given a class date, start time (HH:mm, teacher-local), the teacher's
+ * Given a class date, start time (`@db.Time`, teacher-local), the teacher's
  * timezone, and the cancel deadline enum:
  * 1. Resolve classDate + startTime in the teacher's timezone → class start
  * 2. Subtract deadline hours → deadline time
@@ -143,7 +143,7 @@ export const DEADLINE_HOURS: Record<CancelDeadline, number> = {
  */
 export function getWaitlistWindow(
   classDate: Date,
-  startTime: string,
+  startTime: Date,
   cancelDeadline: CancelDeadline,
   timeZone: string,
   now?: Date,

@@ -2,6 +2,7 @@ import type { Class, TeacherRoom, Room } from '@prisma/client';
 import { StatusBadge, deriveBadgeVariant } from '@/components/ui/status-badge';
 import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { formatRoomLocation, formatDateWithYear } from '@/lib/format';
+import { timeToHHmm } from '@/lib/time-of-day';
 
 type ClassWithRoom = Class & {
   teacherRoom: TeacherRoom & { room: Room };
@@ -53,7 +54,7 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
         <StatusBadge variant={variant} />
       </div>
       <p className="type-body text-ink">
-        {formatDateWithYear(cls.date)} &middot; {cls.startTime} &middot; {cls.durationMinutes} min
+        {formatDateWithYear(cls.date)} &middot; {timeToHHmm(cls.startTime)} &middot; {cls.durationMinutes} min
       </p>
       <p className="type-body">
         {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}

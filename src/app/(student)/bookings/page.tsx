@@ -9,6 +9,7 @@ import { UpdatesStrip } from '@/components/student/updates-strip';
 import { WaitlistEntryActions } from '@/components/student/waitlist-entry-actions';
 import { PaymentQr } from '@/components/student/payment-qr';
 import { formatRoomLocation, paymentStateText, formatDayHeader } from '@/lib/format';
+import { timeToHHmm } from '@/lib/time-of-day';
 import { getWaitlistWindow } from '@/services/waitlist';
 import { studentNotificationHref } from '@/lib/notification-links';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
@@ -159,7 +160,7 @@ export default async function StudentBookingsPage() {
               <div key={entry.id} className="min-h-14 py-2 border-b border-border last:border-b-0">
                 <p className="text-base text-ink">{cls.classType}</p>
                 <p className="type-caption">
-                  {formatDayHeader(cls.date)} · {cls.startTime} · position {entry.position} ·{' '}
+                  {formatDayHeader(cls.date)} · {timeToHHmm(cls.startTime)} · position {entry.position} ·{' '}
                   with {cls.teacher.firstName} {cls.teacher.lastName}
                 </p>
                 <WaitlistEntryActions entryId={entry.id} classId={cls.id} canClaim={canClaim} />
@@ -185,7 +186,7 @@ export default async function StudentBookingsPage() {
                 <div key={reg.id} className="bg-sand-soft border border-border rounded-card p-5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="type-label text-ink">
-                      {formatDayHeader(cls.date)} · {cls.startTime}
+                      {formatDayHeader(cls.date)} · {timeToHHmm(cls.startTime)}
                     </span>
                     <StatusBadge variant={variant} />
                   </div>

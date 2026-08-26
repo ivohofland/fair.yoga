@@ -12,6 +12,7 @@ import { updateStudioClassSchema } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { isRecordNotFound } from '@/lib/api-errors';
+import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 import {
   studioClassDeletability,
@@ -39,7 +40,7 @@ export const GET = withErrorHandler(async (
   if (!studioClass) return respondError('Studio class not found', 404);
   if (studioClass.teacherId !== session.teacherId) return respondError('Access denied', 403);
 
-  return respondOk(studioClass);
+  return respondOk({ ...studioClass, startTime: timeToHHmm(studioClass.startTime) });
 });
 
 export const PUT = withErrorHandler(async (
@@ -137,6 +138,13 @@ export const PUT = withErrorHandler(async (
     // src/app/api/classes/[id]/route.ts.
     ...(dateString !== undefined ? { date: new Date(dateString) } : {}),
   };
+  // `startTime` stays inside `gated` above — Gate 1's `Object.keys(gated)`
+  // check needs its presence, not its wire shape — so the "HH:MM" → `Date`
+  // conversion happens here instead of at the destructure, after the field
+  // has already done its job of tripping (or not tripping) that gate.
+  if (typeof updateData.startTime === 'string') {
+    updateData.startTime = hhmmToTime(updateData.startTime);
+  }
   if (studentCount !== undefined) {
     updateData.studentCount = studentCount;
   }
@@ -162,7 +170,7 @@ export const PUT = withErrorHandler(async (
       where: { id },
       data: updateData,
     });
-    return respondOk(updated);
+    return respondOk({ ...updated, startTime: timeToHHmm(updated.startTime) });
   } catch (err) {
     if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
       // LOGGED for the reason the cross-family arm below states in full:

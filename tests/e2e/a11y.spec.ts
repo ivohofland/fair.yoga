@@ -3,6 +3,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
  * Accessibility sweep: axe-core over the key screens, failing on any
@@ -80,7 +81,7 @@ test.describe('Accessibility sweep', () => {
         teacherRoomId: teacherRoom.id,
         classType: 'A11y Vinyasa',
         date: new Date('2099-06-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 20,
         minRate: 15,

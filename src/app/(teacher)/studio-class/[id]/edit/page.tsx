@@ -5,6 +5,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import { StudioClassEditForm } from '@/components/studio-class/studio-class-edit-form';
 import { studioClassEditability } from '@/services/studio-class-editability';
+import { timeToHHmm } from '@/lib/time-of-day';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,7 +49,7 @@ export default async function StudioClassEditPage({
           classType: studioClass.classType,
           location: studioClass.location,
           date: studioClass.date.toISOString().slice(0, 10),
-          startTime: studioClass.startTime,
+          startTime: timeToHHmm(studioClass.startTime),
           durationMinutes: studioClass.durationMinutes,
           hourlyRate: Number(studioClass.hourlyRate),
         }}

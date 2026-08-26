@@ -13,6 +13,7 @@ import { uniqueSuffix } from '../helpers';
 import { createSession, validateSession } from '@/lib/auth';
 import { transitionClass, completeClass } from '@/services/class-lifecycle';
 import { markPaymentPaid, getPaymentsForClass, getOutstandingPayments } from '@/services/payments';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -168,7 +169,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
         teacherRoomId,
         classType: 'Hatha',
         date: new Date('2099-07-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,

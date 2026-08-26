@@ -84,7 +84,7 @@ function blindTo(tx: Prisma.TransactionClient, model: 'studioClass' | 'class') {
 
 const candidates = (now: Date) =>
   getNextOccurrences(DAY, now, 5)
-    .filter((d) => classStartInstant(d, TIME, ZONE) > now)
+    .filter((d) => classStartInstant(d, hhmmToTime(TIME), ZONE) > now)
     .slice(0, 4);
 
 beforeAll(async () => {
@@ -175,7 +175,7 @@ describe('generation inside a real $transaction (DB)', () => {
     await prisma.studioClass.create({
       data: {
         teacherId, templateId: null, classType: 'Holder', date: blocked,
-        startTime: TIME, durationMinutes: 60, location: 'Elsewhere', hourlyRate: 40,
+        startTime: hhmmToTime(TIME), durationMinutes: 60, location: 'Elsewhere', hourlyRate: 40,
       },
     });
     const template = await freshClassTemplate();
@@ -214,7 +214,7 @@ describe('generation inside a real $transaction (DB)', () => {
     await prisma.class.create({
       data: {
         teacherId, teacherRoomId, templateId: null, classType: 'Holder', date: blocked,
-        startTime: TIME, durationMinutes: 60, roomCost: 20, minRate: 30,
+        startTime: hhmmToTime(TIME), durationMinutes: 60, roomCost: 20, minRate: 30,
         targetRate: 60, minStudents: 3, maxStudents: 10,
       },
     });
@@ -246,7 +246,7 @@ describe('generation inside a real $transaction (DB)', () => {
     await prisma.studioClass.create({
       data: {
         teacherId, templateId: null, classType: 'Holder', date: blocked,
-        startTime: TIME, durationMinutes: 60, location: 'Elsewhere', hourlyRate: 40,
+        startTime: hhmmToTime(TIME), durationMinutes: 60, location: 'Elsewhere', hourlyRate: 40,
       },
     });
     const template = await freshClassTemplate();

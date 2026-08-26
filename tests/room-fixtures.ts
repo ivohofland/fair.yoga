@@ -82,7 +82,7 @@ export function fixtureRun(prefix: string) {
         teacherRoomId: f.linkId,
         classType: 'Vinyasa',
         date,
-        startTime: `0${seq % 8}:30`,
+        startTime: hhmmToTime(`0${seq % 8}:30`),
         durationMinutes: 60,
         roomCost: new Prisma.Decimal(20),
         minRate: new Prisma.Decimal(15),

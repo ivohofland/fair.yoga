@@ -40,7 +40,7 @@ const page = async (id: string) => {
   return res.text();
 };
 
-const makeClass = (data: {
+const makeClass = ({ startTime, ...data }: {
   templateId?: string | null;
   classType?: string;
   date: Date;
@@ -56,6 +56,7 @@ const makeClass = (data: {
       durationMinutes: 60,
       location: 'Community Studio',
       hourlyRate: 45,
+      startTime: hhmmToTime(startTime),
       ...data,
     },
   });
@@ -384,7 +385,7 @@ describe('the reporting page, which is where the income claim is settled', () =>
         classType: 'Solo Case',
         templateId: null,
         date: new Date('2020-08-07T00:00:00.000Z'),
-        startTime: '08:00',
+        startTime: hhmmToTime('08:00'),
         durationMinutes: 90,
         location: 'Community Studio',
         hourlyRate: 60,
@@ -424,7 +425,7 @@ describe('the studio class edit page', () => {
   const editPage = (id: string, as = token) =>
     fetch(`${BASE_URL}/studio-class/${id}/edit`, { headers: cookie(as) });
 
-  const makeEditCase = (data: { templateId?: string | null; date: Date; startTime: string }) =>
+  const makeEditCase = ({ startTime, ...data }: { templateId?: string | null; date: Date; startTime: string }) =>
     prisma.studioClass.create({
       data: {
         teacherId,
@@ -432,6 +433,7 @@ describe('the studio class edit page', () => {
         durationMinutes: 60,
         location: 'Editable Studio',
         hourlyRate: 45,
+        startTime: hhmmToTime(startTime),
         ...data,
       },
     });

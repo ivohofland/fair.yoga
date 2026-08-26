@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
+import { hhmmToTime } from '@/lib/time-of-day';
 import { lockClassRowsOrdered } from './db-locks';
 
 const prisma = new PrismaClient();
@@ -153,7 +154,7 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
       teacherId,
       teacherRoomId: teacherRoom.id,
       classType: 'Order class',
-      startTime: '09:00',
+      startTime: hhmmToTime('09:00'),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,

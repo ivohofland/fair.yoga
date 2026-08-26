@@ -9,6 +9,7 @@ import { PrismaClient } from '@prisma/client';
 import { inviteContact, unlinkTeacher } from '@/services/invitations';
 import { promoteNext } from '@/services/waitlist';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -957,7 +958,7 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
     const cls = await prisma.class.create({
       data: {
         teacherId, teacherRoomId: teacherRoom.id, classType: 'Vinyasa', date: new Date(),
-        startTime: '09:00', durationMinutes: 60, roomCost: 30,
+        startTime: hhmmToTime('09:00'), durationMinutes: 60, roomCost: 30,
         minRate: 15, targetRate: 25, minStudents: 2, maxStudents: 10,
         status: 'completed', settingsLocked: true,
       },
@@ -1775,7 +1776,7 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     const openClass = await prisma.class.create({
       data: {
         teacherId: resolveTeacherId, teacherRoomId, classType: 'Resolve Open',
-        date: new Date('2099-06-01'), startTime: '09:00', durationMinutes: 60,
+        date: new Date('2099-06-01'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 10,
         status: 'open',
       },
@@ -1790,7 +1791,7 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     const promoteClass = await prisma.class.create({
       data: {
         teacherId: resolveTeacherId, teacherRoomId, classType: 'Resolve Promote',
-        date: new Date('2099-06-02'), startTime: '09:00', durationMinutes: 60,
+        date: new Date('2099-06-02'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 2,
         status: 'open',
       },
@@ -1811,7 +1812,7 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     const claimClass = await prisma.class.create({
       data: {
         teacherId: resolveTeacherId, teacherRoomId, classType: 'Resolve Claim',
-        date: claimDate, startTime: claimStartTime, durationMinutes: 60,
+        date: claimDate, startTime: hhmmToTime(claimStartTime), durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 1,
         cancelDeadline: 'HOURS_6', status: 'open',
       },
@@ -2372,7 +2373,7 @@ describe('unlinking silences the teacher and freezes the shares (#166 whole-bran
     const cls = await prisma.class.create({
       data: {
         teacherId: c1TeacherId, teacherRoomId: c1TeacherRoomId, classType: 'C1 Class',
-        date: new Date('2099-06-01'), startTime: '09:00', durationMinutes: 60,
+        date: new Date('2099-06-01'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 10,
         status: 'open',
       },
@@ -2532,7 +2533,7 @@ describe('unlinking withdraws waiting entries for the teacher (#166 F3)', () => 
     const cls = await prisma.class.create({
       data: {
         teacherId, teacherRoomId, classType: 'F3 Class',
-        date: new Date('2099-06-01'), startTime: '09:00', durationMinutes: 60,
+        date: new Date('2099-06-01'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 1,
         status: 'open',
       },
@@ -2704,7 +2705,7 @@ describe('the unlink withdrawal takes the class lock (#166 whole-branch I4)', ()
     const cls = await prisma.class.create({
       data: {
         teacherId: lockTeacherId, teacherRoomId: lockTeacherRoomId, classType: 'Lock Class',
-        date: new Date('2099-06-01'), startTime: '09:00', durationMinutes: 60,
+        date: new Date('2099-06-01'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 1,
         status: 'open',
       },

@@ -195,7 +195,7 @@ describe('generateClassInstances (DB)', () => {
       expect(cls.teacherRoomId).toBe(teacherRoomId);
       expect(cls.templateId).toBe(templateId);
       expect(cls.description).toBe('Tuesday morning flow');
-      expect(cls.startTime).toBe('09:00');
+      expect(timeToHHmm(cls.startTime)).toBe('09:00');
       expect(cls.durationMinutes).toBe(75);
       expect(cls.cancelDeadline).toBe('HOURS_24');
       expect(cls.autoCancelCheck).toBe('HOURS_2');
@@ -955,7 +955,7 @@ describe('generateClassInstances (DB)', () => {
       });
       expect(created.length).toBeGreaterThan(0);
       for (const c of created) {
-        expect(c.startTime).toBe('18:45');
+        expect(timeToHHmm(c.startTime)).toBe('18:45');
         // dayOfWeek 5 in this schema's convention (0=Mon) is Saturday,
         // which is getUTCDay() === 6.
         expect(c.date.getUTCDay()).toBe(6);
@@ -1057,7 +1057,7 @@ describe('generateClassInstances (DB)', () => {
     /** The same four dates the generator will choose, computed the same way. */
     function candidates(now: Date): Date[] {
       return getNextOccurrences(1, now, 5)
-        .filter((d) => classStartInstant(d, '09:00', 'Europe/Amsterdam') > now)
+        .filter((d) => classStartInstant(d, hhmmToTime('09:00'), 'Europe/Amsterdam') > now)
         .slice(0, 4);
     }
 
@@ -1114,7 +1114,7 @@ describe('generateClassInstances (DB)', () => {
           templateId: null,
           classType: 'Manual',
           date: taken,
-          startTime: '09:00',
+          startTime: hhmmToTime('09:00'),
           durationMinutes: 60,
           roomCost: 40,
           minRate: 15,
@@ -1154,7 +1154,7 @@ describe('generateClassInstances (DB)', () => {
           templateId: null,
           classType: 'Cross Family',
           date: blocked,
-          startTime: '09:00',
+          startTime: hhmmToTime('09:00'),
           durationMinutes: 60,
           location: 'Elsewhere',
           hourlyRate: 50,
@@ -1181,7 +1181,7 @@ describe('generateClassInstances (DB)', () => {
           templateId: null,
           classType: 'Cross Family Cancelled',
           date: notBlocked,
-          startTime: '09:00',
+          startTime: hhmmToTime('09:00'),
           durationMinutes: 60,
           location: 'Elsewhere',
           hourlyRate: 50,
@@ -1246,7 +1246,7 @@ describe('generateClassInstances (DB)', () => {
               templateId: null,
               classType: 'Someone else, studio',
               date,
-              startTime: '09:00',
+              startTime: hhmmToTime('09:00'),
               durationMinutes: 60,
               location: 'Their studio',
               hourlyRate: 50,
@@ -1293,7 +1293,7 @@ describe('generateClassInstances (DB)', () => {
               templateId: null,
               classType: 'Someone else',
               date,
-              startTime: '09:00',
+              startTime: hhmmToTime('09:00'),
               durationMinutes: 60,
               roomCost: 40,
               minRate: 15,
@@ -1332,7 +1332,7 @@ describe('generateClassInstances (DB)', () => {
           templateId: null,
           classType: 'Manual',
           date: free,
-          startTime: '09:00',
+          startTime: hhmmToTime('09:00'),
           durationMinutes: 60,
           roomCost: 40,
           minRate: 15,
@@ -1409,7 +1409,7 @@ describe('generateClassInstances (DB)', () => {
               templateId: null,
               classType: 'Vinyasa',
               date: collide,
-              startTime: '09:00',
+              startTime: hhmmToTime('09:00'),
               durationMinutes: 60,
               roomCost: 40,
               minRate: 15,
@@ -1659,7 +1659,7 @@ describe('generateClassInstances (DB)', () => {
 
     function candidates(now: Date): Date[] {
       return getNextOccurrences(1, now, 5)
-        .filter((d) => classStartInstant(d, '09:00', 'Europe/Amsterdam') > now)
+        .filter((d) => classStartInstant(d, hhmmToTime('09:00'), 'Europe/Amsterdam') > now)
         .slice(0, 4);
     }
 
@@ -1669,7 +1669,7 @@ describe('generateClassInstances (DB)', () => {
       templateId,
       classType: 'Vinyasa',
       date,
-      startTime: '09:00',
+      startTime: hhmmToTime('09:00'),
       durationMinutes: 75,
       roomCost: 40,
       minRate: 15,

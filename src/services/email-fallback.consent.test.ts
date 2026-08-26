@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { processEmailFallback } from './email-fallback';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 // The dry-run tests in email-fallback.test.ts can't tell "emailed" from
 // "skipped and marked" — both end in emailSent=true. This file makes the
@@ -105,7 +106,7 @@ describe('processEmailFallback consent wiring (mocked send)', () => {
         teacherRoomId: teacherRoom.id,
         classType: 'Vinyasa',
         date: new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate())),
-        startTime: `${String(start.getUTCHours()).padStart(2, '0')}:${String(start.getUTCMinutes()).padStart(2, '0')}`,
+        startTime: hhmmToTime(`${String(start.getUTCHours()).padStart(2, '0')}:${String(start.getUTCMinutes()).padStart(2, '0')}`),
         durationMinutes: 60,
         roomCost: 30,
         minRate: 15,

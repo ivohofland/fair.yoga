@@ -11,6 +11,7 @@ import {
   WaitlistJoinError,
   WaitlistPromotionError,
 } from './waitlist';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 // ===========================================================================
 // Pure logic tests — getWaitlistWindow
@@ -24,7 +25,7 @@ describe('getWaitlistWindow', () => {
     // now = April 8 12:00 UTC → well before cutoff → 'auto_promote'
     const result = getWaitlistWindow(
       new Date('2026-04-10'),
-      '09:00',
+      hhmmToTime('09:00'),
       'HOURS_24',
       'UTC',
       new Date('2026-04-08T12:00:00Z'),
@@ -37,7 +38,7 @@ describe('getWaitlistWindow', () => {
     // now = April 9 08:30 UTC → between cutoff and deadline → 'first_come_first_claimed'
     const result = getWaitlistWindow(
       new Date('2026-04-10'),
-      '09:00',
+      hhmmToTime('09:00'),
       'HOURS_24',
       'UTC',
       new Date('2026-04-09T08:30:00Z'),
@@ -50,7 +51,7 @@ describe('getWaitlistWindow', () => {
     // now = April 9 10:00 UTC → past deadline → 'frozen'
     const result = getWaitlistWindow(
       new Date('2026-04-10'),
-      '09:00',
+      hhmmToTime('09:00'),
       'HOURS_24',
       'UTC',
       new Date('2026-04-09T10:00:00Z'),
@@ -65,7 +66,7 @@ describe('getWaitlistWindow', () => {
     // now = April 10 02:30 UTC → between cutoff and deadline → 'first_come_first_claimed'
     const result = getWaitlistWindow(
       new Date('2026-04-10'),
-      '09:00',
+      hhmmToTime('09:00'),
       'HOURS_6',
       'UTC',
       new Date('2026-04-10T02:30:00Z'),
@@ -78,7 +79,7 @@ describe('getWaitlistWindow', () => {
     // now = exactly April 9 09:00 UTC → frozen (>= deadline)
     const result = getWaitlistWindow(
       new Date('2026-04-10'),
-      '09:00',
+      hhmmToTime('09:00'),
       'HOURS_24',
       'UTC',
       new Date('2026-04-09T09:00:00Z'),
@@ -91,7 +92,7 @@ describe('getWaitlistWindow', () => {
     // now = exactly April 9 08:00 UTC → first_come_first_claimed (>= cutoff)
     const result = getWaitlistWindow(
       new Date('2026-04-10'),
-      '09:00',
+      hhmmToTime('09:00'),
       'HOURS_24',
       'UTC',
       new Date('2026-04-09T08:00:00Z'),
@@ -105,7 +106,7 @@ describe('getWaitlistWindow', () => {
     // now = April 7 12:00 UTC → auto_promote
     const result = getWaitlistWindow(
       new Date('2026-04-10'),
-      '09:00',
+      hhmmToTime('09:00'),
       'HOURS_48',
       'UTC',
       new Date('2026-04-07T12:00:00Z'),
@@ -119,7 +120,7 @@ describe('getWaitlistWindow', () => {
     // now = April 9 20:30 UTC → first_come_first_claimed
     const result = getWaitlistWindow(
       new Date('2026-04-10'),
-      '09:00',
+      hhmmToTime('09:00'),
       'HOURS_12',
       'UTC',
       new Date('2026-04-09T20:30:00Z'),
@@ -131,7 +132,7 @@ describe('getWaitlistWindow', () => {
     // Use a class far in the future to guarantee auto_promote
     const result = getWaitlistWindow(
       new Date('2099-12-31'),
-      '09:00',
+      hhmmToTime('09:00'),
       'HOURS_24',
       'UTC',
     );
@@ -145,7 +146,7 @@ describe('getWaitlistWindow', () => {
     // but a UTC reading would still say first_come_first_claimed.
     const result = getWaitlistWindow(
       new Date('2026-07-20'),
-      '09:00',
+      hhmmToTime('09:00'),
       'HOURS_24',
       'Europe/Amsterdam',
       new Date('2026-07-19T08:00:00Z'),
@@ -164,11 +165,10 @@ const uniqueSuffix = Date.now();
 /**
  * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
  * the next hour rather than ever emitting an invalid minute like `'09:60'`
- * once a block's fixture counter crosses 30. `startTime` is a plain `String`
- * with no CHECK constraint, occupancy is string equality, and
- * `Class_teacher_slot_unique` compares strings too — so a raw `HH:${counter}`
- * literal would accept an out-of-range value silently instead of exercising
- * the constraint a fixture counter exists to dodge collisions with. The two
+ * once a block's fixture counter crosses 30 — a raw `HH:${counter}` literal
+ * would build exactly that. `Class.startTime` is `@db.Time` and would refuse
+ * the row outright at the DB, which is a less useful failure here than this
+ * guard's message naming the fixture counter that produced it. The two
  * blocks below that use this each pick their own hour offset (`slotTime(60 +
  * counter)` for a `10:xx` base) so neither counter's values can land in the
  * other's hour. Mirrors `class-template-lifecycle.test.ts`'s `slotTime`.
@@ -214,7 +214,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
         teacherRoomId,
         classType: 'Hatha',
         date: new Date('2099-06-01'),
-        startTime: slotTime(makeClassCounter),
+        startTime: hhmmToTime(slotTime(makeClassCounter)),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -650,7 +650,7 @@ describe('promoteNext (DB)', () => {
         teacherRoomId,
         classType: 'Yin',
         date: new Date('2099-07-01'),
-        startTime: '18:00',
+        startTime: hhmmToTime('18:00'),
         durationMinutes: 75,
         roomCost: 40,
         minRate: 10,
@@ -893,7 +893,7 @@ describe('promoteNext (DB)', () => {
         teacherRoomId,
         classType: 'Yin',
         date: new Date('2099-07-01'),
-        startTime: '19:00',
+        startTime: hhmmToTime('19:00'),
         durationMinutes: 75,
         roomCost: 40,
         minRate: 10,
@@ -1041,7 +1041,7 @@ describe('claimSpot (DB)', () => {
         teacherRoomId,
         classType: 'Claim Flow',
         date: new Date('2026-06-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -1438,7 +1438,7 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
           teacherRoomId,
           classType: label,
           date: new Date('2099-08-01'),
-          startTime: slotTime(60 + makeClassCounter),
+          startTime: hhmmToTime(slotTime(60 + makeClassCounter)),
           durationMinutes: 60,
           roomCost: 25,
           minRate: 15,
@@ -1700,7 +1700,7 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
         teacherRoomId,
         classType: 'Lock Flow',
         date: new Date('2099-09-01'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 30,
         minRate: 15,
@@ -1936,7 +1936,7 @@ describe('handleSpotFreed (DB)', () => {
         teacherRoomId,
         classType: 'SpotFreed Flow',
         date: new Date('2026-06-03'),
-        startTime: '09:00',
+        startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,

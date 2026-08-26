@@ -1360,11 +1360,15 @@ export async function pauseOrResumeStudioTemplate(
   // spare-today carve-out to mirror here — today's class is still on the
   // schedule and must be reported as such.
   const today = startOfLocalDay(new Date(), template.scheduleRule.teacher.defaultTimezone);
-  const lastScheduled = await db.studioClass.findFirst({
+  const lastScheduledRow = await db.studioClass.findFirst({
     where: scheduledWhere(templateId, { gte: today }),
     orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
     select: { date: true, startTime: true },
   });
+  const lastScheduled: LastScheduledClass | null = lastScheduledRow && {
+    date: lastScheduledRow.date,
+    startTime: timeToHHmm(lastScheduledRow.startTime),
+  };
   return { ok: true, action: 'paused', template: result.template, lastScheduled };
 }
 

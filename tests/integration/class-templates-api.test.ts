@@ -256,7 +256,7 @@ describe('POST /api/class-templates', () => {
     expect(instances.length).toBe(4);
     for (const instance of instances) {
       expect(instance.status).toBe('open');
-      expect(instance.startTime).toBe('09:30');
+      expect(timeToHHmm(instance.startTime)).toBe('09:30');
       expect(instance.date.getUTCDay()).toBe(EXPECTED_JS_DAY);
     }
   });
@@ -1291,7 +1291,7 @@ describe('PUT /api/class-templates/[id]', () => {
       orderBy: { date: 'asc' },
     });
     expect(before.length).toBeGreaterThan(0);
-    expect(before.every((c) => c.startTime === '15:00')).toBe(true);
+    expect(before.every((c) => timeToHHmm(c.startTime) === '15:00')).toBe(true);
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -1613,7 +1613,7 @@ describe('PUT /api/class-templates/[id]', () => {
         teacherRoomId,
         classType: 'Slot Blocker',
         date: blocked,
-        startTime: '03:00',
+        startTime: hhmmToTime('03:00'),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -1814,7 +1814,7 @@ describe('PUT /api/class-templates/[id]', () => {
         teacherRoomId,
         classType: 'Cancelled Slot Blocker',
         date: weekFive,
-        startTime: '21:00',
+        startTime: hhmmToTime('21:00'),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -2111,7 +2111,7 @@ describe('PUT /api/class-templates/[id]', () => {
         teacherRoomId,
         classType: 'Sync Slot Blocker',
         date: targetDate,
-        startTime: '01:00',
+        startTime: hhmmToTime('01:00'),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -2137,7 +2137,7 @@ describe('PUT /api/class-templates/[id]', () => {
     // collide with. Both halves asserted: "the PUT returned 200" alone would
     // also be satisfied by a propagation that happened to find the slot free.
     const instance = await prisma.class.findUniqueOrThrow({ where: { id: instances[0]!.id } });
-    expect(instance.startTime).toBe('00:00');
+    expect(timeToHHmm(instance.startTime)).toBe('00:00');
   });
 
   // Door 5 of the room archive lifecycle (issue 76, fix round 2):

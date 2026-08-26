@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { processEmailFallback } from './email-fallback';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 // RESEND_API_KEY is unset in the test environment, so the service takes the
 // dev path (logs instead of sending) — what we assert is the bookkeeping:
@@ -102,7 +103,7 @@ describe('processEmailFallback (DB)', () => {
           teacherRoomId: teacherRoom.id,
           classType: 'Vinyasa',
           date,
-          startTime,
+          startTime: hhmmToTime(startTime),
           durationMinutes: 60,
           roomCost: 30,
           minRate: 15,
@@ -156,7 +157,7 @@ describe('processEmailFallback (DB)', () => {
         teacherRoomId: amsTeacherRoom.id,
         classType: 'Vinyasa',
         date: new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day))),
-        startTime: `${parts.hour}:${parts.minute}`,
+        startTime: hhmmToTime(`${parts.hour}:${parts.minute}`),
         durationMinutes: 60,
         roomCost: 30,
         minRate: 15,
