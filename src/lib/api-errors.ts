@@ -55,33 +55,35 @@ export type ApiFailure = {
 };
 
 /**
- * Matches the terminality triggers — plural since #247. Both raise
+ * Matches the terminality triggers — plural since #247. Each raises
  * `RAISE EXCEPTION ... USING ERRCODE = '23514'` with the same
- * `which is terminal` wording, and both mean the same thing to a caller
- * ("that class is frozen"), so both route through this one branch:
+ * `which is terminal` wording, and they mean the same thing to a caller
+ * ("that class is frozen"), so they route through this one branch:
  *
- * - `20260805120000_class_terminal_status_trigger` — `class_terminal_status_
- *   guard`, BEFORE UPDATE OF status, refuses to change a terminal class's
- *   status.
- * - `20260817120000_class_terminal_date_trigger` — `class_terminal_date_
- *   guard`, BEFORE UPDATE OF date, refuses to move a terminal class's date.
- *   Added because `reapClosedWaitlistEntries` DELETES on a predicate of
- *   terminal AND `date` more than 365 days past, and only the first half was
- *   enforced.
+ * - `class_terminal_status_guard`, BEFORE UPDATE OF status on `Class`, refuses
+ *   to change a terminal class's status.
+ * - `entry_frozen_schedule_guard`, BEFORE UPDATE OF date, "startTime",
+ *   "durationMinutes" on `CalendarEntry`, refuses to move a terminal class in
+ *   the calendar. It exists because `reapClosedWaitlistEntries` DELETES on a
+ *   predicate of terminal AND `date` more than 365 days past, and only the
+ *   first half was enforced (#247).
+ * - `entry_terminal_liveness_guard`, BEFORE UPDATE OF "cancelledAt" on
+ *   `CalendarEntry`, refuses to un-cancel a terminal regular entry or to
+ *   cancel a completed one.
  *
- * ADDING A THIRD TRIGGER: it joins this branch only by doing BOTH — declaring
+ * ADDING A FOURTH TRIGGER: it joins this branch only by doing BOTH — declaring
  * `USING ERRCODE = '23514'` *and* carrying the literal clause `which is
  * terminal` in its message. Either one alone classifies 500 for a request
  * that should be a 409. That requirement used to be undocumented and
- * unenforced, so the author of a third trigger would have had to already know
+ * unenforced, so the author of a fourth trigger would have had to already know
  * it; `api-errors.test.ts` now sweeps `prisma/migrations/` and reddens on the
  * commit that adds a `23514` trigger without the phrase. Mechanical, not
  * remembered.
  *
- * The name is narrower than what this matches — a date violation classifies
- * here too. Kept rather than renamed, but said out loud, because a reader who
- * greps `isTerminalStatusViolation`, finds nothing about dates, and concludes
- * a date violation goes unhandled would be wrong.
+ * The name is narrower than what this matches — a frozen-schedule violation
+ * classifies here too. Kept rather than renamed, but said out loud, because a
+ * reader who greps `isTerminalStatusViolation`, finds nothing about dates, and
+ * concludes a date violation goes unhandled would be wrong.
  *
  * Measured directly rather than assumed (`src/services/class-terminal-
  * status.test.ts`, which also pins `classifyApiError(caught).status === 409`
@@ -92,15 +94,15 @@ export type ApiFailure = {
  *   PrismaClientUnknownRequestError: Invalid `prisma.class.update()` invocation
  *   Error occurred during query execution:
  *   ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(
- *     PostgresError { code: "23514", message: "Class <id> is cancelled, which
+ *     PostgresError { code: "23514", message: "Class <id> is completed, which
  *     is terminal; cannot change status to <status>", severity: "ERROR",
  *     detail: None, column: None, hint: None }), transient: false })
  *
- * The date trigger's message differs only after the shared clause, so the
- * same match covers it (observed via `db.class.updateMany`, #247):
+ * The entry-level guards' messages differ only after the shared clause, so the
+ * same match covers them (observed via `db.calendarEntry.update`, #327):
  *
- *     PostgresError { code: "23514", message: "Class <id> is completed, which
- *     is terminal; cannot change its date from <old> to <new>", ... }
+ *     PostgresError { code: "23514", message: "CalendarEntry <id> is completed,
+ *     which is terminal; cannot change its date, start time or duration", ... }
  *
  * TWO ERROR SHAPES CARRY THE SAME SQLSTATE, and which one arrives is decided
  * by how the statement was issued, not by what failed. A typed
@@ -128,12 +130,12 @@ export type ApiFailure = {
  * of those as "that class can no longer be changed." The `which is terminal`
  * wording is what actually discriminates.
  *
- * That wording is no longer unique to ONE trigger — since #247 two migrations
- * emit it — but it does not need to be, and the matcher must not be narrowed
+ * That wording is no longer unique to ONE trigger — since #247 more than one
+ * emits it — but it does not need to be, and the matcher must not be narrowed
  * to restore uniqueness. What it needs is to be unique to *this class of
  * failure*, and it is: no other `23514` in this schema uses the phrase, and
  * every writer that does means the identical thing to a caller. Matching a set
- * of triggers deliberately is the design; the two are kept in step by
+ * of triggers deliberately is the design; they are kept in step by
  * `class-terminal-status.test.ts` and `class-terminal-date.test.ts`, each of
  * which pins `classifyApiError(...).status === 409` against its own real
  * thrown error.
@@ -322,36 +324,38 @@ export function isRestrictViolationOn(error: unknown, constraints: readonly stri
  * something more specific than this can.
  */
 export function classifyApiError(error: unknown): ApiFailure {
-  // The terminality triggers (migrations 20260805120000 and 20260817120000)
-  // raise with SQLSTATE 23514. Reaching here means a write to a frozen class
-  // — its status, or since #247 its date — got past the guard that should
-  // have refused it first. That is a 409 either way: the request is
-  // well-formed and it conflicts with a state the class has already reached.
+  // The terminality triggers named in `isTerminalStatusViolation`'s docblock
+  // raise with SQLSTATE 23514. Reaching here means a write to a frozen class —
+  // its status, its liveness, or since #247 its place in the calendar — got
+  // past the guard that should have refused it first. That is a 409 either
+  // way: the request is well-formed and it conflicts with a state the class
+  // has already reached.
   if (isTerminalStatusViolation(error)) {
     // WHICH trigger fired, read from the message tail the matcher itself
     // deliberately ignores. Classification is shared; the operator's reading
-    // of the two is not, and `level` is the only field that can say so.
+    // is not, and `level` is the only field that can say so.
     //
-    // A STATUS fire is a lost race. Every status writer has had a CAS or a
-    // row lock since #174, so the trigger catching one means a guard was
-    // bypassed under contention — expected-but-notable, the same reading as
-    // the P2002 branch below, and `warn` is right for it.
+    // Anything but a DATE fire is a lost race. Every status and liveness
+    // writer has had a CAS or a row lock since #174, so a trigger catching one
+    // means a guard was bypassed under contention — expected-but-notable, the
+    // same reading as the P2002 branch below, and `warn` is right for it.
     //
     // A DATE fire is not a race, because there is no race to lose:
-    // `updateClass` is the only writer of `Class.date` in `src/`, and its CAS
-    // (`status: { notIn: [...TERMINAL_CLASS_STATUSES] }`) means this trigger's
-    // own WHEN clause can never hold for it. The trigger is currently
-    // unfireable. If it fires, someone has added an unguarded writer of the
-    // exact column `reapClosedWaitlistEntries` reads before it permanently
-    // DELETEs a class's queue — the precondition for the data loss #247
-    // exists to prevent. That must not land in the log at the level a
-    // lock timeout lands at.
+    // `updateClass` is the only writer in `src/` that moves an existing
+    // entry's `date`, and its entry CAS (`classCompletedAt: null` plus the
+    // regular-and-cancelled exclusion) re-asks exactly what
+    // `entry_frozen_schedule_guard` asks, so the guard can never fire for it.
+    // If it fires, someone has added an unguarded writer of the exact column
+    // `reapClosedWaitlistEntries` reads before it permanently DELETEs a
+    // class's queue — the precondition for the data loss #247 exists to
+    // prevent. That must not land in the log at the level a lock timeout lands
+    // at.
     const trigger = error.message.includes('cannot change its date') ? 'date' : 'status';
     return {
       status: 409,
-      // Deliberately names neither "status" nor "date". Both triggers reach
-      // this branch and both mean the same thing to the caller — the class is
-      // frozen — so any wording that names one column is wrong half the time.
+      // Deliberately names no column. Every trigger that reaches this branch
+      // means the same thing to the caller — the class is frozen — so any
+      // wording that names one column is wrong for the others.
       message: 'That class can no longer be changed',
       logMessage: 'terminal class write reached a DB trigger',
       level: trigger === 'date' ? 'error' : 'warn',

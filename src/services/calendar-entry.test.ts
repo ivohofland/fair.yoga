@@ -99,8 +99,14 @@ async function expectSlotRefusal(fn: () => Promise<unknown>): Promise<void> {
  * schedule or its liveness, and a shared teacher would make those mutations
  * visible to each other through `CalendarEntry_teacher_slot_excl` — a slot
  * refusal where the case is about the freeze.
+ *
+ * `classStatus` is the status the `Class` row is INSERTED with, which is not
+ * the same question as the status it ends up in: `class_sync_entry_completed`
+ * hangs off both events since #327 and the two are pinned separately.
  */
-async function regularEntryWithClass(): Promise<{ entryId: string; classId: string }> {
+async function regularEntryWithClass(
+  classStatus: 'draft' | 'completed' = 'draft',
+): Promise<{ entryId: string; classId: string }> {
   const teacherId = await freshTeacher();
   const teacherRoom = await prisma.teacherRoom.create({
     // `capacityOverride` is required and has no default (prisma/schema.prisma).
@@ -114,9 +120,9 @@ async function regularEntryWithClass(): Promise<{ entryId: string; classId: stri
   );
   const classId = randomUUID();
   await prisma.$executeRawUnsafe(
-    `INSERT INTO "Class" (id,"calendarEntryId",kind,"teacherRoomId","roomCost","minRate","targetRate","minStudents","maxStudents","createdAt","updatedAt")
-     VALUES ($1,$2,'regular',$3,35,15,25,4,12,now(),now())`,
-    classId, entryId, teacherRoom.id,
+    `INSERT INTO "Class" (id,"calendarEntryId",kind,"teacherRoomId","roomCost","minRate","targetRate","minStudents","maxStudents",status,"createdAt","updatedAt")
+     VALUES ($1,$2,'regular',$3,35,15,25,4,12,$4::"ClassStatus",now(),now())`,
+    classId, entryId, teacherRoom.id, classStatus,
   );
   return { entryId, classId };
 }
@@ -143,12 +149,14 @@ describe('CalendarEntry_teacher_slot_excl', () => {
   let teacherId: string;
   beforeEach(async () => { teacherId = await freshTeacher(); });
 
-  const entry = (o: Partial<{ date: string; start: string; mins: number; cancelled: boolean }> = {}) =>
+  const entry = (
+    o: Partial<{ date: string; start: string; mins: number; cancelled: boolean; kind: string }> = {},
+  ) =>
     prisma.$executeRawUnsafe(
       `INSERT INTO "CalendarEntry" (id,"teacherId",kind,"classType",date,"startTime","durationMinutes","cancelledAt","createdAt","updatedAt")
-       VALUES (gen_random_uuid()::text,$1,'regular','Vinyasa',$2::date,$3::time,$4,$5::timestamp,now(),now())`,
+       VALUES (gen_random_uuid()::text,$1,$6::"ClassFamily",'Vinyasa',$2::date,$3::time,$4,$5::timestamp,now(),now())`,
       teacherId, o.date ?? '2027-09-01', o.start ?? '19:00', o.mins ?? 90,
-      o.cancelled ? new Date() : null,
+      o.cancelled ? new Date() : null, o.kind ?? 'regular',
     );
 
   it('refuses an entry overlapping the tail of another', async () => {
@@ -176,9 +184,13 @@ describe('CalendarEntry_teacher_slot_excl', () => {
     await expect(entry()).resolves.toBeDefined();
   });
 
+  // STUDIO entries, and that is not incidental: un-cancelling is a studio-only
+  // move. `entry_terminal_liveness_guard` refuses it outright on a regular
+  // entry, and would answer here with its own `23514` before the constraint
+  // was ever consulted — a pass for the wrong reason.
   it('refuses un-cancelling back into an occupied slot', async () => {
-    await entry({ cancelled: true });
-    await entry();
+    await entry({ cancelled: true, kind: 'studio' });
+    await entry({ kind: 'studio' });
     await expectSlotRefusal(() => prisma.$executeRawUnsafe(
       `UPDATE "CalendarEntry" SET "cancelledAt" = NULL WHERE "teacherId" = $1 AND "cancelledAt" IS NOT NULL`,
       teacherId,
@@ -298,6 +310,18 @@ describe('disjoint occupancy — one entry, one child', () => {
   });
 });
 
+/**
+ * The refusal wording every case below matches on.
+ *
+ * Not `/frozen/i`. `isTerminalStatusViolation` (`src/lib/api-errors.ts`)
+ * requires the literal clause `which is terminal` alongside SQLSTATE `23514`
+ * before `classifyApiError` will answer 409 rather than 500, so the clause is
+ * part of these guards' contract rather than prose — and matching on it is
+ * what makes a reworded message fail here instead of surfacing as an
+ * "Internal server error" to a caller.
+ */
+const TERMINAL_REFUSAL = /which is terminal/;
+
 describe('the freeze: a trigger maintains the marker, the guard reads its own row', () => {
   it('sets classCompletedAt when the owning class completes', async () => {
     const { entryId, classId } = await regularEntryWithClass();
@@ -307,14 +331,56 @@ describe('the freeze: a trigger maintains the marker, the guard reads its own ro
     expect(e?.m).toBeInstanceOf(Date);
   });
 
+  // The INSERT half of the same marker. `class_sync_entry_completed_guard` is
+  // `AFTER UPDATE OF status`, so a raw
+  // `INSERT INTO "Class" (…, status) VALUES (…, 'completed')` produced a
+  // completed class with no marker at all — an entry whose schedule stayed
+  // editable, which is the guarantee `waitlist-retention.ts` rests on before
+  // it permanently deletes a class's queue.
+  // `class_sync_entry_completed_insert_guard` is the second trigger on the
+  // same function that closes it.
+  it('sets classCompletedAt when a class is INSERTED already completed', async () => {
+    const { entryId } = await regularEntryWithClass('completed');
+    const [e] = await prisma.$queryRawUnsafe<Array<{ m: Date | null }>>(
+      `SELECT "classCompletedAt" AS m FROM "CalendarEntry" WHERE id=$1`, entryId);
+    expect(e?.m).toBeInstanceOf(Date);
+    // The marker is not the point on its own — the freeze it enables is.
+    await expect(prisma.$executeRawUnsafe(
+      `UPDATE "CalendarEntry" SET date='2027-12-01' WHERE id=$1`, entryId,
+    )).rejects.toThrow(TERMINAL_REFUSAL);
+  });
+
   it('then refuses moving the date, the startTime, and the duration', async () => {
     const { entryId, classId } = await regularEntryWithClass();
     await prisma.$executeRawUnsafe(`UPDATE "Class" SET status='completed' WHERE id=$1`, classId);
     for (const set of [`date='2027-12-01'`, `"startTime"='07:00'`, `"durationMinutes"=45`]) {
       await expect(prisma.$executeRawUnsafe(
         `UPDATE "CalendarEntry" SET ${set} WHERE id=$1`, entryId,
-      )).rejects.toThrow(/frozen/i);
+      )).rejects.toThrow(TERMINAL_REFUSAL);
     }
+  });
+
+  // The other half of the guard's decision, and the half a trigger cannot
+  // state: `BEFORE UPDATE OF date, …` fires on a column's presence in the SET
+  // list, not on its value changing. Without the early return the guard
+  // refuses a writer that carries the unchanged date alongside a column it
+  // does mean to change — and tells it "cannot change its date, start time or
+  // duration" about a statement changing none of them.
+  //
+  // All three columns at their current values in one statement, so a
+  // reintroduced defect on any one of them lands here.
+  it('allows a write that repeats a frozen entry\'s own schedule alongside another column', async () => {
+    const { entryId, classId } = await regularEntryWithClass();
+    await prisma.$executeRawUnsafe(`UPDATE "Class" SET status='completed' WHERE id=$1`, classId);
+    await expect(prisma.$executeRawUnsafe(
+      `UPDATE "CalendarEntry"
+          SET date='2027-10-01'::date, "startTime"='09:00'::time, "durationMinutes"=75,
+              "classType"='Unchanged schedule'
+        WHERE id=$1`, entryId,
+    )).resolves.toBeDefined();
+    const [e] = await prisma.$queryRawUnsafe<Array<{ t: string }>>(
+      `SELECT "classType" AS t FROM "CalendarEntry" WHERE id=$1`, entryId);
+    expect(e?.t).toBe('Unchanged schedule');
   });
 
   it('freezes a CANCELLED regular entry without any marker', async () => {
@@ -322,7 +388,7 @@ describe('the freeze: a trigger maintains the marker, the guard reads its own ro
     await prisma.$executeRawUnsafe(`UPDATE "CalendarEntry" SET "cancelledAt"=now() WHERE id=$1`, entryId);
     await expect(prisma.$executeRawUnsafe(
       `UPDATE "CalendarEntry" SET date='2027-12-01' WHERE id=$1`, entryId,
-    )).rejects.toThrow(/frozen/i);
+    )).rejects.toThrow(TERMINAL_REFUSAL);
   });
 
   // The asymmetry, pinned. A studio cancellation is reversible and its
@@ -341,5 +407,72 @@ describe('the freeze: a trigger maintains the marker, the guard reads its own ro
     await expect(prisma.$executeRawUnsafe(
       `UPDATE "CalendarEntry" SET "classType"='Hatha' WHERE id=$1`, entryId,
     )).resolves.toBeDefined();
+  });
+});
+
+/**
+ * Liveness on a terminal REGULAR entry, which is a different column list from
+ * the freeze above and therefore a different trigger.
+ *
+ * One predicate used to cover all of this: before #327 cancellation was a
+ * `ClassStatus` and `class_reject_terminal_status_change` refused a status
+ * change on `OLD.status IN ('completed','cancelled')`. Both of its arms landed
+ * on a column no trigger guarded once liveness moved to the entry — a
+ * cancelled class could be un-cancelled, and a completed one could be
+ * cancelled, leaving its `Payment` rows attached to a class the app then
+ * renders as cancelled.
+ *
+ * The `kind` conjunct is the same asymmetry the freeze guard carries:
+ * cancelling a `StudioClass` is reversible and `PUT /api/studio-classes/[id]`
+ * is a live door onto it, so a studio entry's liveness stays writable in both
+ * directions.
+ */
+describe('entry_terminal_liveness_guard', () => {
+  const setCancelled = (entryId: string, value: string) =>
+    prisma.$executeRawUnsafe(
+      `UPDATE "CalendarEntry" SET "cancelledAt"=${value} WHERE id=$1`, entryId,
+    );
+
+  it('refuses un-cancelling a cancelled regular entry', async () => {
+    const { entryId } = await regularEntryWithClass();
+    await setCancelled(entryId, 'now()');
+    await expect(setCancelled(entryId, 'NULL')).rejects.toThrow(TERMINAL_REFUSAL);
+  });
+
+  it('refuses cancelling a COMPLETED regular class', async () => {
+    const { entryId, classId } = await regularEntryWithClass();
+    await prisma.$executeRawUnsafe(`UPDATE "Class" SET status='completed' WHERE id=$1`, classId);
+    await expect(setCancelled(entryId, 'now()')).rejects.toThrow(TERMINAL_REFUSAL);
+  });
+
+  // The pass-cases, without which a predicate mutated to refuse every write to
+  // the column would still satisfy both cases above. Cancelling a live class
+  // is the whole of `POST /api/classes/[id]/cancel`.
+  it('allows cancelling a live regular entry', async () => {
+    const { entryId } = await regularEntryWithClass();
+    await expect(setCancelled(entryId, 'now()')).resolves.toBeDefined();
+  });
+
+  // The actual-change half, which `BEFORE UPDATE OF "cancelledAt"` cannot
+  // state on its own — it fires on the column's presence in the SET list. A
+  // writer re-asserting the value it already holds is not a liveness change.
+  it('allows a write that repeats a cancelled regular entry\'s own cancelledAt', async () => {
+    const { entryId } = await regularEntryWithClass();
+    await setCancelled(entryId, 'now()');
+    await expect(prisma.$executeRawUnsafe(
+      `UPDATE "CalendarEntry" e SET "cancelledAt"=e."cancelledAt", "classType"='Re-asserted' WHERE id=$1`,
+      entryId,
+    )).resolves.toBeDefined();
+  });
+
+  // The live studio path this guard sits directly beside: the same statement
+  // `PUT /api/studio-classes/[id]` issues when a teacher un-cancels.
+  it('lets a cancelled STUDIO entry be un-cancelled', async () => {
+    const { entryId } = await studioEntryWithClass();
+    await setCancelled(entryId, 'now()');
+    await expect(setCancelled(entryId, 'NULL')).resolves.toBeDefined();
+    const [e] = await prisma.$queryRawUnsafe<Array<{ c: Date | null }>>(
+      `SELECT "cancelledAt" AS c FROM "CalendarEntry" WHERE id=$1`, entryId);
+    expect(e?.c).toBeNull();
   });
 });
