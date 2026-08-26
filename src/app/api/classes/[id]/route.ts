@@ -12,6 +12,7 @@ import { updateClassSchema } from '@/lib/schemas';
 import { updateClass, type ClassUpdateData } from '@/services/class-lifecycle';
 import { entryConflictMessage, probeConflictingEntry } from '@/lib/entry-conflict';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
+import { log } from '@/lib/log';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -126,6 +127,22 @@ export const PUT = withErrorHandler(async (
   // cancellation committing between this handler's read and the write — since
   // a visibly frozen class is answered as `terminal` above.
   if (result.reason === 'frozen') {
+    // LOGGED for the reason every refusal RETURNED from a service carries:
+    // `respondError` does not log, and `withErrorHandler` never sees a response
+    // that was returned rather than thrown — so this handler is what removes
+    // the server-side record. Its three entry-level siblings each state the
+    // same rule beside their own line; this was the door that logged nothing.
+    //
+    // `error`, not `warn`, and the level is the point. The paragraph above says
+    // this branch is "reached only by losing the race the entry's CAS exists to
+    // lose", and the UNREACHABLE trigger backstop for the same condition
+    // (`entry_frozen_schedule_guard`, via `classifyApiError`) logs at `error`.
+    // A guard firing where its own comment says it cannot must not be quieter
+    // than the backstop behind it.
+    log.error(
+      { classId: id, teacherId: session.teacherId },
+      'class edit refused: the entry was frozen between this handler read and its write',
+    );
     return respondError(
       'This class was completed or cancelled while you were editing it, so its schedule can no longer change.',
       409,
@@ -158,6 +175,19 @@ export const PUT = withErrorHandler(async (
       durationMinutes: data.durationMinutes ?? cls.calendarEntry.durationMinutes,
       excludeEntryId: cls.calendarEntryId,
     });
+    // The studio twin's own line, mirrored (`api/studio-classes/[id]/route.ts`).
+    // `probeConflictingEntry` logs its own failures with `{ err, teacherId }`
+    // and nothing else, so without this a failed probe left no way to tell WHICH
+    // request it belonged to; and a successful one left no record of the
+    // refusal at all.
+    log.warn(
+      {
+        classId: id,
+        teacherId: session.teacherId,
+        conflictEntryId: conflict?.id ?? null,
+      },
+      'class edit refused: another live entry holds that slot',
+    );
     return respondError(
       entryConflictMessage(conflict, 'regular'),
       409,

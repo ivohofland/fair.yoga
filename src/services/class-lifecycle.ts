@@ -1537,7 +1537,14 @@ export async function updateClass(
         where: { id: classId },
         include: { calendarEntry: true },
       });
-      if (!updated) return { ok: false, reason: 'not_found' };
+      // THROWN, not returned, and the difference is that a `return` COMMITS.
+      // Unreachable under the lock this transaction is holding — the entry FK
+      // is `ON DELETE CASCADE`, so deleting the entry out from under us needs
+      // the `Class` row lock we hold — but this file's own argument about its
+      // siblings applies here word for word: the throw does not depend on that
+      // argument holding. Every other refusal in this transaction rolls back;
+      // this one used to commit two writes and then report the row missing.
+      if (!updated) throw new UpdateClassRefusal({ ok: false, reason: 'not_found' });
       return { ok: true, cls: updated };
     });
   } catch (err) {

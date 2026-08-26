@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { log } from './log';
 
 /**
  * Which family's rule occupies a slot, asked after `ScheduleRule_teacher_slot_excl`
@@ -45,6 +46,20 @@ export function minutesSinceMidnight(t: Date): number {
  * count here:
  *
  *   grep -rn "ruleSlotHolder(db\|ruleSlotHolder(prisma" src/services/ src/app/api/
+ *
+ * NEVER THROWS, and that is a guarantee about the refusal rather than about
+ * this query — the same contract `probeConflictingEntry` (`./entry-conflict`)
+ * carries one layer down, arrived at for the same reason. Every caller has
+ * already been refused by the database and has already decided on 409; this
+ * only decides how specific the sentence is. A throw from inside that `catch`
+ * would escape to `withErrorHandler` and answer 5xx instead, reporting a write
+ * the database CORRECTLY refused as one that may have happened. Contention is
+ * also exactly when slot conflicts occur, so a pool or lock timeout on this
+ * extra query is the realistic case rather than a hypothetical one — and it is
+ * likeliest under the very contention that produced the conflict.
+ *
+ * It degrades to the same `'unknown'` the ordinary "the rule was archived
+ * meanwhile" outcome produces, which is why there is a value to degrade TO.
  */
 export async function ruleSlotHolder(
   db: PrismaClient,
@@ -57,13 +72,27 @@ export async function ruleSlotHolder(
     excludeRuleId?: string;
   },
 ): Promise<RuleSlotHolder> {
-  const rows = await db.$queryRaw<Array<{ kind: string }>>`
-    SELECT "kind"::text AS kind FROM "ScheduleRule"
-     WHERE "teacherId" = ${probe.teacherId} AND "dayOfWeek" = ${probe.dayOfWeek} AND "isArchived" = false
-       AND "slot" && int4range(${probe.startMinutes}::int, ${probe.startMinutes + probe.durationMinutes}::int, '[)')
-       AND (${probe.excludeRuleId ?? null}::text IS NULL OR "id" <> ${probe.excludeRuleId ?? null}::text)
-     LIMIT 1
-  `;
-  const kind = rows[0]?.kind;
-  return kind === 'regular' || kind === 'studio' ? kind : 'unknown';
+  try {
+    const rows = await db.$queryRaw<Array<{ kind: string }>>`
+      SELECT "kind"::text AS kind FROM "ScheduleRule"
+       WHERE "teacherId" = ${probe.teacherId} AND "dayOfWeek" = ${probe.dayOfWeek} AND "isArchived" = false
+         AND "slot" && int4range(${probe.startMinutes}::int, ${probe.startMinutes + probe.durationMinutes}::int, '[)')
+         AND (${probe.excludeRuleId ?? null}::text IS NULL OR "id" <> ${probe.excludeRuleId ?? null}::text)
+       LIMIT 1
+    `;
+    const kind = rows[0]?.kind;
+    return kind === 'regular' || kind === 'studio' ? kind : 'unknown';
+  } catch (err) {
+    log.warn(
+      {
+        err,
+        teacherId: probe.teacherId,
+        dayOfWeek: probe.dayOfWeek,
+        startMinutes: probe.startMinutes,
+        durationMinutes: probe.durationMinutes,
+      },
+      'rule slot holder probe failed; the refusal will name neither family',
+    );
+    return 'unknown';
+  }
 }

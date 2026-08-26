@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { ruleSlotHolder } from './rule-slot-holder';
 
@@ -128,5 +128,30 @@ describe('ruleSlotHolder', () => {
       excludeRuleId: mover.id,
     });
     expect(holder).toBe('unknown');
+  });
+
+  /**
+   * Both call sites run this INSIDE a `catch` block — `api/class-templates`
+   * and `api/studio-class-templates`, each after
+   * `ScheduleRule_teacher_slot_excl` has already refused their write and each
+   * having already decided on 409. A throw from here escapes that catch,
+   * reaches `withErrorHandler` and answers 5xx: a write the database correctly
+   * refused, reported as one that may have happened.
+   *
+   * A pool or lock timeout on this extra query is the realistic failure and not
+   * a hypothetical one — it is likeliest under exactly the contention that
+   * produced the conflict. `probeConflictingEntry` (`./entry-conflict`) carries
+   * the same contract one layer down and has carried it since #327; this is
+   * the sibling that did not.
+   */
+  it('answers unknown rather than throwing when the query itself fails', async () => {
+    const spy = vi.spyOn(prisma, '$queryRaw').mockRejectedValueOnce(new Error('connection reset'));
+    try {
+      await expect(ruleSlotHolder(prisma, {
+        teacherId, dayOfWeek: 2, startMinutes: 9 * 60, durationMinutes: 60,
+      })).resolves.toBe('unknown');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

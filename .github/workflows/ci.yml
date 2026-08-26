@@ -151,6 +151,28 @@ jobs:
       - name: Check schema/migration drift
         run: npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
 
+      # THE SEED IS THE FIRST THING THAT CAN VIOLATE A NEW CONSTRAINT, and
+      # `20260826080000_calendar_entry`'s own comment rests the placement of
+      # `CalendarEntry_teacher_slot_excl` on that — while nothing in CI ever
+      # ran it. #327 also widened what "violate" means: under the exact-start
+      # key it replaced, a seed collision needed two of one teacher's classes
+      # at the identical minute; under a RANGE constraint any two within a
+      # duration of each other collide, and the seed writes eleven classes
+      # across three teachers.
+      #
+      # THIS JOB, NOT THE INTEGRATION ONE. `DATABASE_URL` here is
+      # `ethical_yoga`, which this job migrates and nothing then reads — both
+      # vitest projects resolve to `DATABASE_URL_TEST` (`vitest.config.ts`), so
+      # the seed cannot perturb a single assertion. The integration job's
+      # database is the one the built app and the whole e2e suite run against,
+      # and they run against an empty one today; seeding there would change
+      # what every schedule, CRM and reporting assertion sees, which is a
+      # behavioural change to the merge gate in exchange for a schema check.
+      # It also lands beside the drift check, which is the other thing here
+      # that needs a live database and tests no code.
+      - name: Seed (the schema's first real writer)
+        run: npx prisma db seed
+
       - name: Unit tests
         run: npx vitest run --project unit
 

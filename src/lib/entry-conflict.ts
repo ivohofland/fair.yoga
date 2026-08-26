@@ -235,7 +235,20 @@ export async function probeConflictingEntry(
     const row = rows[0];
     if (row === undefined) return null;
     const kind = toFamily(row.kind);
-    if (kind === null) return null;
+    if (kind === null) {
+      // Compile-tethered and unreachable: `FAMILY_NOUN` is a
+      // `Record<ClassFamily, string>` and `FAMILIES` reads its membership off
+      // that object, so a third family cannot enter the enum without landing
+      // here first. Logged anyway, because the one thing this branch must not
+      // do is discard a row it FOUND and answer as though the slot were free —
+      // the caller then says "that time is taken" with no time and no date,
+      // about a holder the query had in hand.
+      log.error(
+        { teacherId, entryId: row.id, kind: row.kind },
+        'entry conflict probe found a holder whose kind this module has no noun for',
+      );
+      return null;
+    }
     return {
       id: row.id,
       kind,
@@ -244,8 +257,18 @@ export async function probeConflictingEntry(
       durationMinutes: row.durationMinutes,
     };
   } catch (err) {
+    // THE SPAN, because it is the only thing that lets an operator reproduce
+    // the query — the three columns this was probing are in scope and were
+    // being dropped. Rendered through the same converters the message uses, so
+    // a `@db.Date` and a `@db.Time` do not print as full timestamps.
     log.warn(
-      { err, teacherId },
+      {
+        err,
+        teacherId,
+        date: span.date.toISOString().slice(0, 10),
+        startTime: timeToHHmm(span.startTime),
+        durationMinutes: span.durationMinutes,
+      },
       'entry conflict probe failed; the refusal will name no time and no date',
     );
     return null;
