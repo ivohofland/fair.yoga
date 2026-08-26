@@ -305,7 +305,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // (`@/lib/generation`) is the one place both reductions live, so a SEVENTH
   // `SkipReason` fails the build here rather than vanishing silently. Seventh,
   // not sixth: the union has had six members since #296 added
-  // `blocked_by_other_family`, and the number is `countSkipReasons`' own
+  // `blocked_by_overlap`, and the number is `countSkipReasons`' own
   // docblock's — cited rather than recounted here, so the two do not drift.
   // This line said fifth after the #194 branch's own correction pass, because
   // the phrase WRAPS ACROSS A LINE BREAK: the line-oriented grep that found the

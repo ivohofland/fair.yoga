@@ -1031,7 +1031,7 @@ take.
 ### What keeps the realistic path away from the guard
 
 Both generators pre-check the sibling table and decline the date as
-`blocked_by_other_family` (`class-generator.ts`, `studio-class-generator.ts`),
+`blocked_by_overlap` (`class-generator.ts`, `studio-class-generator.ts`),
 and **ten endpoints across eight route files** answer 409:
 
 | How it reaches the 409 | Endpoints |

@@ -232,7 +232,7 @@ describe('StudioTemplateForm', () => {
             blockedByCancelled: 1,
             slotTaken: 0,
             alreadyThisWeek: 0,
-            blockedByOtherFamily: 0,
+            blockedByOverlap: 0,
           },
         },
       }),
@@ -283,7 +283,7 @@ describe('StudioTemplateForm', () => {
             blockedByCancelled: 0,
             slotTaken: 0,
             alreadyThisWeek: 0,
-            blockedByOtherFamily: 0,
+            blockedByOverlap: 0,
           },
         },
       }),
@@ -380,7 +380,7 @@ describe('StudioTemplateForm', () => {
             blockedByCancelled: 1,
             slotTaken: 0,
             alreadyThisWeek: 0,
-            blockedByOtherFamily: 0,
+            blockedByOverlap: 0,
           },
         },
       }),
@@ -441,7 +441,7 @@ describe('StudioTemplateForm', () => {
 
   /**
    * PR #300 review, C2 — the studio mirror. The gate enumerated
-   * `blockedByCancelled > 0 || slotTaken > 0`; #296's `blockedByOtherFamily` is
+   * `blockedByCancelled > 0 || slotTaken > 0`; #296's `blockedByOverlap` is
    * reachable on create here too (a manually logged `Class` at that day and
    * time does not block creating a studio TEMPLATE, since the template trigger
    * reads `ClassTemplate`), and the window came back short in silence.
@@ -462,7 +462,7 @@ describe('StudioTemplateForm', () => {
             blockedByCancelled: 0,
             slotTaken: 0,
             alreadyThisWeek: 0,
-            blockedByOtherFamily: 2,
+            blockedByOverlap: 2,
           },
         },
       }),

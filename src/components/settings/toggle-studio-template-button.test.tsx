@@ -62,7 +62,7 @@ describe('ToggleStudioTemplateButton', () => {
           blockedByCancelled: 0,
           slotTaken: 0,
           alreadyThisWeek: 0,
-          blockedByOtherFamily: 0,
+          blockedByOverlap: 0,
         },
       },
     }),

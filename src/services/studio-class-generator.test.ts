@@ -1052,7 +1052,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     const result = await generateStudioInstancesForTemplate(prisma, tpl, now);
     expect(result.created).toBe(3);
-    expect(result.skipped).toEqual([{ date: dates[1]!, reason: 'blocked_by_other_family' }]);
+    expect(result.skipped).toEqual([{ date: dates[1]!, reason: 'blocked_by_overlap' }]);
   });
 
   it('does not skip a date held by a CANCELLED class from the other family', async () => {
@@ -1093,7 +1093,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     const result = await generateStudioInstancesForTemplate(prisma, tpl, now);
     expect(result.created).toBe(4);
-    expect(result.skipped.map((slot) => slot.reason)).not.toContain('blocked_by_other_family');
+    expect(result.skipped.map((slot) => slot.reason)).not.toContain('blocked_by_overlap');
   });
 
   it('does not treat a cancelled neighbour as occupying the slot', async () => {

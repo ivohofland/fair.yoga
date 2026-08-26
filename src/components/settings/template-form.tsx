@@ -354,7 +354,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         const result = json.data;
         setCreated(true);
         // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
-        // gate enumerated its terms until #296 added `blockedByOtherFamily` —
+        // gate enumerated its terms until #296 added `blockedByOverlap` —
         // the first such reason THE GATE DID NOT ALREADY LIST (`slotTaken` has
         // been reachable on create since #196, and the gate listed it) — and
         // then navigated away from a short window in silence. See that

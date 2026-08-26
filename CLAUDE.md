@@ -146,7 +146,7 @@ Classes move through states: `draft → open → in_progress → completed → c
   `durationMinutes`, `isActive`, `isArchived`, `archivedAt`,
   `withdrawnCount`), and `ClassTemplate`/`StudioClassTemplate` hold only
   their own economics, reaching their teacher through the rule rather than
-  directly. Both generators pre-check and skip (`blocked_by_other_family`);
+  directly. Both generators pre-check and skip (`blocked_by_overlap`);
   ten write endpoints across eight route files answer 409 — usually naming
   which family holds the slot, except the template routes' `heldBy: 'unknown'`
   case, which deliberately names neither

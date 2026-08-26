@@ -23,7 +23,7 @@ import { NextRequest } from 'next/server';
  * What is left, and why it still needs a mock: generation's race is covered
  * end-to-end nowhere else. The generator pre-checks the sibling table with
  * the same predicate the trigger carries, so a pre-existing studio class is
- * SKIPPED (`blocked_by_other_family`) and never reaches the insert. The only
+ * SKIPPED (`blocked_by_overlap`) and never reaches the insert. The only
  * way generation raises is a row committing inside the window between that
  * pre-check's `findMany` and its `createManyAndReturn` — the race
  * `docs/lock-order.md` records as knowingly accepted. An integration test

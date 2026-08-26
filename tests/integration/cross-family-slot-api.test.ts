@@ -357,7 +357,7 @@ describe('the studio family refuses a slot the class family holds', () => {
 
 describe('the count reaches the teacher, not just the reducer', () => {
   /**
-   * PR #300 review, G8 + G5. `blockedByOtherFamily` was asserted in exactly two
+   * PR #300 review, G8 + G5. `blockedByOverlap` was asserted in exactly two
    * places — the pure reducer (`generation.test.ts`) and the pure copy layer
    * (`template-action-messages.test.ts`), both hand-fed. No service result, no
    * HTTP body and no rendered component ever carried a non-zero value, so the
@@ -391,7 +391,7 @@ describe('the count reaches the teacher, not just the reducer', () => {
     }
   }
 
-  it('POST /api/class-templates carries a non-zero blockedByOtherFamily on the wire', async () => {
+  it('POST /api/class-templates carries a non-zero blockedByOverlap on the wire', async () => {
     await holdWholeWindowWithStudioClasses();
 
     const res = await send('POST', '/api/class-templates', templateBody(DAY, TIME));
@@ -401,10 +401,10 @@ describe('the count reaches the teacher, not just the reducer', () => {
       data: { added: number; counts: Record<string, number> };
     };
     // Nested under `counts`, which is the shape the forms and both resolvers
-    // read. A flat `blockedByOtherFamily` on the body would leave this
+    // read. A flat `blockedByOverlap` on the body would leave this
     // undefined and the copy layer silent.
     expect(body.data.counts).toBeDefined();
-    expect(body.data.counts.blockedByOtherFamily).toBeGreaterThan(0);
+    expect(body.data.counts.blockedByOverlap).toBeGreaterThan(0);
     // Distinct from its neighbours at a DIFFERENT value, so a hop wired to the
     // wrong member cannot pass by coincidence.
     expect(body.data.counts.slotTaken).toBe(0);
@@ -427,7 +427,7 @@ describe('the count reaches the teacher, not just the reducer', () => {
       data: { action: string; counts: Record<string, number> };
     };
     expect(body.data.action).toBe('active');
-    expect(body.data.counts.blockedByOtherFamily).toBeGreaterThan(0);
+    expect(body.data.counts.blockedByOverlap).toBeGreaterThan(0);
     expect(body.data.counts.slotTaken).toBe(0);
   });
 
@@ -442,7 +442,7 @@ describe('the count reaches the teacher, not just the reducer', () => {
     const body = (await res.json()) as {
       data: { added: number; counts: Record<string, number> };
     };
-    expect(body.data.counts.blockedByOtherFamily).toBeGreaterThan(0);
+    expect(body.data.counts.blockedByOverlap).toBeGreaterThan(0);
     expect(body.data.added).toBe(0);
   });
 });

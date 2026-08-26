@@ -270,6 +270,6 @@ describe('generation inside a real $transaction (DB)', () => {
     );
 
     expect(result.created).toBe(3);
-    expect(result.skipped).toEqual([{ date: blocked, reason: 'blocked_by_other_family' }]);
+    expect(result.skipped).toEqual([{ date: blocked, reason: 'blocked_by_overlap' }]);
   });
 });

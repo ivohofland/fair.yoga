@@ -558,7 +558,7 @@ describe('updateClassTemplate (DB)', () => {
   /**
    * #296. The probe must decline a date the OTHER family holds, for the same
    * reason it declines one this family holds: the generator will skip it
-   * (`blocked_by_other_family`), so naming its week promises a class the sweep
+   * (`blocked_by_overlap`), so naming its week promises a class the sweep
    * does not deliver.
    *
    * This is the `slot_taken` omission one table over. That one made the

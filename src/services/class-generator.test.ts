@@ -1159,7 +1159,7 @@ describe('generateClassInstances (DB)', () => {
       const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
 
       expect(result.created).toBe(3);
-      expect(result.skipped).toEqual([{ date: blocked, reason: 'blocked_by_other_family' }]);
+      expect(result.skipped).toEqual([{ date: blocked, reason: 'blocked_by_overlap' }]);
       expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(3);
     });
 
@@ -1185,7 +1185,7 @@ describe('generateClassInstances (DB)', () => {
       const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
 
       expect(result.created).toBe(4);
-      expect(result.skipped.map((slot) => slot.reason)).not.toContain('blocked_by_other_family');
+      expect(result.skipped.map((slot) => slot.reason)).not.toContain('blocked_by_overlap');
     });
 
     /**
@@ -1209,7 +1209,7 @@ describe('generateClassInstances (DB)', () => {
      * `StudioClass`, so dropping `teacherId` from the new `foreign` read
      * (`class-generator.ts`) left the whole suite green — while every
      * candidate date another teacher happened to hold read
-     * `blocked_by_other_family`, this teacher's window came back short, and
+     * `blocked_by_overlap`, this teacher's window came back short, and
      * nothing raised. §4.1 calls a pre-check STRICTER than the guard the only
      * real defect, and this is that direction.
      *

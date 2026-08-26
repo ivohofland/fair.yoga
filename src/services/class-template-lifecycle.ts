@@ -606,7 +606,7 @@ export type UpdateClassTemplateResult =
  *   - `already_this_week` — the same read, and the same `isWeekHeld` the
  *     generator's loop decides with. That sharing is the point of the
  *     function existing.
- *   - `slot_taken` (#196) and `blocked_by_other_family` (#296) — somebody
+ *   - `slot_taken` (#196) and `blocked_by_overlap` (#296) — somebody
  *     ELSE's row: another LIVE entry of this teacher at the same
  *     `(date, startTime)`. Invisible to a rule-keyed read, which is why there
  *     is a SECOND read. Missing it made the prediction land EARLIER than the

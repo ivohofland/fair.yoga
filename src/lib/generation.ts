@@ -97,27 +97,21 @@ export type SkipReason =
   | 'already_this_week'
   /**
    * A LIVE entry of this teacher's OVERLAPS the candidate, and did not start
-   * at the same minute (#296, widened by #327).
+   * at the same minute (#296, widened and renamed by #327).
    *
-   * THE NAME IS NARROWER THAN THE CONDITION and is being corrected rather than
-   * kept: with both families in one `CalendarEntry` table behind one RANGE
+   * With both families in one `CalendarEntry` table behind one RANGE
    * constraint, what a generator's pre-check can see is an overlap, and an
    * overlapping entry may be of either family. The copy still names the other
-   * half of the teacher's schedule, which is right for the common case and
-   * wrong for a same-family class that merely runs into the candidate.
+   * half of the teacher's schedule (`resumeMessage` and `resumeStudioMessage`,
+   * `components/settings/template-action-messages.ts`), which is right for
+   * the common case and wrong for a same-family class that merely runs into
+   * the candidate — the conflation #288 is open about.
    *
    * Distinct from `slot_taken`, which means one of this teacher's own
    * SAME-family classes starts at exactly that minute. Kept separate because
-   * the remedy differs: `slot_taken` is answered inside this family. Folding
-   * the two would make one member carry two situations with two remedies —
-   * the conflation #288 is open about.
-   *
-   * It is the one member whose copy is not shared between the families, since
-   * each has to name the opposite half: see `resumeMessage` and
-   * `resumeStudioMessage` (`components/settings/template-action-messages.ts`),
-   * which delegated wholesale until this member existed.
+   * the remedy differs: `slot_taken` is answered inside this family.
    */
-  | 'blocked_by_other_family'
+  | 'blocked_by_overlap'
   /** The pre-check said free and `ON CONFLICT DO NOTHING` skipped it anyway — a concurrent insert landed in between (#164). */
   | 'raced';
 
@@ -135,7 +129,7 @@ export interface GenerationResult {
 /**
  * The `SkipReason` counts `SkipCounts` carries for a caller to surface to a
  * teacher — `blockedByCancelled`, `slotTaken`, `alreadyThisWeek` and
- * `blockedByOtherFamily`. The fourth is the newest (#296) and is the only one
+ * `blockedByOverlap`. The fourth is the newest (#296) and is the only one
  * whose sentence differs between the two families, because each names the
  * opposite half of the teacher's schedule. The third (#194) is read the whole
  * way through:
@@ -176,8 +170,8 @@ export type SkipCounts = {
   slotTaken: number;
   /** Candidate dates whose week this template already occupies (#194). */
   alreadyThisWeek: number;
-  /** Candidate dates a live class from the OTHER family holds (#296). */
-  blockedByOtherFamily: number;
+  /** Candidate dates a live entry of this teacher's overlaps (#296, widened by #327). */
+  blockedByOverlap: number;
 };
 
 /**
@@ -188,7 +182,7 @@ export type SkipCounts = {
  * reach, and the reason is worth keeping: nesting protects a count that is
  * PASSED, and those two sites INSPECT. They hand-listed
  * `blockedByCancelled > 0 || slotTaken > 0`, and when
- * `blockedByOtherFamily` arrived — the first such reason THE GATE DID NOT
+ * `blockedByOverlap` arrived — the first such reason THE GATE DID NOT
  * ALREADY LIST — both gates silently kept navigating away from a short window.
  * Not the first REACHABLE one: `slotTaken` has been reachable on create since
  * #196 and the gate listed it; `blockedByCancelled` and `alreadyThisWeek` are
@@ -253,10 +247,11 @@ export function anyBlocked(counts: SkipCounts): boolean {
  * `class-template-lifecycle.ts`'s `PauseTemplateResult` cites this docblock
  * for that number.
  *
- * #296 added the sixth member (`blocked_by_other_family`) and the fourth
- * count, and both halves of this paragraph's warning played out as written.
- * The `switch` below failed the build at its `never` arm — measured by
- * mutation, `Type '"blocked_by_other_family"' is not assignable to type
+ * #296 added the sixth member — `blocked_by_overlap`, named
+ * `blocked_by_other_family` until #327's rename — and the fourth count, and
+ * both halves of this paragraph's warning played out as written. The
+ * `switch` below failed the build at its `never` arm — measured by mutation
+ * at #296, `Type '"blocked_by_other_family"' is not assignable to type
  * 'never'` — which is the half that works. The COUNT reached the wire, both
  * routes, both forms and the copy layer without a single one of them failing,
  * and that is NOT this guard working: it is #296's task 4a, which had already
@@ -268,7 +263,7 @@ export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
   let blockedByCancelled = 0;
   let slotTaken = 0;
   let alreadyThisWeek = 0;
-  let blockedByOtherFamily = 0;
+  let blockedByOverlap = 0;
   for (const { reason } of skipped) {
     switch (reason) {
       case 'blocked_by_cancelled':
@@ -280,8 +275,8 @@ export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
       case 'already_this_week':
         alreadyThisWeek += 1;
         break;
-      case 'blocked_by_other_family':
-        blockedByOtherFamily += 1;
+      case 'blocked_by_overlap':
+        blockedByOverlap += 1;
         break;
       case 'already_generated':
       case 'raced':
@@ -293,7 +288,7 @@ export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
       }
     }
   }
-  return { blockedByCancelled, slotTaken, alreadyThisWeek, blockedByOtherFamily };
+  return { blockedByCancelled, slotTaken, alreadyThisWeek, blockedByOverlap };
 }
 
 /**

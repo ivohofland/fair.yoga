@@ -10,7 +10,7 @@ const NONE: SkipCounts = {
   blockedByCancelled: 0,
   slotTaken: 0,
   alreadyThisWeek: 0,
-  blockedByOtherFamily: 0,
+  blockedByOverlap: 0,
 };
 
 /**
@@ -54,7 +54,7 @@ describe('countSkipReasons', () => {
       at('2026-09-28T00:00:00.000Z', 'slot_taken'),
       at('2026-10-05T00:00:00.000Z', 'already_this_week'),
       at('2026-10-12T00:00:00.000Z', 'already_this_week'),
-      at('2026-11-02T00:00:00.000Z', 'blocked_by_other_family'),
+      at('2026-11-02T00:00:00.000Z', 'blocked_by_overlap'),
       // Deliberately excluded — see SkipCounts' docblock.
       at('2026-10-19T00:00:00.000Z', 'already_generated'),
       at('2026-10-26T00:00:00.000Z', 'raced'),
@@ -64,26 +64,26 @@ describe('countSkipReasons', () => {
       blockedByCancelled: 1,
       slotTaken: 1,
       alreadyThisWeek: 2,
-      blockedByOtherFamily: 1,
+      blockedByOverlap: 1,
     });
   });
 
   /**
-   * `blocked_by_other_family` and `slot_taken` are separate members carrying
+   * `blocked_by_overlap` and `slot_taken` are separate members carrying
    * separate remedies (#296), and the one way to prove they have not been
    * conflated is to count both at once at DIFFERENT values. Equal values pass
    * against a filter wired to the wrong member — the coincidence
    * `class-template-lifecycle.test.ts` already records paying for once.
    */
-  it('counts blocked_by_other_family apart from slot_taken', () => {
+  it('counts blocked_by_overlap apart from slot_taken', () => {
     const counts = countSkipReasons([
-      at('2026-09-21T00:00:00.000Z', 'blocked_by_other_family'),
-      at('2026-09-28T00:00:00.000Z', 'blocked_by_other_family'),
-      at('2026-10-05T00:00:00.000Z', 'blocked_by_other_family'),
+      at('2026-09-21T00:00:00.000Z', 'blocked_by_overlap'),
+      at('2026-09-28T00:00:00.000Z', 'blocked_by_overlap'),
+      at('2026-10-05T00:00:00.000Z', 'blocked_by_overlap'),
       at('2026-10-12T00:00:00.000Z', 'slot_taken'),
     ]);
 
-    expect(counts.blockedByOtherFamily).toBe(3);
+    expect(counts.blockedByOverlap).toBe(3);
     expect(counts.slotTaken).toBe(1);
   });
 
@@ -92,7 +92,7 @@ describe('countSkipReasons', () => {
       blockedByCancelled: 0,
       slotTaken: 0,
       alreadyThisWeek: 0,
-      blockedByOtherFamily: 0,
+      blockedByOverlap: 0,
     });
   });
 });

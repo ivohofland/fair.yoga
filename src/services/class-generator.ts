@@ -439,16 +439,15 @@ export async function generateInstancesForTemplate(
     // no row is created either way. The studio generator orders its own pair
     // the same way.
     //
-    // WIDER THAN ITS NAME, until #327's rename lands. The old branch read a
-    // separate `StudioClass` table for an exact start-time match; there is one
-    // table now, and one RANGE constraint over it, so what actually blocks a
-    // candidate is any live entry of this teacher whose span overlaps it —
-    // a studio class at the same time, and equally a class of either family
-    // that merely runs into this one. Both reach the teacher through the
-    // cross-family sentence today, which is a misnomer for the second case and
-    // the reason the member is being renamed rather than deleted.
+    // Any live entry of this teacher whose span overlaps the candidate blocks
+    // it here — a studio class at the same time, and equally a class of
+    // either family that merely runs into this one. The family-specific
+    // sentence (`resumeMessage`/`resumeStudioMessage`,
+    // `components/settings/template-action-messages.ts`) still names the
+    // OTHER family, which is right for the common case and a misnomer for the
+    // second — the conflation #288 is open about.
     if (live.some((e) => spansOverlap(e, candidateSpan))) {
-      skipped.push({ date, reason: 'blocked_by_other_family' });
+      skipped.push({ date, reason: 'blocked_by_overlap' });
       continue;
     }
 

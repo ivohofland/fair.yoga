@@ -149,11 +149,11 @@ export function resumeStudioMessage(
   // Shares an implementation rather than duplicating one. The two families'
   // resume sentences were identical word for word until #296, and this
   // docblock's promise that "a future divergence has somewhere to land" is now
-  // spent: `blockedByOtherFamily` is that divergence, because each family has
+  // spent: `blockedByOverlap` is that divergence, because each family has
   // to name the OPPOSITE half of the teacher's schedule.
   //
   // Note what this is NOT. Delegating to `resumeMessage` with
-  // `blockedByOtherFamily` zeroed and appending a clause afterwards was tried
+  // `blockedByOverlap` zeroed and appending a clause afterwards was tried
   // and is wrong: with `scheduled > 0 && added === 0` and no other cause, the
   // delegate takes its "Nothing needed adding." branch, and the appended clause
   // then contradicts it in the same breath — "4 classes on your schedule.
@@ -195,7 +195,7 @@ export function resumeStudioMessage(
  * inflecting family too, and doubly so — "is/are" AND "a class/classes" both
  * change with number.
  *
- * `alreadyThisWeek` (#194) is THIRD of the four causes — `blockedByOtherFamily`
+ * `alreadyThisWeek` (#194) is THIRD of the four causes — `blockedByOverlap`
  * (#296) was appended after it — and the order is not
  * arbitrary: every sentence pinned before it keeps the prefix it already had,
  * so the existing tests stay meaningful rather than being rewritten around a
@@ -217,7 +217,7 @@ export function resumeMessage(added: number, scheduled: number, counts: SkipCoun
 }
 
 /**
- * The `blockedByOtherFamily` clause, which is the ONE thing the two families
+ * The `blockedByOverlap` clause, which is the ONE thing the two families
  * do not share (#296).
  *
  * Each names the opposite half of the teacher's schedule: a class template's
@@ -258,7 +258,7 @@ function buildResumeSentence(
   counts: SkipCounts,
   otherFamilyClause: OtherFamilyClause,
 ): string {
-  const { blockedByCancelled, slotTaken, alreadyThisWeek, blockedByOtherFamily } = counts;
+  const { blockedByCancelled, slotTaken, alreadyThisWeek, blockedByOverlap } = counts;
   // Assembled before the `scheduled === 0` branch, deliberately. An earlier
   // version built the causes only on the non-empty branch, so a teacher whose
   // every candidate date was taken by another class — `slotTaken: 4`, measured
@@ -287,8 +287,8 @@ function buildResumeSentence(
   }
   // Last, after the three that predate it (#296). The order is a copy decision
   // and is pinned by a test, not left to how the `if`s happen to be stacked.
-  if (blockedByOtherFamily > 0) {
-    causes.push(otherFamilyClause(blockedByOtherFamily));
+  if (blockedByOverlap > 0) {
+    causes.push(otherFamilyClause(blockedByOverlap));
   }
 
   const head =
@@ -507,7 +507,7 @@ const COUNT_KEYS = {
   blockedByCancelled: true,
   slotTaken: true,
   alreadyThisWeek: true,
-  blockedByOtherFamily: true,
+  blockedByOverlap: true,
 } satisfies Record<keyof SkipCounts, true>;
 
 /**

@@ -247,11 +247,12 @@ export async function generateStudioInstancesForTemplate(
     // reporting preference, not a guarantee — but it costs nothing to state,
     // since both branches `continue` and no row is created either way.
     //
-    // WIDER THAN ITS NAME until #327's rename lands — the class twin carries
-    // the same note, and `SkipReason`'s own docblock (`@/lib/generation`) is
-    // where the reason lives rather than in either generator.
+    // Any live entry of this teacher whose span overlaps the candidate blocks
+    // it here — the class twin carries the same note, and `SkipReason`'s own
+    // docblock (`@/lib/generation`) is where the reason lives rather than in
+    // either generator.
     if (live.some((e) => spansOverlap(e, candidateSpan))) {
-      skipped.push({ date, reason: 'blocked_by_other_family' });
+      skipped.push({ date, reason: 'blocked_by_overlap' });
       continue;
     }
 

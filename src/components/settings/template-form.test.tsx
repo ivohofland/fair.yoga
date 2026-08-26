@@ -392,7 +392,7 @@ describe('TemplateForm', () => {
                 blockedByCancelled: 0,
                 slotTaken: 1,
                 alreadyThisWeek: 0,
-                blockedByOtherFamily: 0,
+                blockedByOverlap: 0,
               },
             },
           }),
@@ -427,7 +427,7 @@ describe('TemplateForm', () => {
    * written to prevent, reproduced one reason later.
    *
    * The gate enumerated `blockedByCancelled > 0 || slotTaken > 0`. #296 added
-   * `blockedByOtherFamily`, the first reason reachable on CREATE that is not
+   * `blockedByOverlap`, the first reason reachable on CREATE that is not
    * structurally 0, and the gate did not gain the term — so a teacher whose
    * whole window is held by the OTHER family navigated away in silence. The
    * path is ordinary: a manually logged studio class at that day and time does not
@@ -470,7 +470,7 @@ describe('TemplateForm', () => {
                 blockedByCancelled: 0,
                 slotTaken: 0,
                 alreadyThisWeek: 0,
-                blockedByOtherFamily: 4,
+                blockedByOverlap: 4,
               },
             },
           }),
@@ -543,7 +543,7 @@ describe('TemplateForm', () => {
                 blockedByCancelled: 0,
                 slotTaken: 0,
                 alreadyThisWeek: 0,
-                blockedByOtherFamily: 0,
+                blockedByOverlap: 0,
               },
             },
           }),
@@ -683,7 +683,7 @@ describe('TemplateForm', () => {
                 blockedByCancelled: 1,
                 slotTaken: 0,
                 alreadyThisWeek: 0,
-                blockedByOtherFamily: 0,
+                blockedByOverlap: 0,
               },
             },
           }),
