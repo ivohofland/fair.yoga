@@ -22,8 +22,12 @@ import { Prisma } from '@prisma/client';
  *      the SQLSTATE is spelled `` Code: `23P01` `` and the constraint name
  *      appears unescaped, quoted by Postgres itself.
  *
- * Nothing in `src/` writes `ScheduleRule` raw today, so shape 2 is
- * unreachable as the code stands. Matched anyway, for the reason above.
+ * Both shapes are reached. Shape 1 is what a typed model call produces;
+ * shape 2 is what a raw statement produces, and
+ * `src/services/calendar-entry.test.ts` takes that path for every
+ * `CalendarEntry_teacher_slot_excl` refusal it asserts — those cases write
+ * that table raw precisely so the database, not the Prisma client, is what
+ * answers.
  *
  * Both the SQLSTATE and the constraint name are required in either shape, so
  * a message that merely quotes a name does not match.

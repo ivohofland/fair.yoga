@@ -59,23 +59,29 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Entries first, and they take their children with them
-  // (`Class_calendarEntryId_kind_fkey` / the `StudioClass` twin are
-  // `ON DELETE CASCADE`). Must precede `teacherRoom.deleteMany`:
-  // `Class_teacherRoomId_fkey` is `ON DELETE RESTRICT`, so a surviving class
-  // blocks the room link's delete.
-  const ids = teacherIds.map((_, i) => `$${i + 1}`).join(',');
-  await prisma.$executeRawUnsafe(
-    `DELETE FROM "CalendarEntry" WHERE "teacherId" IN (${ids})`, ...teacherIds,
-  );
-  await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teacherIds } } });
-  await prisma.room.deleteMany({ where: { createdById: { in: teacherIds } } });
-  await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
-  // `Teacher.accountId` has no `onDelete: Cascade` (prisma/schema.prisma), so
-  // the Account row each freshTeacher() created survives the teacher delete
-  // above and must be removed separately, only after it — Account is what
-  // Teacher.accountId references.
-  await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  // Guarded because `beforeAll` can fail before it creates anyone: an empty
+  // list builds `IN ()`, and that syntax error would surface here instead of
+  // the failure actually worth reading.
+  if (teacherIds.length > 0) {
+    // Entries first, and they take their children with them
+    // (`Class_calendarEntryId_kind_fkey` / the `StudioClass` twin are
+    // `ON DELETE CASCADE`). Must precede `teacherRoom.deleteMany`:
+    // `Class_teacherRoomId_fkey` is `ON DELETE RESTRICT`, so a surviving class
+    // blocks the room link's delete.
+    const ids = teacherIds.map((_, i) => `$${i + 1}`).join(',');
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM "CalendarEntry" WHERE "teacherId" IN (${ids})`, ...teacherIds,
+    );
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.room.deleteMany({ where: { createdById: { in: teacherIds } } });
+    await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+    // `Teacher.accountId` has no `onDelete: Cascade` (prisma/schema.prisma), so
+    // the Account row each freshTeacher() created survives the teacher delete
+    // above and must be removed separately, only after it — Account is what
+    // Teacher.accountId references.
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  }
   await prisma.$disconnect();
 });
 
@@ -195,6 +201,69 @@ describe('CalendarEntry_teacher_slot_excl', () => {
       `INSERT INTO "CalendarEntry" (id,"teacherId",kind,"classType",date,"startTime","durationMinutes","createdAt","updatedAt")
        VALUES (gen_random_uuid()::text,$1,'regular','Vinyasa','2027-09-01','19:30',60,now(),now())`, other,
     )).resolves.toBeDefined();
+  });
+});
+
+describe('CalendarEntry_duration_positive', () => {
+  const withDuration = (teacherId: string, mins: number) =>
+    prisma.$executeRawUnsafe(
+      `INSERT INTO "CalendarEntry" (id,"teacherId",kind,"classType",date,"startTime","durationMinutes","createdAt","updatedAt")
+       VALUES (gen_random_uuid()::text,$1,'regular','Vinyasa','2027-11-01','09:00',$2,now(),now())`,
+      teacherId, mins,
+    );
+
+  // Two probes, refused by DIFFERENT objects — which is the fact worth
+  // pinning rather than asserting one error twice.
+  //
+  // Zero is the CHECK's own boundary and the CHECK answers it. A NEGATIVE
+  // duration never reaches the CHECK at all: `span` is a STORED generated
+  // column, so PostgreSQL computes it first, and `tsrange` refuses a lower
+  // bound above its upper bound outright with 22000. Measured — the first
+  // version of this case asserted the constraint name for both and failed on
+  // the negative probe.
+  //
+  // Both probes are kept because only zero is at the boundary: relaxing the
+  // CHECK to `>= 0` leaves a negative-only case green.
+  it('refuses a non-positive duration', async () => {
+    const teacherId = await freshTeacher();
+    await expect(withDuration(teacherId, 0))
+      .rejects.toThrow(/CalendarEntry_duration_positive/);
+    await expect(withDuration(teacherId, -30))
+      .rejects.toThrow(/range lower bound must be less than or equal to range upper bound/);
+  });
+});
+
+describe('CalendarEntry_scheduleRuleId_date_key', () => {
+  const onRule = (teacherId: string, scheduleRuleId: string, start: string, cancelled: boolean) =>
+    prisma.$executeRawUnsafe(
+      `INSERT INTO "CalendarEntry" (id,"teacherId",kind,"classType",date,"startTime","durationMinutes","scheduleRuleId","cancelledAt","createdAt","updatedAt")
+       VALUES (gen_random_uuid()::text,$1,'regular','Vinyasa','2027-11-08',$2::time,60,$3,$4::timestamp,now(),now())`,
+      teacherId, start, scheduleRuleId, cancelled ? new Date() : null,
+    );
+
+  // The key is TOTAL, not partial on liveness, and that asymmetry against
+  // `CalendarEntry_teacher_slot_excl` is the whole point: a cancelled entry
+  // releases its SLOT (the describe above proves it) and goes on holding its
+  // DATE, so the hourly sweep does not refill a date a teacher cancelled.
+  it('a cancelled entry goes on holding its rule-date', async () => {
+    const teacherId = await freshTeacher();
+    const rule = await prisma.scheduleRule.create({
+      data: {
+        teacherId, kind: 'regular', classType: 'Vinyasa', dayOfWeek: 1,
+        startTime: new Date('1970-01-01T09:00:00Z'), durationMinutes: 60,
+      },
+    });
+    await onRule(teacherId, rule.id, '09:00', true);
+    // A different start time, so the slot exclusion cannot be what refuses —
+    // the cancelled entry released that slot. Only the (rule, date) key is
+    // left to raise, which is what makes this case about the key.
+    //
+    // Asserted on the SQLSTATE and the key COLUMNS, not the index name:
+    // Prisma surfaces only PostgreSQL's DETAIL line for a raw 23505, and that
+    // line carries no constraint name. The columns are what say which unique
+    // key answered.
+    await expect(onRule(teacherId, rule.id, '14:00', false))
+      .rejects.toThrow(/Code: `23505`[\s\S]*Key \("scheduleRuleId", date\)/);
   });
 });
 

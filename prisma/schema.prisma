@@ -581,8 +581,14 @@ model CalendarEntry {
 
   /// The owning class completed. Written ONLY by `class_sync_entry_completed`,
   /// never from TypeScript — a marker synced by application code would miss a
-  /// raw `UPDATE "Class" SET status='completed'`, and the freeze exists
-  /// precisely to reach clients that bypass the services.
+  /// raw `UPDATE "Class" SET status='completed'`, which is the client the
+  /// trigger exists to reach.
+  ///
+  /// It records a TRANSITION, not a state. The trigger is `AFTER UPDATE OF
+  /// status`, so a row INSERTed already carrying `status = 'completed'`
+  /// produces no marker, and its entry's date, start time and duration stay
+  /// editable. `prisma/seed.ts` creates its completed classes live and then
+  /// transitions them for exactly this reason, and says so.
   ///
   /// A marker rather than a read, for lock order: a guard here that consulted
   /// `Class.status` would acquire Entry then Class, against `lockClassRow`'s
