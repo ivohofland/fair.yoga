@@ -258,12 +258,12 @@ function buildResumeSentence(
   // and is pinned by a test, not left to how the `if`s happen to be stacked.
   //
   // NAMES NO FAMILY, and that is the whole of what #327 changed here. The
-  // reason this clause reports now covers four conditions — an entry of the
-  // other family overlapping, an entry of this one overlapping at a start time
-  // that is not identical, a neighbour spilling past midnight, and a manually
-  // logged class hanging off no rule — and one sentence has to be true for all
-  // four. "held by a studio class" was true for the first and false for the
-  // rest.
+  // reason this clause reports covers two conditions — an entry of the OTHER
+  // family overlapping, and an entry of THIS one overlapping at a start time
+  // that is not identical — and one sentence has to be true for both. "held by
+  // a studio class" was true for the first and false for the second.
+  // `SkipReason`'s docblock (`@/lib/generation`) owns that enumeration and the
+  // case that looks like a third and is not.
   //
   // Number agreement follows `alreadyThisWeek`'s clause, the nearest
   // neighbour in shape: the subject, the agent and the verb all inflect.

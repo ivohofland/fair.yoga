@@ -445,7 +445,7 @@ export async function generateInstancesForTemplate(
     // a teacher reads (`resumeMessage`/`resumeStudioMessage`,
     // `components/settings/template-action-messages.ts`) names NO family: the
     // reason covers holders this branch cannot tell apart. `SkipReason`'s own
-    // docblock (`@/lib/generation`) carries the four conditions it spans.
+    // docblock (`@/lib/generation`) owns the enumeration.
     if (live.some((e) => spansOverlap(e, candidateSpan))) {
       skipped.push({ date, reason: 'blocked_by_overlap' });
       continue;

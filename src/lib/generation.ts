@@ -23,18 +23,28 @@
  * wrong. That is the third consecutive form this one sentence has failed in:
  * a roster, then a check too strict for its own examples.
  *
- * The census, re-derived rather than carried, with the check that produces it:
+ * The census, re-derived rather than carried, with the check that produces it.
+ * `-l` and not `-n`, so the OUTPUT IS THE COUNT — one line per importer, no
+ * arithmetic for a reader to get wrong:
  *
- *   grep -rn "/generation'" src/ --include="*.ts" --include="*.tsx"
+ *   grep -rl "/generation'" src/ --include="*.ts" --include="*.tsx" \
+ *     | grep -vE '/generation(\.test)?\.ts$'
  *
  * NINE non-test importers outside this file, split three ways — plus
  * `generation.test.ts` by relative path, for ten in all. Stated as nine-plus-one
  * rather than ten, because the parenthetical counts below add to nine and a
- * reader doing the arithmetic the docblock invites should not land short.
- * The grep prints more lines than that, and neither excess is drift: two
- * importers take two lines each, a value import beside an `import type`, and
- * this docblock quotes the needle back at itself — the last paragraph here
- * says exactly where, and is the owner of that part.
+ * reader doing the arithmetic the docblock invites should not land short. The
+ * filter is what removes the plus-one and this file itself; drop it and the
+ * `-l` form answers two more, which are those two.
+ *
+ * `-n` INSTEAD WHEN YOU WANT TO SEE WHERE, and its line count is not a census:
+ * it runs ahead of the importer count for two reasons that are not drift. An
+ * importer may take more than one line — a module needing both a value and a
+ * type from here can split them, and some do, in either order and not
+ * necessarily adjacent — and this docblock quotes the needle back at itself,
+ * which the last paragraph here owns. No number is attached to the `-n` form
+ * for exactly that reason; the `-l` form above is the one to trust, and it is
+ * immune to both.
  *
  *   VALUE, client (2)  `template-form.tsx`, `studio-template-form.tsx`
  *   VALUE, server (6)  `api/class-templates/route.ts`,
@@ -60,11 +70,10 @@
  *
  * The needle starts at the SLASH, and that is the whole of it. This line used
  * to prescribe `"lib/generation'"` and claim it was "wide enough to see the
- * relative-path importer" — it is not, and was not: `generation.test.ts`
- * imports `from './generation'`, which contains no `lib/` at all, so the
- * prescribed grep returned eight lines AT THAT TIME (it returns more now, and
- * the point survives) and silently omitted the one importer that does not go
- * through the `@/` alias. A docblock whose whole purpose is
+ * relative-path importer". It is not, in either form: `generation.test.ts`
+ * imports `from './generation'`, which contains no `lib/` at all, so that
+ * needle silently omits the one importer that does not go through the `@/`
+ * alias. A docblock whose whole purpose is
  * "re-check this rather than trusting it" is worse than useless with a check
  * that cannot find what it is checking for.
  *
@@ -72,7 +81,9 @@
  * — `scheduler.ts`'s job name, which has no slash. Every hit outside this
  * docblock is an import; the hits inside it are this paragraph quoting the
  * grep and the two module specifiers back at itself, and are the only false
- * positives the check has.
+ * positives the check has. The census above never sees them: its filter drops
+ * this file, which is the other half of why the `-l` form needs no correction
+ * term.
  */
 
 /**
@@ -107,18 +118,28 @@ export type SkipReason =
    *
    * With both families in one `CalendarEntry` table behind one RANGE
    * constraint, what a generator's pre-check can see is an overlap, and an
-   * overlapping entry may be of EITHER family. So the copy names none
-   * (`resumeMessage`/`resumeStudioMessage`,
+   * overlapping entry may be of EITHER family. TWO CONDITIONS reach this
+   * member: an OTHER-family entry overlapping, at an identical start or not,
+   * and a SAME-family one overlapping at a start that is not identical (an
+   * identical one is `slot_taken`). Whether the holder was generated or logged
+   * by hand makes no difference to either — a manual row is an entry like any
+   * other. So the copy names no family (`resumeMessage`/`resumeStudioMessage`,
    * `components/settings/template-action-messages.ts`, whose clause reads "N
-   * dates overlap other classes on your schedule"): the member's condition
-   * covers an other-family overlap, a same-family non-identical-start overlap,
-   * a neighbour spilling past midnight and a manually logged class hanging off
-   * no rule, and one sentence has to be true for all four. Under #296's
-   * exact-start cross-family key only the first was reachable and the copy
+   * dates overlap other classes on your schedule"), because one sentence has
+   * to be true for both. Under #296's exact-start cross-family key only the
+   * first condition was reachable and only at an identical start, and the copy
    * named the other family; #327 made the rest reachable and the sentence
    * false. Naming a specific holder happens at the ROUTE layer instead, where
    * a teacher can act on it — `lib/entry-conflict.ts` probes for the actual
    * row.
+   *
+   * A MIDNIGHT SPILL IS NOT A THIRD CONDITION and cannot produce this member.
+   * Both generators read occupancy as `date: { in: dates }` and compare with
+   * `spansOverlap` below, which is minutes-since-midnight on ONE date, so a
+   * neighbour carried into a candidate from the PREVIOUS calendar date is
+   * invisible to the pre-check — `spansOverlap`'s own docblock says so. The
+   * constraint catches it at insert, the `ON CONFLICT DO NOTHING` there
+   * absorbs it, and the date reaches the teacher as `raced`.
    *
    * Distinct from `slot_taken`, which means one of this teacher's own
    * SAME-family classes starts at exactly that minute. Kept separate because
