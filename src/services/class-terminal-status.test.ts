@@ -5,7 +5,7 @@ import { classifyApiError } from '@/lib/api-errors';
 import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 import { enforcedTerminalStatuses } from '../../tests/migration-sql';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { createClassFixture } from '../../tests/class-fixtures';
+import { createClassFixture, slotDate } from '../../tests/class-fixtures';
 
 /**
  * A pure DB-invariant test — no HTTP surface, nothing here calls the app on
@@ -24,33 +24,14 @@ import { createClassFixture } from '../../tests/class-fixtures';
  * matters: that suite runs a database-wide `deleteMany`, so it carries a
  * runtime guard on the connected database's name. THIS file is the harmless
  * twin — every row it touches is one it created, and it takes no unscoped
- * write. This file used to live in
- * `tests/integration/`, which by design runs against the **dev** database
- * (`docs/test-database.md` §3.4) — every mutation-prove-the-trigger run
- * therefore needed a manual `DATABASE_URL` shell override to reach the test
- * DB instead, and getting that override wrong drops the trigger on dev.
- * Moving the file removes the foot-gun rather than documenting around it.
+ * write.
  *
- * Correction to the migration's own comment, which cannot be edited (the
- * migration is applied; `CLAUDE.md` forbids touching one). It explains that
- * the trigger enforces terminality only, not the whole `VALID_TRANSITIONS`
- * table, because mirroring the table would reject `open -> completed`, "which
- * class-template-lifecycle.test.ts:592-597 does deliberately when building a
- * fixture." The reasoning holds; the line range no longer does. It was exact
- * at the commit that shipped it — those six lines were precisely the `it.each`
- * through its `prisma.class.update({ data: { status } })`, verified against
- * that commit rather than assumed. An earlier version of this paragraph said
- * the range "did not [hold] even when it shipped," which is false, and false
- * in the one direction a citation correction must never be: it blamed the
- * original author for rot this branch caused. What actually broke it was #174
- * task 9's own one-line net addition higher up that same file, which pushed
- * the block down by one, so the cited range now stops one line short of the
- * `prisma.class.update({ data: { status } })` that is the entire point of the
- * citation. The test it means is `class-template-lifecycle.test.ts`'s
- * "keeps a future %s class — outside the draft/open scope", whose `it.each`
- * runs `'in_progress'` and `'completed'`. Named rather than re-pinned: this
- * branch broke three line-number citations by moving code near them, and a
- * test name only rots if someone renames the test.
+ * THE SUBJECT IS `class_terminal_status_guard`, and since #327 its terminal
+ * set has one member. Cancellation is not a `ClassStatus` any more; it is
+ * `CalendarEntry.cancelledAt`, and the arms of this trigger that used to guard
+ * it — a cancelled class cannot leave its status, a completed class cannot be
+ * cancelled — are `entry_terminal_liveness_guard` now, pinned in
+ * `calendar-entry.test.ts` beside the other entry-level guards.
  *
  * Manual mutation-proof recipe, if this trigger is ever touched again —
  * against `DATABASE_URL_TEST`, never dev:
@@ -60,40 +41,19 @@ import { createClassFixture } from '../../tests/class-fixtures';
  *   npx vitest run --project unit src/services/class-terminal-status.test.ts
  *   # first test fails: `caught` stays undefined, no exception to catch
  *
- * To restore: `CREATE OR REPLACE FUNCTION` (in the migration) is idempotent,
- * but `CREATE TRIGGER` is not — replaying the migration file only works
- * because the trigger was just dropped. Replaying it while the trigger still
- * exists fails with `trigger "class_terminal_status_guard" for relation
- * "Class" already exists`. Either confirm it's actually gone first, then:
+ * To restore, recreate the trigger by hand. Replaying its migration is not an
+ * option: `CREATE OR REPLACE FUNCTION` is idempotent but `CREATE TRIGGER` is
+ * not, and the file that carries both — `20260826080100_calendar_entry_rewire`
+ * — also moves columns between tables and refuses to run against a populated
+ * database at all.
  *
- *   docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
- *     < prisma/migrations/20260805120000_class_terminal_status_trigger/migration.sql
- *
- * or reset the whole test database from scratch instead of replaying by
- * hand: `DATABASE_URL_TEST=... npx prisma migrate reset` (safe — it never
- * touches dev).
+ *   docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test -c \
+ *     'CREATE TRIGGER class_terminal_status_guard BEFORE UPDATE OF status
+ *        ON "Class" FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status)
+ *        EXECUTE FUNCTION class_reject_terminal_status_change();'
  */
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
-
-/**
- * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
- * the next hour rather than ever emitting an invalid minute like `'09:60'`
- * once the counter below crosses 60 — a raw `09:${counter}` literal would
- * build exactly that. `Class.startTime` is `@db.Time` and would refuse the
- * row outright at the DB, which is a less useful failure here than this
- * guard's message naming the counter that produced it.
- * Mirrors `class-template-lifecycle.test.ts`'s `slotTime`.
- */
-function slotTime(totalMinutesFrom9am: number): string {
-  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
-  const minute = totalMinutesFrom9am % 60;
-  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
-    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
-  }
-  return startTime;
-}
 
 let teacherId: string;
 let accountId: string;
@@ -102,32 +62,34 @@ let teacherRoomId: string;
 let studentId: string;
 const classIds: string[] = [];
 
-// Counter-derived startTime: every test in this file calls makeClass once
-// for the same teacher/date, and several tests deliberately drive their
-// class to a non-cancelled terminal state ('completed') that keeps
-// occupying its slot under Class_teacher_slot_unique for the rest of the
-// run. No test here reads or asserts the created row's literal startTime,
-// so a distinct minute per call removes the collision without touching any
-// assertion. Routed through `slotTime` rather than a raw `09:${counter}`
-// literal.
+/**
+ * A DAY per fixture, not a minute. Every test here calls `makeClass` once for
+ * the same teacher, and several drive their class to `completed`, which keeps
+ * occupying its slot for the rest of the run. `CalendarEntry_teacher_slot_excl`
+ * is a RANGE overlap since #327, so the per-call minute offset this file used
+ * against the old exact-start key is no longer enough — two 60-minute classes
+ * one minute apart overlap. `slotDate` (`tests/class-fixtures.ts`) owns that
+ * reasoning; no test here reads or asserts a fixture's literal date.
+ */
+const FIXTURE_BASE = '2099-06-01';
 let makeClassCounter = 0;
 
 async function makeClass(opts: { status: ClassStatus }): Promise<{ classId: string }> {
   makeClassCounter += 1;
   const cls = await createClassFixture(prisma, {
-      teacherId,
-      teacherRoomId,
-      classType: 'Terminal Status Test',
-      date: new Date('2099-06-01'),
-      startTime: hhmmToTime(slotTime(makeClassCounter)),
-      durationMinutes: 60,
-      roomCost: 20,
-      minRate: 15,
-      targetRate: 25,
-      minStudents: 1,
-      maxStudents: 8,
-      status: opts.status,
-    });
+    teacherId,
+    teacherRoomId,
+    classType: 'Terminal Status Test',
+    date: slotDate(FIXTURE_BASE, makeClassCounter),
+    startTime: hhmmToTime('09:00'),
+    durationMinutes: 60,
+    roomCost: 20,
+    minRate: 15,
+    targetRate: 25,
+    minStudents: 1,
+    maxStudents: 8,
+    status: opts.status,
+  });
   classIds.push(cls.id);
   return { classId: cls.id };
 }
@@ -182,7 +144,10 @@ afterAll(async () => {
   await prisma.payment.deleteMany({ where: { registration: { classId: { in: classIds } } } });
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.student.deleteMany({ where: { id: studentId } });
-  await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+  // Entries, not classes: `Class_calendarEntryId_kind_fkey` is
+  // `ON DELETE CASCADE`, so deleting the entry takes its class with it, and
+  // the entry is what would otherwise be left behind holding a slot.
+  await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
   await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
   await prisma.room.deleteMany({ where: { id: roomId } });
   await prisma.teacher.deleteMany({ where: { id: teacherId } });
@@ -190,71 +155,28 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe('class terminal status trigger', () => {
-  it('refuses to change the status of a cancelled class, and says so with a matchable code', async () => {
-    const { classId } = await makeClass({ status: 'open' });
-    await prisma.calendarEntry.updateMany({
-      where: { classes: { some: { id: classId } }, cancelledAt: null },
-      data: { cancelledAt: new Date() },
-    });
-
-    let caught: unknown;
-    try {
-      await prisma.class.update({ where: { id: classId }, data: { status: 'open' } });
-    } catch (err) {
-      caught = err;
-    }
-
-    // Observed directly (see api-errors.ts's isTerminalStatusViolation
-    // docblock for the full transcript): the trigger's `RAISE EXCEPTION`
-    // reaches Prisma as PrismaClientUnknownRequestError, not
-    // PrismaClientKnownRequestError — there is no P-code for "a trigger
-    // fired", so it carries no `.code`/`.meta`, only a message with the raw
-    // driver text embedded, including `code: "23514"` and this trigger's own
-    // wording. Asserting the class, not just a loose substring, is what
-    // would have caught a regression to the wrong error shape.
-    expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
-    expect(String(caught)).toMatch(/23514/);
-    expect(String(caught)).toMatch(/which is terminal/);
-
-    // End-to-end pin, not just a unit test against a frozen fixture:
-    // api-errors.test.ts feeds classifyApiError a hand-built string literal
-    // shaped like this error, which proves the *matcher* is right about the
-    // shape it was told to expect but not that the shape is still real. This
-    // line closes that gap by running the real classifier against the real
-    // error this test just caught — a Prisma upgrade that reshapes the
-    // ConnectorError/PostgresError debug formatting the matcher depends on
-    // fails here even if the frozen fixture in api-errors.test.ts stays
-    // green.
-    expect(classifyApiError(caught).status).toBe(409);
-
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
-    expect(after.status).toBe('cancelled');
-  });
-
+describe('class_terminal_status_guard', () => {
   /**
-   * The `completed` arm, which had no test until #174's four-specialist
-   * review found it unfalsifiable. Narrowing the trigger's guard from
-   * `OLD.status IN ('completed','cancelled')` to `IN ('cancelled')` on the
-   * test database left the whole `unit` project green at 562/562: the test
-   * above only exercises `cancelled`, and the one below it updates a
-   * non-status column, which a `BEFORE UPDATE OF status` trigger never fires
-   * for at all.
+   * The `completed` arm, which had no test until #174's four-specialist review
+   * found it unfalsifiable. Narrowing the trigger's guard on the test database
+   * left the whole `unit` project green: no case exercised `completed`, and
+   * the cases below it update a non-status column, which a
+   * `BEFORE UPDATE OF status` trigger never fires for at all.
    *
-   * This is the arm that matters most. A `cancelled` class has no money
-   * attached to it; a `completed` one has a `Payment` row per charged
-   * registration and students who have been asked to pay. Cancelling it
-   * behind their backs orphans those payments — which is exactly what
+   * This is the arm that matters most, and since #327 it is the only one.
+   * A completed class has a `Payment` row per charged registration and
+   * students who have been asked to pay. Moving it back out of `completed`
+   * behind their backs orphans those payments — which is what
    * `deleteTeacherAccount`'s cancel CAS would do if it ever landed on a class
    * that completed after its own read, and why that CAS re-checks the status
-   * in its `where`. This trigger is the backstop for every writer that
-   * forgets to.
+   * in its `where`. This trigger is the backstop for every writer that forgets
+   * to.
    *
-   * The fixture carries a real `Payment` for that reason: the assertion is
-   * not only that the status held, but that the money it guards is still
-   * there and still attached to a completed class.
+   * The fixture carries a real `Payment` for that reason: the assertion is not
+   * only that the status held, but that the money it guards is still there and
+   * still attached to a completed class.
    */
-  it('refuses to cancel a completed class, leaving its payments attached', async () => {
+  it('refuses to move a completed class back out of completed, leaving its payments attached', async () => {
     const { classId } = await makeClass({ status: 'open' });
     const registration = await prisma.registration.create({
       data: { classId, studentId, status: 'attended', tierAtBooking: 3, price: 12.5 },
@@ -279,22 +201,35 @@ describe('class terminal status trigger', () => {
 
     let caught: unknown;
     try {
-      await prisma.calendarEntry.updateMany({ where: { classes: { some: { id: classId } } }, data: { cancelledAt: new Date() } });
+      await prisma.class.update({ where: { id: classId }, data: { status: 'open' } });
     } catch (err) {
       caught = err;
     }
 
-    // The same error shape as the `cancelled` arm above, asserted the same
-    // way and for the same reason — see that test's comment for the observed
-    // transcript. Both arms of one `IF` must surface identically, or a route
-    // handles one and 500s on the other.
+    // Observed directly (see api-errors.ts's isTerminalStatusViolation
+    // docblock for the full transcript): the trigger's `RAISE EXCEPTION`
+    // reaches Prisma as PrismaClientUnknownRequestError, not
+    // PrismaClientKnownRequestError — there is no P-code for "a trigger
+    // fired", so it carries no `.code`/`.meta`, only a message with the raw
+    // driver text embedded, including `code: "23514"` and this trigger's own
+    // wording. Asserting the class, not just a loose substring, is what would
+    // have caught a regression to the wrong error shape.
     expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
     expect(String(caught)).toMatch(/23514/);
     expect(String(caught)).toMatch(/which is terminal/);
     expect(String(caught)).toMatch(/is completed/);
+
+    // End-to-end pin, not just a unit test against a frozen fixture:
+    // api-errors.test.ts feeds classifyApiError a hand-built string literal
+    // shaped like this error, which proves the *matcher* is right about the
+    // shape it was told to expect but not that the shape is still real. This
+    // line closes that gap by running the real classifier against the real
+    // error this test just caught — a Prisma upgrade that reshapes the
+    // ConnectorError/PostgresError debug formatting the matcher depends on
+    // fails here even if the frozen fixture in api-errors.test.ts stays green.
     expect(classifyApiError(caught).status).toBe(409);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
     expect(after.status).toBe('completed');
 
     // The stakes, spelled out: the payment is still there, still pending, and
@@ -308,8 +243,8 @@ describe('class terminal status trigger', () => {
   /**
    * The `WHEN (OLD.status IS DISTINCT FROM NEW.status)` clause, which nothing
    * pinned either — deleting it from the migration today breaks no test, and
-   * the migration's own comment ("Fires only on an actual status change")
-   * would then be describing behaviour that no longer exists.
+   * the migration's own comment would then be describing behaviour that no
+   * longer exists.
    *
    * The shape is `completeClass`'s (`class-lifecycle.ts`): `status` in the
    * `SET` list alongside the three financial columns, in one statement. What
@@ -322,15 +257,7 @@ describe('class terminal status trigger', () => {
    * entirely.
    */
   it('allows a completeClass-shaped write that repeats a completed status alongside other columns', async () => {
-    const { classId } = await makeClass({ status: 'open' });
-    await prisma.class.updateMany({
-      where: { id: classId, status: 'open' },
-      data: { status: 'in_progress' },
-    });
-    await prisma.class.updateMany({
-      where: { id: classId, status: 'in_progress' },
-      data: { status: 'completed' },
-    });
+    const { classId } = await makeClass({ status: 'completed' });
 
     await prisma.class.update({
       where: { id: classId },
@@ -342,48 +269,37 @@ describe('class terminal status trigger', () => {
       },
     });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
     expect(after.status).toBe('completed');
     expect(Number(after.totalRevenue)).toBe(45);
     expect(after.totalStudents).toBe(1);
   });
 
   /**
-   * The same clause on the other terminal value, and with nothing else in the
-   * `SET` list — the minimal case, so a failure here says "the `WHEN` clause
-   * is gone" and not "a multi-column write regressed".
+   * The same clause with nothing else in the `SET` list — the minimal case, so
+   * a failure here says "the `WHEN` clause is gone" and not "a multi-column
+   * write regressed".
    */
-  it('allows a no-op status write on a cancelled class', async () => {
-    const { classId } = await makeClass({ status: 'open' });
-    await prisma.calendarEntry.updateMany({
-      where: { classes: { some: { id: classId } }, cancelledAt: null },
-      data: { cancelledAt: new Date() },
-    });
+  it('allows a bare no-op status write on a completed class', async () => {
+    const { classId } = await makeClass({ status: 'completed' });
 
-    await prisma.calendarEntry.updateMany({ where: { classes: { some: { id: classId } } }, data: { cancelledAt: new Date() } });
+    await prisma.class.update({ where: { id: classId }, data: { status: 'completed' } });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
-    expect(after.status).toBe('cancelled');
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    expect(after.status).toBe('completed');
   });
 
-  it('leaves a non-status, non-date update to a completed class alone', async () => {
-    // Narrowed by #247. `date` is now guarded on a terminal class by a SECOND
-    // trigger, `class_terminal_date_guard`, pinned in the sibling file
-    // `class-terminal-date.test.ts`. This case is about THIS trigger's `OF
-    // status` scope, so it deliberately writes neither column.
-    const { classId } = await makeClass({ status: 'open' });
-    await prisma.class.updateMany({
-      where: { id: classId, status: 'open' },
-      data: { status: 'in_progress' },
-    });
-    await prisma.class.updateMany({
-      where: { id: classId, status: 'in_progress' },
-      data: { status: 'completed' },
-    });
+  it('leaves a non-status update to a completed class alone', async () => {
+    // The entry's `date`, `startTime` and `durationMinutes` are frozen on a
+    // completed class by a SECOND trigger, `entry_frozen_schedule_guard`,
+    // pinned in the sibling file `class-terminal-date.test.ts`. This case is
+    // about THIS trigger's `OF status` scope, so it writes a column on the
+    // class row that is neither.
+    const { classId } = await makeClass({ status: 'completed' });
 
     await prisma.class.update({ where: { id: classId }, data: { description: 'Edited after' } });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
     expect(after.description).toBe('Edited after');
     expect(after.status).toBe('completed');
   });
@@ -396,28 +312,22 @@ describe('class terminal status trigger', () => {
    * than 365 days past its `date`, and its whole safety argument is "no writer
    * can ever touch those rows again". Since #247 that argument rests on TWO
    * triggers, one per half of the predicate: this one freezes `status`, and
-   * `class_terminal_date_guard` freezes `date`, pinned in the sibling file
-   * `class-terminal-date.test.ts` — which carries its own copy of the drift
-   * pin below, read out of its own migration. This docblock went on saying the
-   * argument "rests on this trigger" after the second one shipped, and #247's
-   * sweep of that claim missed it because it is phrased in different words
-   * from the others; a reader who believed it would conclude the date half is
-   * enforced by nothing.
+   * `entry_frozen_schedule_guard` freezes the entry's `date`, pinned in the
+   * sibling file `class-terminal-date.test.ts` — which carries its own copy of
+   * the drift pin below, read out of the other frozen text.
    *
-   * Both triggers hard-code `('completed','cancelled')` in SQL that cannot be
-   * edited — they are applied migrations. The constant, meanwhile, is DERIVED
-   * from `VALID_TRANSITIONS`. Widen that table and the constant widens
-   * silently while neither trigger does, and the reaper would then delete rows
-   * on a class whose immutability nothing enforces.
+   * Both triggers hard-code the terminal set in SQL that cannot be edited —
+   * they are applied migrations. The constant, meanwhile, is DERIVED from
+   * `VALID_TRANSITIONS`. Widen that table and the constant widens silently
+   * while neither trigger does, and the reaper would then delete rows on a
+   * class whose immutability nothing enforces.
    *
-   * So this iterates the derived set rather than restating it. The two tests
-   * that assert `classifyApiError(...).status === 409` — 'refuses to change the
-   * status of a cancelled class, and says so with a matchable code' and
-   * 'refuses to cancel a completed class, leaving its payments attached' — stay
-   * as they are: they assert the trigger's error SHAPE end to end, including
-   * the HTTP status a caller sees. This one adds the per-status sweep, and
-   * asserts the Prisma error class, `23514` and `/which is terminal/` for each
-   * member as well as the status surviving.
+   * So this iterates the derived set rather than restating it. The test above
+   * that asserts `classifyApiError(...).status === 409` stays as it is: it
+   * asserts the trigger's error SHAPE end to end, including the HTTP status a
+   * caller sees. This one adds the per-status sweep, and asserts the Prisma
+   * error class, `23514` and `/which is terminal/` for each member as well as
+   * the status surviving.
    */
   it.each(TERMINAL_CLASS_STATUSES)(
     'has a DB-enforced terminal %s, so the reaper may treat it as unwritable',
@@ -435,7 +345,7 @@ describe('class terminal status trigger', () => {
       expect(String(caught)).toMatch(/23514/);
       expect(String(caught)).toMatch(/which is terminal/);
 
-      const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
       expect(after.status).toBe(status);
     },
   );
@@ -444,24 +354,31 @@ describe('class terminal status trigger', () => {
    * The same pin in the NARROWING direction, which nothing above catches.
    *
    * The `it.each` above only iterates what is IN `TERMINAL_CLASS_STATUSES`, so
-   * it can only ever catch the set growing past what the trigger enforces. Give
-   * `cancelled` an outgoing transition in `VALID_TRANSITIONS` and the set
-   * shrinks to `['completed']` — the reaper silently stops reaping cancelled
-   * classes, and every pin above passes VACUOUSLY, because a case that is no
-   * longer generated cannot fail. An empty set is the same hole at its limit,
-   * hence the length assertion.
+   * it can only ever catch the set growing past what the trigger enforces.
+   * Give `completed` an outgoing transition in `VALID_TRANSITIONS` and the set
+   * empties — the reaper silently stops reaping, and every pin above passes
+   * VACUOUSLY, because a case that is no longer generated cannot fail. Hence
+   * the length assertion.
    *
    * Read out of the migration's own SQL rather than restated as a literal here,
    * so there is exactly one place the enforced set is written down and this
    * cannot drift from it by being edited in only one of two files.
    *
+   * ANCHORED ON THE FUNCTION NAME, not on the directory. Both frozen texts now
+   * live in that one migration, so the directory alone no longer identifies
+   * which one a pin reads — `tests/migration-sql.ts` explains what that would
+   * cost. This pin reads the guard; the sibling file reads the sync trigger.
+   *
    * Regex over SQL is normally fragile; here it inverts. The file is an APPLIED
    * migration, which `CLAUDE.md` forbids editing, so the text this reads is
-   * frozen by policy — and the `if (!m)` guard turns a shape change into a
+   * frozen by policy — and the throws in the parser turn a shape change into a
    * named failure rather than a silent pass. No database is touched.
    */
-  it('matches the exact status set the trigger SQL enforces', () => {
-    const enforced = enforcedTerminalStatuses('20260805120000_class_terminal_status_trigger');
+  it('matches the exact status set the guard SQL enforces', () => {
+    const enforced = enforcedTerminalStatuses(
+      '20260826080100_calendar_entry_rewire',
+      'class_reject_terminal_status_change',
+    );
 
     expect(enforced.length).toBeGreaterThan(0);
     expect(TERMINAL_CLASS_STATUSES.length).toBeGreaterThan(0);

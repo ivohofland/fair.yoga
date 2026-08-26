@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
@@ -24,14 +25,22 @@ async function makeTeacher(tag: string): Promise<string> {
 let roomId: string;
 let teacherRoomId: string;
 
-const studio = (teacher: string, day: number) => ({
-  teacherId: teacher, classType: 'Yoga', date: new Date(Date.UTC(2027, 0, day)),
-  startTime: hhmmToTime('09:00'), durationMinutes: 60, location: 'Studio', hourlyRate: 40,
+/**
+ * One date per case, handed out by hand rather than by a counter: several
+ * cases below need TWO dates that must not be each other's, and a shared
+ * counter would make which date a case gets depend on how many the cases above
+ * it consumed.
+ */
+const day = (n: number) => new Date(Date.UTC(2027, 5, n));
+
+const studio = (teacher: string, date: Date, start = '09:00') => ({
+  teacherId: teacher, classType: 'Yoga', date,
+  startTime: hhmmToTime(start), durationMinutes: 60, location: 'Studio', hourlyRate: 40,
 });
 
-const cls = (teacher: string, day: number) => ({
+const cls = (teacher: string, date: Date, start = '09:00') => ({
   teacherId: teacher, teacherRoomId, classType: 'Yoga',
-  date: new Date(Date.UTC(2027, 1, day)), startTime: hhmmToTime('09:00'), durationMinutes: 60,
+  date, startTime: hhmmToTime(start), durationMinutes: 60,
   roomCost: 20, minRate: 30, targetRate: 60, minStudents: 3, maxStudents: 10,
 });
 
@@ -56,8 +65,12 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const teachers = [teacherId, otherTeacherId];
-  await prisma.class.deleteMany({ where: { calendarEntry: { teacherId: { in: teachers } } } });
-  await prisma.studioClass.deleteMany({ where: { calendarEntry: { teacherId: { in: teachers } } } });
+  // Entries first, and they take both families' children with them
+  // (`Class_calendarEntryId_kind_fkey` and its `StudioClass` twin are
+  // `ON DELETE CASCADE`). Must precede `teacherRoom.deleteMany`:
+  // `Class_teacherRoomId_fkey` is `ON DELETE RESTRICT`, so a surviving class
+  // blocks the room link's delete.
+  await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teachers } } });
   // `ClassTemplate`/`StudioClassTemplate` are `onDelete: Cascade` from
   // `ScheduleRule` (issue 298), so deleting the rules removes both
   // families' templates with them.
@@ -73,68 +86,158 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+const EXCL = 'CalendarEntry_teacher_slot_excl';
+
+/** Asserts the DATABASE refused, and that it was THIS constraint that did. */
+async function expectSlotRefusal(fn: () => Promise<unknown>): Promise<void> {
+  await expect(fn()).rejects.toSatisfy((e: unknown) => isExclusionConflictOn(e, EXCL));
+}
+
 /**
- * These assert the DATABASE rejects the write. The route-level 409s in
- * tests/integration only prove a route's own branch; with the index absent
- * they would still pass on a sequential retry and fail only under a race,
- * which is the case that motivated #196.
+ * One teacher, one slot, across both families (#296) — asserted at the layer a
+ * caller actually writes through.
  *
- * The assertions name `meta.target` — the column list — rather than matching
- * a message. A bare `rejects.toThrow()` would be satisfied by any masking
- * failure (an FK violation from a stale fixture, a different unique key).
+ * These assert the DATABASE rejects the write. The route-level 409s in
+ * tests/integration only prove a route's own branch; with the constraint absent
+ * they would still pass on a sequential retry and fail only under a race, which
+ * is the case that motivated #196.
+ *
+ * WHAT THIS FILE ADDS OVER `calendar-entry.test.ts`. That file drives
+ * `CalendarEntry_teacher_slot_excl` with raw inserts of bare entries, which is
+ * the right way to pin the constraint's own shape — the half-open boundary,
+ * the midnight span, the duration edit. Every case here goes through
+ * `createClassFixture` / `createStudioClassFixture` instead, i.e. through an
+ * entry AND its child in the family a caller would create, which is what makes
+ * the cross-family half of #296 observable at all: an entry with no child
+ * belongs to no family.
+ *
+ * The assertions name the exclusion constraint by NAME
+ * (`isExclusionConflictOn`) rather than by `meta.target`, because a 23P01
+ * exclusion violation carries no `meta.target`: `code` and `meta` are both
+ * `undefined` on the Prisma error (`src/lib/exclusion-conflict.ts`), which is
+ * the whole reason that matcher exists rather than reusing `isUniqueConflictOn`.
+ *
+ * LOAD-BEARING PROPERTY THIS WHOLE DESCRIBE DEPENDS ON:
+ * `CalendarEntry_teacher_slot_excl` keys on `(teacherId, span)` only — `kind`
+ * is not part of it (`20260826080000_calendar_entry/migration.sql`). That is
+ * why the cases below mix `regular` and `studio` freely rather than writing a
+ * same-family and a cross-family variant of each: with `kind` absent from the
+ * key, a same-family collision and a cross-family one compile to
+ * byte-identical work against this constraint, so one case proves both. The
+ * four refusal cases that DO spell out the 2x2 are the exception, and
+ * deliberate — that matrix is #296's acceptance criterion stated directly.
+ * If `kind` is ever added to the constraint's key, every case that relies on
+ * the stand-in needs its same-family twin written back in.
+ *
+ * TWO CASES THIS FILE NO LONGER CARRIES, both from the trigger era:
+ * - "leaves a pre-existing violating pair editable on unrelated columns", in
+ *   both families. The pair was built by disabling the triggers around an
+ *   insert; a constraint is not a trigger and cannot be disabled that way, and
+ *   an exclusion constraint cannot be `NOT VALID` either, so the state is
+ *   unconstructible by design (parent design doc §7.2).
+ * - "un-cancelling a class into an occupied cross-family slot". Un-cancelling
+ *   a REGULAR entry is refused outright now, whatever the slot holds —
+ *   `entry_terminal_liveness_guard`, pinned in `calendar-entry.test.ts`. The
+ *   studio half survives below, because that un-cancel path is live.
  */
-describe('teacher slot unique indexes', () => {
-  it('rejects a second live studio class at the same teacher/date/startTime', async () => {
-    await createStudioClassFixture(prisma, studio(teacherId, 4));
-    const err = await createStudioClassFixture(prisma, studio(teacherId, 4)).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
-    expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P2002');
-    expect((err as Prisma.PrismaClientKnownRequestError).meta?.target)
-      .toEqual(['teacherId', 'date', 'startTime']);
+describe('CalendarEntry_teacher_slot_excl, through both families', () => {
+  it('refuses a second live class on an occupied slot', async () => {
+    await createClassFixture(prisma, cls(teacherId, day(1)));
+    await expectSlotRefusal(() => createClassFixture(prisma, cls(teacherId, day(1))));
   });
 
-  it('does not block another teacher at the same date and time', async () => {
-    // Seeds its own colliding row (day 6, distinct from the day-4 fixture
-    // above) rather than relying on the preceding test's row: under the
-    // Step 9 mutation that drops `teacherId` from the index, this is what
-    // makes the assertion actually exercise the guard instead of vacuously
-    // passing when run in isolation.
-    await createStudioClassFixture(prisma, studio(teacherId, 6));
-    await expect(createStudioClassFixture(prisma, studio(otherTeacherId, 6))).resolves.toBeTruthy();
+  it('refuses a second live studio class on an occupied slot', async () => {
+    await createStudioClassFixture(prisma, studio(teacherId, day(2)));
+    await expectSlotRefusal(() => createStudioClassFixture(prisma, studio(teacherId, day(2))));
   });
 
-  it('a cancelled studio class does not block re-creating that slot', async () => {
-    await createStudioClassFixture(prisma, { ...studio(teacherId, 5), cancelledAt: new Date() });
-    await expect(createStudioClassFixture(prisma, studio(teacherId, 5))).resolves.toBeTruthy();
-  });
-});
-
-describe('Class_teacher_slot_unique', () => {
-  it('rejects a second live class at the same teacher/date/startTime', async () => {
-    await createClassFixture(prisma, cls(teacherId, 4));
-    const err = await createClassFixture(prisma, cls(teacherId, 4)).catch((e: unknown) => e);
-    expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P2002');
-    expect((err as Prisma.PrismaClientKnownRequestError).meta?.target)
-      .toEqual(['teacherId', 'date', 'startTime']);
+  it('refuses a live studio class on a live class\'s slot', async () => {
+    await createClassFixture(prisma, cls(teacherId, day(3)));
+    await expectSlotRefusal(() => createStudioClassFixture(prisma, studio(teacherId, day(3))));
   });
 
-  it('a cancelled class does not block re-creating that slot', async () => {
-    const c = await createClassFixture(prisma, cls(teacherId, 5));
-    // Created as `draft` then moved, because `class_terminal_status_guard`
-    // governs status changes. If a direct `status: 'cancelled'` insert is
-    // accepted, use it — but do not assume; run it and see.
-    await prisma.calendarEntry.updateMany({ where: { classes: { some: { id: c.id } } }, data: { cancelledAt: new Date() } });
-    await expect(createClassFixture(prisma, cls(teacherId, 5))).resolves.toBeTruthy();
+  it('refuses a live class on a live studio class\'s slot', async () => {
+    await createStudioClassFixture(prisma, studio(teacherId, day(4)));
+    await expectSlotRefusal(() => createClassFixture(prisma, cls(teacherId, day(4))));
   });
 
-  // PR #208 review, E2. `StudioClass` and `Room_private` already had this
-  // shape pinned; `Class`, `ClassTemplate` and `StudioClassTemplate` did not.
-  // Seeds its own colliding row (day 6, distinct from the fixtures above)
-  // rather than relying on a preceding test's row — self-seeded, so it
-  // cannot pass vacuously if `teacherId` is ever dropped from the index.
-  it('does not block another teacher at the same date and time', async () => {
-    await createClassFixture(prisma, cls(teacherId, 6));
-    await expect(createClassFixture(prisma, cls(otherTeacherId, 6))).resolves.toBeTruthy();
+  // The two boundary cases, at the layer the fixtures write. The raw-SQL file
+  // pins the constraint's half-open range directly; these pin that a fixture's
+  // `durationMinutes` actually reaches `span` — a builder that dropped the
+  // column would leave every exact-slot case above green.
+  it('refuses a studio class overlapping the tail of a class', async () => {
+    await createClassFixture(prisma, cls(teacherId, day(5), '09:00'));   // 09:00-10:00
+    await expectSlotRefusal(() =>
+      createStudioClassFixture(prisma, studio(teacherId, day(5), '09:30')));
+  });
+
+  it('ALLOWS back-to-back across the two families', async () => {
+    await createClassFixture(prisma, cls(teacherId, day(6), '09:00'));   // 09:00-10:00
+    await expect(createStudioClassFixture(prisma, studio(teacherId, day(6), '10:00')))
+      .resolves.toBeTruthy();
+  });
+
+  // Cancellation releases the slot — the constraint is partial on
+  // `cancelledAt IS NULL`. Families mixed on purpose (see the docblock): the
+  // resident's family is what varies, because that is the row whose liveness
+  // decides.
+  it('a cancelled class releases its slot to a studio class', async () => {
+    await createClassFixture(prisma, { ...cls(teacherId, day(7)), cancelledAt: new Date() });
+    await expect(createStudioClassFixture(prisma, studio(teacherId, day(7))))
+      .resolves.toBeTruthy();
+  });
+
+  it('a cancelled studio class releases its slot to a class', async () => {
+    await createStudioClassFixture(prisma, { ...studio(teacherId, day(8)), cancelledAt: new Date() });
+    await expect(createClassFixture(prisma, cls(teacherId, day(8)))).resolves.toBeTruthy();
+  });
+
+  // `teacherId WITH =` scopes the constraint. Both pairings, because the
+  // resident and the mover are not symmetric here: each case seeds its own
+  // colliding row rather than relying on a preceding test's, so neither can
+  // pass vacuously if `teacherId` is ever dropped from the key.
+  it('does not block another teacher from a class\'s slot', async () => {
+    await createClassFixture(prisma, cls(teacherId, day(9)));
+    await expect(createClassFixture(prisma, cls(otherTeacherId, day(9)))).resolves.toBeTruthy();
+  });
+
+  it('does not block a class from another teacher\'s studio class at the same slot', async () => {
+    await createStudioClassFixture(prisma, studio(otherTeacherId, day(10)));
+    await expect(createClassFixture(prisma, cls(teacherId, day(10)))).resolves.toBeTruthy();
+  });
+
+  // The constraint re-checks on UPDATE, not only on INSERT — and `span` is
+  // generated from `date` and `startTime` both, so one case per field. Which
+  // family moves is the stand-in the docblock names; the field is not.
+  it('refuses moving a class by DATE into an occupied slot', async () => {
+    await createStudioClassFixture(prisma, studio(teacherId, day(11)));       // resident
+    const c = await createClassFixture(prisma, cls(teacherId, day(12)));      // mover
+    await expectSlotRefusal(() => prisma.calendarEntry.update({
+      where: { id: c.calendarEntryId },
+      data: { date: day(11) },
+    }));
+  });
+
+  it('refuses moving a studio class by startTime into an occupied slot', async () => {
+    await createClassFixture(prisma, cls(teacherId, day(13), '09:00'));       // resident
+    const s = await createStudioClassFixture(prisma, studio(teacherId, day(13), '07:00'));
+    await expectSlotRefusal(() => prisma.calendarEntry.update({
+      where: { id: s.calendarEntryId },
+      data: { startTime: hhmmToTime('09:00') },
+    }));
+  });
+
+  // Reviving a cancelled row is the third way into the constraint, after
+  // create and move. Studio only — see the docblock's second missing case.
+  it('refuses un-cancelling a studio class into an occupied slot', async () => {
+    const s = await createStudioClassFixture(
+      prisma, { ...studio(teacherId, day(14)), cancelledAt: new Date() },
+    );
+    await createClassFixture(prisma, cls(teacherId, day(14)));
+    await expectSlotRefusal(() => prisma.calendarEntry.update({
+      where: { id: s.calendarEntryId },
+      data: { cancelledAt: null },
+    }));
   });
 });
 
@@ -185,225 +288,5 @@ describe('Room identity indexes', () => {
     await prisma.room.create({ data: room(teacherId, true, 'DualScope') });
     await expect(prisma.room.create({ data: room(teacherId, false, 'DualScope') }))
       .resolves.toBeTruthy();
-  });
-});
-
-describe('cross-family slot exclusivity (#296)', () => {
-  const D = new Date(Date.UTC(2027, 5, 1));
-
-  it('rejects a live studio class on a live class slot', async () => {
-    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D });
-    await expect(
-      createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D }),
-    ).rejects.toThrow(/YG001/);
-  });
-
-  it('rejects a live class on a live studio class slot', async () => {
-    const D2 = new Date(Date.UTC(2027, 5, 2));
-    await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D2 });
-    await expect(
-      createClassFixture(prisma, { ...cls(teacherId, 1), date: D2 }),
-    ).rejects.toThrow(/YG001/);
-  });
-
-  it('a cancelled class does not block a studio class on that slot', async () => {
-    const D3 = new Date(Date.UTC(2027, 5, 3));
-    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D3, cancelledAt: new Date() });
-    const s = await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D3 });
-    expect(s.id).toBeTruthy();
-  });
-
-  it('a cancelled studio class does not block a class on that slot', async () => {
-    const D4 = new Date(Date.UTC(2027, 5, 4));
-    await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D4, cancelledAt: new Date() });
-    const c = await createClassFixture(prisma, { ...cls(teacherId, 1), date: D4 });
-    expect(c.id).toBeTruthy();
-  });
-
-  it('un-cancelling a studio class into an occupied slot is rejected', async () => {
-    const D5 = new Date(Date.UTC(2027, 5, 5));
-    const s = await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D5, cancelledAt: new Date() });
-    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D5 });
-    await expect(
-      prisma.calendarEntry.update({ where: { id: s.calendarEntryId }, data: { cancelledAt: null } }),
-    ).rejects.toThrow(/YG001/);
-  });
-
-  it('does not block another teacher at the same date and time', async () => {
-    const D6 = new Date(Date.UTC(2027, 5, 6));
-    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D6 });
-    const s = await createStudioClassFixture(prisma, { ...studio(otherTeacherId, 1), date: D6 });
-    expect(s.id).toBeTruthy();
-  });
-
-  it('leaves a pre-existing violating pair editable on unrelated columns', async () => {
-    const D7 = new Date(Date.UTC(2027, 5, 7));
-    const c = await createClassFixture(prisma, { ...cls(teacherId, 1), date: D7 });
-    await prisma.$executeRaw`ALTER TABLE "StudioClass" DISABLE TRIGGER USER`;
-    try {
-      await prisma.$executeRaw`
-        INSERT INTO "StudioClass"
-          ("id","teacherId","classType","date","startTime","durationMinutes","location","hourlyRate","createdAt","updatedAt")
-        VALUES
-          (gen_random_uuid()::text, ${teacherId}, 'Yoga', ${D7}::date, '09:00', 60, 'Studio', 40, now(), now())`;
-    } finally {
-      await prisma.$executeRaw`ALTER TABLE "StudioClass" ENABLE TRIGGER USER`;
-    }
-    const updated = await prisma.class.update({
-      where: { id: c.id },
-      data: { description: 'edited while a violating pair stands' },
-    });
-    expect(updated.description).toBe('edited while a violating pair stands');
-
-    // Prove the guard still fires: the DISABLE/ENABLE bracket above must not
-    // have leaked, or every other test in this file would be silently voided.
-    const D7b = new Date(Date.UTC(2027, 5, 8));
-    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D7b });
-    await expect(
-      createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D7b }),
-    ).rejects.toThrow(/YG001/);
-  });
-
-  // PR #296 review, I1. The "does not block another teacher" test above only
-  // pins `studio_class_reject_cross_family_slot`'s own `teacherId` filter
-  // (a live Class(teacherId) resident, a StudioClass(otherTeacherId) mover —
-  // that fires the STUDIO-side function). Dropping `teacherId` from
-  // `class_reject_cross_family_slot`'s WHERE reddened nothing before this
-  // test existed. This is the opposite pairing: a live StudioClass belonging
-  // to a DIFFERENT teacher must not stop `teacherId` from taking the same
-  // date/startTime.
-  it('does not block a class from another teacher\'s studio class at the same slot', async () => {
-    const D8 = new Date(Date.UTC(2027, 5, 9));
-    await createStudioClassFixture(prisma, { ...studio(otherTeacherId, 1), date: D8 });
-    const c = await createClassFixture(prisma, { ...cls(teacherId, 1), date: D8 });
-    expect(c.id).toBeTruthy();
-  });
-
-  // PR #296 review, I3. Nothing anywhere moved a `date`/`startTime` into an
-  // occupied cross-family slot, so the slot-move disjuncts of both
-  // instance-level UPDATE `WHEN` clauses were dead to this suite. Two tests,
-  // one per disjunct (moving `date` here, `startTime` in the mirror below) —
-  // covering the same field twice would leave the other permanently
-  // unproven.
-  it('moving a class into an occupied cross-family slot is rejected', async () => {
-    const D9 = new Date(Date.UTC(2027, 5, 10)); // resident StudioClass's date
-    const D10 = new Date(Date.UTC(2027, 5, 11)); // mover Class's starting date
-    await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D9 });
-    const c = await createClassFixture(prisma, { ...cls(teacherId, 1), date: D10 });
-    await expect(
-      prisma.calendarEntry.update({
-      where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: c.id }, select: { calendarEntryId: true } })).calendarEntryId },
-      data: { date: D9 },
-    }),
-    ).rejects.toThrow(/YG001/);
-  });
-
-  it('moving a studio class into an occupied cross-family slot is rejected', async () => {
-    const D11 = new Date(Date.UTC(2027, 5, 12));
-    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D11 });
-    const s = await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D11, startTime: hhmmToTime('08:00') });
-    await expect(
-      prisma.calendarEntry.update({ where: { id: s.calendarEntryId }, data: { startTime: hhmmToTime('09:00') } }),
-    ).rejects.toThrow(/YG001/);
-  });
-
-  /**
-   * PR #300 review, G2. The pair above is one-sided: the `Class` side is
-   * covered in BOTH fields (`date` above, `startTime` at
-   * `cross-family-slot-api.test.ts`), while the `StudioClass` side only ever
-   * moves `startTime` — here and in the integration suite. So
-   * `studio_class_cross_family_slot_update_guard`'s
-   * `OLD."date" IS DISTINCT FROM NEW."date"` disjunct had no test at any layer,
-   * and `PUT /api/studio-classes/[id]` is a live door onto it.
-   *
-   * The comment above says the two tests exist "one per disjunct… covering the
-   * same field twice would leave the other permanently unproven" — which is
-   * right, and was applied per-FAMILY where it needed to be applied per-family-
-   * per-field.
-   */
-  it('moving a studio class by DATE into an occupied cross-family slot is rejected', async () => {
-    const D12 = new Date(Date.UTC(2027, 5, 13)); // resident Class's date
-    const D13 = new Date(Date.UTC(2027, 5, 14)); // mover StudioClass's date
-    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D12, startTime: hhmmToTime('08:15') });
-    const s = await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D13, startTime: hhmmToTime('08:15') });
-    await expect(
-      prisma.calendarEntry.update({ where: { id: s.calendarEntryId }, data: { date: D12 } }),
-    ).rejects.toThrow(/YG001/);
-  });
-
-  it('moving a class by startTime into an occupied cross-family slot is rejected', async () => {
-    // The fourth cell of the family x field matrix, so no disjunct on either
-    // instance trigger is left resting on the other family's coverage.
-    const D14 = new Date(Date.UTC(2027, 5, 15));
-    await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D14, startTime: hhmmToTime('08:30') });
-    const c = await createClassFixture(prisma, { ...cls(teacherId, 1), date: D14, startTime: hhmmToTime('08:45') });
-    await expect(
-      prisma.calendarEntry.update({
-      where: { id: (await prisma.class.findUniqueOrThrow({ where: { id: c.id }, select: { calendarEntryId: true } })).calendarEntryId },
-      data: { startTime: hhmmToTime('08:30') },
-    }),
-    ).rejects.toThrow(/YG001/);
-  });
-
-  // PR #296 review, I4 (the `Class` half — the `StudioClass` half already had
-  // "un-cancelling a studio class..." above). A direct `status: 'cancelled'`
-  // insert is used, as the "a cancelled class does not block..." test above
-  // already established works for this table.
-  //
-  // `class_terminal_status_guard` (20260805120000) also blocks EVERY
-  // cancelled -> non-cancelled status change, unconditionally — so this
-  // update is refused either way. What proves the became-live disjunct
-  // specifically is WHICH error surfaces: Postgres fires same-table BEFORE
-  // ROW triggers in alphabetical name order, and
-  // `class_cross_family_slot_update_guard` sorts before
-  // `class_terminal_status_guard` ('r' < 't' at the first difference), so
-  // the occupied-slot case raises YG001 before the terminal-status trigger
-  // ever runs. Drop the became-live disjunct and this specific assertion
-  // goes red (the update is still refused, but with the terminal-status
-  // trigger's 23514 instead) even though the update remains rejected either
-  // way — which is exactly why this needs its own test rather than folding
-  // into the terminal-status suite.
-  it('un-cancelling a class into an occupied cross-family slot is rejected', async () => {
-    const D12 = new Date(Date.UTC(2027, 5, 13));
-    await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D12 });
-    const c = await createClassFixture(prisma, { ...cls(teacherId, 1), date: D12, cancelledAt: new Date() });
-    await expect(
-      prisma.calendarEntry.update({ where: { id: c.calendarEntryId }, data: { cancelledAt: null } }),
-    ).rejects.toThrow(/YG001/);
-  });
-
-  // PR #296 review, mutation W2 finding. "leaves a pre-existing violating
-  // pair editable on unrelated columns" above only pins the narrowness of
-  // `class_cross_family_slot_update_guard`'s own `WHEN` — reducing the
-  // SIBLING trigger's `WHEN` (`studio_class_cross_family_slot_update_guard`)
-  // to its liveness term alone reddened nothing until this test existed, for
-  // the same reason W1 caught `class_cross_family_slot_update_guard`'s
-  // reduction: dropping the extra conjunct WIDENS when a trigger fires
-  // (it stops excluding "nothing relevant changed"), so only an
-  // unrelated-column-edit-stays-editable test can catch it — a
-  // slot-move/became-live rejection test cannot, since widening a WHEN never
-  // removes coverage those already exercise.
-  it('leaves a pre-existing violating pair editable on unrelated columns (studio class)', async () => {
-    const D13 = new Date(Date.UTC(2027, 5, 14));
-    const s = await createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D13 });
-    await prisma.$executeRaw`ALTER TABLE "Class" DISABLE TRIGGER USER`;
-    try {
-      await createClassFixture(prisma, { ...cls(teacherId, 1), date: D13 });
-    } finally {
-      await prisma.$executeRaw`ALTER TABLE "Class" ENABLE TRIGGER USER`;
-    }
-    const updated = await prisma.studioClass.update({
-      where: { id: s.id },
-      data: { location: 'edited while a violating pair stands' },
-    });
-    expect(updated.location).toBe('edited while a violating pair stands');
-
-    // Prove the guard still fires: the DISABLE/ENABLE bracket above must not
-    // have leaked.
-    const D13b = new Date(Date.UTC(2027, 5, 15));
-    await createClassFixture(prisma, { ...cls(teacherId, 1), date: D13b });
-    await expect(
-      createStudioClassFixture(prisma, { ...studio(teacherId, 1), date: D13b }),
-    ).rejects.toThrow(/YG001/);
   });
 });
