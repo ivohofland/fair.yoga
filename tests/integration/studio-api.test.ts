@@ -1458,18 +1458,13 @@ describe('/api/studio-classes', () => {
     // constraint, so this fires through the DB, not through any pre-check the
     // route could have.
     //
-    // THE CODE STOPPED NAMING THE OTHER FAMILY IN #327, and that is what this
-    // case now asserts. The refusal used to be a `YG001` from a trigger that
-    // existed only for cross-family collisions, so the route could answer
-    // `CROSS_FAMILY_CLASS_SLOT` — a different sentence, sending the teacher to
-    // the other half of their schedule. Both families share one
-    // `CalendarEntry_teacher_slot_excl` now; it raises `23P01` and cannot say
-    // which family holds the slot, so the route answers its own family's
-    // sentence. Not a weakening of the refusal — the move is still refused,
-    // still 409, still leaves the row where it was, which is what the three
-    // assertions below check. What is lost is the REMEDY the message points
-    // at, and Task 3's entry probe is what restores it; this assertion is
-    // expected to change again then.
+    // THE MESSAGE NAMES THE HOLDING ROW, not this caller's own family (#327).
+    // `CalendarEntry_teacher_slot_excl` raises a `23P01` carrying no family, so
+    // the route probes for the live entry whose span overlaps and reports that
+    // row's family, start time and date — here a CLASS at 09:00 on 6 May 2031,
+    // where the mover is a studio class. The CODE stays this caller's
+    // (`DUPLICATE_STUDIO_SLOT`): it says the slot is occupied, which is the
+    // condition the caller hit.
     it('refuses a date move onto a slot the class family already holds', async () => {
       const room = await prisma.room.create({
         data: {
@@ -1512,7 +1507,7 @@ describe('/api/studio-classes', () => {
       expect(res.status).toBe(409);
       const json = (await res.json()) as { error: { code: string; message: string } };
       expect(json.error.code).toBe('DUPLICATE_STUDIO_SLOT');
-      expect(json.error.message).toMatch(/already have a studio class/i);
+      expect(json.error.message).toBe('You already have a class at 09:00 on 6 May 2031.');
 
       // The row did not move — the half of this test the code change does not
       // touch, and the half that would matter if the refusal ever stopped

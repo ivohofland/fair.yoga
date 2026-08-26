@@ -17,7 +17,6 @@ import { ECONOMIC_FIELDS, type EconomicField } from '@/lib/class-fields';
 import { toIncomeTierOrThrow } from '@/lib/tiers.server';
 import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
-import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
@@ -1123,14 +1122,6 @@ export type UpdateClassResult =
    */
   | { ok: false; reason: 'frozen' }
   | { ok: false; reason: 'slot_conflict' }
-  /**
-   * A LIVE row of the OTHER class family holds this slot (#296) — enforced by
-   * trigger, since no unique index can span two tables. A sibling of
-   * `slot_taken`/`slot_conflict` rather than a widening of it: the remedy is
-   * in the other half of the teacher's schedule, so the two cannot share a
-   * sentence.
-   */
-  | { ok: false; reason: 'cross_family_slot_conflict' }
   | { ok: false; reason: 'template_date_conflict' }
   | { ok: false; reason: 'past_start' };
 
@@ -1514,25 +1505,6 @@ export async function updateClass(
     // time did.
     if (isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')) {
       return { ok: false, reason: 'slot_conflict' };
-    }
-    // #296. The cross-family guard raises `YG001`, which is not a P2002 at all,
-    // so without this arm it rethrows past every branch here and reaches the
-    // teacher as a 500.
-    //
-    // LOGGED, because catching is what would otherwise remove the record. A
-    // returned failure never reaches `withErrorHandler` (`api-utils.ts`), which
-    // logs every error that escapes with its `err`, method and path — so before
-    // this arm existed a `YG001` here left a server-side trace, and adding the
-    // arm without the line would have deleted it. `studio-class-template-
-    // lifecycle.ts` states the same rule above its own catch (#231). A
-    // reschedule onto a studio slot is the door a teacher hits repeatedly, so
-    // this is the one worth being able to see.
-    if (isCrossFamilySlotConflict(err)) {
-      log.warn(
-        { err, classId, teacherId: entry.teacherId },
-        'class reschedule refused: the studio family holds that slot',
-      );
-      return { ok: false, reason: 'cross_family_slot_conflict' };
     }
     // `CalendarEntry_scheduleRuleId_date_key` — the generator's one-per-week
     // key, reachable only from a reschedule, and only when the entry carries a

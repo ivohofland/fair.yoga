@@ -10,6 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { updateClassSchema } from '@/lib/schemas';
 import { updateClass, type ClassUpdateData } from '@/services/class-lifecycle';
+import { entryConflictMessage, probeConflictingEntry } from '@/lib/entry-conflict';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 
 export const GET = withErrorHandler(async (
@@ -131,25 +132,36 @@ export const PUT = withErrorHandler(async (
       'CLASS_SCHEDULE_FROZEN',
     );
   }
-  // A reschedule (date/startTime) landed on a slot this teacher already
-  // occupies with another live class (#196) — the same clash a `POST` into
-  // that slot reports, reached here by a move instead of a create.
+  // A reschedule (date/startTime/durationMinutes) landed on a slot this teacher
+  // already occupies with another live entry (#196) — the same clash a `POST`
+  // into that slot reports, reached here by a move instead of a create.
   if (result.reason === 'slot_conflict') {
+    // WHICH entry, asked of the database, because the `23P01` behind this
+    // reason does not say — and either family can be the answer, since both
+    // live in one table now.
+    //
+    // Here rather than inside `updateClass`, so all four entry-level doors
+    // probe the same way. The span is the three columns `CalendarEntry.span` is
+    // generated from: the body's value where this request sent one, the row
+    // this handler read above where it did not.
+    //
+    // On `prisma`, and off any aborted transaction by construction: `result` is
+    // a returned value, so every transaction `updateClass` opened has already
+    // closed — a probe on an aborted one would answer `25P02`.
+    //
+    // `excludeEntryId` because the entry still holds its OLD span: the write
+    // that would have moved it is the one that failed, so without this it
+    // reports itself and names back the time the teacher was moving away from.
+    const conflict = await probeConflictingEntry(prisma, session.teacherId, {
+      date: data.date ?? cls.calendarEntry.date,
+      startTime: data.startTime ?? cls.calendarEntry.startTime,
+      durationMinutes: data.durationMinutes ?? cls.calendarEntry.durationMinutes,
+      excludeEntryId: cls.calendarEntryId,
+    });
     return respondError(
-      'You already have a class at that date and time.',
+      entryConflictMessage(conflict, 'regular'),
       409,
       'DUPLICATE_CLASS_SLOT',
-    );
-  }
-  // The OTHER family holds it (#296). Same status as the branch above and a
-  // deliberately different sentence: that clash is fixed among this teacher's
-  // classes, this one sends them to their studio classes. A shared message
-  // would be the same status for two different remedies.
-  if (result.reason === 'cross_family_slot_conflict') {
-    return respondError(
-      'You already have a studio class at that date and time.',
-      409,
-      'CROSS_FAMILY_STUDIO_SLOT',
     );
   }
   // The `@@unique([scheduleRuleId, date])` key, not the slot constraint above

@@ -10,7 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { createStudioClassSchema } from '@/lib/schemas';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
-import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
+import { entryConflictMessage, probeConflictingEntry } from '@/lib/entry-conflict';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
@@ -105,32 +105,28 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // so a create that merely OVERLAPS a live class of this teacher collides
     // where before only an identical start time did.
     if (isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')) {
+      // WHICH entry, asked of the database, because the `23P01` does not say —
+      // and either family can be the answer, since both live in one table now.
+      // On `prisma`, never on a transaction client: this handler opens none,
+      // and the implicit one behind the nested `create` above was rolled back
+      // and closed before this catch ran.
+      const conflict = await probeConflictingEntry(prisma, session.teacherId, {
+        date: new Date(body.date),
+        startTime: hhmmToTime(body.startTime),
+        durationMinutes: body.durationMinutes,
+      });
+      // LOGGED before responding, for the reason the five SERVICE sites carry:
+      // `respondError` does not log and `withErrorHandler` never sees a response
+      // that was RETURNED rather than thrown, so catching here is what removes
+      // the server-side record.
+      log.warn(
+        { err, teacherId: session.teacherId, conflictEntryId: conflict?.id ?? null },
+        'studio class create refused: another live entry holds that slot',
+      );
       return respondError(
-        'You already have a studio class at that date and time.',
+        entryConflictMessage(conflict, 'studio'),
         409,
         'DUPLICATE_STUDIO_SLOT',
-      );
-    }
-    // The OTHER family holds it (#296) — a `YG001` from the cross-family
-    // trigger, which is not a P2002 and so passes straight through the branch
-    // above. Same status, deliberately different sentence: that clash is fixed
-    // within this family, this one sends the teacher to the other half of
-    // their schedule.
-    // LOGGED before responding, for the reason the five SERVICE sites now carry:
-    // `respondError` does not log and `withErrorHandler` never sees a response
-    // that was RETURNED rather than thrown, so catching here is what removes
-    // the server-side record. The first fix for this asymmetry moved it rather
-    // than closing it — it logged the two service returns and left five route
-    // catches silent.
-    if (isCrossFamilySlotConflict(err)) {
-      log.warn(
-        { err, teacherId: session.teacherId },
-        'studio class create refused: the class family holds that slot',
-      );
-      return respondError(
-        'You already have a class at that date and time.',
-        409,
-        'CROSS_FAMILY_CLASS_SLOT',
       );
     }
     throw err;

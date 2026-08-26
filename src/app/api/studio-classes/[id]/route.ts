@@ -11,7 +11,7 @@ import {
 import { updateStudioClassSchema } from '@/lib/schemas';
 import { Prisma } from '@prisma/client';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
-import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
+import { entryConflictMessage, probeConflictingEntry } from '@/lib/entry-conflict';
 import { isRecordNotFound } from '@/lib/api-errors';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
@@ -237,45 +237,48 @@ export const PUT = withErrorHandler(async (
     });
   } catch (err) {
     if (isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')) {
-      // LOGGED for the reason the cross-family arm below states in full:
-      // `respondError` does not log, and `withErrorHandler` never sees a
-      // response that was RETURNED rather than thrown, so catching here is
-      // what removes the server-side record — the `classifyApiError` warn this
-      // P2002 would otherwise have produced on its way out.
+      // WHICH entry, asked of the database, because the `23P01` does not say —
+      // and either family can be the answer, since both live in one table now.
+      //
+      // Built from the same merge the write used: whichever of the three span
+      // columns the body carried, over the stored row for the rest. On
+      // `prisma`, never on `tx`: the `$transaction` above has already rolled
+      // back and closed, and a probe issued on the aborted one would answer
+      // `25P02`.
+      //
+      // `excludeEntryId` because this entry still holds its OLD span — the
+      // write that would have moved it is the one that just failed — and
+      // without it a move of an hour or less reports the row as its own
+      // holder, naming back the time the teacher was moving away from.
+      const conflict = await probeConflictingEntry(prisma, session.teacherId, {
+        date: dateString !== undefined ? new Date(dateString) : studioClass.calendarEntry.date,
+        startTime: startTime !== undefined
+          ? hhmmToTime(startTime)
+          : studioClass.calendarEntry.startTime,
+        durationMinutes: durationMinutes ?? studioClass.calendarEntry.durationMinutes,
+        excludeEntryId: studioClass.calendarEntryId,
+      });
+      // LOGGED for the reason the five SERVICE sites carry: `respondError` does
+      // not log, and `withErrorHandler` never sees a response that was RETURNED
+      // rather than thrown, so catching here is what removes the server-side
+      // record.
+      //
+      // `studioClassId` too: a row identifier is in scope here, and every
+      // service-side sibling logs one. The stated purpose of these lines is
+      // making a teacher's report traceable, which wants the row.
       log.warn(
-        { err, studioClassId: id, teacherId: session.teacherId },
-        'studio class edit refused: another studio class holds that slot',
+        {
+          err,
+          studioClassId: id,
+          teacherId: session.teacherId,
+          conflictEntryId: conflict?.id ?? null,
+        },
+        'studio class edit refused: another live entry holds that slot',
       );
       return respondError(
-        'You already have a studio class at that date and time.',
+        entryConflictMessage(conflict, 'studio'),
         409,
         'DUPLICATE_STUDIO_SLOT',
-      );
-    }
-    // The OTHER family holds it (#296) — a `YG001` from the cross-family
-    // trigger, which is not a P2002 and so passes straight through the branch
-    // above. Same status, deliberately different sentence: that clash is fixed
-    // within this family, this one sends the teacher to the other half of
-    // their schedule.
-    // LOGGED before responding, for the reason the five SERVICE sites now carry:
-    // `respondError` does not log and `withErrorHandler` never sees a response
-    // that was RETURNED rather than thrown, so catching here is what removes
-    // the server-side record. The first fix for this asymmetry moved it rather
-    // than closing it — it logged the two service returns and left five route
-    // catches silent.
-    if (isCrossFamilySlotConflict(err)) {
-      log.warn(
-        // `studioClassId` too: this is the only one of the five route sites
-        // where a row identifier is in scope, and every service-side sibling
-        // logs one. The stated purpose of these lines is making a teacher's
-        // report traceable, which wants the row.
-        { err, studioClassId: id, teacherId: session.teacherId },
-        'studio class edit refused: the class family holds that slot',
-      );
-      return respondError(
-        'You already have a class at that date and time.',
-        409,
-        'CROSS_FAMILY_CLASS_SLOT',
       );
     }
     throw err;
