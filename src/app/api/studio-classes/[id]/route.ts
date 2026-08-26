@@ -289,12 +289,13 @@ export const PUT = withErrorHandler(async (
  * obvious wrong edit is: `room-deletion.ts` is the model for this file and it
  * carries an FK backstop, so copying one here looks like diligence. There is
  * nothing to back stop. Neither disjunct of the predicate can flip
- * `removable → not removable`: `templateId` is written once at creation, and a
- * calendar date already past cannot become un-past. The archive door's
- * `deleteMany` is keyed on a concrete `templateId` and filters
- * `cancelledAt: null` with `date: { gt: today }` — see `scheduledWhere` and the
- * `deleteMany` it feeds in `studio-class-template-lifecycle.ts` — so it can
- * match neither a manual row nor a past one. (Cited by symbol, not by line:
+ * `removable → not removable`: the entry's `scheduleRuleId` is written once at
+ * creation, and a calendar date already past cannot become un-past. The
+ * archive door's `deleteMany` is keyed on a concrete `scheduleRuleId` and
+ * filters `cancelledAt: null` with `date: { gt: today }` — see
+ * `scheduledWhere` and the `deleteMany` it feeds in
+ * `studio-class-template-lifecycle.ts` — so it can match neither a manual row
+ * nor a past one. (Cited by symbol, not by line:
  * the line numbers this docblock first carried were stale within the same PR,
  * broken by an edit to that file's header.) The only real race is a second
  * click, and `isRecordNotFound` answers it the way `DELETE /api/waitlist/[id]`

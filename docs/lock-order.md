@@ -110,6 +110,46 @@ catch, not a rising count by itself.
 shared 2s bound and the dedupe for `Class`; a new `Class` site inherits all
 four by calling it.
 
+## Ordering BETWEEN `Class` and its `CalendarEntry` (#327)
+
+**`Class` first, then `CalendarEntry`. Always.** A class's calendar identity —
+`classType`, `date`, `startTime`, `durationMinutes`, `cancelledAt` — lives on
+its entry since #327, so a transaction that decides from one and writes the
+other now touches two rows where it used to touch one. Two such transactions
+taking the pair in opposite sequences is an AB-BA cycle exactly like any other.
+
+Three things take both, and all three take them in this order:
+
+- **`lockClassRow` (`src/lib/db-locks.ts`)** — two statements naming the two
+  tables, `Class` then `CalendarEntry`. Not one joined statement: `FOR UPDATE
+  OF e` on a join locks only `e`, and a statement that waited on the join's
+  non-locked member has already evaluated its predicate against the pre-wait
+  snapshot (`EvalPlanQual` re-fetches locked rows only). Measured 6/6 during
+  stage A.
+- **`lockClassRowsOrdered` with `entries: true`** — every `Class` row first,
+  ascending by `c.id`; then their entries, ascending by `e.id`. Two of its four
+  callers pass the flag; each carries its own written verdict at the call site.
+- **`class_sync_entry_completed`**, the trigger that stamps
+  `CalendarEntry.classCompletedAt`. It fires `AFTER UPDATE OF status ON
+  "Class"`, so it acquires `Class` and then the entry, inside the completing
+  transaction. That is why terminality reaches the entry as a WRITE rather than
+  as a cross-table read: a guard on `CalendarEntry` that consulted
+  `Class.status` would acquire Entry then Class, against this order, and a
+  measured `40P01` on the schedule-write hot path is what that produced.
+
+Nothing takes an entry lock and then asks for a class lock, which is what makes
+the order sufficient rather than merely conventional. The check is the same
+grep the section above prescribes, minus the template tables:
+
+    grep -rn 'FOR UPDATE' --include='*.ts' src/ \
+      | grep -v '\.test\.ts:' \
+      | grep -vE ':[0-9]+: *(\*|//)' \
+      | grep -vE 'OF (ct|sct)`|"ClassTemplate"|"StudioClassTemplate"'
+
+Expect FOUR lines and expect all four to be in `src/lib/db-locks.ts`. A hit
+anywhere else is a site that took one of these two row locks without going
+through either helper.
+
 The third filter is not optional, and leaving it off is how this check shipped
 broken. Without it the grep returns **11** lines across four files, ten of them
 prose *about* the convention rather than uses of it — this codebase discusses

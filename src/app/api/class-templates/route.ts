@@ -155,10 +155,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     },
       // FOUR sequential statements on a 2GB VPS — the create, generation's two
       // reads (its date-scoped occupancy `findMany`, and the
-      // `templateId`-scoped week read #194 added), and its one batched insert
+      // `scheduleRuleId`-scoped week read #194 added), and its batched insert
       // — against Prisma's 5s default. Three until #194; the fourth is a
-      // `findMany` riding `@@unique([templateId, date])`, so it moves the
-      // arithmetic without moving the conclusion. An earlier draft of this
+      // `findMany` riding `@@unique([scheduleRuleId, date])`, so it moves the
+      // arithmetic without moving the conclusion. #327 split the insert in
+      // two (entry, then child), which moves it again and no further: five
+      // sequential statements, still nowhere near the bound this paragraph
+      // sizes. An earlier draft of this
       // comment said nine, "one create, four candidate probes and four
       // inserts": that shape was replaced by #164/#192's generator work
       // (commit `a960f9e`), since when `generateInstancesForTemplate` has

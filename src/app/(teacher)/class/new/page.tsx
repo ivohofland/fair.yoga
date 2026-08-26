@@ -307,8 +307,8 @@ export default function CreateClassPage() {
 
       const json: { data: { id: string } } = await res.json();
       // #40. A second identical POST to /api/classes now collides with
-      // `Class_teacher_slot_unique` ((teacherId, date, startTime) WHERE
-      // status <> 'cancelled', #196) and comes back as a 409
+      // `CalendarEntry_teacher_slot_excl` (teacherId WITH =, span WITH &&,
+      // WHERE cancelledAt IS NULL — #327) and comes back as a 409
       // DUPLICATE_CLASS_SLOT (`api/classes/route.ts`) rather than a second
       // row. That backstop is server-side and after the round trip, though —
       // it does not stop the second request from being sent, or turn its

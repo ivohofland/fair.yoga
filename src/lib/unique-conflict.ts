@@ -7,8 +7,9 @@ import { Prisma } from '@prisma/client';
  * Branching on columns rather than on the index name is not a preference: an
  * index Prisma cannot see (every partial index this project hand-authors) still
  * reports `meta.target` as the column-name array, identically to a declared
- * `@unique`. Measured on `StudioClass_teacher_slot_unique`:
- * `{"modelName":"StudioClass","target":["teacherId","date","startTime"]}`.
+ * `@unique`. Measured on `Room_private_identity_unique`, one of the two
+ * partial indexes #196 hand-authored and the only such pair left:
+ * `{"modelName":"Room","target":["createdById","address","floor","roomName"]}`.
  *
  * Compared as a set. Two unique keys over the same columns in a different
  * order cannot meaningfully coexist, and an order-sensitive check would turn a
@@ -16,19 +17,18 @@ import { Prisma } from '@prisma/client';
  *
  * Deliberately ignores `err.meta?.modelName`. The invariant that actually
  * holds is narrower than "one model per caller": no single `try` block may
- * raise P2002 from two models that share a column-name set — if one ever
- * did, this matcher could not tell which model's row collided. `(teacherId,
- * date, startTime)` names both `Class_teacher_slot_unique` and
- * `StudioClass_teacher_slot_unique`; a route whose transaction can raise
- * P2002 from both under one `try` would need `modelName` added to
- * disambiguate them. Tracked as #210, which is not fixed here.
+ * raise P2002 from two models that share a column-name set — if one ever did,
+ * this matcher could not tell which model's row collided.
  *
- * `(teacherId, dayOfWeek, startTime)` is not this kind of pair any more:
- * issue 298 replaced the two partial indexes that column set used to name
- * (`ClassTemplate_teacher_slot_unique`, `StudioClassTemplate_teacher_slot_
- * unique`) with `ScheduleRule_teacher_slot_excl`, a single exclusion
- * constraint raising `23P01`, not P2002 — so no caller matches this function
- * against those columns any more.
+ * NO SUCH PAIR EXISTS TODAY, and #210 — filed for the one that did — is moot
+ * rather than fixed. `(teacherId, date, startTime)` used to name both
+ * `Class_teacher_slot_unique` and `StudioClass_teacher_slot_unique`; #327
+ * replaced both with one `EXCLUDE USING gist` on `CalendarEntry`, which raises
+ * `23P01` and carries no `meta.target` at all — see `exclusion-conflict.ts`,
+ * which this function cannot substitute for. The rule above still binds the
+ * next pair someone introduces.
+ *
+ * `(teacherId, dayOfWeek, startTime)` went the same way one layer up, in #298.
  */
 export function isUniqueConflictOn(err: unknown, columns: readonly string[]): boolean {
   if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') return false;

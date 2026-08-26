@@ -50,8 +50,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Fields are named rather than spread. The spread was not the vulnerability —
   // Zod strips undeclared keys, so only declared keys ever rode it — but it did
-  // make `templateId` and `studentCount` invisible: neither name appeared in
-  // this handler, so grepping for them found nothing (#148).
+  // make the two server-set keys of the day invisible: neither name appeared in
+  // this handler, so grepping for them found nothing (#148). One of the two,
+  // `templateId`, is not a column at all any more; `scheduleRuleId` on the
+  // entry is what replaced it, and this handler never sets it either.
   try {
     // The ENTRY is the row created, with its studio class nested (#327).
     // `kind` is set once, on the parent: it is half of the composite foreign

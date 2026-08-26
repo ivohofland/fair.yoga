@@ -129,8 +129,8 @@ export default function NewStudioClassPage() {
 
       const json: { data: { id: string } } = await res.json();
       // #40. A second identical POST to /api/studio-classes now collides
-      // with `StudioClass_teacher_slot_unique` ((teacherId, date, startTime)
-      // WHERE "cancelledAt" IS NULL, #196) and comes back as a 409
+      // with `CalendarEntry_teacher_slot_excl` (teacherId WITH =, span WITH
+      // &&, WHERE "cancelledAt" IS NULL — #327) and comes back as a 409
       // DUPLICATE_STUDIO_SLOT (`api/studio-classes/route.ts`) rather than a
       // second row. That backstop is server-side and after the round trip,
       // though — it does not stop the second request from being sent, or
