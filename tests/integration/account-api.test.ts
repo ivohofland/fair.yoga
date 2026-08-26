@@ -546,7 +546,7 @@ describe('DELETE /api/account', () => {
 
     // And something really did — the class completed, in its own committed
     // transaction, before the failure.
-    const completed = await prisma.class.findUniqueOrThrow({ where: { id: billed.classId }, include: { calendarEntry: true },});
+    const completed = await prisma.class.findUniqueOrThrow({ where: { id: billed.classId }, include: { calendarEntry: true } });
     expect(completed.status).toBe('completed');
     expect(
       await prisma.payment.count({ where: { registrationId: billed.registrationId } }),

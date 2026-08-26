@@ -357,7 +357,7 @@ describe('POST /api/classes/[id]/complete', () => {
     const res = await complete(otherTeacherToken, classId);
     expect(res.status).toBe(403);
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(unchanged.status).toBe('draft');
   });
 
@@ -370,7 +370,7 @@ describe('POST /api/classes/[id]/complete', () => {
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('cannot move from "draft" to "completed"');
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(unchanged.status).toBe('draft');
   });
 });
@@ -417,7 +417,7 @@ describe('POST /api/classes/[id]/transition', () => {
     const res = await transition(otherTeacherToken, classId, { status: 'open' });
     expect(res.status).toBe(403);
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(unchanged.status).toBe('draft');
   });
 
@@ -430,7 +430,7 @@ describe('POST /api/classes/[id]/transition', () => {
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('cannot move from "draft" to "in_progress"');
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(unchanged.status).toBe('draft');
   });
 
@@ -440,7 +440,7 @@ describe('POST /api/classes/[id]/transition', () => {
     const res = await transition(ownerToken, classId, { status: 'completed' });
     expect(res.status).toBe(400);
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(unchanged.status).toBe('draft');
   });
 
@@ -463,7 +463,7 @@ describe('POST /api/classes/[id]/transition', () => {
     expect(json.error.code).toBe('CLASS_STARTS_IN_PAST');
     expect(json.error.message).toMatch(/already passed/i);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: pastDraftClassId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: pastDraftClassId }, include: { calendarEntry: true } });
     expect(after.status).toBe('draft');
   });
 
@@ -474,7 +474,7 @@ describe('POST /api/classes/[id]/transition', () => {
     // The ENTRY carries it since #327; the class keeps its `draft` status,
     // asserted alongside so a regression that wrote neither reads as what it
     // is rather than as a missing cancellation.
-    const cancelled = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId }, include: { calendarEntry: true },});
+    const cancelled = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId }, include: { calendarEntry: true } });
     expect(cancelled.status).toBe('draft');
     expect(cancelled.calendarEntry.cancelledAt).not.toBeNull();
   });
@@ -760,9 +760,14 @@ describe('POST /api/classes/[id]/transition', () => {
       await holder.$disconnect();
 
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
-      // `deleteMany`, not `delete`: on the happy path the holder already
-      // deleted this row, and a `delete` would throw P2025 out of the cleanup.
-      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
+      // By the entry's OWN id, not through the `Class` relation: on the happy
+      // path the holder already deleted the `Class` row, which orphans this
+      // entry rather than cascading to it (cascade runs the other way). A
+      // `classes: { some: { id: cls.id } } }` filter would then match nothing
+      // and silently leave the orphan for the file's teacher-scoped `afterAll`
+      // to reclaim instead. `deleteMany`, not `delete`: still defensive
+      // against a path where the row is already gone.
+      await prisma.calendarEntry.deleteMany({ where: { id: cls.calendarEntry.id } });
     }
     // Explicit: this test sleeps 1s by design and then makes a full Next.js
     // round trip, against a 5s default that the suite has already been observed
@@ -781,7 +786,7 @@ describe('POST /api/classes/[id]/transition', () => {
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('This class is already cancelled.');
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId }, include: { calendarEntry: true },});
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId }, include: { calendarEntry: true } });
     expect(unchanged.calendarEntry.cancelledAt).not.toBeNull();
   });
 
@@ -836,19 +841,19 @@ describe('PUT /api/classes/[id]', () => {
     });
 
   it('unlocked class: owner edits economic fields -> 200, the new values persist', async () => {
-    const before = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId }, include: { calendarEntry: true },});
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId }, include: { calendarEntry: true } });
     expect(before.settingsLocked).toBe(false); // sanity: the control fixture for the locked-class cases below
 
     const res = await put(ownerToken, economicsClassId, { roomCost: 42, minStudents: 2 });
     expect(res.status).toBe(200);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId }, include: { calendarEntry: true } });
     expect(Number(updated.roomCost)).toBe(42);
     expect(updated.minStudents).toBe(2);
   });
 
   it('locked class: economic edit is rejected with 409 naming the fields sent', async () => {
-    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
     expect(before.settingsLocked).toBe(true); // sanity: the beforeAll fixture registration locked it
 
     // Body order deliberately reversed from the `ECONOMIC_FIELDS` constant's
@@ -870,13 +875,13 @@ describe('PUT /api/classes/[id]', () => {
     expect(json.error.message).toContain('roomCost');
     expect(json.error.message).toContain('minRate');
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
     expect(Number(after.minRate)).toBe(Number(before.minRate));
   });
 
   it('locked class: a mixed economic + non-economic body is rejected atomically', async () => {
-    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
 
     // The lock check inside `updateClass` rejects before any write happens.
     // Nothing pinned that the rejection is all-or-nothing until this case — a
@@ -886,18 +891,18 @@ describe('PUT /api/classes/[id]', () => {
     const res = await put(ownerToken, lockedClassId, { description: 'x', roomCost: 999 });
     expect(res.status).toBe(409);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
     expect(after.description).toBe(before.description);
   });
 
   it('locked class: a non-economic edit still succeeds — the lock is scoped to economics', async () => {
-    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
 
     const res = await put(ownerToken, lockedClassId, { description: 'Updated after lock' });
     expect(res.status).toBe(200);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
     expect(after.description).toBe('Updated after lock');
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
     expect(Number(after.minRate)).toBe(Number(before.minRate));
@@ -907,7 +912,7 @@ describe('PUT /api/classes/[id]', () => {
   });
 
   it("403s another teacher's cookie on a locked class with an economic body — proves the ownership guard fires before the lock check", async () => {
-    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
 
     // An economic field, not `description`: a non-economic body can't tell
     // ownership-first from lock-first apart, because sentEconomicFields would
@@ -923,12 +928,12 @@ describe('PUT /api/classes/[id]', () => {
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('Not your class');
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
   });
 
   it('open class: a date edit into the past is refused with 409, not 500 (#249)', async () => {
-    const target = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId }, include: { calendarEntry: true },});
+    const target = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId }, include: { calendarEntry: true } });
     expect(target.status).toBe('open'); // sanity: a LIVE class, so #247's freeze is not what refuses
 
     const res = await put(ownerToken, economicsClassId, { date: '2020-01-01' });
@@ -939,7 +944,7 @@ describe('PUT /api/classes/[id]', () => {
     // started" from "frozen" without matching on English.
     expect(json.error.code).toBe('CLASS_STARTS_IN_PAST');
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId }, include: { calendarEntry: true } });
     expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-06-01');
   });
 
@@ -982,14 +987,14 @@ describe('PUT /api/classes/[id]', () => {
       const json = (await res.json()) as { error: { code: string } };
       expect(json.error.code).toBe('DUPLICATE_CLASS_SLOT');
 
-      const after = await prisma.class.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true },});
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true } });
       expect(timeToHHmm(after.calendarEntry.startTime)).toBe('08:15');
 
       // The test's premise is that this row is the one occupying the slot
       // the reschedule collided on, and that it is untouched by the failed
       // move — assert that rather than discarding the reference, so a route
       // that clobbered the wrong row would fail this test.
-      const stillOccupied = await prisma.class.findUniqueOrThrow({ where: { id: occupied.id }, include: { calendarEntry: true },});
+      const stillOccupied = await prisma.class.findUniqueOrThrow({ where: { id: occupied.id }, include: { calendarEntry: true } });
       expect(timeToHHmm(stillOccupied.calendarEntry.startTime)).toBe('08:00');
     });
   });
@@ -1070,18 +1075,18 @@ describe('PUT /api/classes/[id]', () => {
       expect(json.error.code).toBe('TEMPLATE_INSTANCE_DATE_CONFLICT');
       expect(json.error.message).toBe('That recurring class already has a class on that date.');
 
-      const after = await prisma.class.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true },});
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true } });
       expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-09-09');
 
       // The test's premise is that this row is the one occupying the date
       // the move collided on, and that it is untouched by the failed move.
-      const stillThere = await prisma.class.findUniqueOrThrow({ where: { id: sibling.id }, include: { calendarEntry: true },});
+      const stillThere = await prisma.class.findUniqueOrThrow({ where: { id: sibling.id }, include: { calendarEntry: true } });
       expect(stillThere.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-09-02');
     });
   });
 
   it('completed class: the edit is refused with 409 and the stored date does not move (#247)', async () => {
-    const before = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId }, include: { calendarEntry: true },});
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId }, include: { calendarEntry: true } });
     expect(before.status).toBe('completed'); // sanity: the fixture is the state under test
 
     // The exact payload from the issue. `isoDate` has no range bound, so this
@@ -1096,13 +1101,13 @@ describe('PUT /api/classes/[id]', () => {
 
     // The whole point: a refusal that still wrote the column would leave
     // waitlist-retention's sweep with a class dated 2020 to reap.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId }, include: { calendarEntry: true } });
     expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-06-01');
   });
 
   it('cancelled class: the edit is refused with 409 naming cancelled, not completed (#247)', async () => {
     const before = await prisma.class.findUniqueOrThrow({
-      where: { id: cancelledTerminalClassId }, include: { calendarEntry: true },});
+      where: { id: cancelledTerminalClassId }, include: { calendarEntry: true } });
     // The premise, on the row that carries it since #327: the class keeps a
     // live status and the ENTRY holds the cancellation.
     expect(before.calendarEntry.cancelledAt).not.toBeNull();
@@ -1127,7 +1132,7 @@ describe('PUT /api/classes/[id]', () => {
     expect(json.error.code).toBe('CLASS_TERMINAL');
 
     const after = await prisma.class.findUniqueOrThrow({
-      where: { id: cancelledTerminalClassId }, include: { calendarEntry: true },});
+      where: { id: cancelledTerminalClassId }, include: { calendarEntry: true } });
     expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-06-01');
   });
 });
@@ -1251,7 +1256,7 @@ describe('POST /api/classes', () => {
     const res = await post(ownerToken, baseBody());
     expect(res.status).toBe(201);
     const { data } = (await res.json()) as { data: { id: string } };
-    const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true },});
+    const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true } });
     expect(created.calendarEntry.teacherId).toBe(ownerId);
     expect(created.calendarEntry.scheduleRuleId).toBeNull();
   });
@@ -1281,7 +1286,7 @@ describe('POST /api/classes', () => {
     expect(res.status).toBe(201);
 
     const { data } = (await res.json()) as { data: { id: string } };
-    const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true },});
+    const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true } });
     expect(created.calendarEntry.scheduleRuleId).toBeNull();
 
     // The victim's own generation window is untouched. Both assertions here
@@ -1405,7 +1410,7 @@ describe('POST /api/classes', () => {
       expect(second.status).toBe(409);
       expect((await second.json()).error.code).toBe('DUPLICATE_CLASS_SLOT');
 
-      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('07:00') } }, include: { calendarEntry: true },});
+      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('07:00') } }, include: { calendarEntry: true } });
       expect(rows).toHaveLength(1);
     });
 
@@ -1417,7 +1422,7 @@ describe('POST /api/classes', () => {
       const loser = a.status === 409 ? a : b;
       expect((await loser.json()).error.code).toBe('DUPLICATE_CLASS_SLOT');
 
-      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('09:00') } }, include: { calendarEntry: true },});
+      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('09:00') } }, include: { calendarEntry: true } });
       expect(rows).toHaveLength(1);
     });
 
@@ -1441,7 +1446,7 @@ describe('POST /api/classes', () => {
       const second = await post(body);
       expect(second.status).toBe(201);
 
-      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('11:00') } }, include: { calendarEntry: true },});
+      const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: hhmmToTime('11:00') } }, include: { calendarEntry: true } });
       expect(rows).toHaveLength(2);
       // Read off the ENTRY: the cancelled row keeps its `draft` status.
       expect(rows.find((r) => r.id === created.id)?.calendarEntry.cancelledAt).not.toBeNull();

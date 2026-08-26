@@ -1685,7 +1685,7 @@ describe('updateStudioClassTemplate (DB)', () => {
     // cancelled, still attached. Four assertions rather than one because a
     // future sync could plausibly move it, cancel it, re-point it or delete
     // it, and each would be a different product answer to #194.
-    const after = await prisma.studioClass.findUnique({ where: { id: instance.id }, include: { calendarEntry: true },});
+    const after = await prisma.studioClass.findUnique({ where: { id: instance.id }, include: { calendarEntry: true } });
     expect(after).not.toBeNull();
     expect(after?.calendarEntry.startTime.getTime()).toBe(instance.calendarEntry.startTime.getTime());
     expect(after?.location).toBe('Update Studio');

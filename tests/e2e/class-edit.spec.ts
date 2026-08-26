@@ -139,7 +139,7 @@ test.describe('Class edit screen', () => {
     await page.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.getByText('Saved')).toBeVisible();
 
-    const cls = await prisma.class.findUniqueOrThrow({ where: { id: draftClassId }, include: { calendarEntry: true },});
+    const cls = await prisma.class.findUniqueOrThrow({ where: { id: draftClassId }, include: { calendarEntry: true } });
     expect(cls.calendarEntry.classType).toBe('Morning Hatha');
     expect(Number(cls.targetRate)).toBe(24);
     expect(cls.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-07-02');
@@ -161,7 +161,7 @@ test.describe('Class edit screen', () => {
     await page.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.getByText(/Cannot update economic fields/)).toBeVisible();
 
-    const cls = await prisma.class.findUniqueOrThrow({ where: { id: draftClassId }, include: { calendarEntry: true },});
+    const cls = await prisma.class.findUniqueOrThrow({ where: { id: draftClassId }, include: { calendarEntry: true } });
     expect(Number(cls.targetRate)).toBe(24); // untouched
   });
 
@@ -186,7 +186,7 @@ test.describe('Class edit screen', () => {
     await page.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.getByText('Saved')).toBeVisible();
 
-    const cls = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true },});
+    const cls = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
     expect(cls.description).toBe('Bring your own mat.');
     expect(Number(cls.targetRate)).toBe(20); // untouched
     // The unchanged date round-trips exactly — a local-time prefill

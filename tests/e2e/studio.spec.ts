@@ -524,7 +524,7 @@ test.describe('One-off studio classes', () => {
     await expect(page.getByText('Saved')).toBeVisible();
     await expect
       .poll(async () =>
-        (await prisma.studioClass.findUniqueOrThrow({ where: { id: created.id }, include: { calendarEntry: true },})).studentCount,
+        (await prisma.studioClass.findUniqueOrThrow({ where: { id: created.id }, include: { calendarEntry: true } })).studentCount,
       )
       .toBe(11);
 

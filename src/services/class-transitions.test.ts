@@ -150,7 +150,7 @@ describe('class transitions (DB, timezone-aware)', () => {
     // naive-UTC 18:00Z reading — the old UTC code would have skipped this.
     await autoTransitionToInProgress(prisma, new Date('2026-07-20T16:30:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.status).toBe('in_progress');
     await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
@@ -160,7 +160,7 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     await autoTransitionToInProgress(prisma, new Date('2026-07-20T15:30:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.status).toBe('open');
     await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
@@ -173,7 +173,7 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     await autoTransitionToInProgress(prisma, new Date('2026-07-19T23:00:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.status).toBe('in_progress');
     await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
@@ -230,7 +230,7 @@ describe('class transitions (DB, timezone-aware)', () => {
       expect(hookCalls).toBe(1);
       expect(transitioned).toBe(0);
 
-      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
       expect(updated.status).toBe('open');
 
       // Filtered to THIS class. `autoTransitionToInProgress` sweeps every open
@@ -314,7 +314,7 @@ describe('class transitions (DB, timezone-aware)', () => {
         await holder;
         expect(await sweeping).toBe(0);
 
-        const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+        const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
         expect(updated.status).toBe('open');
 
         // POSITIVE evidence that the locked re-read is what refused, and the
@@ -386,7 +386,7 @@ describe('class transitions (DB, timezone-aware)', () => {
     try {
       await autoCancelClasses(prisma, new Date('2026-07-20T15:00:00Z'));
 
-      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
       expect(updated.calendarEntry.cancelledAt).not.toBeNull();
 
       // `findFirstOrThrow`, not `findFirst` + a null check: the body
@@ -425,7 +425,7 @@ describe('class transitions (DB, timezone-aware)', () => {
     // 13:00Z is before the 14:00Z window opening.
     await autoCancelClasses(prisma, new Date('2026-07-20T13:00:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.status).toBe('open');
     await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: cls.id } } } });
   });
@@ -506,7 +506,7 @@ describe('class transitions (DB, timezone-aware)', () => {
 
       await autoCancelClasses(prisma, at);
 
-      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
       expect(updated.calendarEntry.cancelledAt).not.toBeNull();
 
       // `findFirstOrThrow`, not `findFirst` + `if` — the conditional silently
@@ -659,7 +659,7 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     expect(calls).toBe(1);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.status).toBe('open');
     expect(
       await prisma.notification.count({ where: { relatedClassId: cls.id, type: 'class_cancelled' } }),
@@ -818,7 +818,7 @@ describe('class transitions (DB, timezone-aware)', () => {
       // the same reason.
       expect(String(competingWriteError)).toMatch(/55P03|lock timeout/);
 
-      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
       expect(updated.calendarEntry.cancelledAt).not.toBeNull();
 
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
@@ -887,7 +887,7 @@ describe('class transitions (DB, timezone-aware)', () => {
     expect(hookCalls).toBe(1);
     expect(cancelledCount).toBe(0);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.status).toBe('open');
 
     // Nobody was told a class was cancelled that wasn't. Pre-fix this is 2 —
@@ -955,7 +955,7 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     expect(decisionCounts).toBe(0);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.status).toBe('open');
 
     await prisma.registration.deleteMany({ where: { classId: cls.id } });
@@ -986,7 +986,7 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     await autoCancelClasses(prisma, new Date('2026-07-20T15:00:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.calendarEntry.cancelledAt).not.toBeNull();
 
     await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
@@ -1041,7 +1041,7 @@ describe('class transitions (DB, timezone-aware)', () => {
       expect(hookCalls).toBe(1);
       expect(completed).toBe(0);
 
-      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
       expect(updated.status).toBe('in_progress');
       // No payments for a class that has not happened. This is the assertion
       // that makes the defect concrete: completion creates Payment rows.
@@ -1074,7 +1074,7 @@ describe('class transitions (DB, timezone-aware)', () => {
     // Ends 17:00Z (16:00Z start + 60 min); 17:30Z is past that.
     await autoCompleteClasses(prisma, new Date('2026-07-20T17:30:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.status).toBe('completed');
     expect(updated.totalRevenue).not.toBeNull();
   });

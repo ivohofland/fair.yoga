@@ -290,7 +290,7 @@ describe('POST /api/registrations', () => {
     expect(json.error.message).toBe('Student is not in your roster');
 
     // And the victim's class must NOT have been settings-locked
-    const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(cls.settingsLocked).toBe(false);
   });
 
@@ -352,7 +352,7 @@ describe('POST /api/registrations', () => {
     const res = await post(studentTokens[0]!, { classId });
     expect(res.status).toBe(201);
 
-    const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(cls.settingsLocked).toBe(true);
   });
 

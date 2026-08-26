@@ -521,7 +521,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
 
     const booking = prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
-      await tx.class.findUnique({ where: { id: cls.id }, include: { calendarEntry: true },});
+      await tx.class.findUnique({ where: { id: cls.id }, include: { calendarEntry: true } });
       await tx.registration.count({
         where: { classId: cls.id, status: { in: ['registered', 'attended', 'no_show'] } },
       });

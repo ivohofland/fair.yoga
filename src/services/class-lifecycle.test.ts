@@ -448,7 +448,7 @@ describe('transitionClass (DB)', () => {
       expect(result.newStatus).toBe('open');
     }
 
-    const updated = await prisma.class.findUnique({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUnique({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated?.status).toBe('open');
   });
 
@@ -475,7 +475,7 @@ describe('transitionClass (DB)', () => {
       expect(result.error).toContain('completed');
     }
 
-    const unchanged = await prisma.class.findUnique({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const unchanged = await prisma.class.findUnique({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(unchanged?.status).toBe('draft');
   });
 
@@ -555,7 +555,7 @@ describe('transitionClass (DB)', () => {
     // Cancellation left `ClassStatus` in #327, so "did not overwrite" is
     // read from the two rows together: the status untouched at `open`, the
     // entry still cancelled.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.status).toBe('open');
     expect(after.calendarEntry.cancelledAt).not.toBeNull();
 
@@ -654,7 +654,7 @@ describe('transitionClass (DB)', () => {
     if (!result.ok) expect(result.reason).toBe('STARTS_IN_PAST');
 
     // Refused means not written.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.status).toBe('draft');
   });
 
@@ -692,7 +692,7 @@ describe('transitionClass (DB)', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('STARTS_IN_PAST');
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.status).toBe('draft');
   });
 
@@ -723,7 +723,7 @@ describe('transitionClass (DB)', () => {
     // asserts the stored state because "refused" has to mean "did not write";
     // the permit case owes the same evidence in the other direction, or it
     // passes against an implementation that returns `ok` and writes nothing.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.status).toBe('in_progress');
   });
 });
@@ -897,7 +897,7 @@ describe('completeClass (DB)', () => {
     }
 
     // Verify class was updated
-    const cls = await prisma.class.findUnique({ where: { id: classId }, include: { calendarEntry: true },});
+    const cls = await prisma.class.findUnique({ where: { id: classId }, include: { calendarEntry: true } });
     expect(cls?.status).toBe('completed');
     expect(cls?.totalStudents).toBe(4);
     expect(cls?.effectiveTeacherRate).not.toBeNull();
@@ -1039,7 +1039,7 @@ describe('completeClass (DB)', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('CANCELLED');
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.status).toBe('in_progress');
     expect(after.calendarEntry.cancelledAt).not.toBeNull();
 
@@ -1125,7 +1125,7 @@ describe('completeClass (DB)', () => {
     // with `endsWith`, so appending anything to the producer's message kept this
     // green and silently desynced the sweep.
     if (!result.ok) expect(result.reason).toBe('NOT_ENDED_YET');
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.status).toBe('in_progress');
   });
 
@@ -1152,7 +1152,7 @@ describe('completeClass (DB)', () => {
       completeClass(prisma, cls.id, { requireEndedBy: new Date('not-a-date') }),
     ).rejects.toThrow(TypeError);
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(unchanged.status).toBe('in_progress');
   });
 
@@ -1167,7 +1167,7 @@ describe('completeClass (DB)', () => {
     const result = await completeClass(prisma, cls.id, { requireEndedBy: end });
     expect(result.ok).toBe(true);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.status).toBe('completed');
   });
 
@@ -1193,7 +1193,7 @@ describe('completeClass (DB)', () => {
     });
     expect(result.ok).toBe(true);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.status).toBe('completed');
   });
 
@@ -1239,7 +1239,7 @@ describe('completeClass (DB)', () => {
       expect(waited).toBeGreaterThan(1_000);
       expect(waited).toBeLessThan(4_000);
 
-      const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+      const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
       expect(unchanged.status).toBe('open');
     } finally {
       release();
@@ -1372,7 +1372,7 @@ describe('completeClass — billing path throws rather than mis-charging a bypas
       ).rejects.toThrow(/outside 1-5/);
 
       // The transaction rolled back — the class must not have completed.
-      const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+      const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
       expect(cls.status).not.toBe('completed');
     } finally {
       // Restoring here, rather than after the assertions above, means a
@@ -1540,7 +1540,7 @@ describe('updateClass (DB)', () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.cls.description).toBe('Updated');
 
-    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(stored.description).toBe('Updated');
   });
 
@@ -1559,7 +1559,7 @@ describe('updateClass (DB)', () => {
     // Every economic field, not a sample: these are the pricing engine's
     // inputs, and stripping any one of them from the write used to leave this
     // suite green.
-    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(Number(stored.roomCost)).toBe(42);
     expect(Number(stored.minRate)).toBe(5);
     expect(Number(stored.targetRate)).toBe(60);
@@ -1588,7 +1588,7 @@ describe('updateClass (DB)', () => {
     });
     expect(result.ok).toBe(true);
 
-    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(stored.calendarEntry.classType).toBe('Vinyasa');
     expect(timeToHHmm(stored.calendarEntry.startTime)).toBe('18:30');
     expect(stored.calendarEntry.durationMinutes).toBe(75);
@@ -1607,7 +1607,7 @@ describe('updateClass (DB)', () => {
     const result = await updateClass(prisma, cls.id, { minRate: 1, roomCost: 999 });
     expect(result).toEqual({ ok: false, reason: 'locked', fields: ['roomCost', 'minRate'] });
 
-    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(Number(stored.roomCost)).toBe(35);
     expect(Number(stored.minRate)).toBe(15);
   });
@@ -1618,7 +1618,7 @@ describe('updateClass (DB)', () => {
     const result = await updateClass(prisma, cls.id, { description: 'Still editable' });
     expect(result.ok).toBe(true);
 
-    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(stored.description).toBe('Still editable');
     expect(Number(stored.roomCost)).toBe(35);
   });
@@ -1629,7 +1629,7 @@ describe('updateClass (DB)', () => {
     const result = await updateClass(prisma, cls.id, { description: 'x', roomCost: 999 });
     expect(result).toEqual({ ok: false, reason: 'locked', fields: ['roomCost'] });
 
-    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(stored.description).toBeNull();
     expect(Number(stored.roomCost)).toBe(35);
   });
@@ -1663,7 +1663,7 @@ describe('updateClass (DB)', () => {
     // wrong date is what makes waitlist-retention's sweep delete this class's
     // unfulfilled queue, so a refusal that still moved the column would close
     // nothing.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
   });
 
@@ -1677,7 +1677,7 @@ describe('updateClass (DB)', () => {
     // optional here either: `reapClosedWaitlistEntries` reaps a `cancelled`
     // class's queue too, not only a `completed` one, so a refuse-but-write bug
     // on this path is the identical data-loss shape as T1's.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
   });
 
@@ -1687,7 +1687,7 @@ describe('updateClass (DB)', () => {
     const result = await updateClass(prisma, cls.id, { description: 'Annotated afterwards' });
     expect(result).toEqual({ ok: false, reason: 'terminal', state: 'completed' });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.description).toBeNull();
   });
 
@@ -1703,7 +1703,7 @@ describe('updateClass (DB)', () => {
     expect(result).toEqual({ ok: false, reason: 'terminal', state: 'completed' });
 
     // Cheap and consistent with T1/T2: assert the economic column did not move.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(Number(after.roomCost)).toBe(35);
   });
 
@@ -1725,7 +1725,7 @@ describe('updateClass (DB)', () => {
     // Cheap and consistent with T1/T2/T4: assert the economic column did not
     // move — under either refusal reason this class would refuse the write,
     // but only `terminal` is the true one here.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(Number(after.roomCost)).toBe(35);
   });
 
@@ -1739,7 +1739,7 @@ describe('updateClass (DB)', () => {
     // make, for the same reason. A refusal that still moved the column is what
     // leaves `waitlist-retention`'s sweep a class dated 2020 to reap, and the
     // sweep is a `deleteMany`.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
   });
 
@@ -1765,7 +1765,7 @@ describe('updateClass (DB)', () => {
     // Under either refusal this class refuses the write, so the returned reason
     // is the only thing that distinguishes them — assert the column too, since
     // "refused" has meant "did not write" everywhere else on this branch.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(Number(after.roomCost)).toBe(35);
     expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
   });
@@ -1784,7 +1784,7 @@ describe('updateClass (DB)', () => {
     expect(result).toEqual({ ok: false, reason: 'past_start' });
 
     // Refused means not written, as everywhere else on this branch.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
   });
 
@@ -1820,7 +1820,7 @@ describe('updateClass (DB)', () => {
     });
     expect(result.ok).toBe(true);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.description).toBe('Updated');
     expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
   });
@@ -1838,7 +1838,7 @@ describe('updateClass (DB)', () => {
     });
     expect(result).toEqual({ ok: false, reason: 'past_start' });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.calendarEntry.date.toISOString()).toBe(cls.calendarEntry.date.toISOString());
     expect(after.description).toBeNull();
   });
@@ -1862,7 +1862,7 @@ describe('updateClass (DB)', () => {
     const result = await updateClass(prisma, cls.id, { startTime: hhmmToTime('23:59') });
     expect(result).toEqual({ ok: false, reason: 'past_start' });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(timeToHHmm(after.calendarEntry.startTime)).not.toBe('23:59');
   });
 
@@ -1893,7 +1893,7 @@ describe('updateClass (DB)', () => {
       const result = await updateClass(prisma, cls.id, { description: `Edited while ${status}` });
       expect(result.ok).toBe(true);
 
-      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
       expect(after.description).toBe(`Edited while ${status}`);
     },
   );
@@ -1951,7 +1951,7 @@ describe('updateClass (DB)', () => {
     // The assertion the stubs cannot make: the row is untouched. `description`
     // is not economic and not `date`, so no trigger and no `settingsLocked`
     // check was ever involved — this is the conjunct alone.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.description).toBeNull();
     expect(after.status).toBe('completed');
   });

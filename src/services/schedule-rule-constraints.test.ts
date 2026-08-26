@@ -45,7 +45,6 @@ beforeAll(async () => {
 afterAll(async () => {
   const teachers = [teacherId, otherTeacherId];
   await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teachers } } });
-  await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teachers } } });
   // Deletes both `ClassTemplate` and `StudioClassTemplate` rows via
   // `onDelete: Cascade` on their composite FK to `ScheduleRule` — neither
   // child carries `teacherId` any more (prisma/schema.prisma). Must precede

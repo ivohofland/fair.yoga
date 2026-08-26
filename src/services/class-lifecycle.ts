@@ -1290,22 +1290,26 @@ export async function updateClass(
   // moved nothing. The rule is that a write may not NEWLY PLACE the start in
   // the past; leaving it where it already was is not that.
   //
-  // ONE ENFORCEMENT POINT, not two, and the contrast with the terminal freeze
-  // above is the reason to say so: that one needs a CAS conjunct as well
-  // because a completion can commit between this read and the write. This one
-  // does not need the same treatment. The incoming `date`/`startTime` are
-  // fixed by the request, so the only movable input is the stored pair the
-  // `??` falls back to — and since this function now takes `lockClassRow`
-  // before either write, that pair cannot move under it either.
+  // NOT COVERED BY `lockClassRow`, and that is not the same thing as safe.
+  // This whole check runs on `entry`, the pre-transaction read above (before
+  // the lock, before the transaction even opens); `lockClassRow` (below) only
+  // closes the LOCK→WRITE gap, not the READ→LOCK gap this decision is made
+  // in. The residual: entry dated today at 09:00; a concurrent call to this
+  // same function reschedules it sooner and commits before this call reaches
+  // its lock (its own guard passes, against ITS OWN fresh read); this call,
+  // still holding the `entry.date` it read before that commit, computes
+  // `movesStart`/`startsInPast` against a row that no longer exists — and if
+  // this call's own request omits `date` (sending only `startTime: '01:00'`,
+  // say), its write touches `startTime` alone and lands beside whatever
+  // `date` the concurrent call already left, newly placing the start in the
+  // past. A wrong answer in a race this narrow — two writes to the same entry
+  // inside one read-to-lock gap — not a broken invariant held open by design.
   //
-  // The stored pair has exactly one writer, and it is this function. Re-derived
-  // from the `calendarEntry.` write sites in `src/` rather than recalled: the
-  // generators and the seed CREATE entries, `cancelClass` and the studio PUT
-  // write `cancelledAt`, and the entry `updateMany` below is the only statement
-  // that moves an existing entry's `date` or `startTime`. The equivalent claim
-  // about `Class` was false for a year — the template sync rewrote `startTime`
-  // past no such guard until #194 deleted it — so it is worth re-running the
-  // grep rather than trusting this sentence.
+  // It stays this narrow: `updateClass` is the only writer of a REGULAR
+  // entry's `date`/`startTime` (the studio family's PUT route writes the same
+  // two columns, but only on `kind: 'studio'` rows, which this function never
+  // reaches). Re-derive, don't trust this sentence: `grep -rn
+  // 'calendarEntry\.update' src`.
   if (data.date !== undefined || data.startTime !== undefined) {
     const timeZone = entry.teacher.defaultTimezone;
     const effectiveDate = data.date ?? entry.date;

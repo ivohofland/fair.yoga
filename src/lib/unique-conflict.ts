@@ -7,8 +7,10 @@ import { Prisma } from '@prisma/client';
  * Branching on columns rather than on the index name is not a preference: an
  * index Prisma cannot see (every partial index this project hand-authors) still
  * reports `meta.target` as the column-name array, identically to a declared
- * `@unique`. Measured on `Room_private_identity_unique`, one of the two
- * partial indexes #196 hand-authored and the only such pair left:
+ * `@unique`. Measured on `Room_private_identity_unique`, a partial index #196
+ * hand-authored — `SELECT indexname FROM pg_indexes WHERE schemaname='public'
+ * AND indexdef ILIKE '%UNIQUE%' AND indexdef ILIKE '%WHERE%'` lists every
+ * partial unique index live today, rather than trusting a number here:
  * `{"modelName":"Room","target":["createdById","address","floor","roomName"]}`.
  *
  * Compared as a set. Two unique keys over the same columns in a different

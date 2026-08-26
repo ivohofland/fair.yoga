@@ -1096,7 +1096,7 @@ describe('/api/studio-classes', () => {
     expect(res.status).toBe(201);
 
     const { data } = (await res.json()) as { data: { id: string } };
-    const created = await prisma.studioClass.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true },});
+    const created = await prisma.studioClass.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true } });
     expect(created.calendarEntry.scheduleRuleId).toBeNull();
 
     // Both assertions rest on an absence, and `CalendarEntry.scheduleRuleId`
@@ -1127,7 +1127,7 @@ describe('/api/studio-classes', () => {
     expect(res.status).toBe(201);
 
     const { data } = (await res.json()) as { data: { id: string } };
-    const created = await prisma.studioClass.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true },});
+    const created = await prisma.studioClass.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true } });
     expect(created.studentCount).toBeNull();
   });
 
@@ -1140,7 +1140,7 @@ describe('/api/studio-classes', () => {
       expect(res.status, `${method} should be 403`).toBe(403);
     }
 
-    const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId }, include: { calendarEntry: true },});
+    const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId }, include: { calendarEntry: true } });
     expect(Number(after.hourlyRate)).toBe(45);
   });
 
@@ -1152,7 +1152,7 @@ describe('/api/studio-classes', () => {
     });
     expect(cancel.status).toBe(200);
     expect(
-      (await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId }, include: { calendarEntry: true },})).calendarEntry.cancelledAt,
+      (await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId }, include: { calendarEntry: true } })).calendarEntry.cancelledAt,
     ).not.toBeNull();
 
     const restore = await send('PUT', ownerToken, `/api/studio-classes/${studioClassId}`, {
@@ -1160,7 +1160,7 @@ describe('/api/studio-classes', () => {
     });
     expect(restore.status).toBe(200);
     expect(
-      (await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId }, include: { calendarEntry: true },})).calendarEntry.cancelledAt,
+      (await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId }, include: { calendarEntry: true } })).calendarEntry.cancelledAt,
     ).toBeNull();
   });
 
@@ -1210,7 +1210,7 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } });
       expect(after.location).toBe('Lighthouse Studio');
     });
 
@@ -1222,7 +1222,7 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } });
       expect(after.calendarEntry.durationMinutes).toBe(105);
     });
 
@@ -1234,7 +1234,7 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } });
       expect(Number(after.hourlyRate)).toBe(62.5);
     });
   });
@@ -1284,7 +1284,7 @@ describe('/api/studio-classes', () => {
       const json = (await res.json()) as { error: { code: string } };
       expect(json.error.code).toBe('DUPLICATE_STUDIO_SLOT');
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true } });
       expect(timeToHHmm(after.calendarEntry.startTime)).toBe('12:15');
     });
 
@@ -1302,7 +1302,7 @@ describe('/api/studio-classes', () => {
       const json = (await res.json()) as { error: { code: string } };
       expect(json.error.code).toBe('DUPLICATE_STUDIO_SLOT');
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: cancelled.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: cancelled.id }, include: { calendarEntry: true } });
       expect(after.calendarEntry.cancelledAt).not.toBeNull();
     });
   });
@@ -1362,7 +1362,7 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } });
       expect(after.calendarEntry.classType).toBe('Renamed Via Policy');
     });
 
@@ -1374,7 +1374,7 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } });
       expect(after.calendarEntry.date.getTime()).toBe(new Date('2099-06-02').getTime());
     });
 
@@ -1389,7 +1389,7 @@ describe('/api/studio-classes', () => {
       expect(json.error.code).toBe('STUDIO_CLASS_INCOME_RECORD');
       expect(json.error.message).toContain('student count and cancellation');
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } });
       expect(Number(after.hourlyRate)).toBe(45);
     });
 
@@ -1404,7 +1404,7 @@ describe('/api/studio-classes', () => {
       const json = (await res.json()) as { error: { code: string } };
       expect(json.error.code).toBe('STUDIO_CLASS_INCOME_RECORD');
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } });
       expect(after.studentCount).toBeNull();
       expect(Number(after.hourlyRate)).toBe(45);
     });
@@ -1417,7 +1417,7 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } });
       expect(after.studentCount).toBe(3);
     });
 
@@ -1433,7 +1433,7 @@ describe('/api/studio-classes', () => {
       expect(json.error.code).toBe('STUDIO_CLASS_GENERATED_DATE');
       expect(json.error.message).toContain('recurring template');
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } });
       expect(after.calendarEntry.date.getTime()).toBe(new Date('2099-06-21').getTime());
     });
 
@@ -1448,7 +1448,7 @@ describe('/api/studio-classes', () => {
       const json = (await res.json()) as { error: { code: string } };
       expect(json.error.code).toBe('DUPLICATE_STUDIO_SLOT');
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true } });
       expect(after.calendarEntry.date.getTime()).toBe(new Date('2027-05-11').getTime());
     });
 
@@ -1517,7 +1517,7 @@ describe('/api/studio-classes', () => {
       // The row did not move — the half of this test the code change does not
       // touch, and the half that would matter if the refusal ever stopped
       // being enforced rather than merely stopped being specific.
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id }, include: { calendarEntry: true } });
       expect(after.calendarEntry.date.getTime()).toBe(new Date('2031-05-07').getTime());
     });
 
@@ -1564,7 +1564,7 @@ describe('/api/studio-classes', () => {
       expect(json.error.code).toBe('STUDIO_CLASS_INCOME_RECORD');
       expect(json.error.message).not.toMatch(/recurring template/);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } });
       expect(after.calendarEntry.date.getTime()).toBe(new Date('2020-02-01').getTime());
     });
 
@@ -1587,7 +1587,7 @@ describe('/api/studio-classes', () => {
       expect(json.error.code).toBe('STUDIO_CLASS_PAST_DATE');
       expect(json.error.message).toMatch(/cannot move to a date in the past/i);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } });
       expect(after.calendarEntry.date.getTime()).toBe(new Date('2099-06-24').getTime());
     });
 
@@ -1607,7 +1607,7 @@ describe('/api/studio-classes', () => {
       });
       expect(cancel.status).toBe(200);
       expect(
-        (await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },})).calendarEntry.cancelledAt,
+        (await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } })).calendarEntry.cancelledAt,
       ).not.toBeNull();
 
       const restore = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
@@ -1615,7 +1615,7 @@ describe('/api/studio-classes', () => {
       });
       expect(restore.status).toBe(200);
       expect(
-        (await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },})).calendarEntry.cancelledAt,
+        (await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } })).calendarEntry.cancelledAt,
       ).toBeNull();
     });
 
@@ -1635,7 +1635,7 @@ describe('/api/studio-classes', () => {
       });
       expect(res.status).toBe(200);
 
-      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true },});
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id }, include: { calendarEntry: true } });
       expect(Number(after.hourlyRate)).toBe(77);
     });
   });
@@ -1718,14 +1718,14 @@ describe('DELETE /api/studio-classes/[id]', () => {
     const sc = await makeClass({ date: PAST, startTime: '05:00' });
     const res = await fetch(`${BASE_URL}/api/studio-classes/${sc.id}`, { method: 'DELETE' });
     expect(res.status).toBe(401);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).not.toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true } })).not.toBeNull();
   });
 
   it("refuses another teacher's class with 403", async () => {
     const sc = await makeClass({ date: PAST, startTime: '05:15' });
     const res = await send('DELETE', otherToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(403);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).not.toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true } })).not.toBeNull();
   });
 
   it('answers 404 for an id that is not there', async () => {
@@ -1746,7 +1746,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
     const body = (await res.json()) as { error: { message: string; code?: string } };
     expect(body.error.code).toBe('STUDIO_CLASS_REGENERATES');
     expect(body.error.message).toContain('Cancel it instead.');
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).not.toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true } })).not.toBeNull();
   });
 
   /**
@@ -1764,7 +1764,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
 
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(409);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).not.toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true } })).not.toBeNull();
   });
 
   it('removes a future manual class, because nothing regenerates it', async () => {
@@ -1774,7 +1774,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
     // respondOk wraps in `data` — the plan's predicted bare `{ deleted: true }`
     // did not match the helper's actual shape.
     expect(await res.json()).toEqual({ data: { deleted: true } });
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true } })).toBeNull();
   });
 
   it('removes a past generated class', async () => {
@@ -1782,7 +1782,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
     const sc = await makeClass({ scheduleRuleId: tpl.scheduleRuleId, date: PAST, startTime: '06:15' });
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(200);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true } })).toBeNull();
   });
 
   /**
@@ -1803,7 +1803,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
     });
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(200);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true } })).toBeNull();
   });
 
   /** The double-click. P2025 must read as 404, not as a 500. */
@@ -1831,7 +1831,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
 
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(409);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).not.toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true } })).not.toBeNull();
   });
 
   /**
@@ -1860,7 +1860,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: { message: string; code?: string } };
     expect(body.error.code).toBe('STUDIO_CLASS_REGENERATES');
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).not.toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true } })).not.toBeNull();
   });
 
   /** The complement: one day earlier, the sweep cannot reach it and it goes. */
@@ -1874,7 +1874,7 @@ describe('DELETE /api/studio-classes/[id]', () => {
 
     const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
     expect(res.status).toBe(200);
-    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true },})).toBeNull();
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true } })).toBeNull();
   });
 
   it('answers the second removal with 404 rather than a 500', async () => {

@@ -922,7 +922,7 @@ let studentAccountId: string;
     // Cancellation is the ENTRY's column since #327 — the class keeps its
     // `open` status, which is asserted alongside so a regression that wrote
     // neither reads as what it is.
-    const openClass = await prisma.class.findUniqueOrThrow({ where: { id: openClassId }, include: { calendarEntry: true },});
+    const openClass = await prisma.class.findUniqueOrThrow({ where: { id: openClassId }, include: { calendarEntry: true } });
     expect(openClass.status).toBe('open');
     expect(openClass.calendarEntry.cancelledAt).not.toBeNull();
 
@@ -933,7 +933,7 @@ let studentAccountId: string;
     expect(note).not.toBeNull();
 
     // Completed class (the students' payment history) survives
-    const completed = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId }, include: { calendarEntry: true },});
+    const completed = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId }, include: { calendarEntry: true } });
     expect(completed.status).toBe('completed');
 
     await prisma.notification.deleteMany({ where: { recipientId: other.id } });
@@ -1436,7 +1436,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     // Order matters for what a regression reports: checking the row first
     // means the unconditional-update bug shows as the actual overwrite
     // ("expected 'completed' to be 'cancelled'"), not just a wrong boolean.
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(after.status).toBe('completed');
 
     // The skip has to be real, not just "the class row happens to look
@@ -2033,7 +2033,7 @@ describe('deleteTeacherAccount notifies whoever is registered when it cancels (#
 
     expect(hookCalls).toBe(1);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(after.calendarEntry.cancelledAt).not.toBeNull();
 
     // The student who was already there is told — this half passes either

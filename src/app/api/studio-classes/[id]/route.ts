@@ -211,9 +211,11 @@ export const PUT = withErrorHandler(async (
   try {
     // Child then parent, matching the direction `lockClassRow` fixes for the
     // regular family (`db-locks.ts`): every writer that touches both takes the
-    // class row before its entry. Two statements in one transaction rather
-    // than a nested write, so the order is stated rather than left to Prisma's
-    // query emission.
+    // class row before its entry — when both actually run. A body that edits
+    // only entry fields leaves `studioData` all-`undefined`; Prisma then
+    // issues no `StudioClass` write at all, so this transaction takes only
+    // the entry lock and no ordering question arises for it. The order below
+    // matters for the body that touches both.
     const updated = await prisma.$transaction(async (tx) => {
       await tx.studioClass.update({ where: { id }, data: studioData });
       const entry = await tx.calendarEntry.update({

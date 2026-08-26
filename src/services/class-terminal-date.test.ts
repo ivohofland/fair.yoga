@@ -234,7 +234,7 @@ describe('class_terminal_date_guard', () => {
       // classifyApiError does with this shape is what a caller would see.
       expect(classifyApiError(caught).status).toBe(409);
 
-      const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
       expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe(ORIGINAL_DATE);
     },
   );
@@ -254,7 +254,7 @@ describe('class_terminal_date_guard', () => {
 
     await prisma.$executeRaw`UPDATE "Class" SET date = '2099-07-01' WHERE id = ${classId}`;
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-07-01');
   });
 
@@ -280,7 +280,7 @@ describe('class_terminal_date_guard', () => {
       UPDATE "Class" SET date = ${ORIGINAL_DATE}::date, description = 'Unchanged date'
       WHERE id = ${classId}`;
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(after.description).toBe('Unchanged date');
     expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe(ORIGINAL_DATE);
   });

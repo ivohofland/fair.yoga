@@ -148,7 +148,7 @@ test.describe('Recurring classes', () => {
     const first = await fire();
     expect(first.status).toBe(200);
 
-    const instances = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const instances = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(instances.length).toBe(4);
     for (const instance of instances) {
       expect(instance.status).toBe('open');
@@ -167,7 +167,7 @@ test.describe('Recurring classes', () => {
     await page.goto('/');
     await expect(page.getByText('Recurring Flow').first()).toBeVisible();
 
-    const first = await prisma.class.findFirstOrThrow({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const first = await prisma.class.findFirstOrThrow({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     await page.goto(`/class/${first.id}`);
     await expect(page.getByRole('heading', { name: 'Recurring Flow' })).toBeVisible();
     await expect(page.getByText('Open for registration')).toBeVisible();
@@ -194,7 +194,7 @@ test.describe('Recurring classes', () => {
   test('editing the template leaves the already-scheduled instances where they are', async ({
     page,
   }) => {
-    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(before.length).toBe(4);
     expect(before.every((c) => timeToHHmm(c.calendarEntry.startTime) === '08:15')).toBe(true);
 
@@ -230,7 +230,7 @@ test.describe('Recurring classes', () => {
     // The classes did not — same rows, same ids, same time. Asserted on ids
     // as well as times: "still four rows at 08:15" would also be satisfied by
     // a delete-and-refill that happened to land on the old time.
-    const after = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const after = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
     expect(after.every((c) => timeToHHmm(c.calendarEntry.startTime) === '08:15')).toBe(true);
   });

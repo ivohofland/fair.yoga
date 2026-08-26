@@ -202,14 +202,12 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await prisma.calendarEntry.deleteMany({ where: { teacherId } });
-  await prisma.calendarEntry.deleteMany({ where: { teacherId } });
   // `ClassTemplate`/`StudioClassTemplate` are `onDelete: Cascade` from
   // `ScheduleRule` (issue 298), so one delete clears both families.
   await prisma.scheduleRule.deleteMany({ where: { teacherId } });
 });
 
 afterAll(async () => {
-  await prisma.calendarEntry.deleteMany({ where: { teacherId } });
   await prisma.calendarEntry.deleteMany({ where: { teacherId } });
   await prisma.scheduleRule.deleteMany({ where: { teacherId } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId } });

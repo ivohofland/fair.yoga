@@ -270,7 +270,7 @@ describe('POST /api/class-templates', () => {
     const { data: template } = (await res.json()) as { data: { id: string } };
 
     // The whole point: no cron ran, yet the schedule is populated.
-    const instances = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const instances = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(instances.length).toBe(4);
     for (const instance of instances) {
       expect(instance.status).toBe('open');
@@ -346,7 +346,7 @@ describe('POST /api/class-templates', () => {
       // The half the endpoint's severity actually lives in: a second
       // template would have generated a second full four-week set of
       // bookable classes.
-      const generated = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templates[0]!.id } } } } }, include: { calendarEntry: true },});
+      const generated = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templates[0]!.id } } } } }, include: { calendarEntry: true } });
       expect(generated).toHaveLength(4);
     });
 
@@ -364,7 +364,7 @@ describe('POST /api/class-templates', () => {
       });
       expect(templates).toHaveLength(1);
 
-      const generated = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templates[0]!.id } } } } }, include: { calendarEntry: true },});
+      const generated = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templates[0]!.id } } } } }, include: { calendarEntry: true } });
       expect(generated).toHaveLength(4);
     });
   });
@@ -547,7 +547,7 @@ describe('PATCH /api/class-templates/[id]', () => {
 
     // Simulate window drift: one instance vanishes (e.g. teacher-cancelled
     // long ago and pruned). Regeneration is what heals it.
-    const first = await prisma.class.findFirstOrThrow({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const first = await prisma.class.findFirstOrThrow({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: first.id } } } });
 
     const toggle = (state: string) =>
@@ -571,7 +571,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     // future unbooked window, so the count drops to zero rather than
     // staying at 3. Un-archive leaves the template paused and does not
     // restore what archiving deleted — still zero.
-    const next = await prisma.class.findFirstOrThrow({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const next = await prisma.class.findFirstOrThrow({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: next.id } } } });
     const archive = (state: string) =>
       fetch(`${BASE_URL}/api/class-templates/${template.id}?state=${state}`, {
@@ -1239,7 +1239,7 @@ describe('PUT /api/class-templates/[id]', () => {
   it('updates the template and leaves every generated instance untouched', async () => {
     const id = await createTemplate('Editable Flow', '08:00', ALT_DAY_3);
 
-    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(before.length).toBeGreaterThan(0);
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
@@ -1258,7 +1258,7 @@ describe('PUT /api/class-templates/[id]', () => {
     // along with it any more, and a re-added one fails here.
     expect(data).not.toHaveProperty('sync');
 
-    const after = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const after = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
     expect(after.every((c) => c.calendarEntry.classType === 'Editable Flow')).toBe(true);
     expect(after.every((c) => c.calendarEntry.durationMinutes === 60)).toBe(true);
@@ -1285,7 +1285,7 @@ describe('PUT /api/class-templates/[id]', () => {
     // the file's other two permanent DAY_OF_WEEK occupants.
     const id = await createTemplate('Stamp Not Link', '15:00');
 
-    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(before.length).toBeGreaterThan(0);
     expect(before.every((c) => timeToHHmm(c.calendarEntry.startTime) === '15:00')).toBe(true);
 
@@ -1300,7 +1300,7 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(timeToHHmm(template.scheduleRule.startTime)).toBe('17:00');
     expect(template.roomCost.toString()).toBe('99');
 
-    const after = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const after = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(
       after.map((c) => ({
         id: c.id,
@@ -1432,7 +1432,7 @@ describe('PUT /api/class-templates/[id]', () => {
   it('a dayOfWeek change deletes nothing and moves nothing', async () => {
     const id = await createTemplate('Day Shift', '12:00');
 
-    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(before.length).toBeGreaterThan(0);
     expect(before.every((c) => c.calendarEntry.date.getUTCDay() === EXPECTED_JS_DAY)).toBe(true);
 
@@ -1453,7 +1453,7 @@ describe('PUT /api/class-templates/[id]', () => {
     // scoped to: with nothing propagating there is no boundary left to
     // respect. No refill either — the PUT does not generate, so the count is
     // unchanged rather than merely non-zero.
-    const after = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const after = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
     expect(after.every((c) => c.calendarEntry.date.getUTCDay() === EXPECTED_JS_DAY)).toBe(true);
   });
@@ -1482,7 +1482,7 @@ describe('PUT /api/class-templates/[id]', () => {
     const { data: created } = (await create.json()) as { data: { id: string } };
     const id = created.id;
 
-    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(before.length).toBe(4);
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
@@ -1524,7 +1524,7 @@ describe('PUT /api/class-templates/[id]', () => {
     const later = await generateInstancesForTemplate(prisma, template, predicted);
     expect(later.created).toBeGreaterThan(0);
 
-    const after = await prisma.class.findMany({ where: { id: { notIn: before.map((c) => c.id) }, calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const after = await prisma.class.findMany({ where: { id: { notIn: before.map((c) => c.id) }, calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(after.length).toBe(later.created);
     const first = after[0]!;
     // The week the sentence named, and the weekday the teacher moved to.
@@ -1632,7 +1632,7 @@ describe('PUT /api/class-templates/[id]', () => {
     const sweep = await generateInstancesForTemplate(prisma, template, new Date(mondayOf(blocked)));
     expect(sweep.skipped).toContainEqual({ date: blocked, reason: 'slot_taken' });
 
-    const filled = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } }, date: { gte: new Date(mondayOf(blocked)) } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const filled = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } }, date: { gte: new Date(mondayOf(blocked)) } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(filled.length).toBeGreaterThan(0);
     expect(mondayOf(filled[0]!.calendarEntry.date)).toBe(predicted.getTime());
   });
@@ -1682,7 +1682,7 @@ describe('PUT /api/class-templates/[id]', () => {
     const { data: created } = (await create.json()) as { data: { id: string } };
     const id = created.id;
 
-    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(before.length).toBe(4);
 
     // Cancelled, not deleted, and cancelled through the one column the two
@@ -1731,7 +1731,7 @@ describe('PUT /api/class-templates/[id]', () => {
     // And the week the sentence named is the week the sweep then fills.
     const later = await generateInstancesForTemplate(prisma, template, predicted);
     expect(later.created).toBeGreaterThan(0);
-    const after = await prisma.class.findMany({ where: { id: { notIn: before.map((c) => c.id) }, calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const after = await prisma.class.findMany({ where: { id: { notIn: before.map((c) => c.id) }, calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(mondayOf(after[0]!.calendarEntry.date)).toBe(predicted.getTime());
   });
 
@@ -1825,7 +1825,7 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(sweep.skipped).toEqual([]);
     expect(sweep.created).toBe(4);
 
-    const filled = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } }, date: { gte: fromWeekFive } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const filled = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } }, date: { gte: fromWeekFive } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(filled.length).toBeGreaterThan(0);
     expect(filled[0]!.calendarEntry.date.getTime()).toBe(weekFive.getTime());
   });
@@ -2018,7 +2018,7 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(resumed.scheduled).toBe(4);
     // And the classes really are still on the old weekday — the count means
     // what its clause says it means.
-    const still = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, include: { calendarEntry: true },});
+    const still = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, include: { calendarEntry: true } });
     expect(still.length).toBe(4);
     expect(still.every((c) => c.calendarEntry.date.getUTCDay() === (OLD_DAY + 1) % 7)).toBe(true);
   });
@@ -2069,7 +2069,7 @@ describe('PUT /api/class-templates/[id]', () => {
   // one of the two stopped being a collision at all.
   it('allows a startTime change onto a slot only a generated instance would have collided with', async () => {
     const id = await createTemplate('Sync Slot Template', '00:00', ALT_DAY_5);
-    const instances = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const instances = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(instances.length).toBeGreaterThan(0);
     const targetDate = instances[0]!.calendarEntry.date;
 
@@ -2105,7 +2105,7 @@ describe('PUT /api/class-templates/[id]', () => {
     // And the generated instance did not, which is why there was nothing to
     // collide with. Both halves asserted: "the PUT returned 200" alone would
     // also be satisfied by a propagation that happened to find the slot free.
-    const instance = await prisma.class.findUniqueOrThrow({ where: { id: instances[0]!.id }, include: { calendarEntry: true },});
+    const instance = await prisma.class.findUniqueOrThrow({ where: { id: instances[0]!.id }, include: { calendarEntry: true } });
     expect(timeToHHmm(instance.calendarEntry.startTime)).toBe('00:00');
   });
 
@@ -2144,7 +2144,7 @@ describe('PUT /api/class-templates/[id]', () => {
       });
       expect(create.status).toBe(201);
       const { data: template } = (await create.json()) as { data: { id: string } };
-      const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, include: { calendarEntry: true },});
+      const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, include: { calendarEntry: true } });
       expect(before.length).toBeGreaterThan(0);
       expect(before.every((c) => c.teacherRoomId === owner.teacherRoomId)).toBe(true);
 
@@ -2168,7 +2168,7 @@ describe('PUT /api/class-templates/[id]', () => {
       // ...and — the assertion a guard placed after the transaction, rather
       // than before it, would not catch — no future instance was relocated
       // onto the archived room either.
-      const instancesAfter = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, include: { calendarEntry: true },});
+      const instancesAfter = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, include: { calendarEntry: true } });
       expect(instancesAfter.every((c) => c.teacherRoomId === owner.teacherRoomId)).toBe(true);
       expect(instancesAfter.some((c) => c.teacherRoomId === archived.teacherRoomId)).toBe(false);
     } finally {
@@ -2247,7 +2247,7 @@ describe('PUT /api/class-templates/[id]', () => {
 
       // The assertion whose absence hid the defect. Its active-move sibling
       // has carried it since the door was written; this case did not.
-      const instancesAfter = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, include: { calendarEntry: true },});
+      const instancesAfter = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, include: { calendarEntry: true } });
       expect(instancesAfter.length).toBeGreaterThan(0);
       expect(instancesAfter.some((c) => c.teacherRoomId === archived.teacherRoomId)).toBe(false);
     } finally {

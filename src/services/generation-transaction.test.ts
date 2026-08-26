@@ -114,7 +114,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.calendarEntry.deleteMany({ where: { teacherId } });
-  await prisma.calendarEntry.deleteMany({ where: { teacherId } });
   // `ClassTemplate`/`StudioClassTemplate` are `onDelete: Cascade` from
   // `ScheduleRule` (issue 298), so deleting the rules removes both
   // families' templates with them.
@@ -259,7 +258,6 @@ describe('generation inside a real $transaction (DB)', () => {
     // transaction commits the other three. This is the realistic path.
     const now = new Date();
     const blocked = candidates(now)[1]!;
-    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await createStudioClassFixture(prisma, {
         teacherId, scheduleRuleId: null, classType: 'Holder', date: blocked,

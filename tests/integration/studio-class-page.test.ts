@@ -176,6 +176,55 @@ describe('the studio class page: which classes offer removal', () => {
   });
 });
 
+describe('the studio class page: the template link', () => {
+  /**
+   * Issue 327 F2. CLAUDE.md: "a template is a stamp, not a live link" — a
+   * class generated before a rename keeps its OLD `classType` forever, while
+   * the rule the template reads from is renamed in place. The link labelled
+   * "Template" points AT the template, so it must show the template's
+   * CURRENT name, not the stamp this specific class happens to be carrying.
+   */
+  it("names the template's current type, not the class's stamped one, after a rename", async () => {
+    const tpl = await prisma.studioClassTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Old Name',
+            dayOfWeek: 5,
+            startTime: hhmmToTime('06:00'),
+            durationMinutes: 60,
+          },
+        },
+        location: 'Template Venue',
+        hourlyRate: 45,
+      },
+    });
+    const sc = await makeClass({
+      classType: 'Old Name',
+      scheduleRuleId: tpl.scheduleRuleId,
+      date: new Date('2099-08-10T00:00:00.000Z'),
+      startTime: '06:00',
+    });
+    // The rename: the rule's `classType` moves; the already-generated class's
+    // stamp does not.
+    await prisma.scheduleRule.update({
+      where: { id: tpl.scheduleRuleId },
+      data: { classType: 'New Name' },
+    });
+    const html = await page(sc.id);
+    // Anchored to the template link itself (`href` plus the immediately
+    // following arrow span) — the class's OWN stamped name legitimately
+    // still appears elsewhere on this page (the h1), so an unanchored
+    // substring check would pass or fail for the wrong reason.
+    const linkPattern = (label: string) =>
+      new RegExp(`href="/settings/studio-classes/${tpl.id}"[^>]*>${label}<span`);
+    expect(html).toMatch(linkPattern('New Name'));
+    expect(html).not.toMatch(linkPattern('Old Name'));
+  });
+});
+
 describe('the studio class page: how it titles itself', () => {
   /**
    * The `|| location` half of the header, which nothing else reaches. Every

@@ -228,7 +228,7 @@ describe('class terminal status trigger', () => {
     // green.
     expect(classifyApiError(caught).status).toBe(409);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(after.status).toBe('cancelled');
   });
 
@@ -294,7 +294,7 @@ describe('class terminal status trigger', () => {
     expect(String(caught)).toMatch(/is completed/);
     expect(classifyApiError(caught).status).toBe(409);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(after.status).toBe('completed');
 
     // The stakes, spelled out: the payment is still there, still pending, and
@@ -342,7 +342,7 @@ describe('class terminal status trigger', () => {
       },
     });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(after.status).toBe('completed');
     expect(Number(after.totalRevenue)).toBe(45);
     expect(after.totalStudents).toBe(1);
@@ -362,7 +362,7 @@ describe('class terminal status trigger', () => {
 
     await prisma.calendarEntry.updateMany({ where: { classes: { some: { id: classId } } }, data: { cancelledAt: new Date() } });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(after.status).toBe('cancelled');
   });
 
@@ -383,7 +383,7 @@ describe('class terminal status trigger', () => {
 
     await prisma.class.update({ where: { id: classId }, data: { description: 'Edited after' } });
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(after.description).toBe('Edited after');
     expect(after.status).toBe('completed');
   });
@@ -435,7 +435,7 @@ describe('class terminal status trigger', () => {
       expect(String(caught)).toMatch(/23514/);
       expect(String(caught)).toMatch(/which is terminal/);
 
-      const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true },});
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
       expect(after.status).toBe(status);
     },
   );

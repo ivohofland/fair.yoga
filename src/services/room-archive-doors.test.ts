@@ -40,7 +40,7 @@ describe('transitionClass — door 2: publishing into an archived room', () => {
     expect(result.reason).toBe('ROOM_ARCHIVED');
     expect(result.error).toBe('This room is archived. Unarchive it to publish classes here.');
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.status).toBe('draft');
   });
 
@@ -51,7 +51,7 @@ describe('transitionClass — door 2: publishing into an archived room', () => {
     const result = await transitionClass(prisma, cls.id, 'open');
 
     expect(result.ok).toBe(true);
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.status).toBe('open');
   });
 });

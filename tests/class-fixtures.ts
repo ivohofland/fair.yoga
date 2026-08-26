@@ -110,7 +110,9 @@ export async function createClassFixture(
   // reach. `prisma/seed.ts` does the same thing for the same reason and says
   // so.
   if (classFields.status === 'completed') {
-    await db.class.update({ where: { id: cls.id }, data: { status: 'in_progress' } });
+    // No `in_progress` update here: the create above already inserted the row
+    // in that status, so this is the one transition that actually changes
+    // `status` and fires `class_sync_entry_completed`.
     await db.class.update({ where: { id: cls.id }, data: { status: 'completed' } });
     const marked = await db.calendarEntry.findUniqueOrThrow({ where: { id: bareEntry.id } });
     return { ...cls, calendarEntry: marked };

@@ -196,7 +196,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
       expect(result.newStatus).toBe('open');
     }
 
-    const cls = await prisma.class.findUnique({ where: { id: classId }, include: { calendarEntry: true },});
+    const cls = await prisma.class.findUnique({ where: { id: classId }, include: { calendarEntry: true } });
     expect(cls?.status).toBe('open');
   });
 
@@ -290,7 +290,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
   // Step 14: Verify class completion data
   // -----------------------------------------------------------------------
   it('Step 14: class has correct completion data', async () => {
-    const cls = await prisma.class.findUnique({ where: { id: classId }, include: { calendarEntry: true },});
+    const cls = await prisma.class.findUnique({ where: { id: classId }, include: { calendarEntry: true } });
 
     expect(cls).not.toBeNull();
     expect(cls!.status).toBe('completed');

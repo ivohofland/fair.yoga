@@ -420,6 +420,15 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // `closeQueueOnStart` flips those rows to `expired`, and the walk-in
     // resolver in `POST /api/registrations` writes `expired` entries under this
     // same class row lock, so the gap was live.
+    //
+    // VERDICT (#327): no `entries: true`. This transaction reads and writes
+    // `WaitlistEntry`, `Registration`, `StudentPrivacy`, `TeacherStudent`,
+    // `Invitation`, `Notification`, `Session` and `Account` — it touches no
+    // `CalendarEntry` column. Its registration-cancel filter reads
+    // `calendarEntry: { cancelledAt: null }` further down, which is a
+    // predicate on a relation, not a decision this lock has to serialise —
+    // the same shape `status: { in: ['draft', 'open'] }` had, unlocked,
+    // before #327.
     await lockClassRowsOrdered(tx, {
       join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`,
       where: Prisma.sql`w."studentId" = ${studentId}`,

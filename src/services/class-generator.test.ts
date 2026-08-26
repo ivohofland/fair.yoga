@@ -179,7 +179,7 @@ describe('generateClassInstances (DB)', () => {
 
     expect(count).toBe(4);
 
-    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
 
     expect(classes).toHaveLength(4);
 
@@ -208,7 +208,7 @@ describe('generateClassInstances (DB)', () => {
 
     expect(count).toBe(0);
 
-    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, include: { calendarEntry: true },});
+    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, include: { calendarEntry: true } });
     expect(classes).toHaveLength(4);
   });
 
@@ -227,7 +227,7 @@ describe('generateClassInstances (DB)', () => {
 
     expect(count).toBe(0);
 
-    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, include: { calendarEntry: true },});
+    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, include: { calendarEntry: true } });
     expect(classes).toHaveLength(0);
 
     // Re-activate for potential further tests
@@ -273,7 +273,7 @@ describe('generateClassInstances (DB)', () => {
     const count = await generateClassInstances(prisma, from, teacherId);
 
     expect(count).toBe(4);
-    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(classes.map((c) => c.calendarEntry.date.toISOString())).toEqual([
       '2026-04-14T00:00:00.000Z',
       '2026-04-21T00:00:00.000Z',
@@ -291,7 +291,7 @@ describe('generateClassInstances (DB)', () => {
     const count = await generateClassInstances(prisma, from, teacherId);
 
     expect(count).toBe(4);
-    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(classes.map((c) => c.calendarEntry.date.toISOString())).toEqual([
       '2026-04-07T00:00:00.000Z',
       '2026-04-14T00:00:00.000Z',
@@ -1026,7 +1026,7 @@ describe('generateClassInstances (DB)', () => {
         });
         expect(created).toBe(4);
 
-        const beforeArchive = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true },});
+        const beforeArchive = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
         expect(beforeArchive).toHaveLength(4);
         expect(beforeArchive[0]!.calendarEntry.date.toISOString()).toBe(today.toISOString());
 
@@ -1040,7 +1040,7 @@ describe('generateClassInstances (DB)', () => {
         expect(result.deleted).toBe(3);
         expect(result.remaining).toBe(1);
 
-        const afterArchive = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, include: { calendarEntry: true },});
+        const afterArchive = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, include: { calendarEntry: true } });
         expect(afterArchive).toHaveLength(1);
         expect(afterArchive[0]!.calendarEntry.date.toISOString()).toBe(today.toISOString());
         expect(afterArchive[0]!.status).toBe('open'); // still publicly bookable
@@ -2000,7 +2000,7 @@ describe('generateClassInstances (DB)', () => {
         // The furthest-out instance, deliberately: the archive's `deleteMany`
         // is scoped `gt: today`, so today's class — which generation keeps
         // while its start is still ahead — is not one of the rows it locks.
-        const victim = await prisma.class.findFirstOrThrow({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'desc' } }, include: { calendarEntry: true },});
+        const victim = await prisma.class.findFirstOrThrow({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'desc' } }, include: { calendarEntry: true } });
 
         // Captured rather than assumed null: earlier tests in this file archive
         // this same fixture successfully, and their `afterEach` restores

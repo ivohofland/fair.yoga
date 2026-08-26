@@ -774,7 +774,7 @@ describe('updateClassTemplate (DB)', () => {
     });
     expect(result.ok).toBe(true);
 
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: instance.id }, include: { calendarEntry: true },});
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: instance.id }, include: { calendarEntry: true } });
     expect(after.calendarEntry.date.toISOString()).toBe(instance.calendarEntry.date.toISOString());
     expect(after.calendarEntry.startTime.getTime()).toBe(instance.calendarEntry.startTime.getTime());
     expect(after.roomCost.toString()).toBe(instance.roomCost.toString());
