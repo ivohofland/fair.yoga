@@ -972,9 +972,10 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   const future = () => new Date(Date.now() + 5 * DAY);
   const past = () => new Date(Date.now() - 5 * DAY);
   const today = () => new Date();
-  // `date` truncates to a calendar day and carries `@@unique([templateId,
-  // date])`, so tests that put more than one class on the same template need
-  // distinct days — plain `future()` called twice would collide.
+  // `date` truncates to a calendar day and its entry carries
+  // `@@unique([scheduleRuleId, date])`, so tests that put more than one class
+  // on the same template need distinct days — plain `future()` called twice
+  // would collide.
   const futureOn = (daysFromNow: number) => new Date(Date.now() + daysFromNow * DAY);
 
   let teacherId: string;

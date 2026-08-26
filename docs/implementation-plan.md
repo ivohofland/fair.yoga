@@ -37,7 +37,7 @@ Built by Ivo + Claude Code. Technical foundation first, then layer on UI and fea
   - Test against pricing-simulator.html values for validation
 
 2.2 — Implement class lifecycle state machine (`services/class-lifecycle.ts`)
-  - State transitions with guards: draft → open → full → in_progress → completed → cancelled
+  - State transitions with guards: draft → open → in_progress → completed (`full` is derived from the registration count, and since #327 cancellation is `CalendarEntry.cancelledAt` rather than a status)
   - settings_locked enforcement on first registration
   - Transition side effects (pricing calculation on completion, notification triggers)
 

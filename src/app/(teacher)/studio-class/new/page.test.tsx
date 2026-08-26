@@ -193,12 +193,17 @@ describe('NewStudioClassPage', () => {
    * `finally { setSubmitting(false) }` behind it, so a push that never commits
    * leaves a populated form with "Log class" re-enabled.
    *
-   * `POST /api/studio-classes` is a bare `prisma.studioClass.create` with no
-   * dedupe, and `StudioClass`'s only unique constraint is
-   * `@@unique([templateId, date])`, which a manually logged class cannot trip:
-   * its `templateId` is null, and Postgres treats NULLs as distinct. The
-   * second click logs the class twice and double-counts the teacher's income
-   * for that week.
+   * `POST /api/studio-classes` writes a bare entry-plus-class pair with no
+   * dedupe, and the entry's only unique key is
+   * `@@unique([scheduleRuleId, date])`, which a manually logged class cannot
+   * trip: its `scheduleRuleId` is null, and Postgres treats NULLs as distinct.
+   *
+   * WHAT THE SECOND CLICK COSTS CHANGED IN #327, and the guard is still the
+   * fix. `CalendarEntry_teacher_slot_excl` spans both families, so a second
+   * entry on the same span is refused and the double-count it used to produce
+   * is gone; the second request answers 409 instead. An error for clicking
+   * twice on a form that was working is still the wrong outcome, and only this
+   * guard stops the request going out.
    *
    * Asserted on the fetch count, not on rendered text: a partial fix that only
    * changed a label would satisfy a text assertion and still allow the second

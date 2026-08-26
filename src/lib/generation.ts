@@ -31,9 +31,10 @@
  * `generation.test.ts` by relative path, for ten in all. Stated as nine-plus-one
  * rather than ten, because the parenthetical counts below add to nine and a
  * reader doing the arithmetic the docblock invites should not land short.
- * The grep prints more lines than that: two importers take two lines each,
- * a value import beside a `import type`, and this docblock quotes its own
- * needle.
+ * The grep prints more lines than that, and neither excess is drift: two
+ * importers take two lines each, a value import beside an `import type`, and
+ * this docblock quotes the needle back at itself — the last paragraph here
+ * says exactly where, and is the owner of that part.
  *
  *   VALUE, client (2)  `template-form.tsx`, `studio-template-form.tsx`
  *   VALUE, server (6)  `api/class-templates/route.ts`,

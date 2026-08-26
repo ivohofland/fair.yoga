@@ -149,10 +149,18 @@ describe('NewClassPage', () => {
    * leaves a fully populated review step with "Create class" re-enabled.
    *
    * Nothing downstream catches the obvious second click. `POST /api/classes`
-   * is a bare `prisma.class.create` with no dedupe, and the only unique
-   * constraint on `Class` is `@@unique([templateId, date])`, which a manually
-   * created row cannot trip: its `templateId` is null, and Postgres treats
-   * NULLs as distinct. Two identical classes, both bookable.
+   * writes a bare entry-plus-class pair with no dedupe, and the only unique
+   * key on the entry is `@@unique([scheduleRuleId, date])`, which a manually
+   * created row cannot trip: its `scheduleRuleId` is null, and Postgres treats
+   * NULLs as distinct.
+   *
+   * WHAT THE SECOND CLICK COSTS CHANGED IN #327, and the guard is still the
+   * fix. `CalendarEntry_teacher_slot_excl` refuses a second entry on the same
+   * span, so the duplicate is no longer created — the second request answers
+   * 409 `DUPLICATE_CLASS_SLOT` instead. The teacher gets an error for having
+   * clicked twice on a form that was working, where they used to get two
+   * bookable classes. Neither is an outcome to ship, and only this guard
+   * prevents the request being sent at all.
    *
    * The assertion is on the fetch count, not on rendered text: a partial fix
    * that only changed a label would satisfy a text assertion and still allow

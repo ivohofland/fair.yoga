@@ -247,9 +247,10 @@ a call):
    family's resume, are reads — no locks under READ COMMITTED, no edges.
    **True of the row, false since #196 of its index entries** — see "The
    slot key is a wait edge" below: a bare `create`/`createManyAndReturn`
-   still cannot conflict on the row it inserts, but it can now conflict on
-   `(teacherId, date, startTime)`, which is why this check alone no longer
-   bounds the candidate set for `Class`, and neither does the multiplicity
+   still cannot conflict on the row it inserts, but it can conflict on the
+   slot, which since #327 is `CalendarEntry_teacher_slot_excl` and is written
+   by entry inserts rather than `Class` inserts. That is why this check alone
+   no longer bounds the candidate set, and neither does the multiplicity
    filter below;
 2. `'"Class"'` — the raw statements. **Do not carry a number here; grep it.**
    An earlier version of this check said "8 in total … the other 3 are
@@ -618,11 +619,12 @@ It is retained as the measurement that proved `ClassTemplate_teacher_slot_unique
 is load-bearing, which is a property of the index, not of the sync.)*
 
 The reason is structural, not luck. Two template-driven writers can only
-collide on `(teacherId, date, startTime)` if their templates agree on
-`(teacherId, dayOfWeek, startTime)` — a template generates on one weekday at
-one time, so same slot means same weekday and same time — and that is the key
-`ScheduleRule_teacher_slot_excl` forbids now, where `ClassTemplate_teacher_slot_unique`
-forbade it when this was measured: #298 replaced one with the other, and the
+collide on a dated slot — `(teacherId, date, startTime)` when this was
+measured, an overlapping `(teacherId, span)` since #327 — if their templates
+agree on `(teacherId, dayOfWeek, startTime)`, because a template generates on
+one weekday at one time, so same slot means same weekday and same time. That
+is the key `ScheduleRule_teacher_slot_excl` forbids now, where
+`ClassTemplate_teacher_slot_unique` forbade it when this was measured: #298 replaced one with the other, and the
 argument did not change, only which object carries it. The archived-rule hole
 in that constraint does not open it: archiving deletes every future
 `draft`/`open` instance (`scheduledWhere`, `gt: today`), and an archived rule

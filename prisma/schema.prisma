@@ -588,10 +588,12 @@ model CalendarEntry {
   /// status` and, since `20260826140000_entry_guard_restorations`, `AFTER
   /// INSERT`. The UPDATE half alone recorded a TRANSITION rather than a state,
   /// so a row INSERTed already carrying `status = 'completed'` produced no
-  /// marker and left its entry's date, start time and duration editable —
-  /// which is the guarantee `waitlist-retention.ts` rests on when it
-  /// permanently deletes queue rows. The migration's own comment carries why
-  /// it is a second trigger rather than a widened `WHEN`.
+  /// marker and left its entry's date, start time and duration editable. That
+  /// was the HOLE: what `waitlist-retention.ts` rests on when it permanently
+  /// deletes queue rows is the freeze, so a completed class whose entry was
+  /// never marked is one the sweep can still see move under it. The INSERT
+  /// trigger closes it; the migration's own comment carries why it is a
+  /// second trigger rather than a widened `WHEN`.
   ///
   /// Stamping twice is a no-op: the function writes only where
   /// `classCompletedAt IS NULL`.

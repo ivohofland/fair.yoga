@@ -120,8 +120,8 @@ describe('generateStudioClassInstances (DB)', () => {
    * Named for what it can see, which is not the row lock. This used to be
    * called "never creates duplicates under concurrent runs (row lock
    * serialises the sweeps)", and the distinctness assertion below cannot
-   * fail for any implementation: `@@unique([templateId, date])` makes a
-   * duplicate date unrepresentable, so even a build where both sweeps
+   * fail for any implementation: `@@unique([scheduleRuleId, date])` on the
+   * entry makes a duplicate date unrepresentable, so even a build where both sweeps
    * genuinely generated at once would arrive here with a distinct set.
    * Measured rather than assumed — removing `FOR UPDATE` from
    * `claimStudioTemplateForGeneration` leaves this test green while failing
@@ -804,8 +804,8 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
    * silently under-fills a window and nothing raises.
    *
    * Two teachers, same weekday, same start time. The other teacher's class must
-   * be invisible here: #196's slot key is `(teacherId, date, startTime)`, so it
-   * can never block this one. Unscoped, every one of these dates reads
+   * be invisible here: `CalendarEntry_teacher_slot_excl` is scoped per teacher
+   * (`"teacherId" WITH =`), so it can never block this one. Unscoped, every one of these dates reads
    * `slot_taken` and this teacher's window comes back empty — with a log line
    * naming the wrong teacher's schedule.
    */

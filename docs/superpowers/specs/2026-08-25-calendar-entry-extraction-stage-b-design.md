@@ -341,8 +341,11 @@ order, **naming both tables explicitly**.
   ```
 
   `5 waitlist.ts + 2 class-transitions.ts + 1 class-lifecycle.ts +
-  1 api/registrations/route.ts + 1 waitlist-retention.ts = 10`. **The grep
-  returns 11, and the eleventh has to be read rather than filtered out.**
+  1 api/registrations/route.ts + 1 waitlist-retention.ts = 10`, **measured at
+  `9e7fae0c`, this plan's baseline** — the work itself adds call sites, so a
+  reader running the grep today gets a larger number (13 at the branch tip) and
+  should not read the difference as drift. **At that baseline the grep returned
+  11, and the eleventh had to be read rather than filtered out.**
   `waitlist-retention.ts:170` is a prose mention that writes the full call form
   `lockClassRow(tx, classId)` inside backticks, so no tightening of the pattern
   separates it from a call site — the bare name is worse still (71 lines, this

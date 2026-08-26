@@ -304,11 +304,20 @@ const uniqueSuffix = Date.now();
  * value that produced it. Mirrors `class-template-lifecycle.test.ts`'s
  * `slotTime`.
  *
- * Called with a CONSTANT at both blocks below (`slotTime(0)` and
- * `slotTime(540)`), not a running counter: since #327 the slot constraint is a
- * range overlap, so two 60-minute fixtures a minute apart collide. What varies
- * per call is the DATE — `slotDate` (`tests/class-fixtures.ts`) — and the two
- * blocks keep their own hours so neither can land in the other's window.
+ * Called with a CONSTANT, never a running counter: since #327 the slot
+ * constraint is a RANGE overlap, so two 60-minute fixtures a minute apart
+ * collide where the exact-start key it replaced let them through. What varies
+ * per call is the DATE instead — `slotDate` (`tests/class-fixtures.ts`), a day
+ * per call, which is disjoint whatever the duration.
+ *
+ * Nothing here needs the call sites to agree on an hour, and no roster of them
+ * is kept: every `(DB)` block below stands up its OWN teacher in its
+ * `beforeAll`, and `CalendarEntry_teacher_slot_excl` is scoped per teacher
+ * (`"teacherId" WITH =`), so two blocks cannot collide with each other however
+ * their hours line up. Within a block it is `slotDate` that keeps the fixtures
+ * apart. The current callers are whatever this returns:
+ *
+ *   grep -n "slotTime(" src/services/class-lifecycle.test.ts
  */
 function slotTime(totalMinutesFrom9am: number): string {
   const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
@@ -743,13 +752,14 @@ describe('completeClass (DB)', () => {
   // 'completed'. Mirrors `updateClass (DB)`'s `makeClass` closure — reuses
   // the shared teacher/room fixture from `beforeAll` instead of standing up
   // a fresh one per test.
-  // Counter-derived DATE: the beforeAll below plants a class at 18:00 for
-  // this same teacher, and both call sites in this block (the lock test and
-  // the already-cancelled test) need their own slot too. None of these tests
-  // reads or asserts the literal startTime, only the id, so the fixture keeps
-  // one `slotTime(540)` start and walks the date instead — see `slotDate` at
-  // the call site below, and the `#327` note beside it for why a minute per
-  // call stopped being enough.
+  // Counter-derived DATE: the beforeAll below plants a class at 18:00 for this
+  // same teacher, and every call here needs a slot of its own too. No test in
+  // this block reads or asserts the literal startTime, only the id, so the
+  // fixture keeps one `slotTime(540)` start and walks the date instead — see
+  // `slotDate` at the call site below, and the `#327` note beside it for why a
+  // minute per call stopped being enough. Stated without a call count
+  // deliberately: the wording this replaces named two, and the block has held
+  // more than that for some time without anything noticing.
   let makeClassCounter = 0;
   const makeClass = ({ status }: { status: ClassStatus }) => {
     makeClassCounter += 1;

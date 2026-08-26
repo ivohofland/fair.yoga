@@ -272,7 +272,10 @@ export async function generateStudioInstancesForTemplate(
   // parallel files asserted about both.)
   //
   // A `catch` with a per-date retry shipped on this branch and was measured
-  // non-functional. Every production caller of the two generators passes a
+  // non-functional. Everything in this paragraph is the TRIGGER era: the
+  // `RAISE EXCEPTION` it turns on came from the cross-family guards #327
+  // replaced, so read it as why a retry was wrong then, not as what an insert
+  // does now. Every production caller of the two generators passes a
   // TRANSACTION client — six across the pair, three per generator;
   // `class-generator.ts`'s function docblock states its own three, and this
   // file's states no caller count at all, so do not read the number as coming
@@ -302,12 +305,15 @@ export async function generateStudioInstancesForTemplate(
   // which is the gap rather than transactions being untested generally. `generation-transaction.test.ts` now drives this
   // path through a real `$transaction` for that reason.
   //
-  // What the loss costs, stated rather than waved past: a cross-family row
-  // committing between the pre-check above and this insert costs this
-  // template its whole window for THIS run. The next sweep's pre-check sees
-  // the now-committed row and skips exactly that date, so it self-corrects
-  // within the hour — and on the two POST routes the same `YG001` becomes the
-  // 409 those routes were given a branch for.
+  // WHAT A LOST RACE COSTS NOW, which is the half of that argument #327
+  // changed: its own date, not the window. A row committing between the
+  // pre-check above and this insert is absorbed by the `ON CONFLICT DO
+  // NOTHING` below — the statement completes, the date simply does not come
+  // back, and the loop after it reports that date as `'raced'`. Nothing
+  // escapes to a caller, which is also why no route turns this into a 409 any
+  // more: the `YG001` the two template POSTs used to catch has no raiser left
+  // at all (`docs/lock-order.md`, "One teacher, one slot").
+  //
   // TWO STATEMENTS SINCE #327, and only the first can conflict — the class
   // twin's own comment carries the argument. `skipDuplicates` belongs on the
   // entry because the entry is what holds every constraint; the `StudioClass`

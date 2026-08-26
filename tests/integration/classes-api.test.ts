@@ -998,15 +998,25 @@ describe('PUT /api/classes/[id]', () => {
     });
   });
 
-  // PR #208 review, D1. `CalendarEntry` carries two slot-shaped constraints —
+  // PR #208 review, D1. `CalendarEntry` carries two slot-shaped constraints:
   // `CalendarEntry_scheduleRuleId_date_key` and
-  // `CalendarEntry_teacher_slot_excl` — and Postgres validates a multi-key
-  // violation in the indexes' OID order, the older key first. The slot
-  // coverage above always leaves `startTime` identical between the two rows,
-  // which also collides on the exclusion constraint and can never exercise
-  // this. This block deliberately gives its two instances
-  // non-overlapping spans, so only the `(scheduleRuleId, date)` key fires.
-  describe("PUT /api/classes/[id] collides on the template's own (templateId, date) key (#196)", () => {
+  // `CalendarEntry_teacher_slot_excl`. The slot coverage above always leaves
+  // `startTime` identical between the two rows, which collides on the
+  // exclusion constraint and can never exercise the rule-date key.
+  //
+  // So this block gives its two instances NON-OVERLAPPING spans, and that has
+  // to be arranged deliberately since #327. Where the dropped
+  // `Class_teacher_slot_unique` was an exact `(teacherId, date, startTime)`
+  // match — so any distinct minute kept it quiet — the exclusion constraint is
+  // a RANGE overlap, and two 60-minute instances a quarter-hour apart violate
+  // BOTH constraints. Which one Postgres then reports is decided by index OID
+  // order, i.e. by the order the DDL happened to run, and that is NOT stable
+  // across databases: measured 2026-08-26, `ethical_yoga` has the rule-date
+  // key at the lower OID and `ethical_yoga_test` has the exclusion constraint
+  // there, so the identical move reports a different code in each. Disjoint
+  // spans are what make this case about the rule-date key on any database
+  // rather than about which migration ran first.
+  describe("PUT /api/classes/[id] collides on the rule's own (scheduleRuleId, date) key (#196)", () => {
     let templateDateTemplateId: string;
     let templateDateScheduleRuleId: string;
 
@@ -1062,11 +1072,14 @@ describe('PUT /api/classes/[id]', () => {
             status: 'open',
           });
       const sibling = await makeInstance('2099-09-02', '07:00');
-      // Distinct startTime from `sibling`'s, deliberately: the slot key
-      // (teacherId, date, startTime) must NOT also fire here — this test
-      // exists to prove the older (templateId, date) key is reachable on
-      // its own, with no help from the newer one.
-      const mover = await makeInstance('2099-09-09', '07:15');
+      // FOUR HOURS clear of `sibling`, not the fifteen minutes this used to
+      // carry: `CalendarEntry_teacher_slot_excl` must NOT also fire when the
+      // move lands, and at 60 minutes a side only a gap wider than the
+      // duration guarantees that. This test exists to prove the
+      // `(scheduleRuleId, date)` key is reachable on its own, with no help
+      // from the slot constraint — see the block comment for what a
+      // double violation would leave this asserting instead.
+      const mover = await makeInstance('2099-09-09', '11:00');
 
       const res = await put(ownerToken, mover.id, { date: '2099-09-02' });
       expect(res.status).toBe(409);
@@ -1260,11 +1273,11 @@ describe('POST /api/classes', () => {
     expect(created.calendarEntry.scheduleRuleId).toBeNull();
   });
 
-  // #146. templateId is server-set — class-generator.ts writes it when a
-  // template materialises an instance, and no creation UI renders it. Sending
-  // another teacher's template id used to squat the (templateId, date) unique
-  // pair, which silently stops the victim's generator from ever filling that
-  // date.
+  // #146. The rule link is server-set — class-generator.ts writes the entry's
+  // `scheduleRuleId` when a template materialises an instance, and no creation
+  // UI renders it. Sending another teacher's template id used to squat the
+  // `(scheduleRuleId, date)` unique pair, which silently stops the victim's
+  // generator from ever filling that date.
   //
   // startTime overridden away from baseBody()'s '10:00': the previous test
   // ('creates a class against the calling teacher') already created a real row

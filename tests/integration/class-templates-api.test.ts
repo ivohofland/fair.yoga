@@ -1642,17 +1642,17 @@ describe('PUT /api/class-templates/[id]', () => {
    * observe it: a cancelled class holds its week (#194, spec §3.2).
    *
    * The probe issues two reads a few lines apart and they disagree about
-   * `cancelled` deliberately — the week read (keyed `templateId`) carries no
-   * status filter, the slot read (keyed `teacherId` + `startTime`) carries
-   * `status: { not: 'cancelled' }`. Every other case in this file leaves all
-   * four generated classes live, so neither half of that asymmetry is
-   * observable anywhere: adding `status: { not: 'cancelled' }` to the week
-   * read left the whole suite green when it was mutated. This case is one
-   * missing half and the case below is the other.
+   * cancellation deliberately — the week read (keyed `scheduleRuleId`) carries
+   * no liveness filter, the slot read (keyed `teacherId`, over the entry's
+   * span) carries `cancelledAt: null`. Every other case in this file leaves
+   * all four generated classes live, so neither half of that asymmetry is
+   * observable anywhere: adding `cancelledAt: null` to the week read left the
+   * whole suite green when it was mutated. This case is one missing half and
+   * the case below is the other.
    *
    * Adding that filter is the likely future edit, because the two reads sit in
-   * one `Promise.all` and only one of them is filtered, so "harmonising" them
-   * reads as tidying. It is the DISHONEST direction: the week it frees is one
+   * one `Promise.all` over one table and only one of them is filtered, so
+   * "harmonising" them reads as tidying. It is the DISHONEST direction: the week it frees is one
    * the sweep still refuses — `already_this_week`, asserted below — so the PUT
    * would name a week no class ever lands in.
    *
@@ -1686,9 +1686,9 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(before.length).toBe(4);
 
     // Cancelled, not deleted, and cancelled through the one column the two
-    // reads disagree about. `@@unique([templateId, date])` carries no status,
-    // so this row still holds its DATE for good (#192); what is under test is
-    // that it also still holds its WEEK.
+    // reads disagree about. `@@unique([scheduleRuleId, date])` carries no
+    // liveness, so this row still holds its DATE for good (#192); what is
+    // under test is that it also still holds its WEEK.
     const cancelled = before[0]!;
     await prisma.calendarEntry.updateMany({ where: { classes: { some: { id: cancelled.id } } }, data: { cancelledAt: new Date() } });
 

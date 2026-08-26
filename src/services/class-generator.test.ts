@@ -1195,8 +1195,8 @@ describe('generateClassInstances (DB)', () => {
      * the spec calls the only real defect: a pre-check *stricter* than the
      * index silently under-fills a window and nothing raises.
      *
-     * #196's slot key is `(teacherId, date, startTime)`, so another teacher's
-     * class can never block this one. Unscoped, every candidate date here reads
+     * `CalendarEntry_teacher_slot_excl` is scoped per teacher (`"teacherId"
+     * WITH =`), so another teacher's class can never block this one. Unscoped, every candidate date here reads
      * `slot_taken`, this teacher's window comes back empty, and the log line
      * names the wrong teacher's schedule.
      */
@@ -1515,10 +1515,12 @@ describe('generateClassInstances (DB)', () => {
       // Spec §3.2. Cancel one Tuesday, move to Thursday: that week must stay
       // empty rather than flipping to the new day for one week and back.
       // This is the one place this codebase does NOT read cancelled as free —
-      // both partial slot indexes do, and the sibling test above ("does not
-      // treat a cancelled neighbour as occupying the slot") pins that. With a
-      // `status: { not: 'cancelled' }` filter on the week read, week 2 alone
-      // would move to Thursday while weeks 1, 3 and 4 stayed Tuesday.
+      // `CalendarEntry_teacher_slot_excl` is partial on `"cancelledAt" IS
+      // NULL` and does, and the sibling test above ("does not treat a
+      // cancelled neighbour as occupying the slot") pins that. With a
+      // `cancelledAt: null` filter on the week read — which is keyed
+      // `scheduleRuleId` and deliberately carries none — week 2 alone would
+      // move to Thursday while weeks 1, 3 and 4 stayed Tuesday.
       const cancelled = new Date(TUESDAYS[1]!);
       await prisma.calendarEntry.updateMany({ where: { scheduleRule: { classTemplates: { some: { id: templateId } } }, date: cancelled }, data: { cancelledAt: new Date() } });
       await prisma.scheduleRule.update({

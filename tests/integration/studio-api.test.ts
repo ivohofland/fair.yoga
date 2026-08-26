@@ -1636,8 +1636,8 @@ describe('/api/studio-classes', () => {
 
   describe('POST /api/studio-classes is retry-safe on the slot key (#196)', () => {
     // '2027-04-12' is a date no fixture above touches, so ownerId's slot
-    // uniqueness ((teacherId, date, startTime) WHERE cancelledAt IS NULL) has
-    // nothing to collide with. The top-level afterAll clears every StudioClass
+    // exclusion (`CalendarEntry_teacher_slot_excl`, overlapping spans per
+    // teacher WHERE "cancelledAt" IS NULL) has nothing to collide with. The top-level afterAll clears every StudioClass
     // row for ownerId regardless of classType, so these need no nested one.
     const slotBody = () => ({
       classType: 'Slot Studio', date: '2027-04-12', startTime: '11:00',
@@ -1809,7 +1809,8 @@ describe('DELETE /api/studio-classes/[id]', () => {
    * case in this file still passes.
    *
    * What it would ship: removing a cancelled FUTURE generated class releases
-   * `(templateId, date)`, and that date is held only because the cancelled row
+   * its entry's `(scheduleRuleId, date)`, and that date is held only because
+   * the cancelled row
    * occupies it (`studio-class-generator.ts`, `blocked_by_cancelled`). The
    * sweep recreates the class LIVE within the hour, so a teacher's cancellation
    * silently un-cancels itself on a class students were told was off.
@@ -1837,8 +1838,8 @@ describe('DELETE /api/studio-classes/[id]', () => {
    * and "cannot regenerate". But move the template to a later hour — an
    * ordinary edit, and one CLAUDE.md guarantees leaves the class untouched —
    * and the sweep finds that later instant still ahead, finds
-   * `(templateId, date)` released by the removal, and re-inserts on the same
-   * date within the hour. A delete that undid itself.
+   * `(scheduleRuleId, date)` released by the removal, and re-inserts on the
+   * same date within the hour. A delete that undid itself.
    *
    * The template here is created at a LATER time than the class deliberately,
    * so the fixture is the divergence rather than merely a same-day class.

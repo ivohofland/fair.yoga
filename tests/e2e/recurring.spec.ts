@@ -157,7 +157,7 @@ test.describe('Recurring classes', () => {
       expect(instance.calendarEntry.date.getTime()).toBeGreaterThan(Date.now() - 24 * 3600 * 1000);
     }
 
-    // Re-firing must not duplicate — unique (templateId, date).
+    // Re-firing must not duplicate — unique (scheduleRuleId, date) on the entry.
     const second = await fire();
     expect(second.status).toBe(200);
     expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(4);

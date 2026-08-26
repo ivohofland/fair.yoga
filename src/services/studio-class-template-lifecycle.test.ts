@@ -78,9 +78,10 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
   const future = () => new Date(Date.now() + 5 * DAY);
   const past = () => new Date(Date.now() - 5 * DAY);
   const today = () => new Date();
-  // `date` truncates to a calendar day and carries `@@unique([templateId,
-  // date])`, so tests that put more than one class on the same template need
-  // distinct days — plain `future()` called twice would collide.
+  // `date` truncates to a calendar day and its entry carries
+  // `@@unique([scheduleRuleId, date])`, so tests that put more than one class
+  // on the same template need distinct days — plain `future()` called twice
+  // would collide.
   const futureOn = (daysFromNow: number) => new Date(Date.now() + daysFromNow * DAY);
 
   let teacherId: string;
@@ -759,7 +760,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
    * own pattern — `futureOn(3)` against `dayOfWeek: 3` coincides with it one
    * day in seven, so this fixture is not reliably "off pattern" and the test
    * does not depend on which it is. Duplication is not asserted separately:
-   * `@@unique([templateId, date])` makes two rows at the same date
+   * `@@unique([scheduleRuleId, date])` makes two rows at the same date
    * unrepresentable, so a count at `c`'s own date could only ever show 0 or
    * 1 and would add nothing beyond the not-deleted check below.
    */
@@ -931,7 +932,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
    * classes (not because they are income records — reporting excludes them —
    * but because they hold their dates), and the generator's existence probe has
    * no `cancelledAt` filter, so those dates cannot be regenerated either —
-   * `@@unique([templateId, date])` makes it unrepresentable. The teacher
+   * `@@unique([scheduleRuleId, date])` makes it unrepresentable. The teacher
    * therefore gets back fewer classes than the archive withdrew, and before
    * this test nothing said so.
    */

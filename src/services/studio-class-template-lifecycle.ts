@@ -15,8 +15,9 @@
  *     future class is *not* an income record: the sole `studioClass.findMany`
  *     in `settings/reporting/page.tsx` queries with `cancelledAt: null` and
  *     excludes it from earnings outright.
- *     It survives because it holds `(templateId, date)`, and a date the
- *     teacher cancelled deliberately must not be refilled on the next resume.
+ *     It survives because its entry holds `(scheduleRuleId, date)`, and a
+ *     date the teacher cancelled deliberately must not be refilled on the
+ *     next resume.
  *     Archiving leaves it standing for that reason — structurally like the
  *     class family leaving a charged registration standing, but not for the
  *     same reason. Corrected under issue 279; see `CalendarEntry.cancelledAt`
