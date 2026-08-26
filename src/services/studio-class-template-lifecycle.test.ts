@@ -1578,12 +1578,13 @@ describe('updateStudioClassTemplate (DB)', () => {
    * The twin of `class-template-lifecycle.test.ts`'s "maps a delete landing
    * between the read and the write to not_found". The class version
    * additionally clears its `Class` rows before deleting the template; that is
-   * housekeeping, **not** a constraint, and this comment used to claim
-   * otherwise. Both families' instance FK is `onDelete: SetNull` —
-   * `prisma/schema.prisma:432` for `Class.template`, `:533` for
-   * `StudioClass.template`, and `ON DELETE SET NULL` in both migrations. A
-   * reader who trusted the old wording would conclude the two schemas differ
-   * where they are identical.
+   * housekeeping, **not** a constraint. Since #327 neither family's child row
+   * references a template at all: `Class.template` and `StudioClass.template`
+   * are gone, and the edge that survives is the one both families now share,
+   * `CalendarEntry.scheduleRule` (`onDelete: SetNull`,
+   * `prisma/schema.prisma`). So the two families are identical here for a
+   * stronger reason than they were — one relation rather than two matching
+   * ones.
    *
    * Interposed rather than raced: the extension performs the real read and
    * then deletes the row before returning it, which *is* the interleaving the

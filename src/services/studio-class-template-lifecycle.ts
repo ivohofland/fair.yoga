@@ -578,7 +578,7 @@ export async function updateStudioClassTemplate(
       async (tx): Promise<UpdateStudioClassTemplateResult> => {
         // Bounds the wait for this row. Two siblings hold it long enough to
         // matter, on the same 10s budget: `archiveOrUnarchiveStudioTemplate`'s
-        // CAS holds it through a `studioClass.deleteMany` and a count, and
+        // CAS holds it through a `calendarEntry.deleteMany` and a count, and
         // `pauseOrResumeStudioTemplate`'s holds it from its CAS through the
         // generation claim and generation itself. So a concurrent edit really
         // can queue behind one. (This said "deletes and generates" of the

@@ -20,6 +20,19 @@ import { readFileSync } from 'fs';
  * appears first and both pins would follow the same one. Slicing to the named
  * function is what keeps them independent.
  *
+ * `migrationDir` MUST NAME THE MIGRATION HOLDING THE LIVE DEFINITION, which is
+ * not always the one that declared the function. A later migration may
+ * `CREATE OR REPLACE` it, and this helper would then read a superseded body and
+ * compare a constant against SQL no database is running — a pin that passes on
+ * dead text. It has already happened on the object next door:
+ * `entry_reject_frozen_schedule_change` was declared in the rewire and replaced
+ * in `20260826140000_entry_guard_restorations`. No caller is wrong today; the
+ * only defence is that a caller picks its directory deliberately. To check one:
+ *
+ *   grep -rln 'CREATE OR REPLACE FUNCTION <name>' prisma/migrations/
+ *
+ * More than one hit means the LAST of them is the live body.
+ *
  * `OLD` or `NEW`: the guard reads `OLD.status` (a terminal class cannot leave
  * its status), the sync trigger reads `NEW.status` (a class REACHING a
  * terminal status stamps the entry's marker). Same set, opposite tense.

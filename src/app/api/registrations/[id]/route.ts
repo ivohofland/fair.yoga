@@ -242,8 +242,7 @@ export const DELETE = withErrorHandler(async (
   if (isStudent) {
     const hours = DEADLINE_HOURS[registration.class.cancelDeadline] ?? 24;
     const classStart = classStartInstant(
-      registration.class.calendarEntry.date,
-      registration.class.calendarEntry.startTime,
+      registration.class.calendarEntry,
       registration.class.calendarEntry.teacher.defaultTimezone,
     );
     const deadline = new Date(classStart.getTime() - hours * 60 * 60 * 1000);

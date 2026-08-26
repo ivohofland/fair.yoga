@@ -681,6 +681,84 @@ describe('updateClassTemplate (DB)', () => {
     await prisma.scheduleRule.deleteMany({ where: { teacherId: solo.teacherId } });
   });
 
+  /**
+   * #327. The holder OVERLAPS the candidate without starting on the same
+   * minute, and it is the teacher's OWN family — the ordinary case a range
+   * constraint made reachable and an exact-start key never could.
+   *
+   * The probe read `startTime: hhmmToTime(template.startTime)` until this
+   * test, so it counted this date as free and named its week. The generator
+   * decides with `spansOverlap` and declines it (`blocked_by_overlap`), so the
+   * prediction landed EARLIER than the sweep delivers — the dishonest
+   * direction, and #194's original failure. The two now decide with the same
+   * function.
+   *
+   * `23:59` for the template, as the two cases above: it keeps today's
+   * occurrence out of reach of the probe's already-started filter, which would
+   * otherwise move the answer a week for a reason that is not what this pins.
+   * The holder at `23:30` runs into it from behind — 23:30–00:30 against
+   * 23:59–00:59 — so the spans overlap and the start times differ, which is
+   * the whole of the case.
+   */
+  it('declines a date an OVERLAPPING same-family class holds, not just an identical start', async () => {
+    const solo = await seedTeacher('overlap-probe');
+    const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
+    const template = await prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId: solo.teacherId,
+            kind: 'regular',
+            classType: 'Overlap Probe',
+            dayOfWeek: todaySchemaDay,
+            startTime: hhmmToTime('23:59'),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: solo.teacherRoomId } },
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+      },
+    });
+
+    const occurrences = getNextOccurrences(todaySchemaDay, new Date(), 2);
+    const blocked = occurrences[0]!;
+    const nextWeek = occurrences[1]!;
+
+    await createClassFixture(prisma, {
+      teacherId: solo.teacherId,
+      teacherRoomId: solo.teacherRoomId,
+      scheduleRuleId: null,
+      classType: 'Overlap Holder',
+      date: blocked,
+      startTime: hhmmToTime('23:30'),
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 2,
+      maxStudents: 8,
+      status: 'open',
+    });
+
+    const result = await updateClassTemplate(prisma, template.id, solo.teacherId, {
+      classType: 'Overlap Probe, Renamed',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.firstEffective).not.toBeNull();
+    expect(result.firstEffective!.getTime()).toBe(mondayOf(nextWeek));
+    expect(result.firstEffective!.getTime()).not.toBe(mondayOf(blocked));
+
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: solo.teacherId } });
+    // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298), so deleting the rule removes the template with it.
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: solo.teacherId } });
+  });
+
   it('drops an occurrence whose start has already passed, exactly as the sweep does', async () => {
     const solo = await seedTeacher('past-start');
     const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
@@ -2348,7 +2426,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
     await pauseOrResumeTemplate(prisma, t.id, teacherId, 'paused');
 
     const candidates = getNextOccurrences(3, new Date(), 5)
-      .filter((d) => classStartInstant(d, hhmmToTime('09:30'), 'UTC') > new Date())
+      .filter((d) => classStartInstant({ date: d, startTime: hhmmToTime('09:30') }, 'UTC') > new Date())
       .slice(0, 4);
     await createClassFixture(prisma, {
         teacherId,

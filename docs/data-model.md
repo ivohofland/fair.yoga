@@ -248,7 +248,7 @@ active/archived state, and the cross-family slot rule.
 | start_time | time | |
 | duration_minutes | int | |
 | cancelled_at | datetime, nullable | Liveness, for both families — one column where `Class.status = 'cancelled'` and `StudioClass.cancelled_at` used to be two spellings |
-| class_completed_at | datetime, nullable | The owning class completed. Written only by the `class_sync_entry_completed` triggers, never from TypeScript |
+| class_completed_at | datetime, nullable | The owning class completed. Written only by the `class_sync_entry_completed` triggers, and write-once: `entry_completion_marker_guard` refuses every departure from a value it has set, because the schedule freeze reads this column and clearing it in one statement unfroze `date` in the next |
 | *schedule_rule_id* (FK) | → ScheduleRule, nullable | Null for one-off entries. Unique with `date` |
 | **Timestamps** | | |
 | created_at | datetime | |
@@ -268,6 +268,35 @@ refill a date the teacher deliberately cancelled.
 
 `Class` and `StudioClass` below hold only their own economics now — they reach
 their teacher, and everything calendar-shaped, through this row.
+
+**An entry with no child holds a slot nobody can see, and nothing in the schema
+forbids one.** Every entry is meant to have exactly one child. There is no
+totality constraint and that is deliberate (stage B design §8): what makes the
+pair total is a property of the WRITERS — every creator writes parent and child
+in one transaction, nested — not of the schema, and PostgreSQL has no way to
+say "this row must be referenced" without a deferred constraint trigger per
+child table. So the invariant is real, unenforced, and its violation is silent:
+an orphan is visible on no page, reachable by no route and removed by no sweep,
+while its live `span` goes on occupying
+`CalendarEntry_teacher_slot_excl` for its teacher. The symptom is a
+teacher — or a fixture — being refused a time that looks free.
+
+Cheap to detect, expensive to diagnose from the symptom. Expect **zero rows**:
+
+```sql
+SELECT e.id, e.kind, e."teacherId", e.date, e."startTime", e."cancelledAt"
+  FROM "CalendarEntry" e
+ WHERE NOT EXISTS (SELECT 1 FROM "Class" c        WHERE c."calendarEntryId" = e.id)
+   AND NOT EXISTS (SELECT 1 FROM "StudioClass" s  WHERE s."calendarEntryId" = e.id);
+```
+
+Both local databases held some when #327's whole-branch review ran — 8 of 37 in
+`ethical_yoga`, 46 of 155 in `ethical_yoga_test`. All were test residue from a
+teardown that deleted the CHILD and left the parent standing, the shape
+`ca3418aa` fixed across ~25 suites; none appeared after it. If this query ever
+returns rows again, look for a `class.deleteMany`/`studioClass.deleteMany`
+where a `calendarEntry.deleteMany` belongs — deleting the entry cascades to the
+child, and the reverse does not.
 
 ### Class (single class instance)
 
@@ -459,7 +488,7 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
 - **A `Teacher` hard-delete cascades through `ScheduleRule`, not directly to `ClassTemplate`/`StudioClassTemplate`** (#298) — one hop further out than `TeacherRoom`, whose `ClassTemplate_teacherRoomId_fkey` is `ON DELETE RESTRICT`. Measured in a rolled-back transaction against the real constraints: a single `DELETE FROM "Teacher"` still succeeds cleanly and every dependent row goes, because PostgreSQL defers a `NOT DEFERRABLE` foreign-key check to the end of the enclosing statement, and by then the sibling `ON DELETE CASCADE` from `Teacher` through `ScheduleRule` has already removed the `ClassTemplate`/`StudioClassTemplate` row the RESTRICT check would otherwise block on. That deferral is a property of one statement, not of the transaction: nothing in `src/` issues a hard `teacher.delete` today (erasure soft-deletes, per `deleteTeacherAccount`), but wherever tests tear a teacher down by hand across separate `deleteMany` calls, `scheduleRule.deleteMany` must run before `teacherRoom.deleteMany` — reversed, the `teacherRoom.deleteMany` hits the still-live `ClassTemplate`/`StudioClassTemplate` row and fails on `ClassTemplate_teacherRoomId_fkey`, measured the same way.
 - **tier_at_booking** on Registration captures the student's income tier at the moment they booked. The student's global tier on the Student table can change anytime, but pricing uses the tier at booking time. This also serves as income history — no separate tracking table needed.
 - **settings_locked** on Class flips to true when the first Registration is created. After that, economic fields (room_cost, min_rate, target_rate, min_students, max_students) are immutable.
-- **Terminal status is the second, wider freeze** (#247). Once a Class is `completed` or `cancelled`, `updateClass` refuses every field edit — the class, not a column list — and `PUT /api/classes/[id]` answers 409. It never lifts. The entry's schedule is additionally frozen in the database by `entry_frozen_schedule_guard`, because the waitlist retention sweep above deletes on a terminality-plus-date predicate and reads that column before it does; since #327 it covers `date`, `start_time` and `duration_minutes`, all three of which moved to `CalendarEntry` together. `entry_terminal_liveness_guard` freezes `cancelled_at` beside it, for regular entries only — a studio cancellation is reversible. Both triggers are narrower than the service on purpose, so the two layers are not the same rule twice, and both decide from the entry's own columns (`cancelled_at`, `class_completed_at`) rather than reaching back for `Class.status` — see `docs/lock-order.md` for why that direction matters.
+- **Terminal status is the second, wider freeze** (#247). Once a Class is `completed` or `cancelled`, `updateClass` refuses every field edit — the class, not a column list — and `PUT /api/classes/[id]` answers 409. It never lifts. The entry's schedule is additionally frozen in the database by `entry_frozen_schedule_guard`, because the waitlist retention sweep above deletes on a terminality-plus-date predicate and reads that column before it does; since #327 it covers `date`, `start_time` and `duration_minutes`, all three of which moved to `CalendarEntry` together. `entry_terminal_liveness_guard` freezes `cancelled_at` beside it, for regular entries only — a studio cancellation is reversible — and `entry_completion_marker_guard` makes `class_completed_at` write-once, which is what stops the freeze being walked around in two statements: every one of these is `BEFORE UPDATE OF <columns>` and `UPDATE OF` fires on a column's presence in the SET list, so a guard reading `OLD` is only as immovable as the columns its `OLD` depends on. All three are narrower than the service on purpose, so the two layers are not the same rule twice, and all three decide from the entry's own columns (`cancelled_at`, `class_completed_at`) rather than reaching back for `Class.status` — see `docs/lock-order.md` for why that direction matters.
 - **WaitlistEntry** is a separate entity from Registration to cleanly model the hybrid promotion rules. When promoted, a new Registration is created and linked via registration_id.
 - **StudioClass** is intentionally disconnected from Room and Student entities. It's a simple log entry for the teacher's calendar and income reporting.
 - **Notification** uses a polymorphic recipient (teacher or student) so both user types share the same inbox infrastructure.

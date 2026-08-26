@@ -418,7 +418,7 @@ export async function transitionClass(
       // nothing of its own, so without this the only record of a publish
       // refusal is a 409 body the teacher reads and no one keeps.
       const entry = cls.calendarEntry;
-      const start = classStartInstant(entry.date, entry.startTime, entry.teacher.defaultTimezone);
+      const start = classStartInstant(entry, entry.teacher.defaultTimezone);
       log.info(
         {
           classId,
@@ -649,7 +649,7 @@ export async function completeClass(
         throw new TypeError('completeClass: requireEndedBy is not a valid Date');
       }
       const entry = cls.calendarEntry;
-      const start = classStartInstant(entry.date, entry.startTime, entry.teacher.defaultTimezone);
+      const start = classStartInstant(entry, entry.teacher.defaultTimezone);
       const end = new Date(start.getTime() + entry.durationMinutes * 60 * 1000);
       if (timing.requireEndedBy < end) {
         return {
@@ -842,7 +842,9 @@ void _entryUpdateFieldsAreSent;
  * a `typeof` source and earn an eslint suppression for the privilege.
  *
  * Adding a member is how a new schema field gets authorized: it grants write
- * access to a `Class` column that may be gated by business logic the plain
+ * access to a column of one of the two tables a class spans — `EntryUpdateField`
+ * above decides which, and four of the members below are `CalendarEntry`
+ * columns since #327 — and that column may be gated by business logic the plain
  * update path does not run. Before adding one, go read what actually guards
  * that column — none of these guards live in `updateClass`, which is the point:
  *   - `status`             → the lifecycle state machine (`VALID_TRANSITIONS`),
@@ -853,7 +855,10 @@ void _entryUpdateFieldsAreSent;
  *                            *reads* it, to gate `ECONOMIC_FIELDS` — so nothing
  *                            here would stop a write to the flag itself
  *   - `teacherId`          → class ownership, checked in the route
- *                            (`api/classes/[id]/route.ts`), not in this service
+ *                            (`api/classes/[id]/route.ts`), not in this service.
+ *                            A `CalendarEntry` column since #327, which is why
+ *                            `_forbiddenColumnsExist` below pins the forbidden
+ *                            list against BOTH tables' inputs
  *   - the financial totals → written only by `completeClass`
  * — because the compiler will not. For the columns above, the forbidden pin
  * below refuses the grant outright; for anything else, the judgement is yours.
@@ -1337,10 +1342,13 @@ export async function updateClass(
     const effectiveStartTime = data.startTime ?? entry.startTime;
     // Compared as instants through the same function, so a resend of the stored
     // values can never read as a move however it was serialised.
-    const effectiveStart = classStartInstant(effectiveDate, effectiveStartTime, timeZone);
+    const effectiveStart = classStartInstant(
+      { date: effectiveDate, startTime: effectiveStartTime },
+      timeZone,
+    );
     const movesStart =
       effectiveStart.getTime() !==
-      classStartInstant(entry.date, entry.startTime, timeZone).getTime();
+      classStartInstant(entry, timeZone).getTime();
     if (movesStart && startsInPast(
         { date: effectiveDate, startTime: effectiveStartTime, timeZone },
         new Date(),

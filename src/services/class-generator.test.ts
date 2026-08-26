@@ -1059,7 +1059,7 @@ describe('generateClassInstances (DB)', () => {
     /** The same four dates the generator will choose, computed the same way. */
     function candidates(now: Date): Date[] {
       return getNextOccurrences(1, now, 5)
-        .filter((d) => classStartInstant(d, hhmmToTime('09:00'), 'Europe/Amsterdam') > now)
+        .filter((d) => classStartInstant({ date: d, startTime: hhmmToTime('09:00') }, 'Europe/Amsterdam') > now)
         .slice(0, 4);
     }
 
@@ -1638,7 +1638,7 @@ describe('generateClassInstances (DB)', () => {
 
     function candidates(now: Date): Date[] {
       return getNextOccurrences(1, now, 5)
-        .filter((d) => classStartInstant(d, hhmmToTime('09:00'), 'Europe/Amsterdam') > now)
+        .filter((d) => classStartInstant({ date: d, startTime: hhmmToTime('09:00') }, 'Europe/Amsterdam') > now)
         .slice(0, 4);
     }
 

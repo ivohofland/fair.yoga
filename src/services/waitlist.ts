@@ -150,7 +150,7 @@ export function getWaitlistWindow(
 ): WaitlistWindow {
   const currentTime = now ?? new Date();
 
-  const classStart = classStartInstant(classDate, startTime, timeZone);
+  const classStart = classStartInstant({ date: classDate, startTime }, timeZone);
 
   // Calculate deadline and cutoff
   const deadlineHours = DEADLINE_HOURS[cancelDeadline];

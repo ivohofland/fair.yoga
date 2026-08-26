@@ -289,8 +289,9 @@ afterAll(async () => {
   // `class-lifecycle.test.ts`'s `transitionClass (DB)` afterAll guards
   // against. The waitlist entries are deleted too, but not because they
   // FK-reference the class: `WaitlistEntry.class` is `onDelete: Cascade`
-  // (`prisma/schema.prisma:575`), so an entry disappears with its class
-  // whether or not this line runs. It is harmless and mildly defensive,
+  // (`prisma/schema.prisma`), so a queue row disappears with its class
+  // whether or not this line runs — and the `calendarEntry.deleteMany` below
+  // takes the classes with it. It is harmless and mildly defensive,
   // nothing more — the actual FK risk below is the surviving `Class` row
   // against `teacherRoom`/`room`, which is what the ordering above guards.
   if (ownerId) {

@@ -172,12 +172,12 @@ export function ClassList({ classes, studioClasses = [], timeZone, emptyMessage 
     ...classes.map((c) => ({
       type: 'class' as const,
       data: c,
-      dateTime: classStartInstant(c.calendarEntry.date, c.calendarEntry.startTime, timeZone),
+      dateTime: classStartInstant(c.calendarEntry, timeZone),
     })),
     ...studioClasses.map((sc) => ({
       type: 'studio' as const,
       data: sc,
-      dateTime: classStartInstant(sc.calendarEntry.date, sc.calendarEntry.startTime, timeZone),
+      dateTime: classStartInstant(sc.calendarEntry, timeZone),
     })),
   ].sort((a, b) => sortDesc
     ? b.dateTime.getTime() - a.dateTime.getTime()

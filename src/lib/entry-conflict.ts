@@ -177,8 +177,14 @@ export async function probeConflictingEntry(
  *
  * `caller` is that fallback, and it is the asking family on purpose. With no
  * row to describe there is nothing to be specific about, so the message says
- * only that the slot is taken — in the words of the surface the teacher is
+ * only that the time is taken — in the words of the surface the teacher is
  * standing on.
+ *
+ * The fallback says OVERLAPS rather than naming the date and time, because
+ * `CalendarEntry_teacher_slot_excl` is a RANGE constraint (#327): the holder
+ * need share neither the requested start time nor, for a neighbour running
+ * past midnight, the requested date. "at that date and time" was true under
+ * the exact-start key it replaced and is a guess now.
  *
  * Both stored values go through a converter rather than into the template
  * literal: `startTime` is a `@db.Time` and `date` a `@db.Date`, each read back
@@ -189,7 +195,7 @@ export function entryConflictMessage(
   caller: ClassFamily,
 ): string {
   if (conflict === null) {
-    return `You already have a ${FAMILY_NOUN[caller]} at that date and time.`;
+    return `You already have a ${FAMILY_NOUN[caller]} that overlaps that time.`;
   }
   const when = `${timeToHHmm(conflict.startTime)} on ${formatDateWithYear(conflict.date)}`;
   return `You already have a ${FAMILY_NOUN[conflict.kind]} at ${when}.`;

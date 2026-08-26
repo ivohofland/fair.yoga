@@ -84,7 +84,7 @@ function blindTo(tx: Prisma.TransactionClient, model: 'calendarEntry') {
 
 const candidates = (now: Date) =>
   getNextOccurrences(DAY, now, 5)
-    .filter((d) => classStartInstant(d, hhmmToTime(TIME), ZONE) > now)
+    .filter((d) => classStartInstant({ date: d, startTime: hhmmToTime(TIME) }, ZONE) > now)
     .slice(0, 4);
 
 beforeAll(async () => {

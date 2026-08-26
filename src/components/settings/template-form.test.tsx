@@ -429,10 +429,11 @@ describe('TemplateForm', () => {
    * The gate enumerated `blockedByCancelled > 0 || slotTaken > 0`. #296 added
    * `blockedByOverlap`, the first reason reachable on CREATE that is not
    * structurally 0, and the gate did not gain the term — so a teacher whose
-   * whole window is held by the OTHER family navigated away in silence. The
+   * whole window is overlapped by classes already on their schedule navigated
+   * away in silence. The
    * path is ordinary: a manually logged studio class at that day and time does not
-   * block creating this template (the template trigger reads the sibling
-   * TEMPLATE table), so the create succeeds and the generator then declines
+   * block creating this template (the template rule reads the sibling
+   * TEMPLATE family), so the create succeeds and the generator then declines
    * every date.
    *
    * The gate is now `anyBlocked(counts)` (`@/lib/generation`), which reduces
@@ -443,7 +444,7 @@ describe('TemplateForm', () => {
    * exercised. `anyBlocked`'s own unit tests in `src/lib/generation.test.ts`
    * are what cover the reduction per member.
    */
-  it('reports a window the OTHER family holds, instead of navigating away', async () => {
+  it('reports a window already-scheduled classes overlap, instead of navigating away', async () => {
     fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
       const url = String(input);
       if (url === '/api/teacher-rooms') {
@@ -491,7 +492,7 @@ describe('TemplateForm', () => {
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
 
     expect(
-      await screen.findByText(/4 dates are held by studio classes\./i),
+      await screen.findByText(/4 dates overlap other classes on your schedule\./i),
     ).toBeInTheDocument();
     expect(routerPush).not.toHaveBeenCalled();
   });

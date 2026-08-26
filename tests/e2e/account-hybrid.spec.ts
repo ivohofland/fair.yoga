@@ -109,7 +109,17 @@ test.describe('Account hybrid: teacher joins a class', () => {
     await prisma.registration.deleteMany({ where: { classId } });
     await prisma.teacherStudent.deleteMany({ where: { teacherId: hostTeacherId } });
     await prisma.session.deleteMany({ where: { accountId: guestAccountId } });
-    await prisma.calendarEntry.deleteMany({ where: { teacherId: hostTeacherId } });
+    // Guarded, because the delete widened at #327. `class.deleteMany({ where:
+    // { teacherId } })` used to sit here; the calendar identity moved, so it is
+    // the ENTRY that carries `teacherId` and the entry that has to go (the
+    // classes ride its cascade). Prisma DROPS an `undefined` where-clause
+    // rather than matching nothing, and Playwright runs `afterAll` even when
+    // `beforeAll` threw before this id was assigned — so the unguarded form
+    // used to empty `Class` and would now empty BOTH families' calendars for
+    // every teacher in the database.
+    if (hostTeacherId) {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: hostTeacherId } });
+    }
     await prisma.teacherRoom.deleteMany({ where: { teacherId: hostTeacherId } });
     await prisma.room.deleteMany({ where: { address: { contains: suffix } } });
     await prisma.student.deleteMany({ where: { email: { contains: suffix } } });

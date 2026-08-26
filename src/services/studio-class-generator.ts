@@ -174,7 +174,7 @@ export async function generateStudioInstancesForTemplate(
   const dates = getNextOccurrences(template.scheduleRule.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
     .filter(
       (date) =>
-        classStartInstant(date, startTime, template.scheduleRule.teacher.defaultTimezone) >
+        classStartInstant({ date, startTime }, template.scheduleRule.teacher.defaultTimezone) >
         startDate,
     )
     .slice(0, DEFAULT_WEEKS);

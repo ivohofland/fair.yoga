@@ -231,7 +231,7 @@ export async function generateInstancesForTemplate(
     DEFAULT_WEEKS + 1,
   ).map((date) => ({
     date,
-    start: classStartInstant(date, startTime, template.scheduleRule.teacher.defaultTimezone),
+    start: classStartInstant({ date, startTime }, template.scheduleRule.teacher.defaultTimezone),
   }));
   const dates = starts
     .filter(({ start }) => start > startDate)
@@ -441,11 +441,11 @@ export async function generateInstancesForTemplate(
     //
     // Any live entry of this teacher whose span overlaps the candidate blocks
     // it here — a studio class at the same time, and equally a class of
-    // either family that merely runs into this one. The family-specific
-    // sentence (`resumeMessage`/`resumeStudioMessage`,
-    // `components/settings/template-action-messages.ts`) still names the
-    // OTHER family, which is right for the common case and a misnomer for the
-    // second — the conflation #288 is open about.
+    // either family that merely runs into this one. Which is why the sentence
+    // a teacher reads (`resumeMessage`/`resumeStudioMessage`,
+    // `components/settings/template-action-messages.ts`) names NO family: the
+    // reason covers holders this branch cannot tell apart. `SkipReason`'s own
+    // docblock (`@/lib/generation`) carries the four conditions it spans.
     if (live.some((e) => spansOverlap(e, candidateSpan))) {
       skipped.push({ date, reason: 'blocked_by_overlap' });
       continue;

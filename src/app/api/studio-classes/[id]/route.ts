@@ -209,19 +209,33 @@ export const PUT = withErrorHandler(async (
   // `@@unique([scheduleRuleId, date])` unreachable; relax gate 2 and this arm
   // becomes necessary, or a real collision escapes as a 500.
   try {
-    // Child then parent, matching the direction `lockClassRow` fixes for the
-    // regular family (`db-locks.ts`): every writer that touches both takes the
-    // class row before its entry — when both actually run. A body that edits
-    // only entry fields leaves `studioData` all-`undefined`; Prisma then
-    // issues no `StudioClass` write at all, so this transaction takes only
-    // the entry lock and no ordering question arises for it. The order below
+    // ENTRY THEN CHILD, which is the studio family's order everywhere and the
+    // OPPOSITE of the class family's (`lockClassRow`, `db-locks.ts`, takes
+    // `Class` before its entry). The asymmetry is not a slip: this family's
+    // other two writers of the pair are CASCADES off the entry —
+    // `archiveOrUnarchiveStudioTemplate`'s `calendarEntry.deleteMany` and this
+    // route's own DELETE — and PostgreSQL locks the parent tuple before the RI
+    // trigger reaches the child, so both acquire entry then `StudioClass` and
+    // neither has anywhere else to put its locks. Ordering this statement the
+    // class family's way made it the one writer going against them: a straight
+    // AB-BA, degrading to a retryable 503 through `TRANSIENT_SQLSTATES`.
+    // The class family resolves the same cascade the other way instead, by
+    // pre-locking every `Class` row (`lockClassRowsOrdered({ entries: true })`)
+    // before its archive's delete; there is no equivalent here because there
+    // is no other order to protect. `docs/lock-order.md` carries the pair.
+    //
+    // A body that edits only entry fields leaves `studioData` all-`undefined`,
+    // and Prisma then issues no `UPDATE` at all — measured through a query
+    // log against a single-record `update` on a model carrying `@updatedAt`:
+    // one `SELECT`, no write, `updatedAt` unmoved. So such a request takes the
+    // entry lock alone and no ordering question arises for it. The order below
     // matters for the body that touches both.
     const updated = await prisma.$transaction(async (tx) => {
-      await tx.studioClass.update({ where: { id }, data: studioData });
       const entry = await tx.calendarEntry.update({
         where: { id: studioClass.calendarEntryId },
         data: entryData,
       });
+      await tx.studioClass.update({ where: { id }, data: studioData });
       const sc = await tx.studioClass.findUniqueOrThrow({ where: { id } });
       return { ...sc, entry };
     });

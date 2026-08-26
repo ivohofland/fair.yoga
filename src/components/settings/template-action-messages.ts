@@ -146,21 +146,21 @@ export function resumeStudioMessage(
   scheduled: number,
   counts: SkipCounts,
 ): string {
-  // Shares an implementation rather than duplicating one. The two families'
-  // resume sentences were identical word for word until #296, and this
-  // docblock's promise that "a future divergence has somewhere to land" is now
-  // spent: `blockedByOverlap` is that divergence, because each family has
-  // to name the OPPOSITE half of the teacher's schedule.
+  // Shares an implementation rather than duplicating one, and shares the WHOLE
+  // of it: the two families' resume sentences are identical word for word.
+  // A separate entry point anyway, so that a resolver's call site stays
+  // family-specific and a future divergence has somewhere to land.
   //
-  // Note what this is NOT. Delegating to `resumeMessage` with
-  // `blockedByOverlap` zeroed and appending a clause afterwards was tried
-  // and is wrong: with `scheduled > 0 && added === 0` and no other cause, the
-  // delegate takes its "Nothing needed adding." branch, and the appended clause
-  // then contradicts it in the same breath — "4 classes on your schedule.
-  // Nothing needed adding. 2 dates are held by your own classes." The clause
-  // has to be part of the cause list BEFORE that branch is chosen, which means
-  // passing it in rather than bolting it on.
-  return buildResumeSentence(added, scheduled, counts, STUDIO_FAMILY_OTHER_CLAUSE);
+  // #296 was that divergence for one release and #327 took it back. Its clause
+  // named the OTHER family — "held by a studio class" — on a condition that was
+  // then "the other family holds this exact minute". `CalendarEntry_teacher_
+  // slot_excl` made the condition an OVERLAP of either family, so the sentence
+  // was false for a teacher whose own one-off class merely ran into the
+  // candidate. The clause is neutral now, and neutral is the same word on both
+  // sides. What a teacher can act on is named at the route layer instead, by
+  // the conflict probe (`lib/entry-conflict.ts`), which reads the actual
+  // holder.
+  return buildResumeSentence(added, scheduled, counts);
 }
 
 /**
@@ -196,7 +196,7 @@ export function resumeStudioMessage(
  * change with number.
  *
  * `alreadyThisWeek` (#194) is THIRD of the four causes — `blockedByOverlap`
- * (#296) was appended after it — and the order is not
+ * (#296, neutral wording since #327) was appended after it — and the order is not
  * arbitrary: every sentence pinned before it keeps the prefix it already had,
  * so the existing tests stay meaningful rather than being rewritten around a
  * new clause. It is also the reason the count is carried at all. A teacher who
@@ -213,50 +213,19 @@ export function resumeStudioMessage(
  * arguments measure.
  */
 export function resumeMessage(added: number, scheduled: number, counts: SkipCounts): string {
-  return buildResumeSentence(added, scheduled, counts, CLASS_FAMILY_OTHER_CLAUSE);
+  return buildResumeSentence(added, scheduled, counts);
 }
 
 /**
- * The `blockedByOverlap` clause, which is the ONE thing the two families
- * do not share (#296).
- *
- * Each names the opposite half of the teacher's schedule: a class template's
- * slot is held by a *studio* class, and a studio template's by one of their
- * ordinary classes. Getting these two the wrong way round is the mistake this
- * split exists to make possible to test — and note that on the studio side the
- * neighbouring `slotTaken` clause ("N dates already had a class") means another
- * STUDIO class, so "one of your own classes" is doing real work distinguishing
- * the two rather than restating them.
- *
- * Number agreement follows `alreadyThisWeek`'s clause, the nearest neighbour in
- * shape: singular pluralises the subject AND the agent, and switches is/are.
- * Matching it rather than inventing a second convention is this file's rule.
- */
-type OtherFamilyClause = (count: number) => string;
-
-const CLASS_FAMILY_OTHER_CLAUSE: OtherFamilyClause = (count) =>
-  count === 1
-    ? '1 date is held by a studio class.'
-    : `${count} dates are held by studio classes.`;
-
-const STUDIO_FAMILY_OTHER_CLAUSE: OtherFamilyClause = (count) =>
-  count === 1
-    ? '1 date is held by one of your own classes.'
-    : `${count} dates are held by your own classes.`;
-
-/**
- * Everything the two families' resume sentences share, which is all of it bar
- * the clause passed in.
+ * Everything the two families' resume sentences share, which is all of it.
  *
  * Private: the two exported entry points above are what callers use, so a
- * resolver's call site stays family-specific and cannot silently be handed the
- * wrong family's copy.
+ * resolver's call site stays family-specific even though the copy is not.
  */
 function buildResumeSentence(
   added: number,
   scheduled: number,
   counts: SkipCounts,
-  otherFamilyClause: OtherFamilyClause,
 ): string {
   const { blockedByCancelled, slotTaken, alreadyThisWeek, blockedByOverlap } = counts;
   // Assembled before the `scheduled === 0` branch, deliberately. An earlier
@@ -287,8 +256,24 @@ function buildResumeSentence(
   }
   // Last, after the three that predate it (#296). The order is a copy decision
   // and is pinned by a test, not left to how the `if`s happen to be stacked.
+  //
+  // NAMES NO FAMILY, and that is the whole of what #327 changed here. The
+  // reason this clause reports now covers four conditions — an entry of the
+  // other family overlapping, an entry of this one overlapping at a start time
+  // that is not identical, a neighbour spilling past midnight, and a manually
+  // logged class hanging off no rule — and one sentence has to be true for all
+  // four. "held by a studio class" was true for the first and false for the
+  // rest.
+  //
+  // Number agreement follows `alreadyThisWeek`'s clause, the nearest
+  // neighbour in shape: the subject, the agent and the verb all inflect.
+  // Matching it rather than inventing a second convention is this file's rule.
   if (blockedByOverlap > 0) {
-    causes.push(otherFamilyClause(blockedByOverlap));
+    causes.push(
+      blockedByOverlap === 1
+        ? '1 date overlaps another class on your schedule.'
+        : `${blockedByOverlap} dates overlap other classes on your schedule.`,
+    );
   }
 
   const head =

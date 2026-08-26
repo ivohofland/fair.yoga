@@ -20,7 +20,7 @@ const H = 60 * 60 * 1000;
  * window is `[classStart - 25h, classStart - 24h)`.
  */
 function windowClocks(startTime: string) {
-  const classStart = classStartInstant(CLASS_DATE, hhmmToTime(startTime), TZ);
+  const classStart = classStartInstant({ date: CLASS_DATE, startTime: hhmmToTime(startTime) }, TZ);
   return {
     classStart,
     autoPromote: new Date(classStart.getTime() - 48 * H),

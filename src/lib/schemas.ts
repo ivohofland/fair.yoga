@@ -72,7 +72,7 @@ const emailField = z.string().email().transform((s) => s.toLowerCase());
  * `emailField` above (HTTP) or straight out of a `*_email_lowercase_check`
  * column (Account, Student). A census at the time of writing found 8 call sites
  * and no ninth source — there is deliberately no email-change flow
- * (`prisma/schema.prisma:112-115`).
+ * (`Account`'s own docblock, `prisma/schema.prisma`).
  *
  * It exists for the ninth caller. These functions compare addresses with
  * case-SENSITIVE `findUnique` lookups, so an un-normalised argument does not

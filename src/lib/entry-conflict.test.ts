@@ -118,7 +118,7 @@ describe('probeConflictingEntry', () => {
     // and no date — no digit reaches the teacher, because every digit this
     // message could carry would come from the row the probe did not find.
     const message = entryConflictMessage(conflict, 'studio');
-    expect(message).toBe('You already have a studio class at that date and time.');
+    expect(message).toBe('You already have a studio class that overlaps that time.');
     expect(message).not.toMatch(/\d/);
   });
 
@@ -217,10 +217,14 @@ describe('entryConflictMessage', () => {
       .toBe('You already have a studio class at 19:00 on 1 Sep 2027.');
   });
 
-  it('falls back to the CALLER\'s family when nothing was found', () => {
+  // The fallback claims an OVERLAP and not a shared date and start time. Under
+  // `CalendarEntry_teacher_slot_excl`'s range predicate (#327) the holder need
+  // share neither — a neighbour running past midnight collides from the
+  // previous calendar date — so the narrower sentence would be a guess.
+  it('falls back to the CALLER\'s family, and claims only an overlap', () => {
     expect(entryConflictMessage(null, 'regular'))
-      .toBe('You already have a class at that date and time.');
+      .toBe('You already have a class that overlaps that time.');
     expect(entryConflictMessage(null, 'studio'))
-      .toBe('You already have a studio class at that date and time.');
+      .toBe('You already have a studio class that overlaps that time.');
   });
 });

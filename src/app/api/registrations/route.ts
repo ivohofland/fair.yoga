@@ -156,8 +156,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // adding a student well before class is a normal registration and
       // respects capacity like everyone else.
       const classStart = classStartInstant(
-        cls.calendarEntry.date,
-        cls.calendarEntry.startTime,
+        cls.calendarEntry,
         cls.calendarEntry.teacher.defaultTimezone,
       );
       const isWalkIn =

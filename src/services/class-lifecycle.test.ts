@@ -419,11 +419,12 @@ describe('transitionClass (DB)', () => {
   });
 
   afterAll(async () => {
-    // Not because it blocks `class.deleteMany`: `WaitlistEntry.class` is
-    // `onDelete: Cascade` (`prisma/schema.prisma:575`), so a waitlist row
+    // Not because it blocks the delete below: `WaitlistEntry.class` is
+    // `onDelete: Cascade` (`prisma/schema.prisma`), so a waitlist row
     // disappears with its class whether or not this line ever runs. What
     // actually blocks teardown is the surviving `Class` row itself, via the
-    // plain `Class.teacherRoomId` FK — `class.deleteMany` below has to run
+    // plain `Class.teacherRoomId` FK — `calendarEntry.deleteMany` below (which
+    // takes the classes with it) has to run
     // before `teacherRoom.deleteMany`/`room.delete` further down, or those
     // fail on the FK instead. Kept anyway: harmless, and mildly defensive.
     // Same shape as `completeClass (DB)`'s afterAll below and
@@ -681,7 +682,7 @@ describe('transitionClass (DB)', () => {
     // exceeding 30 minutes this fixture would silently stop discriminating and
     // the test below would pass for the wrong reason.
     expect(utcMisreading.getTime()).toBeGreaterThan(Date.now());
-    expect(classStartInstant(date, hhmmToTime(startTime), 'Europe/Amsterdam').getTime()).toBeLessThan(
+    expect(classStartInstant({ date, startTime: hhmmToTime(startTime) }, 'Europe/Amsterdam').getTime()).toBeLessThan(
       Date.now(),
     );
 
@@ -879,11 +880,12 @@ describe('completeClass (DB)', () => {
     // Clean up in dependency order: waitlist entries → payments → registrations → class → students → teacherRoom → room → teacher.
     // Filtered by teacherId, not just the fixed `classId`, so this also
     // catches the extra classes `makeClass` creates in the lock tests below.
-    // Not because it blocks `class.deleteMany`: `WaitlistEntry.class` is
-    // `onDelete: Cascade` (`prisma/schema.prisma:575`), so a waitlist row
+    // Not because it blocks the delete below: `WaitlistEntry.class` is
+    // `onDelete: Cascade` (`prisma/schema.prisma`), so a waitlist row
     // disappears with its class whether or not this line ever runs. What
     // actually blocks teardown is the surviving `Class` row itself, via the
-    // plain `Class.teacherRoomId` FK — `class.deleteMany` below has to run
+    // plain `Class.teacherRoomId` FK — `calendarEntry.deleteMany` below (which
+    // takes the classes with it) has to run
     // before `teacherRoom.delete` further down, or that fails on the FK
     // instead. Kept anyway: harmless, and mildly defensive.
     await prisma.waitlistEntry.deleteMany({ where: { class: { calendarEntry: { teacherId } } } });
@@ -1173,7 +1175,7 @@ describe('completeClass (DB)', () => {
     const row = await prisma.calendarEntry.findUniqueOrThrow({
       where: { id: cls.calendarEntryId },
     });
-    const start = classStartInstant(row.date, row.startTime, 'Europe/Amsterdam');
+    const start = classStartInstant(row, 'Europe/Amsterdam');
     const end = new Date(start.getTime() + row.durationMinutes * 60 * 1000);
 
     const result = await completeClass(prisma, cls.id, { requireEndedBy: end });

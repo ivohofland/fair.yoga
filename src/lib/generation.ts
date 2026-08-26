@@ -107,11 +107,18 @@ export type SkipReason =
    *
    * With both families in one `CalendarEntry` table behind one RANGE
    * constraint, what a generator's pre-check can see is an overlap, and an
-   * overlapping entry may be of either family. The copy still names the other
-   * half of the teacher's schedule (`resumeMessage` and `resumeStudioMessage`,
-   * `components/settings/template-action-messages.ts`), which is right for
-   * the common case and wrong for a same-family class that merely runs into
-   * the candidate — the conflation #288 is open about.
+   * overlapping entry may be of EITHER family. So the copy names none
+   * (`resumeMessage`/`resumeStudioMessage`,
+   * `components/settings/template-action-messages.ts`, whose clause reads "N
+   * dates overlap other classes on your schedule"): the member's condition
+   * covers an other-family overlap, a same-family non-identical-start overlap,
+   * a neighbour spilling past midnight and a manually logged class hanging off
+   * no rule, and one sentence has to be true for all four. Under #296's
+   * exact-start cross-family key only the first was reachable and the copy
+   * named the other family; #327 made the rest reachable and the sentence
+   * false. Naming a specific holder happens at the ROUTE layer instead, where
+   * a teacher can act on it — `lib/entry-conflict.ts` probes for the actual
+   * row.
    *
    * Distinct from `slot_taken`, which means one of this teacher's own
    * SAME-family classes starts at exactly that minute. Kept separate because
@@ -135,9 +142,10 @@ export interface GenerationResult {
 /**
  * The `SkipReason` counts `SkipCounts` carries for a caller to surface to a
  * teacher — `blockedByCancelled`, `slotTaken`, `alreadyThisWeek` and
- * `blockedByOverlap`. The fourth is the newest (#296) and is the only one
- * whose sentence differs between the two families, because each names the
- * opposite half of the teacher's schedule. The third (#194) is read the whole
+ * `blockedByOverlap`. The fourth is the newest (#296); its sentence differed
+ * between the two families for one release and no longer does, because #327
+ * made its condition one no family owns — see the member's own docblock above.
+ * The third (#194) is read the whole
  * way through:
  * `resumeMessage` names it as "N dates are still held by classes on your
  * previous day", which is what stops a resume after a day edit reporting

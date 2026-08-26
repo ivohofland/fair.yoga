@@ -221,6 +221,72 @@ constraint is `CalendarEntry_teacher_slot_excl` and the statements that join
 that wait chain are entry writes, not `Class` writes — so the rows it orders
 are one hop from the ones this section is about.
 
+## Ordering BETWEEN `StudioClass` and its `CalendarEntry` (#327)
+
+**`CalendarEntry` first, then `StudioClass`. Always — and that is the OPPOSITE
+of the section above.** Read that as a fact about the two families rather than
+as an inconsistency to tidy: the direction is not free in either family, and
+each is pinned by something that cannot move.
+
+The class family is pinned by `lockClassRow`. Ten callers take a `Class` row
+lock because `Class` is the entity they are operating on, and the entry lock
+follows; re-deciding that would re-decide all ten.
+
+The studio family is pinned by its CASCADES. Two of its three writers of the
+pair delete the entry and let `ON DELETE CASCADE` take the child —
+`archiveOrUnarchiveStudioTemplate`'s `calendarEntry.deleteMany`
+(`studio-class-template-lifecycle.ts`) and `DELETE /api/studio-classes/[id]`.
+PostgreSQL locks the parent tuple, then the RI trigger deletes the child, so
+both acquire entry then `StudioClass` with no statement to reorder. The third
+is `PUT /api/studio-classes/[id]`, which writes both rows in one transaction
+and is therefore the only one with a choice; it takes them in the cascades'
+order.
+
+The class family has the same cascade and resolves it the other way, which is
+worth seeing side by side rather than as a special case:
+`archiveOrUnarchiveTemplate`'s `calendarEntry.deleteMany` would acquire
+entry then `Class` too, and it does not, because
+`lockClassRowsOrdered(tx, { …, entries: true })` has already taken every
+`Class` row and then every entry. The delete then acquires nothing new. That
+pre-lock is what makes `Class`-first sufficient rather than merely usual, and
+it is the reason the flag is opt-in with a written verdict per call site.
+
+**No pre-lock exists for the studio pair, and none is needed.** With all three
+writers agreeing, there is no second order for one to protect against.
+`lockClassRowsOrdered` reads `FROM "Class"` and cannot serve this family
+without becoming a different function; a studio equivalent would add wait edges
+to defend an order nothing takes.
+
+**The two orders do not compose into a cycle.** The edges are
+`Class → CalendarEntry` and `CalendarEntry → StudioClass`; a cycle needs
+something acquiring `StudioClass` before `Class` or before an entry, and
+nothing does — no `SELECT … FOR UPDATE` names `StudioClass` anywhere in `src/`,
+and the only transaction touching both families' children is
+`deleteTeacherAccount`, whose `Class` locks all come from
+`lockClassRowsOrdered` and which writes no `StudioClass` row. Re-derive the
+three claims with:
+
+    # (a) nothing takes an explicit StudioClass row lock — expect NO output
+    grep -rn '"StudioClass"' --include='*.ts' src/ | grep -v '\.test\.ts:' \
+      | grep -E 'FOR UPDATE|FOR NO KEY UPDATE'
+
+    # (b) direct StudioClass writers — expect TWO, the PUT's `update` and
+    #     `studio-class-generator.ts`'s `createMany` (an insert takes no
+    #     existing row's lock, so the PUT is the only one that can acquire one
+    #     outside a cascade)
+    grep -rnE 'studioClass\.(update|updateMany|delete|deleteMany|createMany)' \
+      --include='*.ts' src/ | grep -v '\.test\.ts:' | grep -vE ':[0-9]+: *(\*|//)'
+
+    # (c) the cascade side — expect THREE `CalendarEntry` deleters: the studio
+    #     DELETE route, the studio archive, and the class archive (which is the
+    #     one with a pre-lock in front of it)
+    grep -rnE 'calendarEntry\.(delete|deleteMany)\(' --include='*.ts' src/ \
+      | grep -v '\.test\.ts:'
+
+The filter on (b) drops prose: this codebase discusses these statements more
+often than it issues them, the same reason the class section's own grep needs
+its third filter.
+
 ### How that enumeration was derived
 
 Mechanically, not by recall — the defect being fixed was an incomplete list

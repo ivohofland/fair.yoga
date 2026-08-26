@@ -157,10 +157,32 @@ export function mondayOf(date: Date): number {
  * UTC accessors — a `time` column carries no zone of its own, so the hour and
  * minute it reports are exactly the wall-clock digits stored).
  *
+ * THE PAIR IS ONE OBJECT, not two positional arguments, because both halves
+ * are `Date`s and a transposition compiles. It also does not fail loudly:
+ * a `@db.Time` value is pinned to 1970-01-01 and a `@db.Date` value is at
+ * midnight, so a swap returns 1970-01-01T00:00 with no NaN anywhere — every
+ * class reads as long past, and `startsInPast` below then refuses every write
+ * it guards. Naming the fields removes the failure mode at the type level.
+ * Most callers hold a `CalendarEntry` and pass it whole; the generators build
+ * a literal from a candidate date and a template's time, which names the
+ * fields just as well.
+ *
+ * A BRANDED `Date` was weighed and does not work here: `startTime` arrives
+ * from Prisma as a plain `Date` on every read of `CalendarEntry`, so a brand
+ * only `hhmmToTime` could mint would need a cast at each of those sites, and
+ * a cast per call site is the hazard rather than a fix for it.
+ *
+ * `timeZone` stays positional: it is a `string` against an object, so it
+ * cannot join the swap.
+ *
  * Unknown timezones fall back to UTC interpretation rather than throwing —
  * a wrong-but-bounded answer beats a crashed cron run.
  */
-export function classStartInstant(classDate: Date, startTime: Date, timeZone: string): Date {
+export function classStartInstant(
+  cls: { date: Date; startTime: Date },
+  timeZone: string,
+): Date {
+  const { date: classDate, startTime } = cls;
   const d = new Date(classDate);
   const hours = startTime.getUTCHours();
   const minutes = startTime.getUTCMinutes();
@@ -271,16 +293,22 @@ export function isoOrNull(date: Date): string | null {
  * a value the guard can still reason about, where this one has no start
  * instant at all.
  *
- * THE SCHEDULING TRIPLE IS STILL ONE OBJECT, not positional arguments:
- * restructuring this signature is outside what changing `startTime`'s type
- * needs to touch.
+ * THE SCHEDULING TRIPLE IS ONE OBJECT, not positional arguments — and so is
+ * `classStartInstant`'s pair since #327. That function kept a positional
+ * signature while `startTime` was a `string`, when the swappable adjacency was
+ * `startTime`/`timeZone` and a swap fed `'Europe/Amsterdam'` to an `HH:mm`
+ * parser: NaN, and this function's fail-closed rule below then refused
+ * everything, loudly. The extraction moved the adjacency rather than removing
+ * it — `date` and `startTime` are both `Date` now — and made it QUIETER, since
+ * a swap of those two produces a valid instant in 1970. Both functions name
+ * their fields for that reason.
  */
 export function startsInPast(
   cls: { date: Date; startTime: Date; timeZone: string },
   now: Date,
 ): boolean {
   const { date: classDate, startTime, timeZone } = cls;
-  const start = classStartInstant(classDate, startTime, timeZone);
+  const start = classStartInstant(cls, timeZone);
   if (Number.isNaN(start.getTime())) {
     log.warn(
       // Through `isoOrNull`, because this is the one branch reached by inputs

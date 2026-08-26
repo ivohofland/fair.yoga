@@ -37,6 +37,7 @@ import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
+import { spansOverlap } from '@/lib/generation';
 import { isTransientDbError } from '@/lib/api-errors';
 import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 // Server-only (pino). Safe here: this module's sole importer is
@@ -607,8 +608,8 @@ export type UpdateClassTemplateResult =
  *     generator's loop decides with. That sharing is the point of the
  *     function existing.
  *   - `slot_taken` (#196) and `blocked_by_overlap` (#296) — somebody
- *     ELSE's row: another LIVE entry of this teacher at the same
- *     `(date, startTime)`. Invisible to a rule-keyed read, which is why there
+ *     ELSE's row: another LIVE entry of this teacher whose SPAN overlaps the
+ *     candidate's. Invisible to a rule-keyed read, which is why there
  *     is a SECOND read. Missing it made the prediction land EARLIER than the
  *     sweep delivers, which is the dishonest direction: rule 1 of #194 leaves
  *     a moved-off template's instances standing, so a second template edited
@@ -616,6 +617,11 @@ export type UpdateClassTemplateResult =
  *     occupied. The two reasons took two reads until #327 put both families
  *     in one `CalendarEntry`; they take one now, and the probe does not tell
  *     them apart because the answer it gives is the same either way.
+ *
+ *     Overlap rather than an identical start time, and that distinction is
+ *     #327's: the constraint behind both reasons is a RANGE now. A read keyed
+ *     on `startTime` reproduced neither reason fully, and erred in the
+ *     dishonest direction while this bullet claimed it reproduced both.
  *   - `raced` — **not reproduced, and not reproducible.** It is a concurrent
  *     insert landing between the generator's pre-check and its write, so at
  *     probe time it has not happened yet and there is nothing to read. Its
@@ -666,8 +672,9 @@ async function probeFirstEffectiveWeek(
         },
         select: { date: true },
       }),
-      // The dates whose slot is already taken, mirroring the generator's own
-      // predicate: this teacher's LIVE entries at this template's `startTime`.
+      // This teacher's LIVE entries on the candidate dates, whatever their
+      // start time — the SPAN comparison happens below, in `spansOverlap`, the
+      // same function the generator's own pre-check decides with.
       // `cancelledAt: null` rather than no filter, matching
       // `CalendarEntry_teacher_slot_excl`'s partial scope (`WHERE
       // "cancelledAt" IS NULL`) — the opposite of the read above, and for the
@@ -684,28 +691,48 @@ async function probeFirstEffectiveWeek(
       // this function's own docblock calls the dishonest direction. With one
       // occupancy table that blindness is not expressible.
       //
-      // Still EXACT-START rather than overlap-based, unlike the generator's
-      // own pre-check: this probe answers "which week can the new schedule
-      // first reach", and a partial overlap that the generator would decline
-      // would make this answer later than delivered — the honest direction.
+      // OVERLAP, NOT EXACT START, and that is the SAME defect one shape over.
+      // #327 made `CalendarEntry_teacher_slot_excl` a RANGE constraint, so a
+      // generator declines a candidate that merely runs into a neighbour. An
+      // exact-start read here counts such a date as free, names a week the
+      // sweep then skips, and lands EARLIER than delivered — the dishonest
+      // direction again, and #194's original failure. Erring the other way is
+      // not on offer: matching the generator exactly is what makes the answer
+      // right rather than merely safe.
       db.calendarEntry.findMany({
         where: {
           teacherId: template.teacherId,
-          startTime: hhmmToTime(template.startTime),
           cancelledAt: null,
           date: { in: [...horizon] },
         },
-        select: { date: true },
+        select: { date: true, startTime: true, durationMinutes: true },
       }),
     ]);
 
     const heldWeeks = new Set(ownRows.map((e) => mondayOf(e.date)));
+    // What every candidate would occupy — one span for the whole horizon,
+    // since a template has one start time and one duration. Built exactly as
+    // `generateInstancesForTemplate` builds its own `candidateSpan`, so the
+    // two cannot disagree about which dates are reachable.
+    const candidateSpan = {
+      startTime: hhmmToTime(template.startTime),
+      durationMinutes: template.durationMinutes,
+    };
     // Both families' slot holders in one set, which is now what the table is
     // rather than something this function assembles. They are not told apart,
     // and deliberately: a date is unreachable for the same reason whichever
     // family holds it. The GENERATOR tells them apart, because its two reasons
     // carry two different remedies for the teacher.
-    const takenDates = new Set(slotHolders.map((e) => e.date.getTime()));
+    //
+    // `spansOverlap` is same-date-only and the read above supplies that. It
+    // therefore misses a neighbour spilling over midnight into a candidate,
+    // exactly as the generator's pre-check does — so the two agree on that
+    // case too, and the constraint refuses it at insert either way.
+    const takenDates = new Set(
+      slotHolders
+        .filter((e) => spansOverlap(e, candidateSpan))
+        .map((e) => e.date.getTime()),
+    );
 
     // Removed from the candidates rather than folded into `heldWeeks`. Folding
     // would be shorter and would say something false: a taken slot does not
@@ -1076,7 +1103,7 @@ export async function updateClassTemplate(
   const now = new Date();
   const horizon = getNextOccurrences(updated.dayOfWeek, now, DEFAULT_WEEKS * 2).filter(
     (date) =>
-      classStartInstant(date, hhmmToTime(updated.startTime), template.scheduleRule.teacher.defaultTimezone) >
+      classStartInstant({ date, startTime: hhmmToTime(updated.startTime) }, template.scheduleRule.teacher.defaultTimezone) >
       now,
   );
 

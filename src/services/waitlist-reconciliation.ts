@@ -469,8 +469,7 @@ function broadcastStillStands(cls: CandidateClass): boolean {
   if (cls.spotBroadcastAt === null) return false;
 
   const classStart = classStartInstant(
-      cls.calendarEntry.date,
-      cls.calendarEntry.startTime,
+      cls.calendarEntry,
       cls.calendarEntry.teacher.defaultTimezone,
     );
   const claimWindowStart = new Date(

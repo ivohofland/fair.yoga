@@ -503,16 +503,23 @@ describe('resumeMessage (class)', () => {
   });
 
   /**
-   * #296. The first clause the two families do NOT share: each names the
-   * OTHER half of the teacher's schedule, so the class family says "a studio
-   * class" and the studio family says "one of your own classes".
+   * The `blockedByOverlap` clause (#296), NEUTRAL since #327.
    *
-   * Asserted as whole sentences rather than `toContain`, because the thing
-   * that can go wrong here is the two families getting each other's sentence —
-   * a swap that every substring check in the obvious shape ("contains
-   * 'studio'") would pass.
+   * It used to name the other family — "held by a studio class" for a class
+   * template, "one of your own classes" for a studio one — on a condition that
+   * was then "the other family holds this exact minute". #327 replaced the
+   * two per-family slot keys with one RANGE constraint over both, so the
+   * reason a generator raises now also covers a SAME-family class that merely
+   * overlaps: a teacher with a Tuesday 19:00 template and a one-off ordinary
+   * class at 20:00 on one of those Tuesdays was told a studio class held the
+   * date, and had none. The sentence has to be true for every condition the
+   * reason carries, so it names none of them.
+   *
+   * Asserted as whole sentences rather than `toContain`: the wording is what
+   * this is about, and a substring check would pass a sentence that had
+   * silently regained a family.
    */
-  it('names the studio family when it holds a class-family slot', () => {
+  it('names no family, because the reason no longer identifies one', () => {
     expect(
       resumeMessage(0, 4, {
         blockedByCancelled: 0,
@@ -520,7 +527,7 @@ describe('resumeMessage (class)', () => {
         alreadyThisWeek: 0,
         blockedByOverlap: 2,
       }),
-    ).toBe('4 classes on your schedule. 2 dates are held by studio classes.');
+    ).toBe('4 classes on your schedule. 2 dates overlap other classes on your schedule.');
   });
 
   it('says it in the singular for one date', () => {
@@ -531,10 +538,10 @@ describe('resumeMessage (class)', () => {
         alreadyThisWeek: 0,
         blockedByOverlap: 1,
       }),
-    ).toBe('4 classes on your schedule. 1 date is held by a studio class.');
+    ).toBe('4 classes on your schedule. 1 date overlaps another class on your schedule.');
   });
 
-  it('orders the other-family clause after the three that predate it', () => {
+  it('orders the overlap clause after the three that predate it', () => {
     // The cause order is `slotTaken`, `blockedByCancelled`, `alreadyThisWeek`,
     // then this one. Pinned because the order is a copy decision, not an
     // accident of how the `if`s happen to be stacked.
@@ -546,87 +553,78 @@ describe('resumeMessage (class)', () => {
         blockedByOverlap: 4,
       }),
     ).toBe(
-      '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates. 3 dates are still held by classes on your previous day. 4 dates are held by studio classes.',
+      '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates. 3 dates are still held by classes on your previous day. 4 dates overlap other classes on your schedule.',
     );
   });
 });
 
-describe('resumeStudioMessage names the class family, where resumeMessage names the studio one', () => {
-  it('names the class family when it holds a studio-family slot', () => {
-    expect(
-      resumeStudioMessage(0, 4, {
-        blockedByCancelled: 0,
-        slotTaken: 0,
-        alreadyThisWeek: 0,
-        blockedByOverlap: 2,
-      }),
-    ).toBe('4 classes on your schedule. 2 dates are held by your own classes.');
+describe('the overlap clause claims no family on either side', () => {
+  // Both directions of the mistake #327 made reachable, pinned as the exact
+  // words rather than as a difference between the two functions — there is no
+  // difference to assert any more, and asserting one would re-create the split
+  // this deleted.
+  it('does not tell a class-template teacher that a studio class holds the date', () => {
+    const msg = resumeMessage(0, 4, {
+      blockedByCancelled: 0,
+      slotTaken: 0,
+      alreadyThisWeek: 0,
+      blockedByOverlap: 2,
+    });
+    expect(msg).not.toContain('studio');
   });
 
-  it('says it in the singular for one date', () => {
-    expect(
-      resumeStudioMessage(0, 4, {
-        blockedByCancelled: 0,
-        slotTaken: 0,
-        alreadyThisWeek: 0,
-        blockedByOverlap: 1,
-      }),
-    ).toBe('4 classes on your schedule. 1 date is held by one of your own classes.');
-  });
-
-  it('does not use the class family sentence', () => {
-    // The swap this whole split exists to prevent: telling a teacher resuming
-    // a STUDIO template that a studio class holds the slot, which is what
-    // `slot_taken` already means on that side.
+  it('does not tell a studio-template teacher that one of their own classes does', () => {
+    // On the studio side the neighbouring `slotTaken` clause ("N dates already
+    // had a class") already means another STUDIO class, so a clause saying
+    // "your own classes" was distinguishing two things it could not tell apart.
     const msg = resumeStudioMessage(0, 4, {
       blockedByCancelled: 0,
       slotTaken: 0,
       alreadyThisWeek: 0,
       blockedByOverlap: 2,
     });
-    expect(msg).not.toContain('studio class');
+    expect(msg).toBe('4 classes on your schedule. 2 dates overlap other classes on your schedule.');
+    expect(msg).not.toContain('your own');
   });
 });
 
-describe('the two families resume with one sentence, except where they must not', () => {
-  // NARROWED at #296, not deleted. The two sentences WERE word-for-word
-  // identical and `resumeStudioMessage` delegated wholesale; they now differ in
-  // exactly one clause — the one naming the other family — because each has to
-  // name the opposite half of the teacher's schedule. So this claim is still
-  // true and still worth pinning, over the counts that predate that clause.
-  //
-  // `blockedByOverlap` is deliberately 0 in every case below, and that is
-  // the whole narrowing: the divergent clause has its own tests above, which
-  // assert the two families produce DIFFERENT sentences for a non-zero value.
-  // Widening these cases to a non-zero sixth column would not strengthen this
-  // test, it would falsify it.
+describe('the two families resume with one sentence', () => {
+  // WHOLE again. #296 narrowed this to "except where they must not" by giving
+  // the `blockedByOverlap` clause a per-family wording; #327 made that wording
+  // neutral, because the reason stopped identifying a family. So the cases
+  // below carry NON-ZERO `blockedByOverlap` values too — under the narrowed
+  // claim those were the counter-examples, and under this one they are the
+  // newest thing worth agreeing about.
   it('answers identically for every case pinned above', () => {
     // The fifth column is `alreadyThisWeek` (#194). It is 0 in production on
     // the studio side until #284 gives that generator a producer for the
     // reason — but the two functions must still answer identically when it is
     // not, or the delegation has a hole exactly where the newest count lives.
-    const cases: Array<[number, number, number, number, number]> = [
-      [4, 4, 0, 0, 0],
-      [0, 4, 0, 0, 0],
-      [3, 4, 0, 1, 0],
-      [0, 0, 4, 0, 0],
-      [0, 0, 1, 0, 0],
-      [0, 2, 1, 1, 0],
-      [0, 0, 0, 4, 0],
-      [0, 0, 2, 2, 0],
-      [1, 1, 0, 0, 0],
-      [0, 0, 0, 0, 0],
-      [0, 4, 0, 0, 4],
-      [0, 4, 0, 0, 1],
-      [0, 4, 2, 1, 3],
-      [0, 0, 0, 0, 2],
+    const cases: Array<[number, number, number, number, number, number]> = [
+      [4, 4, 0, 0, 0, 0],
+      [0, 4, 0, 0, 0, 0],
+      [3, 4, 0, 1, 0, 0],
+      [0, 0, 4, 0, 0, 0],
+      [0, 0, 1, 0, 0, 0],
+      [0, 2, 1, 1, 0, 0],
+      [0, 0, 0, 4, 0, 0],
+      [0, 0, 2, 2, 0, 0],
+      [1, 1, 0, 0, 0, 0],
+      [0, 0, 0, 0, 0, 0],
+      [0, 4, 0, 0, 4, 0],
+      [0, 4, 0, 0, 1, 0],
+      [0, 4, 2, 1, 3, 0],
+      [0, 0, 0, 0, 2, 0],
+      [0, 4, 0, 0, 0, 2],
+      [0, 4, 0, 0, 0, 1],
+      [0, 4, 2, 1, 3, 4],
     ];
-    for (const [added, scheduled, blocked, taken, thisWeek] of cases) {
+    for (const [added, scheduled, blocked, taken, thisWeek, overlap] of cases) {
       const counts = {
         blockedByCancelled: blocked,
         slotTaken: taken,
         alreadyThisWeek: thisWeek,
-        blockedByOverlap: 0,
+        blockedByOverlap: overlap,
       };
       expect(resumeStudioMessage(added, scheduled, counts)).toBe(
         resumeMessage(added, scheduled, counts),

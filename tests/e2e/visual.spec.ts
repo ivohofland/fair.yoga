@@ -313,7 +313,16 @@ test.describe('Visual regression', () => {
     // would add only a failure mode — Prisma drops an `undefined` where-clause
     // rather than matching nothing, and this hook still runs when beforeAll
     // threw before `teacherId` was assigned.
-    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    //
+    // Which is exactly why the delete below is now GUARDED rather than merely
+    // warned about. It widened at #327: the calendar identity moved, so it is
+    // the ENTRY that carries `teacherId` and the entry that has to go (the
+    // classes ride its cascade). The paragraph above described the hazard and
+    // the line under it walked into it, on a statement that would now empty
+    // BOTH families' calendars for every teacher in the database.
+    if (teacherId) {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    }
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });

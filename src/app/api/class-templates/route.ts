@@ -69,7 +69,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Door 4 of the room archive lifecycle (issue 76). Unlike a class — always
   // born `draft` and caught at the publish door — a template is born
-  // `isActive: true` (schema.prisma:336) and starts generating immediately,
+  // `isActive: true` (`ScheduleRule.isActive`, `prisma/schema.prisma`) and
+  // starts generating immediately,
   // so creation is itself the commitment and there is no later door to catch.
   if (teacherRoom.isArchived) {
     log.info(

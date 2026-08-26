@@ -195,8 +195,7 @@ export async function getUnreadForEmailFallback(
         createdAt: n.createdAt,
         classStart: n.relatedClass
           ? classStartInstant(
-              n.relatedClass.calendarEntry.date,
-              n.relatedClass.calendarEntry.startTime,
+              n.relatedClass.calendarEntry,
               n.relatedClass.calendarEntry.teacher.defaultTimezone,
             )
           : null,

@@ -44,7 +44,7 @@ function inCancelWindow(
   timezone: string,
   at: Date,
 ): boolean {
-  const start = classStartInstant(entry.date, entry.startTime, timezone);
+  const start = classStartInstant(entry, timezone);
   const checkHours = CANCEL_CHECK_HOURS[cls.autoCancelCheck] ?? 2;
   const checkTime = new Date(start.getTime() - checkHours * 60 * 60 * 1000);
   return at >= checkTime && at < start;
@@ -94,8 +94,7 @@ export async function autoTransitionToInProgress(
       // never cause a wrong one, because nothing here transitions: it only
       // decides whether to open a transaction and look properly.
       const start = classStartInstant(
-        cls.calendarEntry.date,
-        cls.calendarEntry.startTime,
+        cls.calendarEntry,
         cls.calendarEntry.teacher.defaultTimezone,
       );
       if (start > currentTime) continue;
@@ -155,8 +154,7 @@ export async function autoTransitionToInProgress(
         // Recomputed from `fresh`, not re-tested against the snapshot's
         // `start`. Re-testing the old instant is the defect wearing a lock.
         const freshStart = classStartInstant(
-          fresh.calendarEntry.date,
-          fresh.calendarEntry.startTime,
+          fresh.calendarEntry,
           fresh.calendarEntry.teacher.defaultTimezone,
         );
         if (freshStart > currentTime) {
@@ -614,7 +612,7 @@ export async function autoCompleteClasses(
       // already takes. A stale pre-filter can only DELAY a completion to the
       // next 60-second tick, never cause a wrong one.
       const entry = cls.calendarEntry;
-      const start = classStartInstant(entry.date, entry.startTime, entry.teacher.defaultTimezone);
+      const start = classStartInstant(entry, entry.teacher.defaultTimezone);
       const endTime = new Date(start.getTime() + entry.durationMinutes * 60 * 1000);
 
       if (currentTime >= endTime) {

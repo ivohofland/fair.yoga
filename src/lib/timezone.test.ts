@@ -78,34 +78,34 @@ describe('classStartInstant', () => {
   });
 
   it('converts Amsterdam summer time (CEST, +2) to UTC', () => {
-    const start = classStartInstant(day('2026-07-20'), hhmmToTime('18:00'), 'Europe/Amsterdam');
+    const start = classStartInstant({ date: day('2026-07-20'), startTime: hhmmToTime('18:00') }, 'Europe/Amsterdam');
     expect(start.toISOString()).toBe('2026-07-20T16:00:00.000Z');
   });
 
   it('converts Amsterdam winter time (CET, +1) to UTC', () => {
-    const start = classStartInstant(day('2026-01-20'), hhmmToTime('18:00'), 'Europe/Amsterdam');
+    const start = classStartInstant({ date: day('2026-01-20'), startTime: hhmmToTime('18:00') }, 'Europe/Amsterdam');
     expect(start.toISOString()).toBe('2026-01-20T17:00:00.000Z');
   });
 
   it('handles zones behind UTC', () => {
-    const start = classStartInstant(day('2026-07-20'), hhmmToTime('18:00'), 'America/New_York');
+    const start = classStartInstant({ date: day('2026-07-20'), startTime: hhmmToTime('18:00') }, 'America/New_York');
     expect(start.toISOString()).toBe('2026-07-20T22:00:00.000Z');
   });
 
   it('an early-morning class can start on the previous UTC day', () => {
-    const start = classStartInstant(day('2026-07-20'), hhmmToTime('00:30'), 'Europe/Amsterdam');
+    const start = classStartInstant({ date: day('2026-07-20'), startTime: hhmmToTime('00:30') }, 'Europe/Amsterdam');
     expect(start.toISOString()).toBe('2026-07-19T22:30:00.000Z');
   });
 
   it('UTC zone is the identity', () => {
-    const start = classStartInstant(day('2026-07-20'), hhmmToTime('09:15'), 'UTC');
+    const start = classStartInstant({ date: day('2026-07-20'), startTime: hhmmToTime('09:15') }, 'UTC');
     expect(start.toISOString()).toBe('2026-07-20T09:15:00.000Z');
   });
 
   it('resolves a time on the EU spring-forward day (02:30 does not exist)', () => {
     // 2026-03-29 02:00 CET jumps to 03:00 CEST. The helper must return a
     // deterministic instant on the right day, not NaN.
-    const start = classStartInstant(day('2026-03-29'), hhmmToTime('02:30'), 'Europe/Amsterdam');
+    const start = classStartInstant({ date: day('2026-03-29'), startTime: hhmmToTime('02:30') }, 'Europe/Amsterdam');
     expect(Number.isNaN(start.getTime())).toBe(false);
     // Either interpretation (+1 → 01:30Z, +2 → 00:30Z) is acceptable.
     const iso = start.toISOString();
@@ -113,13 +113,13 @@ describe('classStartInstant', () => {
   });
 
   it('falls back to UTC interpretation for an unknown timezone', () => {
-    const start = classStartInstant(day('2026-07-20'), hhmmToTime('18:00'), 'Not/AZone');
+    const start = classStartInstant({ date: day('2026-07-20'), startTime: hhmmToTime('18:00') }, 'Not/AZone');
     expect(start.toISOString()).toBe('2026-07-20T18:00:00.000Z');
   });
 
   it('warns when falling back to UTC so the bad zone is observable', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    classStartInstant(day('2026-07-20'), hhmmToTime('18:00'), 'Not/AZone');
+    classStartInstant({ date: day('2026-07-20'), startTime: hhmmToTime('18:00') }, 'Not/AZone');
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ timeZone: 'Not/AZone' }),
       expect.stringContaining('falling back to UTC'),
@@ -146,7 +146,7 @@ describe('classStartInstant', () => {
    */
   it('names the date when the date is what broke, not the startTime', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    classStartInstant(new Date('nonsense'), hhmmToTime('09:00'), 'Europe/Amsterdam');
+    classStartInstant({ date: new Date('nonsense'), startTime: hhmmToTime('09:00') }, 'Europe/Amsterdam');
 
     expect(warn).toHaveBeenCalledTimes(1);
     const [payload, message] = warn.mock.calls[0] as [Record<string, unknown>, string];
@@ -162,7 +162,7 @@ describe('classStartInstant', () => {
   // from ever reaching `hhmmToTime` in the first place.
   it('names the startTime when the startTime is what broke, not the date', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    classStartInstant(day('2026-07-20'), new Date('garbage'), 'Europe/Amsterdam');
+    classStartInstant({ date: day('2026-07-20'), startTime: new Date('garbage') }, 'Europe/Amsterdam');
 
     expect(warn).toHaveBeenCalledTimes(1);
     const [payload, message] = warn.mock.calls[0] as [Record<string, unknown>, string];

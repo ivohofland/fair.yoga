@@ -835,7 +835,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     const id = await makeTemplate(eastTeacherId, 6, '07:30');
     const tpl = await withZone(id);
     const dates = getNextOccurrences(6, now, 5)
-      .filter((d) => classStartInstant(d, hhmmToTime('07:30'), tpl.scheduleRule.teacher.defaultTimezone) > now)
+      .filter((d) => classStartInstant({ date: d, startTime: hhmmToTime('07:30') }, tpl.scheduleRule.teacher.defaultTimezone) > now)
       .slice(0, 4);
     const collide = dates[2]!;
 

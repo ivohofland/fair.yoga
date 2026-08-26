@@ -443,15 +443,15 @@ describe('StudioTemplateForm', () => {
    * PR #300 review, C2 — the studio mirror. The gate enumerated
    * `blockedByCancelled > 0 || slotTaken > 0`; #296's `blockedByOverlap` is
    * reachable on create here too (a manually logged `Class` at that day and
-   * time does not block creating a studio TEMPLATE, since the template trigger
+   * time does not block creating a studio TEMPLATE, since the template rule
    * reads `ClassTemplate`), and the window came back short in silence.
    *
-   * Note the sentence names the OTHER family — "your own classes" — where the
-   * class family's twin says "studio classes". On this side the neighbouring
-   * `slotTaken` clause already means another STUDIO class, so the distinction
-   * is doing real work rather than restating.
+   * The sentence is WORD FOR WORD the class family's, which is #327: the
+   * reason it reports covers holders of either family, so naming one was a
+   * false sentence half the time. It named "your own classes" here and "studio
+   * classes" there until then.
    */
-  it('reports a window the OTHER family holds, instead of navigating away', async () => {
+  it('reports a window already-scheduled classes overlap, instead of navigating away', async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -475,7 +475,7 @@ describe('StudioTemplateForm', () => {
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
 
     expect(
-      await screen.findByText(/2 dates are held by your own classes\./i),
+      await screen.findByText(/2 dates overlap other classes on your schedule\./i),
     ).toBeInTheDocument();
     expect(routerPush).not.toHaveBeenCalled();
   });

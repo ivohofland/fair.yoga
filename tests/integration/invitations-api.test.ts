@@ -879,7 +879,7 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
   // longer lowercases — it asserts (`requireNormalised`, src/lib/schemas.ts)
   // — so one lowercase literal is both the only representable form and the
   // correct one: `Student.email` and `Account.email` match by construction
-  // for a claimed profile (`prisma/schema.prisma:112`).
+  // for a claimed profile (`Account`'s own docblock, `prisma/schema.prisma`).
   const studentEmail = `unlink-student-${suffix}@test.local`;
 
   let studentId: string;

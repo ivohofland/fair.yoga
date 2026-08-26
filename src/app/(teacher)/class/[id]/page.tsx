@@ -149,8 +149,7 @@ export default async function ClassDetailPage({
   // that gap can be closed without a lock-discipline change; this line is
   // where the UI fix has to start.
   const classStart = classStartInstant(
-    cls.calendarEntry.date,
-    cls.calendarEntry.startTime,
+    cls.calendarEntry,
     cls.calendarEntry.teacher.defaultTimezone,
   );
   const minutesToStart = (classStart.getTime() - now) / 60_000;
