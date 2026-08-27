@@ -182,16 +182,23 @@ refusal without a deadlock. Neither is bolted onto the other.
 
 ### Redo the sum — 228 asks for this explicitly
 
-228 records `N = 2` lock-waiting statements against a 10s budget: three
-statements, of which the `findMany` is a plain read that does not wait under
-READ COMMITTED. **331 changes that count.** Splitting the nested create makes it
-four statements — parent insert, child insert, generation's `findMany`,
-generation's `createManyAndReturn` — of which **three** can wait. So
-`3 × 2s = 6s` inside a 10s budget. Headroom remains, but it is 4s, not 6s, and
-`docs/lock-order.md` asks anyone adding waits to redo this sum. Anyone adding a
-fifth waiting statement must redo it again: at `5 × 2s` the budget is gone and
-the recommendation flips, exactly as 228 records for the nine-statement figure
-that turned out to be wrong.
+228 records `N = 2` lock-waiting statements against a 10s budget. **That
+figure is wrong, and so was this spec's first correction of it.** 228 counted
+generation as one statement; it is two lock-taking writes —
+`studio-class-generator.ts:325` (`calendarEntry.createManyAndReturn`) and `:340`
+(`studioClass.createMany`), with the class family's twin at
+`class-generator.ts`. Re-derive with
+`grep -nE 'createManyAndReturn|createMany' src/services/*-generator.ts`.
+
+The real count, after 331 splits the nested create: **four** waiting statements
+— parent insert, child insert, and generation's two writes. The `findMany` is a
+plain read and does not wait under READ COMMITTED. So `4 × 2s = 8s` inside the
+10s budget, leaving **2s of headroom, not 4s**. Before 331 it was three, at 6s.
+
+That margin is thin enough to be the constraint: **a fifth waiting statement
+takes the sum to 10s and consumes the budget entirely.** `docs/lock-order.md`
+asks anyone adding waits to redo this sum, and this is the second time doing so
+has changed the answer.
 
 ### What the bound does not buy
 

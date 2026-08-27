@@ -24,9 +24,11 @@
 
 ## The lock arithmetic, which this plan changes
 
-228 recorded `N = 2` waiting statements against the 10s budget. Splitting the nested create makes the transaction four statements — parent insert, child insert, generation's `findMany`, generation's `createManyAndReturn` — of which **three** can wait on a lock (the `findMany` is a plain read and does not wait under READ COMMITTED). So `3 × 2s = 6s` inside `{ timeout: 10_000 }`, with 4s of headroom.
+228 recorded `N = 2` waiting statements against the 10s budget. **That was wrong, and this plan's first correction of it was also wrong.** Generation is two lock-taking writes, not one: `studio-class-generator.ts:325` and `:340`, and the class-family twin in `class-generator.ts`.
 
-**Anyone adding a fifth waiting statement must redo this sum**, per `docs/lock-order.md`. At `5 × 2s` the headroom is gone and the recommendation flips.
+The real count after the split is **four** waiting statements — parent insert, child insert, and generation's two writes. The `findMany` is a plain read and does not wait under READ COMMITTED. So `4 × 2s = 8s` inside `{ timeout: 10_000 }`, leaving **2s of headroom**. Re-derive with `grep -nE 'createManyAndReturn|createMany' src/services/*-generator.ts`.
+
+**A fifth waiting statement consumes the budget entirely** (`5 × 2s = 10s`). Redo this sum before adding one, per `docs/lock-order.md`.
 
 ---
 
