@@ -1850,7 +1850,7 @@ export async function pauseOrResumeTemplate(
 }
 
 /** The recurring-class family's `TemplateFamily` entry (`rule-lifecycle.ts`). */
-const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
+export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
   kind: 'regular',
   childTable: 'ClassTemplate',
   logNoun: 'recurring class',

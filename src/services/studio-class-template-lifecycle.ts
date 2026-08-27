@@ -1,13 +1,16 @@
 /**
  * Studio Class Template lifecycle — the teacher-editable boundary for
  * `PUT /api/studio-class-templates/[id]` (#114), plus pause/resume and
- * archive/un-archive for `PATCH` on the same route (#86, #98).
+ * archive/un-archive for `PATCH` on the same route (#86, #98). Since issue
+ * 332, archive/un-archive runs on `rule-lifecycle.ts`'s shared
+ * `archiveOrUnarchiveRule`; this file supplies only the `STUDIO_FAMILY`
+ * descriptor that tells it how to reach this family's rows.
  *
- * The studio sibling of `class-template-lifecycle.ts`'s pause/archive section.
- * Deliberately not sharing an implementation with it — PR #92 found the two
- * families had already drifted apart in their guards, and their registration
- * semantics genuinely differ. Three differences from the class family matter
- * here:
+ * Pause/resume is still implemented here, deliberately not sharing an
+ * implementation with `class-template-lifecycle.ts`'s own pause/resume — PR
+ * #92 found the two families had already drifted apart in their guards, and
+ * their registration semantics genuinely differ. Differences from the class
+ * family that still matter here:
  *
  *   - Where the class family's deletable predicate spreads a `status: {
  *     in: ['draft', 'open'] }` clause, the studio predicate has no status to
@@ -66,6 +69,11 @@ import {
   claimStudioTemplateForGeneration,
   generateStudioInstancesForTemplate,
 } from './studio-class-generator';
+import {
+  archiveOrUnarchiveRule,
+  type ArchiveRuleResult,
+  type TemplateFamily,
+} from './rule-lifecycle';
 
 /**
  * The wire shape `POST /api/studio-class-templates` accepts, derived from
@@ -881,42 +889,10 @@ export type PauseStudioTemplateResult =
   | { ok: false; reason: 'busy' };
 
 /**
- * Archiving and un-archiving are different operations and report different
- * things; `unchanged` is a third, and reports nothing at all — see
- * `ArchiveTemplateResult` for why the un-archiving and unchanged arms carry
- * no counts.
+ * The studio family at `ArchiveRuleResult` (`rule-lifecycle.ts`), where every
+ * arm's reasoning lives.
  */
-export type ArchiveStudioTemplateResult =
-  | {
-      ok: true;
-      action: 'archived';
-      template: StudioClassTemplateWithSlot;
-      deleted: number;
-      remaining: number;
-    }
-  | { ok: true; action: 'unarchived'; template: StudioClassTemplateWithSlot }
-  | { ok: true; action: 'unchanged'; template: StudioClassTemplateWithSlot }
-  | { ok: false; reason: 'not_found' }
-  | { ok: false; reason: 'forbidden' }
-  /**
-   * A live rule occupies the requested slot (#196/#296) — enforced by
-   * `ScheduleRule_teacher_slot_excl`, one exclusion constraint spanning both
-   * class families (issue 298), in place of the partial unique index and the
-   * cross-family trigger this reason used to split across two. `heldBy` is
-   * what tells the two apart now: the constraint's `23P01` cannot say which
-   * family raised it, so a fresh probe of `ScheduleRule` answers separately
-   * (`ruleSlotHolder`, `src/lib/rule-slot-holder.ts`).
-   */
-  | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
-  /**
-   * See `ArchiveTemplateResult`'s `busy` arm (`class-template-lifecycle.ts`)
-   * for what it guarantees and for the full range of causes behind it — a
-   * `lock_timeout` expiry is only the most obvious one. Kept as a pointer
-   * rather than a second copy of that paragraph: this file's own header
-   * records the two families drifting apart once already, and duplicated prose
-   * is what drifts.
-   */
-  | { ok: false; reason: 'busy' };
+export type ArchiveStudioTemplateResult = ArchiveRuleResult<StudioClassTemplate>;
 
 /**
  * Studio entries still on the schedule for a template, from the given
@@ -1436,313 +1412,64 @@ export async function pauseOrResumeStudioTemplate(
   return { ok: true, action: 'paused', template: result.template, lastScheduled };
 }
 
+/** The studio family's `TemplateFamily` entry (`rule-lifecycle.ts`). */
+export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate> = {
+  kind: 'studio',
+  childTable: 'StudioClassTemplate',
+  logNoun: 'studio class',
+  readChild: (client, templateId) =>
+    client.studioClassTemplate.findUnique({
+      where: { id: templateId },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+    }),
+  readChildOrThrow: (client, templateId) =>
+    client.studioClassTemplate.findUniqueOrThrow({
+      where: { id: templateId },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+    }),
+  // `scheduledWhere` above takes two parameters; this field's type takes
+  // three, `alsoOnClass` being the extra one. A function of fewer parameters
+  // is assignable to a type expecting more, so this compiles — and it is
+  // correct, because `family.withdraw?.deleteFilter` is `undefined` for a
+  // family with no `withdraw` hook, and the argument is never passed here.
+  scheduledWhere,
+  // Destructures here, where `StudioClassTemplate` is concrete, then hands
+  // the bare child to this file's existing exported `withSlot` unchanged.
+  withSlot: ({ scheduleRule, ...bare }, rule) => {
+    void scheduleRule;
+    return withSlot(bare, rule);
+  },
+  // Required and explicitly null, not omitted. `StudioClass` has no
+  // registrations and no waitlist, so there is nothing to withdraw beyond the
+  // entries the shared delete already removes.
+  withdraw: null,
+};
+
 /**
  * Archive or un-archive. Archiving withdraws the future studio classes nobody
- * booked and leaves the rest standing (#86), mirroring
- * `archiveOrUnarchiveTemplate`'s reasoning for the class family: generated
- * instances stay publicly listed on the teacher's schedule until removed, so
- * without this an archived template keeps up to four weeks of studio classes
- * looking live.
+ * booked and leaves the rest standing (#86): generated instances stay
+ * publicly listed on the teacher's schedule until removed, so without this an
+ * archived template keeps up to four weeks of studio classes looking live.
+ *
+ * "Nobody booked" means no registration to consult at all — `StudioClass` has
+ * none, so every future uncancelled class the delete's boundary can reach is
+ * deletable; an already-cancelled one survives because its entry holds
+ * `(scheduleRuleId, date)` against the sweep refilling a date the teacher
+ * cancelled deliberately.
  *
  * The update and the delete share a transaction: a half-applied archive is
- * exactly the shelved-but-listed state this exists to prevent.
- *
- * That transaction takes the child's row lock first, then runs a
- * compare-and-swap rather than a plain update, so the transition can only be
- * applied once even when two requests race — see `archiveOrUnarchiveTemplate`
- * for the full reasoning, which holds here unchanged.
+ * exactly the shelved-but-listed state this exists to prevent. The mechanics
+ * — the compare-and-swap, the row lock, the transient/slot-conflict handling
+ * — live in `archiveOrUnarchiveRule` (`rule-lifecycle.ts`), which this
+ * function only parameterises with `STUDIO_FAMILY`.
  */
-export async function archiveOrUnarchiveStudioTemplate(
+export function archiveOrUnarchiveStudioTemplate(
   db: PrismaClient,
   templateId: string,
   teacherId: string,
   target: 'archived' | 'unarchived',
 ): Promise<ArchiveStudioTemplateResult> {
-  const template = await db.studioClassTemplate.findUnique({
-    where: { id: templateId },
-    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
-  });
-  if (!template) return { ok: false, reason: 'not_found' };
-  if (template.scheduleRule.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
-
-  const archiving = target === 'archived';
-
-  // No write, no delete. Archiving twice must not withdraw twice — the
-  // withdrawal is a consequence of the transition, not of the request.
-  //
-  // A fast path, not the guarantee: this row was read before the transaction
-  // below opened, so it is outside the row lock and two concurrent archives
-  // both clear it. The compare-and-swap inside the transaction is the
-  // authoritative one; this only saves them a transaction in the common case.
-  //
-  // The one place "already there" and "apply the transition" differ
-  // observably: both archiving and un-archiving force `isActive: false`
-  // below, but this early return touches nothing. So `?state=unarchived`
-  // against a template that is already unarchived but still active answers
-  // `unchanged` and leaves it active, where a real un-archive would have
-  // paused it. That is correct — `isArchived` and `isActive` are independent
-  // axes, and no button ever sends that combination — but it deserves to be
-  // written down rather than left for a future reader to derive.
-  if (template.scheduleRule.isArchived === archiving) {
-    const { scheduleRule, ...bare } = template;
-    return { ok: true, action: 'unchanged', template: withSlot(bare, scheduleRule) };
-  }
-
-  const timeZone = template.scheduleRule.teacher.defaultTimezone;
-
-  // Un-archiving (`archiving === false`) flips `isArchived` from `true` to
-  // `false` in the CAS below, which is the one write in this function that
-  // can newly enter `ScheduleRule_teacher_slot_excl`'s scope (`WHERE
-  // isArchived = false`, #196/#298) — archiving only ever leaves it, which
-  // cannot collide. Wrapped around the whole `$transaction`, not just the
-  // CAS statement, because a `23P01` raised inside a Postgres transaction
-  // aborts it and the driver surfaces that failure from `$transaction`
-  // itself, not from the individual `await` that triggered it.
-  try {
-    return await db.$transaction(
-      async (tx) => {
-        // Bounds every statement left in this transaction, the child lock
-        // immediately below first among them, then the CAS.
-        //
-        // Without it the wait is bounded by NOTHING, which is a stronger
-        // statement than the 10s budget and the one that is true: Prisma
-        // checks that budget at statement boundaries, so it "cannot roll back
-        // a statement already blocked inside Postgres, only refuse to start a
-        // new one" (`db-locks.ts`). The mutation records measure it — removing
-        // this line ends in a hung test, never a 10s abort.
-        await setLockTimeout(tx);
-
-        // The child's row lock, taken explicitly and first — before the CAS
-        // below touches `ScheduleRule` at all, and before the `deleteMany`
-        // further down. Before issue 298 this CAS wrote `StudioClassTemplate`
-        // directly and so held, as a side effect of a plain `updateMany`, the
-        // same row `claimStudioTemplateForGeneration`
-        // (studio-class-generator.ts) takes `FOR UPDATE` on. `isArchived`/
-        // `isActive` moved to `ScheduleRule` with the rest of the calendar
-        // identity, so that CAS no longer touches `StudioClassTemplate` at
-        // all; this statement is what takes its place. See
-        // `docs/lock-order.md`, "The child row is the lock node for the
-        // template families" for the decision this implements.
-        //
-        // Row count checked, not discarded: `ScheduleRule` carries no FK back
-        // to `StudioClassTemplate`, so a `StudioClassTemplate` deleted out
-        // from under this transaction leaves an orphaned rule row the CAS
-        // below would still match. Mirrors the class family's
-        // `archiveOrUnarchiveTemplate` — see there for the reasoning.
-        const childLock = await tx.$queryRaw<Array<{ id: string }>>`
-          SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
-        if (childLock.length === 0) return { ok: false as const, reason: 'not_found' as const };
-
-        // Compare-and-swap, mirroring `archiveOrUnarchiveTemplate` — see there
-        // for what a plain `update` cost: the loser of a race overwrote the
-        // winner's `archivedAt`/`withdrawnCount` with a `0` its own
-        // `deleteMany` produced only because the winner had already deleted
-        // those classes. Constraining the write to `isArchived: !archiving`
-        // makes the transition itself the thing that can happen only once.
-        //
-        // No P2025 guard here, unlike `updateClassTemplate` in the class
-        // family (#100) — `pauseOrResumeTemplate` belonged in that list until
-        // #116 made it a CAS with this same shape. Not an omission:
-        // `updateMany` returns `{ count: 0 }` rather than throwing when nothing
-        // matches, and the zero-count branch below already answers `not_found`
-        // by re-reading. The `findUniqueOrThrow`/`update` sites further down
-        // *can* raise P2025, but only run after this CAS matched, which holds
-        // `FOR NO KEY UPDATE` on this row until commit — `pauseOrResumeStudioTemplate`'s
-        // own docstring above already names this CAS's mode in passing ("a
-        // concurrent archive's own CAS"). That conflicts with the `FOR
-        // UPDATE`-strength lock a concurrent `DELETE` needs, so it blocks
-        // rather than wins. What a plain single-record `update` would change is
-        // not the lock — it takes the same mode — but the first limb: it raises
-        // P2025 where `updateMany` returns `{ count: 0 }`, so the write itself
-        // becomes a P2025 source needing its own guard.
-        const swapped = await tx.scheduleRule.updateMany({
-          where: { id: template.scheduleRuleId, isArchived: !archiving },
-          data: {
-            isArchived: archiving,
-            isActive: false,
-            // Folded in rather than issued as a second `update`: `null` depends
-            // on nothing this transaction has yet to do, unlike the archiving
-            // arm's `withdrawnCount` below.
-            ...(archiving ? {} : { archivedAt: null, withdrawnCount: null }),
-          },
-        });
-
-        if (swapped.count === 0) {
-          // Another request already applied the transition, or the row is gone.
-          // Read which rather than assuming. Re-read rather than reusing the
-          // snapshot from the top of this function — that one still carries the
-          // value the winner just falsified. See the class family's twin for why
-          // the flag on the returned row can still be stale under three
-          // concurrent requests, and why locking here would not be worth it.
-          const current = await tx.studioClassTemplate.findUnique({
-            where: { id: templateId },
-            include: { scheduleRule: true },
-          });
-          if (!current) return { ok: false as const, reason: 'not_found' as const };
-          return {
-            ok: true as const,
-            action: 'unchanged' as const,
-            template: withSlot(current, current.scheduleRule),
-          };
-        }
-
-        if (!archiving) {
-          // `updateMany` returns a count, not a row, and every arm of the
-          // contract carries a template. Safe to read back here specifically
-          // because the CAS above holds the rule row's lock until we commit —
-          // the same lock-then-read pattern the generator's claim uses.
-          //
-          // A template that is no longer archived has no withdrawal to report.
-          // Not a *live* one — the CAS above forced `isActive: false` in the
-          // same write, so what is standing here is paused. Leaving a stale
-          // count on it would be worse than having none (#97).
-          const cleared = await tx.studioClassTemplate.findUniqueOrThrow({
-            where: { id: templateId },
-            include: { scheduleRule: true },
-          });
-          return {
-            ok: true as const,
-            action: 'unarchived' as const,
-            template: withSlot(cleared, cleared.scheduleRule),
-          };
-        }
-
-        // One clock reading serves both the calendar boundary and the
-        // timestamp recorded below. `CalendarEntry.date` is `@db.Date`, so both
-        // sides of every comparison below are calendar dates. See
-        // `archiveOrUnarchiveTemplate` for what comparing the column to a raw
-        // instant costs in each direction.
-        const now = new Date();
-        const today = startOfLocalDay(now, timeZone);
-
-        // Deliberately one statement, not a `findMany` followed by a
-        // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
-        // class get cancelled in the gap between them under READ COMMITTED, and
-        // the delete — keyed only on the ids already read — would not re-check
-        // it, destroying a class the teacher cancelled after the read — a date
-        // deliberately withheld, which the archive is required to leave standing.
-        // Passing the predicate straight to `deleteMany` makes Postgres
-        // re-evaluate it at execution time, and its returned `count` is the
-        // number of rows that actually matched then — not a stale count from an
-        // earlier read. Do not "optimise" this back into a read-then-delete.
-        const { count: deleted } = await tx.calendarEntry.deleteMany({
-          where: scheduledWhere(template.scheduleRuleId, { gt: today }),
-        });
-
-        // `gte`, where the delete used `gt`: the delete spares a class dated
-        // today, and counting with its boundary would undercount that same
-        // survivor. No charged-status filter is needed here, unlike the class
-        // sibling — `StudioClass` has no registrations to consult, so every
-        // uncancelled row in scope counts.
-        const remaining = await tx.calendarEntry.count({
-          where: scheduledWhere(template.scheduleRuleId, { gte: today }),
-        });
-
-        // Written from the delete's own `count`, inside the same transaction
-        // (#97). A second statement rather than folded into the CAS above, on
-        // data dependency alone: `deleted` does not exist until the `deleteMany`
-        // has run, and the CAS runs before it — see `archiveOrUnarchiveTemplate`
-        // for why the row lock the sweep serialises against is the child's
-        // `FOR UPDATE`, taken before the CAS runs, not the CAS's own lock on
-        // `ScheduleRule`. A plain single-record `update` is enough: the CAS's
-        // lock is still held, so nothing can have moved this row since.
-        // `archivedAt`/`withdrawnCount` live on `ScheduleRule` now (issue
-        // 298); the CAS's lock on that row is still held, so nothing can
-        // have moved it since.
-        const recordedRule = await tx.scheduleRule.update({
-          where: { id: template.scheduleRuleId },
-          data: { archivedAt: now, withdrawnCount: deleted },
-        });
-
-        // `template` unstripped still carries the pre-transaction
-        // `scheduleRule` join `withSlot` would otherwise re-spread onto the
-        // result — the archiving write touches no `StudioClassTemplate`
-        // column, so that outer read is still current for the child half.
-        const { scheduleRule: _sr, ...bareTemplate } = template;
-        void _sr;
-        return {
-          ok: true as const,
-          action: 'archived' as const,
-          template: withSlot(bareTemplate, recordedRule),
-          deleted,
-          remaining,
-        };
-      },
-      // This CAS writes `ScheduleRule`, and is serialised against a sweep
-      // in progress by the explicit child-row `FOR UPDATE` this transaction
-      // already took above, before the CAS — the same lock
-      // `claimStudioTemplateForGeneration` (studio-class-generator.ts) holds
-      // for the duration of its own per-template transaction. This archive
-      // can still block on a concurrent pause or resume, though:
-      // `pauseOrResumeStudioTemplate`'s own CAS holds the same rule row from
-      // its `updateMany` through generation to commit, on the same 10s
-      // budget, so a user-facing PATCH can make an archive wait on another
-      // one (#94).
-      //
-      // The wait itself is now bounded by this transaction's own
-      // `setLockTimeout` (2s), so the 10s figure no longer governs the wait —
-      // it governs this transaction's own work once the lock is won: the
-      // `deleteMany`, the `remaining` count and the record `update`, which a
-      // loaded VPS can push past Prisma's 5s default and turn into an opaque
-      // P2028. The class family's twin lists a notification write among its
-      // own and this comment was copied from it — wrongly: this family has no
-      // registrations to notify, which is why the module imports no
-      // notification helper at all (see the file header). Three 10s
-      // budgets used not to compose: a sweep holding the row, a pause queued
-      // behind it and this archive queued behind that pause meant the last
-      // link's own clock ran while it waited its turn, and it was the one most
-      // likely to exhaust its budget without ever reaching its own work. The
-      // bound is what took that apart — every link now waits at most 2s and
-      // answers `busy`.
-      //
-      // A *resume* cannot be that middle link: the claim selects
-      // `WHERE "isActive" = true` while a resume only ever runs on a paused
-      // template (its CAS constrains `isActive: false`), so no claim is ever
-      // waiting on a row a resume holds — a resume can only ever be the HEAD
-      // of a wait chain, never a middle link. The sweep at the head holds
-      // rather than waits, so it is a chain of three participants but only two
-      // waiters.
-      { timeout: 10_000 },
-    );
-  } catch (err) {
-    // Transient first, ahead of the slot-conflict branch — see the class
-    // family's twin (`archiveOrUnarchiveTemplate`) for why that ordering is
-    // defensive rather than load-bearing (the predicates are disjoint today,
-    // so reordering is behaviour-neutral, and the point is that it stays safe
-    // only while they are), and for why the log line lives here rather than
-    // being left to the API wrapper.
-    if (isTransientDbError(err)) {
-      // `target` for the reason the class family's twin records: the message
-      // names the function, not the direction, and both reach the same route.
-      log.warn(
-        { err, templateId, teacherId, target },
-        'studio class archive lost the template lock race',
-      );
-      return { ok: false, reason: 'busy' };
-    }
-    // Only reachable un-archiving: `isArchived` flips false in the same CAS
-    // that re-enters `ScheduleRule_teacher_slot_excl`'s scope, and another
-    // live rule — either family — can already hold this slot. Neither
-    // `dayOfWeek` nor `startTime` moves here, so the probe reads them
-    // straight off the pre-transaction `template` read. See the class
-    // family's twin: a returned failure never reaches `withErrorHandler`, so
-    // without this line this 409 leaves no server-side trace at all.
-    if (isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')) {
-      const heldBy = await ruleSlotHolder(db, {
-        teacherId,
-        dayOfWeek: template.scheduleRule.dayOfWeek,
-        startMinutes: minutesSinceMidnight(template.scheduleRule.startTime),
-        durationMinutes: template.scheduleRule.durationMinutes,
-        excludeRuleId: template.scheduleRuleId,
-      });
-      log.warn(
-        { err, templateId, teacherId, heldBy },
-        'studio class un-archive refused: that slot is taken',
-      );
-      return { ok: false, reason: 'slot_conflict', heldBy };
-    }
-    throw err;
-  }
+  return archiveOrUnarchiveRule(db, STUDIO_FAMILY, templateId, teacherId, target);
 }
 
 /**
