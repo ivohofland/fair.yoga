@@ -191,19 +191,24 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * this function or `lockClassRowsOrdered` below now — no site keeps its own
  * inline statement. The check, with the template tables filtered OUT rather
  * than counted alongside, because they are what an unfiltered grep is mostly
- * made of and a total over both was already wrong before this branch (it said
- * FOUR; the real figure was 12):
+ * made of. No total over both is kept here — `docs/lock-order.md`, "How that
+ * enumeration was derived", owns that figure and ships the command that
+ * re-derives it:
  *
  *   grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" \
  *     | grep -vE ":[0-9]+: *(\*|//)" \
- *     | grep -vE 'OF (ct|sct)`|"ClassTemplate"|"StudioClassTemplate"|childTable'
+ *     | grep -vE 'OF (ct|sct)`|"ClassTemplate"|"StudioClassTemplate"|family\.childTable'
  *
  * That last alternative earns its place: `archiveOrUnarchiveRule`
  * (`rule-lifecycle.ts`) locks the child template row for both families from
  * one statement, splicing the table name in from the family descriptor, so
  * the literal table names no longer appear at that site and the filter has to
- * match the splice instead. Without it a template-row lock shows up here as if
- * it were a `Class` one.
+ * match the splice instead. Qualified — `family.childTable`, not the bare
+ * token — because `childTable` is typed `Prisma.ModelName`, which includes
+ * `Class` and `CalendarEntry`: a bare alternative would let a future descriptor
+ * splice hide from the one register whose job is to catch exactly that. Without
+ * the alternative at all, a template-row lock shows up here as if it were a
+ * `Class` one.
  *
  * Expect FOUR hits and expect every one of them to be in THIS FILE — this
  * helper's two statements and `lockClassRowsOrdered`'s two. That is the whole

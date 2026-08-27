@@ -886,8 +886,8 @@ export type PauseStudioTemplateResult =
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'archived' }
   /**
-   * See `ArchiveTemplateResult`'s `busy` arm (`class-template-lifecycle.ts`) —
-   * same guarantee, same causes. This function is the one of the four that had
+   * See `ArchiveRuleResult`'s `busy` arm (`rule-lifecycle.ts`) — same
+   * guarantee, same causes. This function is the one of the four that had
    * no `catch` at all before the arm existed, so before it a lost race here
    * propagated raw to the API wrapper.
    */

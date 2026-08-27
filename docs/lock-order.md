@@ -345,9 +345,9 @@ a call):
    `grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" |
    grep -vE ":[0-9]+: *(\*|//)"` is the check, not a number kept here.
    **It returned four hits when this check was first written, and returns
-   thirteen when re-run today** — re-derived on the branch that last touched
-   this passage, not carried forward. Of the original four, two were never
-   `Class` locks at all — `claimTemplateForGeneration` (`class-generator.ts`)
+   thirteen when re-run today** — re-derived for issue 332, not carried
+   forward. Of the original four, two were never `Class` locks at all —
+   `claimTemplateForGeneration` (`class-generator.ts`)
    and `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) take
    `FOR UPDATE OF ct`/`FOR UPDATE OF sct` on a `ClassTemplate` /
    `StudioClassTemplate` row — so the claim above holds over them rather than

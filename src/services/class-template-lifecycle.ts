@@ -1768,7 +1768,8 @@ export async function pauseOrResumeTemplate(
     //
     // Never `23P01` from the CAS either, and this half is worth proving
     // rather than asserting, because #196/#298 added an exclusion constraint
-    // this file's other CAS does collide on. `data` up there is
+    // the archive's CAS (`archiveOrUnarchiveRule`, `rule-lifecycle.ts`) does
+    // collide on. `data` up there is
     // `{ isActive: desiredActive }` — nothing else — and
     // `ScheduleRule_teacher_slot_excl` excludes on `(teacherId, dayOfWeek,
     // slot)` `WHERE isArchived = false`. None of the columns that key names is
@@ -1973,9 +1974,12 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       // once claimed it was by naming only one writer that could add a row
       // to the set after the pre-lock runs. The generation sweep is one
       // such writer and genuinely cannot: it serialises on the same
-      // `ClassTemplate` row the CAS above already holds (#95, the comment
-      // on that CAS). But it is not the only one. `updateClass`
-      // (`class-lifecycle.ts`) issues a bare `db.class.updateMany({ where:
+      // `ClassTemplate` row the archive's child `FOR UPDATE` already holds —
+      // that statement, and the #95 reasoning for it, are in
+      // `archiveOrUnarchiveRule` (`rule-lifecycle.ts`), not the CAS, which
+      // writes `ScheduleRule` and which no sweep touches. But it is not the
+      // only one. `updateClass` (`class-lifecycle.ts`) issues a bare
+      // `db.class.updateMany({ where:
       // { id } })` with `date` in its teacher-editable set, taking neither
       // the `ClassTemplate` lock nor any `Class` lock this pre-lock holds.
       // A same-day instance — outside `c.date > ${today}` above, so never

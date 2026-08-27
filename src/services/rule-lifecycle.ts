@@ -344,9 +344,11 @@ export async function archiveOrUnarchiveRule<TChild>(
         // Not an omission: `updateMany` returns
         // `{ count: 0 }` rather than throwing when nothing matches, and the
         // zero-count branch below already answers `not_found` by re-reading. The
-        // `findUniqueOrThrow`/`update` sites further down *can* raise P2025, but
-        // only run after this CAS matched, which holds `FOR NO KEY UPDATE` on
-        // this row until commit. That conflicts with the `FOR UPDATE`-strength
+        // two sites further down that *can* raise P2025 — `readChildOrThrow`,
+        // which every family implements with a `findUniqueOrThrow`, and the
+        // record `update` — run only after this CAS matched, which holds
+        // `FOR NO KEY UPDATE` on this row until commit. That conflicts with
+        // the `FOR UPDATE`-strength
         // lock a concurrent `DELETE` needs, so it blocks rather than wins.
         //
         // What a plain single-record `update` would change is not the lock — it
@@ -556,19 +558,14 @@ export async function archiveOrUnarchiveRule<TChild>(
       { timeout: 10_000 },
     );
   } catch (err) {
-    // Transient first — and the honest reason is narrower than the one this
-    // comment used to give, which the spec, the plan and the handover all
-    // repeated. It claimed that testing for a slot conflict first would let a
-    // transient code "fall past a branch that cannot match it into the
-    // rethrow". It would not: `isTransientDbError` and `isExclusionConflictOn`
-    // below match disjoint SQLSTATEs, and a non-match falls to the NEXT branch
-    // rather than to the rethrow. Reordering these two is behaviour-neutral
-    // today, and no mutation could show otherwise.
-    //
-    // Kept explicit anyway: the ordering is safe today only BECAUSE those two
-    // predicates match disjoint SQLSTATEs, and widening either would end that
-    // silently. `classifyApiError` (`src/lib/api-errors.ts`) orders itself the
-    // same way for the same defensive reason.
+    // Transient first. Reordering these two branches would be behaviour-neutral
+    // today — `isTransientDbError` and `isExclusionConflictOn` below match
+    // disjoint SQLSTATEs, so a code that misses one falls to the NEXT branch
+    // rather than to the rethrow, and no mutation could show otherwise. The
+    // order is kept explicit anyway, because it is safe ONLY because those two
+    // predicates are disjoint, and widening either would end that silently.
+    // `classifyApiError` (`src/lib/api-errors.ts`) orders itself the same way
+    // for the same defensive reason.
     //
     // Logged here rather than left to the API wrapper: returning instead of
     // throwing means the wrapper never sees this, and its automatic line
