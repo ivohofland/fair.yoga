@@ -302,6 +302,7 @@ model TeacherRoom {
   classes        Class[]
 
   @@unique([teacherId, roomId])
+  @@unique([id, isArchived])
 }
 
 // ============================================================================
@@ -324,6 +325,30 @@ model ClassTemplate {
   scheduleRuleId  String          @unique
   kind            ClassFamily
   teacherRoomId   String
+
+  /// MIRRORS, MAINTAINED BY POSTGRES. Neither column is state this row owns.
+  ///
+  /// `ruleLive` mirrors `ScheduleRule.live`; `roomArchived` mirrors
+  /// `TeacherRoom.isArchived`. Neither can drift from what it mirrors, and that
+  /// is enforced rather than intended: each is one column of a composite foreign
+  /// key whose remaining columns are the parent's key, so a row claiming a value
+  /// its parent does not hold is refused with `23503` instead of stored, and
+  /// `ON UPDATE CASCADE` rewrites every mirroring child in the same statement
+  /// that changes the parent.
+  ///
+  /// They exist so a predicate spanning three tables can be checked against one
+  /// row. That check is `ClassTemplate_live_needs_open_room`,
+  /// `CHECK (NOT ("ruleLive" AND "roomArchived"))`, hand-authored in the
+  /// migration because Prisma cannot express it — the constraint that makes "an
+  /// active template may not sit on an archived room" unrepresentable rather
+  /// than merely guarded (issue 272).
+  ///
+  /// THIS IS NOT #298 BEING UNDONE. #298 moved the OWNERSHIP of `isActive` and
+  /// `isArchived` to `ScheduleRule`, and that is still the only place either is
+  /// written. What sits here is a copy the database maintains. Removing these
+  /// columns to "finish" #298 removes the invariant with them.
+  ruleLive        Boolean         @default(true)
+  roomArchived    Boolean         @default(false)
   description     String?         @db.Text
   roomCost        Decimal         @db.Decimal(10, 2)
   minRate         Decimal         @db.Decimal(10, 2)
@@ -335,8 +360,8 @@ model ClassTemplate {
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
-  scheduleRule ScheduleRule @relation(fields: [scheduleRuleId, kind], references: [id, kind], onDelete: Cascade)
-  teacherRoom  TeacherRoom  @relation(fields: [teacherRoomId], references: [id])
+  scheduleRule ScheduleRule @relation(fields: [scheduleRuleId, kind, ruleLive], references: [id, kind, live], onDelete: Cascade)
+  teacherRoom  TeacherRoom  @relation(fields: [teacherRoomId, roomArchived], references: [id, isArchived])
 }
 
 /// Since #327, carries neither a slot index nor a cross-family trigger: the
@@ -499,6 +524,20 @@ model ScheduleRule {
   isActive   Boolean @default(true)
   isArchived Boolean @default(false)
 
+  /// Rule liveness as a stored generated column: exactly the predicate
+  /// `ACTIVE_TEMPLATE_WHERE` (`src/lib/template-selection.ts`) applies to a row
+  /// set, computed per row so a foreign key can reference it.
+  ///
+  /// `NOT NULL` is load-bearing and not tidiness. A generated column is nullable
+  /// unless declared otherwise, Prisma's `Boolean` is required, and the mismatch
+  /// is drift — `prisma migrate diff --exit-code`, the required CI check, fails
+  /// on it. `docs/lock-order.md` carries the argument for the constraint this
+  /// column serves.
+  ///
+  /// Prisma exposes it as a writable field and the database refuses every write
+  /// to it (`428C9`) — measured, not assumed. Nothing in the app writes it.
+  live       Boolean @default(dbgenerated())
+
   /// When this rule was last archived (#97). Issue 298 moved this column
   /// here from `ClassTemplate`/`StudioClassTemplate` — the semantics are
   /// unchanged, and it is now shared by both families through `kind`.
@@ -568,6 +607,7 @@ model ScheduleRule {
   calendarEntries      CalendarEntry[]
 
   @@unique([id, kind])
+  @@unique([id, kind, live])
   @@index([teacherId, dayOfWeek])
 }
 
