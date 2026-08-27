@@ -1,8 +1,18 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { PrismaClient } from '@prisma/client';
 import type { ClassFamily, ClassTemplate, StudioClassTemplate } from '@prisma/client';
-import type { TemplateFamily } from './rule-lifecycle';
+import {
+  archiveOrUnarchiveRule,
+  type ArchiveRuleResult,
+  type TemplateFamily,
+  type WithSlot,
+} from './rule-lifecycle';
 import { CLASS_FAMILY } from './class-template-lifecycle';
 import { STUDIO_FAMILY } from './studio-class-template-lifecycle';
+import { hhmmToTime } from '@/lib/time-of-day';
+
+const prisma = new PrismaClient();
+const uniqueSuffix = Date.now();
 
 /**
  * Every family this repo has, as a union.
@@ -53,5 +63,182 @@ describe('rule-lifecycle family descriptors', () => {
     // asserting that is present is what actually distinguishes "declared a
     // hook" from "declared nothing".
     expect(CLASS_FAMILY.withdraw).toHaveProperty('around');
+  });
+});
+
+/**
+ * `ArchiveRuleResult`'s docblock (`rule-lifecycle.ts`) claims that being
+ * generic in the child leaves the two families' results non-interchangeable,
+ * because `template` differs. A claim about what the compiler refuses is worth
+ * only the pin that makes the compiler refuse it — the shape
+ * `template-action-messages.test.ts` uses for the `templateKind` discriminator
+ * this is modelled on ("the two toggle payloads are not interchangeable").
+ *
+ * `{} as WithSlot<…>` because `template` is the only field carrying the
+ * difference and nothing here reads the row; building two real ones would put
+ * the schema's own columns into a test about assignability.
+ */
+describe("the two families' archive results are not interchangeable", () => {
+  it('rejects each family result where the other family is required', () => {
+    const takesStudio = (r: ArchiveRuleResult<StudioClassTemplate>) => r.ok;
+    const takesClass = (r: ArchiveRuleResult<ClassTemplate>) => r.ok;
+
+    const classResult: ArchiveRuleResult<ClassTemplate> = {
+      ok: true,
+      action: 'unarchived',
+      template: {} as WithSlot<ClassTemplate>,
+    };
+    const studioResult: ArchiveRuleResult<StudioClassTemplate> = {
+      ok: true,
+      action: 'unarchived',
+      template: {} as WithSlot<StudioClassTemplate>,
+    };
+
+    // @ts-expect-error a class archive result must never satisfy the studio one
+    takesStudio(classResult);
+    // @ts-expect-error a studio archive result must never satisfy the class one
+    takesClass(studioResult);
+
+    // Each at its own family, so the two functions above are exercised rather
+    // than merely declared.
+    expect(takesStudio(studioResult)).toBe(true);
+    expect(takesClass(classResult)).toBe(true);
+  });
+});
+
+/**
+ * The record guard inside `archiveOrUnarchiveRule` — that a family's
+ * `withdraw` hook runs the shared delete exactly once and reports its count.
+ *
+ * It protects `withdrawnCount` (#97), the durable record of what a teacher is
+ * told was withdrawn, and it holds for both shipped families vacuously:
+ * `STUDIO_FAMILY.withdraw` is `null`, so that family never reaches the
+ * callback at all, and `CLASS_FAMILY`'s hook is correct. Nothing shipped can
+ * turn the guard red, so a synthetic family is what makes it fail — deleting
+ * the guard has to break something.
+ */
+describe('the archive record guard (DB)', () => {
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+
+  // A slot per template, spaced a full `durationMinutes` apart:
+  // `ScheduleRule_teacher_slot_excl` (issue 298) excludes on RANGE overlap,
+  // and every archive in this block is rolled back by the guard it is testing
+  // — so no template here is ever left archived, and each one holds its slot
+  // for the rest of the run.
+  let makeTemplateCounter = 0;
+  const makeTemplate = () => {
+    makeTemplateCounter += 1;
+    return prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'regular',
+            classType: `Guard ${makeTemplateCounter}`,
+            dayOfWeek: 3,
+            startTime: hhmmToTime(`${String(8 + makeTemplateCounter).padStart(2, '0')}:00`),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoomId } },
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+      },
+      include: { scheduleRule: true },
+    });
+  };
+
+  beforeAll(async () => {
+    await prisma.$connect();
+    const email = `rule-guard-${uniqueSuffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Guard',
+        lastName: 'Teacher',
+        email,
+        account: { create: { email } },
+        bio: 'Teacher for the archive record guard',
+        pageSlug: `rule-guard-${uniqueSuffix}`,
+        // Pinned rather than left to the schema default, for the reason #123
+        // put the same pin in both lifecycle test files: the archive derives
+        // its boundary from `startOfLocalDay(now, defaultTimezone)`, and a
+        // zone that disagrees with the fixture's UTC dates moves that boundary
+        // by a day at some hours of the evening.
+        defaultTimezone: 'UTC',
+      },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Guard Venue',
+        address: `${uniqueSuffix} Guard St`,
+        city: 'Testville',
+        postcode: '1234TP',
+        floor: '1',
+        roomName: 'Loft',
+        maxCapacity: 10,
+        createdById: teacher.id,
+      },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 8, rentalRate: 15 },
+    });
+    teacherRoomId = teacherRoom.id;
+  });
+
+  afterAll(async () => {
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    // `ClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue 298),
+    // so deleting the rule removes the template with it.
+    await prisma.scheduleRule.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.delete({ where: { id: roomId } });
+    await prisma.session.deleteMany({ where: { accountId } });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.account.delete({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  // `CLASS_FAMILY` spread whole, so everything except the hook is the real
+  // archive — the read, the child row lock, the CAS, both predicates. One case
+  // per operand of the guard's condition: a hook that runs the delete and
+  // reports a number of its own, and a hook that never runs it.
+  const cases: Array<[string, TemplateFamily<ClassTemplate>]> = [
+    [
+      'reports a count the shared delete did not produce',
+      {
+        ...CLASS_FAMILY,
+        withdraw: { around: async (_tx, _ctx, deleteEntries) => (await deleteEntries()) + 1 },
+      },
+    ],
+    ['never runs the shared delete at all', { ...CLASS_FAMILY, withdraw: { around: async () => 0 } }],
+  ];
+
+  it.each(cases)('refuses a withdraw hook that %s, and records nothing', async (_label, family) => {
+    const template = await makeTemplate();
+
+    await expect(
+      archiveOrUnarchiveRule(prisma, family, template.id, teacherId, 'archived'),
+    ).rejects.toThrow(/must run the shared delete exactly once and report its count/);
+
+    // Refusing is half of what the guard is for; the other half is that the
+    // throw rolls the transaction back whole, so the CAS that ran before the
+    // hook leaves no archive behind — least of all a `withdrawnCount` the
+    // teacher would be shown.
+    const after = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id: template.id },
+      include: { scheduleRule: true },
+    });
+    expect(after.scheduleRule.archivedAt).toBeNull();
+    expect(after.scheduleRule.withdrawnCount).toBeNull();
+    expect(after.scheduleRule.isArchived).toBe(false);
   });
 });

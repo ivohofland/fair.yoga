@@ -102,24 +102,38 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
   let otherTeacherId: string;
   let otherAccountId: string;
 
-  // Counter-derived startTime: this block calls makeTemplate 15 times for
-  // one teacher/dayOfWeek, and most tests never archive their template (the
-  // 'forbidden' cases, and several 'keeps'/'records' cases where archiving
-  // matches nothing to withdraw but still runs against a template that stays
-  // unarchived until its own later un-archive, if any) — so, mirroring the
-  // class family's equivalent block, one unarchived leftover blocks every
-  // later makeTemplate call before it even creates a row.
+  // Counter-derived startTime: every makeTemplate call in this block needs a
+  // slot of its own on one teacher/dayOfWeek, because most tests never archive
+  // their template (the 'forbidden' cases, and several 'keeps'/'records' cases
+  // where archiving matches nothing to withdraw but still runs against a
+  // template that stays unarchived until its own later un-archive, if any) —
+  // so, mirroring the class family's equivalent block, one unarchived leftover
+  // blocks every later makeTemplate call before it even creates a row.
   //
   // `ScheduleRule_teacher_slot_excl` (issue 298) excludes on RANGE overlap,
   // not exact `startTime` match, so each slot is spaced a full
-  // `durationMinutes` (60) from the last rather than a minute — `counter *
-  // 60 - 30` packs all 15 back-to-back inside one day (`'09:30'` ..
-  // `'23:30'`); the plain `30 + counter` this block used before would have
-  // overlapped every neighbour. No test reads or asserts a created
-  // template's literal startTime.
+  // `durationMinutes` (60) from the last rather than a minute; the plain
+  // `30 + counter` this block used before would have overlapped every
+  // neighbour. No test reads or asserts a created template's literal
+  // startTime, and `slotTime` throws naming the counter value if the block
+  // ever runs out — which is why no call count is written here.
   let makeTemplateCounter = 0;
   const makeTemplate = (classType: string) => {
     makeTemplateCounter += 1;
+    // Two disjoint ranges, the same treatment the pause block below already
+    // needed. `counter * 60 - 30` walks `'09:30'` up to `'23:30'` and then
+    // runs out: counter 16 computes `'24:30'`, past the last time-of-day
+    // Postgres's `time` accepts, and `slotTime` refuses it. Counters past 15
+    // use a second, negative-offset expression that fills the morning the
+    // first range never reaches — `'00:00'`, `'01:00'`, and so on. Exact
+    // multiples of 60, deliberately: a negative argument that is not one puts
+    // JavaScript's negative remainder into the minutes, which `slotTime`
+    // refuses too. That second range in turn stops before counter 25, which
+    // would compute `'09:00'` and overlap the first range's opening slot.
+    const startTime =
+      makeTemplateCounter <= 15
+        ? slotTime(makeTemplateCounter * 60 - 30)
+        : slotTime((makeTemplateCounter - 25) * 60);
     return prisma.studioClassTemplate.create({
       data: {
         scheduleRule: {
@@ -128,7 +142,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
             kind: 'studio',
             classType,
             dayOfWeek: 3,
-            startTime: hhmmToTime(slotTime(makeTemplateCounter * 60 - 30)),
+            startTime: hhmmToTime(startTime),
             durationMinutes: 60,
           },
         },
@@ -588,6 +602,43 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     expect(after.scheduleRule.archivedAt).not.toBeNull();
     expect(after.scheduleRule.archivedAt!.getTime()).toBe(winner.template.archivedAt!.getTime());
     expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: t.id } } } } } })).toBe(0);
+  });
+
+  /**
+   * `TemplateFamily.withSlot` (`rule-lifecycle.ts`) advertises as STRUCTURAL
+   * that the shared archive cannot spread a joined `scheduleRule` into a
+   * response: it is handed the joined row and each family destructures in its
+   * own adapter, so nothing in that module ever holds one. The structure is
+   * real, but it lives in each family's adapter — rewrite `STUDIO_FAMILY.
+   * withSlot` to spread the joined row and the claim is false here with
+   * nothing to say so. The class family's twin of this test
+   * (`class-template-lifecycle.test.ts`) makes the same argument about
+   * `CLASS_FAMILY`'s adapter; neither pins the other's.
+   *
+   * The un-archiving arm, matching that twin. What would go wrong is silent
+   * from end to end: `withSlot` spreads its first argument, `route.ts` spreads
+   * the template onto the response body, and
+   * `StudioClassTemplateWithSlot` never declares `scheduleRule` — so no caller
+   * could type the extra field and no compiler error would find it.
+   *
+   * `not.toContain`, not a whole-shape assertion: the template row's own
+   * fields change with the schema, and this is about one field that must not
+   * be there.
+   */
+  it('un-archiving answers with a flattened template, never the joined rule row', async () => {
+    const t = await makeTemplate('No Joined Rule On The Wire');
+    const rule = await prisma.scheduleRule.findUniqueOrThrow({ where: { id: t.scheduleRuleId } });
+    expectArchived(await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'));
+
+    const resumed = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'unarchived');
+    if (!resumed.ok) throw new Error(`expected ok, got ${resumed.reason}`);
+    expect(resumed.action).toBe('unarchived');
+
+    expect(Object.keys(resumed.template)).not.toContain('scheduleRule');
+    // The flattening itself still happened — otherwise "no `scheduleRule`"
+    // would pass on a response that lost the rule's columns altogether.
+    expect(resumed.template.dayOfWeek).toBe(rule.dayOfWeek);
+    expect(resumed.template.startTime).toBe(timeToHHmm(rule.startTime));
   });
 });
 

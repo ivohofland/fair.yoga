@@ -25,8 +25,8 @@ const uniqueSuffix = Date.now();
  * proof of that invariant rather than a defence this formula can actually
  * fail — but a fixed-width literal (`` `09:${30 + counter}` ``) can't make
  * the same guarantee: Task 6d's review found `archiveOrUnarchiveTemplate`'s
- * `makeTemplate` counter reaching its old ceiling at exactly its own call
- * count (29 calls, `'09:59'`), one call short of `'09:60'`.
+ * `makeTemplate` counter sitting one call short of emitting `'09:60'` under
+ * that spelling.
  * `CalendarEntry.startTime` is `@db.Time` and would now refuse such a value
  * outright at the DB, which
  * is a less useful failure here than this guard's message naming the fixture
@@ -1083,9 +1083,8 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   let east: Seeded;
   let west: Seeded;
 
-  // Counter-derived startTime: this block calls makeTemplate 29 times at
-  // runtime (28 call sites, one of them an `it.each` over 2 statuses) for one
-  // teacher/dayOfWeek — the tightest counter in this repair. Most tests here
+  // Counter-derived startTime: every makeTemplate call in this block needs a
+  // slot of its own on one teacher/dayOfWeek. Most tests here
   // do archive their own template by the end (which flips isArchived and
   // would free the slot on its own), but several deliberately don't (the two
   // 'forbidden' cases, and the "does not tell a waiting student when the
@@ -1097,9 +1096,11 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   // `ScheduleRule_teacher_slot_excl` (issue 298) excludes on RANGE overlap,
   // not exact `startTime` match, so a distinct minute per call is no longer
   // enough — each slot must be spaced a full `durationMinutes` from the
-  // last. `durationMinutes: 10` here (not this file's usual 60) is what
-  // keeps 29 back-to-back slots inside one day; no test reads or asserts a
-  // created template's literal `durationMinutes` or `startTime`.
+  // last. `durationMinutes: 10` here (not this file's usual 60) is what fits
+  // this block's back-to-back slots inside one day; no test reads or asserts a
+  // created template's literal `durationMinutes` or `startTime`. If a call
+  // ever does run the block out of slots, `slotTime` throws naming the
+  // counter value that did it — which is why no call count is written here.
   let makeTemplateCounter = 0;
   const makeTemplate = (classType: string) => {
     makeTemplateCounter += 1;
