@@ -30,7 +30,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient, ClassTemplate, ScheduleRule, ClassStatus } from '@prisma/client';
 import type { z } from 'zod';
-import type { updateClassTemplateSchema } from '@/lib/schemas';
+import type { createClassTemplateSchema, updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { startOfLocalDay, mondayOf, classStartInstant } from '@/lib/timezone';
 import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
@@ -54,7 +54,7 @@ import {
   DEFAULT_WEEKS,
 } from './class-generator';
 import { CHARGED_STATUSES } from './class-lifecycle';
-import { countSkipReasons, type SkipCounts } from '@/lib/generation';
+import { countSkipReasons, type GenerationResult, type SkipCounts } from '@/lib/generation';
 import {
   templateGenerationState,
   type TemplateGenerationState,
@@ -2539,4 +2539,118 @@ export async function archiveOrUnarchiveTemplate(
     }
     throw err;
   }
+}
+
+/**
+ * A create either lands, loses the slot, or loses a contention race. The
+ * `slot_conflict` arm carries `heldBy` for the same reason
+ * `ArchiveTemplateResult`'s does: one exclusion constraint spans both
+ * families (issue 298) and cannot say which raised it, so a fresh probe
+ * answers.
+ *
+ * `slot_conflict` is NOT produced by catching a `23P01` here. The rule insert
+ * uses `ON CONFLICT DO NOTHING`, which refuses by returning no row — the
+ * deadlock-free path (issue 331). A plain INSERT inserts its tuple and THEN
+ * checks the exclusion constraint, so two conflicting creates each wait on
+ * the other's transaction and Postgres breaks the cycle with `40P01`.
+ */
+export type CreateTemplateResult =
+  | { ok: true; template: ClassTemplateWithSlot; generation: GenerationResult }
+  | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
+  | { ok: false; reason: 'busy' };
+
+export async function createClassTemplate(
+  db: PrismaClient,
+  teacherId: string,
+  input: z.infer<typeof createClassTemplateSchema>,
+): Promise<CreateTemplateResult> {
+  let outcome:
+    | { ok: true; created: ClassTemplateWithSlot; generation: GenerationResult }
+    | { ok: false };
+  try {
+    outcome = await db.$transaction(async (tx) => {
+      // FIRST STATEMENT, per every sibling in this file. FOUR statements in
+      // this transaction can wait on a lock — this insert, the template
+      // insert below, and generation's own two writes
+      // (`calendarEntry.createManyAndReturn` and `class.createMany`,
+      // `class-generator.ts`); its occupancy `findMany` is a plain read and
+      // does not wait under READ COMMITTED. So 4 x 2s sits inside the 10s
+      // budget with 2s of headroom; redo that sum before adding a fifth
+      // waiting statement (issue 228, docs/lock-order.md).
+      await setLockTimeout(tx);
+      const [rule] = await tx.scheduleRule.createManyAndReturn({
+        data: [{
+          teacherId,
+          kind: 'regular' as const,
+          classType: input.classType,
+          dayOfWeek: input.dayOfWeek,
+          startTime: hhmmToTime(input.startTime),
+          durationMinutes: input.durationMinutes,
+        }],
+        skipDuplicates: true,
+      });
+      // No row means a constraint refused it. WHICH one is not knowable here
+      // — `ON CONFLICT DO NOTHING` carries no conflict target — so the probe
+      // runs below, on `db`, after this transaction has closed.
+      if (!rule) return { ok: false as const };
+
+      // Unchecked shape (`teacherRoomId` scalar), not the nested `teacherRoom:
+      // { connect: … }` write #298 forced on the route's old inline
+      // transaction: `scheduleRuleId` already names the just-created rule, so
+      // there is no relation left that needs a nested write to establish.
+      const created = await tx.classTemplate.create({
+        data: {
+          scheduleRuleId: rule.id,
+          kind: 'regular',
+          teacherRoomId: input.teacherRoomId,
+          description: input.description,
+          roomCost: input.roomCost,
+          minRate: input.minRate,
+          targetRate: input.targetRate,
+          minStudents: input.minStudents,
+          maxStudents: input.maxStudents,
+          cancelDeadline: input.cancelDeadline,
+          autoCancelCheck: input.autoCancelCheck,
+        },
+        include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      });
+      const generation = await generateInstancesForTemplate(tx, created);
+      const { scheduleRule, ...bare } = created;
+      return { ok: true as const, created: withSlot(bare, scheduleRule), generation };
+    }, { timeout: 10_000 });
+  } catch (err) {
+    // BEFORE any conflict check (`api-errors.ts`: `isTransientDbError` is
+    // checked ahead of every other branch precisely so a non-matching check
+    // placed first cannot swallow a `P2028`/`P2024` — both are
+    // `PrismaClientKnownRequestError`s too, and a conflict check that matches
+    // only one specific code would rethrow them straight past `busy`). An
+    // error that escapes this branch still reaches a 503 —
+    // `classifyApiError`'s own transient-error net, `api-errors.ts:462-473`
+    // — but loses this service's `TEMPLATE_BUSY` code and its create-specific
+    // "nothing was created" sentence for that net's generic, code-less one
+    // (measured, this function's own mutation testing).
+    //
+    // Logs, like every sibling's own transient branch (#231: `classifyApiError`
+    // warns when this escapes uncaught, so catching it here must not be what
+    // removes that line).
+    if (isTransientDbError(err)) {
+      log.warn(
+        { err, teacherId, classType: input.classType, dayOfWeek: input.dayOfWeek, startTime: input.startTime },
+        'recurring class create lost a lock race — nothing committed',
+      );
+      return { ok: false, reason: 'busy' };
+    }
+    throw err;
+  }
+
+  if (!outcome.ok) {
+    const heldBy = await ruleSlotHolder(db, {
+      teacherId,
+      dayOfWeek: input.dayOfWeek,
+      startMinutes: minutesSinceMidnight(hhmmToTime(input.startTime)),
+      durationMinutes: input.durationMinutes,
+    });
+    return { ok: false, reason: 'slot_conflict', heldBy };
+  }
+  return { ok: true, template: outcome.created, generation: outcome.generation };
 }

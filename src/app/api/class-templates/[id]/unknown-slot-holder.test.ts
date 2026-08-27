@@ -15,11 +15,10 @@ import { NextRequest } from 'next/server';
  * runtime. A `SLOT_TAKEN` with `regular` and `unknown` swapped would compile
  * and ship, and no test caught that before this file.
  *
- * WHY THIS IS MOCKED, following `cross-family-conflict-level.test.ts` beside
- * `../route.ts` and `api/cron/daily-cleanup/route.test.ts`'s reasoning for the
- * same shape of problem: staging the actual race needs a second connection to
- * archive the conflicting rule inside the microtask gap between
- * `updateClassTemplate`'s failed transaction and its `ruleSlotHolder` probe —
+ * WHY THIS IS MOCKED, following `api/cron/daily-cleanup/route.test.ts`'s
+ * reasoning for the same shape of problem: staging the actual race needs a
+ * second connection to archive the conflicting rule inside the microtask gap
+ * between `updateClassTemplate`'s failed transaction and its `ruleSlotHolder` probe —
  * a window with no synchronization point exposed to a test, and the
  * integration suite talks to a separate `next dev` process it cannot reach
  * into to add one. Forcing `updateClassTemplate` to resolve with `heldBy:

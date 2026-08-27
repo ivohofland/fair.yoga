@@ -1028,11 +1028,13 @@ SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 It returns **0** — measured against `ethical_yoga_test` on 2026-08-26. The
 earlier values are deliberately not written down here: nobody ran this query
 before those extractions, and a number nobody measured does not become true by
-being plausible. `src/lib/cross-family-conflict.ts` still exports
-`isCrossFamilySlotConflict`, and the two template `POST` routes still carry an
-arm that calls it; all three are dead and each says so where it stands.
-Removing them changes what those two endpoints answer, so it is a decision to
-take deliberately rather than inside a documentation sweep.
+being plausible. The two template `POST` routes' dead arms that called
+`isCrossFamilySlotConflict` are gone (issues 331/228), and with them the
+function's last two callers. `src/lib/cross-family-conflict.ts` and its test
+were deleted in the same round rather than kept at zero callers —
+`grep -rn 'isCrossFamilySlotConflict' src` now matches only comment prose in
+other files narrating what the deleted predicate used to do, no import or
+call site among them.
 
 **The migration comments that this document owns.** Two of them, both stranded
 in APPLIED migrations, which is why they live here instead.

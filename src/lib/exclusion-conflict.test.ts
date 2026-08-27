@@ -20,11 +20,10 @@ describe('isExclusionConflictOn', () => {
   });
 
   it('matches the raw-query shape, which spells the SQLSTATE differently', () => {
-    // `P2010`, the shape `$executeRaw` produces — mirrors
-    // `isCrossFamilySlotConflict`'s equivalent case (`cross-family-conflict.test.ts`).
-    // Nothing in `src/` writes `ScheduleRule` raw today, so this shape is
-    // unreachable as the code stands; matched anyway, per that file's
-    // docblock on why "unreachable" is not an argument for dropping a shape.
+    // `P2010`, the shape `$executeRaw` produces. Nothing in `src/` writes
+    // `ScheduleRule` raw today, so this shape is unreachable as the code
+    // stands; matched anyway — see `exclusion-conflict.ts`'s own docblock on
+    // why "unreachable" is not an argument for dropping a shape.
     const err = new Prisma.PrismaClientKnownRequestError(
       'Invalid `prisma.$executeRaw()` invocation:\n\n\n' +
         'Raw query failed. Code: `23P01`. Message: `ERROR: conflicting key value ' +

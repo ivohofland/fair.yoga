@@ -9,11 +9,10 @@ import { Prisma } from '@prisma/client';
  * predicate from `isUniqueConflictOn` (`./unique-conflict`), which gates on
  * `P2002` and cannot see this at all.
  *
- * TWO ERROR SHAPES CARRY THE SQLSTATE, mirroring `isCrossFamilySlotConflict`
- * (`./cross-family-conflict`), which records in full the argument for
- * admitting both rather than only the one a typed call produces: a
- * whole-repo census of what writes a table raw is not a claim this repo can
- * keep honest, and it was false once already when it was made that way.
+ * TWO ERROR SHAPES CARRY THE SQLSTATE, and both are admitted rather than
+ * only the one a typed call produces: a whole-repo census of what writes a
+ * table raw is not a claim this repo can keep honest, and it was false once
+ * already when it was made that way.
  *
  *   1. A typed model call — `PrismaClientUnknownRequestError` with `code` and
  *      `meta` both `undefined`; the SQLSTATE and constraint name survive only

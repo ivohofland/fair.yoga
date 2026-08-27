@@ -4355,19 +4355,21 @@ both rot directions: 18 carried as open work, all `OPEN`; 24 carried as closed,
 all `CLOSED / COMPLETED`. **No rot found** — two consecutive clean rounds since
 the pair of decision-list rots on 08-24.
 
-**Two things left open deliberately, and neither is a loose end.**
+**One thing left open deliberately, and it is not a loose end.**
 
-**`isCrossFamilySlotConflict` is live code with an unreachable arm.** All four
-`YG001` raisers are gone — the template-level two dropped in
+**`isCrossFamilySlotConflict`'s dead arm is gone from both routes, and the
+function went with it (issues 331/228).** All four `YG001` raisers were
+already gone — the template-level two dropped in
 `20260825065109_schedule_rule_backfill`, the entry-level two in
 `20260826080100_calendar_entry_rewire` — so nothing in the schema raises the
-SQLSTATE the predicate matches. It is **not** unreferenced: two routes import
-and call it and one test file exercises it, and both call sites are labelled
-`DEAD ARM` where they stand. Deleting them changes what
-`api/class-templates/route.ts` and `api/studio-class-templates/route.ts`
-answer for an error nothing can currently produce — a decision worth taking on
-purpose rather than inheriting. Re-derive the census with
-`grep -rn 'YG001' prisma src`.
+SQLSTATE the predicate matched. `api/class-templates/route.ts` and
+`api/studio-class-templates/route.ts` both dropped their `DEAD ARM` catch
+branches as part of giving each route's `POST` a service, which left the
+predicate with zero callers; `src/lib/cross-family-conflict.ts` and its test
+were deleted with it rather than kept unreferenced. Re-derive with
+`grep -rn 'isCrossFamilySlotConflict' src` — no import or call site, only
+comment prose in other files narrating what the deleted predicate used to
+do — and `grep -rn 'YG001' prisma src` (the schema census, unchanged).
 
 **The seed step is a gate that should have existed while the code was being
 written.** `20260826080000_calendar_entry`'s own comment rests the placement of

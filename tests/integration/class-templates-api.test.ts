@@ -351,16 +351,46 @@ describe('POST /api/class-templates', () => {
     });
 
     it('leaves one template and one window when two identical creates are in flight at once', async () => {
-      const body = templateBody('Slot Recurring Concurrent', '02:00', ALT_DAY_1);
+      // TEN RACES, NOT ONE (issue 331). Ten 45-minute slots at 14:00 … 23:00
+      // do not overlap each other, so each race is independent of its
+      // predecessors' leftover rows — the same shape as the studio family's
+      // own race loop (`tests/integration/studio-api.test.ts`). Not any of
+      // ALT_DAY_1/2/3 (dense with this file's other fixtures across most of
+      // the day) and not ALT_DAY_5 (structurally the same weekday
+      // `sameWeekDayPair()`'s `OLD_DAY` resolves to on every non-weekend run,
+      // since both are `today + 1`). This uses the file's own reserved
+      // `(DAY_OF_WEEK + 2) % 7` offset instead — the weekday the `PUT`
+      // describe block's own `NEW_DAY_OF_WEEK` cases move templates onto —
+      // whose only occupants are 06:00 (archived, so outside
+      // `ScheduleRule_teacher_slot_excl`'s scope), 08:00 and 12:00, both well
+      // clear of this loop's 14:00-23:45 span. Verify with
+      // `grep -n "NEW_DAY_OF_WEEK" tests/integration/class-templates-api.test.ts`
+      // before moving this loop again.
+      const RACE_DAY = (DAY_OF_WEEK + 2) % 7;
+      for (let i = 0; i < 10; i++) {
+        const body = {
+          ...templateBody(`Slot Class Concurrent ${i}`, `${String(14 + i).padStart(2, '0')}:00`, RACE_DAY),
+          durationMinutes: 45,
+        };
 
-      const [a, b] = await Promise.all([post(body), post(body)]);
-      expect([a.status, b.status].sort()).toEqual([201, 409]);
+        const [a, b] = await Promise.all([post(body), post(body)]);
+        const [bodyA, bodyB] = await Promise.all([a.json(), b.json()]);
+        const outcomes = `${a.status}:${bodyA?.error?.code ?? '-'} ${b.status}:${bodyB?.error?.code ?? '-'}`;
 
-      const loser = a.status === 409 ? a : b;
-      expect((await loser.json()).error.code).toBe('DUPLICATE_TEMPLATE_SLOT');
+        expect([a.status, b.status].sort(), `race ${i}: ${outcomes}`).toEqual([201, 409]);
 
+        const loserBody = a.status === 409 ? bodyA : bodyB;
+        expect(loserBody.error.code).toBe('DUPLICATE_TEMPLATE_SLOT');
+      }
+
+      // Checking every one of the ten races' shape would just repeat the
+      // sequential sibling above ten times over — that case already pins "one
+      // template, one four-week window" for a single race. This checks the
+      // LAST race (i === 9, '23:00') only, enough to confirm the loop's
+      // winner-per-slot outcome actually lands rather than merely answering
+      // the right HTTP codes.
       const templates = await prisma.classTemplate.findMany({
-        where: { scheduleRule: { teacherId, dayOfWeek: ALT_DAY_1, startTime: hhmmToTime('02:00'), isArchived: false } },
+        where: { scheduleRule: { teacherId, dayOfWeek: RACE_DAY, startTime: hhmmToTime('23:00'), isArchived: false } },
       });
       expect(templates).toHaveLength(1);
 
