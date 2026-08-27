@@ -1011,7 +1011,7 @@ SELECT conrelid::regclass AS "table", conname, pg_get_constraintdef(oid)
   FROM pg_constraint WHERE contype = 'x' ORDER BY 1;
 ```
 
-**`YG001` has no raiser left, and the matcher for it is still in the tree.**
+**`YG001` has no raiser left, and neither does its matcher any more.**
 Both halves of this invariant used to be trigger functions running a plain
 `SELECT … LIMIT 1` against the SIBLING table and raising the user-defined
 SQLSTATE `YG001`: one function per table, fired by an INSERT trigger and an

@@ -363,9 +363,12 @@ describe('POST /api/class-templates', () => {
       // describe block's own `NEW_DAY_OF_WEEK` cases move templates onto —
       // whose only occupants are 06:00 (archived, so outside
       // `ScheduleRule_teacher_slot_excl`'s scope), 08:00 and 12:00, both well
-      // clear of this loop's 14:00-23:45 span. Verify with
+      // clear of this loop's 14:00-23:45 span. The hazard runs the other
+      // way from "moving this loop": a FUTURE `PUT` case that moves a
+      // template onto `NEW_DAY_OF_WEEK` at or after 14:00 would collide with
+      // one of these ten rows instead — grep first with
       // `grep -n "NEW_DAY_OF_WEEK" tests/integration/class-templates-api.test.ts`
-      // before moving this loop again.
+      // before adding one.
       const RACE_DAY = (DAY_OF_WEEK + 2) % 7;
       for (let i = 0; i < 10; i++) {
         const body = {

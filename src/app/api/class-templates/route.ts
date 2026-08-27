@@ -81,8 +81,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // No claim is taken inside `createClassTemplate`'s own transaction
   // (`class-template-lifecycle.ts`) — the rule and template rows are
-  // brand-new there, so nothing can race the insert — but that no longer
-  // leaves the generated classes' FK waits unbounded. That transaction's
+  // brand-new there, so there is no existing row to lock going in. That is
+  // NOT "nothing can race the insert": issue 331 is exactly two identical
+  // creates racing it, and the loser waits on the winner's still-open
+  // transaction before its own `ON CONFLICT DO NOTHING` can resolve, skip,
+  // and answer `slot_conflict` below. No claim also used to mean nothing
+  // bounded that wait or the generated classes' FK waits — that is what
+  // changed. That transaction's
   // `setLockTimeout(tx)`, its first statement, is `SET LOCAL lock_timeout`
   // (`db-locks.ts`), transaction-scoped and so governing every statement left
   // in it: the generated classes' own `FOR KEY SHARE` FK check on the

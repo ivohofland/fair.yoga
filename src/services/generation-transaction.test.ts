@@ -32,9 +32,10 @@
  * a retry after an abort is perfectly legal. The guard answered honestly; the
  * harness asked it about a world production never runs in.
  *
- * So the rule this file enforces is narrow and load-bearing: **whatever escapes
- * a generator on a cross-family collision must still be recognisable to
- * `isCrossFamilySlotConflict` after passing through `$transaction`.** Anything
+ * So the rule this file enforces is narrow and load-bearing: **a cross-family
+ * collision inside a real `$transaction` must be absorbed by the pre-check —
+ * `blocked_by_overlap` on the skip list below, nothing thrown — not surfaced
+ * as an escaped post-abort `25P02` from a retried statement.** Anything
  * that runs another statement post-abort breaks that, and no bare-client test
  * can see it.
  */

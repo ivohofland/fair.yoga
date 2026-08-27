@@ -11,8 +11,12 @@ import { Prisma } from '@prisma/client';
  *
  * TWO ERROR SHAPES CARRY THE SQLSTATE, and both are admitted rather than
  * only the one a typed call produces: a whole-repo census of what writes a
- * table raw is not a claim this repo can keep honest, and it was false once
- * already when it was made that way.
+ * table raw is not a claim this repo can keep honest.
+ * `isTerminalStatusViolation`'s own docblock (`api-errors.ts`) records where
+ * that argument was made and found already false: "An earlier revision
+ * admitted only the Unknown shape and argued the raw one was unreachable...
+ * the census as written was already falsified by the date guard's own test
+ * file."
  *
  *   1. A typed model call — `PrismaClientUnknownRequestError` with `code` and
  *      `meta` both `undefined`; the SQLSTATE and constraint name survive only

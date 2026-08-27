@@ -475,9 +475,11 @@ export async function generateInstancesForTemplate(
   // transaction is aborted`, which `isCrossFamilySlotConflict` correctly
   // declines, and the rethrow costs the whole window anyway. It also cost more
   // than that: the escaping error stopped being the `YG001` that the TWO
-  // template POST catches match. Two, not the ten endpoints answering a
-  // cross-family 409 overall — and NOT because those two are the only callers
-  // that wrap generation, which is false: six do, including both sweeps and
+  // template POST catches match (zero now — issues 331/228 deleted both
+  // arms; `docs/lock-order.md` carries the re-derivable count). Two, not
+  // the ten endpoints answering a cross-family 409 overall — and NOT
+  // because those two were the only callers that wrap generation, which is
+  // false: six do, including both sweeps and
   // both pause/resume services, as the sentence four lines up says. They are
   // the only generation-wrapping callers that CATCH `YG001`. The other four
   // let it reach `withErrorHandler`, where `classifyApiError` has no arm for

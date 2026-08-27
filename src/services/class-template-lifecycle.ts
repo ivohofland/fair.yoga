@@ -2542,6 +2542,18 @@ export async function archiveOrUnarchiveTemplate(
 }
 
 /**
+ * The wire shape `POST /api/class-templates` accepts, derived from
+ * `createClassTemplateSchema` rather than hand-declared — the same reasoning
+ * `ClassTemplateUpdateData` above documents: a hand-written twin would drift
+ * from the schema silently, whereas deriving keeps every schema field
+ * visible to `createClassTemplate`. The studio twin,
+ * `CreateStudioClassTemplateInput`
+ * (`studio-class-template-lifecycle.ts`), is the same derivation one model
+ * over.
+ */
+export type CreateClassTemplateInput = z.infer<typeof createClassTemplateSchema>;
+
+/**
  * A create either lands, loses the slot, or loses a contention race. The
  * `slot_conflict` arm carries `heldBy` for the same reason
  * `ArchiveTemplateResult`'s does: one exclusion constraint spans both
@@ -2562,7 +2574,7 @@ export type CreateTemplateResult =
 export async function createClassTemplate(
   db: PrismaClient,
   teacherId: string,
-  input: z.infer<typeof createClassTemplateSchema>,
+  input: CreateClassTemplateInput,
 ): Promise<CreateTemplateResult> {
   let outcome:
     | { ok: true; created: ClassTemplateWithSlot; generation: GenerationResult }
