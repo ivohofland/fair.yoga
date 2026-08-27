@@ -1849,11 +1849,7 @@ export async function pauseOrResumeTemplate(
   }
 }
 
-/**
- * The recurring-class family's half of `archiveOrUnarchiveRule`
- * (`rule-lifecycle.ts`) — the reads, the entry predicate, the flattening, and
- * the waitlist withdrawal that brackets the shared delete.
- */
+/** The recurring-class family's `TemplateFamily` entry (`rule-lifecycle.ts`). */
 const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
   kind: 'regular',
   childTable: 'ClassTemplate',

@@ -98,8 +98,12 @@ export type WithdrawHook = {
  */
 export type TemplateFamily<TChild> = {
   kind: ClassFamily;
-  /** Raw SQL identifier for the child's row lock. Never interpolated from input. */
-  childTable: string;
+  /**
+   * The child's table, spliced as a raw identifier into the row lock below.
+   * `Prisma.ModelName`, not `string`: the type is the tether, so nothing but a
+   * model name can ever reach that splice.
+   */
+  childTable: Prisma.ModelName;
   /** The noun this family's log lines use: "recurring class" / "studio class". */
   logNoun: string;
   readChild: (
@@ -309,10 +313,9 @@ export async function archiveOrUnarchiveRule<TChild>(
         // apart from a real one, so the check is made here rather than relied
         // on to never come up.
         //
-        // `Prisma.raw` on `family.childTable`, and safe for exactly one
-        // reason: every value it can hold is a hard-coded literal in a
-        // descriptor in this repo, never input. `$queryRaw`'s template
-        // placeholders cannot carry an identifier, only a value.
+        // `Prisma.raw` because `$queryRaw`'s placeholders bind a value, never an
+        // identifier. What bounds the splice is `childTable`'s type, not this
+        // comment.
         const childLock = await tx.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM ${Prisma.raw(`"${family.childTable}"`)} WHERE "id" = ${templateId} FOR UPDATE`;
         if (childLock.length === 0) return { ok: false, reason: 'not_found' };
@@ -449,7 +452,10 @@ export async function archiveOrUnarchiveRule<TChild>(
         // Built here, run by the hook — or directly, for a family with none.
         // The family's own extra conjunct is folded in here rather than left to
         // the hook, so the delete's predicate has exactly one author.
+        let deleteCalls = 0;
+        let deletedRows = 0;
         const deleteEntries = async () => {
+          deleteCalls += 1;
           // Deliberately one statement, not a `findMany` followed by a
           // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
           // registration commit in the gap between them under READ COMMITTED, and
@@ -467,12 +473,26 @@ export async function archiveOrUnarchiveRule<TChild>(
               family.withdraw?.deleteFilter,
             ),
           });
+          deletedRows = count;
           return count;
         };
 
         const deleted = family.withdraw
           ? await family.withdraw.around(tx, ctx, deleteEntries)
           : await deleteEntries();
+
+        // #97's record guarantee, enforced here rather than trusted to the
+        // hook. `deleted` reaches `withdrawnCount` below — a durable record of
+        // what a teacher is told was withdrawn — and it arrives through a
+        // callback this module does not own. A hook that skipped the shared
+        // delete, ran it twice, or answered with a number of its own would
+        // otherwise write that number into the record. Throwing rolls the
+        // transaction back whole, so the archive is not half-applied either.
+        if (deleteCalls !== 1 || deleted !== deletedRows) {
+          throw new Error(
+            `archiveOrUnarchiveRule: the ${family.logNoun} withdraw hook must run the shared delete exactly once and report its count; it ran it ${deleteCalls} time(s) and reported ${deleted} against ${deletedRows} row(s) removed`,
+          );
+        }
 
         // `gte`, where the delete used `gt`. The delete deliberately spares a
         // class dated today — "a class hours from starting should not shift
@@ -542,8 +562,9 @@ export async function archiveOrUnarchiveRule<TChild>(
     // rather than to the rethrow. Reordering these two is behaviour-neutral
     // today, and no mutation could show otherwise.
     //
-    // Kept explicit anyway, for the reason the pause/resume twin in this file
-    // states correctly: it is safe today only BECAUSE those codes differ, and
+    // Kept explicit anyway, for the reason `pauseOrResumeTemplate`
+    // (`class-template-lifecycle.ts`) states correctly: it is safe today only
+    // BECAUSE those codes differ, and
     // either predicate widening would end that silently. `classifyApiError`
     // orders itself the same way for the same defensive reason.
     //

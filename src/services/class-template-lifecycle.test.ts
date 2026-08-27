@@ -2094,6 +2094,39 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   });
 
   /**
+   * `TemplateFamily.withSlot` (`rule-lifecycle.ts`) advertises as STRUCTURAL
+   * that the shared archive cannot spread a joined `scheduleRule` into a
+   * response: it is handed the joined row and each family destructures in its
+   * own adapter, so nothing in that module ever holds one. The structure is
+   * real, but it lives in `CLASS_FAMILY`'s adapter — rewrite that adapter to
+   * spread the joined row and the claim is false with nothing to say so.
+   *
+   * The un-archiving arm is the one to pin because it is the arm that got
+   * this wrong: it passed the joined row straight to `withSlot`, which
+   * spreads its first argument, and `route.ts` spreads the template onto the
+   * response body. `ClassTemplateWithSlot` never declared the field, so no
+   * caller could type it and no compiler error could find it.
+   *
+   * `not.toContain`, not a whole-shape assertion: the template row's own
+   * fields change with the schema, and this is about one field that must not
+   * be there.
+   */
+  it('un-archiving answers with a flattened template, never the joined rule row', async () => {
+    const t = await makeTemplate('No Joined Rule On The Wire');
+    expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
+
+    const resumed = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'unarchived');
+    if (!resumed.ok) throw new Error(`expected ok, got ${resumed.reason}`);
+    expect(resumed.action).toBe('unarchived');
+
+    expect(Object.keys(resumed.template)).not.toContain('scheduleRule');
+    // The flattening itself still happened — otherwise "no `scheduleRule`"
+    // would pass on a response that lost the rule's columns altogether.
+    expect(resumed.template.dayOfWeek).toBe(t.scheduleRule.dayOfWeek);
+    expect(resumed.template.startTime).toBe(timeToHHmm(t.scheduleRule.startTime));
+  });
+
+  /**
    * The `unchanged` guard (`isArchived === archiving`, above) makes archiving
    * twice in a row unreachable — the only way back to the archiving arm is
    * through an un-archive first, and that un-archive already nulled both
