@@ -1402,9 +1402,9 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     // `claimStudioTemplateForGeneration` (class-generator.ts,
     // studio-class-generator.ts) hold `FOR UPDATE` on for the duration of
     // their own per-template transactions (#95), so this erasure serialises
-    // against a sweep or a resume in progress the same way
-    // `archiveOrUnarchiveTemplate`'s CAS does now (`class-template-lifecycle.ts`
-    // and its studio twin).
+    // against a sweep or a resume in progress the same way the archive's own
+    // child lock does now — one statement for both families, inside
+    // `archiveOrUnarchiveRule` (`rule-lifecycle.ts`).
     //
     // This site needs the matching 10s budget more than those four
     // do, not just for symmetry: by the time this transaction opens,

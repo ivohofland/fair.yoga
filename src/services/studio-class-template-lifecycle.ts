@@ -13,7 +13,8 @@
  * family that still matter here:
  *
  *   - Where the class family's deletable predicate spreads a `status: {
- *     in: ['draft', 'open'] }` clause, the studio predicate has no status to
+ *     in: ['draft', 'open'] }` clause, `STUDIO_FAMILY.scheduledWhere` below —
+ *     the predicate this file hands the shared archive — has no status to
  *     filter on. It uses `cancelledAt: null` instead — an already-cancelled
  *     future class is *not* an income record: the sole `studioClass.findMany`
  *     in `settings/reporting/page.tsx` queries with `cancelledAt: null` and
@@ -27,12 +28,15 @@
  *     in `prisma/schema.prisma` for the cancel-versus-remove split.
  *   - Where the class family excludes any class with a registration in a
  *     CHARGED status, the studio family has no registrations to consult at
- *     all — `studentCount` is a plain, unconnected `Int?`. So every future
- *     uncancelled studio class the delete's boundary can reach is deletable.
- *     That boundary deliberately spares a class dated today — the same
- *     carve-out the class family has — so `remaining` is a real query keyed
- *     at the start of the teacher's today, not a hardcoded 0: today's
- *     survivor is the one row it can ever find.
+ *     all — `studentCount` is a plain, unconnected `Int?`. That is what
+ *     `STUDIO_FAMILY.withdraw: null` below records: no extra conjunct for the
+ *     shared delete's predicate and nothing to do around the delete, so every
+ *     future uncancelled studio class that predicate reaches is deletable.
+ *     The shared archive still spares a class dated today and still counts
+ *     `remaining` from the start of the teacher's today — the same carve-out
+ *     and the same boundary the class family gets — so `remaining` is a real
+ *     query on this side too, not a hardcoded 0: today's survivor is the one
+ *     row it can ever find.
  *   - `pauseOrResumeStudioTemplate`'s resume write is a compare-and-swap, not
  *     a plain `update`, and takes a claim
  *     (`claimStudioTemplateForGeneration`, `studio-class-generator.ts`)
@@ -595,14 +599,13 @@ export async function updateStudioClassTemplate(
     return await db.$transaction(
       async (tx): Promise<UpdateStudioClassTemplateResult> => {
         // Bounds the wait for this row. Two siblings hold it long enough to
-        // matter, on the same 10s budget: calling `archiveOrUnarchiveStudioTemplate`
-        // holds it through a `calendarEntry.deleteMany` and a count inside
+        // matter, on the same 10s budget: `archiveOrUnarchiveStudioTemplate`
+        // holds it through the `calendarEntry.deleteMany` and the count inside
         // `archiveOrUnarchiveRule` (`rule-lifecycle.ts`), and
-        // `pauseOrResumeStudioTemplate`'s holds it from its CAS through the
+        // `pauseOrResumeStudioTemplate` holds it from its CAS through the
         // generation claim and generation itself. So a concurrent edit really
-        // can queue behind one. (This said "deletes and generates" of the
-        // archive alone until review; the archive never generates — that is
-        // the resume arm.)
+        // can queue behind one. The archive never generates — that is the
+        // resume arm's work alone.
         //
         // Without this the wait is bounded by NOTHING — a stronger statement
         // than the 10s budget below and the one that is true: Prisma checks
@@ -1093,7 +1096,8 @@ export async function pauseOrResumeStudioTemplate(
           SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
         if (childLock.length === 0) return { outcome: 'not_found' };
 
-        // Compare-and-swap, mirroring `archiveOrUnarchiveStudioTemplate`:
+        // Compare-and-swap, mirroring the one `archiveOrUnarchiveRule`
+        // (`rule-lifecycle.ts`) runs for this family:
         // constraining the write to the exact `isActive`/`isArchived` values
         // already read above makes the transition itself — not just this
         // request — what can happen only once, closing the race the two fast
@@ -1185,21 +1189,18 @@ export async function pauseOrResumeStudioTemplate(
           // statement takes its own snapshot, so a row that changed back in
           // between reaches here.
           //
-          // `busy`, not a throw, and the distinction is the point: the CAS
-          // matched ZERO rows, so this transaction has written nothing and
-          // rolls back clean. That is a lost race a retry wins, which is what
-          // `busy` means everywhere else in this file — the route renders it
-          // 503 "Nothing was changed. Wait a moment, then try again." A throw
-          // surfaces the same state as a 500 logged at `error`, the paging
-          // level, for a condition `classifyApiError`'s transient branch exists
-          // to demote. `pauseOrResumeTemplate` reaches the analogous state and
-          // answers `busy`; the two families agreeing matters more than a
-          // distinction only this branch would draw.
+          // `busy`, not a throw. Why that is the right answer, what the route
+          // renders it as, and why both families must answer alike are one
+          // argument about three other modules, so it lives in
+          // `docs/lock-order.md`, "A CAS miss no re-read can classify answers
+          // `busy`, not a throw". What belongs beside the code is only that
+          // this branch is that case: the CAS matched ZERO rows, so this
+          // transaction has written nothing and rolls back clean.
           //
-          // Logged rather than silent, because `busy` covers two causes worth
-          // telling apart in production: a lock wait that timed out (the
-          // `catch` below, which carries `err`) and this one, which carries the
-          // observed row instead.
+          // Logged rather than silent: the observed row is the half of `busy`
+          // that no `err` carries, and a steady trickle here with no
+          // concurrent writer would mean the CAS predicate and this
+          // classification have drifted apart.
           log.warn(
             {
               templateId,

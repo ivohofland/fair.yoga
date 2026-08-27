@@ -17,8 +17,10 @@
  *     matching zero rows the way `updateMany` does, so catching that one error
  *     code and mapping it to `not_found` is enough — no compare-and-swap
  *     needed. Scoped to `updateClassTemplate` ALONE (#100): the archive
- *     section further down uses a compare-and-swap, because there the race to
- *     close is two requests applying the same transition rather than a row
+ *     (`archiveOrUnarchiveRule`, `rule-lifecycle.ts`, which the wrapper at the
+ *     foot of this file parameterises with `CLASS_FAMILY`) uses a
+ *     compare-and-swap, because there the race to close is two requests
+ *     applying the same transition rather than a row
  *     disappearing — and since #116 so does `pauseOrResumeTemplate`, which
  *     this paragraph named as the second P2025 site until that change made it
  *     the third CAS. Its `updateMany` returns a count where the old `update`
@@ -786,10 +788,10 @@ async function probeFirstEffectiveWeek(
  * lock_timeout` (`db-locks.ts`, still true and still load-bearing: deleting
  * the wrapper would silently delete the #100/#209 lock bound with it). See
  * the budget comment at the call for the same warning where someone trimming
- * this would read it. The `catch` sits OUTSIDE the
- * `$transaction` call, the same shape `archiveOrUnarchiveTemplate` and `POST
- * /api/class-templates` already use: a failed statement aborts a Postgres
- * transaction, so there is nothing to catch from within, and the whole
+ * this would read it. The `catch` sits OUTSIDE the `$transaction` call, the
+ * same shape `archiveOrUnarchiveRule` (`rule-lifecycle.ts`) and
+ * `POST /api/class-templates` already use: a failed statement aborts a
+ * Postgres transaction, so there is nothing to catch from within, and the whole
  * thing rolling back is what makes catching it after the fact meaningful —
  * every reason mapped below describes a transaction that did not commit.
  *
@@ -932,9 +934,10 @@ export async function updateClassTemplate(
         await setLockTimeout(tx);
 
         // The child's row lock, explicit rather than incidental. Every other
-        // caller in this file — `pauseOrResumeTemplate`,
-        // `archiveOrUnarchiveTemplate` — takes this same lock as their own
-        // first statement, so this one has to as well: `classType`,
+        // writer of this template's lifecycle or calendar columns takes this
+        // same lock as its own first statement — `pauseOrResumeTemplate`
+        // further down, and the archive inside `archiveOrUnarchiveRule`
+        // (`rule-lifecycle.ts`) — so this one has to as well: `classType`,
         // `dayOfWeek`, `startTime` and `durationMinutes` write `ScheduleRule`
         // below, and a PUT that touches only those four would otherwise reach
         // that write without ever touching `ClassTemplate` — an edit with
@@ -989,17 +992,13 @@ export async function updateClassTemplate(
     updated = withSlot(written.updatedChild, written.newRule);
     updatedRule = written.newRule;
   } catch (err) {
-    // Transient first, matching the order `pauseOrResumeTemplate` and
-    // `archiveOrUnarchiveTemplate` use in this same file. Not
-    // correctness-critical here — `isTransientDbError`'s codes are disjoint
-    // from P2025 and from the exclusion constraint's `23P01` below, so a
+    // Transient first, matching the order `pauseOrResumeTemplate` further down
+    // and the shared archive (`archiveOrUnarchiveRule`, `rule-lifecycle.ts`)
+    // use. Not correctness-critical here — `isTransientDbError`'s codes are
+    // disjoint from P2025 and from the exclusion constraint's `23P01` below, so a
     // transient error could not fall into either of those branches even
     // checked last — but kept first anyway so a reader does not have to
-    // re-derive that for each of the six template lifecycle functions this
-    // helper now guards — `updateClassTemplate`, `pauseOrResumeTemplate` and
-    // `archiveOrUnarchiveTemplate`, and the three studio twins. (Counted, not
-    // incremented: it read "five" at this branch's base too, and was wrong
-    // there as well.)
+    // re-derive that at every template lifecycle function this helper guards.
     if (isTransientDbError(err)) {
       // The template row, and it can now be named: this transaction takes one
       // lock and it is the `ClassTemplate` row's. For one branch the message
@@ -1061,10 +1060,11 @@ export async function updateClassTemplate(
     // family's — because two different DB objects raised them. Issue 298
     // replaced both objects with the ONE exclusion constraint below, and a
     // `23P01` cannot say which family it refused, so `ruleSlotHolder` probes
-    // `ScheduleRule` itself to answer that. LOGGED for the reason
-    // `archiveOrUnarchiveTemplate`'s own branch below gives: a returned
-    // failure never reaches `withErrorHandler`, so catching here is what
-    // would otherwise remove the server-side record.
+    // `ScheduleRule` itself to answer that. LOGGED for the reason the shared
+    // archive's own `23P01` branch gives (`archiveOrUnarchiveRule`,
+    // `rule-lifecycle.ts`): a returned failure never reaches
+    // `withErrorHandler`, so catching here is what would otherwise remove the
+    // server-side record.
     if (isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')) {
       const heldBy = await ruleSlotHolder(db, {
         teacherId,
@@ -1152,11 +1152,12 @@ export async function updateClassTemplate(
  * The last class still on the schedule for a template, as `pauseOrResumeTemplate`
  * and its studio twin report it, and as `pauseMessage` renders it.
  *
- * Shared rather than declared per site, which is what #100 asked for. Note the
- * two families are otherwise deliberately parallel-but-separate (see the header
- * of `studio-class-template-lifecycle.ts`, and PR #92, which found they had
- * drifted): that policy is about shared *implementation*, and this is two
- * fields with no logic to drift.
+ * Shared rather than declared per site, which is what #100 asked for. The two
+ * families' PAUSE/RESUME halves stay deliberately separate implementations
+ * (see the header of `studio-class-template-lifecycle.ts`, and PR #92, which
+ * found they had drifted); their archives do not — since issue 332 both run on
+ * one body in `rule-lifecycle.ts`. Neither policy reaches this type either
+ * way: it is two fields with no logic to drift.
  *
  * `date` is `CalendarEntry.date` straight through — one column for both
  * producers since #327 — and it is `@db.Date`: a calendar date
@@ -1371,7 +1372,8 @@ const scheduledWhere = (
  * are read back under a lock the successful CAS is still holding, while
  * `unchanged` comes from a plain re-read in the miss branch that may or may
  * not run under a lock this transaction already holds — see that branch, and
- * `archiveOrUnarchiveTemplate`'s, for why the re-read is correct either way.
+ * the shared archive's own miss branch (`archiveOrUnarchiveRule`,
+ * `rule-lifecycle.ts`), for why the re-read is correct either way.
  */
 type ResumeTransactionOutcome =
   | { outcome: 'not_found' }
@@ -1541,11 +1543,12 @@ export async function pauseOrResumeTemplate(
 
         if (swapped.count === 0) {
           // A miss may or may not leave this transaction holding a lock, and
-          // this plain re-read is correct either way. See
-          // `archiveOrUnarchiveTemplate`'s own miss branch for the full
-          // account rather than repeating it here. Both rows read together
-          // (issue 298): the child's existence is still what `not_found`
-          // means, and the rule is what the classification below reads.
+          // this plain re-read is correct either way. See the shared archive's
+          // own miss branch (`archiveOrUnarchiveRule`, `rule-lifecycle.ts`)
+          // for the full account rather than repeating it here. Both rows are
+          // read together (issue 298): the child's existence is still what
+          // `not_found` means, and the rule is what the classification below
+          // reads.
           const current = await tx.classTemplate.findUnique({
             where: { id: templateId },
             include: { scheduleRule: true },
@@ -1575,27 +1578,18 @@ export async function pauseOrResumeTemplate(
           // on `isActive`), and a pause commits before the re-read (so the
           // re-read sees neither already-desired nor archived).
           //
-          // `busy`, not a throw, and the distinction is the whole point: the
-          // CAS matched ZERO rows, so this transaction has written nothing and
-          // rolls back clean. That is a lost race a retry wins, which is what
-          // `busy` means everywhere else in this file — the route renders it
-          // 503 "Nothing was changed. Wait a moment, then try again." An
-          // earlier version of this branch threw here on the theory that the
-          // state was a stacked race too exotic to answer; it surfaced as a
-          // 500 "Internal server error" logged at `error`, the paging level,
-          // for a condition `classifyApiError`'s transient branch exists to
-          // demote. `archiveOrUnarchiveTemplate`'s miss branch reaches the
-          // analogous fourth state and answers `unchanged` rather than
-          // throwing; the two families agreeing matters more than a
-          // distinction only this branch drew.
+          // `busy`, not a throw. Why that is the right answer, what the route
+          // renders it as, and why both families must answer alike are one
+          // argument about three other modules, so it lives in
+          // `docs/lock-order.md`, "A CAS miss no re-read can classify answers
+          // `busy`, not a throw". What belongs beside the code is only that
+          // this branch is that case: the CAS matched ZERO rows, so this
+          // transaction has written nothing and rolls back clean.
           //
-          // Logged rather than silent, because `busy` now covers two causes
-          // that want telling apart in production: a lock wait that timed out
-          // (the `catch` below, which carries `err`) and this one, which
-          // carries the observed row instead. A steady trickle here with no
+          // Logged rather than silent: the observed row is the half of `busy`
+          // that no `err` carries, and a steady trickle here with no
           // concurrent writer would mean the CAS predicate and this
-          // classification have drifted apart — the case the throw was really
-          // aimed at.
+          // classification have drifted apart.
           log.warn(
             {
               templateId,
@@ -1900,10 +1894,11 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       //
       // Ordered pre-lock (issue 180 task 4). Deliberately the FULL
       // `scheduledWhere(templateId, { gt: today })` set — every scheduled
-      // future class of this template — not narrowed to the `deleteMany`'s
-      // `registrations: { none: … }` predicate below. The `deleteMany`
-      // re-evaluates its predicate at execution time (deliberately — see
-      // its own comment below, which this does not change), so ANY
+      // future class of this template — not narrowed to the
+      // `registrations: { none: … }` conjunct `deleteFilter` above supplies.
+      // The shared `deleteMany` this hook brackets re-evaluates its predicate
+      // at execution time (deliberately — see its own comment in
+      // `rule-lifecycle.ts`, which this does not change), so ANY
       // candidate may still match and must already be held before that
       // statement runs. Narrowing this set to only the deletable rows would
       // leave a candidate the delete's re-evaluation pulls into scope
@@ -1986,8 +1981,9 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       // A same-day instance — outside `c.date > ${today}` above, so never
       // locked here — rescheduled into the future between this pre-lock
       // and the `deleteMany` below (whose predicate is re-evaluated at
-      // execution time, by design — see its own comment) can still be
-      // matched and deleted without ever having been held by this
+      // execution time, by design — see its own comment in
+      // `rule-lifecycle.ts`) can still be matched and deleted without ever
+      // having been held by this
       // statement. So the ascending-order guarantee at this site is not
       // total: the AB-BA cycle against `deleteStudentAccount` can still
       // form through this window. Measured, not just reasoned: template

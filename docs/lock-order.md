@@ -241,8 +241,9 @@ follows; re-deciding that would re-decide all ten.
 
 The studio family is pinned by its CASCADES. Two of its three writers of the
 pair delete the entry and let `ON DELETE CASCADE` take the child —
-`archiveOrUnarchiveStudioTemplate`'s `calendarEntry.deleteMany`
-(`studio-class-template-lifecycle.ts`) and `DELETE /api/studio-classes/[id]`.
+`archiveOrUnarchiveStudioTemplate`'s `calendarEntry.deleteMany` (the shared
+one in `rule-lifecycle.ts`, reached with `STUDIO_FAMILY`) and
+`DELETE /api/studio-classes/[id]`.
 PostgreSQL locks the parent tuple, then the RI trigger deletes the child, so
 both acquire entry then `StudioClass` with no statement to reorder. The third
 is `PUT /api/studio-classes/[id]`, which writes both rows in one transaction
@@ -343,25 +344,32 @@ a call):
    rather than inlining it.
    `grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" |
    grep -vE ":[0-9]+: *(\*|//)"` is the check, not a number kept here.
-   **It returned four hits when this was last written, and returns twelve
-   now** — re-measured for Task 3c (#315), not carried forward. Of the
-   original four, two were never `Class` locks at all —
-   `claimTemplateForGeneration` (`class-generator.ts`) and
-   `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) take
+   **It returned four hits when this check was first written, and returns
+   thirteen when re-run today** — re-derived on the branch that last touched
+   this passage, not carried forward. Of the original four, two were never
+   `Class` locks at all — `claimTemplateForGeneration` (`class-generator.ts`)
+   and `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) take
    `FOR UPDATE OF ct`/`FOR UPDATE OF sct` on a `ClassTemplate` /
    `StudioClassTemplate` row — so the claim above holds over them rather than
-   being violated by them, and the other two are the `Class` helpers in
-   `db-locks.ts`, which is the whole point. **Eight new lines**, all of the
-   same non-`Class` kind and all added by the split "The child row is the
-   lock node for the template families" below describes: six single-id plain
-   `FOR UPDATE`s (`updateClassTemplate`, `pauseOrResumeTemplate`,
-   `archiveOrUnarchiveTemplate` and their three studio twins) plus two
-   ordered `FOR UPDATE OF` locks in `deleteTeacherAccount`'s bulk archive
-   (`gdpr.ts`) — one per template family, the fourth and fifth entries the
-   `FOR UPDATE OF` census one section up gained alongside the two claims.
-   Twelve lines total, ten of them not a `Class` lock — the two original
-   claims plus these eight — and two still are, unchanged:
-   `lockClassRow`/`lockClassRowsOrdered` in `db-locks.ts`. A
+   being violated by them, and the other two were the `Class` helpers in
+   `db-locks.ts`, which is the whole point. The nine lines added since are of
+   two kinds. Seven come from the split "The child row is the lock node for
+   the template families" below describes: five single-id plain `FOR UPDATE`s
+   on a child template row — one each in `updateClassTemplate`,
+   `pauseOrResumeTemplate`, `updateStudioClassTemplate` and
+   `pauseOrResumeStudioTemplate`, and a fifth in `archiveOrUnarchiveRule`
+   (`rule-lifecycle.ts`) that serves BOTH archive entry points, its table name
+   spliced from the family descriptor rather than written literally (issue 332
+   merged what were two lines into that one) — plus two ordered
+   `FOR UPDATE OF` locks in `deleteTeacherAccount`'s bulk archive (`gdpr.ts`),
+   one per template family, the fourth and fifth entries the `FOR UPDATE OF`
+   census one section up gained alongside the two claims. The other two are
+   #327's `FOR UPDATE OF e` companions inside `lockClassRow` and
+   `lockClassRowsOrdered`, which now take two lines each. Thirteen lines
+   total: nine of them lock a template child row — the two claims, the five
+   single-id locks and the two ordered bulk-archive locks — and the remaining
+   four are in `db-locks.ts`, which is where every `Class` and `CalendarEntry`
+   row lock still lives. A
    count that stays right while the membership changes is the one error
    nothing that counts can catch, and this document has already made that
    mistake once (`db-locks.ts`'s register named `deleteStudentAccount` as a
@@ -1226,9 +1234,10 @@ needs that column on the rule, so keeping a copy of the lifecycle flags on the
 child would restore the two-sources-of-truth drift this extraction exists to
 remove.
 
-Nine call sites hold the child row `FOR UPDATE` today — ten statements, since
-`deleteTeacherAccount`'s bulk archive takes one per family — all added or
-corrected by Task 3c:
+Nine call sites hold the child row `FOR UPDATE` today, across nine statements:
+`deleteTeacherAccount`'s bulk archive takes one per family, and the two
+archive entry points share the one inside `archiveOrUnarchiveRule`. All were
+added or corrected by Task 3c:
 
 | Site | File | Shape |
 |---|---|---|
@@ -1236,10 +1245,10 @@ corrected by Task 3c:
 | `claimStudioTemplateForGeneration` | `studio-class-generator.ts` | joined predicate, `FOR UPDATE OF sct` |
 | `updateClassTemplate` | `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
 | `pauseOrResumeTemplate` | `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
-| `archiveOrUnarchiveTemplate` | `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
+| `archiveOrUnarchiveTemplate` | statement in `rule-lifecycle.ts`, family in `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `CLASS_FAMILY.childTable` |
 | `updateStudioClassTemplate` | `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
 | `pauseOrResumeStudioTemplate` | `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
-| `archiveOrUnarchiveStudioTemplate` | `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
+| `archiveOrUnarchiveStudioTemplate` | statement in `rule-lifecycle.ts`, family in `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `STUDIO_FAMILY.childTable` |
 | `deleteTeacherAccount` (bulk archive) | `gdpr.ts` | ordered, `FOR UPDATE OF ct` **and** `FOR UPDATE OF sct` |
 
 **This is a convention enforced by a grep and a test, not by the database** —
@@ -1313,6 +1322,42 @@ this lock returns `deleteTeacherAccount` to the SAME `Class`-before-
 before issue 298 this same bulk write already implicitly took it. It does not
 make #229 worse; it makes this function's post-298 behaviour match its
 pre-298 shape again.
+
+## A CAS miss no re-read can classify answers `busy`, not a throw (issue 332)
+
+`pauseOrResumeTemplate` (`class-template-lifecycle.ts`) and
+`pauseOrResumeStudioTemplate` (`studio-class-template-lifecycle.ts`) each
+disambiguate a zero-count CAS with a plain re-read, and each has a residual
+branch for the case that re-read matches no classification: under READ
+COMMITTED every statement takes its own snapshot, so a row that changed and
+changed back between the CAS and the re-read reaches it. Both branches answer
+`{ ok: false, reason: 'busy' }` and log the observed row at `warn`. The
+reasoning is here rather than in either comment because every load-bearing
+part of it is a fact about a different module, and a comment carrying it has
+no owner in the file that would falsify it.
+
+**Why `busy` and not a throw.** The CAS matched zero rows, so the transaction
+wrote nothing and rolls back clean — a lost race a retry wins, which is what
+`busy` means at every other site in both files. `PATCH
+/api/class-templates/[id]` and `PATCH /api/studio-class-templates/[id]` render
+it as a 503 telling the teacher nothing was changed and to wait a moment and
+try again. A throw surfaces the same state as a 500 logged at `error` — the
+paging level — for exactly the condition `classifyApiError`'s transient branch
+(`src/lib/api-errors.ts`) exists to demote to a retryable 503.
+
+**Why both families answer alike.** They did not, for two issues. `aed305f8`
+gave the class branch `busy` for #116 and the port to the studio branch never
+happened, so one interleaving answered 503 in one family and 500 in the other,
+and neither branch had a test. Issue 332 closed that and pinned both. A
+distinction only one family draws costs more than the distinction is worth;
+that judgement is the same one the shared archive in `rule-lifecycle.ts` rests
+on.
+
+**Why logged rather than silent.** `busy` covers two causes worth telling
+apart in production — a lock wait that timed out (each function's `catch`,
+which carries `err`) and this one, which carries the observed row instead. A
+steady trickle here with no concurrent writer means the CAS predicate and the
+classification beneath it have drifted apart.
 
 ## Known conformance
 

@@ -308,8 +308,9 @@ export const UNARCHIVE_STUDIO_MESSAGE =
 /**
  * The class family's twin of `UNARCHIVE_STUDIO_MESSAGE`, and the same failure
  * one arm over: `archiveOrUnarchiveTemplate` forces `isActive: false` on both
- * directions — its own comment says so — and the archive has already deleted
- * the future classes. So a teacher who un-archives to get their weekly class
+ * directions — the shared body it calls, `archiveOrUnarchiveRule`
+ * (`rule-lifecycle.ts`), says so in its docblock — and the archive has already
+ * deleted the future classes. So a teacher who un-archives to get their weekly class
  * back lands on a paused template with an empty window, and until #116 the
  * only signal was that a differently-labelled button appeared.
  *

@@ -196,7 +196,14 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  *
  *   grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" \
  *     | grep -vE ":[0-9]+: *(\*|//)" \
- *     | grep -vE 'OF (ct|sct)`|"ClassTemplate"|"StudioClassTemplate"'
+ *     | grep -vE 'OF (ct|sct)`|"ClassTemplate"|"StudioClassTemplate"|childTable'
+ *
+ * That last alternative earns its place: `archiveOrUnarchiveRule`
+ * (`rule-lifecycle.ts`) locks the child template row for both families from
+ * one statement, splicing the table name in from the family descriptor, so
+ * the literal table names no longer appear at that site and the filter has to
+ * match the splice instead. Without it a template-row lock shows up here as if
+ * it were a `Class` one.
  *
  * Expect FOUR hits and expect every one of them to be in THIS FILE — this
  * helper's two statements and `lockClassRowsOrdered`'s two. That is the whole
@@ -320,9 +327,11 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
  * rather than a predicate re-evaluated later against whatever the table looks
  * like when the write runs — the difference `docs/lock-order.md` draws between
  * `withdrawWaitingEntriesForTeacher` (`waitlist.ts`), whose `updateMany` is
- * keyed on the ids this helper handed back, and `archiveOrUnarchiveTemplate`
- * (`class-template-lifecycle.ts`), whose `deleteMany` re-evaluates its own
- * predicate when it runs. Callers that do
+ * keyed on the ids this helper handed back, and the recurring-class archive,
+ * whose `deleteMany` re-evaluates its own predicate when it runs. The archive
+ * is two files: the call to this helper is in `CLASS_FAMILY.withdraw.around`
+ * (`class-template-lifecycle.ts`), and the delete it brackets is the shared
+ * one in `archiveOrUnarchiveRule` (`rule-lifecycle.ts`). Callers that do
  * not need them may ignore the return value; the lock is the point.
  *
  * `entries: true` ADDS the `CalendarEntry` rows, in a second statement, after

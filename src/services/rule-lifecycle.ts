@@ -258,28 +258,25 @@ export async function archiveOrUnarchiveRule<TChild>(
     return await db.$transaction(
       async (tx): Promise<ArchiveRuleResult<TChild>> => {
         // Bounds every statement left in this transaction — the CAS below
-        // first among them, and the ordered pre-lock further down too, which
-        // is not incidental: that one can lose to an ordinary booking holding
-        // a `Class` row, so the 2s answer reaches a path the sweep never
-        // touches (`class-generator.test.ts`, "the bound reaches its
-        // pre-lock" — issue 180 task 4 moved what that test actually blocks
-        // on from the `deleteMany` to the pre-lock ahead of it; see that
-        // test's own updated comment). The `deleteMany` below no longer waits
-        // on an external holder OF A `Class` ROW THE PRE-LOCK COVERED — that
-        // much the pre-lock does buy. It can still wait, two ways, and an
-        // earlier version of this comment claimed otherwise on both:
+        // first among them, the `deleteMany` further down, and everything a
+        // family's `withdraw` hook issues around it. That last part is not
+        // incidental: the class family's hook opens with an ordered pre-lock
+        // that can lose to an ordinary booking holding a `Class` row, so the
+        // 2s answer reaches a path the generation sweep never touches
+        // (`class-generator.test.ts`, "the bound reaches its pre-lock"). What
+        // that pre-lock does and does not buy is argued where it is written,
+        // in `CLASS_FAMILY.withdraw` (`class-template-lifecycle.ts`).
         //
-        //   - **Cascade children.** `Registration.class` and
-        //     `WaitlistEntry.class` are `onDelete: Cascade`
-        //     (`prisma/schema.prisma`), so the delete takes row locks on child
-        //     rows no `Class` pre-lock holds. Spec §2.4 counts exactly this
-        //     ("the `deleteMany` can then wait only on cascade children"), and
-        //     `class-generator.test.ts`'s 15s derivation counts the sync's
-        //     equivalent statement as a waiting one for the same reason.
-        //   - **Rows the pre-lock never covered.** The `deleteMany` predicate
-        //     is re-evaluated at execution time by design, and the pre-lock
-        //     stops at `date > today` — see that statement's own comment for
-        //     the `updateClass` window, which is measured, not theorised.
+        // The `deleteMany` below can wait even behind a family that pre-locks,
+        // two ways:
+        //
+        //   - **Cascade children.** The entries it deletes cascade into their
+        //     child rows and beyond (`prisma/schema.prisma`), so it takes row
+        //     locks a `Class`-row pre-lock never holds.
+        //   - **Rows a pre-lock never covered.** Its predicate is re-evaluated
+        //     at execution time by design — see the statement's own comment —
+        //     so a row that enters scope after the hook ran is matched and
+        //     locked here regardless.
         //
         // The distinction matters for budgeting, not just for accuracy:
         // someone trimming this transaction's 10s on the strength of "nothing
@@ -293,25 +290,27 @@ export async function archiveOrUnarchiveRule<TChild>(
 
         // The child's row lock, taken explicitly and first — before the CAS
         // below touches `ScheduleRule` at all, and before the `deleteMany`
-        // further down. Before issue 298 this CAS wrote `ClassTemplate`
-        // directly and so held, as a side effect of a plain `updateMany`, the
-        // same row `claimTemplateForGeneration` (class-generator.ts) takes
-        // `FOR UPDATE` on — which is what serialised an archive against a
-        // sweep in progress (#95). `isArchived`/`isActive` moved to
-        // `ScheduleRule` with the rest of the calendar identity, so that CAS
-        // no longer touches `ClassTemplate` at all; this statement is what
-        // takes its place. See `docs/lock-order.md`, "The child row is the
-        // lock node for the template families" for the decision this
-        // implements, and why the lock sits on the child rather than on
-        // `ScheduleRule` itself.
+        // further down. Before issue 298 each family's CAS wrote its own child
+        // table directly and so held, as a side effect of a plain
+        // `updateMany`, the same row that family's generation claim
+        // (`claimTemplateForGeneration`, `class-generator.ts`;
+        // `claimStudioTemplateForGeneration`, `studio-class-generator.ts`)
+        // takes `FOR UPDATE` on — which is what serialised an archive against
+        // a sweep in progress (#95). `isArchived`/`isActive` moved to
+        // `ScheduleRule` with the rest of the calendar identity, so no CAS
+        // touches a child table any more; this statement is what takes their
+        // place, for both families at once. See `docs/lock-order.md`, "The
+        // child row is the lock node for the template families" for the
+        // decision this implements, and why the lock sits on the child rather
+        // than on `ScheduleRule` itself.
         //
         // Row count checked, not discarded: `ScheduleRule` carries no FK back
-        // to `ClassTemplate`, so a `ClassTemplate` deleted out from under this
+        // to either child table, so a child deleted out from under this
         // transaction leaves an orphaned rule row the CAS below would still
-        // match — reachable only through a test double today (nothing in
-        // `src/` deletes a `ClassTemplate`), but the CAS cannot tell that
-        // apart from a real one, so the check is made here rather than relied
-        // on to never come up.
+        // match, and the CAS cannot tell that apart from a real one. Whether
+        // any production path deletes a child at all is a repo-wide question
+        // with a repo-wide answer — `docs/data-model.md`, Design Notes, which
+        // carries it with the grep that re-derives it.
         //
         // `Prisma.raw` because `$queryRaw`'s placeholders bind a value, never an
         // identifier. What bounds the splice is `childTable`'s type, not this
@@ -422,7 +421,7 @@ export async function archiveOrUnarchiveRule<TChild>(
           // contract carries a template. Reading it back is safe here
           // specifically because the CAS above holds the rule row's lock until
           // we commit, so nothing can change or delete it in between — the same
-          // lock-then-read pattern `claimTemplateForGeneration` uses, and
+          // lock-then-read pattern each family's generation claim uses, and
           // `OrThrow` for the same reason: the update just matched this row.
           //
           // A template that is no longer archived has no withdrawal to report.
@@ -540,11 +539,14 @@ export async function archiveOrUnarchiveRule<TChild>(
           remaining,
         };
       },
-      // The compare-and-swap above locks the same row the generator sweep's
-      // `claimTemplateForGeneration` (class-generator.ts) holds `FOR UPDATE` for
-      // the duration of its own per-template transaction. The CAS's own `FOR NO
-      // KEY UPDATE` conflicts with that, so an archive can block on a sweep in
-      // progress. The wait itself is now bounded by the transaction's own
+      // The child row lock above is what a generation sweep serialises
+      // against: each family's claim (`claimTemplateForGeneration`,
+      // `class-generator.ts`; `claimStudioTemplateForGeneration`,
+      // `studio-class-generator.ts`) holds that same row `FOR UPDATE` for the
+      // duration of its own per-template transaction, so an archive can block
+      // on a sweep in progress. Not the CAS's own `FOR NO KEY UPDATE`, which
+      // is on `ScheduleRule` and which no sweep touches — see the record write
+      // above. The wait itself is bounded by the transaction's own
       // `setLockTimeout` (2s); this budget covers the transaction's own work —
       // the delete, whatever the family's `withdraw` hook does around it, and
       // the record write — not the wait. Matching
@@ -563,11 +565,10 @@ export async function archiveOrUnarchiveRule<TChild>(
     // rather than to the rethrow. Reordering these two is behaviour-neutral
     // today, and no mutation could show otherwise.
     //
-    // Kept explicit anyway, for the reason `pauseOrResumeTemplate`
-    // (`class-template-lifecycle.ts`) states correctly: it is safe today only
-    // BECAUSE those codes differ, and
-    // either predicate widening would end that silently. `classifyApiError`
-    // orders itself the same way for the same defensive reason.
+    // Kept explicit anyway: the ordering is safe today only BECAUSE those two
+    // predicates match disjoint SQLSTATEs, and widening either would end that
+    // silently. `classifyApiError` (`src/lib/api-errors.ts`) orders itself the
+    // same way for the same defensive reason.
     //
     // Logged here rather than left to the API wrapper: returning instead of
     // throwing means the wrapper never sees this, and its automatic line
