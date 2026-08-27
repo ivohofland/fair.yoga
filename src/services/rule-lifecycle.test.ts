@@ -47,6 +47,11 @@ describe('rule-lifecycle family descriptors', () => {
     // omission is a compile error — this asserts the runtime half: that the
     // studio descriptor has actually made the choice rather than inherited it.
     expect(STUDIO_FAMILY.withdraw).toBeNull();
-    expect(CLASS_FAMILY.withdraw).not.toBeNull();
+    // `toHaveProperty`, not `not.toBeNull()`: the latter passes for
+    // `undefined` too, the exact omission the assertion above exists to rule
+    // out for the other family. A real `WithdrawHook` has an `around` hook —
+    // asserting that is present is what actually distinguishes "declared a
+    // hook" from "declared nothing".
+    expect(CLASS_FAMILY.withdraw).toHaveProperty('around');
   });
 });

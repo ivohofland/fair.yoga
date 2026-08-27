@@ -546,7 +546,8 @@ export async function archiveOrUnarchiveRule<TChild>(
       // KEY UPDATE` conflicts with that, so an archive can block on a sweep in
       // progress. The wait itself is now bounded by the transaction's own
       // `setLockTimeout` (2s); this budget covers the transaction's own work —
-      // the delete, the notifications, the record write — not the wait. Matching
+      // the delete, whatever the family's `withdraw` hook does around it, and
+      // the record write — not the wait. Matching
       // the sweep's 10s transaction timeout still matters: a loaded VPS can
       // exceed Prisma's 5s default and turn an ordinary archive click into an
       // opaque P2028.

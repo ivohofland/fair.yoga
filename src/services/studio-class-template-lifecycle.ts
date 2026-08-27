@@ -595,8 +595,9 @@ export async function updateStudioClassTemplate(
     return await db.$transaction(
       async (tx): Promise<UpdateStudioClassTemplateResult> => {
         // Bounds the wait for this row. Two siblings hold it long enough to
-        // matter, on the same 10s budget: `archiveOrUnarchiveStudioTemplate`'s
-        // CAS holds it through a `calendarEntry.deleteMany` and a count, and
+        // matter, on the same 10s budget: calling `archiveOrUnarchiveStudioTemplate`
+        // holds it through a `calendarEntry.deleteMany` and a count inside
+        // `archiveOrUnarchiveRule` (`rule-lifecycle.ts`), and
         // `pauseOrResumeStudioTemplate`'s holds it from its CAS through the
         // generation claim and generation itself. So a concurrent edit really
         // can queue behind one. (This said "deletes and generates" of the
@@ -620,11 +621,12 @@ export async function updateStudioClassTemplate(
         // touches only rule fields would otherwise reach that write without
         // ever locking `StudioClassTemplate`, and the sibling functions'
         // CAS would have nothing to wait on. This statement is what closes
-        // that: `archiveOrUnarchiveStudioTemplate` and
-        // `pauseOrResumeStudioTemplate` take the same lock as their own
-        // first statement. See `docs/lock-order.md`, "The child row is the
-        // lock node for the template families" for the decision this
-        // implements.
+        // that: calling `archiveOrUnarchiveStudioTemplate` — via
+        // `archiveOrUnarchiveRule` (`rule-lifecycle.ts`) — and
+        // `pauseOrResumeStudioTemplate` both take the same lock near the
+        // start of their own transaction. See `docs/lock-order.md`, "The
+        // child row is the lock node for the template families" for the
+        // decision this implements.
         await tx.$queryRaw`SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
 
         // The parameter's intersection guards the DOOR; this guards the
@@ -951,9 +953,10 @@ const scheduledWhere = (scheduleRuleId: string, date: { gt: Date } | { gte: Date
  * that `updateMany` first blocking on the conflicting change and only then
  * losing its recheck leaves the row locked to commit regardless (Postgres
  * takes the lock before the recheck, not after) — either way the plain
- * re-read's correctness does not depend on which happened, exactly like
- * `archiveOrUnarchiveStudioTemplate`'s own miss branch; and `busy` carries no
- * template at all, so the question does not arise for it.
+ * re-read's correctness does not depend on which happened, exactly like the
+ * miss branch `archiveOrUnarchiveRule` (`rule-lifecycle.ts`) runs when called
+ * for this family; and `busy` carries no template at all, so the question
+ * does not arise for it.
  */
 type ResumeTransactionOutcome =
   | { outcome: 'not_found' }
@@ -981,9 +984,10 @@ type ResumeTransactionOutcome =
  * `generateStudioInstancesForTemplate` instead, which is scoped to one
  * template and accepts this transaction's client.
  *
- * The write is a compare-and-swap, not a plain `update` — mirroring
- * `archiveOrUnarchiveStudioTemplate`, see that function for the fuller
- * account. The two guards below are read outside any lock and are fast
+ * The write is a compare-and-swap, not a plain `update` — mirroring the CAS
+ * `archiveOrUnarchiveRule` (`rule-lifecycle.ts`) runs for this family, see
+ * that function for the fuller account. The two guards below are read
+ * outside any lock and are fast
  * paths only, not the guarantee: a concurrent archive can commit between
  * those reads and the write. Without the CAS a plain `update` here — keyed
  * on `{ id }` alone — would not notice: it would re-read the new row version
@@ -1124,10 +1128,11 @@ export async function pauseOrResumeStudioTemplate(
         // themselves are unchanged: a row that already satisfied the
         // constraint still does, regardless of which mechanism Postgres uses
         // to re-check it. That exemption is local to this write, not to the
-        // file: `archiveOrUnarchiveStudioTemplate`'s own CAS, further down,
-        // DOES write `isArchived`, and un-archiving into a slot another live
-        // rule holds is exactly what makes that one raise `23P01` — see its
-        // own `catch` for where that is handled.
+        // family: the CAS inside `archiveOrUnarchiveRule` (`rule-lifecycle.ts`)
+        // DOES write `isArchived` when called for this family, and
+        // un-archiving into a slot another live rule holds is exactly what
+        // makes that one raise `23P01` — see that module's own `catch` for
+        // where that is handled.
         const swapped = await tx.scheduleRule.updateMany({
           where: { id: template.scheduleRuleId, isArchived: false, isActive: !desiredActive },
           data: { isActive: desiredActive },
@@ -1146,13 +1151,13 @@ export async function pauseOrResumeStudioTemplate(
           // locks the newest row version first and only then re-checks the
           // `where` against it; a rejection at that point still leaves the lock
           // held to commit. Disambiguate with a plain re-read either way,
-          // exactly as `archiveOrUnarchiveStudioTemplate`'s own miss branch
-          // does — and see there for why taking a lock here on purpose would
-          // not be worth it. Follow that hop knowing the class family now
-          // carries this same correction rather than the flat "holds no lock"
-          // claim it asserted until #117 — the two families agree about this
-          // mechanism again, and a future edit to either owes the other the
-          // same visit.
+          // exactly as the miss branch inside `archiveOrUnarchiveRule`
+          // (`rule-lifecycle.ts`) does — and see there for why taking a lock
+          // here on purpose would not be worth it. Follow that hop knowing
+          // the class family now carries this same correction rather than
+          // the flat "holds no lock" claim it asserted until #117 — the two
+          // families agree about this mechanism again, and a future edit to
+          // either owes the other the same visit.
           const current = await tx.studioClassTemplate.findUnique({
             where: { id: templateId },
             include: { scheduleRule: true },
@@ -1283,8 +1288,9 @@ export async function pauseOrResumeStudioTemplate(
         // replaced with a literal 0. See the public `active` arm's own note.
         const counts = countSkipReasons(generation.skipped);
 
-        // Same helper and same boundary as `archiveOrUnarchiveStudioTemplate`'s
-        // `remaining`, so archiving and resuming report on one basis. `gte`, not
+        // Same helper and same boundary as the `remaining` count
+        // `archiveOrUnarchiveRule` (`rule-lifecycle.ts`) runs for this family,
+        // so archiving and resuming report on one basis. `gte`, not
         // `gt`: this path deletes nothing, so there is no spare-today carve-out
         // to mirror — a class dated today is on the schedule and must be counted.
         //
@@ -1431,7 +1437,8 @@ export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate> = {
   // three, `alsoOnClass` being the extra one. A function of fewer parameters
   // is assignable to a type expecting more, so this compiles — and it is
   // correct, because `family.withdraw?.deleteFilter` is `undefined` for a
-  // family with no `withdraw` hook, and the argument is never passed here.
+  // family with no `withdraw` hook, so the third argument arrives as
+  // `undefined`.
   scheduledWhere,
   // Destructures here, where `StudioClassTemplate` is concrete, then hands
   // the bare child to this file's existing exported `withSlot` unchanged.
