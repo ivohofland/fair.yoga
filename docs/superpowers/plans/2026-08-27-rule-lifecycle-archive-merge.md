@@ -505,7 +505,19 @@ export type TemplateFamily<TChild> = {
     date: { gt: Date } | { gte: Date },
     alsoOnClass?: Prisma.ClassWhereInput,
   ) => Prisma.CalendarEntryWhereInput;
-  withSlot: (child: TChild, rule: ScheduleRule) => WithSlot<TChild>;
+  /**
+   * Takes the JOINED row, not a bare child, and each family destructures in its
+   * own adapter — where `TChild` is concrete and the compiler can prove the
+   * remainder is a `TChild`. Handed a bare child instead, this module would have
+   * to strip `scheduleRule` itself under a naked type parameter, which needs a
+   * cast (measured: `Omit<TChild & {…}, 'scheduleRule'>` is not reducible to
+   * `TChild`).
+   *
+   * The shape also makes a property this code used to defend with prose
+   * structural: nothing in this module ever holds a bare child, so it cannot
+   * spread a joined `scheduleRule` into a response by accident.
+   */
+  withSlot: (child: ChildWithRule<TChild>, rule: ScheduleRule) => WithSlot<TChild>;
   withdraw: WithdrawHook | null;
 };
 
@@ -560,11 +572,10 @@ export async function archiveOrUnarchiveRule<TChild>(
   const archiving = target === 'archived';
 
   if (template.scheduleRule.isArchived === archiving) {
-    const { scheduleRule, ...bare } = template;
     return {
       ok: true,
       action: 'unchanged',
-      template: family.withSlot(bare as unknown as TChild, scheduleRule),
+      template: family.withSlot(template, template.scheduleRule),
     };
   }
 
@@ -595,21 +606,19 @@ export async function archiveOrUnarchiveRule<TChild>(
         if (swapped.count === 0) {
           const current = await family.readChild(tx, templateId);
           if (!current) return { ok: false, reason: 'not_found' };
-          const { scheduleRule, ...bare } = current;
           return {
             ok: true,
             action: 'unchanged',
-            template: family.withSlot(bare as unknown as TChild, scheduleRule),
+            template: family.withSlot(current, current.scheduleRule),
           };
         }
 
         if (!archiving) {
           const cleared = await family.readChildOrThrow(tx, templateId);
-          const { scheduleRule, ...bare } = cleared;
           return {
             ok: true,
             action: 'unarchived',
-            template: family.withSlot(bare as unknown as TChild, scheduleRule),
+            template: family.withSlot(cleared, cleared.scheduleRule),
           };
         }
 
@@ -644,12 +653,12 @@ export async function archiveOrUnarchiveRule<TChild>(
           data: { archivedAt: now, withdrawnCount: deleted },
         });
 
-        const { scheduleRule: _sr, ...bareTemplate } = template;
-        void _sr;
         return {
           ok: true,
           action: 'archived',
-          template: family.withSlot(bareTemplate as unknown as TChild, recordedRule),
+          // `recordedRule`, not `template.scheduleRule`: the archive just wrote
+          // `archivedAt`/`withdrawnCount`, and this is the row version carrying them.
+          template: family.withSlot(template, recordedRule),
           deleted,
           remaining,
         };
@@ -683,10 +692,9 @@ export async function archiveOrUnarchiveRule<TChild>(
 }
 ```
 
-**Two things to check rather than assume as you write this:**
+**One thing to check rather than assume as you write this:**
 
-1. **The `as unknown as TChild` casts.** `ChildWithRule<TChild>` is `TChild & {…}`, so destructuring `scheduleRule` off it leaves a type TypeScript cannot prove is `TChild`. If a cleaner formulation compiles — a `bareChild` field on the descriptor, or `Omit<>` gymnastics — prefer it and report the change. **Do not reach for `any`.** If the casts stay, each needs a one-line comment saying what it is asserting.
-2. **`Prisma.raw` on the table name.** This is string-built SQL. It is defensible only because every value is a hard-coded literal in this repo, which is the same precondition `SCHEDULED_STATUSES_SQL` (`class-template-lifecycle.ts:1373`) documents for itself. Follow that docblock's shape.
+**`Prisma.raw` on the table name.** This is string-built SQL. It is defensible only because every value is a hard-coded literal in this repo, which is the same precondition `SCHEDULED_STATUSES_SQL` (`class-template-lifecycle.ts:1373`) documents for itself. Follow that docblock's shape.
 
 - [ ] **Step 4: Build `CLASS_FAMILY` and rewire the class service**
 
@@ -708,7 +716,12 @@ const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
     }),
   scheduledWhere,
-  withSlot,
+  // Destructures here, where `ClassTemplate` is concrete, then hands the bare
+  // child to this file's existing exported `withSlot` unchanged.
+  withSlot: ({ scheduleRule, ...bare }, rule) => {
+    void scheduleRule;
+    return withSlot(bare, rule);
+  },
   withdraw: {
     deleteFilter: { registrations: { none: { status: { in: [...CHARGED_STATUSES] } } } },
     around: async (tx, { scheduleRuleId, today }, deleteEntries) => {
@@ -835,7 +848,10 @@ export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate> = {
       include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
     }),
   scheduledWhere,
-  withSlot,
+  withSlot: ({ scheduleRule, ...bare }, rule) => {
+    void scheduleRule;
+    return withSlot(bare, rule);
+  },
   // Required and explicitly null, not omitted. `StudioClass` has no
   // registrations and no waitlist, so there is nothing to withdraw beyond the
   // entries the shared delete already removes.
@@ -1055,4 +1071,4 @@ git commit -m "docs: the sweep for what the merge invalidated, verdicted hit by 
 
 **Corrected before execution (pre-flight scan, Ruling 1 in the SDD ledger).** This plan first specified `TemplateFamily<TChild, TState>` with a `before`/`after` hook pair. That does not compile: `TState` sits in a return position and a parameter position at once, so the hook is invariant and the concrete families cannot be collected into `AnyTemplateFamily` — the identical variance failure this plan had already measured for `TChild` and then reintroduced one type parameter later. The `around` form removes the parameter rather than working around it.
 
-**One thing flagged for the executor rather than resolved here:** the `as unknown as TChild` casts in Task 2 Step 3. They compile but they are the weakest part of the design, and the step says to prefer a cleaner formulation if one exists and to report the change. Deciding that requires the compiler, not the plan.
+**The casts this plan first specified are gone, settled by compiling (Ruling 3 in the SDD ledger).** Task 2 Step 3 originally destructured `scheduleRule` inside the shared generic and cast the remainder back to `TChild`, four times, with a note telling the executor to find something better. Three candidates were compiled: the casts (works, four casts), a `stripRule` descriptor field (works, no casts, one extra field), and moving the destructure into each family's own `withSlot` adapter (works, no casts, no extra field). The third is what the plan now specifies. Handing an executor a known-weak construction and asking it to improve it mid-task is how a plan launders its own unfinished decisions.
