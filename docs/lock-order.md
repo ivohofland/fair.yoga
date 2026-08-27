@@ -1110,7 +1110,7 @@ groups that answer differently because the two layers can say different things:
 
 | Layer | How it reaches the 409 | Endpoints |
 |---|---|---|
-| entry, `CalendarEntry_teacher_slot_excl` | a `catch` on `isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')`, then `probeConflictingEntry` for WHICH entry — four call sites, `grep -rn "probeConflictingEntry(" src/services/ src/app/api/` | `POST /api/classes`, `POST /api/studio-classes`, `PUT /api/studio-classes/[id]`; and `PUT /api/classes/[id]`, whose service returns `slot_conflict` and whose route runs the same probe |
+| entry, `CalendarEntry_teacher_slot_excl` | `probeConflictingEntry` for WHICH entry, once a write is refused — four call sites, `grep -rn "probeConflictingEntry(" src/services/ src/app/api/` | `POST /api/classes`, `POST /api/studio-classes`: a zero-row `skipDuplicates` outcome (issue 331); `PUT /api/studio-classes/[id]`: a `catch` on `isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')`; `PUT /api/classes/[id]`: its service returns `slot_conflict` and the route runs the same probe |
 | rule, `ScheduleRule_teacher_slot_excl` | `SLOT_TAKEN[heldBy]`, keyed on `ruleSlotHolder`'s `RuleSlotHolder` — six call sites, `grep -rn "ruleSlotHolder(" src/services/ src/app/api/` | `POST /api/class-templates`, `POST /api/studio-class-templates`, `PUT /api/class-templates/[id]`, `PUT /api/studio-class-templates/[id]`, `PATCH /api/class-templates/[id]?state=unarchived`, `PATCH /api/studio-class-templates/[id]?state=unarchived` |
 
 Four and six. An earlier version of this paragraph said "all eight routes …
