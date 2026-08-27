@@ -286,16 +286,14 @@ export async function generateStudioInstancesForTemplate(
   // transaction is aborted`, which `isCrossFamilySlotConflict` correctly
   // declines, and the rethrow costs the whole window anyway. It also cost more
   // than that: the escaping error stopped being the `YG001` that the TWO
-  // template POST catches match (zero now — issues 331/228 deleted both
-  // arms; `docs/lock-order.md` carries the re-derivable count). Two, not
-  // the ten endpoints answering a cross-family 409 overall — and NOT
-  // because those two were the only callers that wrap generation, which is
-  // false: six do, including both sweeps and
-  // both pause/resume services, as the sentence four lines up says. They are
-  // the only generation-wrapping callers that CATCH `YG001`. The other four
-  // let it reach `withErrorHandler`, where `classifyApiError` has no arm for
-  // it and answers 500 — filed as #301. So a 409 the app knew how to word
-  // became a 500 here too. (Earlier versions said "the eight route branches",
+  // template POST catches used to match. Two, not the ten endpoints answering a
+  // cross-family 409 overall — and NOT because those two were the only callers
+  // that wrap generation, which is false: six do, including both sweeps and both
+  // pause/resume services, as the sentence four lines up says. They were the
+  // only generation-wrapping callers that caught `YG001`. The other four let it
+  // reach `withErrorHandler`, where `classifyApiError` has no arm for it and
+  // answers 500 — filed as #301. So a 409 the app knew how to word became a 500
+  // here too. (Earlier versions said "the eight route branches",
   // the FILE count — the files-versus-endpoints conflation
   // `docs/lock-order.md` was rewritten to diagnose, written straight back into
   // new code by the commit that rewrote it.)
