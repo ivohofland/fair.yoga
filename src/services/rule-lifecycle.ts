@@ -53,14 +53,19 @@ export type WithdrawContext = { scheduleRuleId: string; today: Date };
  * family's own closure — see `around` below for the type-level reason a pair
  * does not work.
  *
- * This hook does its work INSIDE the transaction and reports only the delete's
- * row count. That is the property that makes it expressible at all: no
- * family-specific refusal reaches `ArchiveRuleResult`.
+ * This hook does its work INSIDE the transaction and reports nothing. That is
+ * the property that makes it expressible at all: no family-specific refusal
+ * reaches `ArchiveRuleResult`.
  */
 export type WithdrawHook = {
   /**
-   * Runs the shared delete and whatever this family needs around it, returning
-   * the delete's own row count.
+   * Runs the shared delete and whatever this family needs around it.
+   *
+   * Returns nothing. The delete's row count is already captured by the closure
+   * that owns `deleteEntries`, so a hook handing it back would be reporting a
+   * number the caller holds either way — and the caller would then have to
+   * police the copy against the original. `deleteEntries` still resolves to
+   * the count, for a hook that wants to branch on it.
    *
    * A single `around` rather than a `before`/`after` pair, and the reason is a
    * type one: a pair has to name the state that crosses the delete, which puts
@@ -74,7 +79,7 @@ export type WithdrawHook = {
     tx: TransactionClientOnly,
     ctx: WithdrawContext,
     deleteEntries: () => Promise<number>,
-  ) => Promise<number>;
+  ) => Promise<void>;
 };
 
 /**
@@ -96,12 +101,22 @@ export type TemplateFamily<TChild> = {
   kind: ClassFamily;
   /**
    * The child's table, spliced as a raw identifier into the row lock below.
-   * `Prisma.ModelName`, not `string`: the type is the tether, so nothing but a
-   * model name can ever reach that splice.
+   * Narrowed to the template children rather than left at `Prisma.ModelName`,
+   * which admits every model in the schema: the type below is the tether, so
+   * nothing outside it can reach that splice, and a third family becomes a
+   * deliberate edit here rather than a silent widening. Pinned by
+   * `rule-lifecycle.test.ts`, `@ts-expect-error` on a model name that is not a
+   * template child — a claim about what the compiler refuses is worth only the
+   * pin that makes the compiler refuse it.
    */
-  childTable: Prisma.ModelName;
-  /** The noun this family's log lines use: "recurring class" / "studio class". */
-  logNoun: string;
+  childTable: Extract<Prisma.ModelName, 'ClassTemplate' | 'StudioClassTemplate'>;
+  /**
+   * The noun this family's log lines use. A union rather than `string`: the
+   * log messages composed from it below are asserted verbatim by tests keyed
+   * on the exact string, so the roster belongs to the compiler rather than to
+   * a sentence naming its members.
+   */
+  logNoun: 'recurring class' | 'studio class';
   readChild: (
     client: PrismaClient | TransactionClientOnly,
     templateId: string,
@@ -145,9 +160,17 @@ export type TemplateFamily<TChild> = {
    * cast (measured: `Omit<TChild & {…}, 'scheduleRule'>` is not reducible to
    * `TChild`).
    *
-   * The shape also makes a property this code used to defend with prose
-   * structural: nothing in this module ever holds a bare child, so it cannot
-   * spread a joined `scheduleRule` into a response by accident.
+   * The shape also makes one property structural rather than conventional:
+   * nothing in this module ever holds a bare child, so it cannot spread a
+   * joined `scheduleRule` into a response by accident. The adapters can —
+   * each family's own lifecycle test pins that its adapter does not.
+   *
+   * `rule` is declared `ScheduleRule`, and the call sites below pass something
+   * WIDER than that: every one except the archiving arm's hands over
+   * `template.scheduleRule`, which carries the joined
+   * `teacher: { defaultTimezone }` this function's date boundary needs. An
+   * adapter that spreads `rule` therefore puts a `teacher` object on the wire
+   * while typechecking clean, which is the second thing those tests pin.
    */
   withSlot: (child: ChildWithRule<TChild>, rule: ScheduleRule) => WithSlot<TChild>;
   withdraw: WithdrawHook | null;
@@ -164,8 +187,8 @@ export type TemplateFamily<TChild> = {
  * non-interchangeable anyway, because `ArchiveRuleResult<ClassTemplate>` and
  * `ArchiveRuleResult<StudioClassTemplate>` differ in `template` — the same job
  * `templateKind` does for the wire types in `template-action-messages.ts`.
- * Held by a pair of `@ts-expect-error` assignments in `rule-lifecycle.test.ts`,
- * the way `template-action-messages.test.ts` holds the discriminator this is
+ * Held by `@ts-expect-error` call arguments in `rule-lifecycle.test.ts`, the
+ * way `template-action-messages.test.ts` holds the discriminator this is
  * modelled on: a claim about what the compiler refuses is worth only the pin
  * that makes the compiler refuse it.
  */
@@ -189,24 +212,20 @@ export type ArchiveRuleResult<TChild> =
    * This transaction lost a contention race and rolled back whole, so nothing
    * was applied and the identical request can win the next attempt.
    *
-   * Not only a `lock_timeout` expiry, though that is the case this branch
-   * added and the one the copy is written for. The arm is produced by
-   * `isTransientDbError`, which also matches a deadlock the detector broke
-   * (`40P01`), Prisma's own write-conflict code (`P2034`), an exhausted
-   * connection pool (`P2024`) and the transaction budget expiring (`P2028`).
-   * Reading a `busy` in the logs and hunting for a 2s lock wait that never
-   * happened is the mistake this paragraph exists to prevent.
+   * Not only a `lock_timeout` expiry, though that is the case the copy is
+   * written for. The arm is produced by `isTransientDbError`, whose whole
+   * matcher — `TRANSIENT_SQLSTATES` and `TRANSIENT_PRISMA_CODES`
+   * (`src/lib/api-errors.ts`) — reaches here, and each member carries its own
+   * calibration where it is declared, including which of them cannot fire in
+   * this repo at all. Reading a `busy` in the logs and hunting for a 2s lock
+   * wait that never happened is the mistake this paragraph exists to prevent.
    *
-   * Calibration, so this list does not send anyone the other way.
-   * `40001` is in the matcher but cannot fire yet: nothing here uses a
-   * serializable or repeatable-read transaction, as `api-errors.ts` says
-   * where it lists the code. And what a `40P01` here means is a per-family
-   * question, not a property of this arm: the lock a family takes on top of
-   * the shared ones is its `withdraw` hook's business, so the deadlock
-   * calibration for a family that has one is argued there — for the class
-   * family, in `CLASS_FAMILY.withdraw` (`class-template-lifecycle.ts`). A
-   * family whose `withdraw` is `null` takes no such lock and carries no such
-   * exposure.
+   * What a deadlock here means is a per-family question, not a property of
+   * this arm: the lock a family takes on top of the shared ones is its
+   * `withdraw` hook's business, so the deadlock calibration for a family that
+   * has one is argued there — for the class family, in `CLASS_FAMILY.withdraw`
+   * (`class-template-lifecycle.ts`). A family whose `withdraw` is `null` takes
+   * no such lock and carries no such exposure.
    *
    * The writer on the other side is equally unknown — the generation sweep, or
    * another tab's archive, pause or resume — which is why the copy names none
@@ -278,12 +297,11 @@ export async function archiveOrUnarchiveRule<TChild>(
         // Bounds every statement left in this transaction — the CAS below
         // first among them, the `deleteMany` further down, and everything a
         // family's `withdraw` hook issues around it. That last part is not
-        // incidental: the class family's hook opens with an ordered pre-lock
-        // that can lose to an ordinary booking holding a `Class` row, so the
-        // 2s answer reaches a path the generation sweep never touches
-        // (`class-generator.test.ts`, "the bound reaches its pre-lock"). What
-        // that pre-lock does and does not buy is argued where it is written,
-        // in `CLASS_FAMILY.withdraw` (`class-template-lifecycle.ts`).
+        // incidental: a hook may take locks of its own that this transaction
+        // knows nothing about, and the 2s bound is what keeps those waits from
+        // being unbounded. What any one hook's locks buy is argued where that
+        // hook is written — for the class family, in `CLASS_FAMILY.withdraw`
+        // (`class-template-lifecycle.ts`).
         //
         // The `deleteMany` below can wait even behind a family that pre-locks,
         // two ways:
@@ -335,7 +353,20 @@ export async function archiveOrUnarchiveRule<TChild>(
         // comment.
         const childLock = await tx.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM ${Prisma.raw(`"${family.childTable}"`)} WHERE "id" = ${templateId} FOR UPDATE`;
-        if (childLock.length === 0) return { ok: false, reason: 'not_found' };
+        if (childLock.length === 0) {
+          // Logged at `error`, not returned quietly. The pre-transaction read
+          // above found this child, so reaching here means it was deleted
+          // between that read and this lock — the invariant `docs/data-model.md`
+          // records (Design Notes, with the grep that re-derives it) says no
+          // production path does that. The teacher still gets a plain 404; the
+          // first firing of this line is the signal to revisit every site that
+          // rests on the invariant.
+          log.error(
+            { templateId, scheduleRuleId: template.scheduleRuleId, kind: family.kind, teacherId },
+            'archive found no child row to lock for a template it had just read',
+          );
+          return { ok: false, reason: 'not_found' };
+        }
 
         // Compare-and-swap, the pattern `updateClass` already uses for #72.
         // Constraining the write to `isArchived: !archiving` makes the
@@ -361,13 +392,21 @@ export async function archiveOrUnarchiveRule<TChild>(
         // same guard-free shape, and #116 is where it got it.
         // Not an omission: `updateMany` returns
         // `{ count: 0 }` rather than throwing when nothing matches, and the
-        // zero-count branch below already answers `not_found` by re-reading. The
-        // two sites further down that *can* raise P2025 — `readChildOrThrow`,
-        // which every family implements with a `findUniqueOrThrow`, and the
-        // record `update` — run only after this CAS matched, which holds
-        // `FOR NO KEY UPDATE` on this row until commit. That conflicts with
-        // the `FOR UPDATE`-strength
-        // lock a concurrent `DELETE` needs, so it blocks rather than wins.
+        // zero-count branch below already answers `not_found` by re-reading.
+        // Two sites further down can raise P2025 — `readChildOrThrow` and the
+        // record `update` — and they run only after this CAS matched. A
+        // DIFFERENT lock covers each, and the split is the load-bearing part:
+        //
+        //   - The record `update` writes THIS `ScheduleRule` row, which this
+        //     CAS holds `FOR NO KEY UPDATE` until commit. That conflicts with
+        //     the `FOR UPDATE`-strength lock a concurrent `DELETE` needs, so
+        //     the delete blocks rather than wins.
+        //   - `readChildOrThrow` reads the CHILD row, which this CAS's lock
+        //     does not touch at all. What covers it is the explicit child
+        //     `FOR UPDATE` taken above, before this statement ran — the same
+        //     lock the orphaned-rule reasoning up there turns on. That lock is
+        //     therefore not redundant with this one, and deleting it would put
+        //     an unguarded P2025 under `readChildOrThrow`.
         //
         // What a plain single-record `update` would change is not the lock — it
         // takes the same mode — but the first limb: it raises P2025 where
@@ -413,24 +452,68 @@ export async function archiveOrUnarchiveRule<TChild>(
           // as holding no lock, and nothing may be added here on the strength
           // of the row being pinned either.
           //
-          // With three concurrent
-          // requests a fourth state is possible — the winner archives, someone
-          // un-archives, and this read returns `isArchived: !archiving`. The
-          // answer is still `unchanged` for *this* request, which changed
-          // nothing, and the returned row is a real row; only the flag a caller
-          // reads off it may already be stale. Locking here to close that would
-          // serialise the no-op path against the sweep for no gain.
-          //
           // Re-read rather than reusing the snapshot from the top of this
           // function: that one still says `isArchived: !archiving`, which is
-          // the exact value the winner just falsified.
+          // the exact value the winner just falsified. What the re-read says
+          // is then CHECKED, not assumed — the two states it can be in are
+          // different answers.
           const current = await family.readChild(tx, templateId);
-          if (!current) return { ok: false, reason: 'not_found' };
-          return {
-            ok: true,
-            action: 'unchanged',
-            template: family.withSlot(current, current.scheduleRule),
-          };
+          if (!current) {
+            // Same impossible-by-invariant shape as the child lock above, and
+            // logged for the same reason: the child `FOR UPDATE` this
+            // transaction still holds means no other transaction can have
+            // deleted this row since.
+            log.error(
+              { templateId, scheduleRuleId: template.scheduleRuleId, kind: family.kind, teacherId },
+              'archive re-read found no child row while holding its row lock',
+            );
+            return { ok: false, reason: 'not_found' };
+          }
+
+          // The target state was reached — by this request's loser-twin, or by
+          // another tab. `unchanged` is the honest answer: this request changed
+          // nothing and the state it asked for is the state that stands.
+          if (current.scheduleRule.isArchived === archiving) {
+            return {
+              ok: true,
+              action: 'unchanged',
+              template: family.withSlot(current, current.scheduleRule),
+            };
+          }
+
+          // The fourth state, and it is NOT `unchanged`. With three concurrent
+          // requests the winner applies the transition and a third request
+          // reverses it, so this read finds `isArchived: !archiving` — the
+          // value this request asked to move AWAY from. Answering `unchanged`
+          // here told the teacher nothing at all: the route renders that arm
+          // 200 with no confirmation copy, so an "Archive" click left the
+          // button unchanged, the page silent and the template live and still
+          // generating.
+          //
+          // `busy` instead, which every route already renders as a 503 saying
+          // nothing was changed and to try again. That is exactly what
+          // happened — this transaction wrote nothing and rolls back clean —
+          // and a retry re-reads and wins. Same answer, same reasoning, as the
+          // residual CAS miss in both families' pause/resume; the argument for
+          // it is one about other modules and lives in `docs/lock-order.md`,
+          // "A CAS miss no re-read can classify answers `busy`, not a throw".
+          //
+          // Logged with the observed row because that is the half of `busy` no
+          // `err` carries: a steady trickle here with no concurrent writer
+          // means the CAS predicate and this classification have drifted.
+          log.warn(
+            {
+              templateId,
+              teacherId,
+              target,
+              observed: {
+                isArchived: current.scheduleRule.isArchived,
+                isActive: current.scheduleRule.isActive,
+              },
+            },
+            `${family.logNoun} archive CAS missed and the re-read found the transition reversed`,
+          );
+          return { ok: false, reason: 'busy' };
         }
 
         if (!archiving) {
@@ -473,7 +556,6 @@ export async function archiveOrUnarchiveRule<TChild>(
         let deleteCalls = 0;
         let deletedRows = 0;
         const deleteEntries = async () => {
-          deleteCalls += 1;
           // Deliberately one statement, not a `findMany` followed by a
           // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
           // registration commit in the gap between them under READ COMMITTED, and
@@ -487,34 +569,45 @@ export async function archiveOrUnarchiveRule<TChild>(
           const { count } = await tx.calendarEntry.deleteMany({
             where: family.deleteWhere(template.scheduleRuleId, today),
           });
+          // Both assignments AFTER the await, deliberately. Counting the call
+          // on entry would credit a hook that wrapped this in
+          // `try { … } catch { }` — the statement never completed, no rows
+          // were removed, and the guard below would still read one clean call.
+          // Counted here, a swallowed delete reads as zero calls and gets the
+          // guard's own message instead of whatever opaque failure the aborted
+          // transaction produces next.
+          deleteCalls += 1;
           deletedRows = count;
           return count;
         };
 
-        const deleted = family.withdraw
-          ? await family.withdraw.around(tx, ctx, deleteEntries)
-          : await deleteEntries();
+        if (family.withdraw) {
+          await family.withdraw.around(tx, ctx, deleteEntries);
+        } else {
+          await deleteEntries();
+        }
+        // The delete's own count, read out of this function's closure rather
+        // than handed back by the hook. `withdrawnCount` below is a durable
+        // record (#97) of what a teacher is told was withdrawn, and the
+        // shortest path from the statement that produced the number to the
+        // column that stores it is the one with nothing to police.
+        const deleted = deletedRows;
 
         // #97's record guarantee, enforced here rather than trusted to the
-        // hook. `deleted` reaches `withdrawnCount` below — a durable record of
-        // what a teacher is told was withdrawn — and it arrives through a
-        // callback this module does not own.
+        // hook.
         //
-        // Exactly two things are checked, and the contract is no wider than
-        // them: that the shared delete ran once, and that the number the hook
-        // answered with is the number that delete removed. A hook that skipped
-        // it, ran it twice, or substituted a count of its own is caught. A
-        // hook that runs it once and reports its count faithfully while ALSO
-        // issuing a `calendarEntry.deleteMany` of its own is NOT — those rows
-        // would go unrecorded and nothing here can see them.
+        // Exactly one thing is checked, and the contract is no wider than it:
+        // that the shared delete ran exactly once. A hook that skipped it, ran
+        // it twice, or swallowed its failure is caught. A hook that runs it
+        // once while ALSO issuing a `calendarEntry.deleteMany` of its own is
+        // NOT — those rows would go unrecorded and nothing here can see them.
         //
         // Throwing rolls the transaction back whole, so a caught hook does not
         // leave the archive half-applied either. Pinned by
-        // `rule-lifecycle.test.ts`, which runs a synthetic family through both
-        // halves of that.
-        if (deleteCalls !== 1 || deleted !== deletedRows) {
+        // `rule-lifecycle.test.ts`, which runs a synthetic family through it.
+        if (deleteCalls !== 1) {
           throw new Error(
-            `archiveOrUnarchiveRule: the ${family.logNoun} withdraw hook must run the shared delete exactly once and report its count; it ran it ${deleteCalls} time(s) and reported ${deleted} against ${deletedRows} row(s) removed`,
+            `archiveOrUnarchiveRule: template ${templateId}'s ${family.logNoun} withdraw hook must run the shared delete exactly once; it ran it ${deleteCalls} time(s)`,
           );
         }
 

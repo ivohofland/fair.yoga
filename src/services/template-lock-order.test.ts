@@ -9,10 +9,11 @@ import { createClassFixture } from '../../tests/class-fixtures';
 
 /**
  * Issue 180 had two halves, and this file covers the one that still has code
- * to cover. `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) USED
+ * to cover. `archiveOrUnarchiveTemplate` (the shared body in
+ * `rule-lifecycle.ts`, reached with `CLASS_FAMILY`) USED
  * TO take its `Class` row locks in HEAP order — read past this first
- * paragraph before its tense misleads you. Its `class.deleteMany` is one
- * statement, and Postgres visits the matching rows in whatever order the
+ * paragraph before its tense misleads you. Its `calendarEntry.deleteMany` is
+ * one statement, and Postgres visits the matching rows in whatever order the
  * planner picks (`docs/lock-order.md`, "Sorting the id array does NOT order a
  * multi-row write"); it has no id array to sort even in principle, since the
  * delete takes a predicate. `deleteStudentAccount` (`gdpr.ts`) also used to
@@ -125,7 +126,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * not change when that one went.
    *
    * Also, incidentally, exactly what `archiveOrUnarchiveTemplate`'s
-   * `class.deleteMany` predicate requires to touch these rows at all:
+   * `calendarEntry.deleteMany` predicate requires to touch these rows at all:
    * future-dated (`gt: today`), status `open` (one of `SCHEDULED_STATUSES`),
    * and no registration in a `CHARGED_STATUSES` status. This fixture creates
    * no `Registration` rows at all, only `WaitlistEntry`, so that `none`
@@ -289,7 +290,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
 
   /**
    * The second half of issue 180. `archiveOrUnarchiveTemplate`'s multi-row
-   * `class.deleteMany` took its locks in heap order for the same reason the
+   * `calendarEntry.deleteMany` took its locks in heap order for the same reason the
    * sync's `updateMany` did (issue 180's first half, deleted with the
    * function in #194) — and had no id array to sort even in principle,
    * because its delete takes a predicate, not an
@@ -302,14 +303,15 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * lived in this file until #194 deleted the function under it.
    * `archiveOrUnarchiveTemplate` now opens with an ordered pre-lock —
    * `SELECT ... FOR UPDATE OF c ... ORDER BY c.id` over the full
-   * `scheduledWhere(templateId, { gt: today })` set, immediately before the
-   * `waitlistEntry.findMany` candidate read (`class-template-lifecycle.ts`) —
+   * `scheduledWhere(scheduleRuleId, { gt: today })` set, immediately before the
+   * `waitlistEntry.findMany` candidate read (`CLASS_FAMILY.withdraw`,
+   * `class-template-lifecycle.ts`) —
    * so this assertion now asserts the deadlock's ABSENCE, not its presence.
    * Leaving this `it` unfixed while task 2 fixed the sibling was task 1/3's
    * whole point (a fix at one site would otherwise leave the pairing live
    * through the other, unnoticed); closing this one is task 4's.
    *
-   * The handshake is shaped the way it is because `class.deleteMany` is not
+   * The handshake is shaped the way it is because `calendarEntry.deleteMany` is not
    * JS-observable mid-statement: there is no moment to hook on the archive
    * side itself. It was written to mirror the sync test's, whose `updateMany`
    * had the same property — a parity this sentence stated in the PRESENT
@@ -338,8 +340,8 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * (`Promise.allSettled` + a rejection-only negation) was tried directly
    * against the still-unfixed code and PASSED green while a genuine `40P01
    * deadlock detected` fired underneath it (confirmed via
-   * `class-template-lifecycle.ts`'s own logged error) — because
-   * `archiveOrUnarchiveTemplate`'s own `catch` maps `isTransientDbError`
+   * `rule-lifecycle.ts`'s own logged error) — because
+   * the shared archive's own `catch` maps `isTransientDbError`
    * matches, `40P01` among them, to a RESOLVED `{ ok: false, reason: 'busy'
    * }` and logs the real error via `log.warn` (the "recurring class archive
    * lost the template lock race" line) instead of letting it propagate. A
@@ -368,8 +370,8 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    *    transient-error `catch` never fired. That also de-vacuums point 2:
    *    the spy's `.find()` is keyed on the exact log-message string
    *    ("recurring class archive lost the template lock race",
-   *    `class-template-lifecycle.ts`, the `log.warn` in
-   *    `archiveOrUnarchiveTemplate`'s `isTransientDbError` branch), so a
+   *    `rule-lifecycle.ts`, the `log.warn` in `archiveOrUnarchiveRule`'s
+   *    `isTransientDbError` branch), so a
    *    rename there would make
    *    `toBeUndefined()` pass for the wrong reason — silently, since a
    *    renamed message just never matches the old string again. The
@@ -496,7 +498,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         //
         // Called directly, not wrapped in an outer `prisma.$transaction` —
         // this function opens and manages its own transaction internally
-        // (`class-template-lifecycle.ts`), on the same `db` argument it is
+        // (`rule-lifecycle.ts`), on the same `db` argument it is
         // passed, so wrapping it here would only start a second, unrelated
         // transaction and prove nothing about the one that actually takes
         // the locks. (The sync test that used to sit above DID wrap its call
@@ -550,7 +552,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * The archive pre-lock's ROW SET, which the two `it`s above cannot probe.
    *
    * They lock the same rows whether the pre-lock uses the full
-   * `scheduledWhere(templateId, { gt: today })` predicate or the narrower
+   * `scheduledWhere(scheduleRuleId, { gt: today })` predicate or the narrower
    * "deletable only" one (`AND NOT EXISTS (… charged Registration …)`),
    * because their fixture creates no `Registration` rows at all — so that
    * clause is vacuously true for both classes and the two predicates
@@ -583,7 +585,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    *
    * Under the shipped wide pre-lock: `{ ok: true, deleted: 2, remaining: 0 }`.
    * Under a narrowed one: `40P01` at the `deleteMany`, swallowed by
-   * `archiveOrUnarchiveTemplate`'s own `catch` into `{ ok: false, reason:
+   * the shared archive's own `catch` (`rule-lifecycle.ts`) into `{ ok: false, reason:
    * 'busy' }` — which is why this asserts the positive shape and the absence
    * of the lock-race log line, exactly as the archive `it` above does, and
    * never a rejection.

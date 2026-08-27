@@ -220,7 +220,8 @@ export const PUT = withErrorHandler(async (
     // OPPOSITE of the class family's (`lockClassRow`, `db-locks.ts`, takes
     // `Class` before its entry). The asymmetry is not a slip: this family's
     // other two writers of the pair are CASCADES off the entry —
-    // `archiveOrUnarchiveStudioTemplate`'s `calendarEntry.deleteMany` and this
+    // `archiveOrUnarchiveStudioTemplate`'s `calendarEntry.deleteMany` (the
+    // shared one in `rule-lifecycle.ts`, reached with `STUDIO_FAMILY`) and this
     // route's own DELETE — and PostgreSQL locks the parent tuple before the RI
     // trigger reaches the child, so both acquire entry then `StudioClass` and
     // neither has anywhere else to put its locks. Ordering this statement the

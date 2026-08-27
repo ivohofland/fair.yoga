@@ -65,6 +65,7 @@ import {
   archiveOrUnarchiveRule,
   type ArchiveRuleResult,
   type TemplateFamily,
+  type WithSlot,
 } from './rule-lifecycle';
 
 /**
@@ -382,18 +383,13 @@ void _scheduleRuleAllowlistHasNoForbiddenFields;
  * because the route spreads the template straight onto the response body and
  * the wire consumers on the other end still expect these columns to be
  * there, which the row itself no longer has.
+ *
+ * An alias of `WithSlot` (`rule-lifecycle.ts`) rather than a third hand-written
+ * copy of the same columns: the shared archive's result type is spelled in
+ * `WithSlot` too, so a column added there and not here would compile — a wider
+ * object satisfies a narrower declared return — and reach the wire unnoticed.
  */
-export type ClassTemplateWithSlot = ClassTemplate & {
-  teacherId: string;
-  classType: string;
-  dayOfWeek: number;
-  startTime: string;
-  durationMinutes: number;
-  isActive: boolean;
-  isArchived: boolean;
-  archivedAt: Date | null;
-  withdrawnCount: number | null;
-};
+export type ClassTemplateWithSlot = WithSlot<ClassTemplate>;
 
 /**
  * Flattens a rule's columns onto its child, converting `startTime` to the
@@ -1887,14 +1883,10 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       // A lock is not unavailable — `POST /api/registrations` already takes
       // the `Class` row lock too, through `lockClassRow` (`db-locks.ts`) —
       // and this transaction now takes one too, immediately below.
-      // An earlier draft of this comment argued that locking every candidate
-      // class would work and was simply worse than a second read, because it
-      // blocks booking on every future class of the template for the
-      // duration of the archive, to buy what the read below buys for free.
-      // That was right for what it weighed: a lock against a read, for
-      // NOTIFICATION correctness, where the read genuinely is better — and
-      // the read is still here, still needed, unreplaced by the lock below.
-      // But a pre-lock buys something a read cannot buy at any price: a
+      // The candidate read further down is NOT what the pre-lock replaces:
+      // for NOTIFICATION correctness a read is better than a lock, and that
+      // read is still here, still needed. The pre-lock buys something a read
+      // cannot buy at any price: a
       // CANONICAL LOCK ORDER. `deleteStudentAccount` (`gdpr.ts`) takes its
       // `Class` row locks ascending by id; this function's `deleteMany`
       // below takes them in heap order, whatever order Postgres's planner
@@ -1902,11 +1894,10 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       // controllable by sorting anything in JS. Two rows, opposite orders,
       // one AB-BA cycle (issue 180, reproduced and recorded when the issue
       // was filed). Ordering this function's locks ascending, before either the
-      // read or the delete, is what closes it — the cost the earlier draft
-      // named is real and is now paid: an archive blocks booking on this
-      // template's future classes for its duration, bounded by the 2s
-      // `SET LOCAL lock_timeout` at the head of this transaction and its
-      // 10s budget.
+      // read or the delete, is what closes it, and the cost is real: an
+      // archive blocks booking on this template's future classes for its
+      // duration, bounded by the 2s `SET LOCAL lock_timeout` at the head of
+      // this transaction and its 10s budget.
       //
       // What a `40P01` out of THIS family's archive most likely means, which
       // belongs beside the statement that decides it. The AB-BA cycle against
@@ -1925,7 +1916,7 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       // whose `withdraw` is null takes none of these locks.
       //
       // Ordered pre-lock (issue 180 task 4). Deliberately the FULL
-      // `scheduledWhere(templateId, { gt: today })` set — every scheduled
+      // `scheduledWhere(scheduleRuleId, { gt: today })` set — every scheduled
       // future class of this template — not narrowed by the
       // `registrations: { none: … }` conjunct `deleteWhere` above carries.
       // The shared `deleteMany` this hook brackets re-evaluates its predicate
@@ -1935,10 +1926,12 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       // statement runs. Narrowing this set to only the deletable rows would
       // leave a candidate the delete's re-evaluation pulls into scope
       // unlocked, and the cycle returns — measured, not just reasoned.
-      // `template-lock-order.test.ts`'s own fixture cannot show this (it
-      // holds no `Registration` row at all, so a narrower clause would be
-      // vacuously true for both its candidate classes and coincide with
-      // this wide one). Review round 1 built the fixture that can: one
+      // `template-lock-order.test.ts`'s deadlock fixtures cannot show this
+      // (they hold no `Registration` row at all, so a narrower clause would
+      // be vacuously true for both their candidate classes and coincide with
+      // this wide one). The fixture that can is in that same file, under
+      // "does not deadlock when the archive pre-lock must cover a class that
+      // only becomes deletable mid-transaction": one
       // class carries a charged `Registration` at pre-lock time — a narrow
       // pre-lock would skip locking it, since it is not yet a delete
       // candidate — and that registration is cancelled from OUTSIDE the
@@ -2001,9 +1994,9 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       // (`scheduledWhere` alone), so a row already matching the delete's
       // predicate cannot escape this lock.
       //
-      // That is NOT the same as lock ⊇ delete being total, and this branch
-      // once claimed it was by naming only one writer that could add a row
-      // to the set after the pre-lock runs. The generation sweep is one
+      // That is NOT the same as lock ⊇ delete being total: more than one
+      // writer can add a row to the set after the pre-lock runs, and only
+      // some of them are stopped. The generation sweep is one
       // such writer and genuinely cannot: it serialises on the same
       // `ClassTemplate` row the archive's child `FOR UPDATE` already holds —
       // that statement, and the #95 reasoning for it, are in
@@ -2104,7 +2097,7 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
         },
       });
 
-      const deleted = await deleteEntries();
+      await deleteEntries();
 
       // `candidates` is an ordinary local here — the reason this hook is one
       // function rather than two. It was read before the delete; the survivors
@@ -2119,7 +2112,7 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       // waiter would be told the class was withdrawn while their entry is
       // still `waiting` and the class is still open on the teacher's page — a
       // message the app itself contradicts.
-      if (candidates.length === 0) return deleted;
+      if (candidates.length === 0) return;
       // De-duplicated: `candidates` carries one row per waiter, so a class
       // with three waiters would otherwise repeat its id three times in the
       // `in` list. Same shape and same reason as
@@ -2133,7 +2126,7 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       // on a rolling 4-week basis, so the ordinary archive faces several
       // future classes at once and spares only the booked ones.
       const withdrawn = candidates.filter((c) => !survived.has(c.classId));
-      if (withdrawn.length === 0) return deleted;
+      if (withdrawn.length === 0) return;
       // No `relatedClassId`: the row is gone and the FK is `SetNull`
       // (the `Notification` model's `relatedClass` relation in
       // `prisma/schema.prisma`), so the notification outlives its class with
@@ -2148,7 +2141,6 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
         body: `The ${c.class.calendarEntry.classType} class on ${formatDayHeader(c.class.calendarEntry.date)} at ${timeToHHmm(c.class.calendarEntry.startTime)} has been withdrawn by your teacher. You were on its waiting list.`,
       }));
       await createBulkNotifications(tx, notifications);
-      return deleted;
     },
   },
 };

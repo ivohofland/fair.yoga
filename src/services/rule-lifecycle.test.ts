@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import type { ClassFamily, ClassTemplate, StudioClassTemplate } from '@prisma/client';
+import type { ClassFamily, ClassTemplate, Prisma, StudioClassTemplate } from '@prisma/client';
 import {
   archiveOrUnarchiveRule,
   type ArchiveRuleResult,
@@ -64,6 +64,65 @@ describe('rule-lifecycle family descriptors', () => {
     // hook" from "declared nothing".
     expect(CLASS_FAMILY.withdraw).toHaveProperty('around');
   });
+
+  /**
+   * `childTable` is spliced into a raw identifier position, so its type is the
+   * only thing bounding what can land there. `Prisma.ModelName` admits every
+   * model in the schema, `CalendarEntry` included, and narrowing it to the
+   * template children is what makes a third family a deliberate edit rather
+   * than a silent widening.
+   *
+   * A claim about what the compiler refuses is worth only the pin that makes
+   * the compiler refuse it, which is the rule `ArchiveRuleResult`'s docblock
+   * states and the non-interchangeability pin below already follows.
+   */
+  it('refuses a childTable that is not a template child', () => {
+    // @ts-expect-error `CalendarEntry` is a model, but not a template child
+    const notATemplateChild: TemplateFamily<ClassTemplate>['childTable'] = 'CalendarEntry';
+    void notATemplateChild;
+  });
+
+  /**
+   * `deleteWhere` and `remainingWhere` have identical signatures and sit on
+   * adjacent lines in both descriptors, so swapping them in either family
+   * compiles clean — and in the class family that swap silently drops the
+   * `registrations: { none: CHARGED }` conjunct from the delete, cascading
+   * away classes a student has already been charged for. Nothing about the
+   * types can catch it; the boundary is what tells them apart.
+   *
+   * Asserted directly rather than through a DB round trip: both predicates are
+   * plain inspectable object literals, so the boundary is readable off the
+   * value.
+   */
+  describe('the two predicates keep their boundaries', () => {
+    const RULE_ID = 'rule-under-test';
+    const TODAY = new Date('2026-08-27T00:00:00.000Z');
+
+    // `date` and `classes` dropped, so what remains is the part the two
+    // predicates must agree on. `kind` lives there for the studio family, and
+    // a family that spelled it in only one of its predicates would count rows
+    // it did not delete.
+    const sharedPart = (where: Prisma.CalendarEntryWhereInput) => {
+      const rest = { ...where };
+      delete rest.date;
+      delete rest.classes;
+      return rest;
+    };
+
+    it.each(Object.entries(FAMILY_BY_KIND))(
+      "the %s family's delete excludes today and its count includes it",
+      (_kind, family) => {
+        const del = family.deleteWhere(RULE_ID, TODAY);
+        const remaining = family.remainingWhere(RULE_ID, TODAY);
+
+        // The carve-out #86/#194 rest on: a class hours from starting is
+        // spared by the delete and must still be reported as standing.
+        expect(del.date).toEqual({ gt: TODAY });
+        expect(remaining.date).toEqual({ gte: TODAY });
+        expect(sharedPart(del)).toEqual(sharedPart(remaining));
+      },
+    );
+  });
 });
 
 /**
@@ -108,7 +167,7 @@ describe("the two families' archive results are not interchangeable", () => {
 
 /**
  * The record guard inside `archiveOrUnarchiveRule` — that a family's
- * `withdraw` hook runs the shared delete exactly once and reports its count.
+ * `withdraw` hook runs the shared delete exactly once.
  *
  * It protects `withdrawnCount` (#97), the durable record of what a teacher is
  * told was withdrawn, and it holds for both shipped families vacuously:
@@ -116,6 +175,11 @@ describe("the two families' archive results are not interchangeable", () => {
  * callback at all, and `CLASS_FAMILY`'s hook is correct. Nothing shipped can
  * turn the guard red, so a synthetic family is what makes it fail — deleting
  * the guard has to break something.
+ *
+ * The count itself needs no guard: `around` returns `void`, so the number that
+ * reaches `withdrawnCount` comes out of the shared delete's own closure and no
+ * hook can substitute one. That is a mutation nobody can write, which beats a
+ * mutation this file would have to catch.
  */
 describe('the archive record guard (DB)', () => {
   let teacherId: string;
@@ -209,17 +273,46 @@ describe('the archive record guard (DB)', () => {
 
   // `CLASS_FAMILY` spread whole, so everything except the hook is the real
   // archive — the read, the child row lock, the CAS, both predicates. One case
-  // per operand of the guard's condition: a hook that runs the delete and
-  // reports a number of its own, and a hook that never runs it.
+  // per way the call count can be wrong: never run, run twice, and run but
+  // never completed.
   const cases: Array<[string, TemplateFamily<ClassTemplate>]> = [
+    ['never runs the shared delete at all', { ...CLASS_FAMILY, withdraw: { around: async () => {} } }],
     [
-      'reports a count the shared delete did not produce',
+      'runs the shared delete twice',
       {
         ...CLASS_FAMILY,
-        withdraw: { around: async (_tx, _ctx, deleteEntries) => (await deleteEntries()) + 1 },
+        withdraw: {
+          around: async (_tx, _ctx, deleteEntries) => {
+            await deleteEntries();
+            await deleteEntries();
+          },
+        },
       },
     ],
-    ['never runs the shared delete at all', { ...CLASS_FAMILY, withdraw: { around: async () => 0 } }],
+    [
+      'swallows a failure from the shared delete',
+      {
+        ...CLASS_FAMILY,
+        withdraw: {
+          around: async (tx, _ctx, deleteEntries) => {
+            // Aborts the Postgres transaction (`22012`), so the shared delete
+            // below cannot complete. Every later statement raises `25P02`
+            // until rollback, which is what would surface WITHOUT the guard:
+            // an opaque 500 from the `count` two statements on, naming a
+            // failure nowhere near the hook that caused it.
+            await tx.$queryRaw`SELECT 1 / 0`.catch(() => undefined);
+            try {
+              await deleteEntries();
+            } catch {
+              // The shape this case exists for: a hook that hides the
+              // failure and hands control back as if the delete had run.
+              // The guard's counter is incremented after the statement
+              // completes, so this reads as zero calls rather than one.
+            }
+          },
+        },
+      },
+    ],
   ];
 
   it.each(cases)('refuses a withdraw hook that %s, and records nothing', async (_label, family) => {
@@ -227,7 +320,7 @@ describe('the archive record guard (DB)', () => {
 
     await expect(
       archiveOrUnarchiveRule(prisma, family, template.id, teacherId, 'archived'),
-    ).rejects.toThrow(/must run the shared delete exactly once and report its count/);
+    ).rejects.toThrow(/must run the shared delete exactly once/);
 
     // Refusing is half of what the guard is for; the other half is that the
     // throw rolls the transaction back whole, so the CAS that ran before the

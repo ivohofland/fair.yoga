@@ -635,6 +635,12 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     expect(resumed.action).toBe('unarchived');
 
     expect(Object.keys(resumed.template)).not.toContain('scheduleRule');
+    // `teacher` too, and it is the closer miss: `withSlot`'s `rule`
+    // parameter is declared `ScheduleRule`, and this arm is handed the
+    // JOINED rule, which carries `teacher: { defaultTimezone }`. An
+    // adapter that spread `rule` would typecheck and put that object on
+    // the wire.
+    expect(Object.keys(resumed.template)).not.toContain('teacher');
     // The flattening itself still happened — otherwise "no `scheduleRule`"
     // would pass on a response that lost the rule's columns altogether.
     expect(resumed.template.dayOfWeek).toBe(rule.dayOfWeek);
@@ -1424,9 +1430,27 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
       },
     }) as unknown as PrismaClient;
 
+    const startedAt = Date.now();
     const result = await pauseOrResumeStudioTemplate(interposing, t.id, teacherId, 'active');
+    const elapsed = Date.now() - startedAt;
 
+    // Both hooks fired, so the interleaving this test constructs is the one
+    // that ran — an unfired hook would leave the row in a state the CAS
+    // matches, and this call would never reach the residual at all.
+    expect(armedRead).toBe(false);
+    expect(armedCas).toBe(false);
     expect(result).toEqual({ ok: false, reason: 'busy' });
+    // `busy` has a second producer in this function — the `catch`'s
+    // `isTransientDbError` branch, reached through a `lock_timeout` expiry
+    // that costs at least the 2s `setLockTimeout` bound. Asserting the shape
+    // alone would pass on that one too; the elapsed time is what says this
+    // `busy` came from the residual branch.
+    expect(elapsed).toBeLessThan(1_000);
+
+    // Nothing was written: the CAS matched no row, so the rollback leaves the
+    // row exactly as the second interposed write left it.
+    const after = await prisma.scheduleRule.findUniqueOrThrow({ where: { id: t.scheduleRuleId } });
+    expect(after.isActive).toBe(false);
   });
 });
 

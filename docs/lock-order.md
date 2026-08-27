@@ -1333,14 +1333,17 @@ COMMITTED every statement takes its own snapshot, so a row that changed and
 changed back between the CAS and the re-read reaches it. Both branches return
 the internal `{ outcome: 'busy' }` and log the observed row at `warn`; each
 function's post-transaction switch is what maps that to the public
-`{ ok: false, reason: 'busy' }`. The
-reasoning is here rather than in either comment because every load-bearing
-part of it is a fact about a different module, and a comment carrying it has
-no owner in the file that would falsify it.
+`{ ok: false, reason: 'busy' }`. `archiveOrUnarchiveRule`
+(`rule-lifecycle.ts`) is the same shape one verb over and answers `busy`
+directly: its re-read either finds the target state reached, which is a real
+`unchanged`, or finds the transition reversed, which is this case. The
+reasoning is here rather than in any of those comments because every
+load-bearing part of it is a fact about a different module, and a comment
+carrying it has no owner in the file that would falsify it.
 
 **Why `busy` and not a throw.** The CAS matched zero rows, so the transaction
 wrote nothing and rolls back clean — a lost race a retry wins, which is what
-`busy` means at every other site in both files. `PATCH
+`busy` means at every other site that produces it. `PATCH
 /api/class-templates/[id]` and `PATCH /api/studio-class-templates/[id]` render
 it as a 503 telling the teacher nothing was changed and to wait a moment and
 try again. A throw surfaces the same state as a 500 logged at `error` — the
@@ -1349,11 +1352,20 @@ paging level — for exactly the condition `classifyApiError`'s transient branch
 
 **Why both families answer alike.** They did not, for two issues. `aed305f8`
 gave the class branch `busy` for #116 and the port to the studio branch never
-happened, so one interleaving answered 503 in one family and 500 in the other,
-and neither branch had a test. Issue 332 closed that and pinned both. A
-distinction only one family draws costs more than the distinction is worth;
+happened, so one interleaving answered 503 in one family and 500 in the other.
+The class branch has been pinned since that same commit; issue 332 ported the
+behaviour to the studio branch and pinned it there. Re-derive both halves:
+
+```sh
+git log -S'residual fourth state' --oneline -- src/services/class-template-lifecycle.test.ts
+git log -S'residual CAS miss answers busy' --oneline -- src/services/studio-class-template-lifecycle.test.ts
+```
+
+A distinction only one family draws costs more than the distinction is worth;
 that judgement is the same one the shared archive in `rule-lifecycle.ts` rests
-on.
+on. Its own CAS-miss branch reaches the same answer from the same reasoning:
+the winner applied the transition, a third request reversed it, and the
+re-read sees the state this request asked to move away from.
 
 **Why logged rather than silent.** `busy` covers two causes worth telling
 apart in production — a lock wait that timed out (each function's `catch`,

@@ -2121,6 +2121,12 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(resumed.action).toBe('unarchived');
 
     expect(Object.keys(resumed.template)).not.toContain('scheduleRule');
+    // `teacher` too, and it is the closer miss: `withSlot`'s `rule`
+    // parameter is declared `ScheduleRule`, and this arm is handed the
+    // JOINED rule, which carries `teacher: { defaultTimezone }`. An
+    // adapter that spread `rule` would typecheck and put that object on
+    // the wire.
+    expect(Object.keys(resumed.template)).not.toContain('teacher');
     // The flattening itself still happened — otherwise "no `scheduleRule`"
     // would pass on a response that lost the rule's columns altogether.
     expect(resumed.template.dayOfWeek).toBe(t.scheduleRule.dayOfWeek);
@@ -2263,25 +2269,24 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   });
 
   /**
-   * #100. `archiveOrUnarchiveTemplate` carries no P2025 guard, and the comment
-   * on its compare-and-swap justifies that with "the zero-count branch below
-   * already answers `not_found` by re-reading". Until now nothing exercised
-   * that re-read: the only other archive `not_found` assertion in this file
-   * passes a ghost id, which the guard at the *top* of the function answers
-   * without ever opening the transaction.
+   * #100. `archiveOrUnarchiveTemplate` carries no P2025 guard, and this is the
+   * `not_found` its transaction has to produce on its own: the only other
+   * archive `not_found` assertion in this file passes a ghost id, which the
+   * guard at the *top* of the function answers without ever opening a
+   * transaction.
    *
    * This is the path where the row is real when the function starts and gone
-   * when the CAS runs, so `updateMany` matches nothing, `count` is 0, and the
-   * inner `findUnique` legitimately returns `null` — the only way that null
-   * branch is reachable at all. Two mutants live here without it: turning the
-   * inner read into a `findUniqueOrThrow` (its P2025 would escape the
-   * transaction as a 500), and dropping the null check to report the
-   * pre-transaction snapshot as `unchanged` (a 200 describing a template that
-   * no longer exists).
+   * when the transaction opens. What answers is the child `FOR UPDATE` — it
+   * matches no row and returns `not_found` before the CAS runs at all, which
+   * is measurable rather than inferred: the branch logs at `error`
+   * ("archive found no child row to lock for a template it had just read")
+   * and that is the line this test emits. The mutant it kills is dropping
+   * that zero-row check, which would let the CAS match the orphaned
+   * `ScheduleRule` row and archive a template that no longer exists.
    *
-   * Interposed on `classTemplate.findUnique`, which both reads go through: the
-   * latch fires on the outer one, deleting the row after it has been read, and
-   * no-ops on the inner one, which then sees the delete for real.
+   * Interposed on `classTemplate.findUnique`, which the pre-transaction read
+   * goes through: the latch fires on it, deleting the row after it has been
+   * read.
    */
   it('answers not_found when the row disappears between the read and the compare-and-swap', async () => {
     const t = await makeTemplate('P2025 Archive CAS');
@@ -2310,6 +2315,88 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const result = await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived');
 
     expect(result).toEqual({ ok: false, reason: 'not_found' });
+  });
+
+  /**
+   * The CAS miss has a state the re-read classifies as neither `unchanged` nor
+   * `not_found`: the winner applied the transition and a third request
+   * reversed it, so the re-read finds the row in the state this request asked
+   * to move AWAY from. Three requests get there: A's archive wins, B's is
+   * in flight and misses the CAS, and A un-archives before B re-reads.
+   *
+   * `busy`, not `unchanged`. Reported as `unchanged` this was silent from end
+   * to end: `resolveTemplateConfirmation` (`template-action-messages.ts`)
+   * answers `null` for that action, so the route's 200 produced no message at
+   * all, the button kept its old label, and the template stayed live and
+   * generating. `busy` is what every route already renders as a 503 saying
+   * nothing was changed — which is exactly what happened, since the CAS
+   * matched no row and the transaction rolled back clean.
+   *
+   * The `log.warn` is asserted, not just the return: it is the only channel
+   * carrying the observed row, and a `busy` returned without it is
+   * indistinguishable in production from the transient-error `catch`'s.
+   * Spied with `mockImplementation` for the reason the sibling spies in this
+   * repo use one — the real line would otherwise print on a passing run.
+   */
+  it('answers busy when the CAS miss finds the transition reversed', async () => {
+    const t = await makeTemplate('Reversed Transition');
+
+    let straddled = false;
+    const interposing = prisma.$extends({
+      query: {
+        scheduleRule: {
+          async updateMany({ args, query }) {
+            if (straddled) return query(args);
+            straddled = true;
+            // Commits before the CAS, so its `isArchived: false` clause misses.
+            await prisma.scheduleRule.update({
+              where: { id: t.scheduleRuleId },
+              data: { isArchived: true },
+            });
+            const swapped = await query(args);
+            // Commits before the re-read, so the re-read sees the state this
+            // request asked to leave rather than the one it asked for.
+            await prisma.scheduleRule.update({
+              where: { id: t.scheduleRuleId },
+              data: { isArchived: false },
+            });
+            return swapped;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    try {
+      const result = await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived');
+
+      expect(straddled).toBe(true);
+      expect(result).toEqual({ ok: false, reason: 'busy' });
+
+      const reversedLog = warn.mock.calls.find(
+        (call) =>
+          call[1] === 'recurring class archive CAS missed and the re-read found the transition reversed',
+      );
+      expect(reversedLog).toBeDefined();
+      expect(reversedLog?.[0]).toMatchObject({
+        templateId: t.id,
+        teacherId,
+        target: 'archived',
+        observed: { isArchived: false },
+      });
+    } finally {
+      warn.mockRestore();
+    }
+
+    // Nothing was written: the CAS matched no row, so the rollback leaves the
+    // template exactly as the interposed un-archive left it.
+    const after = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id: t.id },
+      include: { scheduleRule: true },
+    });
+    expect(after.scheduleRule.isArchived).toBe(false);
+    expect(after.scheduleRule.archivedAt).toBeNull();
+    expect(after.scheduleRule.withdrawnCount).toBeNull();
   });
 });
 

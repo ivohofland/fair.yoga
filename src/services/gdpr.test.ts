@@ -2348,8 +2348,9 @@ describe('teacher erasure refuses to erase an already-erased profile (#196)', ()
  * `teacher.deletedAt` filter, so a sweep already mid-claim for this teacher's
  * template when an erasure opens is a real interleaving, not a theoretical
  * one — measured by this test, which holds the claim's own `FOR UPDATE OF ct`
- * and proves the erasure queues behind it exactly like
- * `archiveOrUnarchiveTemplate`'s CAS does.
+ * and proves the erasure queues behind it exactly like the shared archive's
+ * child row lock does (`archiveOrUnarchiveRule`, `rule-lifecycle.ts`). Not its
+ * CAS: that writes `ScheduleRule`, which no sweep touches.
  */
 describe('deleteTeacherAccount serialises against a claim in progress (#315)', () => {
   const prisma = new PrismaClient();

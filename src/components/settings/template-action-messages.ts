@@ -109,7 +109,7 @@ export function archiveStudioMessage(deleted: number, remaining: number): string
  * the Schedule tab, so a bare delta is unreadable without its baseline.
  *
  * Deliberately makes no "for the next 4 weeks" claim. `scheduled` is counted
- * with `scheduledWhere(templateId, { gte: today })` — the same unbounded
+ * with `scheduledWhere(scheduleRuleId, { gte: today })` — the same unbounded
  * from-today predicate archive's `remaining` uses — so no upper boundary backs
  * such a phrase. Bounding the count to the window would mean re-deriving the
  * generator's date *set* as a *range*, and two boundaries that can disagree at
@@ -308,11 +308,10 @@ export const UNARCHIVE_STUDIO_MESSAGE =
 /**
  * The class family's twin of `UNARCHIVE_STUDIO_MESSAGE`, and the same failure
  * one arm over: `archiveOrUnarchiveTemplate` forces `isActive: false` on both
- * directions — the shared body it calls, `archiveOrUnarchiveRule`
- * (`rule-lifecycle.ts`), says so in its docblock — and the archive has already
- * deleted the future classes. So a teacher who un-archives to get their weekly class
- * back lands on a paused template with an empty window, and until #116 the
- * only signal was that a differently-labelled button appeared.
+ * directions, and the archive has already deleted the future classes. So a
+ * teacher who un-archives to get their weekly class back lands on a paused
+ * template with an empty window, and until #116 the only signal was that a
+ * differently-labelled button appeared.
  *
  * "recurring class" rather than the studio wording's "template": that is what
  * this family calls the thing throughout its own copy.

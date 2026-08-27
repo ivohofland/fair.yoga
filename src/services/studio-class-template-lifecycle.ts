@@ -14,11 +14,11 @@
  *
  *   - Where the class family's deletable predicate spreads a `status: {
  *     in: ['draft', 'open'] }` clause, `STUDIO_FAMILY.deleteWhere` below —
- *     the predicate this file hands the shared archive — has no status to
- *     filter on. It uses `cancelledAt: null` instead — an already-cancelled
- *     future class is *not* an income record: the sole `studioClass.findMany`
- *     in `settings/reporting/page.tsx` queries with `cancelledAt: null` and
- *     excludes it from earnings outright.
+ *     one of the predicates this file hands the shared archive — has no
+ *     status to filter on. It uses `cancelledAt: null` instead — an
+ *     already-cancelled class is *not* an income record: the earnings query in
+ *     `src/app/(teacher)/settings/reporting/page.tsx` filters `cancelledAt:
+ *     null` and leaves it out.
  *     It survives because its entry holds `(scheduleRuleId, date)`, and a
  *     date the teacher cancelled deliberately must not be refilled on the
  *     next resume.
@@ -46,7 +46,6 @@
  *     (`class-template-lifecycle.ts`) also generates inside its own
  *     `$transaction` on resume, and since #116 it does both of these too — a
  *     compare-and-swap and a claim, ported from here statement for statement.
- *     This paragraph listed them as differences until then.
  */
 
 import type { Prisma, PrismaClient, StudioClassTemplate, ScheduleRule } from '@prisma/client';
@@ -78,6 +77,7 @@ import {
   archiveOrUnarchiveRule,
   type ArchiveRuleResult,
   type TemplateFamily,
+  type WithSlot,
 } from './rule-lifecycle';
 
 /**
@@ -455,19 +455,13 @@ void _scheduleRuleAllowlistHasNoForbiddenFields;
  * the response body and the wire consumers on the other end still expect
  * these columns to be there, which the row itself no longer has. The class
  * family's `ClassTemplateWithSlot` (`class-template-lifecycle.ts`) is the
- * same shape one model over.
+ * same shape one model over — and, like this one, an alias of `WithSlot`
+ * (`rule-lifecycle.ts`) rather than a hand-written copy of its columns: the
+ * shared archive's result type is spelled in `WithSlot` too, so a column
+ * added there and not here would compile (a wider object satisfies a
+ * narrower declared return) and reach the wire unnoticed.
  */
-export type StudioClassTemplateWithSlot = StudioClassTemplate & {
-  teacherId: string;
-  classType: string;
-  dayOfWeek: number;
-  startTime: string;
-  durationMinutes: number;
-  isActive: boolean;
-  isArchived: boolean;
-  archivedAt: Date | null;
-  withdrawnCount: number | null;
-};
+export type StudioClassTemplateWithSlot = WithSlot<StudioClassTemplate>;
 
 /**
  * Flattens a rule's columns onto its child, converting `startTime` to the
@@ -1441,16 +1435,16 @@ export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate> = {
 };
 
 /**
- * Archive or un-archive. Archiving withdraws the future studio classes nobody
- * booked and leaves the rest standing (#86): generated instances stay
- * publicly listed on the teacher's schedule until removed, so without this an
- * archived template keeps up to four weeks of studio classes looking live.
+ * Archive or un-archive. Archiving withdraws this template's future studio
+ * classes and leaves the rest standing (#86): generated instances sit on the
+ * teacher's own schedule until removed, so without this an archived template
+ * keeps up to four weeks of studio classes standing there as if still live.
  *
- * "Nobody booked" means no registration to consult at all — `StudioClass` has
- * none, so every future uncancelled class the delete's boundary can reach is
- * deletable; an already-cancelled one survives because its entry holds
- * `(scheduleRuleId, date)` against the sweep refilling a date the teacher
- * cancelled deliberately.
+ * There is no booking to consult — `StudioClass` has no registrations and no
+ * waitlist — so every future uncancelled class the delete's boundary can reach
+ * is deletable. An already-cancelled one survives instead, because its entry
+ * holds `(scheduleRuleId, date)` against the sweep refilling a date the
+ * teacher cancelled deliberately.
  *
  * The update and the delete share a transaction: a half-applied archive is
  * exactly the shelved-but-listed state this exists to prevent. The mechanics
