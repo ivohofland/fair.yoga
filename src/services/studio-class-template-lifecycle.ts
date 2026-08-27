@@ -458,10 +458,11 @@ export type StudioClassTemplateWithSlot = StudioClassTemplate & {
 
 /**
  * Flattens a rule's columns onto its child, converting `startTime` to the
- * wire's `"HH:MM"`. Exported for the routes' own reads
- * (`GET /api/studio-class-templates`, `GET /api/studio-class-templates/[id]`,
- * and the `POST` create), which need the same flattening this file's writes
- * do.
+ * wire's `"HH:MM"`. Exported for the two GET routes' own reads
+ * (`GET /api/studio-class-templates`, `GET /api/studio-class-templates/[id]`),
+ * which need the same flattening this file's writes do. The `POST` create no
+ * longer calls this from the route — `createStudioClassTemplate` below calls
+ * it itself, inside the service, like every other writer in this file.
  */
 export function withSlot(template: StudioClassTemplate, rule: ScheduleRule): StudioClassTemplateWithSlot {
   return {
@@ -1746,10 +1747,14 @@ export async function createStudioClassTemplate(
     | { ok: false };
   try {
     outcome = await db.$transaction(async (tx) => {
-      // FIRST STATEMENT, per every sibling in this file. Three of this
-      // transaction's four statements can wait on a lock, so 3 x 2s sits
-      // inside the 10s budget with headroom; redo that sum before adding a
-      // fourth waiting statement (issue 228, docs/lock-order.md).
+      // FIRST STATEMENT, per every sibling in this file. FOUR statements in
+      // this transaction can wait on a lock — this insert, the template
+      // insert below, and generation's own two writes
+      // (`calendarEntry.createManyAndReturn` and `studioClass.createMany`,
+      // `studio-class-generator.ts`); its occupancy `findMany` is a plain
+      // read and does not wait under READ COMMITTED. So 4 x 2s sits inside
+      // the 10s budget with 2s of headroom; redo that sum before adding a
+      // fifth waiting statement (issue 228, docs/lock-order.md).
       await setLockTimeout(tx);
       const [rule] = await tx.scheduleRule.createManyAndReturn({
         data: [{
@@ -1781,10 +1786,16 @@ export async function createStudioClassTemplate(
       return { ok: true as const, created: withSlot(bare, scheduleRule), generation };
     }, { timeout: 10_000 });
   } catch (err) {
-    // BEFORE any conflict check, as all three siblings document: `P2028` and
-    // `P2024` are `PrismaClientKnownRequestError`s too, so the other
-    // ordering drops them into a branch that does not match and out to a
-    // generic 500.
+    // BEFORE any conflict check (`api-errors.ts`: `isTransientDbError` is
+    // checked ahead of every other branch precisely so a non-matching check
+    // placed first cannot swallow a `P2028`/`P2024` — both are
+    // `PrismaClientKnownRequestError`s too, and a conflict check that matches
+    // only one specific code would rethrow them straight past `busy`). An
+    // error that escapes this branch still reaches a 503 —
+    // `classifyApiError`'s own transient-error net, `api-errors.ts:462-473`
+    // — but loses this service's `STUDIO_TEMPLATE_BUSY` code and its
+    // create-specific "nothing was created" sentence for that net's generic,
+    // code-less one (measured, this function's own mutation testing).
     //
     // Logs, like every sibling's own transient branch (#231: `classifyApiError`
     // warns when this escapes uncaught, so catching it here must not be what

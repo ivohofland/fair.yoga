@@ -37,13 +37,17 @@ export function minutesSinceMidnight(t: Date): number {
  * is ever redefined with a different bound — `rule-slot-holder.test.ts`'s
  * boundary case and its mutation are what hold it.
  *
- * Called from a `catch` block outside its transaction, always against `db`,
- * never `tx`: a statement that fails inside a Postgres transaction aborts it,
- * so a probe issued on the aborted `tx` would answer `25P02` rather than an
- * answer, not a `RuleSlotHolder`. Every call site must therefore sit after
- * its own transaction's closing `)`, where Prisma has already rolled back and
- * `db` is a clean connection — re-derive the current set rather than trust a
- * count here:
+ * Called after its transaction has closed, always against `db`, never `tx`:
+ * a statement that fails inside a Postgres transaction aborts it, so a probe
+ * issued on the aborted `tx` would answer `25P02` rather than an answer, not
+ * a `RuleSlotHolder`. Most call sites are a `catch` block for exactly that
+ * reason; `createStudioClassTemplate` (`studio-class-template-lifecycle.ts`)
+ * is the one exception, probing on its normal return path after a zero-row
+ * `ON CONFLICT DO NOTHING` refusal that never threw in the first place — the
+ * requirement is the same either way. Every call site must therefore sit
+ * after its own transaction's closing `)`, where Prisma has already
+ * committed or rolled back and `db` is a clean connection — re-derive the
+ * current set rather than trust a count here:
  *
  *   grep -rn "ruleSlotHolder(db\|ruleSlotHolder(prisma" src/services/ src/app/api/
  *

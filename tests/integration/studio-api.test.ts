@@ -315,6 +315,20 @@ describe('POST /api/studio-class-templates', () => {
         const loserBody = a.status === 409 ? bodyA : bodyB;
         expect(loserBody.error.code).toBe('DUPLICATE_STUDIO_TEMPLATE_SLOT');
       }
+
+      // Checking every one of the ten races' shape would just repeat the
+      // sequential sibling above ten times over — that case already pins "one
+      // template, one four-week window" for a single race. This checks the
+      // LAST race (i === 9, '11:00') only, enough to confirm the loop's
+      // winner-per-slot outcome actually lands rather than merely answering
+      // the right HTTP codes.
+      const templates = await prisma.studioClassTemplate.findMany({
+        where: { scheduleRule: { teacherId: ownerId, dayOfWeek: 6, startTime: hhmmToTime('11:00'), isArchived: false } },
+      });
+      expect(templates).toHaveLength(1);
+
+      const generated = await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templates[0]!.id } } } } }, include: { calendarEntry: true } });
+      expect(generated).toHaveLength(4);
     });
   });
 
