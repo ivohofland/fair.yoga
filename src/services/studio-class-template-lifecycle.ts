@@ -974,13 +974,15 @@ const scheduledWhere = (scheduleRuleId: string, date: { gt: Date } | { gte: Date
  * before this transaction's `updateMany` even ran, but a miss reached by
  * that `updateMany` first blocking on the conflicting change and only then
  * losing its recheck leaves the row locked to commit regardless (Postgres
- * takes the lock before the recheck, not after). Either way the plain
+ * takes the lock before the recheck, not after) — either way the plain
  * re-read's correctness does not depend on which happened, exactly like
- * `archiveOrUnarchiveStudioTemplate`'s own miss branch.
+ * `archiveOrUnarchiveStudioTemplate`'s own miss branch; and `busy` carries no
+ * template at all, so the question does not arise for it.
  */
 type ResumeTransactionOutcome =
   | { outcome: 'not_found' }
   | { outcome: 'archived' }
+  | { outcome: 'busy' }
   | { outcome: 'unchanged'; template: StudioClassTemplateWithSlot }
   | { outcome: 'paused'; template: StudioClassTemplateWithSlot }
   | {
@@ -1195,20 +1197,42 @@ export async function pauseOrResumeStudioTemplate(
             return { outcome: 'unchanged', template: withSlot(current, current.scheduleRule) };
           }
           if (current.scheduleRule.isArchived) return { outcome: 'archived' };
-          // Residual, not provably unreachable this time — said plainly after
-          // getting that claim wrong once already on this branch. The CAS's own
+          // Residual, and REACHABLE — measured, not conceded. The CAS's
           // `where` is `isArchived: false AND isActive: !desiredActive`; a miss
-          // means `isArchived` OR `isActive === desiredActive` held *when the
-          // CAS ran* — both checked above against a *second*, later read. Under
-          // READ COMMITTED each statement gets its own snapshot, so a row that
-          // could change back between those two snapshots — a second race
-          // stacked on the first — could in principle reach here. Surfacing
-          // that rather than silently falling through to the code below, which
-          // assumes the CAS actually succeeded.
-          throw new Error(
-            `pauseOrResumeStudioTemplate: template ${templateId} matched neither the CAS ` +
-              'nor any of its disambiguated misses — its state changed again between them',
+          // means one of those held *when the CAS ran*, and both are checked
+          // above against a second, later read. Under READ COMMITTED each
+          // statement takes its own snapshot, so a row that changed back in
+          // between reaches here.
+          //
+          // `busy`, not a throw, and the distinction is the point: the CAS
+          // matched ZERO rows, so this transaction has written nothing and
+          // rolls back clean. That is a lost race a retry wins, which is what
+          // `busy` means everywhere else in this file — the route renders it
+          // 503 "Nothing was changed. Wait a moment, then try again." A throw
+          // surfaces the same state as a 500 logged at `error`, the paging
+          // level, for a condition `classifyApiError`'s transient branch exists
+          // to demote. `pauseOrResumeTemplate` reaches the analogous state and
+          // answers `busy`; the two families agreeing matters more than a
+          // distinction only this branch would draw.
+          //
+          // Logged rather than silent, because `busy` covers two causes worth
+          // telling apart in production: a lock wait that timed out (the
+          // `catch` below, which carries `err`) and this one, which carries the
+          // observed row instead.
+          log.warn(
+            {
+              templateId,
+              teacherId,
+              target,
+              observed: {
+                isActive: current.scheduleRule.isActive,
+                isArchived: current.scheduleRule.isArchived,
+              },
+              desiredActive,
+            },
+            'studio class pause/resume CAS missed and the re-read matched no classification',
           );
+          return { outcome: 'busy' };
         }
 
         if (!desiredActive) {
@@ -1363,7 +1387,7 @@ export async function pauseOrResumeStudioTemplate(
   // the `paused` work below, so a new `ResumeTransactionOutcome` arm carrying
   // a `template` compiled clean, fell past every `if`, and was answered
   // `action: 'paused'` — with a `lastScheduled` query it never asked for.
-  // Only an arm *without* a `template` was caught, and three of the five arms
+  // Only an arm *without* a `template` was caught, and three of the six arms
   // carry one. The `default` below is the same `never` idiom
   // `api/studio-class-templates/[id]/route.ts` uses twice for its public
   // unions; `paused` breaks out to the post-transaction work it needs, which
@@ -1373,6 +1397,8 @@ export async function pauseOrResumeStudioTemplate(
       return { ok: false, reason: 'not_found' };
     case 'archived':
       return { ok: false, reason: 'archived' };
+    case 'busy':
+      return { ok: false, reason: 'busy' };
     case 'unchanged':
       return { ok: true, action: 'unchanged', template: result.template };
     case 'active':

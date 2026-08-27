@@ -1276,6 +1276,71 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(pauseResult.template.isArchived).toBe(true);
     expect(pauseResult.template.isActive).toBe(false);
   });
+
+  /**
+   * The CAS's `where` is `isArchived: false AND isActive: !desiredActive`. A
+   * miss means one of those held when the CAS ran, and the branch checks both
+   * against a SECOND, later read — so a row that changes back in between
+   * matches neither classification and falls through to the residual.
+   *
+   * Driven by two `$extends` hooks rather than by sleeps: each fires at a
+   * known statement boundary, so the interleaving is deterministic.
+   */
+  it('the residual CAS miss answers busy rather than throwing', async () => {
+    const t = await makeTemplate('Residual Miss');
+    await prisma.scheduleRule.update({
+      where: { id: t.scheduleRuleId },
+      data: { isActive: false },
+    });
+
+    // Guards: each hook must fire ONCE. The miss branch re-reads through the
+    // same `findUnique` the first hook is attached to, so an unguarded hook
+    // would fire again there and undo the setup this test depends on.
+    let armedRead = true;
+    let armedCas = true;
+
+    const interposing = prisma.$extends({
+      query: {
+        studioClassTemplate: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            if (armedRead) {
+              armedRead = false;
+              // Commits AFTER the service's pre-transaction read, so the row
+              // it holds says `isActive: false` while the database says true —
+              // which is what makes the CAS's `isActive: false` predicate miss.
+              await prisma.scheduleRule.update({
+                where: { id: t.scheduleRuleId },
+                data: { isActive: true },
+              });
+            }
+            return row;
+          },
+        },
+        scheduleRule: {
+          async updateMany({ args, query }) {
+            const res = await query(args);
+            if (armedCas) {
+              armedCas = false;
+              // Commits AFTER the CAS has missed, putting the row back so the
+              // re-read below sees neither already-desired nor archived.
+              // Targets `ScheduleRule` while the transaction holds `FOR UPDATE`
+              // on `StudioClassTemplate` — a different table, so no wait.
+              await prisma.scheduleRule.update({
+                where: { id: t.scheduleRuleId },
+                data: { isActive: false },
+              });
+            }
+            return res;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await pauseOrResumeStudioTemplate(interposing, t.id, teacherId, 'active');
+
+    expect(result).toEqual({ ok: false, reason: 'busy' });
+  });
 });
 
 describe('updateStudioClassTemplate (DB)', () => {

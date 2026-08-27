@@ -2893,4 +2893,55 @@ describe('pauseOrResumeTemplate (DB)', () => {
     expect(after.scheduleRule.isActive).toBe(false);
     expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: t.id } } } } } })).toBe(0);
   });
+
+  it('the residual CAS miss answers busy rather than throwing', async () => {
+    // Explicit '12:30', not the counter default: this block's counter has
+    // already reached 14 by the time this test runs, and its own default
+    // slot would be the 15th — hour 24, past a single day. '12:30' is free:
+    // the 'Slot Taken Report' test above overrides its own slot explicitly,
+    // so the counter position it consumes was never actually claimed.
+    const t = await makeTemplate('Residual Miss', '12:30');
+    await prisma.scheduleRule.update({
+      where: { id: t.scheduleRuleId },
+      data: { isActive: false },
+    });
+
+    let armedRead = true;
+    let armedCas = true;
+
+    const interposing = prisma.$extends({
+      query: {
+        classTemplate: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            if (armedRead) {
+              armedRead = false;
+              await prisma.scheduleRule.update({
+                where: { id: t.scheduleRuleId },
+                data: { isActive: true },
+              });
+            }
+            return row;
+          },
+        },
+        scheduleRule: {
+          async updateMany({ args, query }) {
+            const res = await query(args);
+            if (armedCas) {
+              armedCas = false;
+              await prisma.scheduleRule.update({
+                where: { id: t.scheduleRuleId },
+                data: { isActive: false },
+              });
+            }
+            return res;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await pauseOrResumeTemplate(interposing, t.id, teacherId, 'active');
+
+    expect(result).toEqual({ ok: false, reason: 'busy' });
+  });
 });
