@@ -1,5 +1,6 @@
 import type { PrismaClient, ClassStatus } from '@prisma/client';
 import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
+import { isCheckViolationOn } from '@/lib/check-violation';
 import { log } from '@/lib/log';
 
 /**
@@ -154,20 +155,44 @@ export async function setTeacherRoomArchived(
     }
   }
 
-  // KNOWN-OPEN, and deliberate (spec section 8). The counts above are read
-  // before this write, so a class published in another tab in between leaves
-  // an archived room holding an `open` class. Accepted rather than locked: the
-  // publish guard two doors away already records the reasoning for this exact
-  // class of check ("a policy about intent, not an invariant", see
-  // class-lifecycle.ts:303-304), losing the race needs two tabs, and the state
-  // is recoverable by un-archiving and self-heals when the class completes.
-  // A transaction here would NOT help — under read-committed the counts lock
-  // nothing — and the alternative is a new FOR UPDATE node in the ordering
-  // that `template-lock-order.test.ts` exists to defend.
-  await db.teacherRoom.update({
-    where: { id: teacherRoomId },
-    data: { isArchived: archiving },
-  });
+  // KNOWN-OPEN, and deliberate (spec section 8), now on the CLASS side only.
+  // The counts above are read before this write, so a class published in
+  // another tab in between leaves an archived room holding an `open` class.
+  // Accepted rather than locked: the publish guard two doors away already
+  // records the reasoning for this exact class of check ("a policy about
+  // intent, not an invariant", see class-lifecycle.ts:303-304), losing the
+  // race needs two tabs, and the state is recoverable by un-archiving and
+  // self-heals when the class completes. A transaction here would NOT help —
+  // under read-committed the counts lock nothing — and the alternative is a
+  // new FOR UPDATE node in the ordering that `template-lock-order.test.ts`
+  // exists to defend.
+  //
+  // The TEMPLATE half of the race was closed, not accepted, in issue 272: a
+  // template resumed between the counts and this write makes the write's own
+  // cascade to the child row trip `ClassTemplate_live_needs_open_room`, so
+  // the archive is refused by the constraint (below) exactly as if the count
+  // had seen it. The class half is what stays racy — the class invariant is
+  // deliberately out of scope (spec section 8).
+  try {
+    await db.teacherRoom.update({
+      where: { id: teacherRoomId },
+      data: { isArchived: archiving },
+    });
+  } catch (e) {
+    // The counts above are read before this write, so a template resumed in
+    // between is invisible to them — this is that window closing (issue 272),
+    // and it is now a refusal rather than a wrong success. `blockers` is
+    // reported as the counts saw it: zero, which is honest about what this
+    // function measured rather than inventing a number it did not.
+    if (isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room')) {
+      log.info(
+        { teacherRoomId, teacherId },
+        'room archive refused by the constraint: a template went live mid-request',
+      );
+      return { ok: false, reason: 'in_use', blockers: { classes: 0, templates: 0 } };
+    }
+    throw e;
+  }
 
   return { ok: true, action: archiving ? 'archived' : 'unarchived', isArchived: archiving };
 }

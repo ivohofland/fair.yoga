@@ -11,6 +11,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { setTeacherRoomArchived, describeRoomBlockers } from './room-archive';
+import { pauseOrResumeTemplate } from './class-template-lifecycle';
 
 const prisma = new PrismaClient();
 // `ra-` distinguishes this file's rows from `room-archive-doors.test.ts`'s,
@@ -110,6 +111,51 @@ describe('setTeacherRoomArchived — door 1, template clause (no blocking class 
     const result = await setTeacherRoomArchived(prisma, f.linkId, f.teacherId, 'archived');
 
     expect(result).toMatchObject({ ok: true, action: 'archived' });
+  });
+});
+
+describe('setTeacherRoomArchived — the mid-request resume race (issue 272)', () => {
+  // The counts are READ before the write, so a template paused in this room
+  // when the counts ran can still be resumed in another tab before the
+  // archive's own update. Pre-272 that was a wrong success — a live template
+  // left sitting on an archived room, precisely the state door 1 exists to
+  // refuse. Post-272 the archive write's own cascade trips
+  // `ClassTemplate_live_needs_open_room`, and this is the service turning that
+  // 23514 into the SAME `in_use` answer the counts would have given had they
+  // run a moment later. `blockers` is reported as the counts saw it — zero —
+  // which is honest about what this function measured rather than inventing
+  // numbers it did not.
+  it('answers in_use rather than throwing when the constraint refuses the archive', async () => {
+    const f = await makeFixture();
+    const tpl = await addTemplate(f, { isActive: false, isArchived: false });
+
+    // The interposing-`$extends` lever `class-template-lifecycle.test.ts`
+    // uses: a PAUSED template counts as `templates: 0`, so the archive passes
+    // its count gate; the interposed resume lands on another connection
+    // between that read and the write, and the write is then refused by the
+    // constraint rather than succeeding.
+    let interposed = false;
+    const interposing = prisma.$extends({
+      query: {
+        teacherRoom: {
+          async update({ args, query }) {
+            if (interposed) return query(args);
+            interposed = true;
+            const resumed = await pauseOrResumeTemplate(prisma, tpl.id, f.teacherId, 'active');
+            if (!resumed.ok) throw new Error(`interposed resume failed: ${resumed.reason}`);
+            return query(args);
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await setTeacherRoomArchived(interposing, f.linkId, f.teacherId, 'archived');
+
+    expect(interposed).toBe(true);
+    expect(result).toEqual({ ok: false, reason: 'in_use', blockers: { classes: 0, templates: 0 } });
+
+    const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: f.linkId } });
+    expect(after.isArchived).toBe(false);
   });
 });
 
