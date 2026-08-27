@@ -9,7 +9,6 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { createStudioClassSchema } from '@/lib/schemas';
-import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { entryConflictMessage, probeConflictingEntry } from '@/lib/entry-conflict';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
@@ -54,81 +53,84 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // this handler, so grepping for them found nothing (#148). One of the two,
   // `templateId`, is not a column at all any more; `scheduleRuleId` on the
   // entry is what replaced it, and this handler never sets it either.
-  try {
-    // The ENTRY is the row created, with its studio class nested (#327).
-    // `kind` is set once, on the parent: it is half of the composite foreign
-    // key, so Prisma omits it from the nested child input and fills it from
-    // here. `classType` moved with it, and `CalendarEntry.classType` carries
-    // no `@default("")` — every studio write supplies one now.
-    const entry = await prisma.calendarEntry.create({
-      data: {
+
+  // Two Prisma calls, not one nested `create`. Prisma already wraps a single
+  // nested write in its own implicit transaction — `BEGIN`, `INSERT
+  // CalendarEntry`, `INSERT StudioClass`, `SELECT`, `COMMIT` — so this
+  // explicit `$transaction` PRESERVES that atomicity across the two calls
+  // below rather than introducing it. Without it, each call would open its
+  // own implicit transaction, leaving a window where a `CalendarEntry` exists
+  // with no `StudioClass`. It does not add a lock-holding path.
+  //
+  // No `setLockTimeout` here: issue 228 tracks that bound for the create
+  // paths, and adding it alone would turn a wait that usually succeeds into a
+  // generic 503 rather than a named one.
+  const outcome = await prisma.$transaction(async (tx) => {
+    // The ENTRY is inserted alone and first — it holds the slot constraint,
+    // and `skipDuplicates` (`ON CONFLICT DO NOTHING`) makes it refuse with
+    // zero rows rather than deadlock against a concurrent conflicting insert
+    // (issue 331). Parent before child is forced by the composite
+    // `(calendarEntryId, kind)` foreign key; this is a creation path, so
+    // `docs/lock-order.md`'s `Class`-then-entry rule — which governs a write
+    // to two EXISTING rows — does not apply. `kind` is set here on the
+    // parent, and `CalendarEntry.classType` carries no `@default("")` — every
+    // studio write supplies one.
+    const [entry] = await tx.calendarEntry.createManyAndReturn({
+      data: [{
         teacherId: session.teacherId,
-        kind: 'studio',
+        kind: 'studio' as const,
         classType: body.classType,
         date: new Date(body.date),
         startTime: hhmmToTime(body.startTime),
         durationMinutes: body.durationMinutes,
-        studioClasses: {
-          create: {
-            location: body.location,
-            hourlyRate: body.hourlyRate,
-          },
-        },
-      },
-      include: { studioClasses: true },
+      }],
+      skipDuplicates: true,
     });
-    const studioClass = entry.studioClasses[0];
-    if (!studioClass) {
-      throw new Error('studio class create: the nested studio class row did not come back');
-    }
-    return respondOk(
-      {
-        ...studioClass,
-        teacherId: entry.teacherId,
-        classType: entry.classType,
-        date: entry.date,
-        startTime: timeToHHmm(entry.startTime),
-        durationMinutes: entry.durationMinutes,
-        cancelledAt: entry.cancelledAt,
+    if (!entry) return { ok: false as const };
+
+    const studioClass = await tx.studioClass.create({
+      data: {
+        calendarEntryId: entry.id,
+        kind: 'studio',
+        location: body.location,
+        hourlyRate: body.hourlyRate,
       },
-      201,
+    });
+    return { ok: true as const, entry, studioClass };
+  });
+
+  if (!outcome.ok) {
+    // WHICH entry, asked of the database, because a zero row count does not
+    // say — and either family can be the answer, since both live in one
+    // table now. On `prisma`, never on a transaction client: the one above
+    // has closed.
+    const conflict = await probeConflictingEntry(prisma, session.teacherId, {
+      date: new Date(body.date),
+      startTime: hhmmToTime(body.startTime),
+      durationMinutes: body.durationMinutes,
+    });
+    // LOGGED before responding, for the reason every refusal returned from a
+    // service carries: `respondError` does not log and `withErrorHandler`
+    // never sees a response that was RETURNED rather than thrown, so this
+    // line is what leaves a server-side record of the refusal.
+    log.warn(
+      { teacherId: session.teacherId, conflictEntryId: conflict?.id ?? null },
+      'studio class create refused: another live entry holds that slot',
     );
-  } catch (err) {
-    // The slot constraint, not the rule-date key. `@@unique([scheduleRuleId,
-    // date])` cannot raise here — this create never sets `scheduleRuleId` (a
-    // manually logged class has no rule behind it), so it is NULL, and
-    // Postgres treats NULLs as distinct.
-    //
-    // `isExclusionConflictOn`, not `isUniqueConflictOn`: since #327 the slot
-    // is an `EXCLUDE USING gist` raising `23P01`, which has no `meta.target`
-    // column list for the unique matcher to compare. It is also RANGE-based,
-    // so a create that merely OVERLAPS a live class of this teacher collides
-    // where before only an identical start time did.
-    if (isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')) {
-      // WHICH entry, asked of the database, because the `23P01` does not say —
-      // and either family can be the answer, since both live in one table now.
-      // On `prisma`, never on a transaction client: this handler opens none,
-      // and the implicit one behind the nested `create` above was rolled back
-      // and closed before this catch ran.
-      const conflict = await probeConflictingEntry(prisma, session.teacherId, {
-        date: new Date(body.date),
-        startTime: hhmmToTime(body.startTime),
-        durationMinutes: body.durationMinutes,
-      });
-      // LOGGED before responding, for the reason every refusal returned from a
-      // service carries: `respondError` does not log and `withErrorHandler` never
-      // sees a response that was RETURNED rather than thrown, so catching here is
-      // what removes the server-side record.
-      log.warn(
-        { err, teacherId: session.teacherId, conflictEntryId: conflict?.id ?? null },
-        'studio class create refused: another live entry holds that slot',
-      );
-      return respondError(
-        entryConflictMessage(conflict, 'studio'),
-        409,
-        'DUPLICATE_STUDIO_SLOT',
-      );
-    }
-    throw err;
+    return respondError(entryConflictMessage(conflict, 'studio'), 409, 'DUPLICATE_STUDIO_SLOT');
   }
+  const { entry, studioClass } = outcome;
+
+  return respondOk(
+    {
+      ...studioClass,
+      teacherId: entry.teacherId,
+      classType: entry.classType,
+      date: entry.date,
+      startTime: timeToHHmm(entry.startTime),
+      durationMinutes: entry.durationMinutes,
+      cancelledAt: entry.cancelledAt,
+    },
+    201,
+  );
 });

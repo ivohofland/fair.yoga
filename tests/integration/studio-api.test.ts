@@ -1683,18 +1683,37 @@ describe('/api/studio-classes', () => {
       // this test stages never happens. A start time clear of it is what keeps
       // the constraint answering about the two requests rather than about the
       // previous test.
-      const body = { ...slotBody(), startTime: '13:00' };
-      const [a, b] = await Promise.all([
-        send('POST', ownerToken, '/api/studio-classes', body),
-        send('POST', ownerToken, '/api/studio-classes', body),
-      ]);
-      expect([a.status, b.status].sort()).toEqual([201, 409]);
+      //
+      // TEN RACES, NOT ONE (issue 331): a plain `INSERT` against that
+      // exclusion constraint inserts its tuple and only then checks it, so two
+      // concurrent conflicting inserts wait on each other and Postgres breaks
+      // the cycle with `40P01` — the loser answering 503 where a 409 belongs.
+      // One pair passes against that bug most of the time, so a single race
+      // does not catch a regression here reliably — same shape as the
+      // template families' own race loops (`tests/integration/class-templates-api.test.ts`,
+      // this file's `POST /api/studio-class-templates` describe). Ten
+      // non-overlapping 45-minute slots, 13:00 through 22:00, keep every
+      // iteration clear of its predecessors' winners — the loop makes the
+      // leftover-row hazard above sharper, not softer, since each race now
+      // leaves a row of its own standing too.
+      for (let i = 0; i < 10; i++) {
+        const body = {
+          ...slotBody(),
+          startTime: `${String(13 + i).padStart(2, '0')}:00`,
+          durationMinutes: 45,
+        };
+        const [a, b] = await Promise.all([
+          send('POST', ownerToken, '/api/studio-classes', body),
+          send('POST', ownerToken, '/api/studio-classes', body),
+        ]);
+        expect([a.status, b.status].sort(), `race ${i}`).toEqual([201, 409]);
 
-      const loser = a.status === 409 ? a : b;
-      expect((await loser.json()).error.code).toBe('DUPLICATE_STUDIO_SLOT');
+        const loser = a.status === 409 ? a : b;
+        expect((await loser.json()).error.code).toBe('DUPLICATE_STUDIO_SLOT');
 
-      const rows = await prisma.studioClass.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: hhmmToTime('13:00') } }, include: { calendarEntry: true } });
-      expect(rows).toHaveLength(1);
+        const rows = await prisma.studioClass.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: hhmmToTime(body.startTime) } }, include: { calendarEntry: true } });
+        expect(rows, `race ${i}`).toHaveLength(1);
+      }
     });
   });
 });
