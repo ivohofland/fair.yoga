@@ -29,6 +29,19 @@ function slotTime(totalMinutesFrom9am: number): string {
   const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
   const minute = totalMinutesFrom9am % 60;
   const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  // Postgres's `time` accepts up to '24:00:00' and nothing later, but the
+  // shape check below can't see that: `\d{2}` matches '25' and '99' exactly
+  // as readily as '09'. Checked here instead, naming the `totalMinutesFrom9am`
+  // this was called with — the caller derives that value from its own
+  // counter (`base + counter * 60`), so the number here is what lets the
+  // next person find which call ran the block out of slots.
+  if (hour > 24 || (hour === 24 && minute !== 0)) {
+    throw new Error(
+      `slotTime(${totalMinutesFrom9am}) would produce '${startTime}', past ` +
+        `'24:00:00' — the last time-of-day value Postgres's \`time\` accepts. ` +
+        'The caller has run its counter out of slots in this block.',
+    );
+  }
   if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
     throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
   }
@@ -587,20 +600,43 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   let otherTeacherId: string;
   let otherAccountId: string;
 
-  // Counter-derived startTime: this block calls makeTemplate 12 times for
-  // one teacher/dayOfWeek, and pausing (unlike archiving) never sets
-  // isArchived, so a merely-paused template keeps occupying its slot for the
-  // rest of the run — mirroring the class family's equivalent block.
+  // Counter-derived startTime, not a literal: pausing (unlike archiving)
+  // never sets isArchived, so a merely-paused template keeps occupying its
+  // slot for the rest of the run — mirroring the class family's equivalent
+  // block. No test reads or asserts a created template's literal startTime.
   //
   // `ScheduleRule_teacher_slot_excl` (issue 298) excludes on RANGE overlap,
   // so each slot is spaced a full `durationMinutes` (60) from the last.
-  // Anchored at `'12:00'` (`120 + counter * 60`), not `'09:xx'`: the sibling
-  // `makeTemplateOn` below reserves `'09:00'`-`'12:00'` on the same
-  // teacher/day for its own 3 slots, and the two ranges must not touch. No
-  // test reads or asserts a created template's literal startTime.
+  // Calls up to 13 land on `'12:00'`..`'23:00'` plus one more: counter 13's
+  // `120 + 13 * 60` computes `'24:00'`, the string `slotTime` allows as
+  // Postgres's own last `time`, but `hhmmToTime` parses it as
+  // `Date('1970-01-01T24:00:00Z')`, which JavaScript normalizes to
+  // `1970-01-02T00:00:00.000Z` — the DATE rolls forward and only the TIME
+  // survives into the `@db.Time` column. Counter 13's row is therefore
+  // stored as `'00:00'`, confirmed by querying it directly, not as the
+  // `'24:00'` its own source expression suggests. Not `'09:xx'` for any of
+  // these: the sibling `makeTemplateOn` below reserves `'09:00'`-`'12:00'`
+  // on the same teacher/day for its own 3 slots, and the two ranges must not
+  // touch. Calls past 13 switch to a second, disjoint range that starts at
+  // `'01:00'`, not `'00:00'` — see `makeTemplate` below for why.
   let makeTemplateCounter = 0;
   const makeTemplate = (classType: string) => {
     makeTemplateCounter += 1;
+    // Two disjoint ranges, not one continued sequence. Extending
+    // `120 + counter * 60` past counter 13 reaches `'25:00'`, which
+    // `slotTime` now refuses (Postgres's `time` stops at `'24:00:00'`), so
+    // counters past 13 use a second, negative-offset expression instead:
+    // `(counter - 22) * 60` lands counter 14 on `'01:00'`, counter 15 on
+    // `'02:00'`, and so on through counter 21's `'08:00'`. Deliberately not
+    // `'00:00'`: counter 13 already silently holds that slot (see the block
+    // comment above for `hhmmToTime`'s day-rollover), so a row aimed at
+    // `'00:00'` collides with it under `ScheduleRule_teacher_slot_excl`. The
+    // exclusion constraint is the authority on whether a slot is free — the
+    // arithmetic alone cannot show `hhmmToTime`'s day-rollover.
+    const startTime =
+      makeTemplateCounter <= 13
+        ? slotTime(120 + makeTemplateCounter * 60)
+        : slotTime((makeTemplateCounter - 22) * 60);
     return prisma.studioClassTemplate.create({
       data: {
         scheduleRule: {
@@ -609,7 +645,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
             kind: 'studio',
             classType,
             dayOfWeek: 3,
-            startTime: hhmmToTime(slotTime(120 + makeTemplateCounter * 60)),
+            startTime: hhmmToTime(startTime),
             durationMinutes: 60,
           },
         },

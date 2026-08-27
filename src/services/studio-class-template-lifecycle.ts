@@ -1387,11 +1387,11 @@ export async function pauseOrResumeStudioTemplate(
   // the `paused` work below, so a new `ResumeTransactionOutcome` arm carrying
   // a `template` compiled clean, fell past every `if`, and was answered
   // `action: 'paused'` — with a `lastScheduled` query it never asked for.
-  // Only an arm *without* a `template` was caught, and three of the six arms
-  // carry one. The `default` below is the same `never` idiom
-  // `api/studio-class-templates/[id]/route.ts` uses twice for its public
-  // unions; `paused` breaks out to the post-transaction work it needs, which
-  // is the one thing that cannot be expressed as a `return` here.
+  // Only an arm *without* a `template` was caught. The `default` below is
+  // the same `never` idiom `api/studio-class-templates/[id]/route.ts` uses
+  // twice for its public unions; `paused` breaks out to the post-transaction
+  // work it needs, which is the one thing that cannot be expressed as a
+  // `return` here.
   switch (result.outcome) {
     case 'not_found':
       return { ok: false, reason: 'not_found' };
