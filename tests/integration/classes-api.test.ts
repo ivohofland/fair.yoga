@@ -1447,6 +1447,33 @@ describe('POST /api/classes', () => {
       expect(rows).toHaveLength(1);
     });
 
+    it('answers 409 rather than 503 when two identical creates are in flight at once (issue 331)', async () => {
+      // A plain `INSERT` against `CalendarEntry_teacher_slot_excl` inserts its
+      // tuple and only then checks the constraint, so two concurrent
+      // conflicting inserts wait on each other and Postgres breaks the cycle
+      // with `40P01` — the loser answering 503 where a 409 belongs. TEN
+      // RACES, NOT ONE: one pair passes against that bug most of the time, so
+      // a single race does not catch a regression here reliably — same shape
+      // as the template families' own race loop
+      // (`tests/integration/class-templates-api.test.ts`,
+      // `tests/integration/studio-api.test.ts`).
+      //
+      // `slotBody()`'s own date ('2027-04-05') is shared with the sibling
+      // tests in this block, so this loop uses its own ('2031-05-12')
+      // instead — ten non-overlapping 45-minute slots, 02:00 through 11:00,
+      // one per race.
+      for (let i = 0; i < 10; i++) {
+        const body = {
+          ...slotBody(),
+          date: '2031-05-12',
+          startTime: `${String(2 + i).padStart(2, '0')}:00`,
+          durationMinutes: 45,
+        };
+        const [a, b] = await Promise.all([post(body), post(body)]);
+        expect([a.status, b.status].sort(), `race ${i}`).toEqual([201, 409]);
+      }
+    });
+
     // PR #208 review, E4. `CalendarEntry_teacher_slot_excl`'s partial
     // predicate (`WHERE "cancelledAt" IS NULL`) is what frees a cancelled
     // class's slot — proven at the DB layer by `slot-constraints.test.ts` and
