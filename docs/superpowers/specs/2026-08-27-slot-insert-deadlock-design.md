@@ -1,7 +1,7 @@
 # A plain INSERT against an exclusion constraint can deadlock — issue 331
 
-**Date:** 2026-08-27 · **Issue:** 331 · **Depends on:** PR #333 (diagnostics and
-the corrected `lock-order.md` paragraph)
+**Date:** 2026-08-27 · **Issues:** 331 and 228 · **Depends on:** PR #333
+(diagnostics and the corrected `lock-order.md` paragraph)
 
 ## The defect
 
@@ -136,31 +136,79 @@ so it does not interact with `docs/lock-order.md`'s `Class`-then-entry rule for
 `updateClass`, which governs a write to two **existing** rows. State that in the
 code, next to the transaction, not here.
 
-**`setLockTimeout` goes on all four.** The two template routes call it as the
-transaction's first statement today; it stays first. The two entry routes get it
-too.
+## The bound, and why issue 228 comes with this round
 
-An earlier draft of this spec declined that, reasoning that the entry routes had
-no transaction and no bound, so adding one was a behaviour change beyond this
-defect. **The measurement above falsifies the premise:** the transaction is
-already there and the hold is already unbounded, so this is not a bound
-introduced onto a bare statement — it is a bound applied to a lock-holding path
-that has been running without one. Two further reasons:
+**Two earlier claims of mine were wrong and are replaced, not annotated.** I
+wrote that the two template routes call `setLockTimeout` today. **None of the
+four does.** And I proposed adding it to all four as a small consistency fix.
+`class-templates/route.ts:246` already refuses that, in writing:
 
-- The template routes are bounded *because* they are transactional. After this
-  change all four are explicitly transactional, and leaving two unbounded is an
-  asymmetry that reads as an oversight later rather than as a decision.
-- The cost — a slow create becomes a failed one — is what a timeout is *for*,
-  and this project has taken that trade already at both template routes, at
-  `lockClassRow`, and at `deleteStudentAccount` (`services/gdpr.ts`), whose own
-  comment records that a Prisma transaction budget "cannot roll back a statement
-  already blocked inside Postgres, only decline to begin another one".
+> No `setLockTimeout` here, and that is a scope decision rather than an oversight
+> — tracked as issue 228 … Alone, the bound would turn a wait that usually
+> succeeds into the generic `classifyApiError` 503 instead of a named one.
 
-Note what the bound does and does not buy: `lock_timeout` bounds each *wait*,
-not the transaction. `docs/lock-order.md` records the `lockAnnouncementSlot`
-measurement — 13,516 ms and 12,013 ms under a "5000 ms" Prisma timeout —
-precisely because Prisma's budget is not a bound on a blocked statement. A
-`SET LOCAL lock_timeout` is.
+A bare bound trades a rare `40P01`-shaped 503 for a commoner `55P03`-shaped one:
+the same unhelpful answer, more often. That is the defect class this round exists
+to remove, so **the bound only ships with a named outcome**, which is 228's whole
+point and needs the service boundary to have somewhere to put the union.
+
+### Issue 228's half
+
+Both template creates move to `src/services/`, beside their three lifecycle
+siblings, returning the house-convention union:
+
+```ts
+export type CreateTemplateResult =
+  | { ok: true; template: ClassTemplate; generation: GenerationResult }
+  | { ok: false; reason: 'slot_conflict' }
+  | { ok: false; reason: 'busy' };
+```
+
+`setLockTimeout(tx)` is the transaction's first statement. The catch tests
+`isTransientDbError` **before** `isUniqueConflictOn` — `P2028`/`P2024` are
+`PrismaClientKnownRequestError`s too, the ordering all three siblings document.
+The routes keep auth, parsing and response shaping and close their narrowing
+chain with the `never` guard, which is the forcing function 228 is really after:
+a future arm cannot be added without the compiler demanding it be answered.
+
+**Both or neither**, per 228 and #227 before it.
+
+### The two halves fit together better than either alone
+
+331's zero-row skip **is** 228's `slot_conflict` arm. The service returns
+`{ ok: false, reason: 'slot_conflict' }` when the parent insert comes back with
+no row, so 228 gets its named outcome without a catch block, and 331 gets its
+refusal without a deadlock. Neither is bolted onto the other.
+
+### Redo the sum — 228 asks for this explicitly
+
+228 records `N = 2` lock-waiting statements against a 10s budget: three
+statements, of which the `findMany` is a plain read that does not wait under
+READ COMMITTED. **331 changes that count.** Splitting the nested create makes it
+four statements — parent insert, child insert, generation's `findMany`,
+generation's `createManyAndReturn` — of which **three** can wait. So
+`3 × 2s = 6s` inside a 10s budget. Headroom remains, but it is 4s, not 6s, and
+`docs/lock-order.md` asks anyone adding waits to redo this sum. Anyone adding a
+fifth waiting statement must redo it again: at `5 × 2s` the budget is gone and
+the recommendation flips, exactly as 228 records for the nine-statement figure
+that turned out to be wrong.
+
+### What the bound does not buy
+
+`lock_timeout` bounds each *wait*, not the transaction. `docs/lock-order.md`
+records `lockAnnouncementSlot` running 13,516 ms and 12,013 ms under a "5000 ms"
+Prisma budget, because Prisma checks its budget at statement boundaries and
+cannot roll back a statement already blocked inside Postgres. A
+`SET LOCAL lock_timeout` can.
+
+### The two entry routes are NOT in 228's scope
+
+228 names the two template creates. `POST /api/classes` and
+`POST /api/studio-classes` have the same unbounded shape and are not in it. They
+get 331's half only — the deadlock fix, no bound, no service move — and the gap
+is recorded as an update on 228 rather than filed separately (§7's fourth test:
+prefer extending what exists). Widening 228's scope inside this round would make
+it a four-route refactor, which is not what it was scoped or measured for.
 
 ## Acceptance
 
@@ -172,9 +220,11 @@ precisely because Prisma's budget is not a bound on a blocked statement. A
    `docker exec fairyoga-db-1 psql -U yoga -d ethical_yoga_test -c "SELECT deadlocks FROM pg_stat_database WHERE datname='ethical_yoga_test'"`.
 3. All four sites answer their existing 409 code and message unchanged. No new
    status, no new code, no widened assertion.
-4. All four sites are explicitly transactional and all four call
-   `setLockTimeout` as the transaction's first statement. Re-derive with
-   `grep -n 'setLockTimeout' src/app/api/classes/route.ts src/app/api/studio-classes/route.ts src/app/api/class-templates/route.ts src/app/api/studio-class-templates/route.ts`.
+4. Both template creates live in `src/services/`, return `CreateTemplateResult`,
+   call `setLockTimeout` as the transaction's first statement, and their routes
+   close the narrowing chain with a `never` guard. Contention answers a named
+   `busy`, not `classifyApiError`'s generic sentence. The two entry routes are
+   unchanged in this respect and remain unbounded, by decision.
 5. `main` green.
 
 ## Proving each guard bites (§3)
