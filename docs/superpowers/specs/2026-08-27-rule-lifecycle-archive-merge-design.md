@@ -115,23 +115,45 @@ diff /tmp/a /tmp/b
 |---|---|---|---|---|
 | 1 | Prisma delegate (×3) | `db.classTemplate` | `db.studioClassTemplate` | descriptor field |
 | 2 | Raw table literal (×1) | `"ClassTemplate"` | `"StudioClassTemplate"` | descriptor field |
-| 3 | `scheduledWhere` | 3-arg, `classes:{some:{status}}` conjunct | 2-arg, `kind:'studio'` | descriptor field |
+| 3 | `scheduledWhere` | 3-arg, `classes:{some:{status}}` conjunct | 2-arg, `kind:'studio'` | **two** descriptor fields |
 | 4 | Log noun (×2) | `"recurring class"` | `"studio class"` | descriptor field |
 | 5 | Ordered pre-lock + waitlist read (25 lines) **before** the delete, and survivor-diff + withdrawal notifications (18 lines) **after** it | present | absent | **hook** |
 
+Site 3 becomes two fields, not one. `TemplateFamily` requires
+`deleteWhere(scheduleRuleId, today)` and `remainingWhere(scheduleRuleId, today)`,
+each family wrapping its own file-local `scheduledWhere` at the boundary that
+field needs — `{ gt: today }` for the delete, `{ gte: today }` for the count —
+and folding in whatever else that family spares. The class family's
+`registrations: { none: charged }` conjunct lives inside its own `deleteWhere`.
+The shared statements pass each predicate straight through and compose nothing
+onto it, so no conjunct crosses the boundary for one side to choose and the
+other to apply.
+
 Site 5 is one hook, not two, because the two halves share state: the
 `candidates` read must happen before the `deleteMany` and the survivor diff
-after it. The hook therefore brackets the shared delete and threads its own
-state:
+after it. The hook receives the shared delete as a callback and wraps it, so
+that state is an ordinary local in the family's own closure:
 
 ```ts
 type WithdrawHook = {
-  before: (tx: TransactionClientOnly, ctx: WithdrawContext) => Promise<WithdrawState>;
-  after: (tx: TransactionClientOnly, ctx: WithdrawContext, state: WithdrawState) => Promise<void>;
-  /** Extra `Class`-side conjunct for the delete's predicate — `registrations: none charged`. */
-  deleteFilter: Prisma.ClassWhereInput;
+  /**
+   * Runs the shared delete and whatever this family needs around it,
+   * returning the delete's own row count.
+   */
+  around: (
+    tx: TransactionClientOnly,
+    ctx: WithdrawContext,
+    deleteEntries: () => Promise<number>,
+  ) => Promise<number>;
 };
 ```
+
+A `before`/`after` pair cannot do this job: naming the state that crosses the
+delete puts that type in a return position and a parameter position at once,
+which makes the hook invariant — and an invariant hook cannot be collected into
+a union over both families, which is what the descriptor tether in §3.4 needs.
+Measured: `TS2322`. Around a callback there is no such type parameter to go
+wrong, so `TemplateFamily` needs no second one.
 
 ### 3.2 The fact that makes this merge safe
 
@@ -424,12 +446,13 @@ shown to be accidental — the same error #332 warns C2 against.
 ### 6.3 What C1 does *not* settle — stated so C1b is not over-claimed
 
 The archive merge will prove that a family-descriptor record can carry delegate,
-table literal, predicate, log noun and a hook **with no runtime family test**.
+table literal, predicates, log noun and a hook **with no runtime family test**.
 That is the stop condition's real question and it transfers to C1b.
 
 It does **not** settle the room guard, and the spec says so plainly rather than
 let the shape imply more: `withdraw` is a **side-effecting hook** — it does extra
-work inside the transaction and returns nothing to the caller. The room guard is
+work inside the transaction and reports only the shared delete's own row count.
+The room guard is
 a **refusal that widens the return type**. A generic parameterised over the
 *result union* is a materially larger claim than one parameterised over *work
 done inside a transaction*, and C1 produces no evidence about it.
@@ -465,7 +488,9 @@ The `integration` project talks to the app on :3000, so `verify` needs it live.
   family fails the build.
 - **`rule-lifecycle.ts` contains no comparison against a `ClassFamily` literal.**
   Checkable: `grep -nE "'(regular|studio)'" src/services/rule-lifecycle.ts`
-  returns nothing outside type positions.
+  returns nothing at all. The descriptor docblock that names the forbidden
+  comparison spells the literal out of line, so this check stays a clean
+  signal rather than matching its own illustration.
 - Both services keep their exported wrappers and their own result unions; the
   four production call sites (one per function, all in route files) are
   unchanged. Re-derive:
