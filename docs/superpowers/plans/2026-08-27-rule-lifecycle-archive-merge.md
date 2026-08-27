@@ -36,7 +36,7 @@
 
 `67 + 46 = 113` / `1014 + 302 = 1316` (invocation 1); `10 + 33 = 43` / `123 + 527 = 650` (invocation 2).
 
-**Predicted after: 156 files / 1970 tests** (+4: two residual tests in Task 1, two descriptor tests in Task 3). **Measure it anyway** — #212's handover predicted 1294 and the real figure was 1296, because that branch's own review added tests the prediction could not have known about.
+**Predicted after: 156 files / 1969 tests** (+3: one residual test in Task 1 — studio only, since the class family already had a mutation-proof one and the plan's own execution withdrew the second test Steps 7/8 called for — plus two descriptor tests in Task 3). **Measure it anyway** — #212's handover predicted 1294 and the real figure was 1296, because that branch's own review added tests the prediction could not have known about.
 
 ---
 
@@ -108,7 +108,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/
 
 **Files:**
 - Modify: `src/services/studio-class-template-lifecycle.ts` — `ResumeTransactionOutcome` (~981), the residual (~1204-1211), the post-transaction switch (~1372)
-- Test: `src/services/studio-class-template-lifecycle.test.ts`, `src/services/class-template-lifecycle.test.ts`
+- Test: `src/services/studio-class-template-lifecycle.test.ts`. (`class-template-lifecycle.test.ts` is read-only for this task, at line 2859 — see the withdrawn Steps 7/8 below for why no second class test was added.)
 
 **Interfaces:**
 - Consumes: nothing from other tasks.
@@ -116,7 +116,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/
 
 ### Why this is a defect
 
-Both `pauseOrResume` functions run the CAS `where: { isArchived: false, isActive: !desiredActive }` and, on a miss, re-read and check two classifications. A row that changed back between the two statements' READ COMMITTED snapshots matches neither. The class family answers `busy` (503); the studio family throws (500, logged at `error` — the paging level). `aed305f8` fixed the class side for issue 116; the port never happened. **Neither branch has a test.**
+Both `pauseOrResume` functions run the CAS `where: { isArchived: false, isActive: !desiredActive }` and, on a miss, re-read and check two classifications. A row that changed back between the two statements' READ COMMITTED snapshots matches neither. The class family answers `busy` (503); the studio family throws (500, logged at `error` — the paging level). `aed305f8` fixed the class side for issue 116; the port never happened. **The studio branch has no test. The class branch has had one since `aed305f8`** — `class-template-lifecycle.test.ts:2859`, `'answers busy when the CAS miss lands in the residual fourth state'` — **and it is mutation-proof**, confirmed directly (see mutation row 2 below). Steps 7 and 8, which called for a second, new class-family test, are withdrawn for that reason.
 
 - [ ] **Step 1: Write the failing studio test**
 
@@ -278,76 +278,72 @@ npx vitest run --project unit src/services/studio-class-template-lifecycle.test.
 
 Expected: PASS.
 
-- [ ] **Step 7: Write the class family's test**
+- [x] **Step 7: WITHDRAWN.** The class family's fix has *not* stood since `aed305f8` with no test: that commit added `class-template-lifecycle.test.ts:2859`, `'answers busy when the CAS miss lands in the residual fourth state'`, and mutating it (row 2 below) proves it is not merely a compiled pin — it goes RED. A second, differently-built test proves nothing the existing one does not, so it was not added; see the SDD ledger for the ruling. Kept below, struck through, as the record of what this step originally specified:
 
-The class family's fix has stood since `aed305f8` **with no test**. This test is written green, which is exactly why Step 9 mutates it.
+~~The class family's fix has stood since `aed305f8` **with no test**. This test is written green, which is exactly why Step 9 mutates it.~~
 
-Add inside `describe('pauseOrResumeTemplate (DB)', …)` in `src/services/class-template-lifecycle.test.ts`. Same shape, with `classTemplate` as the hooked delegate. **The class family's `makeTemplate` must produce a template on a non-archived room** — the room guard sits between the fast paths and the transaction and would return `room_archived` before the CAS ever runs. Use the block's existing helper unchanged; it already does.
+> Add inside `describe('pauseOrResumeTemplate (DB)', …)` in `src/services/class-template-lifecycle.test.ts`. Same shape, with `classTemplate` as the hooked delegate. **The class family's `makeTemplate` must produce a template on a non-archived room** — the room guard sits between the fast paths and the transaction and would return `room_archived` before the CAS ever runs. Use the block's existing helper unchanged; it already does.
+>
+> ```ts
+>   it('the residual CAS miss answers busy rather than throwing', async () => {
+>     const t = await makeTemplate('Residual Miss');
+>     await prisma.scheduleRule.update({
+>       where: { id: t.scheduleRuleId },
+>       data: { isActive: false },
+>     });
+>
+>     let armedRead = true;
+>     let armedCas = true;
+>
+>     const interposing = prisma.$extends({
+>       query: {
+>         classTemplate: {
+>           async findUnique({ args, query }) {
+>             const row = await query(args);
+>             if (armedRead) {
+>               armedRead = false;
+>               await prisma.scheduleRule.update({
+>                 where: { id: t.scheduleRuleId },
+>                 data: { isActive: true },
+>               });
+>             }
+>             return row;
+>           },
+>         },
+>         scheduleRule: {
+>           async updateMany({ args, query }) {
+>             const res = await query(args);
+>             if (armedCas) {
+>               armedCas = false;
+>               await prisma.scheduleRule.update({
+>                 where: { id: t.scheduleRuleId },
+>                 data: { isActive: false },
+>               });
+>             }
+>             return res;
+>           },
+>         },
+>       },
+>     }) as unknown as PrismaClient;
+>
+>     const result = await pauseOrResumeTemplate(interposing, t.id, teacherId, 'active');
+>
+>     expect(result).toEqual({ ok: false, reason: 'busy' });
+>   });
+> ```
 
-```ts
-  it('the residual CAS miss answers busy rather than throwing', async () => {
-    const t = await makeTemplate('Residual Miss');
-    await prisma.scheduleRule.update({
-      where: { id: t.scheduleRuleId },
-      data: { isActive: false },
-    });
+(Kept only as the record of what Step 7 originally specified; not to be executed.)
 
-    let armedRead = true;
-    let armedCas = true;
-
-    const interposing = prisma.$extends({
-      query: {
-        classTemplate: {
-          async findUnique({ args, query }) {
-            const row = await query(args);
-            if (armedRead) {
-              armedRead = false;
-              await prisma.scheduleRule.update({
-                where: { id: t.scheduleRuleId },
-                data: { isActive: true },
-              });
-            }
-            return row;
-          },
-        },
-        scheduleRule: {
-          async updateMany({ args, query }) {
-            const res = await query(args);
-            if (armedCas) {
-              armedCas = false;
-              await prisma.scheduleRule.update({
-                where: { id: t.scheduleRuleId },
-                data: { isActive: false },
-              });
-            }
-            return res;
-          },
-        },
-      },
-    }) as unknown as PrismaClient;
-
-    const result = await pauseOrResumeTemplate(interposing, t.id, teacherId, 'active');
-
-    expect(result).toEqual({ ok: false, reason: 'busy' });
-  });
-```
-
-- [ ] **Step 8: Run it — it passes immediately**
-
-```sh
-npx vitest run --project unit src/services/class-template-lifecycle.test.ts -t 'residual CAS miss'
-```
-
-Expected: PASS, first run. That is the problem Step 9 solves.
+- [x] **Step 8: WITHDRAWN**, for the same reason as Step 7 — there is no new class-family test to run.
 
 - [ ] **Step 9: Score all three mutations**
 
-Apply each, run, record the exact error text, restore, re-verify. **Row 2 is the one that matters** — a test written green needs its own mutation more than one written red does.
+Apply each, run, record the exact error text, restore, re-verify. **Row 2 is the one that matters** — Steps 7/8 are withdrawn (see above), so row 2 scores the *pre-existing* class test rather than a new one; that test still needs its own mutation, for the same reason any test written green does.
 
 | # | Mutation | Expect |
 |---|---|---|
-| 1 | Studio: restore the `throw` in place of `return { outcome: 'busy' }` | studio test RED |
-| 2 | **Class (`class-template-lifecycle.ts:1659`): replace `return { outcome: 'busy' as const };` with a `throw new Error('mutation')`** | **class test RED** |
+| 1 | Studio: restore the `throw` in place of `return { outcome: 'busy' }` | studio test (`'the residual CAS miss answers busy rather than throwing'`) RED |
+| 2 | **Class (`class-template-lifecycle.ts:1659`): replace `return { outcome: 'busy' as const };` with a `throw new Error('mutation')`** | **`class-template-lifecycle.test.ts:2859`'s pre-existing `'answers busy when the CAS miss lands in the residual fourth state'` goes RED** |
 | 3 | Studio: delete `case 'busy':` from the post-transaction switch | **compile error** from the `never` default — not a test failure |
 
 Mutation 3 is scored by `npm run typecheck`, not by vitest. Record its exact `TS2322` text.
@@ -360,12 +356,16 @@ Write the three verdicts and their error text into the task's report. A mutation
 npx vitest run --project unit
 ```
 
-Expected: green, 1016 tests (1014 + 2).
+Expected: green, 1015 tests (1014 + 1) — Task 1 lands one new test, the studio
+residual (Steps 7/8's would-be second test is withdrawn; see above).
+`class-template-lifecycle.test.ts` carries no net change from `main` — Task 1's
+own execution found and fixed a fixture-capacity collision by giving the
+(withdrawn) test's `makeTemplate` call an explicit non-colliding `startTime`,
+and removing the test removes that need with it.
 
 ```sh
 git add src/services/studio-class-template-lifecycle.ts \
-        src/services/studio-class-template-lifecycle.test.ts \
-        src/services/class-template-lifecycle.test.ts
+        src/services/studio-class-template-lifecycle.test.ts
 git commit -m "fix: the studio pause/resume residual answers busy, not a 500 (issue 332)"
 ```
 

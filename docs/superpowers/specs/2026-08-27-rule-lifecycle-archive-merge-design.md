@@ -246,8 +246,16 @@ directly above the throw. The class comment claims *"the two families agreeing
 matters more than a distinction only this branch drew"* — while they do not
 agree.
 
-**Neither branch has a test.** `grep -rn "matched neither the CAS\|CAS missed and the re-read" src tests --include='*.ts'`
-returns hits in the two source files and nowhere else.
+**The studio residual has no test; the class residual has had one since
+`aed305f8`.** That commit added
+`class-template-lifecycle.test.ts:2859`, `'answers busy when the CAS miss
+lands in the residual fourth state'`, and it is mutation-proof: replacing its
+`return { outcome: 'busy' as const }` (`class-template-lifecycle.ts:1659`)
+with a throw turns it red. The grep above is keyed on log-message strings
+(`"matched neither the CAS"`, `"CAS missed and the re-read"`); a test that
+asserts a *result* rather than a log line contains neither string, so that
+grep could not have found it and its absence from the hits is not evidence of
+its absence from the file.
 
 ### 4.2 Why this is a defect and not a curiosity
 
