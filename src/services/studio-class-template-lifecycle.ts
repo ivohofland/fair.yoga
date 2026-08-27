@@ -43,7 +43,7 @@
 
 import type { Prisma, PrismaClient, StudioClassTemplate, ScheduleRule } from '@prisma/client';
 import type { z } from 'zod';
-import type { updateStudioClassTemplateSchema } from '@/lib/schemas';
+import type { createStudioClassTemplateSchema, updateStudioClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { startOfLocalDay } from '@/lib/timezone';
 import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
@@ -51,7 +51,7 @@ import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { isRecordNotFound, isTransientDbError } from '@/lib/api-errors';
 import { setLockTimeout } from '@/lib/db-locks';
-import { countSkipReasons, type SkipCounts } from '@/lib/generation';
+import { countSkipReasons, type GenerationResult, type SkipCounts } from '@/lib/generation';
 // Server-only (pino). Safe here: this module's sole importer is
 // `api/studio-class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
 // transitively through `studio-class-generator`. No `'use client'` component
@@ -66,6 +66,15 @@ import {
   claimStudioTemplateForGeneration,
   generateStudioInstancesForTemplate,
 } from './studio-class-generator';
+
+/**
+ * The wire shape `POST /api/studio-class-templates` accepts, derived from
+ * `createStudioClassTemplateSchema` rather than hand-declared — the same
+ * reasoning `StudioClassTemplateUpdateData` documents below: a hand-written
+ * twin would drift from the schema silently, whereas deriving keeps every
+ * schema field visible to `createStudioClassTemplate`.
+ */
+export type CreateStudioClassTemplateInput = z.infer<typeof createStudioClassTemplateSchema>;
 
 /**
  * The fields a teacher may change on an existing studio template — the WIRE
@@ -1707,4 +1716,97 @@ export async function archiveOrUnarchiveStudioTemplate(
     }
     throw err;
   }
+}
+
+/**
+ * A create either lands, loses the slot, or loses a contention race. The
+ * `slot_conflict` arm carries `heldBy` for the same reason
+ * `ArchiveTemplateResult`'s does: one exclusion constraint spans both
+ * families (issue 298) and cannot say which raised it, so a fresh probe
+ * answers.
+ *
+ * `slot_conflict` is NOT produced by catching a `23P01` here. The rule insert
+ * uses `ON CONFLICT DO NOTHING`, which refuses by returning no row — the
+ * deadlock-free path (issue 331). A plain INSERT inserts its tuple and THEN
+ * checks the exclusion constraint, so two conflicting creates each wait on
+ * the other's transaction and Postgres breaks the cycle with `40P01`.
+ */
+export type CreateStudioTemplateResult =
+  | { ok: true; template: StudioClassTemplateWithSlot; generation: GenerationResult }
+  | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
+  | { ok: false; reason: 'busy' };
+
+export async function createStudioClassTemplate(
+  db: PrismaClient,
+  teacherId: string,
+  input: CreateStudioClassTemplateInput,
+): Promise<CreateStudioTemplateResult> {
+  let outcome:
+    | { ok: true; created: StudioClassTemplateWithSlot; generation: GenerationResult }
+    | { ok: false };
+  try {
+    outcome = await db.$transaction(async (tx) => {
+      // FIRST STATEMENT, per every sibling in this file. Three of this
+      // transaction's four statements can wait on a lock, so 3 x 2s sits
+      // inside the 10s budget with headroom; redo that sum before adding a
+      // fourth waiting statement (issue 228, docs/lock-order.md).
+      await setLockTimeout(tx);
+      const [rule] = await tx.scheduleRule.createManyAndReturn({
+        data: [{
+          teacherId,
+          kind: 'studio' as const,
+          classType: input.classType,
+          dayOfWeek: input.dayOfWeek,
+          startTime: hhmmToTime(input.startTime),
+          durationMinutes: input.durationMinutes,
+        }],
+        skipDuplicates: true,
+      });
+      // No row means a constraint refused it. WHICH one is not knowable here
+      // — `ON CONFLICT DO NOTHING` carries no conflict target — so the probe
+      // runs below, on `db`, after this transaction has closed.
+      if (!rule) return { ok: false as const };
+
+      const created = await tx.studioClassTemplate.create({
+        data: {
+          scheduleRuleId: rule.id,
+          kind: 'studio',
+          location: input.location,
+          hourlyRate: input.hourlyRate,
+        },
+        include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+      });
+      const generation = await generateStudioInstancesForTemplate(tx, created);
+      const { scheduleRule, ...bare } = created;
+      return { ok: true as const, created: withSlot(bare, scheduleRule), generation };
+    }, { timeout: 10_000 });
+  } catch (err) {
+    // BEFORE any conflict check, as all three siblings document: `P2028` and
+    // `P2024` are `PrismaClientKnownRequestError`s too, so the other
+    // ordering drops them into a branch that does not match and out to a
+    // generic 500.
+    //
+    // Logs, like every sibling's own transient branch (#231: `classifyApiError`
+    // warns when this escapes uncaught, so catching it here must not be what
+    // removes that line).
+    if (isTransientDbError(err)) {
+      log.warn(
+        { err, teacherId, classType: input.classType, dayOfWeek: input.dayOfWeek, startTime: input.startTime },
+        'recurring studio class create lost a lock race — nothing committed',
+      );
+      return { ok: false, reason: 'busy' };
+    }
+    throw err;
+  }
+
+  if (!outcome.ok) {
+    const heldBy = await ruleSlotHolder(db, {
+      teacherId,
+      dayOfWeek: input.dayOfWeek,
+      startMinutes: minutesSinceMidnight(hhmmToTime(input.startTime)),
+      durationMinutes: input.durationMinutes,
+    });
+    return { ok: false, reason: 'slot_conflict', heldBy };
+  }
+  return { ok: true, template: outcome.created, generation: outcome.generation };
 }

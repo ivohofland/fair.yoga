@@ -291,35 +291,30 @@ describe('POST /api/studio-class-templates', () => {
     });
 
     it('leaves one template and one window when two identical creates are in flight at once', async () => {
-      const body = {
-        classType: 'Slot Studio Concurrent', dayOfWeek: 0, startTime: '02:00',
-        durationMinutes: 60, location: 'Some Studio', hourlyRate: 45,
-      };
+      // TEN RACES, NOT ONE (issue 331). Ten 45-minute slots at 02:00 … 11:00
+      // do not overlap each other, so each race is independent of its
+      // predecessors' leftover rows — the hazard the sibling case in the
+      // `POST /api/studio-classes` describe documents. dayOfWeek 6, not 0:
+      // `makeTemplate`'s own comment says a caller past a day's budget states
+      // one of its own, and this file's other `dayOfWeek: 0` fixtures already
+      // spend every hour this loop needs — verify with `grep -n "dayOfWeek: 6"
+      // tests/integration/studio-api.test.ts` before moving this loop again.
+      for (let i = 0; i < 10; i++) {
+        const body = {
+          classType: `Slot Studio Concurrent ${i}`, dayOfWeek: 6,
+          startTime: `${String(2 + i).padStart(2, '0')}:00`,
+          durationMinutes: 45, location: 'Some Studio', hourlyRate: 45,
+        };
 
-      const [a, b] = await Promise.all([post(body), post(body)]);
+        const [a, b] = await Promise.all([post(body), post(body)]);
+        const [bodyA, bodyB] = await Promise.all([a.json(), b.json()]);
+        const outcomes = `${a.status}:${bodyA?.error?.code ?? '-'} ${b.status}:${bodyB?.error?.code ?? '-'}`;
 
-      // BOTH BODIES ARE READ BEFORE THE PAIR IS ASSERTED, and the codes ride
-      // along in the assertion message. A loser answering 503 never reached
-      // the guard that answers 409, and every code `classifyApiError` maps to
-      // 503 arrives as that one status — so a bare `expected [201, 503]` names
-      // no cause and the next run starts from nothing. That is how this case
-      // was read as flake once already (issue 331). `Response.json()` cannot
-      // be called twice, hence the parse up front rather than on the loser.
-      const [bodyA, bodyB] = await Promise.all([a.json(), b.json()]);
-      const outcomes = `${a.status}:${bodyA?.error?.code ?? '-'} ${b.status}:${bodyB?.error?.code ?? '-'}`;
+        expect([a.status, b.status].sort(), `race ${i}: ${outcomes}`).toEqual([201, 409]);
 
-      expect([a.status, b.status].sort(), `outcomes ${outcomes}`).toEqual([201, 409]);
-
-      const loserBody = a.status === 409 ? bodyA : bodyB;
-      expect(loserBody.error.code).toBe('DUPLICATE_STUDIO_TEMPLATE_SLOT');
-
-      const templates = await prisma.studioClassTemplate.findMany({
-        where: { scheduleRule: { teacherId: ownerId, dayOfWeek: 0, startTime: hhmmToTime('02:00'), isArchived: false } },
-      });
-      expect(templates).toHaveLength(1);
-
-      const generated = await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templates[0]!.id } } } } }, include: { calendarEntry: true } });
-      expect(generated).toHaveLength(4);
+        const loserBody = a.status === 409 ? bodyA : bodyB;
+        expect(loserBody.error.code).toBe('DUPLICATE_STUDIO_TEMPLATE_SLOT');
+      }
     });
   });
 
