@@ -589,12 +589,42 @@ section was measured against `Class_teacher_slot_unique`, `(teacherId, date,
 startTime) WHERE status <> 'cancelled'`, which #327 dropped along with the three
 columns it keyed on. The slot now lives on `CalendarEntry_teacher_slot_excl`, an
 `EXCLUDE USING gist` over the generated `span`, partial on `cancelledAt IS
-NULL`. An exclusion constraint waits the same way a unique index does — the
-second writer blocks on the first's uncommitted index entry until it
-commits or rolls back — so read the transcripts below as evidence about a
-mechanism this database still has, on a different object, and read every
-`Class` statement in them as the `CalendarEntry` statement that carries the
-columns now.
+NULL`. Read the transcripts below as evidence about a mechanism this database
+still has, on a different object, and read every `Class` statement in them as
+the `CalendarEntry` statement that carries the columns now.
+
+**But an exclusion constraint does NOT wait the way a unique index does, and
+this paragraph said it did.** Both make the second writer block on the first's
+uncommitted entry. What differs is *when the waiter inserts its own entry*, and
+that difference decides whether the wait can be symmetric:
+
+- A **b-tree unique** check runs BEFORE the waiter's entry exists. The waiter
+  holds nothing the first transaction could block on, so the wait is
+  one-directional and no cycle is constructible.
+- An **exclusion constraint** check runs AFTER the waiter's tuple is inserted
+  (`CONTEXT: while checking exclusion constraint on tuple …`). Both sides hold
+  a tuple the other's check will find, so two conflicting inserts can wait on
+  each other. That is a cycle, and `deadlock_timeout` (1s) breaks it with
+  `40P01` — before `LOCK_TIMEOUT_SQL`'s 2s could bound it.
+
+Measured deterministically, three statements, on a throwaway database with
+`btree_gist`, `uniq (t, s)` unique against `excl (t, span)` exclusion:
+
+- `excl`: A inserts `[10,20)`; B inserts `[15,25)` and blocks; A inserts
+  `[24,30)`, which overlaps B's pending tuple — **`deadlock detected`**,
+  `CONTEXT: while checking exclusion constraint on tuple (0,2) in relation
+  "excl"`. Reproduces every run; it is an ordering, not a race.
+- `uniq`: the same shape run against equality — A inserts `(1,1)`; B inserts
+  `(1,1)` and blocks; A inserts `(1,2)` — **both of A's inserts complete**, and
+  `pg_stat_activity` shows B `active` / `wait_event_type = Lock`, still inside
+  its own `INSERT` with no entry of its own. B succeeds once A rolls back.
+
+The equality case cannot even be made symmetric: equality is transitive, so two
+distinct keys cannot each conflict with the other. Overlap is not transitive,
+which is what gives the exclusion constraint a cycle to have. This is why a
+`40P01` on a plain concurrent create is new since #298/#327 rather than
+inherited, and why issue 331 was first read as flake — this paragraph said the
+mechanism was unchanged.
 
 **It falsifies a stated premise of "How that enumeration was derived".** Check 1
 excuses `create`/`createMany`/`createManyAndReturn` — "a freshly inserted row's

@@ -297,10 +297,21 @@ describe('POST /api/studio-class-templates', () => {
       };
 
       const [a, b] = await Promise.all([post(body), post(body)]);
-      expect([a.status, b.status].sort()).toEqual([201, 409]);
 
-      const loser = a.status === 409 ? a : b;
-      expect((await loser.json()).error.code).toBe('DUPLICATE_STUDIO_TEMPLATE_SLOT');
+      // BOTH BODIES ARE READ BEFORE THE PAIR IS ASSERTED, and the codes ride
+      // along in the assertion message. A loser answering 503 never reached
+      // the guard that answers 409, and every code `classifyApiError` maps to
+      // 503 arrives as that one status — so a bare `expected [201, 503]` names
+      // no cause and the next run starts from nothing. That is how this case
+      // was read as flake once already (issue 331). `Response.json()` cannot
+      // be called twice, hence the parse up front rather than on the loser.
+      const [bodyA, bodyB] = await Promise.all([a.json(), b.json()]);
+      const outcomes = `${a.status}:${bodyA?.error?.code ?? '-'} ${b.status}:${bodyB?.error?.code ?? '-'}`;
+
+      expect([a.status, b.status].sort(), `outcomes ${outcomes}`).toEqual([201, 409]);
+
+      const loserBody = a.status === 409 ? bodyA : bodyB;
+      expect(loserBody.error.code).toBe('DUPLICATE_STUDIO_TEMPLATE_SLOT');
 
       const templates = await prisma.studioClassTemplate.findMany({
         where: { scheduleRule: { teacherId: ownerId, dayOfWeek: 0, startTime: hhmmToTime('02:00'), isArchived: false } },

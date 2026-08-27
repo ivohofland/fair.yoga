@@ -255,6 +255,24 @@ jobs:
       - name: Integration tests
         run: npx vitest run --project integration
 
+      # THE APP'S LOG IS THE ONLY PLACE A 503's CAUSE IS NAMED. `api-utils.ts`
+      # logs the thrown error beside `classifyApiError`'s verdict, and every
+      # code that verdict maps to 503 — `TRANSIENT_SQLSTATES` and the Prisma
+      # codes beside it — arrives at the client as the same status, so a
+      # failing assertion can say `503` and nothing more. Until this step the
+      # log was written and discarded unless the app failed to *start*, which
+      # is why issue 331 needed a rerun to learn nothing new.
+      - name: App log (on failure)
+        if: failure()
+        run: |
+          if [ ! -f server.log ]; then echo "no server.log — app never started"; exit 0; fi
+          echo "::group::contention and error lines"
+          grep -aE 'contention|lock_not_available|deadlock|55P03|40P01|40001|P2024|P2028|P2034' server.log || echo "(none)"
+          echo "::endgroup::"
+          echo "::group::server.log (last 500 lines)"
+          tail -n 500 server.log
+          echo "::endgroup::"
+
       - name: Get Playwright version
         id: playwright-version
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
