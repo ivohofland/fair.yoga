@@ -41,13 +41,15 @@ export function minutesSinceMidnight(t: Date): number {
  * a statement that fails inside a Postgres transaction aborts it, so a probe
  * issued on the aborted `tx` would answer `25P02` rather than an answer, not
  * a `RuleSlotHolder`. Most call sites are a `catch` block for exactly that
- * reason; `createStudioClassTemplate` (`studio-class-template-lifecycle.ts`)
- * is the one exception, probing on its normal return path after a zero-row
- * `ON CONFLICT DO NOTHING` refusal that never threw in the first place — the
- * requirement is the same either way. Every call site must therefore sit
- * after its own transaction's closing `)`, where Prisma has already
- * committed or rolled back and `db` is a clean connection — re-derive the
- * current set rather than trust a count here:
+ * reason; the two template creates — `createClassTemplate`
+ * (`class-template-lifecycle.ts`) and `createStudioClassTemplate`
+ * (`studio-class-template-lifecycle.ts`) — are the exception, each probing
+ * on its normal return path after a zero-row `ON CONFLICT DO NOTHING`
+ * refusal that never threw in the first place — the requirement is the same
+ * either way. Every call site must therefore sit after its own transaction's
+ * closing `)`, where Prisma has already committed or rolled back and `db` is
+ * a clean connection — re-derive the current set rather than trust a count
+ * here:
  *
  *   grep -rn "ruleSlotHolder(db\|ruleSlotHolder(prisma" src/services/ src/app/api/
  *
@@ -55,9 +57,10 @@ export function minutesSinceMidnight(t: Date): number {
  * this query — the same contract `probeConflictingEntry` (`./entry-conflict`)
  * carries one layer down, arrived at for the same reason. Every caller has
  * already been refused by the database and has already decided on 409; this
- * only decides how specific the sentence is. A throw from inside that `catch`
- * would escape to `withErrorHandler` and answer 5xx instead, reporting a write
- * the database CORRECTLY refused as one that may have happened. Contention is
+ * only decides how specific the sentence is. A throw from any call site —
+ * inside a `catch` or on the template creates' return path alike — escapes
+ * to `withErrorHandler` and answers 5xx instead, reporting a write the
+ * database CORRECTLY refused as one that may have happened. Contention is
  * also exactly when slot conflicts occur, so a pool or lock timeout on this
  * extra query is the realistic case rather than a hypothetical one — and it is
  * likeliest under the very contention that produced the conflict.

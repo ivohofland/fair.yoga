@@ -79,34 +79,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     );
   }
 
-  // No claim is taken inside `createClassTemplate`'s own transaction
-  // (`class-template-lifecycle.ts`) — the rule and template rows are
-  // brand-new there, so there is no existing row to lock going in. That is
-  // NOT "nothing can race the insert": issue 331 is exactly two identical
-  // creates racing it, and the loser waits on the winner's still-open
-  // transaction before its own `ON CONFLICT DO NOTHING` can resolve, skip,
-  // and answer `slot_conflict` below. No claim also used to mean nothing
-  // bounded that wait or the generated classes' FK waits — that is what
-  // changed. That transaction's
-  // `setLockTimeout(tx)`, its first statement, is `SET LOCAL lock_timeout`
-  // (`db-locks.ts`), transaction-scoped and so governing every statement left
-  // in it: the generated classes' own `FOR KEY SHARE` FK check on the
-  // `Teacher` row is bounded by it too, not just the rule insert's own wait.
-  // `email`/`pageSlug`/`accountId` are all `@unique`, so a teacher changing
-  // their page slug in another tab takes `FOR UPDATE` there and conflicts —
-  // that wait is now bounded at the same 2s.
-  //
-  // What the transaction's own 10s budget does NOT do is abort a statement
-  // already blocked inside Postgres: Prisma checks that budget at statement
-  // boundaries only, never mid-statement (`db-locks.ts`). What it buys is
-  // room for that transaction's own waiting statements' runtime — see
-  // `createClassTemplate`'s own comment for how many there are and why the
-  // sum still fits; the count lives with the code it describes now, not here.
-  //
-  // Both closed by issue 228, no longer pending for this route: the bound is
-  // no longer absent, and a lost race answers as this service's own named
-  // `busy` outcome below, rather than the generic, code-less
-  // `classifyApiError` 503 net.
+  // The lock behavior for this create — what `setLockTimeout(tx)` bounds,
+  // how many of `createClassTemplate`'s own transaction's statements can
+  // wait on it, and what its 10s budget does and does not cover — is
+  // documented beside that transaction in `class-template-lifecycle.ts`, not
+  // here (issue 228).
   const result = await createClassTemplate(prisma, session.teacherId, body);
 
   if (!result.ok && result.reason === 'slot_conflict') {

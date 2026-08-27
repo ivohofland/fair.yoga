@@ -194,17 +194,24 @@ export async function probeOverlappingCandidates(
  *
  * Called on the failure path once the refused statement's transaction has
  * closed, always against `db`, never `tx`: a statement that fails inside a
- * Postgres transaction aborts it, so a probe issued on the aborted `tx` answers
- * `25P02` rather than answering at all. Every call site must therefore sit
- * after its own transaction's closing `)`. The current set of them is whatever
- * this returns:
+ * Postgres transaction aborts it, so a probe issued on the aborted `tx`
+ * answers `25P02` rather than answering at all. Most call sites reach this
+ * probe from exactly that failure path; two of the four are the exception —
+ * `classes/route.ts` and `studio-classes/route.ts` probe on their normal
+ * return path after a zero-row `ON CONFLICT DO NOTHING` refusal that never
+ * threw in the first place, so the transaction they probe after committed
+ * normally rather than aborting — the requirement to sit after its close is
+ * the same either way. Every call site must therefore sit after its own
+ * transaction's closing `)`. The current set of them is whatever this
+ * returns:
  *
  *   grep -rn "probeConflictingEntry(" src/services/ src/app/api/
  *
  * NEVER THROWS, and that is a guarantee about the refusal rather than about
  * this query. Every caller has already been refused by the database and has
  * already decided on 409; this only decides how specific the sentence is. A
- * throw from here would reach `withErrorHandler` and answer 5xx instead —
+ * throw from any call site — inside a `catch` or on the entry creates'
+ * return path alike — reaches `withErrorHandler` and answers 5xx instead —
  * reporting a correctly refused write as one that may have happened.
  * Contention is also exactly when slot conflicts occur, so a pool or lock
  * timeout on this extra query is the realistic case, not a hypothetical one.

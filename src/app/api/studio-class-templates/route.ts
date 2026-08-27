@@ -55,6 +55,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, createStudioClassTemplateSchema);
   if ('error' in parsed) return parsed.error;
 
+  // The lock behavior for this create — what `setLockTimeout(tx)` bounds,
+  // how many of `createStudioClassTemplate`'s own transaction's statements
+  // can wait on it, and what its 10s budget does and does not cover — is
+  // documented beside that transaction in `studio-class-template-lifecycle.ts`,
+  // not here (issue 228).
   const result = await createStudioClassTemplate(prisma, session.teacherId, parsed.data);
 
   if (!result.ok && result.reason === 'slot_conflict') {

@@ -82,24 +82,35 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   // Two Prisma calls, not one nested `create`. Prisma already wraps a single
-  // nested write in its own implicit transaction — measured on this branch:
-  // `BEGIN`, `INSERT CalendarEntry`, `INSERT Class`, `SELECT`, `COMMIT` — so
-  // this explicit `$transaction` PRESERVES that atomicity across the two
-  // calls below rather than introducing it. Without it, each call would open
-  // its own implicit transaction, leaving a window where a `CalendarEntry`
-  // exists with no `Class`. It does not add a lock-holding path.
+  // nested write in its own implicit transaction — the same five-statement
+  // shape as the studio sibling's nested create (`studio-classes/route.ts`,
+  // measured there): `BEGIN`, `INSERT CalendarEntry`, `INSERT Class`,
+  // `SELECT`, `COMMIT` — so this explicit `$transaction` PRESERVES that
+  // atomicity across the two calls below rather than introducing it. Without
+  // it, each call would open its own implicit transaction, leaving a window
+  // where a `CalendarEntry` exists with no `Class`. It does not add a
+  // lock-holding path.
   //
   // No `setLockTimeout` here: issue 228 tracks that bound for the create
   // paths, and adding it alone would turn a wait that usually succeeds into a
-  // generic 503 rather than a named one.
+  // generic 503 rather than a named one. An explicit `$transaction` also
+  // imports Prisma's interactive-transaction defaults — `maxWait: 2000`,
+  // `timeout: 5000` — that the implicit nested write it replaces did not
+  // carry, so contention here can already surface that same generic,
+  // code-less 503 before any `setLockTimeout` is added.
   const outcome = await prisma.$transaction(async (tx) => {
     // The ENTRY is inserted alone and first — it holds the slot constraint,
     // and `skipDuplicates` (`ON CONFLICT DO NOTHING`) makes it refuse with
     // zero rows rather than deadlock against a concurrent conflicting insert
-    // (issue 331). Parent before child is forced by the composite
-    // `(calendarEntryId, kind)` foreign key; this is a creation path, so
-    // `docs/lock-order.md`'s `Class`-then-entry rule — which governs a write
-    // to two EXISTING rows — does not apply.
+    // (issue 331). `ON CONFLICT DO NOTHING` carries no conflict target, so a
+    // zero-row skip could in principle be any constraint on `CalendarEntry`
+    // — it can only be this slot exclusion here because this handler never
+    // sets `scheduleRuleId`, leaving `@@unique([scheduleRuleId, date])`'s
+    // column NULL, and Postgres treats NULLs as distinct. Parent before
+    // child is forced by the composite `(calendarEntryId, kind)` foreign
+    // key; this is a creation path, so `docs/lock-order.md`'s `Class`-then-
+    // entry rule — which governs a write to two EXISTING rows — does not
+    // apply.
     const [entry] = await tx.calendarEntry.createManyAndReturn({
       data: [{
         teacherId: session.teacherId,

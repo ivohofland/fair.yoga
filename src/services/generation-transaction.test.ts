@@ -22,8 +22,9 @@
  *     aborted, and the first retried `create` returns `25P02`, which
  *     `isCrossFamilySlotConflict` correctly declines — costing the whole
  *     window anyway AND replacing the `YG001` that the two template POST
- *     catches match with a `25P02` that neither does. A wordable 409 became a
- *     500. Two, not the ten endpoints answering a cross-family 409 overall:
+ *     catches used to match with a `25P02` that neither matched. A wordable
+ *     409 became a 500. Two, not the ten endpoints answering a cross-family
+ *     409 overall:
  *     those two are the only ones that wrap generation, so they are the only
  *     ones an error escaping a generator can reach.
  *

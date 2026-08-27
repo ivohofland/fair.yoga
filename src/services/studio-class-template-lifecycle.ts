@@ -1792,8 +1792,8 @@ export async function createStudioClassTemplate(
     // `PrismaClientKnownRequestError`s too, and a conflict check that matches
     // only one specific code would rethrow them straight past `busy`). An
     // error that escapes this branch still reaches a 503 —
-    // `classifyApiError`'s own transient-error net, `api-errors.ts:462-473`
-    // — but loses this service's `STUDIO_TEMPLATE_BUSY` code and its
+    // `classifyApiError`'s own transient-error net (`api-errors.ts`) — but
+    // loses this service's `STUDIO_TEMPLATE_BUSY` code and its
     // create-specific "nothing was created" sentence for that net's generic,
     // code-less one (measured, this function's own mutation testing).
     //

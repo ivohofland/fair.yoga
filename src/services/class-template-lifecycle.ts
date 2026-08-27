@@ -390,9 +390,11 @@ export type ClassTemplateWithSlot = ClassTemplate & {
 
 /**
  * Flattens a rule's columns onto its child, converting `startTime` to the
- * wire's `"HH:MM"`. Exported for the routes' own reads
- * (`GET /api/class-templates`, `GET /api/class-templates/[id]`, and the
- * `POST` create), which need the same flattening this file's writes do.
+ * wire's `"HH:MM"`. Exported for the two GET routes' own reads
+ * (`GET /api/class-templates`, `GET /api/class-templates/[id]`), which need
+ * the same flattening this file's writes do. The `POST` create no longer
+ * calls this from the route — `createClassTemplate` below calls it itself,
+ * inside the service, like every other writer in this file.
  */
 export function withSlot(template: ClassTemplate, rule: ScheduleRule): ClassTemplateWithSlot {
   return {
@@ -2585,10 +2587,11 @@ export async function createClassTemplate(
       // this transaction can wait on a lock — this insert, the template
       // insert below, and generation's own two writes
       // (`calendarEntry.createManyAndReturn` and `class.createMany`,
-      // `class-generator.ts`); its occupancy `findMany` is a plain read and
-      // does not wait under READ COMMITTED. So 4 x 2s sits inside the 10s
-      // budget with 2s of headroom; redo that sum before adding a fifth
-      // waiting statement (issue 228, docs/lock-order.md).
+      // `class-generator.ts`); its two reads — the date-scoped occupancy
+      // `findMany` and the `scheduleRuleId`-scoped week read — are plain
+      // reads and do not wait under READ COMMITTED. So 4 x 2s sits inside
+      // the 10s budget with 2s of headroom; redo that sum before adding a
+      // fifth waiting statement (issue 228, docs/lock-order.md).
       await setLockTimeout(tx);
       const [rule] = await tx.scheduleRule.createManyAndReturn({
         data: [{
@@ -2637,8 +2640,8 @@ export async function createClassTemplate(
     // `PrismaClientKnownRequestError`s too, and a conflict check that matches
     // only one specific code would rethrow them straight past `busy`). An
     // error that escapes this branch still reaches a 503 —
-    // `classifyApiError`'s own transient-error net, `api-errors.ts:462-473`
-    // — but loses this service's `TEMPLATE_BUSY` code and its create-specific
+    // `classifyApiError`'s own transient-error net (`api-errors.ts`) — but
+    // loses this service's `TEMPLATE_BUSY` code and its create-specific
     // "nothing was created" sentence for that net's generic, code-less one
     // (measured, this function's own mutation testing).
     //

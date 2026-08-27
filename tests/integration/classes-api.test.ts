@@ -1471,6 +1471,12 @@ describe('POST /api/classes', () => {
         };
         const [a, b] = await Promise.all([post(body), post(body)]);
         expect([a.status, b.status].sort(), `race ${i}`).toEqual([201, 409]);
+
+        const loser = a.status === 409 ? a : b;
+        expect((await loser.json()).error.code).toBe('DUPLICATE_CLASS_SLOT');
+
+        const rows = await prisma.class.findMany({ where: { calendarEntry: { teacherId: ownerId, date: new Date('2031-05-12'), startTime: hhmmToTime(body.startTime) } }, include: { calendarEntry: true } });
+        expect(rows, `race ${i}`).toHaveLength(1);
       }
     });
 
