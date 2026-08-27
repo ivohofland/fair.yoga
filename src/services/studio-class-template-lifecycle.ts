@@ -381,6 +381,9 @@ void _ruleAllowlistsAgree;
  *   - `archivedAt`,
  *     `withdrawnCount` → written only by the same archive transaction that
  *                        owns `isArchived` (#97, #111).
+ *   - `live`           → generated mirror of `isActive && !isArchived`
+ *                        (issue 272). Postgres owns this column; a plain write
+ *                        cannot set it at all.
  *   - `createdAt`,
  *     `updatedAt`      → Prisma-managed.
  *
@@ -396,6 +399,7 @@ type PlainUpdateForbiddenScheduleRuleField =
   | 'isArchived'
   | 'archivedAt'
   | 'withdrawnCount'
+  | 'live'
   | 'createdAt'
   | 'updatedAt';
 

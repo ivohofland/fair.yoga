@@ -1,16 +1,23 @@
 /**
  * Doors 2 and 3 of the room archive lifecycle (issue 76): an archived room
  * accepts no new commitments. Door 1 lives in `room-archive.test.ts`. Door 4
- * is a route-level guard (`POST /api/class-templates`); door 5's guard is in
- * `updateClassTemplate` but is only reachable through `PUT`, so both are
- * pinned in `tests/integration/class-templates-api.test.ts` — plus the
- * ownership-ordering case below, which needs no HTTP.
+ * is a route-level guard (`POST /api/class-templates`); door 5's refusal used
+ * to live in `updateClassTemplate`, and the wire paths for both are pinned in
+ * `tests/integration/class-templates-api.test.ts` — plus the ownership-ordering
+ * case below, which needs no HTTP.
+ *
+ * (272) Door 3's refusal is the constraint itself:
+ * `ClassTemplate_live_needs_open_room` fires on the resume's CAS, so instead
+ * of the old typed `room_archived` refusal this file pins the service's THROW
+ * and its post-state (nothing committed), and the route's 409 is pinned at
+ * the wire.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { transitionClass } from './class-lifecycle';
 import { pauseOrResumeTemplate, updateClassTemplate } from './class-template-lifecycle';
+import { isCheckViolationOn } from '@/lib/check-violation';
 
 const prisma = new PrismaClient();
 // `rad-` distinguishes this file's rows from `room-archive.test.ts`'s,
@@ -57,15 +64,22 @@ describe('transitionClass — door 2: publishing into an archived room', () => {
 });
 
 describe('pauseOrResumeTemplate — door 3: resuming into an archived room', () => {
-  it('refuses to resume a paused template whose room is archived', async () => {
+  // (272) The refusal is the CHECK, not a service read. The resume's CAS flips
+  // `isActive` to true, which recomputes `live` — and `live` on an archived
+  // room violates `ClassTemplate_live_needs_open_room`, so the statement
+  // throws mid-transaction and the whole thing rolls back. The route turns
+  // this SQLSTATE into the 409 the pre-272 guard used to answer.
+  it('refuses to resume a paused template whose room is archived — the CHECK throws', async () => {
     const f = await makeFixture();
     const tpl = await addTemplate(f, { isActive: false, isArchived: false });
     await prisma.teacherRoom.update({ where: { id: f.linkId }, data: { isArchived: true } });
 
-    const result = await pauseOrResumeTemplate(prisma, tpl.id, f.teacherId, 'active');
+    await expect(pauseOrResumeTemplate(prisma, tpl.id, f.teacherId, 'active')).rejects.toSatisfy(
+      (e: unknown) => isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room'),
+    );
 
-    expect(result).toEqual({ ok: false, reason: 'room_archived' });
-
+    // Nothing committed: the CAS matched-no-row-free, so the rollback leaves
+    // the template paused with no window generated.
     const after = await prisma.classTemplate.findUniqueOrThrow({
       where: { id: tpl.id },
       include: { scheduleRule: true },
@@ -74,16 +88,20 @@ describe('pauseOrResumeTemplate — door 3: resuming into an archived room', () 
     expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: tpl.id } } } } } })).toBe(0);
   });
 
-  // Pausing is the safe direction and must stay unguarded — otherwise a
-  // teacher whose room is archived cannot even stop the template.
-  it('still allows pausing a template whose room is archived', async () => {
+  // Pausing is the safe direction and stayed unguarded — but under 272 a
+  // template on an archived room is paused BY CONSTRUCTION (the CHECK allows
+  // archiving a room only while none of its templates is live), so the
+  // reachable shape of "pausing still works" is a no-op that answers ok. A
+  // teacher whose room was archived out from under a paused template is never
+  // locked out of the pause verb.
+  it('still answers ok when pausing a template whose room is archived', async () => {
     const f = await makeFixture();
-    const tpl = await addTemplate(f, { isActive: true, isArchived: false });
+    const tpl = await addTemplate(f, { isActive: false, isArchived: false });
     await prisma.teacherRoom.update({ where: { id: f.linkId }, data: { isArchived: true } });
 
     const result = await pauseOrResumeTemplate(prisma, tpl.id, f.teacherId, 'paused');
 
-    expect(result).toMatchObject({ ok: true, action: 'paused' });
+    expect(result).toMatchObject({ ok: true, action: 'unchanged' });
   });
 });
 
@@ -155,13 +173,12 @@ describe('transitionClass — door 2: what the refusal must lose to', () => {
 });
 
 describe('updateClassTemplate — door 5: ownership still outranks the room state', () => {
-  // `updateClassTemplate`'s own docblock warns that "only two tests stand
-  // between" the merged `invalid_room` outcome and a cross-teacher existence
-  // oracle. Both of those tests use a NON-archived foreign room, so hoisting
-  // door 5's `isArchived` check above the ownership check stayed green while
-  // leaking existence for archived ids: `room_archived` would confirm the row
-  // exists, `invalid_room` would not.
-  it('answers invalid_room, not room_archived, for another teacher archived room', async () => {
+  // (272) Door 5's refusal moved to the route pre-check (`PUT`), which probes
+  // ownership BEFORE the archived state — so `invalid_room` still answers for
+  // a FOREIGN room, archived or not, and the merged outcome stays
+  // "same 400 for doesn't-exist and isn't-yours", leaking no existence oracle.
+  // This service-level case pins that the SERVICE itself kept the ordering.
+  it('answers invalid_room, not the archived answer, for another teacher archived room', async () => {
     const mine = await makeFixture();
     const theirs = await makeFixture();
     await prisma.teacherRoom.update({

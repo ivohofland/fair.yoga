@@ -195,6 +195,11 @@ void _templateAllowlistHasNoStaleFields;
  *                        not own. Nothing on this route ever needs to move a
  *                        template between rules.
  *   - `createdAt`, `updatedAt` → Prisma-managed.
+ *   - `roomArchived`, `ruleLive` → the issue 272 mirrors. Written only at the
+ *                        create and move sites in this module (which assert
+ *                        or mirror the room's `isArchived` explicitly), never
+ *                        by a plain edit that could detach the child from its
+ *                        parent's archive state.
  *
  * `teacherId`, `isActive`, `isArchived`, `archivedAt` and `withdrawnCount`
  * left this model for `ScheduleRule` in issue 298 — see
@@ -212,6 +217,8 @@ type PlainUpdateForbiddenTemplateField =
   | 'id'
   | 'scheduleRuleId'
   | 'kind'
+  | 'roomArchived'
+  | 'ruleLive'
   | 'createdAt'
   | 'updatedAt';
 
@@ -319,12 +326,16 @@ void _scheduleRuleAllowlistHasNoStaleFields;
  *                    could forge "Archived <date> · <count> withdrawn" onto a
  *                    template that was never archived — the exact stale-record
  *                    state the un-archive clear exists to prevent.
+ *   - `live` → generated mirror of `isActive && !isArchived` (issue 272).
+ *              Postgres owns this column; a plain write cannot set it at all.
  *   - `createdAt`, `updatedAt` → Prisma-managed.
  *
  * `isActive` is the entry that matters most here: it is what stops a `PUT`
  * flipping a template active, which would bypass the transaction-and-generate
  * path `PATCH` owns and door 3's resume refusal with it. Door 5 no longer
- * gates on `isActive`, but door 3 still does.
+ * gates on `isActive`, and door 3's guard is gone with issue 272 — the
+ * constraint enforces it now — but a bare `PUT` flip to `true` would still
+ * mark a template active with no instance window.
  */
 // Exported so the studio file can pin its own forbidden list against this
 // one directly (`_ruleForbiddenListsAgree`) rather than asserting the two
@@ -337,6 +348,7 @@ export type PlainUpdateForbiddenScheduleRuleField =
   | 'isArchived'
   | 'archivedAt'
   | 'withdrawnCount'
+  | 'live'
   | 'createdAt'
   | 'updatedAt';
 
@@ -479,50 +491,6 @@ export type UpdateClassTemplateResult =
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'no_fields' }
   | { ok: false; reason: 'invalid_room' }
-  /**
-   * A fifth door on the room archive lifecycle (issue 76): relocating a
-   * template onto an archived room is refused the same way creating (door 4)
-   * or resuming (door 3) one there is — the doors reasoned about creating a
-   * template and resuming one but never about moving one, the same commitment
-   * by a different verb. The template is what the generator stamps from, so
-   * an ACTIVE template pointed at an archived room hands the next sweep four
-   * weeks of `open` classes to create in a shelved room — the exact state
-   * door 1 exists to refuse, reached one step later.
-   *
-   * THE MECHANISM CHANGED UNDER THIS DOOR IN #194 AND THE DOOR DID NOT. Until
-   * then the edit produced that state itself, relocating every future
-   * non-`settingsLocked` `draft`/`open` instance onto the target room in the
-   * same transaction — one `PUT`, four bookable classes, no race needed.
-   * Nothing propagates now, so the sweep is the whole route, and a route that
-   * takes until the next hour is still a route.
-   *
-   * Gated on a CHANGE of room, NOT on `template.isActive`. Fix round 2 gated
-   * it on `isActive` "symmetrically with door 3"; PR review proved that a
-   * false analogy. Door 3 gates on the *direction of the verb*
-   * (`desiredActive`), so that pausing a template whose room was archived
-   * under it still works. `isActive` is a property of the template on a
-   * different axis, and it is not one this door can rest on: a paused
-   * template is one `PATCH` away from generating, and door 3 refuses exactly
-   * that resume — so an `isActive` gate here would accept the commitment at
-   * the move and refuse it at the resume, stranding the teacher one verb
-   * later over a decision this request already took. What that gate let
-   * through when it shipped is worse and is recorded rather than
-   * paraphrased: pausing deletes nothing, so a paused template still owned
-   * the `open` instances it had generated, and the propagation carried every
-   * one of them onto the archived room in a single request with no race.
-   *
-   * Nobody needs to move a template ONTO an archived room. Moving one OFF one
-   * is the recovery, and this guard reads the TARGET room, so that direction
-   * was never affected by either version of the gate.
-   *
-   * The `!==` half is equally load-bearing: `TemplateForm` posts the whole
-   * form on every edit, so `teacherRoomId` is present on every PUT whether or
-   * not the teacher touched the picker. Without that half, an active template
-   * whose own room is archived — a state spec section 10 says exists in
-   * pre-branch data — could not be edited at all, and answered a description
-   * change with a 409 about moving.
-   */
-  | { ok: false; reason: 'room_archived' }
   /**
    * A live rule occupies the requested slot (#196/#296) — enforced by
    * `ScheduleRule_teacher_slot_excl`, one exclusion constraint spanning both
@@ -855,46 +823,18 @@ export async function updateClassTemplate(
   // oracle for `TeacherRoom` ids — try every id and read which error comes
   // back. Right now only two tests stand between that merge and a
   // well-meaning refactor that reports the two cases separately.
+  let targetRoomIsArchived: boolean | undefined;
   if (data.teacherRoomId !== undefined) {
     const teacherRoom = await db.teacherRoom.findUnique({ where: { id: data.teacherRoomId } });
     if (!teacherRoom || teacherRoom.teacherId !== teacherId) {
       return { ok: false, reason: 'invalid_room' };
     }
-
-    // A fifth door (issue 76): moving a template onto an archived room is the
-    // same commitment as creating (door 4) or resuming (door 3) one there, and
-    // was the only one of the three left unguarded. The template is the
-    // generator's stamp, so an active one pointed here gives the next sweep
-    // four weeks of `open` classes to create in a shelved room. Until #194 the
-    // edit did it itself, relocating every future non-`settingsLocked`
-    // `draft`/`open` instance onto the target room in this transaction; that
-    // mechanism is gone and the door is not. `UpdateClassTemplateResult`'s
-    // `room_archived` docblock carries the same reasoning at length — the two
-    // were written together and must be corrected together.
-    //
-    // Gated on a CHANGE of room, NOT on `template.isActive`. Both halves are
-    // load-bearing and each reddens a test alone (mutations 8 and 9, spec
-    // section 9):
-    //   - drop `isArchived` and both move-refusal cases go red.
-    //   - drop `!== template.teacherRoomId` and "allows a no-op room field"
-    //     goes red, because `TemplateForm` posts the whole form on every edit,
-    //     so an unchanged `teacherRoomId` arrives on every PUT.
-    //
-    // `isActive` is deliberately NOT consulted. The fix-round-2 gate that did
-    // consult it was wrong for a reason #194 has since removed — pausing
-    // deletes nothing, so a paused template still owned its generated `open`
-    // instances, and the propagation carried them onto the archived room, one
-    // step behind door 1's refusal — and it stays wrong for a reason that
-    // remains: a paused template is one resume away from generating, door 3
-    // refuses that resume, and gating here on `isActive` would move the
-    // refusal off the request that made the commitment.
-    if (teacherRoom.isArchived && data.teacherRoomId !== template.teacherRoomId) {
-      log.info(
-        { templateId, from: template.teacherRoomId, to: data.teacherRoomId },
-        'template move refused: the target room is archived',
-      );
-      return { ok: false, reason: 'room_archived' };
-    }
+    // Captured, not consulted as a door: issue 272 moved this refusal to the
+    // constraint (`ClassTemplate_live_needs_open_room` / the room mirror's
+    // foreign key), and this value is written into the child below so the
+    // mirror stays equal to the target room. The route answers the 409 the
+    // guard used to.
+    targetRoomIsArchived = teacherRoom.isArchived;
   }
 
   // Declared out here rather than returned from inside the `try`, so the probe
@@ -952,7 +892,26 @@ export async function updateClassTemplate(
         // exactly, so nothing wider can reach `classTemplate.update` this way.
         const { classType, dayOfWeek, startTime, durationMinutes, ...childData } = data;
 
-        const updatedChild = await tx.classTemplate.update({ where: { id: templateId }, data: childData });
+        // The mirror is written, not defaulted: moving to a different room
+        // means the child's `roomArchived` must equal that room's `isArchived`
+        // or the composite foreign key refuses the row. A PAUSED template may
+        // legitimately move onto an archived room, so this cannot assert
+        // `false` the way the create path does.
+        //
+        // Gated on a CHANGE of room, for the same reason the route's pre-check
+        // gates there: `TemplateForm` posts `teacherRoomId` on every edit, and
+        // writing the mirror on a no-op would trip the room CHECK for a
+        // pre-branch snapshot whose own room is archived and live. The mirror
+        // is a property of the room binding; it moves with the binding only.
+        const updatedChild = await tx.classTemplate.update({
+          where: { id: templateId },
+          data: {
+            ...childData,
+            ...(data.teacherRoomId !== undefined && data.teacherRoomId !== template.teacherRoomId
+              ? { roomArchived: targetRoomIsArchived }
+              : {}),
+          },
+        });
 
         // Built field-by-field rather than spread, and typed with the same
         // `Partial<Record<PlainUpdateForbiddenScheduleRuleField, never>>`
@@ -1256,13 +1215,6 @@ export type PauseTemplateResult =
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'archived' }
   /**
-   * Door 3 of the room archive lifecycle (issue 76): the template's own room
-   * has been archived. A paused template may still sit on an archived room —
-   * only resuming it is refused, since that is the moment new classes would
-   * start being manufactured there. See the guard site for the full note.
-   */
-  | { ok: false; reason: 'room_archived' }
-  /**
    * See `ArchiveTemplateResult`'s `busy` arm for what it guarantees and the
    * range of causes behind it.
    *
@@ -1406,7 +1358,6 @@ export async function pauseOrResumeTemplate(
     where: { id: templateId },
     include: {
       scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } },
-      teacherRoom: { select: { isArchived: true } },
     },
   });
   if (!template) return { ok: false, reason: 'not_found' };
@@ -1414,12 +1365,10 @@ export async function pauseOrResumeTemplate(
 
   // Same reason as the drop further down: `PauseTemplateResult` carries
   // `ClassTemplateWithSlot`, flattened fresh from whatever row versions each
-  // branch below actually reads — the joined `scheduleRule.teacher` and
-  // `teacherRoom` this include added are dropped rather than leaked back to
-  // the caller, including on this early-return path, before any write
-  // happens.
-  const { scheduleRule, teacherRoom: _tr, ...bare } = template;
-  void _tr;
+  // branch below actually reads — the joined `scheduleRule.teacher` this
+  // include added is dropped rather than leaked back to the caller, including
+  // on this early-return path, before any write happens.
+  const { scheduleRule, ...bare } = template;
 
   const desiredActive = target === 'active';
 
@@ -1433,51 +1382,14 @@ export async function pauseOrResumeTemplate(
 
   if (scheduleRule.isArchived) return { ok: false, reason: 'archived' };
 
-  // Door 3 of the room archive lifecycle (issue 76). Symmetric with door 2:
-  // a paused template may SIT on an archived room, but resuming it is the
-  // moment new classes start being manufactured there. Without this, resume
-  // succeeded silently and generated instances into the archived room inside
-  // the transaction below.
-  //
-  // After the already-in-state check above, for the same reason that check
-  // precedes the template-archived guard: `?state=paused` on a template that
-  // is already paused is a no-op with nothing to refuse.
-  //
-  // Gated on `desiredActive`, not on `template.teacherRoom.isArchived` alone
-  // — pausing is a real `isActive` transition too (active room-archived
-  // template -> paused) and does not hit the already-in-state short-circuit
-  // above, so an ungated check here would also refuse the one direction the
-  // brief and the test below require to keep working: a teacher must still
-  // be able to stop a template whose room was archived out from under it.
-  //
-  // KNOWN-OPEN (issue 116). This guard reads `teacherRoom.isArchived` from the
-  // non-transactional `findUnique` at the top of this function, so a room
-  // archive committing between that read and the CAS below is invisible to it:
-  // measured on #116's branch, four classes generated into a just-archived
-  // room. The template's own archive race IS closed, by the CAS — but a CAS on
-  // `ScheduleRule` (issue 298; it wrote `ClassTemplate` directly before that)
-  // cannot carry a predicate on the related room's column.
-  //
-  // Not closed here, deliberately, and not by oversight: `room-archive.ts`
-  // (see its own KNOWN-OPEN, spec section 8) accepts this same race class from
-  // the other side rather than locking, because the alternative is a new
-  // `FOR UPDATE` node in the ordering `template-lock-order.test.ts` exists to
-  // defend. A re-read after the CAS would close the interleaving measured
-  // above and leave its mirror open — a half-guard whose residue would need
-  // documenting forever.
-  //
-  // The invariant "an active template may not sit on an archived room" is
-  // currently enforced by five application doors, every one a non-transactional
-  // read. Enforcing it once in Postgres is the structural answer and a
-  // product-and-schema decision, filed as such: issue #272, which carries the
-  // reproduction above and three options.
-  if (desiredActive && template.teacherRoom.isArchived) {
-    log.info(
-      { templateId, teacherRoomId: template.teacherRoomId },
-      'template resume refused: the room is archived',
-    );
-    return { ok: false, reason: 'room_archived' };
-  }
+  // This door's guard is GONE, and that is the point: issue 272 closed the
+  // "five application doors, every one a non-transactional read" gap this
+  // used to sit in. The refusal now comes from
+  // `ClassTemplate_live_needs_open_room` — the CHECK that no ACTIVE template
+  // sits on an archived room — and the route's pre-check supplies the
+  // sentence. What survives here is the transition it refused: resuming a
+  // template whose room got archived out from under it hits the constraint
+  // and is answered by the route's catch as the identical 409.
 
   let result: ResumeTransactionOutcome;
   try {
@@ -2249,6 +2161,10 @@ export async function createClassTemplate(
           scheduleRuleId: rule.id,
           kind: 'regular',
           teacherRoomId: input.teacherRoomId,
+          // ASSERTS the room is open rather than reading it. There is no
+          // matching parent key for an archived room, so this is refused by the
+          // foreign key without a read that could go stale between the two.
+          roomArchived: false,
           description: input.description,
           roomCost: input.roomCost,
           minRate: input.minRate,

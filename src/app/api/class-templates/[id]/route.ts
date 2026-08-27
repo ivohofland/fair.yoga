@@ -8,10 +8,15 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
+import { isRestrictViolationOn } from '@/lib/api-errors';
+import { isCheckViolationOn } from '@/lib/check-violation';
+import { log } from '@/lib/log';
 import { updateClassTemplateSchema, templateStateQuerySchema } from '@/lib/schemas';
 import {
   updateClassTemplate,
   type ClassTemplateUpdateData,
+  type UpdateClassTemplateResult,
+  type PauseTemplateResult,
   pauseOrResumeTemplate,
   archiveOrUnarchiveTemplate,
   withSlot,
@@ -44,6 +49,21 @@ const SLOT_TAKEN = {
     'TEMPLATE_SLOT_CONFLICT',
   ],
 } as const satisfies Record<RuleSlotHolder, readonly [string, string]>;
+
+/**
+ * The 409 both room-archive doors in this file answer with. One function
+ * because the two differ only in the verb, and they were measured drifting
+ * apart in wording once already.
+ */
+function roomArchivedResponse(verb: 'resume' | 'move') {
+  return respondError(
+    verb === 'resume'
+      ? 'This room is archived. Unarchive it to resume this recurring class.'
+      : 'This room is archived. Unarchive it to move this recurring class here.',
+    409,
+    'ROOM_ARCHIVED',
+  );
+}
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -94,7 +114,56 @@ export const PUT = withErrorHandler(async (
   // to duplicate a check that already has an owner.
   const data: ClassTemplateUpdateData = parsed.data;
 
-  const result = await updateClassTemplate(prisma, id, session.teacherId, data);
+  // Door 5 of the room archive lifecycle (issue 76), as a PRE-CHECK rather
+  // than enforcement (issue 272). What actually refuses an ACTIVE template
+  // moving onto an archived room is `ClassTemplate_live_needs_open_room` — and
+  // the room mirror's foreign key when the read is stale — either of which the
+  // catch below turns into this same 409. The probe exists so the common case
+  // gets a sentence a teacher can act on instead of a raced 409.
+  //
+  // Only a LIVE template is refused: a PAUSED template may legitimately move
+  // onto an archived room (issue 272 — the CHECK keys on `ruleLive`). The
+  // ownership read is repeated here so an unowned room still answers
+  // `invalid_room` and cannot be outranked by the archived check, matching the
+  // service's own ordering.
+  //
+  // Gated on a CHANGE of room, not mere presence: `TemplateForm` posts the
+  // whole form on every edit, so an unchanged `teacherRoomId` rides along with
+  // a pure description change — and an active template whose own room is
+  // archived (a pre-branch snapshot, spec section 10) would otherwise answer
+  // this 409 about a move the teacher did not make.
+  if (data.teacherRoomId !== undefined) {
+    const moving = await prisma.classTemplate.findUnique({
+      where: { id },
+      select: { ruleLive: true, teacherRoomId: true },
+    });
+    if (moving && moving.teacherRoomId !== data.teacherRoomId) {
+      const targetRoom = await prisma.teacherRoom.findUnique({
+        where: { id: data.teacherRoomId },
+        select: { isArchived: true, teacherId: true },
+      });
+      if (!targetRoom || targetRoom.teacherId !== session.teacherId) {
+        return respondError('Invalid teacher room', 400);
+      }
+      if (targetRoom.isArchived && moving.ruleLive) {
+        return roomArchivedResponse('move');
+      }
+    }
+  }
+
+  let result: UpdateClassTemplateResult;
+  try {
+    result = await updateClassTemplate(prisma, id, session.teacherId, data);
+  } catch (e) {
+    if (
+      isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room') ||
+      isRestrictViolationOn(e, ['ClassTemplate_teacherRoomId_roomArchived_fkey'])
+    ) {
+      log.warn({ templateId: id }, 'template move lost the room-archive race');
+      return roomArchivedResponse('move');
+    }
+    throw e;
+  }
 
   // `firstEffective` and `generationState` ride alongside the template row
   // rather than replacing it: `TemplateForm` reads nothing else from this
@@ -124,21 +193,6 @@ export const PUT = withErrorHandler(async (
   if (result.reason === 'forbidden') return respondError('Access denied', 403);
   if (result.reason === 'no_fields') return respondError('No valid fields to update', 400);
   if (result.reason === 'invalid_room') return respondError('Invalid teacher room', 400);
-  // Door 5 of the room archive lifecycle (issue 76, fix round 2): moving a
-  // template onto an archived room. NOT gated on `isActive` — the service's
-  // `room_archived` docblock and the guard itself both say so in terms, and
-  // this comment said "active" until the branch that made them explicit turned
-  // a stale word into a live disagreement between two files about one rule.
-  // Symmetric with door 3's
-  // `room_archived` branch on the PATCH handler below — same code, same
-  // register, different verb.
-  if (result.reason === 'room_archived') {
-    return respondError(
-      'This room is archived. Unarchive it to move this recurring class here.',
-      409,
-      'ROOM_ARCHIVED',
-    );
-  }
   // The template's own dayOfWeek/startTime moved into a slot another of this
   // teacher's live rules already holds — same family or the other (#196/#296).
   if (result.reason === 'slot_conflict') {
@@ -240,7 +294,30 @@ export const PATCH = withErrorHandler(async (
     return unhandled;
   }
 
-  const result = await pauseOrResumeTemplate(prisma, id, session.teacherId, state);
+  let result: PauseTemplateResult;
+  if (state === 'active') {
+    // Door 3 of the room archive lifecycle (issue 76), as a PRE-CHECK rather
+    // than enforcement (issue 272). What actually refuses a resume onto an
+    // archived room is `ClassTemplate_live_needs_open_room`; this read exists
+    // so the common case gets a sentence a teacher can act on instead of a
+    // raced 409. The mirror is read rather than a join to `TeacherRoom`: it is
+    // the same value by construction and needs no join.
+    const resume = await prisma.classTemplate.findUnique({
+      where: { id },
+      select: { roomArchived: true },
+    });
+    if (resume?.roomArchived) return roomArchivedResponse('resume');
+  }
+
+  try {
+    result = await pauseOrResumeTemplate(prisma, id, session.teacherId, state);
+  } catch (e) {
+    if (isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room')) {
+      log.warn({ templateId: id }, 'template resume lost the room-archive race');
+      return roomArchivedResponse('resume');
+    }
+    throw e;
+  }
 
   if (result.ok) {
     // A `switch` rather than the two-way ternary this replaces. `active` now
@@ -288,16 +365,6 @@ export const PATCH = withErrorHandler(async (
   // shelved.
   if (result.reason === 'archived') {
     return respondError('Unarchive the template before activating it', 409);
-  }
-  // Door 3 of the room archive lifecycle (issue 76): the template's own room
-  // has been archived. Symmetric with the `archived` branch above — a paused
-  // template may sit on an archived room, but resuming it is refused.
-  if (result.reason === 'room_archived') {
-    return respondError(
-      'This room is archived. Unarchive it to resume this recurring class.',
-      409,
-      'ROOM_ARCHIVED',
-    );
   }
   if (result.reason === 'busy') {
     return respondError(

@@ -6,6 +6,7 @@ import {
   archiveOrUnarchiveTemplate,
   pauseOrResumeTemplate,
 } from './class-template-lifecycle';
+import { isTransientDbError } from '@/lib/api-errors';
 import { startOfLocalDay, classStartInstant, mondayOf } from '@/lib/timezone';
 import { getNextOccurrences } from './class-generator';
 import { formatDayHeader } from '@/lib/format';
@@ -2334,49 +2335,53 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   });
 
   /**
-   * The CAS miss has a state the re-read classifies as neither `unchanged` nor
-   * `not_found`: the winner applied the transition and a third request
-   * reversed it, so the re-read finds the row in the state this request asked
-   * to move AWAY from. Three requests get there: A's archive wins, B's is
-   * in flight and misses the CAS, and A un-archives before B re-reads.
+   * The migration's `live` mirror column retired this scenario's staging. The
+   * old version interposed a raw `scheduleRule.update` to reverse the
+   * archive's CAS between its miss and its re-read so the re-read found the
+   * row in the state this request asked to move AWAY from. That write no
+   * longer commits mid-flight: `live` is FK-referenced, so it cascades to the
+   * child row the archive transaction already holds `FOR UPDATE` and WAITS on
+   * that hold until the archive's own re-read releases it (272). The reversal
+   * can't land in the [-CAS, re-read] window at all.
    *
-   * `busy`, not `unchanged`. Reported as `unchanged` this was silent from end
-   * to end: `resolveTemplateConfirmation` (`template-action-messages.ts`)
-   * answers `null` for that action, so the route's 200 produced no message at
-   * all, the button kept its old label, and the template stayed live and
-   * generating. `busy` is what every route already renders as a 503 saying
-   * nothing was changed — which is exactly what happened, since the CAS
-   * matched no row and the transaction rolled back clean.
-   *
-   * The `log.warn` is asserted, not just the return: it is the only channel
-   * carrying the observed row, and a `busy` returned without it is
-   * indistinguishable in production from the transient-error `catch`'s.
-   * Spied with `mockImplementation` for the reason the sibling spies in this
-   * repo use one — the real line would otherwise print on a passing run.
+   * So this test measures the serialization the old staging slipped through:
+   * the interposed flip gets a `lock_timeout` of its own and times out (55P03)
+   * against the in-flight archive, the archive's CAS then matches and
+   * completes, and the reversed-warning channel stays silent — the re-read can
+   * no longer find a transition interrupted by a sibling.
    */
-  it('answers busy when the CAS miss finds the transition reversed', async () => {
-    const t = await makeTemplate('Reversed Transition');
+  it('refuses a concurrent rule-state flip that would reverse an in-flight archive', async () => {
+    const t = await makeTemplate('No Reverse Window');
 
     let straddled = false;
+    const flipFailure: unknown[] = [];
     const interposing = prisma.$extends({
       query: {
         scheduleRule: {
           async updateMany({ args, query }) {
             if (straddled) return query(args);
             straddled = true;
-            // Commits before the CAS, so its `isArchived: false` clause misses.
-            await prisma.scheduleRule.update({
-              where: { id: t.scheduleRuleId },
-              data: { isArchived: true },
-            });
-            const swapped = await query(args);
-            // Commits before the re-read, so the re-read sees the state this
-            // request asked to leave rather than the one it asked for.
-            await prisma.scheduleRule.update({
-              where: { id: t.scheduleRuleId },
-              data: { isArchived: false },
-            });
-            return swapped;
+            // Staged where the pre-272 test staged its un-archive: after the
+            // transaction has already taken the child row `FOR UPDATE`. The
+            // migrate-time flip is refused below rather than thrown, so the
+            // archive's own CAS runs against the untouched state.
+            const flip = prisma.$transaction(
+              async (tx) => {
+                await tx.$executeRawUnsafe('SET LOCAL lock_timeout = 1500');
+                await tx.scheduleRule.update({
+                  where: { id: t.scheduleRuleId },
+                  data: { isArchived: true },
+                });
+              },
+              { timeout: 20_000 },
+            );
+            await flip.then(
+              () => undefined,
+              (error: unknown) => {
+                flipFailure.push(error);
+              },
+            );
+            return query(args);
           },
         },
       },
@@ -2387,32 +2392,34 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       const result = await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived');
 
       expect(straddled).toBe(true);
-      expect(result).toEqual({ ok: false, reason: 'busy' });
 
+      // REFUSED, not applied: the flip needed the child row the archive holds,
+      // hit its own lock_timeout, and so never reversed anything.
+      expect(flipFailure).toHaveLength(1);
+      expect(isTransientDbError(flipFailure[0])).toBe(true);
+      expect(String(flipFailure[0])).toMatch(/55P03|lock timeout/);
+
+      // With nothing reversed the CAS matches and the archive completes.
+      expect(result).toMatchObject({ ok: true, action: 'archived' });
+
+      // The 503-warning channel is silent: no interposed flip can reverse the
+      // transition between the archive's CAS and its re-read.
       const reversedLog = warn.mock.calls.find(
         (call) =>
           call[1] === 'recurring class archive CAS missed and the re-read found the transition reversed',
       );
-      expect(reversedLog).toBeDefined();
-      expect(reversedLog?.[0]).toMatchObject({
-        templateId: t.id,
-        teacherId,
-        target: 'archived',
-        observed: { isArchived: false },
-      });
+      expect(reversedLog).toBeUndefined();
     } finally {
       warn.mockRestore();
     }
 
-    // Nothing was written: the CAS matched no row, so the rollback leaves the
-    // template exactly as the interposed un-archive left it.
     const after = await prisma.classTemplate.findUniqueOrThrow({
       where: { id: t.id },
       include: { scheduleRule: true },
     });
-    expect(after.scheduleRule.isArchived).toBe(false);
-    expect(after.scheduleRule.archivedAt).toBeNull();
-    expect(after.scheduleRule.withdrawnCount).toBeNull();
+    expect(after.scheduleRule.isArchived).toBe(true);
+    expect(after.scheduleRule.archivedAt).not.toBeNull();
+    expect(after.scheduleRule.withdrawnCount).not.toBeNull();
   });
 });
 
@@ -2995,38 +3002,47 @@ describe('pauseOrResumeTemplate (DB)', () => {
   );
 
   /**
-   * The CAS's miss branch has a fourth state, and it is reachable: the re-read
-   * finds the row neither already in the desired state nor archived. Driven
-   * here with the `$extends` lever the tests above use, interposed on the CAS
-   * itself — a resume commits before it (so the CAS misses on `isActive`) and
-   * a pause commits after it, before the re-read.
-   *
-   * Two tabs get there: A resumes and then pauses while B's resume is in
-   * flight. `busy` is the answer because the CAS matched zero rows, so B wrote
-   * nothing and rolled back clean — a retry wins. An earlier version of this
-   * branch threw instead, which the route rendered as a 500 logged at `error`.
+   * The residual-fourth-state arm had the same staging dependence as the
+   * reversed arm above, so the migration retired that window too: a pause that
+   * lands after the resume's CAS but before its re-read can no longer commit
+   * at all, because the flip cascades to the child row the resume transaction
+   * already holds `FOR UPDATE` (272). The stale flip now waits on that hold
+   * and times out, the resume's own CAS matches the untouched state and wins,
+   * and the class window is created instead of the old `busy` answer.
    */
-  it('answers busy when the CAS miss lands in the residual fourth state', async () => {
-    const t = await makeTemplate('Residual Race');
+  it('refuses a concurrent rule-state flip that would pre-empt an in-flight resume', async () => {
+    const t = await makeTemplate('No Pre-empt Window');
     await prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { isActive: false } });
 
     let straddled = false;
+    const flipFailure: unknown[] = [];
     const interposing = prisma.$extends({
       query: {
         scheduleRule: {
           async updateMany({ args, query }) {
             if (straddled) return query(args);
             straddled = true;
-            await prisma.scheduleRule.update({
-              where: { id: t.scheduleRuleId },
-              data: { isActive: true },
-            });
-            const swapped = await query(args);
-            await prisma.scheduleRule.update({
-              where: { id: t.scheduleRuleId },
-              data: { isActive: false },
-            });
-            return swapped;
+            // Staged where the pre-272 test staged its pause: after the
+            // transaction has already taken the child row `FOR UPDATE`. The
+            // flip is refused below rather than thrown, so the resume's CAS
+            // runs against the untouched paused state and wins.
+            const flip = prisma.$transaction(
+              async (tx) => {
+                await tx.$executeRawUnsafe('SET LOCAL lock_timeout = 1500');
+                await tx.scheduleRule.update({
+                  where: { id: t.scheduleRuleId },
+                  data: { isActive: true },
+                });
+              },
+              { timeout: 20_000 },
+            );
+            await flip.then(
+              () => undefined,
+              (error: unknown) => {
+                flipFailure.push(error);
+              },
+            );
+            return query(args);
           },
         },
       },
@@ -3035,12 +3051,26 @@ describe('pauseOrResumeTemplate (DB)', () => {
     const result = await pauseOrResumeTemplate(interposing, t.id, teacherId, 'active');
 
     expect(straddled).toBe(true);
-    expect(result).toEqual({ ok: false, reason: 'busy' });
 
-    // Nothing was written: the CAS matched no row, so the rollback leaves the
-    // template exactly as the interposed pause left it.
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
-    expect(after.scheduleRule.isActive).toBe(false);
-    expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: t.id } } } } } })).toBe(0);
+    // REFUSED, not applied: the flip needed the child row the resume held,
+    // timed out, and so never flipped the CAS's predicate out from under it.
+    expect(flipFailure).toHaveLength(1);
+    expect(isTransientDbError(flipFailure[0])).toBe(true);
+    expect(String(flipFailure[0])).toMatch(/55P03|lock timeout/);
+
+    // With nothing pre-empted, the resume's CAS matches the paused row and the
+    // resume completes — generating the class window instead of `busy`.
+    expect(result).toMatchObject({ ok: true, action: 'active' });
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id: t.id },
+      include: { scheduleRule: true },
+    });
+    expect(after.scheduleRule.isActive).toBe(true);
+    expect(
+      await prisma.class.count({
+        where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: t.id } } } } },
+      }),
+    ).toBeGreaterThan(0);
   });
 });

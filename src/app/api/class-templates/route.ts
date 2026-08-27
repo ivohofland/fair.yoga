@@ -8,8 +8,14 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
+import { isRestrictViolationOn } from '@/lib/api-errors';
+import { isCheckViolationOn } from '@/lib/check-violation';
 import { createClassTemplateSchema } from '@/lib/schemas';
-import { withSlot, createClassTemplate } from '@/services/class-template-lifecycle';
+import {
+  withSlot,
+  createClassTemplate,
+  type CreateTemplateResult,
+} from '@/services/class-template-lifecycle';
 import type { RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { countSkipReasons } from '@/lib/generation';
 import { log } from '@/lib/log';
@@ -84,7 +90,30 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // wait on it, and what its 10s budget does and does not cover — is
   // documented beside that transaction in `class-template-lifecycle.ts`, not
   // here (issue 228).
-  const result = await createClassTemplate(prisma, session.teacherId, body);
+  let result: CreateTemplateResult;
+  try {
+    result = await createClassTemplate(prisma, session.teacherId, body);
+  } catch (e) {
+    // The room archived between the pre-check above and the insert: the
+    // service ASSERTS `roomArchived: false`, so the room mirror's foreign key
+    // refuses the row (23503) without a re-read to race. Same 409 as the
+    // pre-check — the probe is for the sentence, the constraint does the work.
+    if (
+      isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room') ||
+      isRestrictViolationOn(e, ['ClassTemplate_teacherRoomId_roomArchived_fkey'])
+    ) {
+      log.warn(
+        { teacherRoomId: body.teacherRoomId, teacherId: session.teacherId },
+        'template create lost the room-archive race',
+      );
+      return respondError(
+        'This room is archived. Unarchive it to add a recurring class here.',
+        409,
+        'ROOM_ARCHIVED',
+      );
+    }
+    throw e;
+  }
 
   if (!result.ok && result.reason === 'slot_conflict') {
     log.warn(

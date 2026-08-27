@@ -2149,7 +2149,10 @@ describe('PUT /api/class-templates/[id]', () => {
   // PUT could relocate every future non-`settingsLocked` `draft`/`open`
   // instance onto a room the teacher had shelved; #194 deleted that
   // relocation, and the door still stands on the half that never depended on
-  // it — the generator would keep producing new classes there.
+  // it — the generator would keep producing new classes there. Issue 272
+  // moved the refusal to the route's pre-check plus the constraint itself
+  // (`ClassTemplate_live_needs_open_room`); the wire contract below is
+  // unchanged and is what the pre-check is pinned against.
   // A dedicated `seedTeacher` fixture rather than the shared `teacherRoomId`
   // dozens of other tests in this file reuse: archiving it here would affect
   // them, and door 5 needs a second room besides.
@@ -2220,21 +2223,20 @@ describe('PUT /api/class-templates/[id]', () => {
     }
   });
 
-  // Pausing is not protection, and this case asserted the opposite until PR
-  // review. `pauseOrResumeTemplate` deletes nothing, so a paused template
-  // still owns every `open` instance it generated before it was paused. When
-  // the sync existed it relocated them with the move: the earlier gate
-  // (`&& template.isActive`) let that through and the earlier version of this
-  // test asserted only `after.teacherRoomId`, so the suite performed the
-  // relocation on every run and asserted nothing about it — four `open`
-  // classes on a room the teacher had shelved, precisely the state door 1
-  // refuses to create.
-  //
-  // #194 removed that route to the bad state; the gate's shape is what is
-  // still under test. The instance assertion below is kept and is no longer
-  // load-bearing against the relocation — it is load-bearing against a future
-  // one, and it costs one query.
-  it('refuses to move a paused template onto an archived room, and relocates nothing', async () => {
+  // 272 changed the active-half gate this case used to pin, and the change is
+  // the test. The old door 5 refused EVERY move onto an archived room,
+  // reasoning that a paused template is one resume away from generating. When
+  // the move synced instances that reasoning was literal — the relocation
+  // would carry four `open` classes onto a shelved room, and the case proved
+  // it was refused. #194 deleted the sync; the gate stayed out of inertia.
+  // Post-272 the refusal lives in `ClassTemplate_live_needs_open_room`, which
+  // keys on `ruleLive`: a paused template has `ruleLive` false, so moving it
+  // onto an archived room is a REPOINT of a generator that is not generating —
+  // nothing is created there (door 3's resume-409 test below closes the one
+  // way the commitment comes back). This is the safe direction and now answers
+  // 200. What it must still never do is carry the generated instances: #194
+  // guarantees that by absence, asserted below.
+  it('allows moving a paused template onto an archived room, and still relocates nothing', async () => {
     const owner = await seedTeacher('move-archived-paused');
     let archivedRoomId = '';
     try {
@@ -2272,15 +2274,14 @@ describe('PUT /api/class-templates/[id]', () => {
         body: JSON.stringify({ teacherRoomId: archived.teacherRoomId }),
       });
 
-      expect(res.status).toBe(409);
-      const body = (await res.json()) as { error: { code: string } };
-      expect(body.error.code).toBe('ROOM_ARCHIVED');
+      expect(res.status).toBe(200);
 
       const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id }, include: { scheduleRule: true } });
-      expect(after.teacherRoomId).toBe(owner.teacherRoomId);
+      expect(after.teacherRoomId).toBe(archived.teacherRoomId);
 
-      // The assertion whose absence hid the defect. Its active-move sibling
-      // has carried it since the door was written; this case did not.
+      // The assertion whose absence hid the defect, carried forward from the
+      // active-move sibling without the 409: the generator is stopped, so the
+      // instances it generated before the pause stay where it made them.
       const instancesAfter = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } }, include: { calendarEntry: true } });
       expect(instancesAfter.length).toBeGreaterThan(0);
       expect(instancesAfter.some((c) => c.teacherRoomId === archived.teacherRoomId)).toBe(false);
@@ -2296,13 +2297,78 @@ describe('PUT /api/class-templates/[id]', () => {
     }
   });
 
+  // Door 3 of the room archive lifecycle (issue 76) at the wire. Issue 272
+  // moved the refusal out of the service into the constraint, which the PATCH
+  // handler's pre-check/catch translate back into the exact 409 this test
+  // pins — same status, same code, same copy. The fixture has to pause the
+  // template and THEN archive its room, because under the migration only a
+  // PAUSED template may sit on an archived room at all: the resume-onto-
+  // archived state is only reachable through the door-1b-legal sequence, which
+  // is the one this test performs.
+  it('still answers 409 ROOM_ARCHIVED when resuming onto an archived room', async () => {
+    const owner = await seedTeacher('resume-archived');
+    try {
+      const create = await fetch(`${BASE_URL}/api/class-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({
+          teacherRoomId: owner.teacherRoomId,
+          classType: 'Resume Refusal',
+          dayOfWeek: DAY_OF_WEEK,
+          startTime: '09:55',
+          durationMinutes: 60,
+          roomCost: 15,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 2,
+          maxStudents: 8,
+        }),
+      });
+      expect(create.status).toBe(201);
+      const { data: template } = (await create.json()) as { data: { id: string } };
+
+      const pause = await fetch(`${BASE_URL}/api/class-templates/${template.id}?state=paused`, {
+        method: 'PATCH',
+        headers: cookie(owner.sessionToken),
+      });
+      expect(pause.status).toBe(200);
+
+      await prisma.teacherRoom.update({
+        where: { id: owner.teacherRoomId },
+        data: { isArchived: true },
+      });
+
+      const res = await fetch(`${BASE_URL}/api/class-templates/${template.id}?state=active`, {
+        method: 'PATCH',
+        headers: cookie(owner.sessionToken),
+      });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('ROOM_ARCHIVED');
+      expect(body.error.message).toBe(
+        'This room is archived. Unarchive it to resume this recurring class.',
+      );
+    } finally {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.room.delete({ where: { id: owner.roomId } });
+      await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+      await prisma.teacher.delete({ where: { id: owner.teacherId } });
+      await prisma.account.delete({ where: { id: owner.accountId } });
+    }
+  });
+
   // The `!== template.teacherRoomId` half of door 5, proven directly: without
   // it, this case 409s. `TemplateForm` posts the whole form on every edit, so
   // an unchanged `teacherRoomId` rides along with a pure description change —
-  // and an active template whose own room is archived (spec section 10 says
-  // pre-branch data holds these) would become uneditable, answered with a 409
-  // about a move the teacher did not make.
-  it('allows a no-op room field on a template whose own room is archived', async () => {
+  // and a template on an archived room (post-272 necessarily PAUSED — the
+  // active-on-archived snapshot spec section 10 described is now refused by
+  // the constraint itself, at the archive write) would otherwise answer this
+  // 409 about a move the teacher did not make. The no-op must never write the
+  // mirror either: the move gates on the CHANGE, so this edit touches only the
+  // description, and it answers 200.
+  it('allows a no-op room field on a template whose room is archived', async () => {
     const owner = await seedTeacher('move-archived-noop');
     try {
       const create = await fetch(`${BASE_URL}/api/class-templates`, {
@@ -2324,9 +2390,14 @@ describe('PUT /api/class-templates/[id]', () => {
       expect(create.status).toBe(201);
       const { data: template } = (await create.json()) as { data: { id: string } };
 
-      // Archive the room out from under the live template — the pre-branch
-      // state, reproduced directly rather than assumed. Door 1 is not
-      // involved: this writes the flag, it does not go through the service.
+      // The same no-op-room shape with the room the teacher has actually
+      // archived, reached the only way 272 allows: pause first, then archive.
+      const pause = await fetch(`${BASE_URL}/api/class-templates/${template.id}?state=paused`, {
+        method: 'PATCH',
+        headers: cookie(owner.sessionToken),
+      });
+      expect(pause.status).toBe(200);
+
       await prisma.teacherRoom.update({
         where: { id: owner.teacherRoomId },
         data: { isArchived: true },
