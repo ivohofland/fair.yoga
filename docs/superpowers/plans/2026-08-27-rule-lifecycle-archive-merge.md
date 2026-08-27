@@ -382,8 +382,8 @@ git commit -m "fix: the studio pause/resume residual answers busy, not a 500 (is
 - Produces, for Task 3:
   - `WithSlot<T>` — `T & { teacherId: string; classType: string; dayOfWeek: number; startTime: string; durationMinutes: number; isActive: boolean; isArchived: boolean; archivedAt: Date | null; withdrawnCount: number | null }`
   - `ChildWithRule<TChild>` — `TChild & { scheduleRuleId: string; scheduleRule: ScheduleRule & { teacher: { defaultTimezone: string } } }`
-  - `TemplateFamily<TChild>` — the eight required fields below
-  - `WithdrawHook<TState>` — `{ deleteFilter: Prisma.ClassWhereInput; before(tx, ctx): Promise<TState>; after(tx, ctx, state): Promise<void> }`
+  - `TemplateFamily<TChild>` — the eight required fields below. **One type parameter, not two** — see the `WithdrawHook` docblock for the variance measurement behind that.
+  - `WithdrawHook` — `{ deleteFilter: Prisma.ClassWhereInput; around(tx, ctx, deleteEntries: () => Promise<number>): Promise<number> }`. Not generic.
   - `ArchiveRuleResult<TChild>` — the seven arms below
   - `archiveOrUnarchiveRule<TChild>(db: PrismaClient, family: TemplateFamily<TChild>, templateId: string, teacherId: string, target: 'archived' | 'unarchived'): Promise<ArchiveRuleResult<TChild>>`
 
@@ -433,26 +433,43 @@ export type WithdrawContext = { scheduleRuleId: string; today: Date };
 /**
  * The family-specific work that brackets the archive's shared delete.
  *
- * One hook rather than two independent ones because the halves share state:
- * the class family reads its about-to-be-withdrawn waitlist entries BEFORE the
- * delete and diffs them against the survivors AFTER it. `TState` is whatever
- * the first half needs to hand the second.
+ * One hook wrapped around the delete rather than a pair on either side of it,
+ * because the halves share state: the class family reads its
+ * about-to-be-withdrawn waitlist entries before the delete and diffs them
+ * against the survivors after it. Wrapping keeps that state a local in the
+ * family's own closure — see `around` below for the type-level reason a pair
+ * does not work.
  *
- * Every member of this hook does work INSIDE the transaction and returns
- * nothing to the caller. That is the property that makes it expressible at
- * all: no family-specific refusal reaches `ArchiveRuleResult`. A hook that
- * needed to widen the result union would be a different and much larger
- * claim — see the spec's §6.3.
+ * This hook does its work INSIDE the transaction and reports only the delete's
+ * row count. That is the property that makes it expressible at all: no
+ * family-specific refusal reaches `ArchiveRuleResult`. A hook that needed to
+ * widen the result union would be a different and much larger claim — see the
+ * spec's §6.3.
  */
-export type WithdrawHook<TState> = {
+export type WithdrawHook = {
   /**
    * Extra `Class`-side conjunct for the delete's predicate. The class family
    * spares classes carrying a charged registration; the studio family has no
    * registrations and supplies no hook at all.
    */
   deleteFilter: Prisma.ClassWhereInput;
-  before: (tx: TransactionClientOnly, ctx: WithdrawContext) => Promise<TState>;
-  after: (tx: TransactionClientOnly, ctx: WithdrawContext, state: TState) => Promise<void>;
+  /**
+   * Runs the shared delete and whatever this family needs around it, returning
+   * the delete's own row count.
+   *
+   * A single `around` rather than a `before`/`after` pair, and the reason is a
+   * type one: a pair has to name the state that crosses the delete, which puts
+   * that type in a return position and a parameter position at once. That makes
+   * the hook invariant, and an invariant hook cannot be collected into the union
+   * `rule-lifecycle.test.ts` tethers the families with. Measured — the pair form
+   * fails with `TS2322`. Around a callback, the state is an ordinary local in
+   * this family's own closure and no type parameter exists to go wrong.
+   */
+  around: (
+    tx: TransactionClientOnly,
+    ctx: WithdrawContext,
+    deleteEntries: () => Promise<number>,
+  ) => Promise<number>;
 };
 
 /**
@@ -469,7 +486,7 @@ export type WithdrawHook<TState> = {
  * nothing complains. `rule-lifecycle.test.ts` holds the tether that closes the
  * other half.
  */
-export type TemplateFamily<TChild, TState = unknown> = {
+export type TemplateFamily<TChild> = {
   kind: ClassFamily;
   /** Raw SQL identifier for the child's row lock. Never interpolated from input. */
   childTable: string;
@@ -489,7 +506,7 @@ export type TemplateFamily<TChild, TState = unknown> = {
     alsoOnClass?: Prisma.ClassWhereInput,
   ) => Prisma.CalendarEntryWhereInput;
   withSlot: (child: TChild, rule: ScheduleRule) => WithSlot<TChild>;
-  withdraw: WithdrawHook<TState> | null;
+  withdraw: WithdrawHook | null;
 };
 
 /**
@@ -529,9 +546,9 @@ Move the body from `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts:19
 **Move the existing comments with their code.** This plan deliberately does not reproduce them: a copy here would be a fifth copy of prose whose whole problem is that it exists four times. Open the source, cut, paste, and then do Task 4's sweep over what the move invalidated.
 
 ```ts
-export async function archiveOrUnarchiveRule<TChild, TState>(
+export async function archiveOrUnarchiveRule<TChild>(
   db: PrismaClient,
-  family: TemplateFamily<TChild, TState>,
+  family: TemplateFamily<TChild>,
   templateId: string,
   teacherId: string,
   target: 'archived' | 'unarchived',
@@ -600,19 +617,23 @@ export async function archiveOrUnarchiveRule<TChild, TState>(
         const today = startOfLocalDay(now, timeZone);
         const ctx: WithdrawContext = { scheduleRuleId: template.scheduleRuleId, today };
 
-        const state = family.withdraw ? await family.withdraw.before(tx, ctx) : null;
+        // Built here, run by the hook — or directly, for a family with none.
+        // The family's own extra conjunct is folded in here rather than left to
+        // the hook, so the delete's predicate has exactly one author.
+        const deleteEntries = async () => {
+          const { count } = await tx.calendarEntry.deleteMany({
+            where: family.scheduledWhere(
+              template.scheduleRuleId,
+              { gt: today },
+              family.withdraw?.deleteFilter,
+            ),
+          });
+          return count;
+        };
 
-        const { count: deleted } = await tx.calendarEntry.deleteMany({
-          where: family.scheduledWhere(
-            template.scheduleRuleId,
-            { gt: today },
-            family.withdraw?.deleteFilter,
-          ),
-        });
-
-        if (family.withdraw) {
-          await family.withdraw.after(tx, ctx, state as TState);
-        }
+        const deleted = family.withdraw
+          ? await family.withdraw.around(tx, ctx, deleteEntries)
+          : await deleteEntries();
 
         const remaining = await tx.calendarEntry.count({
           where: family.scheduledWhere(template.scheduleRuleId, { gte: today }),
@@ -672,7 +693,7 @@ export async function archiveOrUnarchiveRule<TChild, TState>(
 In `src/services/class-template-lifecycle.ts`:
 
 ```ts
-const CLASS_FAMILY: TemplateFamily<ClassTemplate, WaitlistCandidate[]> = {
+const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
   kind: 'regular',
   childTable: 'ClassTemplate',
   logNoun: 'recurring class',
@@ -690,7 +711,7 @@ const CLASS_FAMILY: TemplateFamily<ClassTemplate, WaitlistCandidate[]> = {
   withSlot,
   withdraw: {
     deleteFilter: { registrations: { none: { status: { in: [...CHARGED_STATUSES] } } } },
-    before: async (tx, { scheduleRuleId, today }) => {
+    around: async (tx, { scheduleRuleId, today }, deleteEntries) => {
       await lockClassRowsOrdered(tx, {
         join: Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
         where: Prisma.sql`e."scheduleRuleId" = ${scheduleRuleId}
@@ -699,7 +720,7 @@ const CLASS_FAMILY: TemplateFamily<ClassTemplate, WaitlistCandidate[]> = {
           AND c.status IN (${SCHEDULED_STATUSES_SQL})`,
         entries: true,
       });
-      return tx.waitlistEntry.findMany({
+      const candidates = await tx.waitlistEntry.findMany({
         where: {
           status: 'waiting',
           class: { calendarEntry: scheduledWhere(scheduleRuleId, { gt: today }) },
@@ -714,16 +735,20 @@ const CLASS_FAMILY: TemplateFamily<ClassTemplate, WaitlistCandidate[]> = {
           },
         },
       });
-    },
-    after: async (tx, _ctx, candidates) => {
-      if (candidates.length === 0) return;
+
+      const deleted = await deleteEntries();
+
+      // `candidates` is an ordinary local here — the reason this hook is one
+      // function rather than two. It was read before the delete; the survivors
+      // are read after it, and the difference is who gets told.
+      if (candidates.length === 0) return deleted;
       const survivors = await tx.class.findMany({
         where: { id: { in: [...new Set(candidates.map((c) => c.classId))] } },
         select: { id: true },
       });
       const survived = new Set(survivors.map((s) => s.id));
       const withdrawn = candidates.filter((c) => !survived.has(c.classId));
-      if (withdrawn.length === 0) return;
+      if (withdrawn.length === 0) return deleted;
       const notifications: CreateNotificationInput[] = withdrawn.map((c) => ({
         recipientType: 'student' as const,
         recipientId: c.studentId,
@@ -732,20 +757,13 @@ const CLASS_FAMILY: TemplateFamily<ClassTemplate, WaitlistCandidate[]> = {
         body: `The ${c.class.calendarEntry.classType} class on ${formatDayHeader(c.class.calendarEntry.date)} at ${timeToHHmm(c.class.calendarEntry.startTime)} has been withdrawn by your teacher. You were on its waiting list.`,
       }));
       await createBulkNotifications(tx, notifications);
+      return deleted;
     },
   },
 };
 ```
 
-`WaitlistCandidate` is the element type of that `findMany`'s result. Derive it rather than hand-writing it:
-
-```ts
-type WaitlistCandidate = Awaited<
-  ReturnType<NonNullable<TemplateFamily<ClassTemplate, never>['withdraw']>['before']>
->;
-```
-
-If that self-reference does not resolve, declare the shape explicitly and pin it against the query with `satisfies` — **do not** widen it to `any` or drop the type parameter.
+**No `WaitlistCandidate` type is needed.** `candidates` is inferred from the query and never leaves the closure — which is the whole reason `WithdrawHook` takes an `around` rather than a `before`/`after` pair. If you find yourself wanting to name that type, something has gone wrong; re-read the hook's docblock.
 
 Then replace the function body:
 
@@ -802,7 +820,7 @@ git commit -m "refactor: the class family's archive runs on rule-lifecycle (issu
 - [ ] **Step 1: Build `STUDIO_FAMILY` and rewire**
 
 ```ts
-export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate, never> = {
+export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate> = {
   kind: 'studio',
   childTable: 'StudioClassTemplate',
   logNoun: 'studio class',
@@ -871,8 +889,8 @@ import { STUDIO_FAMILY } from './studio-class-template-lifecycle';
  * Measured, not reasoned.
  */
 type AnyTemplateFamily =
-  | TemplateFamily<ClassTemplate, never>
-  | TemplateFamily<StudioClassTemplate, never>;
+  | TemplateFamily<ClassTemplate>
+  | TemplateFamily<StudioClassTemplate>;
 
 /**
  * A third `ClassFamily` variant becomes a compile error HERE rather than a
@@ -1033,6 +1051,8 @@ git commit -m "docs: the sweep for what the merge invalidated, verdicted hit by 
 
 **Placeholder scan.** No TBDs. Every code step carries real code. Two steps deliberately do *not* paste content: Task 2 Step 3 says to move comments rather than reproducing 500 lines of them in the plan (a fifth copy would be the exact problem this branch exists to fix), and Task 4 works from greps rather than a hand-listed roster — which is the CLAUDE.md rule about prose rosters applied to the plan itself.
 
-**Type consistency.** `TemplateFamily<TChild, TState>` carries both parameters at every use: `TemplateFamily<ClassTemplate, WaitlistCandidate[]>`, `TemplateFamily<StudioClassTemplate, never>`, and `TemplateFamily<ClassTemplate, never>` in the test's union. `WithdrawHook<TState>` matches. `archiveOrUnarchiveRule<TChild, TState>` matches its declared Produces block. `ChildWithRule`, `WithSlot`, `ArchiveRuleResult` are used with the same names in Tasks 2 and 3.
+**Type consistency.** `TemplateFamily<TChild>` takes one parameter at every use: `TemplateFamily<ClassTemplate>`, `TemplateFamily<StudioClassTemplate>`, and both again in the test's union. `WithdrawHook` is not generic. `archiveOrUnarchiveRule<TChild>` matches its declared Produces block. `ChildWithRule`, `WithSlot`, `ArchiveRuleResult` are used with the same names in Tasks 2 and 3.
+
+**Corrected before execution (pre-flight scan, Ruling 1 in the SDD ledger).** This plan first specified `TemplateFamily<TChild, TState>` with a `before`/`after` hook pair. That does not compile: `TState` sits in a return position and a parameter position at once, so the hook is invariant and the concrete families cannot be collected into `AnyTemplateFamily` — the identical variance failure this plan had already measured for `TChild` and then reintroduced one type parameter later. The `around` form removes the parameter rather than working around it.
 
 **One thing flagged for the executor rather than resolved here:** the `as unknown as TChild` casts in Task 2 Step 3. They compile but they are the weakest part of the design, and the step says to prefer a cleaner formulation if one exists and to report the change. Deciding that requires the compiler, not the plan.
