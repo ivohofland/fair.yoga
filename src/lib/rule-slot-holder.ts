@@ -40,16 +40,18 @@ export function minutesSinceMidnight(t: Date): number {
  * Called after its transaction has closed, always against `db`, never `tx`:
  * a statement that fails inside a Postgres transaction aborts it, so a probe
  * issued on the aborted `tx` would answer `25P02` rather than an answer, not
- * a `RuleSlotHolder`. Most call sites are a `catch` block for exactly that
- * reason; the two template creates — `createClassTemplate`
- * (`class-template-lifecycle.ts`) and `createStudioClassTemplate`
- * (`studio-class-template-lifecycle.ts`) — are the exception, each probing
- * on its normal return path after a zero-row `ON CONFLICT DO NOTHING`
- * refusal that never threw in the first place — the requirement is the same
- * either way. Every call site must therefore sit after its own transaction's
- * closing `)`, where Prisma has already committed or rolled back and `db` is
- * a clean connection — re-derive the current set rather than trust a count
- * here:
+ * a `RuleSlotHolder`. Call sites reach this probe two ways: from a `catch`,
+ * where the refused statement aborted the transaction, and from a normal
+ * return path, where a zero-row `ON CONFLICT DO NOTHING` refusal never threw
+ * and the transaction committed. The requirement is identical either way, and
+ * it is the only thing this docblock asserts about them — every call site must
+ * sit after its own transaction's closing `)`, where Prisma has already
+ * committed or rolled back and `db` is a clean connection.
+ *
+ * NO ROSTER HERE, for the reason `db-locks.ts` spends a paragraph on: a caller
+ * list kept in this file goes stale and nothing that counts can catch it. A
+ * further caller of either shape falsifies a name; it does not falsify the
+ * rule above. Re-derive the set:
  *
  *   grep -rn "ruleSlotHolder(db\|ruleSlotHolder(prisma" src/services/ src/app/api/
  *
