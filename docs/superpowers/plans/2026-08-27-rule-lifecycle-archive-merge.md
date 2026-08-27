@@ -395,7 +395,7 @@ git commit -m "fix: the studio pause/resume residual answers busy, not a 500 (is
   - `WithSlot<T>` — `T & { teacherId: string; classType: string; dayOfWeek: number; startTime: string; durationMinutes: number; isActive: boolean; isArchived: boolean; archivedAt: Date | null; withdrawnCount: number | null }`
   - `ChildWithRule<TChild>` — `TChild & { scheduleRuleId: string; scheduleRule: ScheduleRule & { teacher: { defaultTimezone: string } } }`
   - `TemplateFamily<TChild>` — the nine required fields below. **One type parameter, not two** — see the `WithdrawHook` docblock for the variance measurement behind that.
-  - `WithdrawHook` — `{ around(tx, ctx, deleteEntries: () => Promise<number>): Promise<number> }`. Not generic, and it carries no predicate: the family owns both whole predicates directly (`deleteWhere`, `remainingWhere`), so nothing droppable crosses the boundary.
+  - `WithdrawHook` — `{ around(tx, ctx, deleteEntries: () => Promise<number>): Promise<void> }`. Not generic, and it carries no predicate: the family owns both whole predicates directly (`deleteWhere`, `remainingWhere`), so nothing droppable crosses the boundary. It returns nothing either: the delete's row count is captured by the closure that owns `deleteEntries`, so a hook handing it back would be reporting a number the caller holds anyway — and the caller would then have to police the copy against the original.
   - `ArchiveRuleResult<TChild>` — the seven arms below
   - `archiveOrUnarchiveRule<TChild>(db: PrismaClient, family: TemplateFamily<TChild>, templateId: string, teacherId: string, target: 'archived' | 'unarchived'): Promise<ArchiveRuleResult<TChild>>`
 
@@ -452,16 +452,18 @@ export type WithdrawContext = { scheduleRuleId: string; today: Date };
  * family's own closure — see `around` below for the type-level reason a pair
  * does not work.
  *
- * This hook does its work INSIDE the transaction and reports only the delete's
- * row count. That is the property that makes it expressible at all: no
+ * This hook does its work INSIDE the transaction and reports nothing. That is
+ * the property that makes it expressible at all: no
  * family-specific refusal reaches `ArchiveRuleResult`. A hook that needed to
  * widen the result union would be a different and much larger claim — see the
  * spec's §6.3.
  */
 export type WithdrawHook = {
   /**
-   * Runs the shared delete and whatever this family needs around it, returning
-   * the delete's own row count.
+   * Runs the shared delete and whatever this family needs around it. Reports
+   * nothing — `deleteEntries` still resolves to the count for a hook that
+   * wants to branch on it, but the caller reads the number out of its own
+   * closure.
    *
    * A single `around` rather than a `before`/`after` pair, and the reason is a
    * type one: a pair has to name the state that crosses the delete, which puts
@@ -475,7 +477,7 @@ export type WithdrawHook = {
     tx: TransactionClientOnly,
     ctx: WithdrawContext,
     deleteEntries: () => Promise<number>,
-  ) => Promise<number>;
+  ) => Promise<void>;
 };
 
 /**
@@ -637,16 +639,32 @@ export async function archiveOrUnarchiveRule<TChild>(
         // adds no conjunct of its own to it and no hook is handed one to apply,
         // so the delete's predicate has exactly one author AND exactly one
         // application site.
+        let deleteCalls = 0;
+        let deletedRows = 0;
         const deleteEntries = async () => {
           const { count } = await tx.calendarEntry.deleteMany({
             where: family.deleteWhere(template.scheduleRuleId, today),
           });
+          // Both counters AFTER the await: a hook that swallows a failure of
+          // this statement must read as zero calls, not one clean one.
+          deleteCalls += 1;
+          deletedRows = count;
           return count;
         };
 
-        const deleted = family.withdraw
-          ? await family.withdraw.around(tx, ctx, deleteEntries)
-          : await deleteEntries();
+        if (family.withdraw) {
+          await family.withdraw.around(tx, ctx, deleteEntries);
+        } else {
+          await deleteEntries();
+        }
+        const deleted = deletedRows;
+
+        // #97's record guarantee: the shared delete ran exactly once.
+        if (deleteCalls !== 1) {
+          throw new Error(
+            `archiveOrUnarchiveRule: template ${templateId}'s ${family.logNoun} withdraw hook must run the shared delete exactly once; it ran it ${deleteCalls} time(s)`,
+          );
+        }
 
         const remaining = await tx.calendarEntry.count({
           where: family.remainingWhere(template.scheduleRuleId, today),
@@ -758,19 +776,19 @@ const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
         },
       });
 
-      const deleted = await deleteEntries();
+      await deleteEntries();
 
       // `candidates` is an ordinary local here — the reason this hook is one
       // function rather than two. It was read before the delete; the survivors
       // are read after it, and the difference is who gets told.
-      if (candidates.length === 0) return deleted;
+      if (candidates.length === 0) return;
       const survivors = await tx.class.findMany({
         where: { id: { in: [...new Set(candidates.map((c) => c.classId))] } },
         select: { id: true },
       });
       const survived = new Set(survivors.map((s) => s.id));
       const withdrawn = candidates.filter((c) => !survived.has(c.classId));
-      if (withdrawn.length === 0) return deleted;
+      if (withdrawn.length === 0) return;
       const notifications: CreateNotificationInput[] = withdrawn.map((c) => ({
         recipientType: 'student' as const,
         recipientId: c.studentId,
@@ -779,7 +797,6 @@ const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
         body: `The ${c.class.calendarEntry.classType} class on ${formatDayHeader(c.class.calendarEntry.date)} at ${timeToHHmm(c.class.calendarEntry.startTime)} has been withdrawn by your teacher. You were on its waiting list.`,
       }));
       await createBulkNotifications(tx, notifications);
-      return deleted;
     },
   },
 };

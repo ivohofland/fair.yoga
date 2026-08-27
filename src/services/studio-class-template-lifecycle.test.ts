@@ -1377,7 +1377,9 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
    * matches neither classification and falls through to the residual.
    *
    * Driven by two `$extends` hooks rather than by sleeps: each fires at a
-   * known statement boundary, so the interleaving is deterministic.
+   * known statement boundary, so the interleaving is deterministic — and
+   * the branch is identified by the message it logs rather than by how
+   * long the call took, so nothing here depends on wall-clock timing.
    */
   it('the residual CAS miss answers busy rather than throwing', async () => {
     const t = await makeTemplate('Residual Miss');
@@ -1430,22 +1432,43 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
       },
     }) as unknown as PrismaClient;
 
-    const startedAt = Date.now();
-    const result = await pauseOrResumeStudioTemplate(interposing, t.id, teacherId, 'active');
-    const elapsed = Date.now() - startedAt;
-
-    // Both hooks fired, so the interleaving this test constructs is the one
-    // that ran — an unfired hook would leave the row in a state the CAS
-    // matches, and this call would never reach the residual at all.
-    expect(armedRead).toBe(false);
-    expect(armedCas).toBe(false);
-    expect(result).toEqual({ ok: false, reason: 'busy' });
     // `busy` has a second producer in this function — the `catch`'s
-    // `isTransientDbError` branch, reached through a `lock_timeout` expiry
-    // that costs at least the 2s `setLockTimeout` bound. Asserting the shape
-    // alone would pass on that one too; the elapsed time is what says this
-    // `busy` came from the residual branch.
-    expect(elapsed).toBeLessThan(1_000);
+    // `isTransientDbError` branch — and the two are told apart by the message
+    // each logs, not by how long the call took. Spied with
+    // `mockImplementation` so the real line does not print on a passing run.
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    try {
+      const result = await pauseOrResumeStudioTemplate(interposing, t.id, teacherId, 'active');
+
+      // Both hooks fired, so the interleaving this test constructs is the one
+      // that ran — an unfired hook would leave the row in a state the CAS
+      // matches, and this call would never reach the residual at all.
+      expect(armedRead).toBe(false);
+      expect(armedCas).toBe(false);
+      expect(result).toEqual({ ok: false, reason: 'busy' });
+
+      const residualLog = warn.mock.calls.find(
+        (call) =>
+          call[1] === 'studio class pause/resume CAS missed and the re-read matched no classification',
+      );
+      expect(residualLog).toBeDefined();
+      expect(residualLog?.[0]).toMatchObject({
+        templateId: t.id,
+        teacherId,
+        target: 'active',
+        observed: { isActive: false, isArchived: false },
+        desiredActive: true,
+      });
+      // And NOT the other producer's, which would mean this `busy` came from a
+      // lock-timeout expiry rather than from the residual branch.
+      expect(
+        warn.mock.calls.find(
+          (call) => call[1] === 'studio class pause/resume lost the template lock race',
+        ),
+      ).toBeUndefined();
+    } finally {
+      warn.mockRestore();
+    }
 
     // Nothing was written: the CAS matched no row, so the rollback leaves the
     // row exactly as the second interposed write left it.

@@ -299,8 +299,11 @@ export async function archiveOrUnarchiveRule<TChild>(
         // family's `withdraw` hook issues around it. That last part is not
         // incidental: a hook may take locks of its own that this transaction
         // knows nothing about, and the 2s bound is what keeps those waits from
-        // being unbounded. What any one hook's locks buy is argued where that
-        // hook is written — for the class family, in `CLASS_FAMILY.withdraw`
+        // being unbounded. Pinned wherever such a hook exists —
+        // `class-generator.test.ts`, "the bound reaches its pre-lock", which
+        // drives this bound through a wait no hookless family can reach. What
+        // any one hook's locks buy is argued where that hook is written — for
+        // the class family, in `CLASS_FAMILY.withdraw`
         // (`class-template-lifecycle.ts`).
         //
         // The `deleteMany` below can wait even behind a family that pre-locks,
@@ -518,11 +521,22 @@ export async function archiveOrUnarchiveRule<TChild>(
 
         if (!archiving) {
           // `updateMany` returns a count, not a row, and every arm of the
-          // contract carries a template. Reading it back is safe here
-          // specifically because the CAS above holds the rule row's lock until
-          // we commit, so nothing can change or delete it in between — the same
-          // lock-then-read pattern each family's generation claim uses, and
-          // `OrThrow` for the same reason: the update just matched this row.
+          // contract carries a template. TWO different locks make this
+          // read-back safe, and they are not interchangeable — crediting one
+          // with the other's job is what makes the child `FOR UPDATE` above
+          // look redundant:
+          //
+          //   - The rule columns are current because the CAS above holds
+          //     `FOR NO KEY UPDATE` on the rule row until commit, so nothing
+          //     can move `isArchived`/`isActive` between that write and this
+          //     read.
+          //   - `OrThrow` is safe because the child `FOR UPDATE` taken at the
+          //     head of this transaction is still held, so no concurrent
+          //     `DELETE` can take the child row out from under this read. The
+          //     CAS's lock is on `ScheduleRule` and would not stop that — the
+          //     same split the compare-and-swap's own comment draws for P2025,
+          //     and the same lock-then-read pattern each family's generation
+          //     claim uses.
           //
           // A template that is no longer archived has no withdrawal to report.
           // Not a *live* one — the CAS above forced `isActive: false` in the

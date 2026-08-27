@@ -2277,10 +2277,10 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
    *
    * This is the path where the row is real when the function starts and gone
    * when the transaction opens. What answers is the child `FOR UPDATE` — it
-   * matches no row and returns `not_found` before the CAS runs at all, which
-   * is measurable rather than inferred: the branch logs at `error`
-   * ("archive found no child row to lock for a template it had just read")
-   * and that is the line this test emits. The mutant it kills is dropping
+   * matches no row and returns `not_found` before the CAS runs at all. Which
+   * branch answered is asserted, not inferred: that one logs at `error` and
+   * the CAS's own re-read miss logs a different line, so the message pins
+   * which of the two `not_found`s this is. The mutant it kills is dropping
    * that zero-row check, which would let the CAS match the orphaned
    * `ScheduleRule` row and archive a template that no longer exists.
    *
@@ -2312,9 +2312,25 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       },
     }) as unknown as PrismaClient;
 
-    const result = await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived');
+    const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      const result = await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived');
 
-    expect(result).toEqual({ ok: false, reason: 'not_found' });
+      expect(result).toEqual({ ok: false, reason: 'not_found' });
+
+      const lockMissLog = error.mock.calls.find(
+        (call) => call[1] === 'archive found no child row to lock for a template it had just read',
+      );
+      expect(lockMissLog).toBeDefined();
+      expect(lockMissLog?.[0]).toMatchObject({
+        templateId: t.id,
+        scheduleRuleId: t.scheduleRuleId,
+        kind: 'regular',
+        teacherId,
+      });
+    } finally {
+      error.mockRestore();
+    }
   });
 
   /**
