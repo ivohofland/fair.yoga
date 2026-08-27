@@ -219,7 +219,7 @@ For each: apply, run, record the exact error text, restore, re-verify green.
 2. Invert the branch to `if (rule) return { ok: false as const };` → failure on the 201, not a silent second row.
 3. **Reinstate the nested `scheduleRule: { create: … }` shape.** This is the realistic regression — someone tidying two statements back into one — and the racing test is the only thing that catches it.
 4. Delete the `busy` arm from the route → **expect a compile error at the `never` guard.** That guard is 228's actual deliverable; if removing an arm still compiles, the union is not doing its job.
-5. Move `isTransientDbError` *after* a conflict check → expect a transient error to reach a generic 500 rather than `busy`.
+5. Move `isTransientDbError` *after* a conflict check → expect a transient error to lose its named `busy` outcome. **It does not reach a generic 500**, as an earlier draft of this step predicted: `classifyApiError` has its own independent transient net, so the mutation lands on a 503 carrying no structured code or message. That is still the regression — the named outcome is gone and the union's forcing function is bypassed — but record the error text you actually see, not this prediction.
 
 - [ ] **Step 8: Commit**
 
@@ -364,7 +364,13 @@ Expected: PASS.
 
 - [ ] **Step 6: Prove each guard bites**
 
-The five mutations from Task 1 Step 7, against this route and service.
+The same five mutations, against this route and service. Listed here in full because a task brief is extracted per task and cannot reach Task 1's text:
+
+1. Remove `skipDuplicates: true` from the rule insert → the deadlock or an exclusion violation returns.
+2. Invert the branch to `if (rule) return { ok: false as const };` → failure on the 201, not a silent second row.
+3. Reinstate the nested `scheduleRule: { create: … }` shape → the racing test fails. **This is the realistic regression** — someone tidying two statements back into one.
+4. Delete the `busy` arm from the route → **expect a compile error at the `never` guard.** If removing an arm still compiles, the union is not doing its job.
+5. Move `isTransientDbError` after a conflict check → the named `busy` outcome is lost. Expect a 503 with no structured code (not a 500 — `classifyApiError` has its own transient net). Record the text you see.
 
 - [ ] **Step 7: Commit**
 
