@@ -126,7 +126,7 @@ describe('the shared constants', () => {
   // half of the backstop matching nothing.
   it('lists both foreign keys that RESTRICT a TeacherRoom delete', () => {
     expect([...ROOM_DELETE_RESTRICT_FKS].sort()).toEqual([
-      'ClassTemplate_teacherRoomId_fkey',
+      'ClassTemplate_teacherRoomId_roomArchived_fkey',
       'Class_teacherRoomId_fkey',
     ]);
   });
@@ -162,7 +162,7 @@ describe('the FK names, against a real refused delete', () => {
     throw new Error('expected the delete to be refused by a RESTRICT foreign key, but it succeeded');
   }
 
-  it('a teacherRoom delete blocked by a template reports ClassTemplate_teacherRoomId_fkey', async () => {
+  it('a teacherRoom delete blocked by a template reports ClassTemplate_teacherRoomId_roomArchived_fkey', async () => {
     const f = await fx.makeFixture(prisma);
     await fx.addTemplate(prisma, f, { isActive: false, isArchived: true });
 
@@ -171,14 +171,15 @@ describe('the FK names, against a real refused delete', () => {
     expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
     const known = err as Prisma.PrismaClientKnownRequestError;
     expect(known.code).toBe('P2003');
-    expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_fkey');
+    expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_roomArchived_fkey');
     expect(isRoomDeleteBlocked(err)).toBe(true);
   });
 
   it('a BARE room delete reports the same constraint under modelName "Room"', async () => {
     // The whole reason the matcher keys on `constraint` and never on
-    // `modelName`. `Room` has no template FK — `ClassTemplate_teacherRoomId_fkey`
-    // is declared on `TeacherRoom` — so this error can only arrive via
+    // `modelName`. `Room` has no template FK —
+    // `ClassTemplate_teacherRoomId_roomArchived_fkey` is declared on
+    // `TeacherRoom` — so this error can only arrive via
     // TeacherRoom_roomId_fkey's ON DELETE CASCADE
     // (`20260403092044_init/migration.sql:333`) taking the link on the way.
     //
@@ -196,7 +197,7 @@ describe('the FK names, against a real refused delete', () => {
 
     const known = err as Prisma.PrismaClientKnownRequestError;
     expect(known.code).toBe('P2003');
-    expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_fkey');
+    expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_roomArchived_fkey');
     expect(known.meta?.modelName).toBe('Room');
     expect(isRoomDeleteBlocked(err)).toBe(true);
   });
@@ -224,7 +225,7 @@ describe('the FK names, against a real refused delete', () => {
     expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
     const known = err as Prisma.PrismaClientKnownRequestError;
     expect(known.code).toBe('P2003');
-    expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_fkey');
+    expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_roomArchived_fkey');
     expect(known.meta?.modelName).toBe('TeacherRoom');
     expect(isRoomDeleteBlocked(err)).toBe(true);
   });

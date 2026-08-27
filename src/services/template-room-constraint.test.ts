@@ -5,7 +5,6 @@ const prisma = new PrismaClient();
 const suffix = `troom-${Date.now()}`;
 const accountIds: string[] = [];
 let teacherId: string;
-let roomId: string;
 let openRoomId: string;
 let shelvedRoomId: string;
 
@@ -77,7 +76,6 @@ beforeAll(async () => {
     },
   });
   teacherId = t.id; accountIds.push(t.accountId);
-  roomId = await makeRoom('base', false);
   openRoomId = await makeRoom('open', false);
   shelvedRoomId = await makeRoom('shelved', true);
 });

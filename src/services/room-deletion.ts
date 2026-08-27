@@ -27,13 +27,19 @@ import { isRestrictViolationOn } from '@/lib/api-errors';
  * Every foreign key that `RESTRICT`s a `TeacherRoom` delete
  * (`prisma/migrations/20260403092044_init/migration.sql:339,345`).
  *
+ * The template FK changed name when issue 272 widened it to carry the room
+ * mirror (`ClassTemplate_teacherRoomId_roomArchived_fkey`,
+ * `20260827120000_template_room_archive_invariant/migration.sql:39-42`). The
+ * constraint it replaced is gone, so the OLD name here would make this half of
+ * the backstop match nothing.
+ *
  * Used with `isRestrictViolationOn` as the backstop for the check-to-delete
  * race. `Class_teacherRoomId_fkey` is here even though the `Class` guard
  * predates this issue: that guard has the identical race and had no backstop
  * at all.
  */
 export const ROOM_DELETE_RESTRICT_FKS = [
-  'ClassTemplate_teacherRoomId_fkey',
+  'ClassTemplate_teacherRoomId_roomArchived_fkey',
   'Class_teacherRoomId_fkey',
 ] as const;
 

@@ -1849,11 +1849,15 @@ describe('generateClassInstances (DB)', () => {
     /**
      * Runs the race and reports what the resume saw.
      *
-     * WHERE THE RESUME WAITS MOVED IN #327, and the observable outcome moved
-     * with it. The holder inserts its colliding row and holds it UNCOMMITTED,
-     * leaving a pending index entry on the key the generator collides on.
+     * WHERE THE RESUME WAITS MOVED THREE TIMES, and the observable outcome
+     * moved with it. The holder inserts its colliding row and holds it
+     * UNCOMMITTED, so its row never appears in a READ COMMITTED query until it
+     * commits.
      *
-     * From #116 until #327 that insert ALSO took `FOR KEY SHARE` on the
+     * PRE-#116: the resume reached its own insert and parked on the holder's
+     * pending unique entry, resuming once the holder committed.
+     *
+     * #116–#327: the in-flight class insert ALSO took `FOR KEY SHARE` on the
      * `ClassTemplate` row, for the FK a `Class` carried through `templateId`.
      * `claimTemplateForGeneration`'s `FOR UPDATE` conflicts with that mode, so
      * the resume blocked at the CLAIM, waited out the holder, and then saw the
@@ -1864,23 +1868,48 @@ describe('generateClassInstances (DB)', () => {
      * `Class.templateId` is gone. A class hangs off a `CalendarEntry` and the
      * entry's FK reaches `ScheduleRule`, so an in-flight class insert no
      * longer touches the `ClassTemplate` row the claim holds. The resume
-     * therefore walks past the claim and meets the holder at its OWN insert,
+     * therefore walked past the claim and met the holder at its OWN insert,
      * parking on the pending entry and finally taking an `ON CONFLICT DO
      * NOTHING` skip — the pre-#116 behaviour, restored by a schema change
      * rather than by a code change. That is a real loss of coupling and is
-     * asserted rather than hidden: `collidedDates` names the collided date.
+     * asserted rather than hidden: `collidedDates` named the collided date.
      *
-     * WHICH REASON it is named under moved once more, inside #327. The skip was
-     * reported `raced` until the generator started re-asking the database about
-     * a short date; the holder here has COMMITTED by then and is sitting on the
-     * slot, so the answer is `blocked_by_overlap` — a reason that reaches the
-     * teacher, where `raced` is one of the two `countSkipReasons` drops. That
-     * is coarser than the truth (the holder is this rule's own row, so a fresh
-     * pre-check would say `already_generated`) and it is deliberately not
-     * refined: see the note above `landed` in `class-generator.ts`. The filter
-     * below takes every reason but `already_generated`, which is what
-     * `logSkippedSlots` logs, so it cannot go quietly empty if the
-     * classification moves again.
+     * #272 MOVED IT BACK ONE STATEMENT AGAIN, to the CAS. `ScheduleRule` now
+     * carries the generated `live` column, and the composite key it backs
+     * (`ScheduleRule_id_kind_live_key`) is what
+     * `ClassTemplate_scheduleRuleId_kind_ruleLive_fkey` references. Postgres
+     * upgrades an UPDATE of a referenced key column from `FOR NO KEY UPDATE`
+     * to `FOR UPDATE` — the same mode it applies to `isActive` when a rule
+     * row is PATCHed — so the resume's CAS conflicts with the holder's
+     * `FOR KEY SHARE` (the entry's FK check on `scheduleRuleId`) and blocks
+     * for the whole hold. Measured with `pg_stat_activity` while the holder
+     * was parked: the resume sat in `Lock:transactionid` on
+     * `UPDATE "ScheduleRule" SET "isActive" = $1 …` for ~400ms. The holder
+     * then commits, the CAS proceeds, and the resume's occupancy read — now
+     * AFTER the commit — sees the colliding row as its own and reports the
+     * date `already_generated`: the outcome the #327 note below already
+     * predicted for a fresh pre-check, reached by a lock edge rather than by
+     * a refinement.
+     *
+     * WHAT #164 IS ACTUALLY ABOUT SURVIVES, and it is what the two callers
+     * below assert: the transaction is not poisoned, `isActive` stays
+     * committed, and a collision costs only its own date. What changed is who
+     * waits and therefore what the date is named when the collision is
+     * absorbed — the clashed date now classifies `already_generated` (the
+     * holder is this rule's own row), and `collidedDates` is empty.
+     *
+     * WHICH REASON it is named under moved twice. Inside #327 the skip was
+     * reported `blocked_by_overlap`, because the generator started re-asking
+     * the database about a short date and the holder had COMMITTED and sat on
+     * the slot by then — coarser than the truth (the holder is this rule's own
+     * row, so a fresh pre-check would say `already_generated`) and
+     * deliberately not refined. #272 made that prediction the outcome: the
+     * date is consumed by the pre-check itself as `already_generated`, never
+     * reaching the `short` list or the probe. The filter below takes every
+     * reason but `already_generated`, which is what `logSkippedSlots` logs, so
+     * a clash now yields an empty `collidedDates` — the two callers assert
+     * that instead of a name, and the count assertions carry the load the name
+     * used to.
      *
      * What #164 is actually about survives untouched, and it is what the two
      * callers below assert: the transaction is not poisoned, `isActive` stays
@@ -1891,7 +1920,8 @@ describe('generateClassInstances (DB)', () => {
      * RESUME is the party that waits. Pushing the hold past the 2s
      * `setLockTimeout` bound turns that wait into `busy`, which is what the
      * third test in this block pins — unchanged, because the bound reaches
-     * whichever statement does the waiting.
+     * whichever statement does the waiting. Since #272 that statement is the
+     * CAS, and the third test's comment says so.
      *
      * `waitedMs` is what says a race happened at all; without it these tests
      * pass against a pre-committed collision and prove nothing — measured.
@@ -2005,19 +2035,21 @@ describe('generateClassInstances (DB)', () => {
       expect(holderError).toBeNull();
       expect(holderCommitted).toBe(true);
       // The resume blocked until the holder committed. This is the assertion
-      // that says a race happened at all.
+      // that says a race happened at all. Since #272 the block is at the CAS,
+      // not at the resume's insert — see the helper's docblock — so the
+      // clashed date reads back as this rule's own committed row and is
+      // classified `already_generated`, which the `collidedDates` filter
+      // drops.
       expect(waitedMs).toBeGreaterThanOrEqual(HELD_FOR_MS);
-      // And having waited, it lost that one date to the holder's pending
-      // index entry, since #327 moved the wait off the claim and onto the
-      // resume's own insert. See the helper's docblock; the date itself is the
-      // only thing the collision cost.
-      expect(collidedDates).toEqual([dates[3]!.toISOString().slice(0, 10)]);
+      expect(collidedDates).toEqual([]);
       // The action asserted, then narrowed — not narrowed and silently
       // skipped. `if (resumed.ok && resumed.action === 'active')` guarding the
       // only count assertion means an `unchanged` answer passes this test
       // without ever checking a count.
       expect(resumed.ok).toBe(true);
       expect(resumed.ok && resumed.action).toBe('active');
+      // The last free date was the clashed one, so the collision cost the
+      // window its only class — a date, not the window (#164).
       if (resumed.ok && resumed.action === 'active') expect(resumed.added).toBe(0);
 
       const after = await prisma.classTemplate.findUniqueOrThrow({
@@ -2033,17 +2065,20 @@ describe('generateClassInstances (DB)', () => {
       const dates = candidates(now);
       for (const d of dates.slice(0, 2)) await createClassFixture(prisma, classRow(d));
 
-      const { collidedDates, resumed, waitedMs, holderCommitted, holderError } =
+const { collidedDates, resumed, waitedMs, holderCommitted, holderError } =
         await raceResumeAgainst(dates[2]!);
 
       expect(holderError).toBeNull();
       expect(holderCommitted).toBe(true);
       expect(waitedMs).toBeGreaterThanOrEqual(HELD_FOR_MS);
-      expect(collidedDates).toEqual([dates[2]!.toISOString().slice(0, 10)]);
+      // The clashed date classifies `already_generated` since the CAS wait
+      // (#272) moves the occupancy read past the holder's commit — same empty
+      // `collidedDates` as its sibling, for the same reason.
+      expect(collidedDates).toEqual([]);
       expect(resumed.ok).toBe(true);
       expect(resumed.ok && resumed.action).toBe('active');
       // dates[3] is the one nothing collided with — the resume still filled it
-      // after its wait, so the claim cost a date nothing.
+      // after its wait, so the clash cost a date nothing.
       if (resumed.ok && resumed.action === 'active') expect(resumed.added).toBe(1);
 
       const after = await prisma.classTemplate.findUniqueOrThrow({
@@ -2063,12 +2098,14 @@ describe('generateClassInstances (DB)', () => {
      * that, the resume does not report the date as `raced`; the whole
      * transaction rolls back and the answer is `busy`.
      *
-     * Since #116 the statement that gives up is the CLAIM, not the insert:
-     * `claimTemplateForGeneration`'s `FOR UPDATE` conflicts with the
-     * `FOR KEY SHARE` the holder's in-flight insert took for its FK check, so
-     * the resume never reaches its own insert to park on the pending unique
-     * entry. Same bound, same verdict, one statement earlier — see the inline
-     * note below, which carries the measured stack.
+     * Since #272 the statement that gives up is the CAS, not the claim or the
+     * insert: the CAS's `UPDATE ScheduleRule` now has to block on the
+     * `FOR KEY SHARE` the holder's in-flight insert takes, because Postgres
+     * upgrades an UPDATE of a FK-referenced key column to `FOR UPDATE` (the
+     * `live` generated column backs
+     * `ClassTemplate_scheduleRuleId_kind_ruleLive_fkey`). Same bound, same
+     * verdict, one statement earlier than #116's claim — see the inline note
+     * below, which carries the measured stack.
      *
      * The two tests above hold for 400ms and cannot see this. Written because
      * nothing in the branch that added the bound acknowledged it reached this
@@ -2103,14 +2140,19 @@ describe('generateClassInstances (DB)', () => {
         try {
           // Same interleaving as `raceResumeAgainst`: the holder's row is in
           // flight, so it holds `FOR KEY SHARE` on the template row and the
-          // resume blocks asking for the claim's `FOR UPDATE`. The difference
-          // is that nothing releases it before the bound fires.
+          // resume blocks. The difference is that nothing releases it before
+          // the bound fires.
           //
-          // The wait is at `claimTemplateForGeneration`, not at the resume's
-          // own insert — measured, and worth naming because it moved: before
-          // #116 the resume reached its insert and parked on the holder's
-          // pending unique-index entry instead. Same 2s bound, same `busy`,
-          // one statement earlier.
+          // The wait is at the CAS — `pauseOrResumeTemplate`'s
+          // `updateMany`, whose `FOR UPDATE` (upgrade for the FK-referenced
+          // `live` key, #272) now conflicts with the holder's hold — not at
+          // the claim or at the resume's own insert. Measured with
+          // `pg_stat_activity` on the four-contention block above: the resume
+          // sat in `Lock:transactionid` on `UPDATE "ScheduleRule" SET
+          // "isActive" = $1 …` for the whole hold. Same 2s bound, same
+          // `busy`, one statement earlier than #116's claim. Under #327 the
+          // wait sat at the insert instead; without #272 that is where this
+          // test's bound would still bite.
           await parked;
           const startedAt = Date.now();
           const result = await pauseOrResumeTemplate(prisma, templateId, teacherId, 'active');

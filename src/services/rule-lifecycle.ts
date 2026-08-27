@@ -526,10 +526,13 @@ export async function archiveOrUnarchiveRule<TChild>(
           // with the other's job is what makes the child `FOR UPDATE` above
           // look redundant:
           //
-          //   - The rule columns are current because the CAS above holds
-          //     `FOR NO KEY UPDATE` on the rule row until commit, so nothing
-          //     can move `isArchived`/`isActive` between that write and this
-          //     read.
+          //   - The rule columns are current because the CAS above holds a
+          //     rule-row lock until commit, so nothing can move
+          //     `isArchived`/`isActive` between that write and this read. It
+          //     is `FOR UPDATE`, not `FOR NO KEY UPDATE`: the migration's 272
+          //     change made `live` an FK-referenced key column, which upgrades
+          //     every statement touching it (measured: `pg_stat_activity`
+          //     shows a concurrent rule write parked in `Lock:transactionid`).
           //   - `OrThrow` is safe because the child `FOR UPDATE` taken at the
           //     head of this transaction is still held, so no concurrent
           //     `DELETE` can take the child row out from under this read. The
