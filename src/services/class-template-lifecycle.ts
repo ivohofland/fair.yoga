@@ -1859,7 +1859,23 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       where: { id: templateId },
       include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
     }),
-  scheduledWhere,
+  // Whole predicates, both of them: the shared archive passes each straight to
+  // its statement and composes nothing onto it. So the charged-registration
+  // conjunct is applied by the same expression that chooses it, and nothing
+  // crosses the boundary for the other side to drop.
+  //
+  // "Nobody booked" means no registration in a CHARGED status — deliberately
+  // not `settingsLocked` (which answers whether the price may change, and
+  // stays true forever) and not `ACTIVE_REGISTRATION_STATUSES` (which excludes
+  // `late_cancel`, so a class a student still owes for would be cascaded
+  // away).
+  deleteWhere: (scheduleRuleId, today) =>
+    scheduledWhere(
+      scheduleRuleId,
+      { gt: today },
+      { registrations: { none: { status: { in: [...CHARGED_STATUSES] } } } },
+    ),
+  remainingWhere: (scheduleRuleId, today) => scheduledWhere(scheduleRuleId, { gte: today }),
   // Destructures here, where `ClassTemplate` is concrete, then hands the bare
   // child to this file's existing exported `withSlot` unchanged.
   withSlot: ({ scheduleRule, ...bare }, rule) => {
@@ -1867,7 +1883,6 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
     return withSlot(bare, rule);
   },
   withdraw: {
-    deleteFilter: { registrations: { none: { status: { in: [...CHARGED_STATUSES] } } } },
     around: async (tx, { scheduleRuleId, today }, deleteEntries) => {
       // A lock is not unavailable — `POST /api/registrations` already takes
       // the `Class` row lock too, through `lockClassRow` (`db-locks.ts`) —
@@ -1893,10 +1908,26 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       // `SET LOCAL lock_timeout` at the head of this transaction and its
       // 10s budget.
       //
+      // What a `40P01` out of THIS family's archive most likely means, which
+      // belongs beside the statement that decides it. The AB-BA cycle against
+      // `deleteStudentAccount` argued above was reproduced (issue 180), and
+      // the pre-lock below is what closed it — except through the narrow
+      // window recorded further down, which is still open. The other lock
+      // case, an archive queued behind the generation sweep's claim, has no
+      // cycle at all and ends in `55P03`. So a deadlock here now points at
+      // that window, or at the still-open `{Class, ClassTemplate}` ordering
+      // question this hook is one side of (`docs/lock-order.md`, "Known
+      // violation, not fixed here"; the decision is issue #229) — an
+      // unresolved disagreement, never itself reproduced as a live deadlock —
+      // rather than at the pairing this pre-lock already handles.
+      // `ArchiveRuleResult`'s `busy` arm (`rule-lifecycle.ts`) lists the codes
+      // that reach it; this calibration sits here instead, because a family
+      // whose `withdraw` is null takes none of these locks.
+      //
       // Ordered pre-lock (issue 180 task 4). Deliberately the FULL
       // `scheduledWhere(templateId, { gt: today })` set — every scheduled
-      // future class of this template — not narrowed to the
-      // `registrations: { none: … }` conjunct `deleteFilter` above supplies.
+      // future class of this template — not narrowed by the
+      // `registrations: { none: … }` conjunct `deleteWhere` above carries.
       // The shared `deleteMany` this hook brackets re-evaluates its predicate
       // at execution time (deliberately — see its own comment in
       // `rule-lifecycle.ts`, which this does not change), so ANY
@@ -1982,7 +2013,7 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       // `db.class.updateMany({ where:
       // { id } })` with `date` in its teacher-editable set, taking neither
       // the `ClassTemplate` lock nor any `Class` lock this pre-lock holds.
-      // A same-day instance — outside `c.date > ${today}` above, so never
+      // A same-day instance — outside `e.date > ${today}` above, so never
       // locked here — rescheduled into the future between this pre-lock
       // and the `deleteMany` below (whose predicate is re-evaluated at
       // execution time, by design — see its own comment in
@@ -2135,10 +2166,9 @@ export type ArchiveTemplateResult = ArchiveRuleResult<ClassTemplate>;
  * the template, so without this an archived template keeps up to four weeks of
  * classes publicly bookable.
  *
- * "Nobody booked" means no registration in a CHARGED status — deliberately not
- * `settingsLocked` (which answers whether the price may change, and stays true
- * forever) and not `ACTIVE_REGISTRATION_STATUSES` (which excludes `late_cancel`,
- * so a class a student still owes for would be cascaded away).
+ * "Nobody booked" is the charged-registration conjunct in
+ * `CLASS_FAMILY.deleteWhere` above, which also names the two status sets it is
+ * deliberately not.
  *
  * The update and the delete share a transaction: a half-applied archive is
  * exactly the shelved-but-bookable state this exists to prevent.

@@ -1330,8 +1330,10 @@ pre-298 shape again.
 disambiguate a zero-count CAS with a plain re-read, and each has a residual
 branch for the case that re-read matches no classification: under READ
 COMMITTED every statement takes its own snapshot, so a row that changed and
-changed back between the CAS and the re-read reaches it. Both branches answer
-`{ ok: false, reason: 'busy' }` and log the observed row at `warn`. The
+changed back between the CAS and the re-read reaches it. Both branches return
+the internal `{ outcome: 'busy' }` and log the observed row at `warn`; each
+function's post-transaction switch is what maps that to the public
+`{ ok: false, reason: 'busy' }`. The
 reasoning is here rather than in either comment because every load-bearing
 part of it is a fact about a different module, and a comment carrying it has
 no owner in the file that would falsify it.

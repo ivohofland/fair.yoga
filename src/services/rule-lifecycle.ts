@@ -59,12 +59,6 @@ export type WithdrawContext = { scheduleRuleId: string; today: Date };
  */
 export type WithdrawHook = {
   /**
-   * Extra `Class`-side conjunct for the delete's predicate. The class family
-   * spares classes carrying a charged registration; the studio family has no
-   * registrations and supplies no hook at all.
-   */
-  deleteFilter: Prisma.ClassWhereInput;
-  /**
    * Runs the shared delete and whatever this family needs around it, returning
    * the delete's own row count.
    *
@@ -88,8 +82,10 @@ export type WithdrawHook = {
  *
  * A dispatch table, not a runtime discriminator: each family's entry is
  * complete on its own, and nothing in this module ever asks which family it is
- * holding. An `if (family.kind === 'regular')` anywhere below is the stop
- * condition issue 332 names, not an implementation detail.
+ * holding. An `if (family.kind === <a ClassFamily literal>)` anywhere below is
+ * the stop condition issue 332 names, not an implementation detail — the
+ * literal is spelled out of line here on purpose, so that grepping this file
+ * for one stays a clean signal.
  *
  * NO FIELD IS OPTIONAL, deliberately. `withdraw` is `WithdrawHook | null` —
  * required and explicitly null for the family without one — because an
@@ -114,11 +110,33 @@ export type TemplateFamily<TChild> = {
     client: TransactionClientOnly,
     templateId: string,
   ) => Promise<ChildWithRule<TChild>>;
-  scheduledWhere: (
-    scheduleRuleId: string,
-    date: { gt: Date } | { gte: Date },
-    alsoOnClass?: Prisma.ClassWhereInput,
-  ) => Prisma.CalendarEntryWhereInput;
+  /**
+   * The entries an archive of this family withdraws: this rule's, dated
+   * strictly after the teacher's `today`, minus whatever else this family
+   * spares.
+   *
+   * Whole and final. The shared `deleteMany` passes this straight through and
+   * composes nothing onto it, so no conjunct crosses the boundary and there is
+   * nothing for a family to declare and then fail to apply. Two required
+   * predicates rather than one boundary-taking predicate plus a droppable
+   * extra filter, and that is the whole reason for the shape.
+   */
+  deleteWhere: (scheduleRuleId: string, today: Date) => Prisma.CalendarEntryWhereInput;
+  /**
+   * The entries an archive of this family leaves standing, counted for the
+   * teacher after the delete.
+   *
+   * `today` INCLUSIVE, where `deleteWhere` above excludes it. The delete
+   * deliberately spares a class dated today — "a class hours from starting
+   * should not shift under its students", which since #194 is what a template
+   * EDIT does for every instance rather than only for today's: an edit moves
+   * nothing at all, and that delete is the one verb left that can take a
+   * generated class out from under a waiting student. Counting with the
+   * delete's own boundary would exclude that same survivor and tell the
+   * teacher nothing is left while the class is still open on their public
+   * page.
+   */
+  remainingWhere: (scheduleRuleId: string, today: Date) => Prisma.CalendarEntryWhereInput;
   /**
    * Takes the JOINED row, not a bare child, and each family destructures in its
    * own adapter — where `TChild` is concrete and the compiler can prove the
@@ -146,6 +164,10 @@ export type TemplateFamily<TChild> = {
  * non-interchangeable anyway, because `ArchiveRuleResult<ClassTemplate>` and
  * `ArchiveRuleResult<StudioClassTemplate>` differ in `template` — the same job
  * `templateKind` does for the wire types in `template-action-messages.ts`.
+ * Held by a pair of `@ts-expect-error` assignments in `rule-lifecycle.test.ts`,
+ * the way `template-action-messages.test.ts` holds the discriminator this is
+ * modelled on: a claim about what the compiler refuses is worth only the pin
+ * that makes the compiler refuse it.
  */
 export type ArchiveRuleResult<TChild> =
   | { ok: true; action: 'archived'; template: WithSlot<TChild>; deleted: number; remaining: number }
@@ -175,20 +197,16 @@ export type ArchiveRuleResult<TChild> =
    * Reading a `busy` in the logs and hunting for a 2s lock wait that never
    * happened is the mistake this paragraph exists to prevent.
    *
-   * Two calibrations, so this list does not send anyone the other way. This
-   * function used to have a reproduced `40P01` cycle against
-   * `deleteStudentAccount`'s ascending `Class`-row lock order — closed by
-   * this function's own ordered pre-lock (issue 180, atomic-template-update)
-   * — while the branch's headline case, an archive queued behind the sweep's
-   * claim, has no cycle and ends in `55P03`. A `40P01` seen here now most
-   * likely points at the still-open `{Class, ClassTemplate}` ordering
-   * question this function is one side of (`docs/lock-order.md`, "Known
-   * violation, not fixed here"; the decision is issue #229) rather than at a
-   * confirmed, already-reproduced pairing — that inversion is recorded as an
-   * unresolved ordering disagreement, not itself reproduced as a live
-   * deadlock. And `40001` is in the matcher but cannot fire yet: nothing here
-   * uses a serializable or repeatable-read transaction, as `api-errors.ts`
-   * says where it lists the code.
+   * Calibration, so this list does not send anyone the other way.
+   * `40001` is in the matcher but cannot fire yet: nothing here uses a
+   * serializable or repeatable-read transaction, as `api-errors.ts` says
+   * where it lists the code. And what a `40P01` here means is a per-family
+   * question, not a property of this arm: the lock a family takes on top of
+   * the shared ones is its `withdraw` hook's business, so the deadlock
+   * calibration for a family that has one is argued there — for the class
+   * family, in `CLASS_FAMILY.withdraw` (`class-template-lifecycle.ts`). A
+   * family whose `withdraw` is `null` takes no such lock and carries no such
+   * exposure.
    *
    * The writer on the other side is equally unknown — the generation sweep, or
    * another tab's archive, pause or resume — which is why the copy names none
@@ -338,9 +356,9 @@ export async function archiveOrUnarchiveRule<TChild>(
         // … WHERE "id" = $1 AND "isArchived" = $2` — a filter it compiled to a
         // subquery would be re-run under the same snapshot and match anyway.
         //
-        // No P2025 guard here, unlike `updateClassTemplate` (#100) — and
-        // unlike `pauseOrResumeTemplate` only until #116 gave it this same
-        // shape, which is why the sentence below now describes both of them.
+        // No P2025 guard here, unlike `updateClassTemplate` (#100).
+        // `pauseOrResumeTemplate` (`class-template-lifecycle.ts`) has this
+        // same guard-free shape, and #116 is where it got it.
         // Not an omission: `updateMany` returns
         // `{ count: 0 }` rather than throwing when nothing matches, and the
         // zero-count branch below already answers `not_found` by re-reading. The
@@ -391,12 +409,9 @@ export async function archiveOrUnarchiveRule<TChild>(
           // Settled by experiment during #94 — three Prisma connections and a
           // `FOR UPDATE NOWAIT` probe — not from the docs. The second row is
           // not exotic: it is the interleaving this repo's own three-
-          // transaction race tests construct. The sentence this replaces said
-          // flatly that a missed CAS "holds no lock: the CAS matched nothing,
-          // so it acquired none" (#117), which invites a contributor to add a
-          // read-then-write here believing the row is pinned. The reasoning
-          // about whether to lock on purpose survives that correction; the
-          // claim about what is already held does not.
+          // transaction race tests construct. So a missed CAS may not be read
+          // as holding no lock, and nothing may be added here on the strength
+          // of the row being pinned either.
           //
           // With three concurrent
           // requests a fourth state is possible — the winner archives, someone
@@ -451,8 +466,10 @@ export async function archiveOrUnarchiveRule<TChild>(
         const ctx: WithdrawContext = { scheduleRuleId: template.scheduleRuleId, today };
 
         // Built here, run by the hook — or directly, for a family with none.
-        // The family's own extra conjunct is folded in here rather than left to
-        // the hook, so the delete's predicate has exactly one author.
+        // The predicate is `family.deleteWhere`'s whole answer: this module
+        // adds no conjunct of its own to it and no hook is handed one to apply,
+        // so the delete's predicate has exactly one author AND exactly one
+        // application site.
         let deleteCalls = 0;
         let deletedRows = 0;
         const deleteEntries = async () => {
@@ -468,11 +485,7 @@ export async function archiveOrUnarchiveRule<TChild>(
           // a stale count from an earlier read. Do not "optimise" this back into a
           // read-then-delete.
           const { count } = await tx.calendarEntry.deleteMany({
-            where: family.scheduledWhere(
-              template.scheduleRuleId,
-              { gt: today },
-              family.withdraw?.deleteFilter,
-            ),
+            where: family.deleteWhere(template.scheduleRuleId, today),
           });
           deletedRows = count;
           return count;
@@ -485,27 +498,32 @@ export async function archiveOrUnarchiveRule<TChild>(
         // #97's record guarantee, enforced here rather than trusted to the
         // hook. `deleted` reaches `withdrawnCount` below — a durable record of
         // what a teacher is told was withdrawn — and it arrives through a
-        // callback this module does not own. A hook that skipped the shared
-        // delete, ran it twice, or answered with a number of its own would
-        // otherwise write that number into the record. Throwing rolls the
-        // transaction back whole, so the archive is not half-applied either.
+        // callback this module does not own.
+        //
+        // Exactly two things are checked, and the contract is no wider than
+        // them: that the shared delete ran once, and that the number the hook
+        // answered with is the number that delete removed. A hook that skipped
+        // it, ran it twice, or substituted a count of its own is caught. A
+        // hook that runs it once and reports its count faithfully while ALSO
+        // issuing a `calendarEntry.deleteMany` of its own is NOT — those rows
+        // would go unrecorded and nothing here can see them.
+        //
+        // Throwing rolls the transaction back whole, so a caught hook does not
+        // leave the archive half-applied either. Pinned by
+        // `rule-lifecycle.test.ts`, which runs a synthetic family through both
+        // halves of that.
         if (deleteCalls !== 1 || deleted !== deletedRows) {
           throw new Error(
             `archiveOrUnarchiveRule: the ${family.logNoun} withdraw hook must run the shared delete exactly once and report its count; it ran it ${deleteCalls} time(s) and reported ${deleted} against ${deletedRows} row(s) removed`,
           );
         }
 
-        // `gte`, where the delete used `gt`. The delete deliberately spares a
-        // class dated today — "a class hours from starting should not shift
-        // under its students", which since #194 is what a template EDIT does
-        // for every instance rather than only for today's: an edit moves
-        // nothing at all, and this delete is the one verb left that can take a
-        // generated class out from under a waiting student — so counting with
-        // the delete's own boundary would exclude that
-        // same survivor and tell the teacher nothing is left while the class is
-        // still open on their public page.
+        // A separate predicate from the delete's, on the same clock reading:
+        // the two boundaries differ, and `remainingWhere`'s own docblock
+        // (above) carries why a class dated today is spared by one and counted
+        // by the other.
         const remaining = await tx.calendarEntry.count({
-          where: family.scheduledWhere(template.scheduleRuleId, { gte: today }),
+          where: family.remainingWhere(template.scheduleRuleId, today),
         });
 
         // Written from the delete's own `count`, inside the same transaction, so

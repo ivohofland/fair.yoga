@@ -4,7 +4,7 @@
 
 **Goal:** Merge the two template families' `archiveOrUnarchive` into one implementation over `ScheduleRule`, and fix the studio `pauseOrResume` CAS-miss residual that answers 500 where the class family answers 503.
 
-**Architecture:** A new `src/services/rule-lifecycle.ts` owns `TemplateFamily<TChild>` (a descriptor record — delegate reads, raw table name, predicate, log noun, and one optional-but-required-null withdraw hook) and `archiveOrUnarchiveRule`. The two existing services keep their exported wrappers and their own result unions, now aliases of a generic. No runtime family test exists anywhere in the shared module.
+**Architecture:** A new `src/services/rule-lifecycle.ts` owns `TemplateFamily<TChild>` (a descriptor record — delegate reads, raw table name, the delete and remaining predicates, log noun, and one required-but-nullable withdraw hook) and `archiveOrUnarchiveRule`. The two existing services keep their exported wrappers and their own result unions, now aliases of a generic. No runtime family test exists anywhere in the shared module.
 
 **Tech Stack:** TypeScript strict, Next.js 14 App Router, Prisma 6.19.3, PostgreSQL 16.12, vitest.
 
@@ -36,7 +36,19 @@
 
 `67 + 46 = 113` / `1014 + 302 = 1316` (invocation 1); `10 + 33 = 43` / `123 + 527 = 650` (invocation 2).
 
-**Predicted after: 156 files / 1969 tests** (+3: one residual test in Task 1 — studio only, since the class family already had a mutation-proof one and the plan's own execution withdrew the second test Steps 7/8 called for — plus two descriptor tests in Task 3). **Measure it anyway** — #212's handover predicted 1294 and the real figure was 1296, because that branch's own review added tests the prediction could not have known about.
+## Measured after (2026-08-27, `npm run verify` exit 0)
+
+| project | files | tests |
+|---|---:|---:|
+| unit | 68 | 1022 |
+| components | 46 | 302 |
+| unit-sweeps | 10 | 123 |
+| integration | 33 | 527 |
+| **total** | **157** | **1974** |
+
+`68 + 46 = 114` / `1022 + 302 = 1324` (invocation 1); `10 + 33 = 43` / `123 + 527 = 650` (invocation 2). Re-derive per project: `npx vitest run --project <p>`.
+
+One file more than the baseline: `src/services/rule-lifecycle.test.ts`, which the File Structure table below creates. **Measured, not predicted** — #212's handover predicted 1294 and the real figure was 1296, because that branch's own review added tests the prediction could not have known about, and this one did the same: the fix wave that closed the whole-branch review added four more.
 
 ---
 
@@ -382,8 +394,8 @@ git commit -m "fix: the studio pause/resume residual answers busy, not a 500 (is
 - Produces, for Task 3:
   - `WithSlot<T>` — `T & { teacherId: string; classType: string; dayOfWeek: number; startTime: string; durationMinutes: number; isActive: boolean; isArchived: boolean; archivedAt: Date | null; withdrawnCount: number | null }`
   - `ChildWithRule<TChild>` — `TChild & { scheduleRuleId: string; scheduleRule: ScheduleRule & { teacher: { defaultTimezone: string } } }`
-  - `TemplateFamily<TChild>` — the eight required fields below. **One type parameter, not two** — see the `WithdrawHook` docblock for the variance measurement behind that.
-  - `WithdrawHook` — `{ deleteFilter: Prisma.ClassWhereInput; around(tx, ctx, deleteEntries: () => Promise<number>): Promise<number> }`. Not generic.
+  - `TemplateFamily<TChild>` — the nine required fields below. **One type parameter, not two** — see the `WithdrawHook` docblock for the variance measurement behind that.
+  - `WithdrawHook` — `{ around(tx, ctx, deleteEntries: () => Promise<number>): Promise<number> }`. Not generic, and it carries no predicate: the family owns both whole predicates directly (`deleteWhere`, `remainingWhere`), so nothing droppable crosses the boundary.
   - `ArchiveRuleResult<TChild>` — the seven arms below
   - `archiveOrUnarchiveRule<TChild>(db: PrismaClient, family: TemplateFamily<TChild>, templateId: string, teacherId: string, target: 'archived' | 'unarchived'): Promise<ArchiveRuleResult<TChild>>`
 
@@ -447,12 +459,6 @@ export type WithdrawContext = { scheduleRuleId: string; today: Date };
  * spec's §6.3.
  */
 export type WithdrawHook = {
-  /**
-   * Extra `Class`-side conjunct for the delete's predicate. The class family
-   * spares classes carrying a charged registration; the studio family has no
-   * registrations and supplies no hook at all.
-   */
-  deleteFilter: Prisma.ClassWhereInput;
   /**
    * Runs the shared delete and whatever this family needs around it, returning
    * the delete's own row count.
@@ -627,15 +633,13 @@ export async function archiveOrUnarchiveRule<TChild>(
         const ctx: WithdrawContext = { scheduleRuleId: template.scheduleRuleId, today };
 
         // Built here, run by the hook — or directly, for a family with none.
-        // The family's own extra conjunct is folded in here rather than left to
-        // the hook, so the delete's predicate has exactly one author.
+        // The predicate is `family.deleteWhere`'s whole answer: this module
+        // adds no conjunct of its own to it and no hook is handed one to apply,
+        // so the delete's predicate has exactly one author AND exactly one
+        // application site.
         const deleteEntries = async () => {
           const { count } = await tx.calendarEntry.deleteMany({
-            where: family.scheduledWhere(
-              template.scheduleRuleId,
-              { gt: today },
-              family.withdraw?.deleteFilter,
-            ),
+            where: family.deleteWhere(template.scheduleRuleId, today),
           });
           return count;
         };
@@ -645,7 +649,7 @@ export async function archiveOrUnarchiveRule<TChild>(
           : await deleteEntries();
 
         const remaining = await tx.calendarEntry.count({
-          where: family.scheduledWhere(template.scheduleRuleId, { gte: today }),
+          where: family.remainingWhere(template.scheduleRuleId, today),
         });
 
         const recordedRule = await tx.scheduleRule.update({
@@ -715,7 +719,13 @@ const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       where: { id: templateId },
       include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
     }),
-  scheduledWhere,
+  deleteWhere: (scheduleRuleId, today) =>
+    scheduledWhere(
+      scheduleRuleId,
+      { gt: today },
+      { registrations: { none: { status: { in: [...CHARGED_STATUSES] } } } },
+    ),
+  remainingWhere: (scheduleRuleId, today) => scheduledWhere(scheduleRuleId, { gte: today }),
   // Destructures here, where `ClassTemplate` is concrete, then hands the bare
   // child to this file's existing exported `withSlot` unchanged.
   withSlot: ({ scheduleRule, ...bare }, rule) => {
@@ -723,7 +733,6 @@ const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
     return withSlot(bare, rule);
   },
   withdraw: {
-    deleteFilter: { registrations: { none: { status: { in: [...CHARGED_STATUSES] } } } },
     around: async (tx, { scheduleRuleId, today }, deleteEntries) => {
       await lockClassRowsOrdered(tx, {
         join: Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
@@ -870,7 +879,7 @@ export function archiveOrUnarchiveStudioTemplate(
 }
 ```
 
-**The studio `scheduledWhere` takes two parameters and the descriptor's field takes three.** A two-parameter function is assignable to a three-parameter type in TypeScript, so this compiles — and it is correct, because `family.withdraw?.deleteFilter` is `undefined` for this family and the argument is discarded. **Add a comment at the descriptor saying so**, because a reader who notices the arity gap will otherwise assume a bug. Its `kind: 'studio'` conjunct is what keeps the delete scoped, exactly as its existing docblock says.
+**Each family supplies both predicates whole**, wrapping its own file-local `scheduledWhere` at the two boundaries the archive needs: `deleteWhere` at `{ gt: today }` and `remainingWhere` at `{ gte: today }`. The studio pair adds nothing else — `StudioClass` has no registrations to consult — and its `kind: 'studio'` conjunct is what keeps the delete scoped, exactly as its existing docblock says. Nothing is handed across the boundary for the shared code to compose, which is what makes a family that declares an extra conjunct and then fails to apply it unrepresentable.
 
 - [ ] **Step 2: Export `CLASS_FAMILY`**
 

@@ -13,7 +13,7 @@
  * family that still matter here:
  *
  *   - Where the class family's deletable predicate spreads a `status: {
- *     in: ['draft', 'open'] }` clause, `STUDIO_FAMILY.scheduledWhere` below —
+ *     in: ['draft', 'open'] }` clause, `STUDIO_FAMILY.deleteWhere` below —
  *     the predicate this file hands the shared archive — has no status to
  *     filter on. It uses `cancelledAt: null` instead — an already-cancelled
  *     future class is *not* an income record: the sole `studioClass.findMany`
@@ -29,9 +29,10 @@
  *   - Where the class family excludes any class with a registration in a
  *     CHARGED status, the studio family has no registrations to consult at
  *     all — `studentCount` is a plain, unconnected `Int?`. That is what
- *     `STUDIO_FAMILY.withdraw: null` below records: no extra conjunct for the
- *     shared delete's predicate and nothing to do around the delete, so every
- *     future uncancelled studio class that predicate reaches is deletable.
+ *     `STUDIO_FAMILY.deleteWhere` and `STUDIO_FAMILY.withdraw: null` below
+ *     record between them: nothing to exclude from the shared delete's
+ *     predicate and nothing to do around the delete, so every future
+ *     uncancelled studio class that predicate reaches is deletable.
  *     The shared archive still spares a class dated today and still counts
  *     `remaining` from the start of the teacher's today — the same carve-out
  *     and the same boundary the class family gets — so `remaining` is a real
@@ -1144,24 +1145,11 @@ export async function pauseOrResumeStudioTemplate(
 
         if (swapped.count === 0) {
           // The fast paths above missed a race. A miss here may or may not
-          // leave this transaction holding a lock on the row, and the plain
-          // re-read below does not depend on which: if the conflicting change
-          // committed before this `updateMany`'s own snapshot, the `where`
-          // simply evaluated against, and was rejected by, that already-
-          // committed version, and nothing was locked. If instead the change
-          // committed while this `updateMany` was already blocked waiting on
-          // it — the exact interleaving the race tests in
-          // `studio-class-template-lifecycle.test.ts` construct — Postgres
-          // locks the newest row version first and only then re-checks the
-          // `where` against it; a rejection at that point still leaves the lock
-          // held to commit. Disambiguate with a plain re-read either way,
-          // exactly as the miss branch inside `archiveOrUnarchiveRule`
-          // (`rule-lifecycle.ts`) does — and see there for why taking a lock
-          // here on purpose would not be worth it. Follow that hop knowing
-          // the class family now carries this same correction rather than
-          // the flat "holds no lock" claim it asserted until #117 — the two
-          // families agree about this mechanism again, and a future edit to
-          // either owes the other the same visit.
+          // leave this transaction holding a lock on the row, and this plain
+          // re-read is correct either way. See the miss branch inside
+          // `archiveOrUnarchiveRule` (`rule-lifecycle.ts`) for the full
+          // account rather than repeating it here, and see there for why
+          // taking a lock here on purpose would not be worth it.
           const current = await tx.studioClassTemplate.findUnique({
             where: { id: templateId },
             include: { scheduleRule: true },
@@ -1434,13 +1422,12 @@ export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate> = {
       where: { id: templateId },
       include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
     }),
-  // `scheduledWhere` above takes two parameters; this field's type takes
-  // three, `alsoOnClass` being the extra one. A function of fewer parameters
-  // is assignable to a type expecting more, so this compiles — and it is
-  // correct, because `family.withdraw?.deleteFilter` is `undefined` for a
-  // family with no `withdraw` hook, so the third argument arrives as
-  // `undefined`.
-  scheduledWhere,
+  // Whole predicates, both of them: the shared archive passes each straight to
+  // its statement and composes nothing onto it. This family spares nothing
+  // beyond what `scheduledWhere` above already spares — `StudioClass` has no
+  // registrations to consult — so the two differ only in their boundary.
+  deleteWhere: (scheduleRuleId, today) => scheduledWhere(scheduleRuleId, { gt: today }),
+  remainingWhere: (scheduleRuleId, today) => scheduledWhere(scheduleRuleId, { gte: today }),
   // Destructures here, where `StudioClassTemplate` is concrete, then hands
   // the bare child to this file's existing exported `withSlot` unchanged.
   withSlot: ({ scheduleRule, ...bare }, rule) => {
