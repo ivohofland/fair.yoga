@@ -21,6 +21,15 @@ name: E2E flake repro
 # rate rather than clearing it — `--retries=0` below is what makes each
 # repeat an independent first-attempt sample, since a first-attempt failure is
 # exactly what CI's `failOnFlakyTests` turns red.
+#
+# IT CANNOT BE DISPATCHED UNTIL THIS FILE IS ON THE DEFAULT BRANCH. GitHub
+# resolves a `workflow_dispatch` workflow against `main` and only then lets
+# you pick a `--ref`, so running it from the branch that introduces it answers
+#
+#     HTTP 404: workflow e2e-flake-repro.yml not found on the default branch
+#
+# Measured on 2026-08-28, from `docs/roadmap-after-272`. There is no flag that
+# gets around it: merge first, dispatch second.
 on:
   workflow_dispatch:
     inputs:

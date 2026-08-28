@@ -2338,6 +2338,13 @@ That leaves two honest options, and they are not equivalent:
   traces too — the failing side is already in hand, and the comparison is what
   is missing. A red run there means it reproduced.
 
+  **It cannot be dispatched until it is on `main`** — GitHub resolves
+  `workflow_dispatch` against the default branch and only then honours a
+  `--ref`, so dispatching from the branch that adds it answers `HTTP 404:
+  workflow … not found on the default branch` (measured 2026-08-28). Merge
+  first, dispatch second; the run that produces this evidence is therefore the
+  next round's, not this one's.
+
 **The second is the one to do first**, for the reason the health-budget half
 of this row demonstrates: a fix aimed at an unmeasured cause changes something
 nobody needed changed.
