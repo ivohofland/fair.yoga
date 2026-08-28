@@ -700,11 +700,15 @@ describe('isRestrictViolationOn', () => {
   /**
    * The three shapes were MEASURED on 2026-08-19 by provoking each delete
    * against a TeacherRoom carrying one archived ClassTemplate and zero Class
-   * rows, not hand-written:
+   * rows, not hand-written. The template constraint's NAME has since changed —
+   * issue 272's mirror (`20260827120000_rule_mirror`) renamed
+   * `ClassTemplate_teacherRoomId_fkey` to
+   * `ClassTemplate_teacherRoomId_roomArchived_fkey` — so the old name is not
+   * the one a refused delete reports any more:
    *
-   *   teacherRoom.delete:     {"modelName":"TeacherRoom","constraint":"ClassTemplate_teacherRoomId_fkey"}
-   *   teacherRoom.deleteMany: {"modelName":"TeacherRoom","constraint":"ClassTemplate_teacherRoomId_fkey"}
-   *   room.delete:            {"modelName":"Room","constraint":"ClassTemplate_teacherRoomId_fkey"}
+   *   teacherRoom.delete:     {"modelName":"TeacherRoom","constraint":"ClassTemplate_teacherRoomId_roomArchived_fkey"}
+   *   teacherRoom.deleteMany: {"modelName":"TeacherRoom","constraint":"ClassTemplate_teacherRoomId_roomArchived_fkey"}
+   *   room.delete:            {"modelName":"Room","constraint":"ClassTemplate_teacherRoomId_roomArchived_fkey"}
    *
    * `modelName` DIFFERS across them — a bare `room.delete` trips the
    * constraint through TeacherRoom_roomId_fkey's CASCADE — which is why the
@@ -717,13 +721,16 @@ describe('isRestrictViolationOn', () => {
    * which its own handler comment invites. Keeping the matcher blind to
    * `modelName` is what makes that removal safe.
    */
-  const ROOM_FKS = ['ClassTemplate_teacherRoomId_fkey', 'Class_teacherRoomId_fkey'] as const;
+  const ROOM_FKS = [
+    'ClassTemplate_teacherRoomId_roomArchived_fkey',
+    'Class_teacherRoomId_fkey',
+  ] as const;
 
   it('matches the template FK from either delete, despite the differing modelName', () => {
     for (const modelName of ['TeacherRoom', 'Room']) {
       const err = prismaError('P2003', {
         modelName,
-        constraint: 'ClassTemplate_teacherRoomId_fkey',
+        constraint: 'ClassTemplate_teacherRoomId_roomArchived_fkey',
       });
       expect(isRestrictViolationOn(err, ROOM_FKS)).toBe(true);
     }
@@ -758,13 +765,13 @@ describe('isRestrictViolationOn', () => {
   it('does not match a non-P2003, a non-Prisma throwable, or a missing constraint', () => {
     expect(
       isRestrictViolationOn(
-        prismaError('P2002', { constraint: 'ClassTemplate_teacherRoomId_fkey' }),
+        prismaError('P2002', { constraint: 'ClassTemplate_teacherRoomId_roomArchived_fkey' }),
         ROOM_FKS,
       ),
     ).toBe(false);
     // The bare-substring trap `isTransientDbError` documents at :208 — an
     // Error whose text merely quotes the constraint name is not a P2003.
-    expect(isRestrictViolationOn(new Error('ClassTemplate_teacherRoomId_fkey'), ROOM_FKS)).toBe(
+    expect(isRestrictViolationOn(new Error('ClassTemplate_teacherRoomId_roomArchived_fkey'), ROOM_FKS)).toBe(
       false,
     );
     expect(isRestrictViolationOn(undefined, ROOM_FKS)).toBe(false);

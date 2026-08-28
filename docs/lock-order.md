@@ -925,8 +925,10 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
 
 ## The RESTRICT trigger is a wait edge, and a route guard is what closes it (#103)
 
-`ClassTemplate_teacherRoomId_fkey` and `Class_teacherRoomId_fkey` are both
-`ON DELETE RESTRICT` (`20260403092044_init/migration.sql:339,345`). A
+`ClassTemplate_teacherRoomId_roomArchived_fkey`
+(`20260827120000_rule_mirror/migration.sql`; formerly
+`ClassTemplate_teacherRoomId_fkey`) and `Class_teacherRoomId_fkey` are both
+`ON DELETE RESTRICT`. A
 `DELETE FROM "TeacherRoom"` therefore locks the parent row and then runs the
 triggers' `SELECT 1 FROM "ClassTemplate" WHERE "teacherRoomId" = $1 FOR KEY
 SHARE` — a lock nothing in this document's site enumeration can see, because
@@ -1746,3 +1748,28 @@ this file. Left as a finding for a separate issue: the fix is either a
 `deleteMany` (count-tolerant) in place of the single-row `delete`, or
 re-verifying the link inside the transaction rather than trusting a
 pre-transaction read.
+
+## The room mirror's foreign keys are wait edges (#272)
+
+`ClassTemplate_teacherRoomId_roomArchived_fkey` and
+`ClassTemplate_scheduleRuleId_kind_ruleLive_fkey` acquire locks no application
+code asks for, and they are the mechanism, not a side effect:
+
+- updating `TeacherRoom."isArchived"` must rewrite every `ClassTemplate` row
+  that mirrors it, so it locks those rows (`TeacherRoom → ClassTemplate`)
+- updating `ClassTemplate."teacherRoomId"` or `."roomArchived"` takes
+  `KEY SHARE` on the referenced `TeacherRoom` row
+  (`ClassTemplate → TeacherRoom`)
+
+Measured: with a resume holding its transaction open, a concurrent archive
+blocked on the child row and was refused with `23514` once the resume
+committed — the same shape as the exclusion constraints above, with a row lock
+in place of an index entry. Re-derive the constraint set with:
+
+    SELECT conrelid::regclass AS "table", conname, pg_get_constraintdef(oid)
+      FROM pg_constraint
+     WHERE conname LIKE '%roomArchived%' OR conname LIKE '%ruleLive%'
+        OR conname = 'ClassTemplate_live_needs_open_room';
+
+A deadlock still requires two transactions touching two rooms in opposite
+orders, which is a pre-existing shape rather than one these keys introduce.

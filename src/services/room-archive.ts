@@ -8,12 +8,21 @@ import { log } from '@/lib/log';
  *
  * `TeacherRoom.isArchived` shipped in `e57b8bd` as a display flag: it decided
  * which of two list pages a row appeared on and nothing else read it. This
- * module is what gives it meaning — a room may not be archived while in use,
- * and an archived room accepts no new commitments. The other doors are named
- * by verb rather than counted, because the count is what went stale: this
- * sentence said "three" until fix round 2 added a fourth. They are publish
+ * module is what gives it meaning for the CLASS half — a room may not be
+ * archived while it still honours a commitment — and `describeRoomBlockers`
+ * turns the counts that refuse archiving into a sentence a teacher can clear.
+ *
+ * The TEMPLATE half of that refusal used to be a count here too; issue 272 made
+ * it the database's own rule instead. `ClassTemplate_live_needs_open_room`
+ * refuses every write that would leave a live template on an archived room, so
+ * the count below is no longer load-bearing for the template clause — it is
+ * kept because the constraint is a refusal a teacher cannot see, and this
+ * module still produces the words for it. The doors are named by verb rather
+ * than counted, because the count is what went stale: this sentence said
+ * "three" until fix round 2 added a fourth. They are publish
  * (`class-lifecycle`), resume and move (`class-template-lifecycle`), and
- * create (`POST /api/class-templates`).
+ * create (`POST /api/class-templates`) — each of the last three now just a
+ * probe in front of the constraint that enforces it.
  *
  * Framework-agnostic per CLAUDE.md: no HTTP, no `next/*`. The route is a thin
  * wrapper.

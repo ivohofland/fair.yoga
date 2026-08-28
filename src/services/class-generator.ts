@@ -814,41 +814,18 @@ export async function generateClassInstances(
   // block on a different set than this query selects. See
   // `lib/template-selection.ts`.
   //
-  // KNOWN-OPEN, and deliberate (issue 76, spec §10): both flags on
-  // `ACTIVE_TEMPLATE_WHERE` are the TEMPLATE's own — this selection never
-  // reads `teacherRoom.isArchived`. `room-archive.ts`'s header calls that
-  // module "what gives `isArchived` meaning"; this query is the one reader
-  // that still doesn't consult it.
-  //
-  // REACHABLE and measured, not latent. What generates here is an ACTIVE
-  // template on an ARCHIVED room: door 3 of the room archive lifecycle reads
-  // `teacherRoom.isArchived` from a non-transactional `findUnique` at the top
-  // of `pauseOrResumeTemplate`, so a room archive committing between that read
-  // and the CAS below is invisible to it. Measured on #116's branch: four
-  // classes generated into a just-archived room
-  // (`{"outcome":"active","roomArchived":true,"generated":4}`). The template's
-  // own archive race IS closed by the CAS — but a CAS on `ScheduleRule`
-  // (issue 298; it wrote `ClassTemplate` directly before that) cannot carry
-  // a predicate on the related room's column.
-  //
-  // Not closed here, deliberately, and not by oversight: `room-archive.ts`
-  // (see its own KNOWN-OPEN, spec section 8) accepts this same race class from
-  // the other side rather than locking, because the alternative is a new
-  // `FOR UPDATE` node in the ordering `template-lock-order.test.ts` exists to
-  // defend. A re-read after the CAS would close the interleaving measured
-  // above and leave its mirror open — a half-guard whose residue would need
-  // documenting forever. The invariant "an active template may not sit on an
-  // archived room" is currently enforced by five application doors, every one
-  // a non-transactional read. Enforcing it once in Postgres is the structural
-  // answer and a product-and-schema decision, filed as such: issue #272, which
-  // carries the reproduction above and three options.
-  //
-  // Kept anyway, because what makes this query safe is an invariant held
-  // elsewhere rather than anything the query itself checks. Any future writer
-  // that sets `isArchived` outside `room-archive.ts` — a seed script, an admin
-  // surface, a data import — makes the gap reachable again, and closing it is
-  // then a product decision (does archiving pause the template? refuse the
-  // sweep per-instance and log?), not something this file settles alone.
+  // The selection reads only the template's OWN flags — `scheduleRule`'s
+  // `isActive`/`isArchived` — and never `teacherRoom.isArchived`. That used to
+  // be a known gap, measured on #116's branch (four classes generated into a
+  // just-archived room), and is closed structurally: `ClassTemplate` mirrors
+  // the rule's liveness and the room's archive onto its own row, kept equal by
+  // foreign keys, and `ClassTemplate_live_needs_open_room` refuses every write
+  // that would leave a live template on an archived room (issue 272). No row
+  // this query selects can therefore point into an archived room; the
+  // `isArchived` half above is defense in depth against writers that bypass
+  // the pairing invariant altogether (a seed script, an admin surface, a data
+  // import setting the rule's flag directly), not against any state the
+  // migrations allow. See `lib/template-selection.ts`.
   const templates = await db.classTemplate.findMany({
     where: {
       scheduleRule: { ...ACTIVE_TEMPLATE_WHERE.scheduleRule, ...(teacherId ? { teacherId } : {}) },

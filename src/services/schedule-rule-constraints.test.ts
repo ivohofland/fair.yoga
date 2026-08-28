@@ -48,7 +48,7 @@ afterAll(async () => {
   // Deletes both `ClassTemplate` and `StudioClassTemplate` rows via
   // `onDelete: Cascade` on their composite FK to `ScheduleRule` — neither
   // child carries `teacherId` any more (prisma/schema.prisma). Must precede
-  // `teacherRoom.deleteMany`: `ClassTemplate_teacherRoomId_fkey` is
+  // `teacherRoom.deleteMany`: `ClassTemplate_teacherRoomId_roomArchived_fkey` is
   // `ON DELETE RESTRICT`, and a surviving template blocks the room delete.
   await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: teachers } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teachers } } });
