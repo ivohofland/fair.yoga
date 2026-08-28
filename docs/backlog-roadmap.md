@@ -2310,10 +2310,37 @@ that flakes there — but suite-wide, **13 of the 28 `waitForURL` calls follow a
 production build, and hydration timing is the suspected variable, so a local
 green is weak evidence and is recorded as such rather than as a result.
 
-**So step 2 below is no longer "raise a budget".** The candidate fix is the
-assertion shape — assert on destination *content*, which auto-retries, rather
-than on the URL alone, or wait for hydration before clicking. That is a
-13-site change and wants deciding, not defaulting.
+**So step 2 below is no longer "raise a budget".** What it IS remains open,
+and one candidate is already eliminated on reasoning rather than measurement:
+
+**Changing the assertion shape does not fix this.** "Assert on destination
+*content*, which auto-retries, rather than on the URL" was the first candidate
+written here, and it is wrong. If the transition never commits, the
+destination content never renders either — `expect(…).toBeVisible()` would
+time out exactly as `waitForURL` does. It changes the error message and not
+the outcome. **No assertion shape fixes a navigation that is not going to
+happen**, which is the difference between this and an ordinary
+wait-too-short flake, and the reason the 13-site figure above is a count of
+exposure rather than a count of edits.
+
+That leaves two honest options, and they are not equivalent:
+
+- **Replace the click with `page.goto`.** Removes the symptom at every site.
+  It also deletes the only coverage that the `Edit class` link navigates at
+  all — every other test in that spec already reaches the editor by `goto`,
+  which is precisely why this is the one that flakes. Buying green by deleting
+  the test's reason to exist.
+- **Root-cause the non-commit first.** Needs a reproduction under the right
+  conditions, which local is not. `.github/workflows/e2e-flake-repro.yml`
+  (manual dispatch, added with this entry) runs the spec against a **cold
+  production build** with `--retries=0` and `--trace=on`, so every repeat is
+  an independent first-attempt sample and the passing repeats keep their
+  traces too — the failing side is already in hand, and the comparison is what
+  is missing. A red run there means it reproduced.
+
+**The second is the one to do first**, for the reason the health-budget half
+of this row demonstrates: a fix aimed at an unmeasured cause changes something
+nobody needed changed.
 
 ### The order, and why it is this order
 
@@ -2336,7 +2363,10 @@ failure rate is an hour of ambiguous evidence.
    paid, and in the sharpest possible way: there was **nothing to raise**. The
    health budget never fired, and the timeout that did is a client-side
    transition that fetched everything it needed in 11ms and never committed.
-   What remains is a 13-site assertion-shape decision, not a number.
+   What remains is not a number and not an assertion shape — see above for why
+   the latter was eliminated — but a reproduction, and then a choice between
+   root-causing the non-commit and deleting the only click-through coverage of
+   that link.
 3. **Class B — `studio-api` retry safety.** Last **because it is the one that
    might be a real defect**, and it deserves a quiet CI to be judged against.
    Two identical creates in flight against the slot key is exactly the shape

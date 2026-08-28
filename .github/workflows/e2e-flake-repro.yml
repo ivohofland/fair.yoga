@@ -1,0 +1,164 @@
+name: E2E flake repro
+
+# MANUAL ONLY. This never runs on push or pull_request: it exists to answer a
+# question, not to gate anything, and it deliberately adds no status-check
+# context that `ci.yml`'s required checks could be confused with.
+#
+# WHY IT IS A SEPARATE FILE. `ci.yml` puts every run in the concurrency group
+# `ci-${{ github.ref }}` with `cancel-in-progress` for non-main refs. A job
+# added there would either cancel the branch's real CI run or be cancelled by
+# it, and this one wants to run for many minutes beside a normal push.
+#
+# WHAT IT IS FOR (roadmap "Class C, diagnosed"). `class-edit.spec.ts:129`
+# fails its first attempt intermittently on CI: the click's RSC payload and
+# route chunk both arrive in ~11ms and the client-side transition then never
+# commits, so `waitForURL` sits until the test timeout. It does NOT reproduce
+# locally — 10/10 green — against a warm dev server, which is the wrong
+# condition. This job reproduces the right one: a cold production build.
+#
+# A RED RUN HERE MEANS THE FLAKE REPRODUCED, which is the result this job is
+# for. Green means it did not reproduce at this repeat count, which bounds the
+# rate rather than clearing it — `--retries=0` below is what makes each
+# repeat an independent first-attempt sample, since a first-attempt failure is
+# exactly what CI's `failOnFlakyTests` turns red.
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: 'Spec file to run'
+        default: 'tests/e2e/class-edit.spec.ts'
+      grep:
+        description: 'Test name filter (-g). Leave EMPTY to run the whole spec, which is closer to the ordering CI actually runs'
+        default: 'a draft edits fully'
+      project:
+        description: 'Playwright project'
+        default: 'Mobile Chrome'
+        type: choice
+        options: ['Mobile Chrome', 'chromium']
+      repeat:
+        description: 'Repeats per test (--repeat-each)'
+        default: '20'
+
+concurrency:
+  group: e2e-flake-repro-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ethical_yoga
+          POSTGRES_USER: yoga
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    # Byte-identical to `ci.yml`'s `test-integration-e2e`. The whole point is
+    # the same conditions; a difference here makes a green run meaningless.
+    env:
+      DATABASE_URL: postgresql://yoga:test_password@localhost:5432/ethical_yoga
+      PASSKEY_RP_ID: localhost
+      PASSKEY_RP_NAME: fair.yoga
+      CRON_SECRET: ci-cron-secret
+      CRON_SCHEDULER: 'off'
+      RESEND_API_KEY: re_test
+      EMAIL_DRY_RUN: '1'
+      EMAIL_FROM: noreply@test.local
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies # postinstall runs prisma generate
+        run: npm ci
+
+      - name: Run migrations
+        run: npx prisma migrate deploy
+
+      # NO BUILD CACHE, unlike `ci.yml`. A cold build is part of the condition
+      # under test — hydration timing on a first-served route is the suspected
+      # variable, and a warm `.next-build/cache` is the local condition that
+      # already fails to reproduce.
+      - name: Build
+        run: npm run build
+
+      - name: Start app
+        run: |
+          npm run start > server.log 2>&1 &
+          for i in {1..30}; do
+            curl -sf http://localhost:3000/api/health > /dev/null && exit 0
+            sleep 1
+          done
+          echo "::error::App did not become healthy within 30s"
+          cat server.log
+          exit 1
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      # Inputs arrive as env vars, never interpolated into the script — a
+      # `${{ }}` inside `run:` is a shell injection from whoever dispatched.
+      #
+      # `--trace=on` overrides the config's `retain-on-failure`: this job wants
+      # a trace for the PASSING repeats too, because the diagnosis needs the
+      # difference between a navigation that commits and one that does not,
+      # and the failing side is already in hand.
+      - name: Repro run
+        env:
+          SPEC: ${{ inputs.spec }}
+          GREP: ${{ inputs.grep }}
+          PROJECT: ${{ inputs.project }}
+          REPEAT: ${{ inputs.repeat }}
+        run: |
+          set -o pipefail
+          if [ -n "$GREP" ]; then
+            npx playwright test "$SPEC" --project="$PROJECT" -g "$GREP" \
+              --repeat-each="$REPEAT" --retries=0 --trace=on --reporter=list
+          else
+            npx playwright test "$SPEC" --project="$PROJECT" \
+              --repeat-each="$REPEAT" --retries=0 --trace=on --reporter=list
+          fi
+
+      # `always()`, not `failure()`: a green repro run's traces are half the
+      # comparison this job exists to produce.
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flake-repro-report
+          path: playwright-report/
+          retention-days: 7
+
+      - name: Upload traces
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flake-repro-traces
+          path: test-results/
+          retention-days: 7
+
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flake-repro-server-log
+          path: server.log
+          retention-days: 7
