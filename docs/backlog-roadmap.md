@@ -4,13 +4,51 @@
 re-counted with `gh issue list --state open --limit 300 --json number --jq
 'length'` = 106.
 
-**THE 89 → 106 DELTA IS NOT ITEMISED HERE, and that is the thing §8 says must
-not be inherited silently.** #272 closed on this round (one out), so seventeen
-of the eighteen are issues filed outside it — the same outside-the-round batch
-problem the previous snapshot wrote its arithmetic out to avoid, now one round
-older and larger. The count above is measured, not derived; the composition is
-NOT, and re-deriving it is the next round's first job. Recorded as an open debt
-rather than papered over with a plausible sum.
+**THE 89 → 106 DELTA IS RECONCILED (2026-08-28).**
+
+> **89 − 8 + 25 = 106.** Eight of the 89 closed; twenty-five issues filed since
+> are still open. **Twenty-five in, eight out.**
+>
+> **Out (8):** #194, #228, #272, #276, #279, #281, #282, #283.
+> **In (25):** #286-#289, #291, #299, #301, #302, #307, #310-#313, #317-#320,
+> #323, #325, #328, #329, #336-#339.
+
+**The debt was worth paying, because the plausible sum was wrong on both
+terms.** This entry previously read "#272 closed on this round (one out), so
+seventeen of the eighteen are issues filed outside it". Neither number
+survives: **eight** closed, not one, and **thirty-seven** were filed, not
+eighteen. The window is far busier than a net of +17 suggests — **37 filed and
+20 closed**, of which twelve (#290, #293, #296, #297, #298, #304, #309, #315,
+#321, #327, #331, #332) were opened *and* closed inside it and net to nothing.
+A net figure hides a 57-issue turnover; that is what §8 means by a count the
+open number cannot reveal on its own.
+
+**The boundary is an issue number, not a timestamp**, which is what makes this
+re-derivable rather than re-argued. The 89 snapshot was taken after #284 was
+filed (12:46:49Z) and after #116/#117/#126 closed (12:53:50Z), so
+**everything ≥ #285 is new** and the eight above are the pre-#285 closes that
+follow it. Re-derive with:
+
+    gh issue list --state all --limit 400 --json number,state,closedAt \
+      --jq '[.[]|select(.number>=285 and .state=="OPEN")]|length'   # the +25
+    gh issue list --state all --limit 400 --json number,state,closedAt \
+      --jq '[.[]|select(.number<=284 and .state=="CLOSED"
+             and .closedAt>"2026-08-20T12:53:50Z")]|length'          # the -8
+
+**AND THE PREVIOUS ROUND'S DEFERRAL WAS VINDICATED, which is worth more than
+the arithmetic.** #274-#284 were left un-bundled on the ground that bundling
+someone else's batch from its titles is triage that must be re-derived rather
+than inherited. Eight days later **five of the eleven have closed on their
+own** — #276, #279, #281, #282, #283 — so bundling them would have been work
+spent on issues that resolved without it. Six remain: #274, #275, #277, #278,
+#280, #284.
+
+**What is NOT done: the 25 are counted, not bundled.** They cluster by filing
+date — five on 08-20, three on 08-22, one on 08-23, **ten on 08-24**, two on
+08-26, four on 08-27 — and the 08-24 group is visibly one review round over
+form validation and copy pins (#310-#313, #317-#320). Bundling them is the
+next round's job; counting them is done, and this entry no longer hands the
+next round an unexplained baseline.
 
 The previous snapshot's reconciliation, kept because its arithmetic is still
 the worked example of how this is supposed to read:
