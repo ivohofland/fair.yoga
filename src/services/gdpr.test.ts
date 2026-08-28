@@ -1566,13 +1566,13 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       maxStudents: 10,
       status: 'open' as const,
     };
-    // HIGH inserted FIRST. An unordered `SELECT` over a table this small is a
-    // sequential scan, which returns rows in physical order — insertion order
-    // for rows this fresh — so the unordered read hands back [HIGH, LOW]
-    // while both sorting sites hand back [LOW, HIGH]. The test asserts that
-    // premise below rather than assuming it, so a planner or storage change
-    // that invalidates it fails loudly instead of leaving this test green for
-    // no reason.
+    // HIGH inserted FIRST, which is what USUALLY gives the teacher-side scan
+    // a natural order of [HIGH, LOW] against the student side's [LOW, HIGH].
+    // Usually, not always: an unordered `SELECT` has no guaranteed row order,
+    // and `Class` is one 8 KB page shared with every other file in this tier,
+    // so a neighbour's `DELETE` plus autovacuum frees a low line pointer for
+    // the second insert to take. The test below states what that costs when
+    // it does not hold.
     await createClassFixture(prisma, { ...base, id: HIGH_CLASS_ID, date: new Date('2099-06-01') });
     await createClassFixture(prisma, { ...base, id: LOW_CLASS_ID, date: new Date('2099-06-02') });
 
@@ -1621,39 +1621,41 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
   });
 
   it('does not deadlock when a teacher erasure and a student erasure overlap on two classes', async () => {
-    // The premise, asserted rather than assumed: with no `orderBy`, this
-    // read's natural order is the REVERSE of both sorting sites' order. If
-    // this ever stops holding, the test below can no longer provoke the cycle
-    // and would pass on broken code — so it fails here instead.
-    const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT c.id FROM "Class" c
-      JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
-      WHERE e."teacherId" = ${teacherId}
-        AND c.status IN ('draft', 'open', 'in_progress')
-    `;
-    expect(heapOrder.map((r) => r.id)).toEqual([HIGH_CLASS_ID, LOW_CLASS_ID]);
-
-    // The same premise on the OTHER side of the pairing, which the assertion
-    // above does not cover. `deleteTeacherAccount` pre-locks via a `Class`
-    // scan; `deleteStudentAccount` pre-locks via a `WaitlistEntry` join. The
-    // classes are seeded HIGH-first and the entries LOW-first in `beforeAll`,
-    // so the scan's natural order is [HIGH, LOW] and the join's (driven by
-    // `WaitlistEntry`) is the REVERSE — the disagreement this test turns on.
+    // NO PREMISE PROBE ON THE TEACHER SIDE. There used to be one, pinning the
+    // `Class` scan's natural order to [HIGH, LOW], and it was an assertion on
+    // a non-guarantee: PostgreSQL promises no order for an unordered
+    // `SELECT`, `deleteTeacherAccount` reaches these rows by a seq scan, and
+    // seq scans return physical order — which belongs to whichever neighbour
+    // in this parallel tier last churned the page. It failed on CI for that
+    // reason (2026-08-27, the sibling copy in `db-locks.test.ts`), and no
+    // instrument fixes it here: the caller is production code, so this test
+    // cannot force its plan the way it forces the probe below.
     //
-    // The join's order is asserted under the SAME forced plan the student side
-    // gets below. Left to the planner this join is not reliably driven by
-    // `WaitlistEntry`: the choice is a cost knife-edge on `w."studentId"`,
-    // which no index leads with, and it is non-monotonic in table size. CI
-    // proved it — this assertion is what failed on 2026-08-16 with [HIGH, LOW],
-    // because `enable_hashjoin = off` alone removes a join ALGORITHM, not a
-    // join DIRECTION. All three settings are needed; the reasoning and the
+    // WHAT ITS REMOVAL COSTS, precisely: if the two natural orders ever agree,
+    // both erasures park on the same row and serialise, and this test passes
+    // WITHOUT having provoked the cycle. That is vacuity, not a false green on
+    // broken code in the ordinary sense — but it is silent, and it is the
+    // trade being made. It is paid for elsewhere:
+    // `db-locks-lock-order.test.ts` proves `ORDER BY c.id` load-bearing on the
+    // shared primitive both erasures call, from assigned sort keys rather than
+    // an observed heap, and that proof does not depend on this file's luck.
+    //
+    // THE STUDENT SIDE KEEPS ITS PROBE, because that one can be made to hold.
+    // `deleteStudentAccount` pre-locks via a `WaitlistEntry` join, and under
+    // the forced plan below the order comes from
+    // `WaitlistEntry_classId_position_idx` — so from `classId`, which
+    // `beforeAll` assigns — rather than from a heap nobody owns.
+    //
+    // Left to the planner this join is not reliably driven by `WaitlistEntry`:
+    // the choice is a cost knife-edge on `w."studentId"`, which no index leads
+    // with, and it is non-monotonic in table size. CI proved it — this
+    // assertion is what failed on 2026-08-16 with [HIGH, LOW], because
+    // `enable_hashjoin = off` alone removes a join ALGORITHM, not a join
+    // DIRECTION. All three settings are needed; the reasoning and the
     // measurements live in `db-locks-lock-order.test.ts`'s
-    // `forceWaitlistDrivenPlan`, which this mirrors deliberately rather than
+    // `forceIndexOrderedPlan`, which this mirrors deliberately rather than
     // importing — a test helper crossing suites would couple two files whose
     // fixtures are independent.
-    //
-    // Asserting the `Class` side proves nothing about the join's: different
-    // tables, different physical layouts.
     const joinOrder = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
       await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
@@ -1672,9 +1674,10 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // erasure queued on a row first is guaranteed to get it on release. The
     // choreography below exploits that to force the exact AB-BA state:
     //
-    //   the teacher's scan asks [HIGH, LOW], the student's join [LOW, HIGH],
-    //   so the two park on DIFFERENT rows — the teacher on HIGH, the student
-    //   on LOW. Release LOW first: the student takes it and re-queues on HIGH,
+    //   the teacher's scan asks [HIGH, LOW] — usually, see above; the
+    //   student's join [LOW, HIGH], which is asserted — so the two park on
+    //   DIFFERENT rows: the teacher on HIGH, the student on LOW.
+    //   Release LOW first: the student takes it and re-queues on HIGH,
     //   BEHIND the teacher parked there. Release HIGH: the teacher takes it,
     //   reaches for LOW — held by the student — and the two form the cycle.
     //   With the shared `ORDER BY` both ask [LOW, HIGH], park on the same row,
