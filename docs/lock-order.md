@@ -1777,7 +1777,13 @@ room while it waits on a child — a backward edge against the generator's sweep
 room), with a single room, was measured to deadlock (`40P01`, the archive
 aborted). The archive route closes the cycle by taking the room's child rows
 `FOR UPDATE` before the room row itself, so both wait in the same direction
-(`setTeacherRoomArchived`). What remains is the pre-existing two-room shape
+(`setTeacherRoomArchived`). That pre-lock carries the shared `setLockTimeout`
+bound like every other node here: the row it waits on is the one
+`claimTemplateForGeneration` holds for a whole generation sweep, and Prisma's
+transaction budget cannot cut short a statement already blocked inside
+Postgres. Both properties are pinned from the archive's side in
+`room-archive.test.ts` ("lock discipline"), one case per property, each
+verified to fail when its guard is removed. What remains is the pre-existing two-room shape
 directly above (#103-class rows): two transactions row-locking two rooms in
 opposite orders, which is not a shape this migration introduces — probe
 results, both shapes, in the #272 PR body.

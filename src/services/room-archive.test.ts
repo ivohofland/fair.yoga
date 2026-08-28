@@ -165,7 +165,9 @@ describe('setTeacherRoomArchived — the mid-request resume race (issue 272)', (
   // the guard: the archive transaction pre-locks the room's child templates
   // BEFORE it row-locks the room, so a resume arriving mid-request finds the
   // child already held, its `scheduleRule` CAS cascade waits on the hold,
-  // hits the 1500ms lock timeout, and answers `busy` — a refusal, clean, on
+  // hits the shared `LOCK_TIMEOUT_SQL` bound (`db-locks.ts`, named rather than
+  // restated so a change to it cannot leave this sentence stale), and answers
+  // `busy` — a refusal, clean, on
   // the tab that clicked resume, never a deadlock and never a throw. Before
   // the pre-lock the loser was the archive (this describe's first case);
   // afterward it is the resume. Both orders keep the invariant; the guard

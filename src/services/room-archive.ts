@@ -1,6 +1,7 @@
 import type { PrismaClient, ClassStatus } from '@prisma/client';
 import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
 import { isCheckViolationOn } from '@/lib/check-violation';
+import { setLockTimeout } from '@/lib/db-locks';
 import { log } from '@/lib/log';
 
 /**
@@ -171,10 +172,11 @@ export async function setTeacherRoomArchived(
   // records the reasoning for this exact class of check ("a policy about
   // intent, not an invariant", see class-lifecycle.ts:303-304), losing the
   // race needs two tabs, and the state is recoverable by un-archiving and
-  // self-heals when the class completes. A transaction here would NOT help —
-  // under read-committed the counts lock nothing — and the alternative is a
-  // new FOR UPDATE node in the ordering that `template-lock-order.test.ts`
-  // exists to defend.
+  // self-heals when the class completes. Locking the CLASS rows is what is
+  // declined here: under read-committed the class counts lock nothing, and
+  // giving them teeth would mean a `Class` FOR UPDATE node in the ordering
+  // `template-lock-order.test.ts` defends. The transaction below takes no
+  // `Class` lock and does not change that.
   //
   // The TEMPLATE half of the race was closed, not accepted, in issue 272: a
   // template resumed between the counts and this write makes the write's own
@@ -187,6 +189,17 @@ export async function setTeacherRoomArchived(
   // — the class invariant is deliberately out of scope (spec section 8).
   try {
     await db.$transaction(async (tx) => {
+      // Bounds every wait in this transaction, the pre-lock below first among
+      // them. Without it the pre-lock's wait is bounded by NOTHING rather than
+      // by this transaction's own budget: Prisma checks that budget at
+      // statement boundaries, so it cannot roll back a statement already
+      // blocked inside Postgres, only refuse to start a new one
+      // (`db-locks.ts`). The row this waits on is the one
+      // `claimTemplateForGeneration` holds for the length of a generation
+      // sweep, so the wait is a real one, and `55P03` reaches the route as the
+      // transient 503 it is.
+      await setLockTimeout(tx);
+
       // Lock ordering, issue 272: the write below cascades to this room's
       // `ClassTemplate` rows via `ClassTemplate_teacherRoomId_roomArchived_fkey`,
       // so the transaction otherwise holds the room while it waits on a child —
@@ -197,6 +210,14 @@ export async function setTeacherRoomArchived(
       // foreign keys are wait edges"). Pre-locking the children first makes
       // this transaction's order `ClassTemplate → TeacherRoom`, the same
       // direction as the generator's, so the cascade waits are forward only.
+      //
+      // ARCHIVING ONLY, and that is a proof rather than an optimisation.
+      // Un-archiving cascades the same way, but no generator transaction can
+      // be its counterparty: a child of an archived room has
+      // `roomArchived = true`, so `ClassTemplate_live_needs_open_room` forces
+      // its `ruleLive` false, so `ACTIVE_TEMPLATE_WHERE` cannot select it and
+      // `claimTemplateForGeneration` never holds it. The rows an un-archive
+      // cascades to are exactly the ones the generator provably ignores.
       if (archiving) {
         await tx.$queryRaw`
           SELECT ct."id" FROM "ClassTemplate" ct

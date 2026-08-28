@@ -18,11 +18,45 @@ const SWEEP_TESTS = [
   'src/services/studio-class-generator.test.ts',
 ] as const;
 
+// Files that hold a real row lock for seconds at a time. They are NOT
+// database-wide the way `SWEEP_TESTS` are — each owns the rows it touches —
+// so the reason they cannot run in `unit` is a different one: a parallel
+// neighbour that asserts on lock TIMING does not survive beside them.
+// `template-lock-order.test.ts` asserts its race ends in neither `40P01` nor
+// `55P03`, and a concurrent multi-second hold pushes it into the second.
+// Measured on issue 272's branch: that file passes alone, passes run beside
+// `room-archive-lock-order.test.ts` alone, and fails in the full `unit` tier
+// with nothing else changed.
+//
+// The membership runs BOTH WAYS: a file that CREATES multi-second holds, and a
+// file whose assertion is destroyed by them. `template-lock-order.test.ts` is
+// the second kind — it asserts its race ends in neither code, so every source
+// of lock noise in the tier is a false failure it cannot distinguish from the
+// defect it watches for. Measured on issue 272's branch: the tier was green
+// 9/9 as the branch stood, and roughly one run in three once the tier's file
+// timings shifted, with the failure landing on that file every time and on
+// `class-template-lifecycle.test.ts`'s own archive-race case twice. Removing
+// this branch's new `setLockTimeout` did not stop it, so the trigger is the
+// tier's contention budget rather than any one call site — issue 272's mirror
+// foreign keys take row locks no application code asks for, which is the
+// budget getting tighter.
+const LOCK_CONTENTION_TESTS = [
+  'src/services/room-archive-lock-order.test.ts',
+  'src/services/template-lock-order.test.ts',
+] as const;
+
+// The two lists above have different reasons and are kept apart so neither
+// comment has to describe the other's membership. This is what the projects
+// below splice, so a file added to either list moves tiers in one edit.
+const SERIAL_TESTS = [...SWEEP_TESTS, ...LOCK_CONTENTION_TESTS];
+
 // The projects below have different blast radii (docs/test-database.md):
-// - unit: services + lib minus `SWEEP_TESTS`, run in parallel against the
-//   dedicated test database. Every file here mutates only rows it owns
-// - unit-sweeps: `SWEEP_TESTS`, serial — the clock-injected, database-wide
-//   sweeps, kept off the dev/seed data and away from each other
+// - unit: services + lib minus `SERIAL_TESTS`, run in parallel against the
+//   dedicated test database. Every file here mutates only rows it owns, and
+//   none of them holds a lock long enough to disturb a neighbour
+// - unit-sweeps: `SERIAL_TESTS`, serial — the clock-injected, database-wide
+//   sweeps, kept off the dev/seed data and away from each other, plus the
+//   lock-contention files that cannot share a parallel tier
 // - integration: talks to the HTTP app on :3000, so its fixtures must
 //   live in the same database that app reads (dev locally, CI's in CI)
 // - components: jsdom rendering with `next/navigation` mocked
@@ -90,9 +124,10 @@ export default defineConfig(({ mode }) => {
           test: {
             name: 'unit',
             include: ['src/**/*.test.ts'],
-            // `SWEEP_TESTS` (above) is the membership list — edit it, not
-            // this array, or `unit` and `unit-sweeps` drift apart.
-            exclude: ['**/node_modules/**', ...SWEEP_TESTS],
+            // `SERIAL_TESTS` (above) is the membership list — edit that, or
+            // one of the two lists it joins, not this array, or `unit` and
+            // `unit-sweeps` drift apart.
+            exclude: ['**/node_modules/**', ...SERIAL_TESTS],
             fileParallelism: true,
             env: { DATABASE_URL: testUrl },
             globalSetup: ['./tests/setup/unit-db.ts'],
@@ -102,11 +137,13 @@ export default defineConfig(({ mode }) => {
           extends: true,
           test: {
             name: 'unit-sweeps',
-            // `SWEEP_TESTS` (above) is the membership list — edit it, not
-            // this array, or `unit` and `unit-sweeps` drift apart. Every
-            // file in it tests a service whose sweep writes rows it was
-            // never handed, with no scope parameter to pass — so it cannot
-            // share a database with a concurrent test file.
+            // `SERIAL_TESTS` (above) is the membership list — edit that, or
+            // one of the two lists it joins, not this array, or `unit` and
+            // `unit-sweeps` drift apart. Each list states its own reason for
+            // being here: `SWEEP_TESTS` cannot share a database with a
+            // concurrent file, `LOCK_CONTENTION_TESTS` cannot share a tier
+            // with one that asserts on lock timing. Both need what this
+            // project provides, which is why they share it despite the name.
             //
             // `fileParallelism: false` is the guard here, not the separate
             // `vitest run` invocation this tier also gets: flipping it to
@@ -114,7 +151,7 @@ export default defineConfig(({ mode }) => {
             // intact. It carries two further preconditions the option's name
             // does not cover, and breaking either re-parallelizes this tier
             // with the flag still reading as set — docs/test-database.md §2.
-            include: [...SWEEP_TESTS],
+            include: [...SERIAL_TESTS],
             fileParallelism: false,
             env: { DATABASE_URL: testUrl },
             globalSetup: ['./tests/setup/unit-db.ts'],
