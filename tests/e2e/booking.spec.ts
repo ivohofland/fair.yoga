@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { accountIdOfStudent } from './account-helpers';

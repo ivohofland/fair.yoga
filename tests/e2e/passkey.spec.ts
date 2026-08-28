@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher } from './account-helpers';
 import { hydrationSignal, patchOk, reloadHydrated, SERVER_RENDER_TIMEOUT } from './page-helpers';

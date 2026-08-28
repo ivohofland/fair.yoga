@@ -1,4 +1,5 @@
-import { test, expect, type BrowserContext } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { BrowserContext } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';

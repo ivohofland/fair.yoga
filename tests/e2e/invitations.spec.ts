@@ -1,4 +1,5 @@
-import { test, expect, type BrowserContext } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { BrowserContext } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';

@@ -2358,6 +2358,37 @@ That leaves two honest options, and they are not equivalent:
 of this row demonstrates: a fix aimed at an unmeasured cause changes something
 nobody needed changed.
 
+**DONE MEANWHILE, because it does not presuppose the cause: the e2e suite now
+captures browser output.** `tests/e2e/fixtures.ts` extends `test` with an
+`auto` fixture recording `console` and `pageerror`, attached to the report
+only when a test did not get its expected result. The gap it closes is that a
+trace records *where* a client-side failure stopped and nothing about *why*:
+class C's trace carried the network timeline, the action log, and no browser
+output at all. **That silence was production, not a hole in the trace
+format** — Playwright does record console entries, and a local trace of the
+same test carries two, both development-only (React's DevTools banner and
+`[HMR] connected`). CI runs `npm run start`, so neither exists and nothing
+else logs. `pageerror` is the channel that matters most there: in a production
+build a thrown render error reaches no console first. Verified by probe, both
+directions — a deliberately failed test attaches the marker it logged AND the
+uncaught error it threw; a passing one attaches nothing.
+
+It does NOT fail a test on a console error. That is a separate decision with a
+much wider blast radius and wants its own measurement of what the app actually
+logs.
+
+**AND A LEAD FOR THE FIX, recorded rather than acted on.** `page-helpers.ts`
+already exports `hydrationSignal(page)`, which waits for the
+`/api/notifications/stream` request — its own docblock says effects run only
+after hydration, so that request is a reliable "hydration finished" signal.
+**Only 2 of the 13 specs arm it, and `class-edit.spec.ts` is not one of
+them.** In the failing trace the stream opened at 0.13s and the click landed
+at ~0.17s, about 40ms later. That is consistent with a click racing
+hydration, and it means the primitive a harness-side fix would need already
+exists rather than needing inventing. It is **consistent with**, not evidence
+for: the repro run is what would turn it into a cause, and a fix aimed at it
+now would be the same mistake this row already made once.
+
 ### Class B, established (2026-08-28) — a real race, fixed before it was triaged
 
 **It was a real defect, it is now established rather than suspected, and it
