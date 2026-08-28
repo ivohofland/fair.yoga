@@ -200,7 +200,42 @@ carry their own kind literal. Measured; see spec §4.1.
   Existing single-argument uses (`TemplateFamily<ClassTemplate>`) keep compiling
   via the default; `archiveOrUnarchiveRule`'s signature needs no change.
 
-- [ ] **Step 1: Write the failing pin first**
+- [ ] **Step 1: Add the type parameter — and nothing else**
+
+This step and the next reproduce **exactly what issue #336 wrote**, so that the
+piece it omits fails on its own terms. The issue's sketch shows two things: the
+type carrying `TKind`, and the correlated `satisfies` clause. It does **not**
+show the family constants carrying their kind literals. So both of the things it
+does show land first, and the omission is what Step 3 supplies.
+
+Order matters here and the obvious order is wrong: writing the `satisfies`
+clause before the type parameter exists yields
+`TS2314: Generic type 'TemplateFamily' requires 1 type argument(s)` — an arity
+complaint that demonstrates nothing about `kind`.
+
+In `src/services/rule-lifecycle.ts`, add the second parameter with its default,
+and nothing more. Leave `CLASS_FAMILY` and `STUDIO_FAMILY` annotated exactly as
+they are:
+
+```ts
+export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
+  kind: TKind;
+  /* … the rest unchanged … */
+};
+```
+
+The default is what keeps every existing single-argument use compiling
+untouched — notably `archiveOrUnarchiveRule<TChild>(db, family: TemplateFamily<TChild>, …)`.
+Confirm that before moving on:
+
+```bash
+npx tsc --noEmit
+```
+
+Expected: **silent**. If this errors, the default is missing or a call site was
+widened that did not need to be.
+
+- [ ] **Step 2: Write the correlated tether, and run it to see it fail**
 
 In `src/services/rule-lifecycle.test.ts`, replace the `FAMILY_BY_KIND`
 declaration's `satisfies` clause with the correlated form, and add the child map
@@ -227,7 +262,7 @@ const FAMILY_BY_KIND = {
 } satisfies { [K in ClassFamily]: TemplateFamily<ChildByKind[K], K> };
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+Then run it:
 
 ```bash
 npx tsc --noEmit 2>&1 | head -12
@@ -243,18 +278,10 @@ error TS2322: … is not assignable to type 'TemplateFamily<…, "regular">'.
 
 This is the point of the task: the type parameter alone is not enough.
 
-- [ ] **Step 3: Add the parameter and annotate both constants**
+- [ ] **Step 3: Supply what the issue's sketch omits**
 
-In `rule-lifecycle.ts`:
-
-```ts
-export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
-  kind: TKind;
-  /* … the rest unchanged … */
-};
-```
-
-Then each constant carries its literal:
+Each constant carries its own kind literal. This is the step #336 does not
+mention, and Step 2 is the evidence that it is required rather than tidy:
 
 ```ts
 export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
