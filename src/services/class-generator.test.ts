@@ -2065,7 +2065,7 @@ describe('generateClassInstances (DB)', () => {
       const dates = candidates(now);
       for (const d of dates.slice(0, 2)) await createClassFixture(prisma, classRow(d));
 
-const { collidedDates, resumed, waitedMs, holderCommitted, holderError } =
+      const { collidedDates, resumed, waitedMs, holderCommitted, holderError } =
         await raceResumeAgainst(dates[2]!);
 
       expect(holderError).toBeNull();

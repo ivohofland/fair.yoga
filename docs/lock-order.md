@@ -926,7 +926,7 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
 ## The RESTRICT trigger is a wait edge, and a route guard is what closes it (#103)
 
 `ClassTemplate_teacherRoomId_roomArchived_fkey`
-(`20260827120000_rule_mirror/migration.sql`; formerly
+(`20260827120000_template_room_archive_invariant/migration.sql`; formerly
 `ClassTemplate_teacherRoomId_fkey`) and `Class_teacherRoomId_fkey` are both
 `ON DELETE RESTRICT`. A
 `DELETE FROM "TeacherRoom"` therefore locks the parent row and then runs the
@@ -1771,5 +1771,13 @@ in place of an index entry. Re-derive the constraint set with:
      WHERE conname LIKE '%roomArchived%' OR conname LIKE '%ruleLive%'
         OR conname = 'ClassTemplate_live_needs_open_room';
 
-A deadlock still requires two transactions touching two rooms in opposite
-orders, which is a pre-existing shape rather than one these keys introduce.
+The `TeacherRoom → ClassTemplate` edge makes an archive transaction hold the
+room while it waits on a child — a backward edge against the generator's sweep
+(`ClassTemplate` `FOR UPDATE`, then its `Class` insert's `KEY SHARE` on the
+room), with a single room, was measured to deadlock (`40P01`, the archive
+aborted). The archive route closes the cycle by taking the room's child rows
+`FOR UPDATE` before the room row itself, so both wait in the same direction
+(`setTeacherRoomArchived`). What remains is the pre-existing two-room shape
+directly above (#103-class rows): two transactions row-locking two rooms in
+opposite orders, which is not a shape this migration introduces — probe
+results, both shapes, in the #272 PR body.

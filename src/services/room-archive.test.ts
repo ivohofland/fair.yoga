@@ -117,33 +117,36 @@ describe('setTeacherRoomArchived — door 1, template clause (no blocking class 
 describe('setTeacherRoomArchived — the mid-request resume race (issue 272)', () => {
   // The counts are READ before the write, so a template paused in this room
   // when the counts ran can still be resumed in another tab before the
-  // archive's own update. Pre-272 that was a wrong success — a live template
+  // archive's own write. Pre-272 that was a wrong success — a live template
   // left sitting on an archived room, precisely the state door 1 exists to
-  // refuse. Post-272 the archive write's own cascade trips
-  // `ClassTemplate_live_needs_open_room`, and this is the service turning that
-  // 23514 into the SAME `in_use` answer the counts would have given had they
-  // run a moment later. `blockers` is reported as the counts saw it — zero —
-  // which is honest about what this function measured rather than inventing
-  // numbers it did not.
+  // refuse. Post-272 the refusal lives in `ClassTemplate_live_needs_open_room`,
+  // and this is the service turning that 23514 into the SAME `in_use` answer
+  // the counts would have given had they run a moment later. `blockers` is
+  // reported as the counts saw it — zero — which is honest about what this
+  // function measured rather than inventing numbers it did not.
   it('answers in_use rather than throwing when the constraint refuses the archive', async () => {
     const f = await makeFixture();
     const tpl = await addTemplate(f, { isActive: false, isArchived: false });
 
-    // The interposing-`$extends` lever `class-template-lifecycle.test.ts`
-    // uses: a PAUSED template counts as `templates: 0`, so the archive passes
-    // its count gate; the interposed resume lands on another connection
-    // between that read and the write, and the write is then refused by the
-    // constraint rather than succeeding.
+    // The interposing-`$extends` lever, staged at the race's true boundary: a
+    // PAUSED template counts as `templates: 0`, so the archive passes its
+    // count gate; the interposed resume then lands on another connection
+    // AFTER the count was read and BEFORE the archive's transaction starts.
+    // The write's own cascade rewrites the now-LIVE child (the transaction's
+    // pre-lock holds it, nothing contests it) and trips the CHECK, so the
+    // refusal comes from the same 23514 the hook used to provoke from inside
+    // the update.
     let interposed = false;
     const interposing = prisma.$extends({
       query: {
-        teacherRoom: {
-          async update({ args, query }) {
-            if (interposed) return query(args);
+        classTemplate: {
+          async count({ args, query }) {
+            const result = await query(args);
+            if (interposed) return result;
             interposed = true;
             const resumed = await pauseOrResumeTemplate(prisma, tpl.id, f.teacherId, 'active');
             if (!resumed.ok) throw new Error(`interposed resume failed: ${resumed.reason}`);
-            return query(args);
+            return result;
           },
         },
       },
@@ -156,6 +159,37 @@ describe('setTeacherRoomArchived — the mid-request resume race (issue 272)', (
 
     const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: f.linkId } });
     expect(after.isArchived).toBe(false);
+  });
+
+  // The flip side of the same race, and which transaction loses changed with
+  // the guard: the archive transaction pre-locks the room's child templates
+  // BEFORE it row-locks the room, so a resume arriving mid-request finds the
+  // child already held, its `scheduleRule` CAS cascade waits on the hold,
+  // hits the 1500ms lock timeout, and answers `busy` — a refusal, clean, on
+  // the tab that clicked resume, never a deadlock and never a throw. Before
+  // the pre-lock the loser was the archive (this describe's first case);
+  // afterward it is the resume. Both orders keep the invariant; the guard
+  // chose the one that cannot deadlock.
+  it('answers busy when the archive already holds the child row', async () => {
+    const f = await makeFixture();
+    const tpl = await addTemplate(f, { isActive: false, isArchived: false });
+    const holder = new PrismaClient();
+    await holder.$connect();
+    try {
+      const held = holder.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "ClassTemplate" WHERE id = ${tpl.id} FOR UPDATE`;
+        await tx.$queryRaw`SELECT pg_sleep(2.5)::text`;
+        return 'released';
+      });
+      const resumed = await pauseOrResumeTemplate(prisma, tpl.id, f.teacherId, 'active');
+      expect(resumed).toEqual({ ok: false, reason: 'busy' });
+      expect(await held).toBe('released');
+
+      const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: f.linkId } });
+      expect(after.isArchived).toBe(false);
+    } finally {
+      await holder.$disconnect();
+    }
   });
 });
 

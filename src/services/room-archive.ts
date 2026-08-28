@@ -180,12 +180,33 @@ export async function setTeacherRoomArchived(
   // template resumed between the counts and this write makes the write's own
   // cascade to the child row trip `ClassTemplate_live_needs_open_room`, so
   // the archive is refused by the constraint (below) exactly as if the count
-  // had seen it. The class half is what stays racy — the class invariant is
-  // deliberately out of scope (spec section 8).
+  // had seen it. The write runs in a transaction that pre-locks the room's
+  // child templates before the room row itself (see the transaction's
+  // comment) so the cascade never waits on a child the generator holds while
+  // this transaction still holds the room. The class half is what stays racy
+  // — the class invariant is deliberately out of scope (spec section 8).
   try {
-    await db.teacherRoom.update({
-      where: { id: teacherRoomId },
-      data: { isArchived: archiving },
+    await db.$transaction(async (tx) => {
+      // Lock ordering, issue 272: the write below cascades to this room's
+      // `ClassTemplate` rows via `ClassTemplate_teacherRoomId_roomArchived_fkey`,
+      // so the transaction otherwise holds the room while it waits on a child —
+      // a backward edge against the generator's `claimTemplateForGeneration`,
+      // which holds a live child `FOR UPDATE` before its `Class` insert's FK
+      // check takes `KEY SHARE` on the room. Single-room AB-BA: measured
+      // `40P01`, archive aborted (`docs/lock-order.md`, "The room mirror's
+      // foreign keys are wait edges"). Pre-locking the children first makes
+      // this transaction's order `ClassTemplate → TeacherRoom`, the same
+      // direction as the generator's, so the cascade waits are forward only.
+      if (archiving) {
+        await tx.$queryRaw`
+          SELECT ct."id" FROM "ClassTemplate" ct
+          WHERE ct."teacherRoomId" = ${teacherRoomId}
+          FOR UPDATE`;
+      }
+      await tx.teacherRoom.update({
+        where: { id: teacherRoomId },
+        data: { isArchived: archiving },
+      });
     });
   } catch (e) {
     // The counts above are read before this write, so a template resumed in

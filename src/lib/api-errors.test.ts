@@ -701,7 +701,7 @@ describe('isRestrictViolationOn', () => {
    * The three shapes were MEASURED on 2026-08-19 by provoking each delete
    * against a TeacherRoom carrying one archived ClassTemplate and zero Class
    * rows, not hand-written. The template constraint's NAME has since changed —
-   * issue 272's mirror (`20260827120000_rule_mirror`) renamed
+   * issue 272's mirror (`20260827120000_template_room_archive_invariant`) renamed
    * `ClassTemplate_teacherRoomId_fkey` to
    * `ClassTemplate_teacherRoomId_roomArchived_fkey` — so the old name is not
    * the one a refused delete reports any more:
