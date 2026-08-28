@@ -57,6 +57,19 @@ on:
         description: 'Repeats per test (--repeat-each)'
         default: '20'
 
+# `--repeat-each` IS UNSOUND ACROSS THE WHOLE SUITE, and the failures it
+# invents look like findings. Measured 2026-08-28 at `repeat: 30` over
+# `tests/e2e`: `auth.spec.ts > submitting email shows confirmation message`
+# failed 10 times, and it was this job's own doing — the test posts the SAME
+# address to `/api/auth/magic-link/send`, which rate-limits per email and
+# answers 429. The failures land on consecutive passes (indices exactly 71
+# apart, the per-pass test count), passes 11–20, then stop when the window
+# expires. Nothing was wrong with the app or the test.
+#
+# So: a spec-scoped default rather than a suite-scoped one, and read any
+# failure OUTSIDE the test under investigation as suspect until its repeat
+# indices are checked. A real flake scatters; a self-inflicted one comes in a
+# contiguous block.
 concurrency:
   group: e2e-flake-repro-${{ github.ref }}
   cancel-in-progress: true

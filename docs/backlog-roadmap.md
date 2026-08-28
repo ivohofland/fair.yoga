@@ -2365,8 +2365,44 @@ That leaves two honest options, and they are not equivalent:
   `workflow_dispatch` against the default branch and only then honours a
   `--ref`, so dispatching from the branch that adds it answers `HTTP 404:
   workflow … not found on the default branch` (measured 2026-08-28). Merge
-  first, dispatch second; the run that produces this evidence is therefore the
-  next round's, not this one's.
+  first, dispatch second.
+
+**RAN, 2026-08-28, and class C DID NOT REPRODUCE.** Four dispatches after PR
+#341 merged, all against a cold production build with `--retries=0`:
+
+| Shape | Executions of the target test | `waitForURL` failures |
+|---|---|---|
+| isolated, `--repeat-each=100` | 100 | 0 |
+| isolated, 5 more | 5 | 0 |
+| full suite × 5 | 5 | 0 |
+| full suite × 30 | 30 | 0 |
+| **total** | **140** | **0** |
+
+**What that bounds, and what it does not.** Rule of three puts the 95% upper
+bound at **≈2.1%**. The single CI observation implied ~5% for this project (one
+failure in twenty `main` runs), and 140 clean executions make that rate
+unlikely enough to reject — `P(0 | 5%) ≈ 0.07%`. So the rate is real but
+**lower than one observation suggested**, which is what one observation is
+worth. It is not zero, and nothing here says the cause is gone.
+
+**THE 30-PASS RUN WENT RED, AND ITS FAILURES WERE THIS JOB'S OWN DOING.** Ten
+of them, all `auth.spec.ts > submitting email shows confirmation message`,
+none of them class C. That test posts the SAME address to
+`/api/auth/magic-link/send`, which rate-limits per email and answers 429;
+`--repeat-each=30` sends it thirty times. The tell is the shape: the failing
+indices are exactly 71 apart — the per-pass test count — so they are passes
+11–20 in a contiguous block, stopping when the window expires. **A real flake
+scatters; a self-inflicted one arrives in a block**, and that check is now in
+the workflow header, because a red repro run is designed to mean "reproduced"
+and these ten did not.
+
+**Where this leaves C: instrumented, bounded, cause still open.** Brute force
+is now poor value — at ~2% another expected hit costs ~150 full-suite
+executions — and it is no longer the only route, because the console and
+`pageerror` capture that shipped with PR #341 means **the next natural
+occurrence names itself**. That is the trade being taken: stop paying for
+reproduction, and let the instrumented suite report the next one. The
+preventive sweep below is untouched work and worth more per hour.
 
 **The second is the one to do first**, for the reason the health-budget half
 of this row demonstrates: a fix aimed at an unmeasured cause changes something
@@ -2479,8 +2515,11 @@ failure rate is an hour of ambiguous evidence.
    it is, step 3 is still being judged against an unquantified baseline. That
    re-derivation is the next round's job, with the `gh run list` command at the
    head of this section.
-2. **Class C — the e2e soft navigation.** **Diagnosed 2026-08-28, not yet
-   fixed** — see the section above. The instruction to diagnose before raising
+2. **Class C — the e2e soft navigation.** **Diagnosed and bounded 2026-08-28;
+   cause still open, and deliberately parked** — 140 executions across four
+   repro dispatches produced no reproduction, which caps the rate near 2% and
+   makes further brute force worse value than the sweep at step 4. See the
+   section above. The instruction to diagnose before raising
    paid, and in the sharpest possible way: there was **nothing to raise**. The
    health budget never fired, and the timeout that did is a client-side
    transition that fetched everything it needed in 11ms and never committed.
