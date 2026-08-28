@@ -188,19 +188,14 @@ type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
  * on the *last* date there is no next statement — `COMMIT` on an aborted
  * transaction returns the `ROLLBACK` tag with no error, so `$transaction`
  * resolved successfully while every row it reported was discarded (#164).
- * Named rather than counted, because a count goes stale on the first unrelated
- * change and this one was wrong on arrival. Re-derived rather than edited by
- * one name when #194 removed a member — `grep -rn "generateInstancesForTemplate("
- * src/` returns three production call sites and all three pass a transaction
- * client: `api/class-templates/route.ts`, `generateClassInstances` below, and
- * `pauseOrResumeTemplate` (`class-template-lifecycle.ts`). There was a fourth,
- * the template sync, and it was the one that did not — it passed a bare
- * `PrismaClient` until the atomic-template-update branch (issue 83) stopped it
- * opening a transaction of its own, and #194 deleted it outright. In
- * production, that is: this file's own tests still call this function directly
- * with a bare `prisma` (`class-generator.test.ts`), which is why the roster
- * says production rather than pretending to be exhaustive. Do not reintroduce
- * a `catch` here; there is nothing it can do that the constraint does not.
+ * That is not hypothetical here: every production path into this function
+ * already runs inside an interactive transaction, so the transaction a caught
+ * `P2002` would abort is the CALLER'S. Stated as that property rather than as
+ * a roster of call sites: a roster reaches past this file and has no owner
+ * here. This file's own tests do call it with a bare `prisma`
+ * (`class-generator.test.ts`), which is why the parameter type admits one. Do
+ * not reintroduce a `catch` here; there is nothing it can do that the
+ * constraint does not.
  *
  * Accepts a transaction client so a route can create the template and its
  * window atomically.
@@ -641,11 +636,12 @@ function logSkippedSlots(templateId: string, teacherId: string, skipped: Skipped
  * Claims a template for generation, or reports it is no longer eligible.
  *
  * `FOR UPDATE OF ct` is the point, not the `SELECT`. It locks the same
- * `ClassTemplate` row `archiveOrUnarchiveTemplate`, `pauseOrResumeTemplate`
- * and `updateClassTemplate` each take as their own first statement (issue
- * 298 / #315, `docs/lock-order.md`, "The child row is the lock node for the
- * template families") — every one of them a plain `SELECT … FOR UPDATE`, the
- * same exclusive mode this statement takes, so the sweep and any of the three
+ * `ClassTemplate` row `updateClassTemplate` and both shared verbs
+ * (`archiveOrUnarchiveRule` and `pauseOrResumeRule`, `rule-lifecycle.ts`)
+ * each take as their own first statement (issue 298 / #315,
+ * `docs/lock-order.md`, "The child row is the lock node for the template
+ * families") — every one of them a plain `SELECT … FOR UPDATE`, the same
+ * exclusive mode this statement takes, so the sweep and any of the three
  * serialise on that row rather than interleaving:
  *
  *   - claim first  → the other statement's own `FOR UPDATE` waits; we
@@ -782,10 +778,11 @@ export async function claimTemplateForGeneration(
     // The signal the sweep's own `if (!fresh) return 0` cannot give: THIS
     // null is the measured `EvalPlanQual` race actually landing — the raw
     // statement above matched and waited, and what it waited on committed a
-    // change the wait made it miss. `pauseOrResumeTemplate`'s own call site
-    // treats reaching this as impossible and throws right after; logging
-    // here first costs it nothing and gives the sweep's silent `return 0`
-    // the trace it does not otherwise get.
+    // change the wait made it miss. `pauseOrResumeRule` (`rule-lifecycle.ts`)
+    // reaches this function through `CLASS_FAMILY.claim` and treats a null as
+    // impossible, throwing right after; logging here first costs it nothing
+    // and gives the sweep's silent `return 0` the trace it does not otherwise
+    // get.
     log.warn({ templateId }, 'class generation claim matched but found the row ineligible on re-check');
     return null;
   }

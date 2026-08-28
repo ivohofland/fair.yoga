@@ -16,17 +16,15 @@
  *     Prisma's P2025 when the row is already gone rather than silently
  *     matching zero rows the way `updateMany` does, so catching that one error
  *     code and mapping it to `not_found` is enough — no compare-and-swap
- *     needed. Scoped to `updateClassTemplate` ALONE (#100): the archive
- *     (`archiveOrUnarchiveRule`, `rule-lifecycle.ts`, which the wrapper at the
- *     foot of this file parameterises with `CLASS_FAMILY`) uses a
- *     compare-and-swap, because there the race to close is two requests
- *     applying the same transition rather than a row
- *     disappearing — and since #116 so does `pauseOrResumeTemplate`, which
- *     this paragraph named as the second P2025 site until that change made it
- *     the third CAS. Its `updateMany` returns a count where the old `update`
- *     threw, so nothing under its transaction raises P2025 at all and its
- *     `not_found` comes from the CAS's miss classification instead; its own
- *     `catch` carries the enumeration.
+ *     needed. Scoped to `updateClassTemplate` ALONE (#100): the two shared
+ *     verbs the wrappers at the foot of this file parameterise with
+ *     `CLASS_FAMILY` — `archiveOrUnarchiveRule` and `pauseOrResumeRule`
+ *     (`rule-lifecycle.ts`) — each use a compare-and-swap instead, because the
+ *     race they close is two requests applying the same transition rather than
+ *     a row disappearing. Their `updateMany` returns a count where a
+ *     single-record `update` throws, so nothing under either transaction
+ *     raises P2025 and each one's `not_found` comes from its CAS's miss
+ *     classification; the enumeration sits with each CAS.
  */
 
 import { Prisma } from '@prisma/client';
@@ -34,7 +32,7 @@ import type { PrismaClient, ClassTemplate, ScheduleRule, ClassStatus } from '@pr
 import type { z } from 'zod';
 import type { createClassTemplateSchema, updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
-import { startOfLocalDay, mondayOf, classStartInstant } from '@/lib/timezone';
+import { mondayOf, classStartInstant } from '@/lib/timezone';
 import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
@@ -56,17 +54,18 @@ import {
   DEFAULT_WEEKS,
 } from './class-generator';
 import { CHARGED_STATUSES } from './class-lifecycle';
-import { countSkipReasons, type GenerationResult, type SkipCounts } from '@/lib/generation';
+import type { GenerationResult } from '@/lib/generation';
 import {
   templateGenerationState,
   type TemplateGenerationState,
 } from '@/lib/template-selection';
 import {
   archiveOrUnarchiveRule,
+  pauseOrResumeRule,
   type ArchiveRuleResult,
+  type PauseRuleResult,
   type TemplateFamily,
   type WithSlot,
-  type LastScheduledClass,
 } from './rule-lifecycle';
 
 /**
@@ -879,9 +878,9 @@ export async function updateClassTemplate(
 
         // The child's row lock, explicit rather than incidental. Every other
         // writer of this template's lifecycle or calendar columns takes this
-        // same lock as its own first statement — `pauseOrResumeTemplate`
-        // further down, and the archive inside `archiveOrUnarchiveRule`
-        // (`rule-lifecycle.ts`) — so this one has to as well: `classType`,
+        // same lock as its own first statement — both shared verbs
+        // (`archiveOrUnarchiveRule` and `pauseOrResumeRule`,
+        // `rule-lifecycle.ts`) — so this one has to as well: `classType`,
         // `dayOfWeek`, `startTime` and `durationMinutes` write `ScheduleRule`
         // below, and a PUT that touches only those four would otherwise reach
         // that write without ever touching `ClassTemplate` — an edit with
@@ -955,8 +954,8 @@ export async function updateClassTemplate(
     updated = withSlot(written.updatedChild, written.newRule);
     updatedRule = written.newRule;
   } catch (err) {
-    // Transient first, matching the order `pauseOrResumeTemplate` further down
-    // and the shared archive (`archiveOrUnarchiveRule`, `rule-lifecycle.ts`)
+    // Transient first, matching the order the shared verbs
+    // (`archiveOrUnarchiveRule` and `pauseOrResumeRule`, `rule-lifecycle.ts`)
     // use. Not correctness-critical here — `isTransientDbError`'s codes are
     // disjoint from P2025 and from the exclusion constraint's `23P01` below, so a
     // transient error could not fall into either of those branches even
@@ -1112,109 +1111,10 @@ export async function updateClassTemplate(
 // ---------------------------------------------------------------------------
 
 /**
- * Outcome of a pause/resume PATCH. `paused` carries the furthest-out class
- * still on the schedule, for the pause confirmation; `active` reports what the
- * window holds and why it is not fuller — `scheduled`, `added`, and `counts`
- * (a whole `SkipCounts`); `unchanged` reports nothing beyond the template
- * itself, because it describes a request that changed nothing.
- *
- * This paragraph used to say "resuming needs no explanation", directly above an
- * arm that had grown counts. That is exactly the shape #164 was caused by — a
- * header disagreeing with the declaration beneath it — so it is worth stating
- * why it survived: it was true when resuming only flipped a flag, and nothing
- * forces a docblock to be re-read when the type under it grows.
- *
- * It has now been wrong twice more, and the second time is the instructive one.
- * #194 added `alreadyThisWeek` to `SkipCounts`, the arm gained it through the
- * old `& SkipCounts` without either name being written here, and this sentence
- * kept naming four. The response was to DERIVE the numbers from the
- * declaration "rather than incremented, which is the only way this stays true
- * through the next one".
- *
- * #296 was the next one, and deriving did not save it: the arm stopped
- * intersecting `SkipCounts` and started nesting it, so the sentence's whole
- * SHAPE — a list of member names — became wrong rather than its count. A
- * derived number survives a member being added; nothing survives the members
- * ceasing to be fields of this arm at all. Hence the naming stops here: this
- * header now says "a whole `SkipCounts`" and points at that type, which is the
- * only spelling that cannot drift, and the count lives in `SkipCounts`' own
- * docblock where the members do.
+ * The class family at `PauseRuleResult` (`rule-lifecycle.ts`), where every
+ * arm's reasoning lives.
  */
-export type PauseTemplateResult =
-  | {
-      ok: true;
-      action: 'paused';
-      template: ClassTemplateWithSlot;
-      lastScheduled: LastScheduledClass | null;
-    }
-  | ({
-      ok: true;
-      action: 'active';
-      template: ClassTemplateWithSlot;
-      /**
-       * Scheduled classes for this template from the start of the teacher's
-       * today onward — the same predicate and boundary `remaining` uses, so
-       * archiving and resuming report on one basis.
-       *
-       * Mirrors the studio family's `scheduled` (#119) in the three ways that
-       * carry the guarantee, not just in name: counted after generation,
-       * inside the same transaction, off the same `defaultTimezone` read the
-       * generator filtered its candidate dates with. An earlier draft counted
-       * it outside the transaction against the pre-transaction read of that
-       * column, which is the one input the studio twin's docblock names as
-       * making `scheduled < added` reachable.
-       */
-      scheduled: number;
-      /** Rows this resume created. */
-      added: number;
-      /**
-       * One nested field rather than re-listed `number`s, and the difference is
-       * a guarantee that did not exist before #116.
-       *
-       * `countSkipReasons`' docblock says a SEVENTH `SkipReason` fails the
-       * build rather than vanishing, and that is true of the REASON — its
-       * exhaustive `switch` catches it, measured by mutation at #296. It was
-       * not true of the COUNT: measured, adding a fifth reason, handling it,
-       * and adding its count to `SkipCounts` compiled clean repo-wide, and the
-       * new number vanished at every site that re-listed the fields by hand.
-       * #296 added a fourth count and it vanished nowhere, which is the change
-       * below rather than the guard above.
-       *
-       * This was `& SkipCounts` until #296 — an intersection, which bought the
-       * same compile-time guarantee HERE and nothing downstream: the route
-       * still mapped the members one by one onto the wire, the wire type still
-       * named them one by one, and the form still read them one by one. Four
-       * hops, three of which an intersection cannot reach. Nesting reaches all
-       * four, because every hop now moves one field whose type is
-       * `SkipCounts` — which is what makes the next count's arrival free rather
-       * than merely loud. Covers this arm and `ResumeTransactionOutcome`'s.
-       */
-      counts: SkipCounts;
-    })
-  | { ok: true; action: 'unchanged'; template: ClassTemplateWithSlot }
-  | { ok: false; reason: 'not_found' }
-  | { ok: false; reason: 'forbidden' }
-  | { ok: false; reason: 'archived' }
-  /**
-   * See `ArchiveTemplateResult`'s `busy` arm for what it guarantees and the
-   * range of causes behind it.
-   *
-   * THREE statements here can wait on a lock — the CAS, the generation claim's
-   * `SELECT … FOR UPDATE`, and generation's insert — matching the archive's
-   * three rather than undercutting them. This paragraph said two until #116
-   * added the claim.
-   *
-   * Which of them the bound catches first moved with that change, and the
-   * distinction is the arm's whole reason for existing: the bound reaches past
-   * the CAS, so a resume contending with a concurrent `Class` writer answers
-   * `busy` rather than reporting that date as `raced`. It used to reach that
-   * verdict at generation's insert, parking on a pending unique entry. It now
-   * reaches it one statement earlier, at the claim, whose `FOR UPDATE`
-   * conflicts with the `FOR KEY SHARE` an inserting row's FK check holds —
-   * measured, `class-generator.test.ts`, "the clash outlives the lock
-   * timeout".
-   */
-  | { ok: false; reason: 'busy' };
+export type PauseTemplateResult = PauseRuleResult<ClassTemplate>;
 
 /**
  * Statuses a generated instance can still be withdrawn or regenerated from.
@@ -1288,452 +1188,6 @@ const scheduledWhere = (
     cancelledAt: null,
     classes: { some: { status: { in: [...SCHEDULED_STATUSES] }, ...alsoOnClass } },
   }) satisfies Prisma.CalendarEntryWhereInput;
-
-/**
- * One arm per way `pauseOrResumeTemplate`'s transaction can resolve. Internal
- * only — mapped to the public `PauseTemplateResult` after the transaction
- * commits. Mirrors `PauseRuleOutcome` (`rule-lifecycle.ts`), which is the
- * shared spelling of these same arms; the two are meant to be read side by
- * side.
- *
- * None of these carries the stale pre-transaction snapshot the CAS exists to
- * stop being trusted, but they reach that differently: `paused` and `active`
- * are read back under a lock the successful CAS is still holding, while
- * `unchanged` comes from a plain re-read in the miss branch that may or may
- * not run under a lock this transaction already holds — see that branch, and
- * the shared archive's own miss branch (`archiveOrUnarchiveRule`,
- * `rule-lifecycle.ts`), for why the re-read is correct either way.
- */
-type ResumeTransactionOutcome =
-  | { outcome: 'not_found' }
-  | { outcome: 'archived' }
-  | { outcome: 'busy' }
-  | { outcome: 'unchanged'; template: ClassTemplateWithSlot }
-  | { outcome: 'paused'; template: ClassTemplateWithSlot }
-  | ({
-      outcome: 'active';
-      template: ClassTemplateWithSlot;
-      scheduled: number;
-      added: number;
-      counts: SkipCounts;
-    });
-
-/**
- * Pause or resume generation. Deletes nothing: pausing means "no new classes",
- * not "withdraw what I already offered" — that is what archiving is for.
- *
- * The re-activation branch is moved verbatim from the PATCH route's previous
- * default action (`src/app/api/class-templates/[id]/route.ts`), not
- * reconstructed: atomic so a generation failure rolls the `isActive` toggle
- * back rather than leaving the template active with a stale window, and using
- * the same typed `teacher: { select: { defaultTimezone: true } }` include
- * `generateInstancesForTemplate` requires.
- */
-export async function pauseOrResumeTemplate(
-  db: PrismaClient,
-  templateId: string,
-  teacherId: string,
-  target: 'active' | 'paused',
-): Promise<PauseTemplateResult> {
-  const template = await db.classTemplate.findUnique({
-    where: { id: templateId },
-    include: {
-      scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } },
-    },
-  });
-  if (!template) return { ok: false, reason: 'not_found' };
-  if (template.scheduleRule.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
-
-  // Same reason as the drop further down: `PauseTemplateResult` carries
-  // `ClassTemplateWithSlot`, flattened fresh from whatever row versions each
-  // branch below actually reads — the joined `scheduleRule.teacher` this
-  // include added is dropped rather than leaked back to the caller, including
-  // on this early-return path, before any write happens.
-  const { scheduleRule, ...bare } = template;
-
-  const desiredActive = target === 'active';
-
-  // Before the archived guard, deliberately. Archiving forces `isActive:
-  // false`, so `?state=paused` on an archived template is already true and
-  // there is nothing to refuse — only `?state=active` is the transition the
-  // guard exists to block.
-  if (scheduleRule.isActive === desiredActive) {
-    return { ok: true, action: 'unchanged', template: withSlot(bare, scheduleRule) };
-  }
-
-  if (scheduleRule.isArchived) return { ok: false, reason: 'archived' };
-
-  // This door's guard is GONE, and that is the point: issue 272 closed the
-  // "application doors, every one a non-transactional read" gap this used to
-  // sit in. The doors are not counted here: `template-room-constraint.test.ts`
-  // enumerates them, one `it` each, which is the roster with an owner. The refusal now comes from
-  // `ClassTemplate_live_needs_open_room` — the CHECK that no ACTIVE template
-  // sits on an archived room — and the route's pre-check supplies the
-  // sentence. What survives here is the transition it refused: resuming a
-  // template whose room got archived out from under it hits the constraint
-  // and is answered by the route's catch as the identical 409.
-
-  let result: ResumeTransactionOutcome;
-  try {
-    result = await db.$transaction(
-      async (tx): Promise<ResumeTransactionOutcome> => {
-        // Bounds every statement left in this transaction — the child lock
-        // immediately below first among them, then the CAS, then the claim
-        // and generation's insert.
-        //
-        // Without it the wait is bounded by NOTHING, not by the 10s budget:
-        // Prisma checks that budget at statement boundaries, so it "cannot
-        // roll back a statement already blocked inside Postgres, only refuse
-        // to start a new one" (`db-locks.ts`), which the mutation records
-        // measure as a hung test rather than a 10s abort.
-        await setLockTimeout(tx);
-
-        // The child's row lock, taken explicitly and first — before the CAS
-        // touches `ScheduleRule` at all. `isActive`/`isArchived` moved off
-        // `ClassTemplate` in issue 298, so a bare `updateMany` on
-        // `ScheduleRule` no longer locks anything a concurrent
-        // `claimTemplateForGeneration` (`class-generator.ts`) or
-        // `archiveOrUnarchiveTemplate`/`updateClassTemplate` waits on — those
-        // now serialise through this same statement instead. See
-        // `docs/lock-order.md`, "The child row is the lock node for the
-        // template families" for the decision this implements.
-        //
-        // Row count checked, not discarded: `ScheduleRule` carries no FK back
-        // to `ClassTemplate`, so a `ClassTemplate` deleted out from under this
-        // transaction leaves an orphaned rule row the CAS below would still
-        // match — reachable only through a test double today (nothing in
-        // `src/` deletes a `ClassTemplate`), but the CAS cannot tell that
-        // apart from a real one, so the check is made here rather than relied
-        // on to never come up.
-        const childLock = await tx.$queryRaw<Array<{ id: string }>>`
-          SELECT "id" FROM "ClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
-        if (childLock.length === 0) return { outcome: 'not_found' as const };
-
-        // A compare-and-swap, not a plain `update`. The two guards at the top
-        // of this function are read outside any lock and are fast paths only,
-        // not the guarantee: an archive can commit between those reads and
-        // this write. Keyed on `{ id }` alone — which is what stood here until
-        // #116 — this statement would not notice. It would re-read the new row
-        // version and set `isActive: true` on a template that had just been
-        // archived, then generate a four-week window onto it: measured, four
-        // `open` classes on an archived template, which is precisely the
-        // shelved-but-bookable state #86 exists to prevent. Constraining the
-        // write to the exact `isArchived`/`isActive` values the guards saw
-        // makes that transition impossible rather than merely unlikely.
-        //
-        // `updateMany`, not `update`, because `update` throws P2025 when
-        // nothing matches and a CAS miss is an ordinary outcome here, not an
-        // exception — see the miss branch below for the three things it can
-        // mean. That choice is also why this transaction no longer has a
-        // P2025 source at all; the `catch` below records the full enumeration.
-        const swapped = await tx.scheduleRule.updateMany({
-          where: { id: template.scheduleRuleId, isArchived: false, isActive: !desiredActive },
-          data: { isActive: desiredActive },
-        });
-
-        if (swapped.count === 0) {
-          // A miss may or may not leave this transaction holding a lock, and
-          // this plain re-read is correct either way. See the shared archive's
-          // own miss branch (`archiveOrUnarchiveRule`, `rule-lifecycle.ts`)
-          // for the full account rather than repeating it here. Both rows are
-          // read together (issue 298): the child's existence is still what
-          // `not_found` means, and the rule is what the classification below
-          // reads.
-          const current = await tx.classTemplate.findUnique({
-            where: { id: templateId },
-            include: { scheduleRule: true },
-          });
-          if (!current) return { outcome: 'not_found' as const };
-          // `isActive === desiredActive` before `isArchived`, deliberately —
-          // the same order as the fast paths above, and for the same reason:
-          // archiving forces `isActive: false`, so an archived row racing a
-          // *pause* is simultaneously "already the desired state" and
-          // "archived". Checking already-desired first answers that case
-          // `unchanged`, matching the fast path; checking `isArchived` first
-          // would answer a plain pause with a 409 meant for resuming an
-          // archived template. A racing *resume* is not already-desired, so it
-          // falls through regardless of order.
-          if (current.scheduleRule.isActive === desiredActive) {
-            return { outcome: 'unchanged' as const, template: withSlot(current, current.scheduleRule) };
-          }
-          if (current.scheduleRule.isArchived) return { outcome: 'archived' as const };
-          // Residual, and REACHABLE — measured, not merely conceded. This
-          // CAS's `where` is `isArchived: false AND isActive: !desiredActive`;
-          // a miss means one of those held *when the CAS ran*, and both are
-          // checked above against a second, later read. Under READ COMMITTED
-          // each statement takes its own snapshot, so a row that changed back
-          // in between reaches here. One interleaving that does it, with the
-          // `$extends` lever this file's tests already use: a resume commits
-          // between this transaction's own read and its CAS (so the CAS misses
-          // on `isActive`), and a pause commits before the re-read (so the
-          // re-read sees neither already-desired nor archived).
-          //
-          // `busy`, not a throw. Why that is the right answer, what the route
-          // renders it as, and why both families must answer alike are one
-          // argument about three other modules, so it lives in
-          // `docs/lock-order.md`, "A CAS miss no re-read can classify answers
-          // `busy`, not a throw". What belongs beside the code is only that
-          // this branch is that case: the CAS matched ZERO rows, so this
-          // transaction has written nothing and rolls back clean.
-          //
-          // Logged rather than silent: the observed row is the half of `busy`
-          // that no `err` carries, and a steady trickle here with no
-          // concurrent writer would mean the CAS predicate and this
-          // classification have drifted apart.
-          log.warn(
-            {
-              templateId,
-              teacherId,
-              target,
-              observed: { isActive: current.scheduleRule.isActive, isArchived: current.scheduleRule.isArchived },
-              desiredActive,
-            },
-            'recurring class pause/resume CAS missed and the re-read matched no classification',
-          );
-          return { outcome: 'busy' as const };
-        }
-
-        if (!desiredActive) {
-          // `updateMany` returns a count, not a row. Safe to read back without
-          // a lock re-check: the CAS above matched, so this transaction holds
-          // the rule row until commit — `FOR UPDATE` since issue 272 made
-          // `live` an FK-referenced key column, `FOR NO KEY UPDATE` before it
-          // — and nothing can change or delete it before we commit. `OrThrow` for that reason — a `| null`
-          // here would be an impossible branch every caller had to pretend to
-          // handle. `bare`, not a fresh child read: pausing writes nothing on
-          // `ClassTemplate`, so the pre-transaction snapshot is still current.
-          const pausedRule = await tx.scheduleRule.findUniqueOrThrow({
-            where: { id: template.scheduleRuleId },
-          });
-          return { outcome: 'paused' as const, template: withSlot(bare, pausedRule) };
-        }
-
-        // Take the row lock before generating. The CAS above only flipped
-        // `isActive`, a non-key column, so Postgres granted it `FOR NO KEY
-        // UPDATE` — which does not conflict with the `FOR KEY SHARE` a
-        // concurrent `Class` insert takes on this template for FK integrity.
-        // Without this claim that race is live; `FOR UPDATE` makes the
-        // collision impossible instead of leaving it to the generator's
-        // `ON CONFLICT DO NOTHING`, which would cost that date's class with no
-        // error (#116, mirroring what #94 did for the studio family).
-        //
-        // It also returns the row, so the generation below runs off a value
-        // read under the lock rather than off the CAS's own count (#102).
-        const claimed = await claimTemplateForGeneration(tx, templateId);
-        if (!claimed) {
-          // Genuinely unreachable, not merely believed to be. The CAS above
-          // proved `isArchived: false` and set `isActive: true` in the same
-          // statement that took this row's write lock, and that lock is still
-          // held here — nothing can have archived, paused or deleted it since.
-          // A null here would mean the claim's eligibility predicate and the
-          // CAS's have drifted apart, not that a race slipped past either.
-          //
-          // This is the detail #116 got right for the wrong reason: it called
-          // a null "a logic error rather than a race" while proposing to keep
-          // the plain `update`, under which a raced archive makes null
-          // legitimately reachable and this throw a 500. The CAS is what earns
-          // the throw.
-          throw new Error(
-            `pauseOrResumeTemplate: claim returned null for template ${templateId} ` +
-              "right after this transaction's own CAS confirmed it eligible — " +
-              'the claim predicate and the CAS predicate have diverged',
-          );
-        }
-        const generation = await generateInstancesForTemplate(tx, claimed);
-
-        // `claimed.teacher`, not the CAS's own read either: the claim's
-        // `findUniqueOrThrow` runs under `FOR UPDATE`, so this is the one read
-        // of that column that cannot be stale, and `generateInstancesForTemplate`
-        // filtered its candidate dates off this same object.
-        //
-        // Inside the transaction, on `tx`, and keyed to `claimed.teacher` — all
-        // three deliberately, to match `pauseOrResumeStudioTemplate` rather
-        // than merely resemble it.
-        //
-        // `claimed.teacher.defaultTimezone`, not the `template.teacher` read at
-        // the top of this function. That is the studio twin's rule, and its
-        // reasoning carries over unchanged: `generateInstancesForTemplate`
-        // filtered its candidate dates with `classStartInstant(date,
-        // startTime, claimed.teacher.defaultTimezone)` off this same object, so
-        // keying the count's boundary to a *different* read of that column is
-        // the one way `scheduled < added` becomes reachable — a zone change
-        // committing between the two reads moves the `gte today` boundary past
-        // a row generation just added.
-        //
-        // **No test pins this, deliberately — know that before trusting it.**
-        // Making the two reads disagree needs a zone change injected between
-        // them (the `$extends` lever this file's tests already use) *and* a
-        // wall-clock hour at which the two zones' local days straddle a
-        // generated date. This function reads `new Date()` internally and takes
-        // no injectable clock, so such a test would pass vacuously at most
-        // hours — the #138 failure, where a check ran at a time when both code
-        // paths rendered identically and therefore proved nothing. Adding a
-        // `now` parameter to production code for a test to steer is the other
-        // thing this project declines to do. The guard is this paragraph and
-        // the studio twin's; if you change this line, nothing will stop you.
-        //
-        // Do not "simplify" this to
-        // `template.scheduleRule.teacher.…`.
-        const today = startOfLocalDay(new Date(), claimed.scheduleRule.teacher.defaultTimezone);
-        const scheduled = await tx.calendarEntry.count({
-          where: scheduledWhere(claimed.scheduleRuleId, { gte: today }),
-        });
-        const { scheduleRule: claimedRule, ...bareT } = claimed;
-        const skipCounts = countSkipReasons(generation.skipped);
-
-        // The studio twin's line, ported — this block was rewritten by #116
-        // and the warning did not come with it. The state it reports — a
-        // template flagged live that produces no classes — is reachable
-        // WITHOUT failing: every candidate date already holds a cancelled row,
-        // so generation creates nothing and there is no throw for
-        // `withErrorHandler` to classify. The teacher is told
-        // (`resumeMessage`'s `scheduled === 0` branch); this carries the
-        // breakdown to the operator side, which otherwise has no record that a
-        // resume left the window empty. Rare enough not to be noise: it only
-        // fires on a resume that filled nothing.
-        if (scheduled === 0) {
-          log.warn(
-            { templateId, teacherId, added: generation.created, ...skipCounts },
-            'recurring class template resumed live with an empty window',
-          );
-        }
-
-        return {
-          outcome: 'active' as const,
-          template: withSlot(bareT, claimedRule),
-          scheduled,
-          added: generation.created,
-          counts: skipCounts,
-        };
-      },
-      // Each individual WAIT is bounded at 2s by the `setLockTimeout` at the
-      // top of this transaction, so this budget does not govern any one of
-      // them — but there are three that can wait (the CAS, the claim, and
-      // generation's insert), so it does govern their sum, and a path that
-      // waits at all three spends 6s of the 10 before doing any work at all.
-      //
-      // The work it was written for is the rest, and it forks. Both arms run
-      // this transaction's `SET LOCAL` and the CAS. The PAUSED arm then runs
-      // one further statement — its own `findUniqueOrThrow` read-back — and
-      // returns; three statements, the cheap path, and a path this enumeration
-      // did not mention at all. The ACTIVE arm runs the claim's `SET LOCAL`,
-      // raw `SELECT` and `findUniqueOrThrow`, generation's TWO reads — its
-      // date-scoped occupancy `findMany` and the `templateId`-scoped week read
-      // #194 added — its batched insert, and the `count`.
-      //
-      // The claim's three statements joined that list in #116 and this
-      // enumeration did not; the week read joined it in #194 and this
-      // enumeration was visited for it; the paused arm's read-back predates
-      // both and was never in it. Three by omission, not the two the sentence
-      // here used to own up to — which is why it now enumerates by ARM rather
-      // than as one flat list, since a flat list is what made a whole branch
-      // easy to miss. The `catch` below asks whoever adds a statement to
-      // update its own enumeration; this one asks the same. A loaded VPS can
-      // push the work past Prisma's 5s default on its own.
-      //
-      // The sentence this replaces said the 5s default "would abort us
-      // mid-wait". It would not, and could not: Prisma checks the budget at
-      // statement boundaries, and a statement blocked inside Postgres never
-      // reaches one. It was the third of three comments making that claim and
-      // the one the correction wave missed.
-      { timeout: 10_000 },
-    );
-  } catch (err: unknown) {
-    // Note what this `catch` is actually attached to: the whole
-    // `$transaction`, not a single statement — so it covers
-    // `generateInstancesForTemplate` too. Nothing under this transaction can
-    // raise P2025: the CAS returns a count, the paused arm's
-    // `findUniqueOrThrow` runs after the CAS matched (under `FOR NO KEY
-    // UPDATE`), `claimTemplateForGeneration`'s `findUniqueOrThrow` runs
-    // under `FOR UPDATE` its own raw `SELECT` just took (so the row
-    // provably exists), `generateInstancesForTemplate` issues two `findMany`s
-    // — the date-scoped occupancy read and the `templateId`-scoped week read
-    // #194 added — and a `createManyAndReturn` (none of the three produces
-    // P2025, and the insert absorbs P2002 rather than raising it), and
-    // `class.count` cannot
-    // produce it. `pauseOrResumeStudioTemplate`'s catch already carries only
-    // the transient branch and a rethrow; this converges on it. Add an
-    // *unprotected* `findUniqueOrThrow` or single-record `update` inside
-    // this transaction and that changes silently. Whoever does that owes
-    // this comment an enumeration of what it now covers.
-    //
-    // Never `23P01` from the CAS either, and this half is worth proving
-    // rather than asserting, because #196/#298 added an exclusion constraint
-    // the archive's CAS (`archiveOrUnarchiveRule`, `rule-lifecycle.ts`) does
-    // collide on. `data` up there is
-    // `{ isActive: desiredActive }` — nothing else — and
-    // `ScheduleRule_teacher_slot_excl` excludes on `(teacherId, dayOfWeek,
-    // slot)` `WHERE isArchived = false`. None of the columns that key names is
-    // in this write's `data`, so the excluded values are unchanged: a row
-    // that already satisfied the constraint still does, whatever mechanism
-    // Postgres uses to re-check it. That exemption is local to this write —
-    // `archiveOrUnarchiveTemplate`'s CAS DOES write `isArchived`, and
-    // un-archiving into a slot another live rule holds is exactly what makes
-    // that one raise `23P01`. This paragraph stood in the `catch` #116
-    // replaced; it is kept because deleting the P2025 branch is no reason to
-    // delete the exclusion-constraint reasoning beside it, and
-    // `studio-class-template-lifecycle.ts` still cites it as the original.
-    if (isTransientDbError(err)) {
-      log.warn(
-        { err, templateId, teacherId, target },
-        'recurring class pause/resume lost the template lock race',
-      );
-      return { ok: false, reason: 'busy' };
-    }
-    throw err;
-  }
-
-  switch (result.outcome) {
-    case 'not_found':
-      return { ok: false, reason: 'not_found' };
-    case 'archived':
-      return { ok: false, reason: 'archived' };
-    case 'busy':
-      return { ok: false, reason: 'busy' };
-    case 'unchanged':
-      return { ok: true, action: 'unchanged', template: result.template };
-    case 'paused': {
-      // `gte` today, not `gt`: this reports what is still on the schedule, and
-      // today's class is still on it. Pause deletes nothing, so there is no
-      // spare-today carve-out here to mirror.
-      const today = startOfLocalDay(new Date(), template.scheduleRule.teacher.defaultTimezone);
-      const lastScheduledRow = await db.calendarEntry.findFirst({
-        where: scheduledWhere(template.scheduleRuleId, { gte: today }),
-        orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
-        select: { date: true, startTime: true },
-      });
-      const lastScheduled: LastScheduledClass | null = lastScheduledRow && {
-        date: lastScheduledRow.date,
-        startTime: timeToHHmm(lastScheduledRow.startTime),
-      };
-      return { ok: true, action: 'paused', template: result.template, lastScheduled };
-    }
-    case 'active':
-      return {
-        ok: true,
-        action: 'active',
-        template: result.template,
-        scheduled: result.scheduled,
-        added: result.added,
-        counts: result.counts,
-      };
-    default: {
-      // Throws rather than returning `unhandled`, converging on
-      // `pauseOrResumeStudioTemplate`'s own default. Both are unreachable —
-      // the union is internal, closed, and the `never` binding is what proves
-      // a new arm cannot be forgotten — but the two failure modes are not
-      // equally diagnosable if one ever is reached. Returning the internal arm
-      // hands `{ outcome: … }` to the route, where `result.ok` is `undefined`,
-      // every `reason` test misses, and the route's own default returns a
-      // plain object where Next expects a `Response`: two silent hops and an
-      // unattributable 500. This says which arm, once, at the boundary.
-      const unhandled: never = result;
-      throw new Error(
-        `pauseOrResumeTemplate: unhandled transaction outcome ${JSON.stringify(unhandled)}`,
-      );
-    }
-  }
-}
 
 /** The recurring-class family's `TemplateFamily` entry (`rule-lifecycle.ts`). */
 export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
@@ -2073,6 +1527,30 @@ export function archiveOrUnarchiveTemplate(
   target: 'archived' | 'unarchived',
 ): Promise<ArchiveTemplateResult> {
   return archiveOrUnarchiveRule(db, CLASS_FAMILY, templateId, teacherId, target);
+}
+
+/**
+ * Pause or resume generation. Deletes nothing: pausing means "no new classes",
+ * not "withdraw what I already offered" — that is what archiving is for.
+ *
+ * Resuming does not call `generateClassInstances`; that takes no `teacherId`
+ * and sweeps every active template platform-wide, across every teacher, which
+ * is not something a single PATCH may do. It goes through
+ * `CLASS_FAMILY.claim`/`generate` instead — `claimTemplateForGeneration` and
+ * `generateInstancesForTemplate` (`class-generator.ts`), both scoped to one
+ * template and both taking this transaction's client.
+ *
+ * The mechanics — the compare-and-swap, the row lock, the claim, the transient
+ * handling — live in `pauseOrResumeRule` (`rule-lifecycle.ts`), which this
+ * function only parameterises with `CLASS_FAMILY`.
+ */
+export function pauseOrResumeTemplate(
+  db: PrismaClient,
+  templateId: string,
+  teacherId: string,
+  target: 'active' | 'paused',
+): Promise<PauseTemplateResult> {
+  return pauseOrResumeRule(db, CLASS_FAMILY, templateId, teacherId, target);
 }
 
 /**

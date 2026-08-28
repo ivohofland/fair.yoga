@@ -3114,4 +3114,75 @@ describe('pauseOrResumeTemplate (DB)', () => {
       }),
     ).toBeGreaterThan(0);
   });
+
+  /**
+   * `TemplateFamily.withSlot` (`rule-lifecycle.ts`) advertises as STRUCTURAL
+   * that the shared pause cannot spread a joined `scheduleRule` onto a
+   * response: it takes the joined row and each family destructures in its own
+   * adapter, so nothing in that module ever holds a loose one. The structure
+   * is real, but it lives in `CLASS_FAMILY`'s adapter — rewrite that adapter
+   * to pass its first argument straight through and the claim is false with
+   * nothing to say so.
+   *
+   * Every arm of `pauseOrResumeRule` reaches that adapter with a joined row,
+   * so one arm exercises it for all of them. The CAS-miss `unchanged` arm is
+   * the one driven here because its template is built inside the transaction
+   * from a re-read, rather than from the row the caller already held.
+   *
+   * `api/class-templates/[id]/route.ts` spreads this template onto the
+   * response body and `ClassTemplateWithSlot` never declares `scheduleRule`,
+   * so no caller can type the field and no compiler error can find it. The
+   * archive arm's twin of this test is "un-archiving answers with a flattened
+   * template, never the joined rule row"; one property, one spelling, and the
+   * two are meant to be read as a pair.
+   *
+   * `not.toContain`, not a whole-shape assertion: the template row's own
+   * fields change with the schema, and this is about fields that must not be
+   * there.
+   */
+  it('answers unchanged with a flattened template, never the joined rule row', async () => {
+    // Explicit start time rather than the block's counter slot: this block
+    // allocates one hour per template from 10:30 and `slotTime` refuses to
+    // run past 24:00, so the last counter value is spoken for. 08:00 sits
+    // below the first allocated slot and clears the 09:30 one by 30 minutes,
+    // which `ScheduleRule_teacher_slot_excl` needs on a 60-minute rule.
+    const t = await makeTemplate('No Joined Rule On A Pause Miss', '08:00');
+
+    let paused = false;
+    // Cast for the same reason the sibling `interposing` clients above need
+    // one: the extended client is missing `$on`, so it is not assignable to
+    // `pauseOrResumeTemplate`'s `PrismaClient`-typed `db` parameter.
+    const interposing = prisma.$extends({
+      query: {
+        classTemplate: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            if (!paused) {
+              paused = true;
+              await prisma.scheduleRule.update({
+                where: { id: t.scheduleRuleId },
+                data: { isActive: false },
+              });
+            }
+            return row;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await pauseOrResumeTemplate(interposing, t.id, teacherId, 'paused');
+
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`);
+    expect(result.action).toBe('unchanged');
+
+    expect(Object.keys(result.template)).not.toContain('scheduleRule');
+    // The second line, not a duplicate of the first: the adapter's `rule`
+    // parameter is the joined row too, and one that spread it whole would
+    // still compile.
+    expect(Object.keys(result.template)).not.toContain('teacher');
+    // The flattening itself still happened — otherwise "no `scheduleRule`"
+    // would pass on a response that lost the rule's columns altogether.
+    expect(result.template.dayOfWeek).toBe(t.scheduleRule.dayOfWeek);
+    expect(result.template.startTime).toBe(timeToHHmm(t.scheduleRule.startTime));
+  });
 });

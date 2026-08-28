@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import type { ClassFamily, ClassTemplate, Prisma, StudioClassTemplate } from '@prisma/client';
 import {
   archiveOrUnarchiveRule,
+  pauseOrResumeRule,
   type ArchiveRuleResult,
   type TemplateFamily,
   type WithSlot,
@@ -153,23 +154,7 @@ describe("the two families' archive results are not interchangeable", () => {
   });
 });
 
-/**
- * The record guard inside `archiveOrUnarchiveRule` — that a family's
- * `withdraw` hook runs the shared delete exactly once.
- *
- * It protects `withdrawnCount` (#97), the durable record of what a teacher is
- * told was withdrawn, and it holds for both shipped families vacuously:
- * `STUDIO_FAMILY.withdraw` is `null`, so that family never reaches the
- * callback at all, and `CLASS_FAMILY`'s hook is correct. Nothing shipped can
- * turn the guard red, so a synthetic family is what makes it fail — deleting
- * the guard has to break something.
- *
- * The count itself needs no guard: `around` returns `void`, so the number that
- * reaches `withdrawnCount` comes out of the shared delete's own closure and no
- * hook can substitute one. That is a mutation nobody can write, which beats a
- * mutation this file would have to catch.
- */
-describe('the archive record guard (DB)', () => {
+describe('the shared lifecycle verbs (DB)', () => {
   let teacherId: string;
   let accountId: string;
   let roomId: string;
@@ -259,10 +244,27 @@ describe('the archive record guard (DB)', () => {
     await prisma.$disconnect();
   });
 
-  // `CLASS_FAMILY` spread whole, so everything except the hook is the real
-  // archive — the read, the child row lock, the CAS, both predicates. One case
-  // per way the call count can be wrong: never run, run twice, and run but
-  // never completed.
+  /**
+   * The record guard inside `archiveOrUnarchiveRule` — that a family's
+   * `withdraw` hook runs the shared delete exactly once.
+   *
+   * It protects `withdrawnCount` (#97), the durable record of what a teacher is
+   * told was withdrawn, and it holds for both shipped families vacuously:
+   * `STUDIO_FAMILY.withdraw` is `null`, so that family never reaches the
+   * callback at all, and `CLASS_FAMILY`'s hook is correct. Nothing shipped can
+   * turn the guard red, so a synthetic family is what makes it fail — deleting
+   * the guard has to break something.
+   *
+   * The count itself needs no guard: `around` returns `void`, so the number that
+   * reaches `withdrawnCount` comes out of the shared delete's own closure and no
+   * hook can substitute one. That is a mutation nobody can write, which beats a
+   * mutation this file would have to catch.
+   *
+   * `CLASS_FAMILY` spread whole, so everything except the hook is the real
+   * archive — the read, the child row lock, the CAS, both predicates. One case
+   * per way the call count can be wrong: never run, run twice, and run but
+   * never completed.
+   */
   const cases: Array<[string, TemplateFamily<ClassTemplate>]> = [
     ['never runs the shared delete at all', { ...CLASS_FAMILY, withdraw: { around: async () => {} } }],
     [
@@ -321,5 +323,61 @@ describe('the archive record guard (DB)', () => {
     expect(after.scheduleRule.archivedAt).toBeNull();
     expect(after.scheduleRule.withdrawnCount).toBeNull();
     expect(after.scheduleRule.isArchived).toBe(false);
+  });
+
+  /**
+   * The shared `catch` answers `busy` for a transient error and rethrows
+   * everything else. That rethrow is load-bearing, and its only other guard
+   * lives in `room-archive-doors.test.ts` — a file named for the room-archive
+   * lifecycle, which is not where someone editing error handling here will
+   * look. Since #272 a resume onto an archived room is refused by a CHECK
+   * rather than by a service guard: the CAS flips `isActive`, the constraint
+   * fires, and the SQLSTATE has to reach the route, which turns it into a 409
+   * a teacher can act on. Classified as transient it becomes a 503 "the system
+   * was busy" instead, and the studio family — which has no such constraint —
+   * shows no symptom at all.
+   *
+   * `23514` sits in neither transient list (`isTransientDbError`,
+   * `@/lib/api-errors`), on a constraint name nothing in this schema declares,
+   * so a stray match cannot make this pass for the wrong reason.
+   *
+   * The override is on `updateMany`, which is the CAS and nothing else here:
+   * the fixture above writes through `update`, so nothing it does is
+   * intercepted. Driven through `CLASS_FAMILY` because that is the family this
+   * block's fixture builds rows for; the `catch` under test takes no family
+   * into account.
+   */
+  it('rethrows a non-transient database error rather than answering busy', async () => {
+    const template = await makeTemplate();
+    // Paused, so `target: 'active'` is a real transition and reaches the CAS
+    // rather than the already-in-that-state fast path.
+    await prisma.scheduleRule.update({
+      where: { id: template.scheduleRuleId },
+      data: { isActive: false },
+    });
+
+    const checkViolation = Object.assign(
+      new Error(
+        'Raw query failed. code: "23514". Message: `ERROR: new row for relation ' +
+          '"ClassTemplate" violates check constraint "__c1b_never_a_real_constraint"`',
+      ),
+      { code: 'P2010' },
+    );
+
+    const throwing = prisma.$extends({
+      query: {
+        scheduleRule: {
+          async updateMany() {
+            throw checkViolation;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    // `rejects`, not a `busy` result: the identity of the error is what the
+    // route reads to pick 409 over 503.
+    await expect(
+      pauseOrResumeRule(throwing, CLASS_FAMILY, template.id, teacherId, 'active'),
+    ).rejects.toBe(checkViolation);
   });
 });

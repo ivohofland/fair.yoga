@@ -454,10 +454,9 @@ export async function archiveOrUnarchiveRule<TChild>(
         // … WHERE "id" = $1 AND "isArchived" = $2` — a filter it compiled to a
         // subquery would be re-run under the same snapshot and match anyway.
         //
-        // No P2025 guard here, unlike `updateClassTemplate` (#100).
-        // `pauseOrResumeTemplate` (`class-template-lifecycle.ts`) has this
-        // same guard-free shape, and #116 is where it got it.
-        // Not an omission: `updateMany` returns
+        // No P2025 guard here, unlike `updateClassTemplate`
+        // (`class-template-lifecycle.ts`, #100). `pauseOrResumeRule` below has
+        // this same guard-free shape. Not an omission: `updateMany` returns
         // `{ count: 0 }` rather than throwing when nothing matches, and the
         // zero-count branch below already answers `not_found` by re-reading.
         // Two sites further down can raise P2025 — `readChildOrThrow` and the
