@@ -5,6 +5,7 @@ import {
   updateClassTemplate,
   archiveOrUnarchiveTemplate,
   pauseOrResumeTemplate,
+  type ClassTemplateUpdateData,
 } from './class-template-lifecycle';
 import { isTransientDbError } from '@/lib/api-errors';
 import { startOfLocalDay, classStartInstant, mondayOf } from '@/lib/timezone';
@@ -13,6 +14,44 @@ import { formatDayHeader } from '@/lib/format';
 import { setLockTimeout } from '@/lib/db-locks';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
+
+/**
+ * The forbidden-field GUARD is required on `updateClassTemplate`'s `data`
+ * parameter, and this is what enforces it.
+ *
+ * `_templateForbiddenListIsComplete` and `_templateForbiddenColumnsExist`
+ * prove the list's CONTENT — every column is classified, and no name on it is
+ * absent from the model. Neither proves the list is APPLIED. Dropping
+ * `& Partial<Record<PlainUpdateForbiddenTemplateField, never>>` from the
+ * signature passes `tsc` and every runtime test, because no call site sends a
+ * forbidden key today — and the parameter then accepts `scheduleRuleId`,
+ * letting a `PUT` re-parent a template onto a rule its teacher does not own.
+ *
+ * Only an unused `@ts-expect-error` can catch that: this function is never
+ * called, and `tsconfig.json` includes every `.ts` in the repo, so weakening
+ * the signature fails the build on this line rather than leaving a green
+ * suite. Same instrument, same reason, as `_completionTimingIsRequired`
+ * (`class-lifecycle.test.ts`).
+ */
+// VARIABLES, NOT OBJECT LITERALS, and that distinction is the whole test. A
+// literal carrying a forbidden key is rejected by excess-property checking
+// whether or not the guard is present, so a literal-based pin passes with the
+// guard deleted — measured, which is why this reads the way it does. Excess
+// properties on a VARIABLE are allowed, so only the intersection refuses these.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _templateForbiddenFieldsAreRejected(
+  db: PrismaClient,
+  reparent: ClassTemplateUpdateData & { scheduleRuleId: string },
+  roomMirror: ClassTemplateUpdateData & { roomArchived: boolean },
+  ruleMirror: ClassTemplateUpdateData & { ruleLive: boolean },
+): Promise<void> {
+  // @ts-expect-error `scheduleRuleId` is identity — a plain edit may never re-parent.
+  await updateClassTemplate(db, 'never-called', 'never-called', reparent);
+  // @ts-expect-error the room mirror belongs to Postgres, never to a plain edit.
+  await updateClassTemplate(db, 'never-called', 'never-called', roomMirror);
+  // @ts-expect-error the rule mirror belongs to Postgres, never to a plain edit.
+  await updateClassTemplate(db, 'never-called', 'never-called', ruleMirror);
+}
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
@@ -2912,10 +2951,14 @@ describe('pauseOrResumeTemplate (DB)', () => {
    * while `pauseOrResumeTemplate` generates, a concurrent `Class` insert for
    * this template cannot proceed — and with the claim removed, it can.
    *
-   * The mechanism is the mode. `claimTemplateForGeneration` takes `FOR UPDATE`
-   * on the `ClassTemplate` row, which conflicts with a concurrent
-   * `FOR KEY SHARE` on it; the CAS above it takes `FOR NO KEY UPDATE`, which
-   * does not. So the claim is the only thing in this transaction that can
+   * The mechanism is the mode, and the row it is on. `claimTemplateForGeneration`
+   * takes `FOR UPDATE` on the `ClassTemplate` row, which conflicts with a
+   * concurrent `FOR KEY SHARE` on it. The CAS reaches that same row only
+   * through the rule's `ON UPDATE CASCADE`, and what it writes there
+   * (`ruleLive`) is not part of any unique index ON `ClassTemplate` — so the
+   * cascade takes `FOR NO KEY UPDATE` on the child and does not conflict.
+   * (The CAS's lock on the RULE row was upgraded to `FOR UPDATE` by issue 272;
+   * that is a different row and does not change what this test measures.) So the claim is the only thing in this transaction that can
    * block such a writer, and this test drives the collision from the other
    * side: the holder takes `FOR KEY SHARE` first, and the resume must then
    * fail to get its `FOR UPDATE` inside the 2s `setLockTimeout` bound and
@@ -2934,8 +2977,8 @@ describe('pauseOrResumeTemplate (DB)', () => {
    * kind of thing that is missed when it goes.
    *
    * The statement is still what discriminates: with the claim removed the
-   * resume takes only `FOR NO KEY UPDATE`, never conflicts with the holder,
-   * and succeeds.
+   * resume touches the child row only through the cascade, at
+   * `FOR NO KEY UPDATE`, never conflicts with the holder, and succeeds.
    *
    * Why not a `FOR KEY SHARE NOWAIT` probe interposed on the generator's own
    * queries, which is what an earlier version of this test did: a second

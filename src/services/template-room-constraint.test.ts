@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
+import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
 
 const prisma = new PrismaClient();
 const suffix = `troom-${Date.now()}`;
@@ -24,6 +25,7 @@ function isFk(err: unknown, constraint: string): boolean {
 
 const CHECK = 'ClassTemplate_live_needs_open_room';
 const ROOM_FK = 'ClassTemplate_teacherRoomId_roomArchived_fkey';
+const RULE_FK = 'ClassTemplate_scheduleRuleId_kind_ruleLive_fkey';
 const at = (hhmm: string) => new Date(`1970-01-01T${hhmm}:00Z`);
 
 async function makeRoom(tag: string, archived: boolean): Promise<string> {
@@ -149,6 +151,68 @@ describe('ClassTemplate_live_needs_open_room', () => {
       data: { teacherRoomId: shelvedRoomId, roomArchived: true },
     });
     expect(moved.teacherRoomId).toBe(shelvedRoomId);
+  });
+
+  // THE RULE MIRROR, the twin of the case below. `prisma/schema.prisma` claims
+  // BOTH mirrors "cannot drift … enforced rather than intended", and only the
+  // room half was pinned. This is the other half: a child claiming its rule is
+  // live when the rule is paused has no matching parent key.
+  it('the rule mirror cannot lie either: claiming a paused rule is live fails on the FK', async () => {
+    // `dayOfWeek` 0 at 08:00, for the slot reason the room-mirror case below
+    // records — and clear of that case's 05:00 window, which runs 90 minutes.
+    // `ScheduleRule_teacher_slot_excl` is RANGE-based (#296), so "a different
+    // start time" is not enough; the windows must not overlap.
+    const tmpl = await makeTemplate(0, openRoomId, {
+      isActive: false, ruleLive: false, startTime: '08:00',
+    });
+    await expect(prisma.classTemplate.update({
+      where: { id: tmpl }, data: { ruleLive: true },
+    })).rejects.toSatisfy((e: unknown) => isFk(e, RULE_FK));
+  });
+
+  // `live` IS `ACTIVE_TEMPLATE_WHERE`, ASSERTED RATHER THAN CLAIMED.
+  // `prisma/schema.prisma` says the generated column is "exactly the predicate
+  // `ACTIVE_TEMPLATE_WHERE` applies to a row set", and `class-generator.ts`
+  // upgrades that into a safety claim — "No row this query selects can
+  // therefore point into an archived room" — which holds only while the two
+  // definitions agree. They are the same predicate written twice, in two
+  // languages, and nothing tied them together: `template-selection.test.ts`
+  // pins the TS constant against TS, and rewriting the migration's expression
+  // to a bare `"isActive"` left the whole suite green.
+  //
+  // All four corners, because the failure that matters is the one where `live`
+  // stays true for a row `ACTIVE_TEMPLATE_WHERE` excludes — the generator would
+  // then select a row the constraint no longer covers.
+  it('the generated `live` column equals ACTIVE_TEMPLATE_WHERE at every corner', async () => {
+    const corners = [
+      { isActive: true,  isArchived: false, live: true  },
+      { isActive: true,  isArchived: true,  live: false },
+      { isActive: false, isArchived: false, live: false },
+      { isActive: false, isArchived: true,  live: false },
+    ] as const;
+
+    for (const [i, c] of corners.entries()) {
+      const rule = await prisma.scheduleRule.create({
+        data: {
+          teacherId, kind: 'regular', classType: 'Corner',
+          // Two hours apart, 30 minutes each: non-overlapping with each other
+          // and with the 05:00 and 08:00 windows above, which the range-based
+          // `ScheduleRule_teacher_slot_excl` would otherwise refuse.
+          dayOfWeek: 0, startTime: at(`${String(10 + i * 2).padStart(2, '0')}:00`),
+          durationMinutes: 30, isActive: c.isActive, isArchived: c.isArchived,
+        },
+      });
+      const stored = await prisma.scheduleRule.findUniqueOrThrow({
+        where: { id: rule.id }, select: { live: true },
+      });
+      expect({ ...c, live: stored.live }).toEqual(c);
+
+      // …and the same corner, read through the constant the generator uses.
+      const selected = await prisma.scheduleRule.count({
+        where: { id: rule.id, ...ACTIVE_TEMPLATE_WHERE.scheduleRule },
+      });
+      expect(selected === 1).toBe(c.live);
+    }
   });
 
   it('the mirror cannot lie: denying an archived room fails on the FK', async () => {

@@ -24,8 +24,10 @@ import { isRestrictViolationOn } from '@/lib/api-errors';
  */
 
 /**
- * Every foreign key that `RESTRICT`s a `TeacherRoom` delete
- * (`prisma/migrations/20260403092044_init/migration.sql:339,345`).
+ * Every foreign key that `RESTRICT`s a `TeacherRoom` delete. The `Class` half
+ * is `20260403092044_init/migration.sql:345`; the template half was declared
+ * beside it at :339 and DROPPED by issue 272, which re-declared it widened —
+ * see the next paragraph for where it lives now.
  *
  * The template FK changed name when issue 272 widened it to carry the room
  * mirror (`ClassTemplate_teacherRoomId_roomArchived_fkey`,

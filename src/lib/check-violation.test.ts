@@ -51,4 +51,38 @@ describe('isCheckViolationOn', () => {
     expect(isCheckViolationOn('a string', NAME)).toBe(false);
     expect(isCheckViolationOn(null, NAME)).toBe(false);
   });
+
+  // `''.includes('')` is true, so an empty name would erase the name half and
+  // leave "is this a 23514" — which every case above exists to refuse. The
+  // sibling `isRestrictViolationOn` is immune for free (`[].includes` is
+  // false); a string matcher has to say it.
+  it('does not match an empty constraint name, which would match every 23514', () => {
+    expect(isCheckViolationOn(typedCall, '')).toBe(false);
+    expect(isCheckViolationOn(rawQuery, '')).toBe(false);
+  });
+
+  // `err.message` carries more than Postgres's classification: Prisma quotes
+  // the calling file's source lines around the failing statement, and
+  // `Failing row contains (…)` carries `ClassTemplate.description`, which a
+  // teacher types. Neither is Postgres saying which constraint refused the
+  // row, so neither may decide the answer.
+  it('does not match the name echoed by a source line or a failing-row dump', () => {
+    const sourceEcho = new Prisma.PrismaClientUnknownRequestError(
+      'Invalid `prisma.classTemplate.update()` invocation in\n/app/src/services/x.ts:12:9\n'
+      + `  11   // guarded by ${NAME}\n`
+      + '→ 12   await tx.classTemplate.update(\n'
+      + 'PostgresError { code: "23514", message: "new row for relation \\"Student\\" violates '
+      + 'check constraint \\"Student_income_tier_check\\"" }',
+      { clientVersion: '6.19.3' },
+    );
+    expect(isCheckViolationOn(sourceEcho, NAME)).toBe(false);
+
+    const teacherText = new Prisma.PrismaClientUnknownRequestError(
+      'PostgresError { code: "23514", message: "new row for relation \\"Student\\" violates '
+      + 'check constraint \\"Student_income_tier_check\\"", '
+      + `detail: Some("Failing row contains (abc, ${NAME}, 30.00)") }`,
+      { clientVersion: '6.19.3' },
+    );
+    expect(isCheckViolationOn(teacherText, NAME)).toBe(false);
+  });
 });

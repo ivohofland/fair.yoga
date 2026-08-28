@@ -18,28 +18,27 @@ const SWEEP_TESTS = [
   'src/services/studio-class-generator.test.ts',
 ] as const;
 
-// Files that hold a real row lock for seconds at a time. They are NOT
-// database-wide the way `SWEEP_TESTS` are — each owns the rows it touches —
-// so the reason they cannot run in `unit` is a different one: a parallel
-// neighbour that asserts on lock TIMING does not survive beside them.
-// `template-lock-order.test.ts` asserts its race ends in neither `40P01` nor
-// `55P03`, and a concurrent multi-second hold pushes it into the second.
-// Measured on issue 272's branch: that file passes alone, passes run beside
-// `room-archive-lock-order.test.ts` alone, and fails in the full `unit` tier
-// with nothing else changed.
+// Files that cannot run in `unit`'s parallel tier because of LOCK TIMING —
+// either they create it or they measure it. Two kinds, one list, because both
+// need the same thing:
 //
-// The membership runs BOTH WAYS: a file that CREATES multi-second holds, and a
-// file whose assertion is destroyed by them. `template-lock-order.test.ts` is
-// the second kind — it asserts its race ends in neither code, so every source
-// of lock noise in the tier is a false failure it cannot distinguish from the
-// defect it watches for. Measured on issue 272's branch: the tier was green
-// 9/9 as the branch stood, and roughly one run in three once the tier's file
-// timings shifted, with the failure landing on that file every time and on
-// `class-template-lifecycle.test.ts`'s own archive-race case twice. Removing
-// this branch's new `setLockTimeout` did not stop it, so the trigger is the
-// tier's contention budget rather than any one call site — issue 272's mirror
-// foreign keys take row locks no application code asks for, which is the
-// budget getting tighter.
+//   - files that hold a real row lock for seconds at a time
+//     (`room-archive-lock-order.test.ts`), and
+//   - files whose assertion is destroyed by that noise
+//     (`template-lock-order.test.ts`, which asserts its race ends in neither
+//     `40P01` nor `55P03` — so any lock noise in the tier is a false failure
+//     it cannot tell from the defect it watches for).
+//
+// The trigger is the tier's contention budget rather than any one call site:
+// removing issue 272's new `setLockTimeout` and skipping the new cases still
+// left the tier failing intermittently, while the branch before them did not.
+// Issue 272's mirror foreign keys take row locks no application code asks for,
+// which is that budget getting tighter.
+//
+// NOT a complete census of files that hold locks. `room-archive.test.ts` holds
+// one for 2.5s and stays in `unit` — safe only because the assertion-side file
+// left the tier, which is the load-bearing fact here. Adding a case that reads
+// lock timing to a parallel file is what this list exists to catch.
 const LOCK_CONTENTION_TESTS = [
   'src/services/room-archive-lock-order.test.ts',
   'src/services/template-lock-order.test.ts',

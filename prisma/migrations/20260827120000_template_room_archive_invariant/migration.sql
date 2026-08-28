@@ -21,6 +21,27 @@ ALTER TABLE "ScheduleRule" ALTER COLUMN "live" SET NOT NULL;
 ALTER TABLE "ScheduleRule"
   ADD CONSTRAINT "ScheduleRule_id_kind_live_key" UNIQUE ("id", "kind", "live");
 
+-- REMEDIATION, and it must precede the backfill below.
+-- `ADD CONSTRAINT ... CHECK` validates every existing row, and the backfill
+-- below mirrors each parent faithfully — so a database that already holds a
+-- live template on an archived room mirrors that state into a violating row
+-- and the constraint at the foot of this file refuses it, aborting the
+-- migration. That state is not hypothetical: it is the premise of issue 272,
+-- and the doors this constraint replaces were measured letting it through.
+--
+-- Pausing is the remediation rather than un-archiving the room, because the
+-- room's archive is the teacher's stated intent and the template's liveness is
+-- what the old doors failed to stop. A paused template on an archived room is
+-- a state this constraint permits, so the row survives and the teacher can
+-- resume it after un-archiving. `withdrawnCount`/`archivedAt` are untouched:
+-- this pauses, it does not archive.
+UPDATE "ScheduleRule" sr SET "isActive" = false
+  FROM "ClassTemplate" ct
+  JOIN "TeacherRoom" tr ON tr."id" = ct."teacherRoomId"
+ WHERE ct."scheduleRuleId" = sr."id"
+   AND sr."isActive" AND NOT sr."isArchived"
+   AND tr."isArchived";
+
 -- The mirrors, backfilled from the parents they mirror.
 ALTER TABLE "ClassTemplate" ADD COLUMN "ruleLive"     BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE "ClassTemplate" ADD COLUMN "roomArchived" BOOLEAN NOT NULL DEFAULT false;

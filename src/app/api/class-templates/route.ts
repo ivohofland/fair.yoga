@@ -103,7 +103,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       isRestrictViolationOn(e, ['ClassTemplate_teacherRoomId_roomArchived_fkey'])
     ) {
       log.warn(
-        { teacherRoomId: body.teacherRoomId, teacherId: session.teacherId },
+        { err: e, teacherRoomId: body.teacherRoomId, teacherId: session.teacherId },
         'template create lost the room-archive race',
       );
       return respondError(

@@ -807,12 +807,12 @@ export async function generateClassInstances(
 ): Promise<number> {
   const startDate = from ?? new Date();
 
-  // isArchived is defense in depth: the routes keep archived templates
-  // inactive, but if that invariant ever slips, the generator must not
-  // materialize classes for something the teacher shelved. That half now
-  // comes from the shared constant so `services/room-archive.ts` cannot
-  // block on a different set than this query selects. See
-  // `lib/template-selection.ts`.
+  // `isArchived` is defense in depth, for ONE reason rather than two: the
+  // routes keep archived templates inactive, but if that pairing ever slips,
+  // the generator must not materialize classes for something the teacher
+  // shelved. That half comes from the shared constant so
+  // `services/room-archive.ts` cannot block on a different set than this query
+  // selects.
   //
   // The selection reads only the template's OWN flags — `scheduleRule`'s
   // `isActive`/`isArchived` — and never `teacherRoom.isArchived`. That used to
@@ -821,11 +821,16 @@ export async function generateClassInstances(
   // the rule's liveness and the room's archive onto its own row, kept equal by
   // foreign keys, and `ClassTemplate_live_needs_open_room` refuses every write
   // that would leave a live template on an archived room (issue 272). No row
-  // this query selects can therefore point into an archived room; the
-  // `isArchived` half above is defense in depth against writers that bypass
-  // the pairing invariant altogether (a seed script, an admin surface, a data
-  // import setting the rule's flag directly), not against any state the
-  // migrations allow. See `lib/template-selection.ts`.
+  // this query selects can therefore point into an archived room.
+  //
+  // That guarantee holds while `ScheduleRule.live` and `ACTIVE_TEMPLATE_WHERE`
+  // stay the same predicate, which is asserted at all four corners in
+  // `template-room-constraint.test.ts` rather than left to this sentence — a
+  // claim about another module cannot be owned here. The ROOM half needs no
+  // filter in this query at all: a writer that sets the rule's flag directly
+  // does not reach around the constraint either, because the cascade
+  // recomputes `ruleLive` and the CHECK refuses the write.
+  // See `lib/template-selection.ts`.
   const templates = await db.classTemplate.findMany({
     where: {
       scheduleRule: { ...ACTIVE_TEMPLATE_WHERE.scheduleRule, ...(teacherId ? { teacherId } : {}) },

@@ -704,7 +704,12 @@ describe('isRestrictViolationOn', () => {
    * issue 272's mirror (`20260827120000_template_room_archive_invariant`) renamed
    * `ClassTemplate_teacherRoomId_fkey` to
    * `ClassTemplate_teacherRoomId_roomArchived_fkey` — so the old name is not
-   * the one a refused delete reports any more:
+   * the one a refused delete reports any more. The payload lines below were
+   * updated by hand for that rename rather than re-provoked — which would make
+   * them a claim with no owner, except that `room-deletion.test.ts` provokes
+   * all three deletes against the real database and asserts `meta.constraint`
+   * equals the new name. That file is the measurement; these lines are the
+   * illustration:
    *
    *   teacherRoom.delete:     {"modelName":"TeacherRoom","constraint":"ClassTemplate_teacherRoomId_roomArchived_fkey"}
    *   teacherRoom.deleteMany: {"modelName":"TeacherRoom","constraint":"ClassTemplate_teacherRoomId_roomArchived_fkey"}

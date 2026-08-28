@@ -135,9 +135,23 @@ export const PUT = withErrorHandler(async (
   if (data.teacherRoomId !== undefined) {
     const moving = await prisma.classTemplate.findUnique({
       where: { id },
-      select: { ruleLive: true, teacherRoomId: true },
+      select: {
+        ruleLive: true,
+        teacherRoomId: true,
+        // OWNERSHIP OF THE TEMPLATE, not just of the target room below. This
+        // probe reads another teacher's row by id, and answering 409 off it
+        // would tell an unowned caller that the row exists and what state its
+        // room is in — the refusal `updateClassTemplate` answers 403 for. The
+        // probe is skipped rather than refused: the service is what produces
+        // `forbidden`, and it stays the single place that decides.
+        scheduleRule: { select: { teacherId: true } },
+      },
     });
-    if (moving && moving.teacherRoomId !== data.teacherRoomId) {
+    if (
+      moving &&
+      moving.scheduleRule.teacherId === session.teacherId &&
+      moving.teacherRoomId !== data.teacherRoomId
+    ) {
       const targetRoom = await prisma.teacherRoom.findUnique({
         where: { id: data.teacherRoomId },
         select: { isArchived: true, teacherId: true },
@@ -159,8 +173,37 @@ export const PUT = withErrorHandler(async (
       isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room') ||
       isRestrictViolationOn(e, ['ClassTemplate_teacherRoomId_roomArchived_fkey'])
     ) {
-      log.warn({ templateId: id }, 'template move lost the room-archive race');
-      return roomArchivedResponse('move');
+      // WHICH WAY THE MIRROR DISAGREED, because the constraint name does not
+      // say. `updateClassTemplate` writes `roomArchived` from a room read taken
+      // OUTSIDE its transaction, so the foreign key fires whichever direction
+      // that read went stale in — the room was archived after it, or
+      // un-archived after it. Only the first is "this room is archived", and
+      // answering it for the second tells a teacher to unarchive a room that
+      // is already open, with no action that satisfies the message and no hint
+      // that a retry would simply work.
+      //
+      // The re-read is not raceable in a way that matters: it decides only
+      // which true sentence to print, and both outcomes refuse the write.
+      const room =
+        data.teacherRoomId === undefined
+          ? null
+          : await prisma.teacherRoom.findUnique({
+              where: { id: data.teacherRoomId },
+              select: { isArchived: true },
+            });
+      if (room === null || room.isArchived) {
+        log.warn({ err: e, templateId: id }, 'template move lost the room-archive race');
+        return roomArchivedResponse('move');
+      }
+      log.warn(
+        { err: e, templateId: id, teacherRoomId: data.teacherRoomId },
+        'template move lost a room-state race the other way; the room is open again',
+      );
+      return respondError(
+        'The system was busy and could not save your changes to this recurring class. Nothing was changed. Wait a moment, then try again.',
+        503,
+        'TEMPLATE_BUSY',
+      );
     }
     throw e;
   }
@@ -302,18 +345,46 @@ export const PATCH = withErrorHandler(async (
     // so the common case gets a sentence a teacher can act on instead of a
     // raced 409. The mirror is read rather than a join to `TeacherRoom`: it is
     // the same value by construction and needs no join.
+    //
+    // THE PROBE ANSWERS ONLY FOR A ROW THIS TEACHER OWNS AND ONLY WHERE IT IS
+    // THE OPERATIVE REFUSAL. Two conditions beyond `roomArchived`, and each
+    // was a defect while it was missing:
+    //
+    //   - `teacherId` — this reads another teacher's row by id. Answering 409
+    //     off it tells an unowned caller the row exists and what state its
+    //     room is in, where `pauseOrResumeTemplate` answers 403. That service
+    //     checks ownership before it reaches door 3; hoisting the door up here
+    //     without the check left the ordering behind.
+    //   - `isArchived` — an ARCHIVED template on an archived room is refused
+    //     by `archiveOrUnarchiveRule`'s own `archived` branch, whose message
+    //     ("Unarchive the template before activating it") is the one the
+    //     teacher can act on. Un-archiving the room accomplishes nothing for
+    //     it. The constraint cannot fire on that path either: the rule archive
+    //     forces `isActive: false` in both directions, so `live` stays false.
+    //
+    // Skipped rather than refused in both cases: the service is what produces
+    // `forbidden` and `archived`, and stays the single place that decides.
     const resume = await prisma.classTemplate.findUnique({
       where: { id },
-      select: { roomArchived: true },
+      select: {
+        roomArchived: true,
+        scheduleRule: { select: { teacherId: true, isArchived: true } },
+      },
     });
-    if (resume?.roomArchived) return roomArchivedResponse('resume');
+    if (
+      resume?.roomArchived &&
+      resume.scheduleRule.teacherId === session.teacherId &&
+      !resume.scheduleRule.isArchived
+    ) {
+      return roomArchivedResponse('resume');
+    }
   }
 
   try {
     result = await pauseOrResumeTemplate(prisma, id, session.teacherId, state);
   } catch (e) {
     if (isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room')) {
-      log.warn({ templateId: id }, 'template resume lost the room-archive race');
+      log.warn({ err: e, templateId: id }, 'template resume lost the room-archive race');
       return roomArchivedResponse('resume');
     }
     throw e;

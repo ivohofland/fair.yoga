@@ -2359,6 +2359,168 @@ describe('PUT /api/class-templates/[id]', () => {
     }
   });
 
+  // OWNERSHIP OUTRANKS THE ARCHIVED STATE, on both verbs. Issue 272 hoisted
+  // doors 3 and 5 out of the services and into route pre-checks, and the
+  // services are where `forbidden` is decided — so a pre-check that answers
+  // off a row it never checked ownership of reports another teacher's state.
+  // Both cases below answered 409 before the probes learned to skip.
+  //
+  // What leaks without them is not the 409 itself but the discrimination: a
+  // 409 means the id exists AND its room is archived, where 403 means only
+  // "not yours". The service's own ordering was the guarantee; hoisting the
+  // door copied the second half of it.
+  it('answers 403, not ROOM_ARCHIVED, when the resumer does not own the template', async () => {
+    const owner = await seedTeacher('resume-foreign');
+    try {
+      const create = await fetch(`${BASE_URL}/api/class-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({
+          teacherRoomId: owner.teacherRoomId,
+          classType: 'Not Yours To Resume',
+          dayOfWeek: DAY_OF_WEEK,
+          startTime: '09:57',
+          durationMinutes: 60,
+          roomCost: 15, minRate: 10, targetRate: 20, minStudents: 2, maxStudents: 8,
+        }),
+      });
+      expect(create.status).toBe(201);
+      const { data: template } = (await create.json()) as { data: { id: string } };
+
+      const pause = await fetch(`${BASE_URL}/api/class-templates/${template.id}?state=paused`, {
+        method: 'PATCH', headers: cookie(owner.sessionToken),
+      });
+      expect(pause.status).toBe(200);
+      await prisma.teacherRoom.update({
+        where: { id: owner.teacherRoomId }, data: { isArchived: true },
+      });
+
+      // The other teacher, against a template whose room IS archived — the
+      // one state in which the pre-check has something to say.
+      const res = await fetch(`${BASE_URL}/api/class-templates/${template.id}?state=active`, {
+        method: 'PATCH', headers: cookie(otherSessionToken),
+      });
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: { code?: string } };
+      expect(body.error.code).not.toBe('ROOM_ARCHIVED');
+
+      const after = await prisma.classTemplate.findUniqueOrThrow({
+        where: { id: template.id }, include: { scheduleRule: true },
+      });
+      expect(after.scheduleRule.isActive).toBe(false);
+    } finally {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.room.delete({ where: { id: owner.roomId } });
+      await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+      await prisma.teacher.delete({ where: { id: owner.teacherId } });
+      await prisma.account.delete({ where: { id: owner.accountId } });
+    }
+  });
+
+  it('answers 403, not ROOM_ARCHIVED, when the mover does not own the template', async () => {
+    const owner = await seedTeacher('move-foreign');
+    let otherArchived: { roomId: string; teacherRoomId: string } | null = null;
+    try {
+      const create = await fetch(`${BASE_URL}/api/class-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({
+          teacherRoomId: owner.teacherRoomId,
+          classType: 'Not Yours To Move',
+          dayOfWeek: DAY_OF_WEEK,
+          startTime: '09:58',
+          durationMinutes: 60,
+          roomCost: 15, minRate: 10, targetRate: 20, minStudents: 2, maxStudents: 8,
+        }),
+      });
+      expect(create.status).toBe(201);
+      const { data: template } = (await create.json()) as { data: { id: string } };
+
+      // The prober names a room they DO own and that IS archived, so the
+      // target-room ownership check cannot be what refuses this — only the
+      // template's own ownership can.
+      otherArchived = await addSecondRoom(otherTeacherId, 'move-foreign-other', true);
+
+      const res = await fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...cookie(otherSessionToken) },
+        body: JSON.stringify({ teacherRoomId: otherArchived.teacherRoomId }),
+      });
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: { code?: string } };
+      expect(body.error.code).not.toBe('ROOM_ARCHIVED');
+
+      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+      expect(after.teacherRoomId).toBe(owner.teacherRoomId);
+    } finally {
+      if (otherArchived) {
+        await prisma.teacherRoom.deleteMany({ where: { id: otherArchived.teacherRoomId } });
+        await prisma.room.delete({ where: { id: otherArchived.roomId } });
+      }
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.room.delete({ where: { id: owner.roomId } });
+      await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+      await prisma.teacher.delete({ where: { id: owner.teacherId } });
+      await prisma.account.delete({ where: { id: owner.accountId } });
+    }
+  });
+
+  // The ARCHIVED template's own refusal must outrank the room's. Both states
+  // are true at once here, and only one of them names something the teacher
+  // can act on: un-archiving the room leaves an archived template that still
+  // will not resume. Reachable with no race at all — archive the template
+  // first (door 1 counts only ACTIVE templates, so the room may then be
+  // archived too), then ask to resume.
+  it('names the archived template, not the archived room, when both are true', async () => {
+    const owner = await seedTeacher('resume-both-archived');
+    try {
+      const create = await fetch(`${BASE_URL}/api/class-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({
+          teacherRoomId: owner.teacherRoomId,
+          classType: 'Both Archived',
+          dayOfWeek: DAY_OF_WEEK,
+          startTime: '09:59',
+          durationMinutes: 60,
+          roomCost: 15, minRate: 10, targetRate: 20, minStudents: 2, maxStudents: 8,
+        }),
+      });
+      expect(create.status).toBe(201);
+      const { data: template } = (await create.json()) as { data: { id: string } };
+
+      const archiveTemplate = await fetch(
+        `${BASE_URL}/api/class-templates/${template.id}?state=archived`,
+        { method: 'PATCH', headers: cookie(owner.sessionToken) },
+      );
+      expect(archiveTemplate.status).toBe(200);
+
+      await prisma.teacherRoom.update({
+        where: { id: owner.teacherRoomId }, data: { isArchived: true },
+      });
+
+      const res = await fetch(`${BASE_URL}/api/class-templates/${template.id}?state=active`, {
+        method: 'PATCH', headers: cookie(owner.sessionToken),
+      });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: { code?: string; message: string } };
+      expect(body.error.message).toBe('Unarchive the template before activating it');
+      expect(body.error.code).not.toBe('ROOM_ARCHIVED');
+    } finally {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.room.delete({ where: { id: owner.roomId } });
+      await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+      await prisma.teacher.delete({ where: { id: owner.teacherId } });
+      await prisma.account.delete({ where: { id: owner.accountId } });
+    }
+  });
+
   // The `!== template.teacherRoomId` half of door 5, proven directly: without
   // it, this case 409s. `TemplateForm` posts the whole form on every edit, so
   // an unchanged `teacherRoomId` rides along with a pure description change —

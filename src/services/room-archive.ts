@@ -19,11 +19,12 @@ import { log } from '@/lib/log';
  * the count below is no longer load-bearing for the template clause — it is
  * kept because the constraint is a refusal a teacher cannot see, and this
  * module still produces the words for it. The doors are named by verb rather
- * than counted, because the count is what went stale: this sentence said
- * "three" until fix round 2 added a fourth. They are publish
- * (`class-lifecycle`), resume and move (`class-template-lifecycle`), and
- * create (`POST /api/class-templates`) — each of the last three now just a
- * probe in front of the constraint that enforces it.
+ * than counted; a count here has no owner and goes stale in another file.
+ * They are publish (`class-lifecycle`), resume and move (`PATCH`/`PUT` on
+ * `api/class-templates/[id]`), and create (`POST /api/class-templates`) —
+ * each of the last three now just a probe in front of the constraint that
+ * enforces it. Issue 272 moved resume and move OUT of
+ * `class-template-lifecycle`, which is where they used to sit.
  *
  * Framework-agnostic per CLAUDE.md: no HTTP, no `next/*`. The route is a thin
  * wrapper.
@@ -78,9 +79,12 @@ function plural(n: number, one: string, many: string): string {
  * already follow in `src/app/api/rooms/[id]/route.ts`.
  */
 export function describeRoomBlockers(blockers: RoomBlockers): string {
-  // `RoomBlockers` admits `{ classes: 0, templates: 0 }`, so this function is
-  // callable with a state its one caller never produces (the `in_use` return
-  // is guarded on a non-zero count). Unreachable is not the same as safe: the
+  // `RoomBlockers` admits `{ classes: 0, templates: 0 }`, and since issue 272
+  // its one caller PRODUCES that state: the constraint-refusal path reports
+  // the counts as it measured them — zero — because the template went live
+  // after they ran. This branch is therefore the live wording for that race,
+  // not the unreachable insurance it was written as. Unreachable is not the
+  // same as safe either: the
   // precedent one module over is `class-lifecycle.ts`'s `locked`, which
   // carries a NON-EMPTY tuple deliberately, because the bug it replaced (#72)
   // shipped a "locked" response naming no fields. Without this line the empty
@@ -148,12 +152,11 @@ export async function setTeacherRoomArchived(
       // logs only on `throw`, which this path does not do — so without this
       // line the only record of a refusal is a 409 body the teacher reads and
       // nobody keeps. Same reasoning the `STARTS_IN_PAST` refusal states in
-      // `transitionClass` (`class-lifecycle.ts`) and the template-move
-      // refusal states in `class-template-lifecycle.ts` ("template move
-      // refused: the target room is archived", door 5). That second citation
-      // was `sync_conflict` at a line number until #194 deleted the
-      // propagation that raised it — named by its log line this time, since
-      // the number is the half that rots. It matters most here: the accepted
+      // `transitionClass` (`class-lifecycle.ts`). A second citation used to
+      // stand here naming door 5's own log line; issue 272 deleted that guard
+      // and the line with it, so the citation went stale the same way the line
+      // number before it had. One example carries the point. It matters most
+      // here: the accepted
       // race below can leave an archived room holding an `open` class, and
       // without a line on this side there is nothing to correlate that state
       // against afterwards.
@@ -170,7 +173,7 @@ export async function setTeacherRoomArchived(
   // another tab in between leaves an archived room holding an `open` class.
   // Accepted rather than locked: the publish guard two doors away already
   // records the reasoning for this exact class of check ("a policy about
-  // intent, not an invariant", see class-lifecycle.ts:303-304), losing the
+  // intent, not an invariant", in `transitionClassInDb`), losing the
   // race needs two tabs, and the state is recoverable by un-archiving and
   // self-heals when the class completes. Locking the CLASS rows is what is
   // declined here: under read-committed the class counts lock nothing, and
@@ -232,15 +235,25 @@ export async function setTeacherRoomArchived(
   } catch (e) {
     // The counts above are read before this write, so a template resumed in
     // between is invisible to them — this is that window closing (issue 272),
-    // and it is now a refusal rather than a wrong success. `blockers` is
-    // reported as the counts saw it: zero, which is honest about what this
-    // function measured rather than inventing a number it did not.
+    // and it is now a refusal rather than a wrong success.
+    //
+    // RE-COUNTED, not reported as zero. `blockers` is not a record of what this
+    // function measured; it is the input to `describeRoomBlockers`, whose whole
+    // job is to name what the teacher must clear. Zero renders as "This room is
+    // still in use." — the subjectless fallback — for a teacher looking at a
+    // room whose blocker list appears empty. The write has rolled back and the
+    // resumed template is committed by now, so this count is the accurate one.
+    // It can still come back zero if the template was paused again in the
+    // meantime, and the fallback sentence is then the honest answer.
     if (isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room')) {
-      log.info(
-        { teacherRoomId, teacherId },
+      log.warn(
+        { err: e, teacherRoomId, teacherId },
         'room archive refused by the constraint: a template went live mid-request',
       );
-      return { ok: false, reason: 'in_use', blockers: { classes: 0, templates: 0 } };
+      const templates = await db.classTemplate.count({
+        where: { teacherRoomId, ...ACTIVE_TEMPLATE_WHERE },
+      });
+      return { ok: false, reason: 'in_use', blockers: { classes: 0, templates } };
     }
     throw e;
   }

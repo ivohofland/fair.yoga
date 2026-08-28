@@ -122,8 +122,9 @@ describe('setTeacherRoomArchived — the mid-request resume race (issue 272)', (
   // refuse. Post-272 the refusal lives in `ClassTemplate_live_needs_open_room`,
   // and this is the service turning that 23514 into the SAME `in_use` answer
   // the counts would have given had they run a moment later. `blockers` is
-  // reported as the counts saw it — zero — which is honest about what this
-  // function measured rather than inventing numbers it did not.
+  // re-counted after the rollback rather than reported as the pre-write counts
+  // saw it, so the sentence a teacher reads names the template that blocked
+  // them instead of nothing at all.
   it('answers in_use rather than throwing when the constraint refuses the archive', async () => {
     const f = await makeFixture();
     const tpl = await addTemplate(f, { isActive: false, isArchived: false });
@@ -155,7 +156,11 @@ describe('setTeacherRoomArchived — the mid-request resume race (issue 272)', (
     const result = await setTeacherRoomArchived(interposing, f.linkId, f.teacherId, 'archived');
 
     expect(interposed).toBe(true);
-    expect(result).toEqual({ ok: false, reason: 'in_use', blockers: { classes: 0, templates: 0 } });
+    // `templates: 1`, not the zero the counts measured: the refusal is
+    // re-counted after the rollback so `describeRoomBlockers` can name what
+    // the teacher must clear. Zero rendered as the subjectless "This room is
+    // still in use.", which is a 409 with nothing in it to act on.
+    expect(result).toEqual({ ok: false, reason: 'in_use', blockers: { classes: 0, templates: 1 } });
 
     const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: f.linkId } });
     expect(after.isArchived).toBe(false);

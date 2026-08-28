@@ -24,7 +24,24 @@
  */
 export function isCheckViolationOn(err: unknown, constraint: string): boolean {
   if (!(err instanceof Error)) return false;
+  // An empty name would make the name half vacuous — `''.includes('')` is true
+  // — and collapse this to "is this a 23514", which is the one match the
+  // docblock above exists to prevent. `isRestrictViolationOn` needs no such
+  // line because `[].includes(x)` is false; a string needs it.
+  if (constraint === '') return false;
   const carriesCode =
     err.message.includes('code: "23514"') || err.message.includes('Code: `23514`');
-  return carriesCode && err.message.includes(constraint);
+  // Matched inside Postgres's own phrasing, not as a bare name. `err.message`
+  // is not only Postgres's classification: it also carries the calling file's
+  // source lines (Prisma quotes them around the failing statement) and
+  // `Failing row contains (…)`, which for this table includes
+  // `ClassTemplate.description` — teacher-supplied free text. A bare
+  // `includes(constraint)` therefore lets a caller's own comment, or a
+  // teacher's template name, decide the classification. The full clause is
+  // Postgres's to write, and appears in both quotings the docblock enumerates.
+  return (
+    carriesCode &&
+    (err.message.includes(`violates check constraint \\"${constraint}\\"`) ||
+      err.message.includes(`violates check constraint "${constraint}"`))
+  );
 }

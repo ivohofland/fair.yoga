@@ -401,9 +401,13 @@ export async function archiveOrUnarchiveRule<TChild>(
         // DIFFERENT lock covers each, and the split is the load-bearing part:
         //
         //   - The record `update` writes THIS `ScheduleRule` row, which this
-        //     CAS holds `FOR NO KEY UPDATE` until commit. That conflicts with
-        //     the `FOR UPDATE`-strength lock a concurrent `DELETE` needs, so
-        //     the delete blocks rather than wins.
+        //     CAS holds `FOR UPDATE` until commit — `FOR NO KEY UPDATE` until
+        //     issue 272 made `live` an FK-referenced key column, which upgrades
+        //     every statement touching `isActive`/`isArchived` (see the read
+        //     below for the measurement). It conflicted with the
+        //     `FOR UPDATE`-strength lock a concurrent `DELETE` needs at the
+        //     weaker mode already, and still does, so the delete blocks rather
+        //     than wins.
         //   - `readChildOrThrow` reads the CHILD row, which this CAS's lock
         //     does not touch at all. What covers it is the explicit child
         //     `FOR UPDATE` taken above, before this statement ran — the same
@@ -645,8 +649,8 @@ export async function archiveOrUnarchiveRule<TChild>(
         // run, and the CAS runs before it. The lock ordering does not add a
         // second constraint here — the row lock the sweep serialises against
         // (#95) is the child's `FOR UPDATE`, taken explicitly before the CAS
-        // even runs (see above), not the CAS's own `FOR NO KEY UPDATE` on
-        // `ScheduleRule`, which the sweep never touches.
+        // even runs (see above), not the CAS's own lock on `ScheduleRule`
+        // (`FOR UPDATE` since issue 272), which the sweep never touches.
         //
         // A plain single-record `update` is enough here: the CAS's lock on the
         // rule row is still held, so nothing can have moved it since.
@@ -674,9 +678,9 @@ export async function archiveOrUnarchiveRule<TChild>(
       // `class-generator.ts`; `claimStudioTemplateForGeneration`,
       // `studio-class-generator.ts`) holds that same row `FOR UPDATE` for the
       // duration of its own per-template transaction, so an archive can block
-      // on a sweep in progress. Not the CAS's own `FOR NO KEY UPDATE`, which
-      // is on `ScheduleRule` and which no sweep touches — see the record write
-      // above. The wait itself is bounded by the transaction's own
+      // on a sweep in progress. Not the CAS's own lock (`FOR UPDATE` since
+      // issue 272), which is on `ScheduleRule` and which no sweep touches —
+      // see the record write above. The wait itself is bounded by the transaction's own
       // `setLockTimeout` (2s); this budget covers the transaction's own work —
       // the delete, whatever the family's `withdraw` hook does around it, and
       // the record write — not the wait. Matching

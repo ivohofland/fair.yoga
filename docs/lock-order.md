@@ -930,9 +930,13 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
 `ClassTemplate_teacherRoomId_fkey`) and `Class_teacherRoomId_fkey` are both
 `ON DELETE RESTRICT`. A
 `DELETE FROM "TeacherRoom"` therefore locks the parent row and then runs the
-triggers' `SELECT 1 FROM "ClassTemplate" WHERE "teacherRoomId" = $1 FOR KEY
-SHARE` — a lock nothing in this document's site enumeration can see, because
-no source line issues it.
+triggers' `SELECT 1 FROM "ClassTemplate" WHERE "teacherRoomId" = $1 AND
+"roomArchived" = $2 FOR KEY SHARE` — a lock nothing in this document's site
+enumeration can see, because no source line issues it. The second conjunct
+arrived with issue 272, which widened the key to carry the room mirror; it
+changes nothing about the lock, because the mirror guarantees every child row
+matches its parent's value, but the check Postgres runs is the two-column one
+and this section exists to state it exactly.
 
 The cycle:
 
@@ -1769,7 +1773,14 @@ in place of an index entry. Re-derive the constraint set with:
     SELECT conrelid::regclass AS "table", conname, pg_get_constraintdef(oid)
       FROM pg_constraint
      WHERE conname LIKE '%roomArchived%' OR conname LIKE '%ruleLive%'
-        OR conname = 'ClassTemplate_live_needs_open_room';
+        OR conname IN ('ClassTemplate_live_needs_open_room',
+                       'TeacherRoom_id_isArchived_key',
+                       'ScheduleRule_id_kind_live_key');
+
+The two parent unique keys are in that list deliberately: neither mirror
+foreign key can exist without the key it references, so a re-derivation that
+returned only the children would report a complete set while missing what
+holds it up.
 
 The `TeacherRoom → ClassTemplate` edge makes an archive transaction hold the
 room while it waits on a child — a backward edge against the generator's sweep
@@ -1782,8 +1793,12 @@ bound like every other node here: the row it waits on is the one
 `claimTemplateForGeneration` holds for a whole generation sweep, and Prisma's
 transaction budget cannot cut short a statement already blocked inside
 Postgres. Both properties are pinned from the archive's side in
-`room-archive.test.ts` ("lock discipline"), one case per property, each
-verified to fail when its guard is removed. What remains is the pre-existing two-room shape
-directly above (#103-class rows): two transactions row-locking two rooms in
-opposite orders, which is not a shape this migration introduces — probe
-results, both shapes, in the #272 PR body.
+`room-archive-lock-order.test.ts`, one case per property, each verified to fail
+when its guard is removed. They live in their own file, and serially, because a
+multi-second hold in a parallel tier is exactly the noise the `#180` case below
+cannot tell from the defect it watches for. What remains is the two-room shape: two transactions
+row-locking two rooms in opposite orders. That one is pre-existing and is not a
+shape this migration introduces — the room-delete wait edge it rides on is
+"The RESTRICT trigger is a wait edge, and a route guard is what closes it
+(#103)" earlier in this file, which describes the edge but not this cycle.
+Probe results for both shapes are in PR #340.

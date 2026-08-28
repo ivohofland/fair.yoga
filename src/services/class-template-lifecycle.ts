@@ -195,11 +195,15 @@ void _templateAllowlistHasNoStaleFields;
  *                        not own. Nothing on this route ever needs to move a
  *                        template between rules.
  *   - `createdAt`, `updatedAt` → Prisma-managed.
- *   - `roomArchived`, `ruleLive` → the issue 272 mirrors. Written only at the
- *                        create and move sites in this module (which assert
- *                        or mirror the room's `isArchived` explicitly), never
- *                        by a plain edit that could detach the child from its
- *                        parent's archive state.
+ *   - `roomArchived`   → the issue 272 room mirror. Written only at the create
+ *                        and move sites in this module, which assert or mirror
+ *                        the room's `isArchived` explicitly — never by a plain
+ *                        edit that could detach the child from its parent.
+ *   - `ruleLive`       → the issue 272 rule mirror. Written by NOTHING in
+ *                        `src/`: `ON UPDATE CASCADE` from `ScheduleRule.live`
+ *                        maintains it, and the composite key refuses a row
+ *                        that claims a value its rule does not hold. It is on
+ *                        this list so a plain edit cannot start.
  *
  * `teacherId`, `isActive`, `isArchived`, `archivedAt` and `withdrawnCount`
  * left this model for `ScheduleRule` in issue 298 — see
@@ -332,10 +336,13 @@ void _scheduleRuleAllowlistHasNoStaleFields;
  *
  * `isActive` is the entry that matters most here: it is what stops a `PUT`
  * flipping a template active, which would bypass the transaction-and-generate
- * path `PATCH` owns and door 3's resume refusal with it. Door 5 no longer
- * gates on `isActive`, and door 3's guard is gone with issue 272 — the
- * constraint enforces it now — but a bare `PUT` flip to `true` would still
- * mark a template active with no instance window.
+ * path `PATCH` owns and door 3's resume refusal with it. Both doors changed in
+ * issue 272: door 3's service guard is gone, the constraint enforces it, and
+ * door 5's route pre-check now gates on `ruleLive` — which is
+ * `isActive AND NOT isArchived`, so it DOES turn on liveness, deliberately,
+ * because a PAUSED template may legitimately move onto an archived room. What
+ * is unchanged is why `isActive` sits on this list: a bare `PUT` flip to
+ * `true` would still mark a template active with no instance window.
  */
 // Exported so the studio file can pin its own forbidden list against this
 // one directly (`_ruleForbiddenListsAgree`) rather than asserting the two
@@ -1383,8 +1390,9 @@ export async function pauseOrResumeTemplate(
   if (scheduleRule.isArchived) return { ok: false, reason: 'archived' };
 
   // This door's guard is GONE, and that is the point: issue 272 closed the
-  // "five application doors, every one a non-transactional read" gap this
-  // used to sit in. The refusal now comes from
+  // "application doors, every one a non-transactional read" gap this used to
+  // sit in. The doors are not counted here: `template-room-constraint.test.ts`
+  // enumerates them, one `it` each, which is the roster with an owner. The refusal now comes from
   // `ClassTemplate_live_needs_open_room` — the CHECK that no ACTIVE template
   // sits on an archived room — and the route's pre-check supplies the
   // sentence. What survives here is the transition it refused: resuming a
@@ -1514,8 +1522,9 @@ export async function pauseOrResumeTemplate(
         if (!desiredActive) {
           // `updateMany` returns a count, not a row. Safe to read back without
           // a lock re-check: the CAS above matched, so this transaction holds
-          // `FOR NO KEY UPDATE` on the rule row and nothing can change or
-          // delete it before we commit. `OrThrow` for that reason — a `| null`
+          // the rule row until commit — `FOR UPDATE` since issue 272 made
+          // `live` an FK-referenced key column, `FOR NO KEY UPDATE` before it
+          // — and nothing can change or delete it before we commit. `OrThrow` for that reason — a `| null`
           // here would be an impossible branch every caller had to pretend to
           // handle. `bare`, not a fresh child read: pausing writes nothing on
           // `ClassTemplate`, so the pre-transaction snapshot is still current.

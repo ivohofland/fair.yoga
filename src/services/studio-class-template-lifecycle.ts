@@ -1003,14 +1003,16 @@ type ResumeTransactionOutcome =
  * failure rolls the flip back rather than leaving a template flagged live
  * with an empty window — the state this issue was filed about. That sharing
  * has a cost the old autocommit `update` did not: this can now fail outright
- * rather than only wait for a contended row. The CAS itself takes `FOR NO
- * KEY UPDATE`, which conflicts with a sweep's claim (`FOR UPDATE`) or a
- * concurrent archive's own CAS (also `FOR NO KEY UPDATE`), and can queue
- * behind either. The transaction's own `setLockTimeout(tx)` — its first
+ * rather than only wait for a contended row. The CAS itself takes
+ * `FOR UPDATE` on the rule row — `FOR NO KEY UPDATE` until issue 272 made
+ * `live` an FK-referenced key column, and this family shares `ScheduleRule`
+ * so it took the upgrade too — which conflicts with a sweep's claim
+ * (`FOR UPDATE`) or a concurrent archive's own CAS, and can queue behind
+ * either. The transaction's own `setLockTimeout(tx)` — its first
  * statement — bounds that wait at the same 2s `lock_timeout`, so the 10s
  * budget covers this transaction's own work, not the wait. Once the CAS
  * succeeds this transaction already
- * holds `FOR NO KEY UPDATE`, so the claim's own `FOR UPDATE` below can then
+ * holds the rule row, so the claim's own `FOR UPDATE` below can then
  * only be blocked by something compatible with that but not with `FOR
  * UPDATE` — a concurrent `StudioClass` insert's `FOR KEY SHARE` FK check —
  * and that 2s is what bounds that wait, never a sweep or an archive. The
@@ -1110,9 +1112,10 @@ export async function pauseOrResumeStudioTemplate(
         // by re-reading. The `findUniqueOrThrow` on the paused arm below, and
         // `claimStudioTemplateForGeneration`'s own read on the active arm, *can*
         // raise P2025, but only run after this CAS matched, which — as this
-        // function's own docstring above notes — holds `FOR NO KEY UPDATE` on
-        // this row until commit. That conflicts with the `FOR UPDATE`-strength
-        // lock a concurrent `DELETE` needs, so it blocks rather than wins.
+        // function's own docstring above notes — holds this row until commit
+        // (`FOR UPDATE` since issue 272). That conflicts with the
+        // `FOR UPDATE`-strength lock a concurrent `DELETE` needs, so it blocks
+        // rather than wins.
         // What a plain single-record `update` would change is not the lock —
         // it takes the same mode — but the first limb: it raises P2025 where
         // `updateMany` returns `{ count: 0 }`, so the write itself becomes a

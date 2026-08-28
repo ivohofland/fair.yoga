@@ -326,7 +326,11 @@ model ClassTemplate {
   kind            ClassFamily
   teacherRoomId   String
 
-  /// MIRRORS, MAINTAINED BY POSTGRES. Neither column is state this row owns.
+  /// MIRRORS. Neither column is state this row owns, and neither may disagree
+  /// with the parent it mirrors — but they are not written the same way.
+  /// `ruleLive` is maintained by Postgres alone; `roomArchived` is written by
+  /// the create and move paths in `class-template-lifecycle.ts`, which assert
+  /// or copy the room's value, and Postgres is what refuses them if they lie.
   ///
   /// `ruleLive` mirrors `ScheduleRule.live`; `roomArchived` mirrors
   /// `TeacherRoom.isArchived`. Neither can drift from what it mirrors, and that
@@ -343,9 +347,11 @@ model ClassTemplate {
   /// active template may not sit on an archived room" unrepresentable rather
   /// than merely guarded (issue 272).
   ///
-  /// THIS IS NOT #298 BEING UNDONE. #298 moved the OWNERSHIP of `isActive` and
-  /// `isArchived` to `ScheduleRule`, and that is still the only place either is
-  /// written. What sits here is a copy the database maintains. Removing these
+  /// THIS IS NOT #298 BEING UNDONE. #298 moved the OWNERSHIP of
+  /// `ClassTemplate.isActive`/`.isArchived` to `ScheduleRule`, and that is
+  /// still the only place either is written. (Said explicitly because the
+  /// column this docblock is about mirrors a DIFFERENT `isArchived` —
+  /// `TeacherRoom`'s, which `setTeacherRoomArchived` owns.) What sits here is a copy the database maintains. Removing these
   /// columns to "finish" #298 removes the invariant with them.
   ruleLive        Boolean         @default(true)
   roomArchived    Boolean         @default(false)
