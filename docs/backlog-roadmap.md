@@ -2149,12 +2149,21 @@ suggested. Re-derive with:
       --jq '[.[].conclusion] | group_by(.) | map({k:.[0], n:length})'
 
 Three failures, and **no two share a cause**. That is the finding: this is not
-one flake, it is three, and they want three PRs in a deliberate order.
+one flake, it is three.
+
+**Status after PR #341 (2026-08-28): A fixed, B established and already fixed
+before it was triaged, C diagnosed and not yet fixed.** Only one of the three
+turned out to need the round it was scheduled for — and the two that did not
+were settled by re-deriving their evidence rather than by working the queue.
+Neither the "three PRs" nor the order below survived contact; the sections
+under each class say why, and the honest version of the finding is that **a
+triage table built from CI log text needs its rows re-derived before they are
+scheduled**, not after.
 
 | # | Class | Observed | What it actually is |
 |---|---|---|---|
 | A | Heap-order assertion — **DONE, PR #341** | `db-locks.test.ts > lockClassRowsOrdered > returns the locked ids ascending…` (main, 2026-08-27); `db-locks-lock-order.test.ts > serialises two callers whose natural orders disagree` (local, PR #340); `gdpr.test.ts > does not deadlock when a teacher erasure and a student erasure overlap` (main, 2026-08-16) — **three sites, not the two this row first listed** | A **correct intent on an unguaranteed mechanism** |
-| B | Concurrent-create retry safety | `studio-api.test.ts > POST /api/studio-class-templates is retry-safe on the slot key` (main, 2026-08-27) | **Possibly a real race**, not established either way |
+| B | Concurrent-create retry safety — **ESTABLISHED, and already fixed** | `studio-api.test.ts > POST /api/studio-class-templates is retry-safe on the slot key` (main, 2026-08-27 **05:40Z**) | A real race — and the run predates its fix by four hours |
 | C | e2e soft navigation — **DIAGNOSED, not a budget** | `class-edit.spec.ts:129 > a draft edits fully` — `page.waitForURL: Test timeout of 30000ms` (main, 2026-08-27). The `App did not become healthy within 30s` half of this row **was never a failure** — see below | A **client-side navigation that fetches and never commits** |
 
 **Class A is not a bad test, and that distinction decides the fix.** It reads:
@@ -2349,6 +2358,66 @@ That leaves two honest options, and they are not equivalent:
 of this row demonstrates: a fix aimed at an unmeasured cause changes something
 nobody needed changed.
 
+### Class B, established (2026-08-28) — a real race, fixed before it was triaged
+
+**It was a real defect, it is now established rather than suspected, and it
+needs no code.** The evidence that called it "not established either way" was
+already four hours stale when it was written down.
+
+**The mechanism, measured** — 40 concurrent races per shape, two transactions
+inserting the same `(teacherId, dayOfWeek, slot)` against
+`ScheduleRule_teacher_slot_excl`:
+
+| Insert form | Outcome over 40 races |
+|---|---|
+| plain `INSERT` (the pre-fix shape) | **17 × `40P01` deadlock**, 23 × `23P01` |
+| `INSERT … ON CONFLICT DO NOTHING` (today) | **40 × clean** — one INSERTED, one REFUSED |
+
+`40P01` is in `TRANSIENT_SQLSTATES` (`api-errors.ts`), so it answers **503**.
+That is `[201, 503]` exactly — the observed failure, reproduced from the
+mechanism rather than inferred from it.
+
+**Why catching the conflict could not have worked.** The old route refused by
+catching `23P01` (`isExclusionConflictOn`). That is right for a conflict
+against a **committed** row and useless against a concurrent one: a plain
+`INSERT` writes its tuple and only *then* checks the exclusion constraint, so
+each of two racing creates waits on the other's uncommitted tuple and Postgres
+breaks the cycle with `40P01` — which is not an exclusion conflict, so it fell
+past the 409 branch to the transient handler. A 43% deadlock rate under a true
+race.
+
+**It was fixed by issue 331, after the failing run.** `4d479ac6` (studio
+template create, authored 2026-08-27 07:04Z) and `0374709b` (studio class
+create, 08:50Z); the failing run started **05:40Z**. Both replace the plain
+insert with `createManyAndReturn({ skipDuplicates: true })`, which compiles to
+`ON CONFLICT DO NOTHING` and refuses by returning no row instead of waiting.
+
+**The preventive sweep for this shape comes back clean.** All four create
+endpoints and both generators carry it — re-derive with:
+
+    grep -rn 'skipDuplicates' src/ | grep -v test
+
+`api/classes/route.ts`, `api/studio-classes/route.ts`,
+`class-template-lifecycle.ts`, `studio-class-template-lifecycle.ts`,
+`class-generator.ts`, `studio-class-generator.ts`. The remaining
+`isExclusionConflictOn` call sites are UPDATE paths, where the conflicting row
+IS committed and catching `23P01` is the correct refusal.
+
+**What is NOT established: that it is gone.** No recurrence in the four `main`
+runs since the fix, plus this branch's, and 50 races green locally through the
+endpoint — but a flake seen once in twenty runs is not disproved by that
+sample. The mechanism-level 40/40 is the stronger evidence, and it is evidence
+about the mechanism, not about CI.
+
+**THE ORDERING RATIONALE WAS WRONG FOR B, and it is worth saying so.** B was
+scheduled last on the argument that "you cannot tell a real race from noise
+while the noise is there" — that judging it needed a quiet CI. It did not.
+Reading the git log around the failing commit and racing the constraint
+directly settled it in one pass, against a CI that is still noisy. **The
+cheapest question was not "is it still failing?" but "what does this insert do
+when it races?"** — and the second one has an answer that does not depend on
+observation windows at all.
+
 ### The order, and why it is this order
 
 **Fix the known-wrong instruments first, investigate the possibly-real races
@@ -2374,24 +2443,26 @@ failure rate is an hour of ambiguous evidence.
    the latter was eliminated — but a reproduction, and then a choice between
    root-causing the non-commit and deleting the only click-through coverage of
    that link.
-3. **Class B — `studio-api` retry safety.** Last **because it is the one that
-   might be a real defect**, and it deserves a quiet CI to be judged against.
-   Two identical creates in flight against the slot key is exactly the shape
-   that produced real findings before (#196). Run it in a loop against a green
-   baseline; if it reproduces, it is a product bug and leaves this bundle.
+3. ~~**Class B — `studio-api` retry safety.**~~ **ESTABLISHED 2026-08-28 — a
+   real defect, and already fixed by issue 331 four hours after the failing
+   run.** It leaves this bundle, as this line said it would if it reproduced.
+   The premise of putting it last did not hold: it needed no quiet CI, only
+   the git log and a direct race against the constraint. See the section
+   above, including what that says about ordering by observability.
 4. **Preventive sweep.** With A and C closed, audit the remaining suites for
    the `LOCK_CONTENTION_TESTS` criterion — files that read or create lock
    timing while sitting in a parallel tier. PR #340 found two by having them
    fail; the rest should be found by looking.
 
-**None of these are filed as issues yet, and class A shipped without being
-filed either** — on PR #341, the roadmap PR that names it, because it was one
-step of a bundle already written down rather than a new finding. Filing B, C
-and the sweep is the next round's first job, alongside the un-itemised
-89 → 106 delta at the head of this file. Worth stating plainly, since the
-previous snapshot's lesson was that work done outside the tracker is work the
-next round cannot see: **B and C are now the whole of this bundle's unfiled
-remainder**, and nothing in the tracker says so.
+**None of these were filed as issues, and class A shipped without being filed
+either** — on PR #341, the roadmap PR that names it, because it was one step
+of a bundle already written down rather than a new finding. B needed no filing
+in the end: it was already fixed under issue 331. Worth stating plainly, since
+the previous snapshot's lesson was that work done outside the tracker is work
+the next round cannot see: **class C and the preventive sweep are now the
+whole of this bundle's remainder**, and nothing in the tracker says so. Filing
+them is the next round's first job, alongside the un-itemised 89 → 106 delta
+at the head of this file.
 
 - ~~**#41 — SSE stream dies instantly in CI.**~~ **DONE — PR #188,
   rebase-merged 2026-08-08.** 11 commits. **The issue was wrong, and the
