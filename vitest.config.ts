@@ -35,10 +35,20 @@ const SWEEP_TESTS = [
 // Issue 272's mirror foreign keys take row locks no application code asks for,
 // which is that budget getting tighter.
 //
-// NOT a complete census of files that hold locks. `room-archive.test.ts` holds
-// one for 2.5s and stays in `unit` — safe only because the assertion-side file
-// left the tier, which is the load-bearing fact here. Adding a case that reads
-// lock timing to a parallel file is what this list exists to catch.
+// NOT a complete census of files that hold locks. `room-archive.test.ts` still
+// holds one in `unit` — a `ClassTemplate` `FOR UPDATE` kept until the resume
+// answers, under a 6s ceiling, not the flat 2.5s this note used to claim.
+// What makes that tolerable is that no file left in the tier reads lock timing
+// to assert on, and the sweep above is what re-established it: this note
+// previously said the holder was safe "because the assertion-side file left
+// the tier" while THREE assertion-side files were still in it. The claim was
+// true of `template-lock-order.test.ts` alone and was read as true of the
+// tier. Adding a case that reads lock timing to a parallel file is what this
+// list exists to catch — re-derive the census with:
+//
+//   grep -rln 'not.toMatch(/[^/]*\(40P01\|55P03\)' src --include='*.test.ts'
+//
+// Every hit belongs on this list.
 const LOCK_CONTENTION_TESTS = [
   'src/services/room-archive-lock-order.test.ts',
   'src/services/template-lock-order.test.ts',
@@ -48,6 +58,18 @@ const LOCK_CONTENTION_TESTS = [
   // user of that table and blocks them in turn. Its own header carries the
   // measurement.
   'src/services/class-lifecycle-tier-guard.test.ts',
+  // Added by the preventive sweep the paragraph below asks for, and all three
+  // are the SECOND kind: each asserts a staged race ends in neither `40P01`
+  // nor `55P03`, so tier noise is a false failure none of them can tell from
+  // the defect it watches for — `template-lock-order.test.ts`'s exact shape.
+  // Found by looking, not by failing.
+  'src/lib/db-locks-lock-order.test.ts',
+  'src/services/invitations-lock-order.test.ts',
+  // Split out of `gdpr.test.ts` rather than moving it: that file is 26 tests
+  // and ~26s and exactly one reads lock timing, so moving all of it cost the
+  // serial tier +92% (37.8s -> 72.6s) against +2.5s extracted. Same move
+  // `class-lifecycle-tier-guard.test.ts` made, for the same kind of reason.
+  'src/services/gdpr-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

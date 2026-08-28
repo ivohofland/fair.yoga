@@ -2494,10 +2494,46 @@ failure rate is an hour of ambiguous evidence.
    The premise of putting it last did not hold: it needed no quiet CI, only
    the git log and a direct race against the constraint. See the section
    above, including what that says about ordering by observability.
-4. **Preventive sweep.** With A and C closed, audit the remaining suites for
-   the `LOCK_CONTENTION_TESTS` criterion — files that read or create lock
-   timing while sitting in a parallel tier. PR #340 found two by having them
-   fail; the rest should be found by looking.
+4. ~~**Preventive sweep.**~~ **DONE 2026-08-28.** Found three by looking, and
+   a false claim underneath them.
+
+   **The criterion turned out to be greppable**, which is what made this a
+   sweep rather than a survey. The acute kind is a test asserting a staged race
+   ends in NEITHER `40P01` NOR `55P03` — tier noise is then a false failure it
+   cannot tell from the defect it watches for. Re-derive the census with:
+
+       grep -rln 'not.toMatch(/[^/]*\(40P01\|55P03\)' src --include='*.test.ts'
+
+   Four hits. **One was on the list; three were not** —
+   `db-locks-lock-order.test.ts`, `invitations-lock-order.test.ts`, and one
+   case inside `gdpr.test.ts`. All three are now serial, and the grep is in
+   `vitest.config.ts` so the census can be re-derived rather than re-argued.
+
+   **`gdpr.test.ts` was SPLIT, not moved, and the measurement decided it.** 26
+   tests, ~26s, exactly one reading lock timing: moving the file cost the
+   serial tier +92% (37.8s → 72.6s); extracting the case cost +2.5s. Same move
+   `class-lifecycle-tier-guard.test.ts` made. Measured after: serial 37.8s →
+   46.1s (+8.2s), parallel unchanged at ~25.7s, and the total test count is
+   conserved at 1173 — which is the check that says a split lost nothing.
+
+   **THE CONFIG'S OWN SAFETY ARGUMENT WAS FALSE, and that is the finding worth
+   more than the three files.** Its note said `room-archive.test.ts` may hold a
+   lock in the parallel tier "safe only because the assertion-side file left
+   the tier" — while three assertion-side files were still in it. The claim was
+   true of `template-lock-order.test.ts` alone and was read as true of the
+   tier. A census stated as prose, about membership, in a comment: exactly what
+   `CLAUDE.md` says to tether or move. It is now tethered to the grep above.
+   Its `2.5s` was also wrong — the hold runs until the resume answers, under a
+   6s ceiling.
+
+   **Two files were considered and NOT moved:**
+   `transition-class-lock-order.test.ts` and `update-class-lock-order.test.ts`
+   stage real races but assert positive application outcomes (`reason:
+   'CANCELLED'`, `reason: 'frozen'`) rather than the absence of a SQLSTATE. Tier
+   noise would still fail them, but distinguishably — an unexpected throw, not a
+   wrong reason — so they are the ordinary "any test can fail under enough
+   noise" case rather than this list's. Recorded so the next sweep does not
+   re-derive the same verdict.
 
 **None of these were filed as issues, and class A shipped without being filed
 either** — on PR #341, the roadmap PR that names it, because it was one step
