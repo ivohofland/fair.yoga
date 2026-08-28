@@ -109,7 +109,8 @@ export async function claimStudioTemplateForGeneration(
     // Mirrors `claimTemplateForGeneration`'s own log at this branch
     // (class-generator.ts): this null is the measured `EvalPlanQual` race
     // actually landing, not the ordinary "not selected" case above.
-    // `pauseOrResumeStudioTemplate`'s call site treats reaching this as
+    // `pauseOrResumeRule`'s call site (`rule-lifecycle.ts`, reached for this
+    // family by `pauseOrResumeStudioTemplate`) treats reaching this as
     // impossible and throws right after; logging here first costs it
     // nothing and gives the sweep's silent `return 0` the trace it does not
     // otherwise get.

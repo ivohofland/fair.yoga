@@ -214,9 +214,9 @@ export const PATCH = withErrorHandler(async (
     // A `switch` rather than the two-way ternary this replaces. `active` now
     // carries fields of its own (#119), and the ternary's `else` limb would
     // have dropped them silently while staying correct for `unchanged` — the
-    // same accidental-exhaustiveness failure `pauseOrResumeStudioTemplate`
-    // records for its own switch, where a new arm compiled clean and was
-    // answered with the wrong action.
+    // same accidental-exhaustiveness failure `pauseOrResumeRule`
+    // (`rule-lifecycle.ts`) records for its own switch, where a new arm
+    // compiled clean and was answered with the wrong action.
     switch (result.action) {
       case 'paused':
         return respondOk({

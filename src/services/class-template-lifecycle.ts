@@ -1292,9 +1292,9 @@ const scheduledWhere = (
 /**
  * One arm per way `pauseOrResumeTemplate`'s transaction can resolve. Internal
  * only — mapped to the public `PauseTemplateResult` after the transaction
- * commits. Mirrors `ResumeTransactionOutcome` in
- * `studio-class-template-lifecycle.ts`; the two families are meant to be read
- * side by side.
+ * commits. Mirrors `PauseRuleOutcome` (`rule-lifecycle.ts`), which is the
+ * shared spelling of these same arms; the two are meant to be read side by
+ * side.
  *
  * None of these carries the stale pre-transaction snapshot the CAS exists to
  * stop being trusted, but they reach that differently: `paused` and `active`
@@ -1775,6 +1775,10 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
     void teacher;
     return withSlot(bare, rule);
   },
+  // The generator's own pair, assigned directly: what it claims is the same
+  // joined shape `readChild` above returns, so neither needs a wrapper.
+  claim: claimTemplateForGeneration,
+  generate: generateInstancesForTemplate,
   withdraw: {
     around: async (tx, { scheduleRuleId, today }, deleteEntries) => {
       // A lock is not unavailable — `POST /api/registrations` already takes

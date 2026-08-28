@@ -356,11 +356,12 @@ a call):
    two kinds. Seven come from the split "The child row is the lock node for
    the template families" below describes: five single-id plain `FOR UPDATE`s
    on a child template row — one each in `updateClassTemplate`,
-   `pauseOrResumeTemplate`, `updateStudioClassTemplate` and
-   `pauseOrResumeStudioTemplate`, and a fifth in `archiveOrUnarchiveRule`
-   (`rule-lifecycle.ts`) that serves BOTH archive entry points, its table name
-   spliced from the family descriptor rather than written literally (issue 332
-   merged what were two lines into that one) — plus two ordered
+   `pauseOrResumeTemplate` and `updateStudioClassTemplate`, plus two in
+   `rule-lifecycle.ts` whose table name is spliced from the family descriptor
+   rather than written literally: `archiveOrUnarchiveRule`, which serves BOTH
+   archive entry points (issue 332 merged what were two lines into that one),
+   and `pauseOrResumeRule`, reached by the studio pause entry point (issue
+   336) — plus two ordered
    `FOR UPDATE OF` locks in `deleteTeacherAccount`'s bulk archive (`gdpr.ts`),
    one per template family, the fourth and fifth entries the `FOR UPDATE OF`
    census one section up gained alongside the two claims. The other two are
@@ -1253,7 +1254,7 @@ added or corrected by Task 3c:
 | `pauseOrResumeTemplate` | `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
 | `archiveOrUnarchiveTemplate` | statement in `rule-lifecycle.ts`, family in `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `CLASS_FAMILY.childTable` |
 | `updateStudioClassTemplate` | `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
-| `pauseOrResumeStudioTemplate` | `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
+| `pauseOrResumeStudioTemplate` | statement in `rule-lifecycle.ts`, family in `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `STUDIO_FAMILY.childTable` |
 | `archiveOrUnarchiveStudioTemplate` | statement in `rule-lifecycle.ts`, family in `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `STUDIO_FAMILY.childTable` |
 | `deleteTeacherAccount` (bulk archive) | `gdpr.ts` | ordered, `FOR UPDATE OF ct` **and** `FOR UPDATE OF sct` |
 
@@ -1332,7 +1333,8 @@ pre-298 shape again.
 ## A CAS miss no re-read can classify answers `busy`, not a throw (issue 332)
 
 `pauseOrResumeTemplate` (`class-template-lifecycle.ts`) and
-`pauseOrResumeStudioTemplate` (`studio-class-template-lifecycle.ts`) each
+`pauseOrResumeRule` (`rule-lifecycle.ts`, reached for the studio family by
+`pauseOrResumeStudioTemplate`) each
 disambiguate a zero-count CAS with a plain re-read, and each has a residual
 branch for the case that re-read matches no classification: under READ
 COMMITTED every statement takes its own snapshot, so a row that changed and

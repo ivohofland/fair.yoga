@@ -1,7 +1,8 @@
 /**
- * The archive/un-archive one `ScheduleRule` child undergoes, written once for
- * both template families (issue 332). A family hands in a `TemplateFamily`
- * descriptor and nothing below ever asks which family it is holding.
+ * The lifecycle a `ScheduleRule` child undergoes — archive/un-archive (issue
+ * 332) and pause/resume (issue 336) — written once for both template families.
+ * A family hands in a `TemplateFamily` descriptor and nothing below ever asks
+ * which family it is holding.
  */
 
 import { Prisma } from '@prisma/client';
@@ -9,6 +10,8 @@ import type { PrismaClient, ScheduleRule, ClassFamily } from '@prisma/client';
 import type { TransactionClientOnly } from '@/lib/db-locks';
 import { setLockTimeout } from '@/lib/db-locks';
 import { startOfLocalDay } from '@/lib/timezone';
+import { timeToHHmm } from '@/lib/time-of-day';
+import { countSkipReasons, type GenerationResult, type SkipCounts } from '@/lib/generation';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { isTransientDbError } from '@/lib/api-errors';
@@ -22,7 +25,7 @@ export type JoinedRule = ScheduleRule & { teacher: { defaultTimezone: string } }
 
 /**
  * A child template with the calendar identity its rule holds, plus the one
- * `Teacher` column the archive's date boundary needs.
+ * `Teacher` column the date boundaries below need.
  */
 export type ChildWithRule<TChild> = TChild & {
   scheduleRuleId: string;
@@ -110,7 +113,8 @@ export type WithdrawHook = {
 };
 
 /**
- * Everything `archiveOrUnarchiveRule` needs in order to run over one family.
+ * Everything the shared lifecycle functions below need in order to run over one
+ * family.
  *
  * A dispatch table, not a runtime discriminator: each family's entry is
  * complete on its own, and nothing in this module ever asks which family it is
@@ -181,6 +185,10 @@ export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
    * delete's own boundary would exclude that same survivor and tell the
    * teacher nothing is left while the class is still open on their public
    * page.
+   *
+   * Read by both verbs below rather than by the archive alone, which is what
+   * makes "archiving and resuming report on one basis" a property of this
+   * field rather than a promise two call sites keep separately.
    */
   standingWhere: (scheduleRuleId: string, today: Date) => Prisma.CalendarEntryWhereInput;
   /**
@@ -207,6 +215,28 @@ export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
    * case, and are not redundant.
    */
   withSlot: (child: ChildWithRule<TChild>, rule: JoinedRule) => WithSlot<TChild>;
+  /**
+   * Claim this template's row for generation, and generate its window. A pair
+   * rather than one hook because the claimed row is what the resume's `active`
+   * arm reports on: its rule id feeds `standingWhere`, its joined teacher feeds
+   * the date boundary, and it feeds `withSlot`.
+   *
+   * Typed over `ChildWithRule<TChild>` rather than over a third type parameter
+   * for the claimed payload. Both families' real functions satisfy these
+   * signatures directly — the claimed payload is the same joined shape
+   * `readChild` returns — and a parameter naming it would sit in a return
+   * position (`claim`'s) and a parameter position (`generate`'s) at once, the
+   * same invariance that rules out the `before`/`after` pair `WithdrawHook.around`
+   * replaces.
+   */
+  claim: (
+    tx: TransactionClientOnly,
+    templateId: string,
+  ) => Promise<ChildWithRule<TChild> | null>;
+  generate: (
+    tx: TransactionClientOnly,
+    claimed: ChildWithRule<TChild>,
+  ) => Promise<GenerationResult>;
   withdraw: WithdrawHook | null;
 };
 
@@ -780,4 +810,521 @@ export async function archiveOrUnarchiveRule<TChild>(
     }
     throw err;
   }
+}
+
+/**
+ * Outcome of a pause/resume. `paused` carries the furthest-out entry still on
+ * the schedule, for the pause confirmation; `active` carries what the window
+ * holds and what this resume added (#119); `unchanged` reports nothing beyond
+ * the template itself.
+ *
+ * Generic in the child rather than one type per family, and for the reasons
+ * `ArchiveRuleResult` above sets out: the two families' pause unions were
+ * measured arm-for-arm identical, and the two instantiations stay
+ * non-interchangeable anyway because they differ in `template`.
+ */
+export type PauseRuleResult<TChild> =
+  | {
+      ok: true;
+      action: 'paused';
+      template: WithSlot<TChild>;
+      lastScheduled: LastScheduledClass | null;
+    }
+  | {
+      ok: true;
+      action: 'active';
+      template: WithSlot<TChild>;
+      /**
+       * Live entries this rule still has from the start of the teacher's today
+       * onward — `TemplateFamily.standingWhere`'s predicate and boundary,
+       * which is also what `ArchiveRuleResult`'s `remaining` counts, so the
+       * two numbers a teacher sees from archiving and from resuming mean the
+       * same thing. Unbounded above: it counts what stands, not what this
+       * resume's window reached.
+       */
+      scheduled: number;
+      /**
+       * Rows this resume created. `scheduled >= added`, always — and by
+       * construction rather than by assertion, which is why no test tries to
+       * pin the relation directly. The count runs *after* generation, inside
+       * the same transaction, over a superset of what generation inserts: the
+       * same rule, live (a row this transaction just created is), dated at or
+       * after a boundary the generator's own date filter already cleared, and
+       * — where a family's `standingWhere` filters on its child's status too —
+       * in a status generation creates, `class-generator.ts` creating `open`
+       * and `SCHEDULED_STATUSES` holding it. Nothing else can insert for this
+       * rule while the claim holds it, and this transaction's own uncommitted
+       * rows cannot be cancelled by anyone else. See the `scheduled` count in
+       * `pauseOrResumeRule` below for the one input that could break it — a
+       * second, disagreeing read of `defaultTimezone`.
+       */
+      added: number;
+      /**
+       * The skip breakdown, whole (#296) — one field rather than its members
+       * re-listed, so a member added to `SkipCounts` arrives here with no edit
+       * at this site.
+       *
+       * `SkipCounts` does not name every `SkipReason` (`src/lib/generation.ts`
+       * carries which, and why a new one fails the build there rather than
+       * vanishing), so these counts do **not** sum with `added` to the window.
+       * The invariant that does hold is `GenerationResult`'s own: `created +
+       * skipped.length` is the candidate count.
+       */
+      counts: SkipCounts;
+    }
+  | { ok: true; action: 'unchanged'; template: WithSlot<TChild> }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'forbidden' }
+  | { ok: false; reason: 'archived' }
+  /**
+   * See `ArchiveRuleResult`'s `busy` arm above — same guarantee, same causes,
+   * and the same reason the copy names no writer on the other side.
+   */
+  | { ok: false; reason: 'busy' };
+
+/**
+ * One arm per way `pauseOrResumeRule`'s transaction can resolve, mapped to the
+ * public `PauseRuleResult` above once it has committed. None of these ever
+ * carries the stale pre-transaction snapshot the CAS exists to stop being
+ * trusted, but they get there differently: `paused`/`active` are read back
+ * under the lock the successful CAS is still holding; `unchanged` (in the
+ * count-0 miss branch) is a plain re-read that may or may not run under a lock
+ * this transaction already holds — a miss leaves nothing locked if the
+ * conflicting change committed before the `updateMany` even ran, but a miss
+ * reached by that `updateMany` first blocking on the conflicting change and
+ * only then losing its recheck leaves the row locked to commit regardless
+ * (Postgres takes the lock before the recheck, not after) — either way the
+ * plain re-read's correctness does not depend on which happened, exactly like
+ * the miss branch `archiveOrUnarchiveRule` above runs; and `busy` carries no
+ * template at all, so the question does not arise for it.
+ */
+export type PauseRuleOutcome<TChild> =
+  | { outcome: 'not_found' }
+  | { outcome: 'archived' }
+  | { outcome: 'busy' }
+  | { outcome: 'unchanged'; template: WithSlot<TChild> }
+  | { outcome: 'paused'; template: WithSlot<TChild> }
+  | {
+      outcome: 'active';
+      template: WithSlot<TChild>;
+      scheduled: number;
+      added: number;
+      counts: SkipCounts;
+    };
+
+/**
+ * Pause or resume generation for one `ScheduleRule` child, for whichever
+ * family `family` describes. Deletes nothing: pausing means "no new classes",
+ * not "withdraw what I already offered" — that is what archiving is for.
+ *
+ * Resuming generates, through `family.claim`/`family.generate` rather than
+ * through the family's platform-wide sweep: a sweep takes no `teacherId` and
+ * runs across every teacher, which is not something a single PATCH may do.
+ *
+ * The write is a compare-and-swap, not a plain `update` — mirroring the CAS
+ * `archiveOrUnarchiveRule` above runs, see that function for the fuller
+ * account. The two guards below are read outside any lock and are fast paths
+ * only, not the guarantee: a concurrent archive can commit between those reads
+ * and the write. Without the CAS a plain `update` here — keyed on `{ id }`
+ * alone — would not notice: it would re-read the new row version and set
+ * `isActive: true` on a template that had just been archived. The CAS makes
+ * that transition itself impossible instead of merely unlikely; a miss is
+ * disambiguated with a plain re-read below rather than assumed — see there and
+ * `PauseRuleOutcome` above for why that re-read is correct whether or not the
+ * miss happens to leave a lock behind.
+ *
+ * The write and the generation share one transaction, so a generation failure
+ * rolls the flip back rather than leaving a template flagged live with an
+ * empty window. That sharing has a cost an autocommit `update` did not: this
+ * can fail outright rather than only wait for a contended row. The CAS itself
+ * takes `FOR UPDATE` on the rule row — `FOR NO KEY UPDATE` until issue 272
+ * made `live` an FK-referenced key column, and both families share
+ * `ScheduleRule`, so both took the upgrade — which conflicts with a sweep's
+ * claim (`FOR UPDATE`) or a concurrent archive's own CAS, and can queue behind
+ * either. The transaction's own `setLockTimeout(tx)` — its first statement —
+ * bounds that wait at the same 2s `lock_timeout`, so the 10s budget covers
+ * this transaction's own work, not the wait. Once the CAS succeeds this
+ * transaction already holds the rule row, so the claim's own `FOR UPDATE` can
+ * then only be blocked by something compatible with that but not with `FOR
+ * UPDATE` — a concurrent insert's `FOR KEY SHARE` FK check on the child row —
+ * and that 2s is what bounds that wait, never a sweep or an archive. The
+ * claim's `SET LOCAL lock_timeout` governs every statement left in this
+ * transaction, not just its own `SELECT … FOR UPDATE`, so the same 2s also
+ * bounds each generated row's own `FOR KEY SHARE` on the `Teacher` row for its
+ * FK. `Teacher.email`, `pageSlug` and `accountId` are all `@unique`, so an
+ * update touching any of them — a teacher changing their page slug in another
+ * tab, say — takes `FOR UPDATE` there instead of `FOR NO KEY UPDATE`, which
+ * conflicts; negligible odds, but this paragraph exists to enumerate exactly
+ * this class of thing.
+ */
+export async function pauseOrResumeRule<TChild>(
+  db: PrismaClient,
+  family: TemplateFamily<TChild>,
+  templateId: string,
+  teacherId: string,
+  target: 'active' | 'paused',
+): Promise<PauseRuleResult<TChild>> {
+  const template = await family.readChild(db, templateId);
+  if (!template) return { ok: false, reason: 'not_found' };
+  if (template.scheduleRule.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
+
+  const desiredActive = target === 'active';
+
+  // Fast path, not the guarantee — read outside any lock, before the
+  // transaction below opens. A request racing between this read and the CAS
+  // inside that transaction is not closed by this check; see the CAS's own
+  // comment for what actually closes it. Before the archived guard,
+  // deliberately: archiving forces `isActive: false`, so `?state=paused` on an
+  // archived template is already true and there is nothing to refuse — only
+  // `?state=active` is the transition the guard below exists to block.
+  if (template.scheduleRule.isActive === desiredActive) {
+    return {
+      ok: true,
+      action: 'unchanged',
+      template: family.withSlot(template, template.scheduleRule),
+    };
+  }
+
+  // Also a fast path only, for the same reason: a concurrent archive can
+  // commit between this read and the transaction's CAS. That race is closed by
+  // the CAS's disambiguation below, not by this check.
+  if (template.scheduleRule.isArchived) return { ok: false, reason: 'archived' };
+
+  let result: PauseRuleOutcome<TChild>;
+  try {
+    result = await db.$transaction(
+      async (tx): Promise<PauseRuleOutcome<TChild>> => {
+        // Bounds every statement left in this transaction, the child lock
+        // immediately below first among them, then the CAS.
+        //
+        // Without it the wait is bounded by NOTHING, which is a stronger
+        // statement than the 10s budget and the one that is true: Prisma
+        // checks that budget at statement boundaries, so it "cannot roll back
+        // a statement already blocked inside Postgres, only refuse to start a
+        // new one" (`db-locks.ts`). The mutation records measure it — removing
+        // this line ends in a hung test, never a 10s abort.
+        await setLockTimeout(tx);
+
+        // The child's row lock, taken explicitly and first — before the CAS
+        // below touches `ScheduleRule` at all. `isActive`/`isArchived` live on
+        // `ScheduleRule` since issue 298, so a bare `updateMany` there locks
+        // nothing a concurrent `family.claim` or archive waits on; those
+        // serialise through this same statement instead. See
+        // `docs/lock-order.md`, "The child row is the lock node for the
+        // template families" for the decision this implements.
+        //
+        // Row count checked, not discarded: `ScheduleRule` carries no FK back
+        // to either child table, so a child deleted out from under this
+        // transaction leaves an orphaned rule row the CAS below would still
+        // match, and the CAS cannot tell that apart from a real one.
+        //
+        // `Prisma.raw` because `$queryRaw`'s placeholders bind a value, never
+        // an identifier. What bounds the splice is `childTable`'s type, not
+        // this comment.
+        const childLock = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT "id" FROM ${Prisma.raw(`"${family.childTable}"`)} WHERE "id" = ${templateId} FOR UPDATE`;
+        if (childLock.length === 0) return { outcome: 'not_found' };
+
+        // Compare-and-swap, mirroring the one `archiveOrUnarchiveRule` above
+        // runs: constraining the write to the exact `isActive`/`isArchived`
+        // values already read above makes the transition itself — not just
+        // this request — what can happen only once, closing the race the two
+        // fast paths above cannot.
+        //
+        // No P2025 guard here: `updateMany` returns `{ count: 0 }` rather than
+        // throwing when nothing matches, and the zero-count branch below
+        // already answers `not_found` by re-reading. The `findUniqueOrThrow`
+        // on the paused arm below, and whatever read `family.claim` makes on
+        // the active arm, *can* raise P2025, but only run after this CAS
+        // matched — which, as this function's own docblock notes, holds this
+        // row until commit (`FOR UPDATE` since issue 272). That conflicts with
+        // the `FOR UPDATE`-strength lock a concurrent `DELETE` needs, so it
+        // blocks rather than wins. What a plain single-record `update` would
+        // change is not the lock — it takes the same mode — but the first
+        // limb: it raises P2025 where `updateMany` returns `{ count: 0 }`, so
+        // the write itself becomes a P2025 source needing its own guard.
+        //
+        // No `23P01` guard here either, and this one is worth proving rather
+        // than asserting. `data` below is `{ isActive: desiredActive }` —
+        // nothing else — and `ScheduleRule_teacher_slot_excl` excludes on
+        // `(teacherId, dayOfWeek, slot)` `WHERE isArchived = false`. None of
+        // the columns that key names is in this write's `data`, so the
+        // excluded values themselves are unchanged: a row that already
+        // satisfied the constraint still does, regardless of which mechanism
+        // Postgres uses to re-check it. That exemption is local to this write,
+        // not to the module: `archiveOrUnarchiveRule`'s CAS DOES write
+        // `isArchived`, and un-archiving into a slot another live rule holds is
+        // exactly what makes that one raise `23P01` — see its `catch`.
+        const swapped = await tx.scheduleRule.updateMany({
+          where: { id: template.scheduleRuleId, isArchived: false, isActive: !desiredActive },
+          data: { isActive: desiredActive },
+        });
+
+        if (swapped.count === 0) {
+          // The fast paths above missed a race. A miss here may or may not
+          // leave this transaction holding a lock on the row, and this plain
+          // re-read is correct either way. See the miss branch inside
+          // `archiveOrUnarchiveRule` above for the full account rather than
+          // repeating it here, and see there for why taking a lock here on
+          // purpose would not be worth it.
+          const current = await family.readChild(tx, templateId);
+          if (!current) return { outcome: 'not_found' };
+          // `isActive === desiredActive` before `isArchived`, deliberately —
+          // the same order as the fast paths above, and for the same reason:
+          // archiving forces `isActive: false`, so an archived row racing a
+          // *pause* is simultaneously "already the desired state" and
+          // "archived". Checking already-desired first answers that case
+          // `unchanged`, matching the fast path and the guard order this
+          // function documents there; checking `isArchived` first would answer
+          // a plain pause with a 409 meant for resuming an archived template.
+          // A racing *resume* is not already-desired (its `isActive` is still
+          // `false`), so it falls through to the `isArchived` check below
+          // regardless of order.
+          if (current.scheduleRule.isActive === desiredActive) {
+            return {
+              outcome: 'unchanged',
+              template: family.withSlot(current, current.scheduleRule),
+            };
+          }
+          if (current.scheduleRule.isArchived) return { outcome: 'archived' };
+          // Residual, and REACHABLE — measured, not conceded. The CAS's
+          // `where` is `isArchived: false AND isActive: !desiredActive`; a miss
+          // means one of those held *when the CAS ran*, and both are checked
+          // above against a second, later read. Under READ COMMITTED each
+          // statement takes its own snapshot, so a row that changed back in
+          // between reaches here.
+          //
+          // `busy`, not a throw. Why that is the right answer, what the route
+          // renders it as, and why both families must answer alike are one
+          // argument about three other modules, so it lives in
+          // `docs/lock-order.md`, "A CAS miss no re-read can classify answers
+          // `busy`, not a throw". What belongs beside the code is only that
+          // this branch is that case: the CAS matched ZERO rows, so this
+          // transaction has written nothing and rolls back clean.
+          //
+          // Logged rather than silent: the observed row is the half of `busy`
+          // that no `err` carries, and a steady trickle here with no
+          // concurrent writer would mean the CAS predicate and this
+          // classification have drifted apart.
+          log.warn(
+            {
+              templateId,
+              teacherId,
+              target,
+              observed: {
+                isActive: current.scheduleRule.isActive,
+                isArchived: current.scheduleRule.isArchived,
+              },
+              desiredActive,
+            },
+            `${family.logNoun} pause/resume CAS missed and the re-read matched no classification`,
+          );
+          return { outcome: 'busy' };
+        }
+
+        if (!desiredActive) {
+          // `updateMany` returns a count, not a row. Safe to read back here
+          // specifically because the CAS above holds the rule row's lock until
+          // we commit — the same lock-then-read pattern `family.claim` uses.
+          // The child half comes from the pre-transaction read instead:
+          // pausing writes nothing on a child table, so that snapshot is still
+          // current.
+          const pausedRule = await tx.scheduleRule.findUniqueOrThrow({
+            where: { id: template.scheduleRuleId },
+          });
+          return {
+            outcome: 'paused',
+            // `teacher` composed in from the row already in scope rather than
+            // re-queried: this read asks for the rule's own columns, and the
+            // teacher's zone is not one of them and cannot have moved under a
+            // lock this transaction holds.
+            template: family.withSlot(template, {
+              ...pausedRule,
+              teacher: template.scheduleRule.teacher,
+            }),
+          };
+        }
+
+        // Take the row lock before generating. The CAS above only flipped
+        // `isActive`, a non-key column, so Postgres grants it `FOR NO KEY
+        // UPDATE` — which does not conflict with the `FOR KEY SHARE` a
+        // concurrent child insert takes on this template for FK integrity.
+        // Without this claim that race is live; `FOR UPDATE` makes the
+        // collision impossible instead of leaving it to the generator's
+        // `ON CONFLICT DO NOTHING`, which would cost that date's class with no
+        // error (#94).
+        const claimed = await family.claim(tx, templateId);
+        if (!claimed) {
+          // Genuinely unreachable, not just believed to be. The CAS above just
+          // proved `isArchived: false` and `isActive: true` in the same
+          // statement that took this row's write lock, and that lock is still
+          // held here — nothing else can have archived, paused or deleted the
+          // row since. A null here would mean the claim's eligibility
+          // predicate and this CAS's have drifted apart from each other, not
+          // that a race slipped past either one.
+          throw new Error(
+            `pauseOrResumeRule: claim returned null for ${family.logNoun} template ${templateId} ` +
+              "right after this transaction's own CAS confirmed it eligible — " +
+              'the claim predicate and the CAS predicate have diverged',
+          );
+        }
+        // Must be `tx`, not `db` — the two are not interchangeable here even
+        // though a family's real generator accepts both. The claim above holds
+        // `FOR UPDATE` on this row on `tx`'s connection; an insert issued
+        // through `db` runs on a separate connection and needs `FOR KEY SHARE`
+        // on the same row for its FK check, which cannot be granted while `FOR
+        // UPDATE` is open. `tx` cannot close to release it because it is
+        // awaiting this very call. Passing `db` here therefore does not fail
+        // fast or cleanly: it blocks for the full 10s transaction timeout
+        // below, then throws — Postgres's deadlock detector does not step in,
+        // because this is one connection waiting on a lock, not a wait-for
+        // cycle between two backends. Measured, not reasoned: swapping `tx`
+        // for `db` and running this shape standalone fails at 10.0s with
+        // Prisma's P2028 ("transaction already closed").
+        //
+        // Under vitest it looks like 5s instead, because vitest's own default
+        // `testTimeout` is 5000ms and fires first — a property of the harness,
+        // not of Prisma or of this code. Do not read that 5s as the real
+        // budget, and do not "correct" the 10s above to match it.
+        const generation = await family.generate(tx, claimed);
+        const added = generation.created;
+        // `countSkipReasons` (`@/lib/generation`) is the one place the skip
+        // counts are reduced from `generation.skipped` — see its docblock for
+        // why a further `SkipReason` fails the build here instead of vanishing.
+        //
+        // Kept whole rather than destructured (#296): naming the members here
+        // is what made every count after the first a hand-thread through four
+        // hops, and carrying the object means the next one needs no edit at
+        // this site at all. A member this family's generator cannot yet produce
+        // is carried the same way rather than replaced with a literal 0.
+        const counts = countSkipReasons(generation.skipped);
+
+        // `standingWhere`, the same predicate and boundary the archive's
+        // `remaining` reads, so archiving and resuming report on one basis. It
+        // takes `today` inclusive: this path deletes nothing, so there is no
+        // spare-today carve-out to mirror — an entry dated today is on the
+        // schedule and must be counted.
+        //
+        // `claimed`'s zone, and it must be that read rather than any other of
+        // the same column. Not because it is locked — it is not: the claim's
+        // `FOR UPDATE` is on the child row, while `defaultTimezone` lives on
+        // `Teacher`, reached by the claim's own join, and it is not a unique
+        // column, so a concurrent change to it takes `FOR NO KEY UPDATE` and
+        // commits straight past us. The reason is stronger than a lock:
+        // `family.generate` filtered its candidate dates against this same
+        // `claimed`, so keying the count's boundary to a *different* read of
+        // that column is the one way `scheduled < added` becomes reachable.
+        // Concretely, a filter that admitted today-in-`Pacific/Niue` (UTC-11)
+        // against a count whose `today` came from `Pacific/Kiritimati` (UTC+14)
+        // would put the just-added row a day outside the boundary. Do not
+        // "simplify" this to `template.scheduleRule.teacher.…`.
+        const today = startOfLocalDay(new Date(), claimed.scheduleRule.teacher.defaultTimezone);
+        const scheduled = await tx.calendarEntry.count({
+          where: family.standingWhere(claimed.scheduleRuleId, today),
+        });
+
+        // The state a create's own transaction exists to prevent — a template
+        // flagged live that produces no classes — is reachable here *without
+        // failing*: every candidate date already holds a cancelled row, so
+        // generation creates nothing and there is no throw for
+        // `withErrorHandler` to classify. The teacher is told
+        // (`template-action-messages.ts`, the `scheduled === 0` branch); this
+        // line carries the measured breakdown to the operator side. Rare
+        // enough not to be noise: it only fires on a resume that leaves the
+        // window empty.
+        if (scheduled === 0) {
+          log.warn(
+            { templateId, teacherId, added, ...counts },
+            `${family.logNoun} template resumed live with an empty window`,
+          );
+        }
+
+        return {
+          outcome: 'active',
+          template: family.withSlot(claimed, claimed.scheduleRule),
+          scheduled,
+          added,
+          counts,
+        };
+      },
+      // Three 10s budgets: the claim's own transaction, this transaction, and
+      // this wait at the head of one of the sweep's. They do not compose as a
+      // chain — a family's claim selects only live rules, and the resume below
+      // only runs on a paused template (its CAS constrains `isActive: false`),
+      // so a resume can never sit between two claims as the middle link; it
+      // can only be the HEAD that waits out a sweep's claim. Matching the
+      // sweep's 10s transaction timeout still matters, because Prisma's 5s
+      // default can be exceeded by a loaded VPS and turn an ordinary resume
+      // click into an opaque P2028.
+      { timeout: 10_000 },
+    );
+  } catch (err) {
+    // Transient only, and everything else rethrown. A returned failure never
+    // reaches `withErrorHandler`, so the line here is the only record of this
+    // one; the message names the operation because the wrapper cannot — a
+    // pause and a resume reach the same route with the same method and the
+    // same path, and the query parameter that separates them is deliberately
+    // excluded from request logs.
+    if (isTransientDbError(err)) {
+      log.warn(
+        { err, templateId, teacherId, target },
+        `${family.logNoun} pause/resume lost the template lock race`,
+      );
+      return { ok: false, reason: 'busy' };
+    }
+    throw err;
+  }
+
+  // A `switch` rather than a chain of `if`s, because such a chain's
+  // exhaustiveness is accidental: it ends in a bare fall-through to the
+  // `paused` work below, so a new `PauseRuleOutcome` arm carrying a `template`
+  // compiles clean, falls past every `if`, and is answered `action: 'paused'`
+  // — with a `lastScheduled` query it never asked for. Only an arm *without* a
+  // `template` is caught that way. The `default` below is the same `never`
+  // idiom the template routes use for their public unions; `paused` breaks out
+  // to the post-transaction work it needs, which is the one thing that cannot
+  // be expressed as a `return` here.
+  switch (result.outcome) {
+    case 'not_found':
+      return { ok: false, reason: 'not_found' };
+    case 'archived':
+      return { ok: false, reason: 'archived' };
+    case 'busy':
+      return { ok: false, reason: 'busy' };
+    case 'unchanged':
+      return { ok: true, action: 'unchanged', template: result.template };
+    case 'active':
+      return {
+        ok: true,
+        action: 'active',
+        template: result.template,
+        scheduled: result.scheduled,
+        added: result.added,
+        counts: result.counts,
+      };
+    case 'paused':
+      break;
+    default: {
+      const unhandled: never = result;
+      throw new Error(
+        `pauseOrResumeRule: unhandled transaction outcome ${JSON.stringify(unhandled)}`,
+      );
+    }
+  }
+
+  // `standingWhere` again, so the entry this names is one of the ones the
+  // resume arm would have counted: pause deletes nothing, so there is no
+  // spare-today carve-out to mirror here — today's class is still on the
+  // schedule and must be reported as such.
+  const today = startOfLocalDay(new Date(), template.scheduleRule.teacher.defaultTimezone);
+  const lastScheduledRow = await db.calendarEntry.findFirst({
+    where: family.standingWhere(template.scheduleRuleId, today),
+    orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
+    select: { date: true, startTime: true },
+  });
+  const lastScheduled: LastScheduledClass | null = lastScheduledRow && {
+    date: lastScheduledRow.date,
+    startTime: timeToHHmm(lastScheduledRow.startTime),
+  };
+  return { ok: true, action: 'paused', template: result.template, lastScheduled };
 }

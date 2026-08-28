@@ -406,8 +406,8 @@ export const PATCH = withErrorHandler(async (
     // carries fields of its own (#164/#192/#196), and the ternary's `else`
     // limb would have dropped them silently while staying correct for
     // `unchanged` — the same accidental-exhaustiveness failure
-    // `pauseOrResumeStudioTemplate` records for its own switch, where a new
-    // arm compiled clean and was answered with the wrong action.
+    // `pauseOrResumeRule` (`rule-lifecycle.ts`) records for its own switch,
+    // where a new arm compiled clean and was answered with the wrong action.
     switch (result.action) {
       case 'paused':
         return respondOk({
