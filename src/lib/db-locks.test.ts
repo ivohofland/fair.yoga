@@ -287,13 +287,22 @@ describe('lockClassRowsOrdered', () => {
   let roomId: string;
   let lowClassId: string;
   let highClassId: string;
+  let midAClassId: string;
+  let midBClassId: string;
+  let midCClassId: string;
   let studentAId: string;
   let studentBId: string;
 
   beforeAll(async () => {
     // Ids chosen so ascending-by-id is knowable in advance, the convention
-    // `template-lock-order.test.ts:154-155` uses.
+    // `template-lock-order.test.ts:154-155` uses. FIVE of them, spread across
+    // the uuid range: see the ordering test below for what the extra three buy.
+    // Only `low` and `high` get waitlist entries, so the three joined tests in
+    // this block still see exactly the two rows they were written against.
     lowClassId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+    midAClassId = `44444444-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+    midBClassId = `88888888-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+    midCClassId = `cccccccc-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
     highClassId = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
 
     // `bio` and `pageSlug` are both required and unique-constrained — copied
@@ -344,11 +353,20 @@ describe('lockClassRowsOrdered', () => {
       maxStudents: 10,
       status: 'open' as const,
     };
-    // HIGH inserted FIRST, so an unordered scan of this small table returns
-    // physical order — the REVERSE of ascending by id. Asserted below, not
-    // assumed.
-    await createClassFixture(prisma, { ...base, id: highClassId, date: new Date('2099-06-01') });
-    await createClassFixture(prisma, { ...base, id: lowClassId, date: new Date('2099-06-02') });
+    // Inserted in a deliberately SHUFFLED order — not ascending, not
+    // descending. Distinct dates because one teacher holds one slot per
+    // overlapping window (`CalendarEntry_teacher_slot_excl`), so five classes
+    // at 09:00 need five days.
+    const seeded: Array<[string, string]> = [
+      [highClassId, '2099-06-01'],
+      [midBClassId, '2099-06-02'],
+      [lowClassId, '2099-06-03'],
+      [midCClassId, '2099-06-04'],
+      [midAClassId, '2099-06-05'],
+    ];
+    for (const [id, date] of seeded) {
+      await createClassFixture(prisma, { ...base, id, date: new Date(date) });
+    }
 
     const studentA = await prisma.student.create({
       data: {
@@ -402,23 +420,40 @@ describe('lockClassRowsOrdered', () => {
   });
 
   it('returns the locked ids ascending, whatever order the table stores them in', async () => {
-    // The premise, asserted rather than assumed: unordered, this table hands
-    // back insertion order, which is the REVERSE of ascending. If a planner
-    // or storage change makes them agree, the assertion below stops proving
-    // anything and this line fails loudly first.
-    const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT c.id FROM "Class" c
-        JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
-       WHERE e."teacherId" = ${teacherId}
-    `;
-    expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
-
+    // NO PREMISE PROBE HERE, and the reason is that there is nothing sound to
+    // probe. An unordered `SELECT` has no guaranteed row order in PostgreSQL,
+    // so an assertion pinning one is asserting a non-guarantee: it held on a
+    // quiet database and failed on CI (2026-08-27, this file, the line this
+    // comment replaces), because `Class` is one 8 KB page shared with every
+    // other file in the parallel tier and a neighbour's `DELETE` plus
+    // autovacuum frees a low line pointer for the next insert to take.
+    //
+    // What replaces it is the SHUFFLED five-row seed above. The assertion
+    // below then carries its own non-vacuity: `ORDER BY c.id` is doing work
+    // unless the database hands back all five rows in exactly sorted order,
+    // which needs the heap to depart from insertion order AND land on the one
+    // arrangement out of 120 that agrees with the sort.
+    //
+    // THAT RESIDUAL IS VACUITY, NOT FLAKE, and the two have opposite costs.
+    // This test cannot go red from row order any more — `ORDER BY c.id` sorts
+    // whatever it is given, so the assertion holds however the heap is laid
+    // out. The 1-in-120 is the chance the run proves less than it looks like
+    // it proves, and a test that quietly proves less stays green. The
+    // deterministic proof that the clause is load-bearing is
+    // `db-locks-lock-order.test.ts`, which constructs two disagreeing orders
+    // from assigned sort keys rather than observing one.
     const locked = await prisma.$transaction((tx) =>
       lockClassRowsOrdered(tx, { join: Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
           where: Prisma.sql`e."teacherId" = ${teacherId}` }),
     );
 
-    expect(locked).toEqual([lowClassId, highClassId]);
+    expect(locked).toEqual([
+      lowClassId,
+      midAClassId,
+      midBClassId,
+      midCClassId,
+      highClassId,
+    ]);
   });
 
   it('collapses a join that matches one class more than once', async () => {
