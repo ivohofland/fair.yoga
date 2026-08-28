@@ -5,6 +5,7 @@ import {
   archiveOrUnarchiveRule,
   pauseOrResumeRule,
   type ArchiveRuleResult,
+  type PauseRuleResult,
   type TemplateFamily,
   type WithSlot,
 } from './rule-lifecycle';
@@ -115,19 +116,22 @@ describe('rule-lifecycle family descriptors', () => {
 });
 
 /**
- * `ArchiveRuleResult`'s docblock (`rule-lifecycle.ts`) claims that being
- * generic in the child leaves the two families' results non-interchangeable,
- * because `template` differs. A claim about what the compiler refuses is worth
- * only the pin that makes the compiler refuse it — the shape
- * `template-action-messages.test.ts` uses for the `templateKind` discriminator
- * this is modelled on ("the two toggle payloads are not interchangeable").
+ * `ArchiveRuleResult`'s and `PauseRuleResult`'s docblocks (`rule-lifecycle.ts`)
+ * both claim that being generic in the child leaves the two families' results
+ * non-interchangeable, because `template` differs. A claim about what the
+ * compiler refuses is worth only the pin that makes the compiler refuse it —
+ * the shape `template-action-messages.test.ts` uses for the `templateKind`
+ * discriminator this is modelled on ("the two toggle payloads are not
+ * interchangeable"). One test per union, because the claim is made twice and
+ * either declaration could lose the field that carries the difference without
+ * the other noticing.
  *
  * `{} as WithSlot<…>` because `template` is the only field carrying the
  * difference and nothing here reads the row; building two real ones would put
  * the schema's own columns into a test about assignability.
  */
-describe("the two families' archive results are not interchangeable", () => {
-  it('rejects each family result where the other family is required', () => {
+describe("the two families' lifecycle results are not interchangeable", () => {
+  it('rejects each family archive result where the other family is required', () => {
     const takesStudio = (r: ArchiveRuleResult<StudioClassTemplate>) => r.ok;
     const takesClass = (r: ArchiveRuleResult<ClassTemplate>) => r.ok;
 
@@ -149,6 +153,33 @@ describe("the two families' archive results are not interchangeable", () => {
 
     // Each at its own family, so the two functions above are exercised rather
     // than merely declared.
+    expect(takesStudio(studioResult)).toBe(true);
+    expect(takesClass(classResult)).toBe(true);
+  });
+
+  it('rejects each family pause result where the other family is required', () => {
+    const takesStudio = (r: PauseRuleResult<StudioClassTemplate>) => r.ok;
+    const takesClass = (r: PauseRuleResult<ClassTemplate>) => r.ok;
+
+    // The `unchanged` arm, because it carries `template` and nothing else —
+    // the field the claim rests on, with no count or `lastScheduled` beside it
+    // to satisfy the assignability question on its own.
+    const classResult: PauseRuleResult<ClassTemplate> = {
+      ok: true,
+      action: 'unchanged',
+      template: {} as WithSlot<ClassTemplate>,
+    };
+    const studioResult: PauseRuleResult<StudioClassTemplate> = {
+      ok: true,
+      action: 'unchanged',
+      template: {} as WithSlot<StudioClassTemplate>,
+    };
+
+    // @ts-expect-error a class pause result must never satisfy the studio one
+    takesStudio(classResult);
+    // @ts-expect-error a studio pause result must never satisfy the class one
+    takesClass(studioResult);
+
     expect(takesStudio(studioResult)).toBe(true);
     expect(takesClass(classResult)).toBe(true);
   });

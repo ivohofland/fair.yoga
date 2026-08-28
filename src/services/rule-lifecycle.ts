@@ -820,7 +820,9 @@ export async function archiveOrUnarchiveRule<TChild>(
  * Generic in the child rather than one type per family, and for the reasons
  * `ArchiveRuleResult` above sets out: the two families' pause unions were
  * measured arm-for-arm identical, and the two instantiations stay
- * non-interchangeable anyway because they differ in `template`.
+ * non-interchangeable anyway because they differ in `template`. Held the same
+ * way the archive's claim is, by `@ts-expect-error` call arguments in
+ * `rule-lifecycle.test.ts`.
  */
 export type PauseRuleResult<TChild> =
   | {
@@ -878,6 +880,17 @@ export type PauseRuleResult<TChild> =
   /**
    * See `ArchiveRuleResult`'s `busy` arm above — same guarantee, same causes,
    * and the same reason the copy names no writer on the other side.
+   *
+   * What this arm adds is where the bound bites, and it is the same for every
+   * family: `setLockTimeout` governs every statement left in
+   * `pauseOrResumeRule`'s transaction, so it reaches PAST the CAS to the
+   * generation claim's `SELECT … FOR UPDATE` and to generation's own inserts.
+   * A resume contending with a concurrent writer therefore rolls the whole
+   * transaction back and answers `busy`, rather than running on and reporting
+   * that date as `raced`. Which statement gives up first is measured rather
+   * than reasoned, and lives with its measurement — `class-generator.test.ts`,
+   * "answers busy when the clash outlives the lock timeout, instead of
+   * reporting it raced".
    */
   | { ok: false; reason: 'busy' };
 

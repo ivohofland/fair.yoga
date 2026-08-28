@@ -1474,6 +1474,85 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     const after = await prisma.scheduleRule.findUniqueOrThrow({ where: { id: t.scheduleRuleId } });
     expect(after.isActive).toBe(false);
   });
+
+  /**
+   * `TemplateFamily.withSlot` (`rule-lifecycle.ts`) advertises as STRUCTURAL
+   * that the shared pause cannot spread a joined `scheduleRule` onto a
+   * response: it takes the joined row and each family destructures in its own
+   * adapter, so nothing in that module ever holds a loose one. The structure
+   * is real, but it lives in `STUDIO_FAMILY`'s adapter — rewrite that adapter
+   * to pass its first argument straight through and the claim is false with
+   * nothing to say so.
+   *
+   * Every arm of `pauseOrResumeRule` reaches that adapter with a joined row,
+   * so one arm exercises it for all of them. The CAS-miss `unchanged` arm is
+   * the one driven here because its template is built inside the transaction
+   * from a re-read, rather than from the row the caller already held.
+   *
+   * `api/studio-class-templates/[id]/route.ts` spreads this template onto the
+   * response body and `StudioClassTemplateWithSlot` never declares
+   * `scheduleRule`, so no caller can type the field and no compiler error can
+   * find it. The archive arm's twin of this test is "un-archiving answers with
+   * a flattened template, never the joined rule row", and the class family's
+   * is the same-named test in `class-template-lifecycle.test.ts`; one
+   * property, one spelling, and they are meant to be read as a set.
+   *
+   * `not.toContain`, not a whole-shape assertion: the template row's own
+   * fields change with the schema, and this is about fields that must not be
+   * there.
+   */
+  it('answers unchanged with a flattened template, never the joined rule row', async () => {
+    const t = await makeTemplate('No Joined Rule On A Pause Miss');
+    const rule = await prisma.scheduleRule.findUniqueOrThrow({ where: { id: t.scheduleRuleId } });
+
+    // Guard: the miss branch re-reads through the same `findUnique` this hook
+    // is attached to, so an unguarded hook would fire again there and pause
+    // the row a second time — after the re-read the assertions below depend on.
+    let paused = false;
+    // Cast because the extended client is missing `$on`, so it is not
+    // assignable to `pauseOrResumeStudioTemplate`'s `PrismaClient`-typed `db`
+    // parameter.
+    const interposing = prisma.$extends({
+      query: {
+        studioClassTemplate: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            if (!paused) {
+              paused = true;
+              // Commits AFTER the service's pre-transaction read, so that read
+              // still says `isActive: true` and takes neither fast path, while
+              // the CAS's `isActive: true` predicate matches nothing. The
+              // re-read below the miss then sees the state this pause asked
+              // for, which is the `unchanged` arm.
+              await prisma.scheduleRule.update({
+                where: { id: t.scheduleRuleId },
+                data: { isActive: false },
+              });
+            }
+            return row;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await pauseOrResumeStudioTemplate(interposing, t.id, teacherId, 'paused');
+
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`);
+    // The hook fired, so the interleaving this test constructs is the one that
+    // ran — without it the CAS matches and the arm under test is never reached.
+    expect(paused).toBe(true);
+    expect(result.action).toBe('unchanged');
+
+    expect(Object.keys(result.template)).not.toContain('scheduleRule');
+    // The second line, not a duplicate of the first: the adapter's `rule`
+    // parameter is the joined row too, and one that spread it whole would
+    // still compile.
+    expect(Object.keys(result.template)).not.toContain('teacher');
+    // The flattening itself still happened — otherwise "no `scheduleRule`"
+    // would pass on a response that lost the rule's columns altogether.
+    expect(result.template.dayOfWeek).toBe(rule.dayOfWeek);
+    expect(result.template.startTime).toBe(timeToHHmm(rule.startTime));
+  });
 });
 
 describe('updateStudioClassTemplate (DB)', () => {

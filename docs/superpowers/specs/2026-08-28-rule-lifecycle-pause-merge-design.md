@@ -12,10 +12,15 @@ Issue #336. Stage C1b of the decision recorded on #297/#298. Stage A shipped as
 
 ### Held
 
-- **The trigger's `diff` is empty.** Both reason sets are
-  `archived, busy, forbidden, not_found` — four arms each, identical.
-  Non-vacuously so: each side extracts four reasons, so this is not the
-  stale-command failure #332 hit on `db-locks.ts`.
+- **The trigger's `diff` was empty at `a4913c20`, non-vacuously.** Both reason
+  sets were `archived, busy, forbidden, not_found` — four arms each, identical,
+  and each side extracted four, so it was not the stale-command failure #332
+  hit on `db-locks.ts`. That criterion is spent: C1b makes
+  `PauseTemplateResult` and `PauseStudioTemplateResult` one-line aliases of
+  `PauseRuleResult`, so both `sed` ranges extract nothing and the `diff` is
+  empty for any input. After the merge the union to read is the shared one in
+  `rule-lifecycle.ts` — reasons `archived`, `busy`, `forbidden`, `not_found`;
+  actions `active`, `paused`, `unchanged`.
 - **`room_archived` is gone from both files.** `grep -n room_archived
   src/services/*template-lifecycle.ts` returns nothing.
 - **What fired it is the event #332 named as "the live one".** #272 closed
@@ -47,7 +52,9 @@ Issue #336. Stage C1b of the decision recorded on #297/#298. Stage A shipped as
 ### Re-derivation
 
 ```sh
-# The trigger. Empty output means C1b is due; both sides must be non-empty.
+# The trigger, run at `a4913c20`. Empty output means C1b is due — and only
+# when BOTH sides are non-empty. Once C1b lands both sides are empty and this
+# command answers empty for any input; see §8 for what stands in its place.
 diff \
   <(sed -n '/^export type PauseTemplateResult/,/^$/p'      src/services/class-template-lifecycle.ts        | grep -oE "reason: '[a-z_]+'" | sort -u) \
   <(sed -n '/^export type PauseStudioTemplateResult/,/^$/p' src/services/studio-class-template-lifecycle.ts | grep -oE "reason: '[a-z_]+'" | sort -u)
@@ -433,8 +440,13 @@ The after-figure is **measured, not predicted**.
 - One `pauseOrResumeRule` over `TemplateFamily`, no runtime family test, both
   services keeping their exported wrappers and their own result unions.
 - `rule-lifecycle.ts` contains no comparison against a `ClassFamily` literal.
-- The trigger's `diff` returns empty, and the branch says why that is necessary
-  but not sufficient (§3.2).
+- The trigger's `diff` returned empty at `a4913c20` with both sides non-empty,
+  and the branch says why that is necessary but not sufficient (§3.2). It is
+  not re-run against the merged tree, where both sides are empty and it passes
+  for any input. What stands in its place: `PauseRuleResult`
+  (`rule-lifecycle.ts`) is the single declaration of the four reasons
+  `archived`/`busy`/`forbidden`/`not_found` and the three actions
+  `active`/`paused`/`unchanged`, and both families' exported unions alias it.
 - `kind` correlates at compile time; the runtime loop is gone; the isolating
   mutation is observed failing, restored, re-verified.
 - `withSlot`'s parameter is the joined type, both bare sites compose `teacher`

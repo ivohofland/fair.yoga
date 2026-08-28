@@ -199,15 +199,16 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  *     | grep -vE ":[0-9]+: *(\*|//)" \
  *     | grep -vE 'OF (ct|sct)`|"ClassTemplate"|"StudioClassTemplate"|family\.childTable'
  *
- * That last alternative earns its place: `archiveOrUnarchiveRule`
- * (`rule-lifecycle.ts`) locks the child template row for both families from
- * one statement, splicing the table name in from the family descriptor, so
- * the literal table names no longer appear at that site and the filter has to
- * match the splice instead. Qualified — `family.childTable`, not the bare
- * token — because `childTable` is typed `Prisma.ModelName`, which includes
- * `Class` and `CalendarEntry`: a bare alternative would let a future descriptor
- * splice hide from the one register whose job is to catch exactly that. Without
- * the alternative at all, a template-row lock shows up here as if it were a
+ * That last alternative earns its place: `archiveOrUnarchiveRule` and
+ * `pauseOrResumeRule` (`rule-lifecycle.ts`) each lock the child template row
+ * for both families from one statement, splicing the table name in from the
+ * family descriptor, so the literal table names never appear at those sites
+ * and the filter has to match the splice instead. Qualified —
+ * `family.childTable`, not the bare token — so the alternative matches that
+ * splice as written and nothing else: a bare one would also swallow a `FOR
+ * UPDATE` line that merely mentions a same-named property somewhere else,
+ * which is a hit this register exists to show rather than hide. Without the
+ * alternative at all, a template-row lock shows up here as if it were a
  * `Class` one.
  *
  * What that settles is a PROPERTY, not a number: every `Class` and

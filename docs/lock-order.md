@@ -191,11 +191,16 @@ one statement, splicing the table name in from the family descriptor, so the
 literal table names never appear at those sites. Without the alternative both
 spliced TEMPLATE locks are counted here as `Class` ones. Qualified —
 `family.childTable`, not the bare token — for the reason `db-locks.ts` gives
-beside its own copy: `childTable`'s type admits `Class` and `CalendarEntry`,
-and a bare alternative would let a future descriptor splice hide from the one
-register whose job is to catch exactly that. The two copies differ only in
-shell quoting; their FILTERS must stay identical, and both times they have
-drifted it was this one that was missing an alternative.
+beside its own copy: it matches that splice as written and nothing else, where
+a bare alternative would also swallow a `FOR UPDATE` line that merely mentions
+a same-named property somewhere else. What the splice itself can name is
+bounded by its type rather than by this filter: `TemplateFamily.childTable` is
+`Extract<Prisma.ModelName, 'ClassTemplate' | 'StudioClassTemplate'>`
+(`src/services/rule-lifecycle.ts`), so no descriptor can splice `Class` or
+`CalendarEntry` in here at all — pinned by an `@ts-expect-error` in
+`src/services/rule-lifecycle.test.ts`. The two copies differ only in shell
+quoting; their FILTERS must stay identical, and both times they have drifted it
+was this one that was missing an alternative.
 
 The third filter is not optional, and leaving it off is how this check shipped
 broken. Without it the grep returns **11** lines across four files, ten of them
