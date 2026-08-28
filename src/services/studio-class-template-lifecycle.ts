@@ -1428,7 +1428,7 @@ export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate> = {
   // beyond what `scheduledWhere` above already spares — `StudioClass` has no
   // registrations to consult — so the two differ only in their boundary.
   deleteWhere: (scheduleRuleId, today) => scheduledWhere(scheduleRuleId, { gt: today }),
-  remainingWhere: (scheduleRuleId, today) => scheduledWhere(scheduleRuleId, { gte: today }),
+  standingWhere: (scheduleRuleId, today) => scheduledWhere(scheduleRuleId, { gte: today }),
   // Destructures here, where `StudioClassTemplate` is concrete, then hands
   // the bare child to this file's existing exported `withSlot` unchanged.
   withSlot: ({ scheduleRule, ...bare }, rule) => {

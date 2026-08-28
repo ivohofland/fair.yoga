@@ -138,8 +138,8 @@ export type TemplateFamily<TChild> = {
    */
   deleteWhere: (scheduleRuleId: string, today: Date) => Prisma.CalendarEntryWhereInput;
   /**
-   * The entries an archive of this family leaves standing, counted for the
-   * teacher after the delete.
+   * The entries either verb of this family reports to the teacher as
+   * standing.
    *
    * `today` INCLUSIVE, where `deleteWhere` above excludes it. The delete
    * deliberately spares a class dated today — "a class hours from starting
@@ -151,7 +151,7 @@ export type TemplateFamily<TChild> = {
    * teacher nothing is left while the class is still open on their public
    * page.
    */
-  remainingWhere: (scheduleRuleId: string, today: Date) => Prisma.CalendarEntryWhereInput;
+  standingWhere: (scheduleRuleId: string, today: Date) => Prisma.CalendarEntryWhereInput;
   /**
    * Takes the JOINED row, not a bare child, and each family destructures in its
    * own adapter — where `TChild` is concrete and the compiler can prove the
@@ -633,11 +633,11 @@ export async function archiveOrUnarchiveRule<TChild>(
         }
 
         // A separate predicate from the delete's, on the same clock reading:
-        // the two boundaries differ, and `remainingWhere`'s own docblock
+        // the two boundaries differ, and `standingWhere`'s own docblock
         // (above) carries why a class dated today is spared by one and counted
         // by the other.
         const remaining = await tx.calendarEntry.count({
-          where: family.remainingWhere(template.scheduleRuleId, today),
+          where: family.standingWhere(template.scheduleRuleId, today),
         });
 
         // Written from the delete's own `count`, inside the same transaction, so

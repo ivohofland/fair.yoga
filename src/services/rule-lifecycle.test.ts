@@ -83,7 +83,7 @@ describe('rule-lifecycle family descriptors', () => {
   });
 
   /**
-   * `deleteWhere` and `remainingWhere` have identical signatures and sit on
+   * `deleteWhere` and `standingWhere` have identical signatures and sit on
    * adjacent lines in both descriptors, so swapping them in either family
    * compiles clean — and in the class family that swap silently drops the
    * `registrations: { none: CHARGED }` conjunct from the delete, cascading
@@ -113,7 +113,7 @@ describe('rule-lifecycle family descriptors', () => {
       "the %s family's delete excludes today and its count includes it",
       (_kind, family) => {
         const del = family.deleteWhere(RULE_ID, TODAY);
-        const remaining = family.remainingWhere(RULE_ID, TODAY);
+        const remaining = family.standingWhere(RULE_ID, TODAY);
 
         // The carve-out #86/#194 rest on: a class hours from starting is
         // spared by the delete and must still be reported as standing.

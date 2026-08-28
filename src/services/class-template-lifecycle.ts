@@ -1792,7 +1792,7 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate> = {
       { gt: today },
       { registrations: { none: { status: { in: [...CHARGED_STATUSES] } } } },
     ),
-  remainingWhere: (scheduleRuleId, today) => scheduledWhere(scheduleRuleId, { gte: today }),
+  standingWhere: (scheduleRuleId, today) => scheduledWhere(scheduleRuleId, { gte: today }),
   // Destructures here, where `ClassTemplate` is concrete, then hands the bare
   // child to this file's existing exported `withSlot` unchanged.
   withSlot: ({ scheduleRule, ...bare }, rule) => {
