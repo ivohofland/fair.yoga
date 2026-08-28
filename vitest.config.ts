@@ -42,6 +42,12 @@ const SWEEP_TESTS = [
 const LOCK_CONTENTION_TESTS = [
   'src/services/room-archive-lock-order.test.ts',
   'src/services/template-lock-order.test.ts',
+  // The third kind: a file whose DDL takes ACCESS EXCLUSIVE on a table the
+  // rest of the tier reads. `class-lifecycle-tier-guard.test.ts` drops and
+  // re-adds a CHECK on `Registration`, so it queues behind every concurrent
+  // user of that table and blocks them in turn. Its own header carries the
+  // measurement.
+  'src/services/class-lifecycle-tier-guard.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither
