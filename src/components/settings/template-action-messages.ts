@@ -418,7 +418,8 @@ export type TemplateToggleResponse =
       added: number;
       /**
        * One field rather than three re-listed `number`s, and the difference is
-       * the same guarantee `class-template-lifecycle.ts` documents at its own
+       * the same guarantee `PauseRuleResult` (`services/rule-lifecycle.ts`)
+       * documents at its own
        * `counts`: a fourth `SkipCounts` member reaches this payload with no
        * edit here, at the route that builds it, or at the form that reads it.
        * `alreadyThisWeek` (#194) is the count that arrived after this arm was

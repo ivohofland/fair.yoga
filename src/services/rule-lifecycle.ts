@@ -920,6 +920,11 @@ export type PauseRuleOutcome<TChild> =
  * through the family's platform-wide sweep: a sweep takes no `teacherId` and
  * runs across every teacher, which is not something a single PATCH may do.
  *
+ * Nothing here knows about rooms, and a resume onto an archived room is
+ * refused elsewhere: `docs/lock-order.md`, "Where a resume onto an archived
+ * room is refused", names the constraint that enforces it, the route that
+ * words it and the family that cannot raise it.
+ *
  * The write is a compare-and-swap, not a plain `update` — mirroring the CAS
  * `archiveOrUnarchiveRule` above runs, see that function for the fuller
  * account. The two guards below are read outside any lock and are fast paths

@@ -2161,9 +2161,10 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(resumed.action).toBe('unarchived');
 
     expect(Object.keys(resumed.template)).not.toContain('scheduleRule');
-    // Kept deliberately after the parameter became the joined type: that makes
-    // the shipped adapters provably teacher-free, but a spread-based adapter
-    // would still compile. This is the second line, not a duplicate of the first.
+    // Kept even though `withSlot`'s `rule` parameter is the joined type: that
+    // makes the shipped adapters provably teacher-free, but a spread-based
+    // adapter would still compile. This is the second line, not a duplicate of
+    // the first.
     expect(Object.keys(resumed.template)).not.toContain('teacher');
     // The flattening itself still happened — otherwise "no `scheduleRule`"
     // would pass on a response that lost the rule's columns altogether.
@@ -2826,9 +2827,9 @@ describe('pauseOrResumeTemplate (DB)', () => {
    * invisible to the guard that already passed. Before the CAS, the write's
    * `where` was `{ id }` alone and simply did not notice — it set
    * `isActive: true` on a row that had just been archived and then generated a
-   * four-week window onto it. `pauseOrResumeStudioTemplate`'s docblock
-   * describes exactly this failure for its own family, which is why the fix is
-   * a port rather than an invention.
+   * four-week window onto it. `pauseOrResumeRule` (`rule-lifecycle.ts`) is one
+   * body serving both families, so this window is closed for both by the same
+   * CAS and this test and its studio twin drive the same statement.
    */
   it('answers archived when an archive lands between the read and the write', async () => {
     const t = await makeTemplate('Archive Race');
@@ -2894,8 +2895,9 @@ describe('pauseOrResumeTemplate (DB)', () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.action).toBe('unchanged');
-    // The PAYLOAD, not just the arm. `ResumeTransactionOutcome`'s docblock
-    // claims none of its arms carries the stale pre-transaction snapshot, and
+    // The PAYLOAD, not just the arm. `PauseRuleOutcome`'s docblock
+    // (`rule-lifecycle.ts`) claims none of its arms carries the stale
+    // pre-transaction snapshot, and
     // `unchanged` is the one that has to earn it from a plain re-read rather
     // than from under the CAS's lock. Without this, returning the stale `bare`
     // instead of the re-read passes every other assertion in this file —

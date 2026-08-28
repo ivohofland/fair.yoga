@@ -210,10 +210,14 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * the alternative at all, a template-row lock shows up here as if it were a
  * `Class` one.
  *
- * Expect FOUR hits and expect every one of them to be in THIS FILE — this
- * helper's two statements and `lockClassRowsOrdered`'s two. That is the whole
- * claim, and it is a claim a grep can settle: a hit anywhere else is a site
- * that took one of these two row locks without going through either helper.
+ * What that settles is a PROPERTY, not a number: every `Class` and
+ * `CalendarEntry` row lock in `src/` is one of this file's own statements —
+ * this helper's two and `lockClassRowsOrdered`'s two. A hit in another file is
+ * a site that took one of those locks without going through either helper,
+ * bar one standing exception that this line-by-line filter cannot exclude and
+ * that is not a `Class` lock at all. The expected line count and that
+ * exception both live in `docs/lock-order.md`, "Ordering BETWEEN `Class` and
+ * its `CalendarEntry`", which runs the identical command and owns its figures.
  * Deliberately not a list of the CALL SITES, which is what went stale the last
  * time this paragraph carried one.
  *

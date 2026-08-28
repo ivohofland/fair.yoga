@@ -30,12 +30,18 @@
  *   grep -rl "/generation'" src/ --include="*.ts" --include="*.tsx" \
  *     | grep -vE '/generation(\.test)?\.ts$'
  *
- * NINE non-test importers outside this file, split three ways — plus
- * `generation.test.ts` by relative path, for ten in all. Stated as nine-plus-one
- * rather than ten, because the parenthetical counts below add to nine and a
- * reader doing the arithmetic the docblock invites should not land short. The
- * filter is what removes the plus-one and this file itself; drop it and the
- * `-l` form answers two more, which are those two.
+ * TEN non-test importers outside this file, split three ways — plus
+ * `generation.test.ts` by relative path, for eleven in all. Stated as
+ * ten-plus-one rather than eleven, because the parenthetical counts below add
+ * to ten and a reader doing the arithmetic the docblock invites should not
+ * land short. The filter is what removes the plus-one and this file itself;
+ * drop it and the `-l` form answers two more, which are those two.
+ *
+ * The filtered form still prints ELEVEN lines against those ten importers, and
+ * the extra line is not drift: `class-generator.test.ts` is a test whose path
+ * shares no segment with the needle the filter matches on, so no tightening of
+ * this filter reaches it. That one line is the entire gap between the output
+ * and the split below.
  *
  * `-n` INSTEAD WHEN YOU WANT TO SEE WHERE, and its line count is not a census:
  * it runs ahead of the importer count for two reasons that are not drift. An
@@ -49,16 +55,16 @@
  *   VALUE, client (2)  `template-form.tsx`, `studio-template-form.tsx`
  *   VALUE, server (6)  `api/class-templates/route.ts`,
  *                      `api/studio-class-templates/route.ts`,
- *                      `class-template-lifecycle.ts`,
- *                      `studio-class-template-lifecycle.ts`,
+ *                      `class-template-lifecycle.ts`, `rule-lifecycle.ts`,
  *                      `class-generator.ts`, `studio-class-generator.ts`
  *                      (the last two since #327 gave this module
  *                      `spansOverlap`; they were type-only before it)
- *   TYPE-ONLY (1)      `template-action-messages.ts` (erased at build, so it
- *                      adds nothing to any bundle)
+ *   TYPE-ONLY (2)      `template-action-messages.ts`,
+ *                      `studio-class-template-lifecycle.ts` (both erased at
+ *                      build, so neither adds anything to any bundle)
  *
  * plus `generation.test.ts`, by relative path; a test is not a bundle. There
- * was an eleventh, `template-sync.ts`, until #194 deleted it.
+ * was one more, `template-sync.ts`, until #194 deleted it.
  *
  * An earlier version of this paragraph concluded "None of those is a
  * `'use client'` file, so the client-bundle conclusion still holds" — the
@@ -296,18 +302,18 @@ export function anyBlocked(counts: SkipCounts): boolean {
  * left the call-site roster at yesterday's, and the result described a state
  * this repo was never in at any point.
  *
- * Today, for the avoidance of exactly that: FOUR value-importing call sites
+ * Today, for the avoidance of exactly that: THREE value-importing call sites
  * (#194 deleted `template-sync.ts` — check with the grep in this file's header
  * docblock, which is also where its hits are split into value-imports,
- * type-only imports and the one test — note that is FOUR CALL SITES OF THIS
+ * type-only imports and the one test — note that is THREE CALL SITES OF THIS
  * FUNCTION, not the eight value importers the header now counts: the two forms
- * value-import `anyBlocked` and the two generators value-import
- * `spansOverlap`, and none of the four calls this), SIX `SkipReason`
+ * value-import `anyBlocked` and three modules value-import `spansOverlap`, and
+ * none of those five calls this), SIX `SkipReason`
  * members and FOUR
  * `SkipCounts` fields. So the member that would vanish without the `switch`
- * below is now the SEVENTH, and
- * `class-template-lifecycle.ts`'s `PauseTemplateResult` cites this docblock
- * for that number.
+ * below is now the SEVENTH, and `api/class-templates/route.ts` cites this
+ * docblock for that number rather than recounting it — the one site that
+ * spells the ordinal out.
  *
  * #296 added the sixth member — `blocked_by_overlap`, named
  * `blocked_by_other_family` until #327's rename — and the fourth count, and

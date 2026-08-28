@@ -171,11 +171,31 @@ grep the section above prescribes, minus the template tables:
     grep -rn 'FOR UPDATE' --include='*.ts' src/ \
       | grep -v '\.test\.ts:' \
       | grep -vE ':[0-9]+: *(\*|//)' \
-      | grep -vE 'OF (ct|sct)`|"ClassTemplate"|"StudioClassTemplate"'
+      | grep -vE 'OF (ct|sct)`|"ClassTemplate"|"StudioClassTemplate"|family\.childTable'
 
-Expect FOUR lines and expect all four to be in `src/lib/db-locks.ts`. A hit
-anywhere else is a site that took one of these two row locks without going
+**Expect FIVE lines: the four in `src/lib/db-locks.ts` — `lockClassRow`'s two
+and `lockClassRowsOrdered`'s two — plus `src/services/room-archive.ts:235`,
+which is not a `Class` lock at all.** That fifth is a false positive this
+command cannot suppress: it locks `ClassTemplate` rows, but its `"ClassTemplate"`
+sits on the line ABOVE its `FOR UPDATE`, and every filter here matches line by
+line. Both copies of this census share the blind spot, so both return five;
+neither can be "fixed" by tightening the filter, only by rewriting the
+statement onto one line, which nothing else wants. Any SIXTH line is the real
+signal — a site that took a `Class` or `CalendarEntry` row lock without going
 through either helper.
+
+The last alternative, `family\.childTable`, is the one this command was missing
+until issue 336. `archiveOrUnarchiveRule` and `pauseOrResumeRule`
+(`rule-lifecycle.ts`) each lock the child template row for BOTH families from
+one statement, splicing the table name in from the family descriptor, so the
+literal table names never appear at those sites. Without the alternative both
+spliced TEMPLATE locks are counted here as `Class` ones. Qualified —
+`family.childTable`, not the bare token — for the reason `db-locks.ts` gives
+beside its own copy: `childTable`'s type admits `Class` and `CalendarEntry`,
+and a bare alternative would let a future descriptor splice hide from the one
+register whose job is to catch exactly that. The two copies differ only in
+shell quoting; their FILTERS must stay identical, and both times they have
+drifted it was this one that was missing an alternative.
 
 The third filter is not optional, and leaving it off is how this check shipped
 broken. Without it the grep returns **11** lines across four files, ten of them
@@ -345,7 +365,7 @@ a call):
    `grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" |
    grep -vE ":[0-9]+: *(\*|//)"` is the check, not a number kept here.
    **It returned four hits when this check was first written, and returns
-   thirteen when re-run today** — re-derived for issue 332, not carried
+   thirteen when re-run today** — re-derived for issue 336, not carried
    forward. Of the original four, two were never `Class` locks at all —
    `claimTemplateForGeneration` (`class-generator.ts`)
    and `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) take
@@ -353,22 +373,26 @@ a call):
    `StudioClassTemplate` row — so the claim above holds over them rather than
    being violated by them, and the other two were the `Class` helpers in
    `db-locks.ts`, which is the whole point. The nine lines added since are of
-   two kinds. Seven come from the split "The child row is the lock node for
-   the template families" below describes: five single-id plain `FOR UPDATE`s
-   on a child template row — one each in `updateClassTemplate`,
-   `pauseOrResumeTemplate` and `updateStudioClassTemplate`, plus two in
-   `rule-lifecycle.ts` whose table name is spliced from the family descriptor
-   rather than written literally: `archiveOrUnarchiveRule`, which serves BOTH
-   archive entry points (issue 332 merged what were two lines into that one),
-   and `pauseOrResumeRule`, reached by the studio pause entry point (issue
-   336) — plus two ordered
+   three kinds. Six come from the split "The child row is the lock node for
+   the template families" below describes: four single-id plain `FOR UPDATE`s
+   on a child template row — one each in `updateClassTemplate` and
+   `updateStudioClassTemplate`, plus two in `rule-lifecycle.ts` whose table
+   name is spliced from the family descriptor rather than written literally,
+   `archiveOrUnarchiveRule` and `pauseOrResumeRule`, each serving BOTH of its
+   verb's entry points (issue 332 merged the two archive lines into the first,
+   issue 336 the two pause lines into the second) — plus two ordered
    `FOR UPDATE OF` locks in `deleteTeacherAccount`'s bulk archive (`gdpr.ts`),
    one per template family, the fourth and fifth entries the `FOR UPDATE OF`
-   census one section up gained alongside the two claims. The other two are
+   census one section up gained alongside the two claims. Two more are
    #327's `FOR UPDATE OF e` companions inside `lockClassRow` and
-   `lockClassRowsOrdered`, which now take two lines each. Thirteen lines
-   total: nine of them lock a template child row — the two claims, the five
-   single-id locks and the two ordered bulk-archive locks — and the remaining
+   `lockClassRowsOrdered`, which now take two lines each. The ninth is
+   `room-archive.ts`'s cascade pre-lock, which holds every `ClassTemplate` row
+   of the room being archived; it belongs to no convention on this page and is
+   the line the two `Class`-scoped censuses above cannot filter out, because
+   its table name sits on the preceding line. Thirteen lines
+   total: nine of them lock a `ClassTemplate` or `StudioClassTemplate` row —
+   the two claims, the four single-id lifecycle locks, the two ordered
+   bulk-archive locks and the room archive's pre-lock — and the remaining
    four are in `db-locks.ts`, which is where every `Class` and `CalendarEntry`
    row lock still lives. A
    count that stays right while the membership changes is the one error
@@ -1241,17 +1265,17 @@ needs that column on the rule, so keeping a copy of the lifecycle flags on the
 child would restore the two-sources-of-truth drift this extraction exists to
 remove.
 
-Nine call sites hold the child row `FOR UPDATE` today, across nine statements:
-`deleteTeacherAccount`'s bulk archive takes one per family, and the two
-archive entry points share the one inside `archiveOrUnarchiveRule`. All were
-added or corrected by Task 3c:
+Nine call sites hold the child row `FOR UPDATE` today, across eight
+statements: `deleteTeacherAccount`'s bulk archive takes one per family, the
+two archive entry points share the one inside `archiveOrUnarchiveRule`, and
+the two pause entry points share the one inside `pauseOrResumeRule`:
 
 | Site | File | Shape |
 |---|---|---|
 | `claimTemplateForGeneration` | `class-generator.ts` | joined predicate, `FOR UPDATE OF ct` |
 | `claimStudioTemplateForGeneration` | `studio-class-generator.ts` | joined predicate, `FOR UPDATE OF sct` |
 | `updateClassTemplate` | `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
-| `pauseOrResumeTemplate` | `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
+| `pauseOrResumeTemplate` | statement in `rule-lifecycle.ts`, family in `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `CLASS_FAMILY.childTable` |
 | `archiveOrUnarchiveTemplate` | statement in `rule-lifecycle.ts`, family in `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `CLASS_FAMILY.childTable` |
 | `updateStudioClassTemplate` | `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
 | `pauseOrResumeStudioTemplate` | statement in `rule-lifecycle.ts`, family in `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `STUDIO_FAMILY.childTable` |
@@ -1332,14 +1356,13 @@ pre-298 shape again.
 
 ## A CAS miss no re-read can classify answers `busy`, not a throw (issue 332)
 
-`pauseOrResumeTemplate` (`class-template-lifecycle.ts`) and
-`pauseOrResumeRule` (`rule-lifecycle.ts`, reached for the studio family by
-`pauseOrResumeStudioTemplate`) each
-disambiguate a zero-count CAS with a plain re-read, and each has a residual
+`pauseOrResumeRule` (`rule-lifecycle.ts`, reached by `pauseOrResumeTemplate`
+and `pauseOrResumeStudioTemplate`)
+disambiguates a zero-count CAS with a plain re-read, and has a residual
 branch for the case that re-read matches no classification: under READ
 COMMITTED every statement takes its own snapshot, so a row that changed and
-changed back between the CAS and the re-read reaches it. Both branches return
-the internal `{ outcome: 'busy' }` and log the observed row at `warn`; each
+changed back between the CAS and the re-read reaches it. That branch returns
+the internal `{ outcome: 'busy' }` and logs the observed row at `warn`; the
 function's post-transaction switch is what maps that to the public
 `{ ok: false, reason: 'busy' }`. `archiveOrUnarchiveRule`
 (`rule-lifecycle.ts`) is the same shape one verb over and answers `busy`
@@ -1358,11 +1381,17 @@ try again. A throw surfaces the same state as a 500 logged at `error` — the
 paging level — for exactly the condition `classifyApiError`'s transient branch
 (`src/lib/api-errors.ts`) exists to demote to a retryable 503.
 
-**Why both families answer alike.** They did not, for two issues. `aed305f8`
-gave the class branch `busy` for #116 and the port to the studio branch never
-happened, so one interleaving answered 503 in one family and 500 in the other.
-The class branch has been pinned since that same commit; issue 332 ported the
-behaviour to the studio branch and pinned it there. Re-derive both halves:
+**Why both families answer alike.** Structurally, since issue 336: there is
+one branch, and both entry points reach it. Before that there were two, and
+they disagreed for two issues — `aed305f8` gave the class branch `busy` for
+#116 and the port to the studio branch never happened, so one interleaving
+answered 503 in one family and 500 in the other; issue 332 ported the
+behaviour and pinned it. One live pin covers the branch today — "the residual
+CAS miss answers busy rather than throwing"
+(`studio-class-template-lifecycle.test.ts`); the class family's equivalent was
+retired when #272 closed the window that could stage it, and
+`class-template-lifecycle.test.ts` records that where its test stood.
+Re-derive both halves:
 
 ```sh
 git log -S'residual fourth state' --oneline -- src/services/class-template-lifecycle.test.ts
@@ -1376,7 +1405,7 @@ the winner applied the transition, a third request reversed it, and the
 re-read sees the state this request asked to move away from.
 
 **Why logged rather than silent.** `busy` covers two causes worth telling
-apart in production — a lock wait that timed out (each function's `catch`,
+apart in production — a lock wait that timed out (the function's `catch`,
 which carries `err`) and this one, which carries the observed row instead. A
 steady trickle here with no concurrent writer means the CAS predicate and the
 classification beneath it have drifted apart.
@@ -1844,3 +1873,37 @@ its place as the table grows, not today. Re-derive with:
     EXPLAIN (ANALYZE, BUFFERS)
     SELECT ct."id" FROM "ClassTemplate" ct
      WHERE ct."teacherRoomId" = '<a room with children>' FOR UPDATE;
+
+### Where a resume onto an archived room is refused (issue 336)
+
+Three sites are involved and only one of them enforces anything. The
+enforcement is `ClassTemplate_live_needs_open_room`, `CHECK (NOT ("ruleLive"
+AND "roomArchived"))` on `ClassTemplate`
+(`20260827120000_template_room_archive_invariant`). It keys on the two mirror
+columns, so it fires on the write itself and needs no second read — the
+property the section above exists to explain.
+
+`pauseOrResumeRule` (`rule-lifecycle.ts`) knows nothing about rooms. It is one
+body over both template families and `TemplateFamily` carries no room field, so
+it neither pre-checks nor catches: the CHECK's `23514` leaves its
+`$transaction` as an ordinary throw, past a `catch` that returns `busy` only
+for `isTransientDbError` and rethrows everything else. That is why the shared
+function's docblock points here instead of arguing it.
+
+`PATCH /api/class-templates/[id]` is what turns that into a sentence a teacher
+can act on. Its pre-check runs only when `state === 'active'`, and only for a
+row this teacher owns whose rule is not archived — both conditions load-bearing
+and each a defect while it was missing: without the ownership conjunct the
+probe is an existence oracle where the service answers 403, and without the
+`isArchived` conjunct it outranks the `archived` refusal with advice
+("unarchive the room") that would accomplish nothing for an archived template.
+The route's `catch` on `isCheckViolationOn(e,
+'ClassTemplate_live_needs_open_room')` covers the race between that read and
+the write, and renders the same sentence.
+
+The studio family has no such constraint and no such door.
+`StudioClassTemplate` has no room, no `roomArchived` mirror, and `PATCH
+/api/studio-class-templates/[id]` carries neither pre-check nor catch — a room
+refusal cannot arise on that side at all. Re-derive the set of sites:
+
+    grep -rn 'ClassTemplate_live_needs_open_room' src/ prisma/

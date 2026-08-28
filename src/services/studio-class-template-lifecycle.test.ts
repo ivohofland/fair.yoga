@@ -635,9 +635,10 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     expect(resumed.action).toBe('unarchived');
 
     expect(Object.keys(resumed.template)).not.toContain('scheduleRule');
-    // Kept deliberately after the parameter became the joined type: that makes
-    // the shipped adapters provably teacher-free, but a spread-based adapter
-    // would still compile. This is the second line, not a duplicate of the first.
+    // Kept even though `withSlot`'s `rule` parameter is the joined type: that
+    // makes the shipped adapters provably teacher-free, but a spread-based
+    // adapter would still compile. This is the second line, not a duplicate of
+    // the first.
     expect(Object.keys(resumed.template)).not.toContain('teacher');
     // The flattening itself still happened — otherwise "no `scheduleRule`"
     // would pass on a response that lost the rule's columns altogether.
@@ -1361,9 +1362,9 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     // route spreads `...result.template` straight into its 200 body, so
     // returning that snapshot would describe the template to the teacher as
     // live and unarchived when it is neither. This is the arm
-    // `ResumeTransactionOutcome`'s docstring singles out when it claims none
-    // of its arms ever carries the stale pre-transaction snapshot; without
-    // these two lines that claim has nothing holding it.
+    // `PauseRuleOutcome`'s docblock (`rule-lifecycle.ts`) singles out when it
+    // claims none of its arms ever carries the stale pre-transaction snapshot;
+    // without these two lines that claim has nothing holding it.
     expect(pauseResult.template.isArchived).toBe(true);
     expect(pauseResult.template.isActive).toBe(false);
   });
