@@ -174,7 +174,61 @@ archive, the new shared pause, and `rule-lifecycle.test.ts`'s boundary
 `update` arrives and the descriptor sprouts a third verb's worth, grouping can
 be argued then, on evidence.
 
-### 3.4 The public result types stay distinct
+#### The third type parameter these two fields do *not* need
+
+Typing them the obvious way needs a `TClaimed`:
+
+```ts
+claim:    (tx, templateId) => Promise<TClaimed | null>;
+generate: (tx, claimed: TClaimed) => Promise<GenerationResult>;
+```
+
+`TClaimed` then sits in a **return** position and a **parameter** position at
+once — invariant, and precisely the shape that killed #332's two-parameter
+`TemplateFamily<TChild, TState>` draft with `TS2322`. Probed rather than
+assumed, and it turns out not to arise, for two separate reasons:
+
+1. Even spelled with `TClaimed`, it compiles — the correlated registry, a union
+   of the two instantiations, and inference from a concrete descriptor all
+   pass. #332's failure needed assignability *between* instantiations; nothing
+   here asks for it.
+2. **It is not needed at all.** `TemplateWithTimezone` and
+   `StudioTemplateWithTimezone` are both
+   `Prisma.XGetPayload<{ include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } } }>`
+   — structurally exactly `ChildWithRule<TChild>`, which is what `readChild`
+   already returns. So:
+
+```ts
+claim:    (tx: TransactionClientOnly, templateId: string) => Promise<ChildWithRule<TChild> | null>;
+generate: (tx: TransactionClientOnly, claimed: ChildWithRule<TChild>) => Promise<GenerationResult>;
+```
+
+Measured: the four real generator functions assign **directly** to those
+fields — no wrapper, no cast, no third parameter. The plan must not reintroduce
+`TClaimed`; it would pay #332's variance tax for nothing.
+
+### 3.4 A cross-family import the merge removes
+
+`studio-class-template-lifecycle.ts` imports `LastScheduledClass` **from
+`class-template-lifecycle.ts`** — the studio family depending on the class
+family for a shape neither owns. It is `{ date: Date; startTime: string }`,
+returned by both `paused` arms.
+
+It moves to `rule-lifecycle.ts`, which both services already import and which
+must not import them back (#332 §3.4's no-cycle constraint). Both then read it
+from the shared module.
+
+The other two names studio imports from the class family —
+`PlainUpdateForbiddenScheduleRuleField` and `TeacherEditableScheduleRuleField`,
+both aliased — **stay**. They are deliberate cross-family *agreement pins*
+(`_ruleAllowlistsAgree`, `_ruleForbiddenListsAgree`) whose whole purpose is to
+compare one family's roster against the other's. Moving them would defeat them.
+
+```sh
+grep -n "from './class-template-lifecycle'" src/services/studio-class-template-lifecycle.ts
+```
+
+### 3.5 The public result types stay distinct
 
 `PauseTemplateResult` and `PauseStudioTemplateResult` are **not** merged, even
 though their arms now agree. This follows #332 §3.3 and the measurement
@@ -183,7 +237,7 @@ is the smaller diff and *certifies nothing*. `pauseOrResumeRule` is generic in
 the child type and returns each family's own union; the two services keep thin
 exported wrappers.
 
-### 3.5 The stop condition
+### 3.6 The stop condition
 
 Inherited from #332 and unchanged: *if merging forces a parameter that exists
 only to tell the two families apart at runtime, stop and record it.*
