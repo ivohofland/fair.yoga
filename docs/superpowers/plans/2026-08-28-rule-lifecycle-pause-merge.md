@@ -456,7 +456,7 @@ Mutate `CLASS_FAMILY.withSlot` to spread the rule whole:
 ```ts
 withSlot: ({ scheduleRule, ...bare }, rule) => {
   void scheduleRule;
-  return { ...withSlot(bare, rule), ...rule };
+  return { ...rule, ...withSlot(bare, rule) };
 },
 ```
 
@@ -467,6 +467,14 @@ npx vitest run --project unit src/services/class-template-lifecycle.test.ts -t "
 
 Expected: **tsc silent** (this is the caveat, demonstrated) and the test **RED**
 on `teacher`. Record both. Restore and re-verify green.
+
+**The spread order is load-bearing.** `withSlot`'s output must come LAST.
+`ScheduleRule.startTime` is a raw Prisma `DateTime` while `WithSlot`'s is the
+flattened `string`, so spreading `rule` *after* `withSlot(...)` overwrites the
+string with a `Date` and tsc rejects it on that mismatch — a compile error, but
+about the wrong thing, and one that would teach the opposite of the truth. With
+`withSlot` last, `startTime` stays a string and only `teacher` survives from the
+rule, which is exactly the leak the pin exists to catch.
 
 - [ ] **Step 7: Commit**
 
