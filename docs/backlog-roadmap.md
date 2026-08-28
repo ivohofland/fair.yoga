@@ -2434,6 +2434,41 @@ scatters; a self-inflicted one arrives in a block**, and that check is now in
 the workflow header, because a red repro run is designed to mean "reproduced"
 and these ten did not.
 
+**IT RECURRED ON 2026-08-28, HOURS AFTER BEING PARKED, and the instrument
+earned its keep on the first try.** CI run `33203000735`, on a docs-only PR.
+Three things changed the picture:
+
+**1. A DIFFERENT TEST, in a different project.** `studio.spec.ts:360 > an
+archived template leaves the live list for the archived one`, on **chromium** —
+not `class-edit.spec.ts:129` on Mobile Chrome. Same signature exactly: the
+click preventDefaults (`navigations have finished` in 0ms, no document
+navigation scheduled), and `waitForURL` then sits until the test timeout.
+**So class C is not a property of one test**, which is why 140 executions of
+that one test found nothing: the rate is per-PATTERN, spread over the thirteen
+`.click()` → `waitForURL` sites, not concentrated in the one that happened to
+be observed first. The earlier sampling measured the wrong denominator.
+
+**2. NO CONSOLE OUTPUT AND NO PAGE ERRORS** — the capture's own words, "the
+page produced no console output or page errors". A negative result, and a
+load-bearing one: it rules out a thrown render error, a failed chunk
+evaluation, and any `console.error`. **The transition is not failing, it is
+never resolving.**
+
+**3. THE RSC REQUESTS TO THE DESTINATION WERE ABORTED — all three of them**,
+followed by one JS chunk and then thirty seconds of nothing. In the first
+occurrence one of three completed (200 in 10.9ms) and the transition still did
+not commit. What both share is a **burst of superseded RSC prefetches around
+the click**, and a router that afterwards waits on something that never
+arrives. That shape — dedup against an in-flight or cancelled prefetch entry —
+is the hypothesis the next round should test, and it is a PRODUCT hypothesis,
+not a harness one.
+
+**What this does not settle:** whether a real user can reach it. Playwright
+clicks tens of milliseconds after a locator resolves, which is exactly when the
+prefetch burst is in flight; a person is usually slower. That question decides
+whether the fix belongs in the app or in a shared hydration-aware click helper,
+and it is still open.
+
 **Where this leaves C: instrumented, bounded, cause still open.** Brute force
 is now poor value — at ~2% another expected hit costs ~150 full-suite
 executions — and it is no longer the only route, because the console and
