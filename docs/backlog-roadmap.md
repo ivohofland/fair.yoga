@@ -2155,7 +2155,7 @@ one flake, it is three, and they want three PRs in a deliberate order.
 |---|---|---|---|
 | A | Heap-order assertion — **DONE, PR #341** | `db-locks.test.ts > lockClassRowsOrdered > returns the locked ids ascending…` (main, 2026-08-27); `db-locks-lock-order.test.ts > serialises two callers whose natural orders disagree` (local, PR #340); `gdpr.test.ts > does not deadlock when a teacher erasure and a student erasure overlap` (main, 2026-08-16) — **three sites, not the two this row first listed** | A **correct intent on an unguaranteed mechanism** |
 | B | Concurrent-create retry safety | `studio-api.test.ts > POST /api/studio-class-templates is retry-safe on the slot key` (main, 2026-08-27) | **Possibly a real race**, not established either way |
-| C | e2e app startup | `App did not become healthy within 30s`, then `page.waitForURL: Test timeout of 30000ms` (main, 2026-08-27) | A **budget**, and possibly a symptom |
+| C | e2e soft navigation — **DIAGNOSED, not a budget** | `class-edit.spec.ts:129 > a draft edits fully` — `page.waitForURL: Test timeout of 30000ms` (main, 2026-08-27). The `App did not become healthy within 30s` half of this row **was never a failure** — see below | A **client-side navigation that fetches and never commits** |
 
 **Class A is not a bad test, and that distinction decides the fix.** It reads:
 
@@ -2248,6 +2248,73 @@ mechanism the rest of this bundle should reach for. Its criterion is stated
 there: a file that **creates** lock timing, or one whose assertion is
 **destroyed** by it.
 
+### Class C, diagnosed (2026-08-28) — and it is neither of the things this table first called it
+
+**The health-check half of class C never happened.** `App did not become
+healthy within 30s` is the `run:` script being echoed into the log by GitHub
+Actions, not a message anything printed. It appears **verbatim in successful
+runs** — check `33172726315`, which passed:
+
+    gh run view <id> --log | sed 's/\x1b\[[0-9;]*m//g' | grep "become healthy"
+
+In the failing run the health check passed on its first `curl`: the step was
+entered at `16:45:10.694` and the next step began at `16:45:11.814`, 1.1s
+later. **Raising that budget would have changed something that has never
+fired** — precisely the blind raise this section warned against, and the
+warning was aimed at the wrong half of its own evidence. The row was assembled
+by grepping the log for error-shaped strings, which is how a script listing
+became a symptom.
+
+**The real failure passed on retry.** Playwright reported `1 flaky`, `14
+skipped`, `127 passed`. The run went red because `playwright.config.ts` sets
+`failOnFlakyTests: true` — a deliberate #293 decision whose comment says why
+("a fail-then-pass exits 0 by default, which is the last place a red can
+become green without anyone deciding to"). **That is working as designed and
+is not part of this bundle.** What is left to fix is the intermittency itself.
+
+**It is not a budget, and the app was not slow.** From the uploaded trace
+(`playwright-report`, still downloadable with `gh run download <id> -n
+playwright-report`):
+
+| t | event |
+|---|---|
+| 0.17s | click on the `Edit class` `<Link>` returns **ok** |
+| +0.4ms | Playwright logs `navigations have finished` — **no document navigation was scheduled**, so `Link` called `preventDefault` |
+| 0.19s | `GET /class/{id}/edit?_rsc=…` → **200 in 10.9ms** |
+| 0.20s | the route's JS chunk → **200 in 2.7ms** |
+| 0.20s → 30s | **no network activity at all** |
+
+Everything the browser asked for arrived in about 11ms. The client-side
+transition fetched its data, its code, and then never committed — so the URL
+never became `/edit` and `waitForURL` sat until the test timeout. A larger
+timeout does not help a transition that is not going to commit.
+
+**The server-side `redirect()` explanation is ruled out**, and the link's own
+render gate is what rules it out: it renders only inside `{!cancelled &&
+(status === 'draft' || status === 'open')}`, so at render time the class was
+live, editable and owned. For `/edit` to redirect, that would have to stop
+being true inside the 190ms between the detail render and the RSC fetch, and
+nothing mutates it there — `CRON_SCHEDULER` is `off` in CI, the integration
+suite had finished, and no sibling test touches that row.
+
+**What is left is a hydration/router race, and it is a PATTERN, not one
+test.** `class-edit.spec.ts:129` is the only test in its own file that reaches
+the editor by clicking rather than by `page.goto`, which is why it is the one
+that flakes there — but suite-wide, **13 of the 28 `waitForURL` calls follow a
+`.click()`**, and every one is the same shape. Re-derive with:
+
+    grep -rn -B2 'waitForURL' tests/e2e/*.spec.ts | grep -A2 '\.click()'
+
+**Not reproduced locally: 10/10 green** (`--repeat-each=10`, Mobile Chrome)
+— against a warm dev server, which is the wrong condition. CI runs a cold
+production build, and hydration timing is the suspected variable, so a local
+green is weak evidence and is recorded as such rather than as a result.
+
+**So step 2 below is no longer "raise a budget".** The candidate fix is the
+assertion shape — assert on destination *content*, which auto-retries, rather
+than on the URL alone, or wait for hydration before clicking. That is a
+13-site change and wants deciding, not defaulting.
+
 ### The order, and why it is this order
 
 **Fix the known-wrong instruments first, investigate the possibly-real races
@@ -2264,11 +2331,12 @@ failure rate is an hour of ambiguous evidence.
    it is, step 3 is still being judged against an unquantified baseline. That
    re-derivation is the next round's job, with the `gh run list` command at the
    head of this section.
-2. **Class C — the e2e health budget.** Second-most-observed, and cheap to
-   bound. But diagnose before raising: `App did not become healthy within 30s`
-   may be a budget that is genuinely too tight on a cold runner, or it may be a
-   startup regression wearing a timeout's clothes. Raising it blindly converts a
-   loud failure into a slow one.
+2. **Class C — the e2e soft navigation.** **Diagnosed 2026-08-28, not yet
+   fixed** — see the section above. The instruction to diagnose before raising
+   paid, and in the sharpest possible way: there was **nothing to raise**. The
+   health budget never fired, and the timeout that did is a client-side
+   transition that fetched everything it needed in 11ms and never committed.
+   What remains is a 13-site assertion-shape decision, not a number.
 3. **Class B — `studio-api` retry safety.** Last **because it is the one that
    might be a real defect**, and it deserves a quiet CI to be judged against.
    Two identical creates in flight against the slot key is exactly the shape
