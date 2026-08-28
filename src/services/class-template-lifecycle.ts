@@ -66,6 +66,7 @@ import {
   type ArchiveRuleResult,
   type TemplateFamily,
   type WithSlot,
+  type LastScheduledClass,
 } from './rule-lifecycle';
 
 /**
@@ -1109,33 +1110,6 @@ export async function updateClassTemplate(
 // ---------------------------------------------------------------------------
 // Pause / resume and archive / un-archive (#86)
 // ---------------------------------------------------------------------------
-
-/**
- * The last class still on the schedule for a template, as `pauseOrResumeTemplate`
- * and its studio twin report it, and as `pauseMessage` renders it.
- *
- * Shared rather than declared per site, which is what #100 asked for. The two
- * families' PAUSE/RESUME halves stay deliberately separate implementations
- * (see the header of `studio-class-template-lifecycle.ts`, and PR #92, which
- * found they had drifted); their archives do not — since issue 332 both run on
- * one body in `rule-lifecycle.ts`. Neither policy reaches this type either
- * way: it is two fields with no logic to drift.
- *
- * `date` is `CalendarEntry.date` straight through — one column for both
- * producers since #327 — and it is `@db.Date`: a calendar date
- * pinned to midnight UTC, never an instant. That is the one
- * property of this type a producer can actually violate, and it is what
- * licenses `pauseMessage` to render it through `formatDayHeader`, which reads
- * its argument with `getUTC*` accessors (`src/lib/format.ts`). Fill this from
- * a raw `new Date()` instead and the rendered day slips back one west of UTC.
- * Both producers satisfy it today by `select`ing the column unchanged.
- *
- * `TemplateToggleResponse.lastScheduled` in `template-action-messages.ts` is
- * NOT this type and must not be folded into it — it carries `date: string`,
- * the post-`JSON.parse` wire form, converted back inside that file's two
- * `resolve*Confirmation` functions.
- */
-export type LastScheduledClass = { date: Date; startTime: string };
 
 /**
  * Outcome of a pause/resume PATCH. `paused` carries the furthest-out class

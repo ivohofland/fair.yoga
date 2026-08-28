@@ -1,5 +1,5 @@
 import { formatDayHeader } from '@/lib/format';
-import type { LastScheduledClass } from '@/services/class-template-lifecycle';
+import type { LastScheduledClass } from '@/services/rule-lifecycle';
 // Type-only, but it would be safe as a value import too: `template-selection.ts`
 // is import-free on purpose, so nothing server-only rides in with it. The rule
 // itself is evaluated on the server and arrives here as a string on the wire —

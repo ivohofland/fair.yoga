@@ -40,6 +40,27 @@ export type WithSlot<T> = T & {
   withdrawnCount: number | null;
 };
 
+/**
+ * The last dated entry a pause leaves standing, as the teacher is told about
+ * it.
+ *
+ * `date` is `CalendarEntry.date` straight through, and it is `@db.Date`: a
+ * calendar date pinned to midnight UTC, never an instant. That is the one
+ * property of this type a producer can actually violate, and it is what
+ * licenses `pauseMessage` to render it through `formatDayHeader`, which reads
+ * its argument with `getUTC*` accessors (`src/lib/format.ts`). Fill this from
+ * a raw `new Date()` instead and the rendered day slips back one west of UTC.
+ *
+ * `startTime` is HH:mm — the wire spelling, not the `Date` the column holds
+ * — because this crosses into a response body unchanged.
+ *
+ * `TemplateToggleResponse.lastScheduled` in `template-action-messages.ts` is
+ * NOT this type and must not be folded into it — it carries `date: string`,
+ * the post-`JSON.parse` wire form, converted back inside that file's two
+ * `resolve*Confirmation` functions.
+ */
+export type LastScheduledClass = { date: Date; startTime: string };
+
 /** What the withdraw hook is handed. */
 export type WithdrawContext = { scheduleRuleId: string; today: Date };
 
@@ -138,8 +159,8 @@ export type TemplateFamily<TChild> = {
    */
   deleteWhere: (scheduleRuleId: string, today: Date) => Prisma.CalendarEntryWhereInput;
   /**
-   * The entries either verb of this family reports to the teacher as
-   * standing.
+   * The entries of this family that stand at or after the boundary — this
+   * rule's, dated on or after the teacher's `today`.
    *
    * `today` INCLUSIVE, where `deleteWhere` above excludes it. The delete
    * deliberately spares a class dated today — "a class hours from starting

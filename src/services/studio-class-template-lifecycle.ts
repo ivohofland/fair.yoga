@@ -65,7 +65,6 @@ import { countSkipReasons, type GenerationResult, type SkipCounts } from '@/lib/
 // value-imports anything in this chain.
 import { log } from '@/lib/log';
 import type {
-  LastScheduledClass,
   PlainUpdateForbiddenScheduleRuleField as PlainUpdateForbiddenClassRuleField,
   TeacherEditableScheduleRuleField as TeacherEditableClassRuleField,
 } from './class-template-lifecycle';
@@ -78,6 +77,7 @@ import {
   type ArchiveRuleResult,
   type TemplateFamily,
   type WithSlot,
+  type LastScheduledClass,
 } from './rule-lifecycle';
 
 /**
