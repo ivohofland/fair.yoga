@@ -791,11 +791,46 @@ it.
 **Files:**
 - Modify: `src/services/rule-lifecycle.ts`, both lifecycle services, both route
   files, `src/lib/db-locks.ts`, `docs/lock-order.md`
+- Modify: **`docs/technical-architecture.md`** — carries a DUPLICATE of
+  `class-generator.ts`'s call-site census. CLAUDE.md lists this file as a live
+  reference, and it is the file that went stale on #39 in exactly this way, so
+  it is named here rather than left to a sweep.
+- Modify: **`src/services/class-template-lifecycle.test.ts`** and
+  **`src/services/studio-class-template-lifecycle.test.ts`** — stale references
+  deliberately left during Tasks 5-6, because those files being byte-unchanged
+  was the evidence the merge altered no behaviour. That proof has now been
+  cashed, so they are editable here and only here.
 - Create: a short `docs/` entry for where the room refusal now lives
 
 **Interfaces:**
 - Consumes: Tasks 1-6.
 - Produces: no code surface.
+
+**Findings deferred into this task** (each has a ledger entry; give each a
+verdict, and expect legitimate survivors):
+
+| From | What |
+|---|---|
+| Task 4 | Both pin comments say "after the parameter **became** the joined type" — mild historical framing; make it tense-neutral |
+| Task 5 (M4) | `class-template-lifecycle.test.ts` cites the wrapper's docblock for a failure it no longer describes |
+| Task 5 (M5) | `studio-class-template-lifecycle.test.ts` points at a wrapper, and at `ResumeTransactionOutcome`, which Task 5 deleted |
+| Task 6 | `docs/lock-order.md` has five mentions to verdict, including a table row naming the wrong file |
+| Task 6 | `docs/technical-architecture.md`'s copy of the call-site census |
+
+**Recorded, do NOT re-do:** Task 5 already corrected three passages in
+`docs/lock-order.md` and two PATCH-route comments, and Task 6 replaced
+`class-generator.ts`'s census roster with a property. Verify those rather than
+rewriting them — rewriting a still-true claim is the mirror-image defect and
+costs more than the staleness did.
+
+**One fact this task must carry, not re-derive:** the reason-set `diff` that
+gated this whole issue is now a STALE COMMAND. Both families' result types are
+one-line aliases of `PauseRuleResult`, so its `sed` ranges extract nothing and
+the diff is empty because both sides are empty — not because the sets agree.
+Measured on this branch. Any version of that check kept anywhere must read the
+shared union in `rule-lifecycle.ts`, where the reasons are
+`archived`/`busy`/`forbidden`/`not_found` and the actions are
+`active`/`paused`/`unchanged`.
 
 - [ ] **Step 1: Sweep for what you INVALIDATED, not what you edited**
 
