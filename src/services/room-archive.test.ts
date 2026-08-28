@@ -182,22 +182,59 @@ describe('setTeacherRoomArchived — the mid-request resume race (issue 272)', (
     const tpl = await addTemplate(f, { isActive: false, isArchived: false });
     const holder = new PrismaClient();
     await holder.$connect();
+    let acquired!: () => void;
+    let release!: () => void;
+    const acquiredSignal = new Promise<void>((r) => { acquired = r; });
+    const releaseSignal = new Promise<void>((r) => { release = r; });
+    let ceiling: ReturnType<typeof setTimeout> | undefined;
+
     try {
-      const held = holder.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "ClassTemplate" WHERE id = ${tpl.id} FOR UPDATE`;
-        await tx.$queryRaw`SELECT pg_sleep(2.5)::text`;
-        return 'released';
-      });
+      // THE BARRIER IS THE TEST. Without it this raced the wrong way: the
+      // holder's transaction was started and the resume called immediately,
+      // so on a machine where the resume reached the row first it took the
+      // lock, succeeded, and answered `{ ok: true, action: 'active' }`. That
+      // is not a flake to retry — it is this case asserting nothing about
+      // contention on the run where it passed. Measured red on CI, green
+      // locally, which is the shape of a missing happens-before.
+      const held = holder.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "ClassTemplate" WHERE id = ${tpl.id} FOR UPDATE`;
+          acquired();
+          // Held until the resume has answered, rather than a flat sleep: the
+          // hold is the contention this file pays for in the PARALLEL tier
+          // (`vitest.config.ts`, LOCK_CONTENTION_TESTS), so it lasts exactly
+          // as long as the assertion needs. The ceiling exists only for the
+          // path where the resume never gives up, so that failure surfaces as
+          // this case's own assertion rather than a vitest timeout.
+          await Promise.race([
+            releaseSignal,
+            new Promise<void>((r) => { ceiling = setTimeout(r, 6_000); }),
+          ]);
+          return 'released';
+        },
+        { timeout: 20_000 },
+      );
+      held.catch(() => {});
+      await acquiredSignal;
+
       const resumed = await pauseOrResumeTemplate(prisma, tpl.id, f.teacherId, 'active');
+      release();
       expect(resumed).toEqual({ ok: false, reason: 'busy' });
       expect(await held).toBe('released');
 
       const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: f.linkId } });
       expect(after.isArchived).toBe(false);
     } finally {
+      if (ceiling) clearTimeout(ceiling);
+      release();
       await holder.$disconnect();
     }
-  });
+    // Explicit, because vitest's 5s default is not comfortably above what this
+    // case legitimately costs: fixture setup, then a resume that waits out the
+    // shared `lock_timeout` before answering. A loaded CI runner fits inside
+    // 5s only just, and a timeout here would read as a defect rather than as
+    // the machine being busy.
+  }, 20_000);
 });
 
 describe('setTeacherRoomArchived — ownership, idempotency, release valve', () => {
