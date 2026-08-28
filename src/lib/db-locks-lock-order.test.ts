@@ -8,8 +8,22 @@ import { createClassFixture } from '../../tests/class-fixtures';
 const prisma = new PrismaClient();
 
 /**
- * Forces the `WaitlistEntry`-driven nested loop this test's join side needs,
- * by removing every plan shape that would drive the join from `Class`.
+ * Forces both callers off sequential scans, so each one's row order comes
+ * from index structure rather than from `Class`'s heap.
+ *
+ * That is the property this whole file rests on, and it is why the same three
+ * settings serve both sides. A seq-scanned `Class` hands back physical order,
+ * and physical order is not this test's to own: `Class` is one 8 KB page
+ * shared with every other file in the parallel tier, so a neighbour's `DELETE`
+ * plus autovacuum frees a low line pointer and the next insert takes it —
+ * measured 2026-08-28, and the mechanism behind the CI failure at
+ * `db-locks.test.ts:414` on 2026-08-27. Under these settings the join side is
+ * ordered by `WaitlistEntry_classId_position_idx` (so by `classId`) and the
+ * scan side by `Class_calendarEntryId_key` (so by `calendarEntryId`), both of
+ * which this file's fixture ASSIGNS.
+ *
+ * The join side additionally needs the nested loop driven from
+ * `WaitlistEntry`, which is what the measurements below are about.
  *
  * All three settings are required, and `enable_hashjoin = off` alone is what
  * CI proved insufficient (#239 review). It removes a join ALGORITHM, not a
@@ -36,7 +50,7 @@ const prisma = new PrismaClient();
  * entirely inside the caller's transaction and reach neither the other caller
  * nor production.
  */
-async function forceWaitlistDrivenPlan(tx: Prisma.TransactionClient): Promise<void> {
+async function forceIndexOrderedPlan(tx: Prisma.TransactionClient): Promise<void> {
   await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
   await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
   await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
@@ -56,37 +70,48 @@ async function forceWaitlistDrivenPlan(tx: Prisma.TransactionClient): Promise<vo
  * serialise whether or not the clause is there — such a test passes against
  * the bug and proves nothing. `ORDER BY c.id` is load-bearing only where two
  * sites reach the same rows by DIFFERENT plans: the join below is driven by
- * `WaitlistEntry` and returns classes in that table's physical order, while
- * the scan is driven by `Class` and returns them in its own. The fixture
- * inserts the two tables in OPPOSITE orders so the two natural orders
- * disagree, and both premises are asserted before the race rather than
- * assumed — a planner or storage change that makes them agree fails loudly
- * here instead of leaving the test green for an unrelated reason.
+ * `WaitlistEntry` and returns classes in `classId` order, while the scan
+ * reaches `Class` through `Class_calendarEntryId_key` and returns them in
+ * `calendarEntryId` order. The fixture ASSIGNS both of those keys, so the two
+ * natural orders are opposite by construction, and both premises are asserted
+ * before the race rather than assumed — an index or plan change that makes
+ * them agree fails loudly here instead of leaving the test green for an
+ * unrelated reason.
+ *
+ * NEITHER ORDER IS THE HEAP'S, which is the reason both keys are assigned
+ * rather than left to insertion order. `Class` is one 8 KB page shared with
+ * every other file in the parallel tier: a neighbour's `DELETE` plus
+ * autovacuum frees a low line pointer, the next insert takes it, and
+ * insertion order and physical order come apart. Both premises here held
+ * 24/24 under `forceIndexOrderedPlan`, including 12 runs against a heap
+ * deliberately inverted to [LOW, HIGH].
  *
  * WHY A THIRD TRANSACTION. Both callers take their locks inside one statement
  * each, so there is no application-level window to interleave — the same
  * property that made the per-pairing reproductions unconstructible. Holding
- * both rows from a third transaction and releasing them parks one caller on
- * each row first, so the collision is deterministic rather than a race this
- * test hopes to win. Same technique as `gdpr.test.ts`'s "a third transaction
- * takes the `Student` row `FOR UPDATE` before either".
+ * both rows from a third transaction and releasing them parks BOTH callers
+ * before either can start, which is what a bare `Promise.all` cannot
+ * guarantee. It does not decide what happens next — see the catch rates
+ * below — but without it the two callers can miss each other entirely. Same
+ * technique as `gdpr.test.ts`'s "a third transaction takes the `Student` row
+ * `FOR UPDATE` before either".
  *
- * WHY THE JOIN SIDE FORCES ITS PLAN. The plan this construction models is the
- * production one — a `WaitlistEntry` join driven by that table. Left to the
- * planner it is not reliably that: see `forceWaitlistDrivenPlan` below, which
- * owns the three settings and the measurements behind them. The short version
- * is that the choice is a cost knife-edge on an unindexed column, it is
- * non-monotonic in table size, and this test shipped green on one setting for
- * exactly one CI run before the sibling premise in `gdpr.test.ts` failed on
- * the same commit.
+ * WHY BOTH SIDES FORCE THEIR PLAN. The plans this construction models are
+ * production ones — a `WaitlistEntry` join driven by that table, and a
+ * `Class` scan reached through an index. Left to the planner neither is
+ * reliably that: see `forceIndexOrderedPlan` below, which owns the three
+ * settings and the measurements behind them. The short version is that the
+ * join side is a cost knife-edge on an unindexed column and non-monotonic in
+ * table size, and that an unforced scan side falls back to the heap, which
+ * belongs to whichever neighbour last churned it.
  *
- * THIS TEST PASSED BY LUCK BEFORE #239's REVIEW, and the mechanism is worth
- * keeping written down. Its premise is character-identical to
- * `gdpr.test.ts`'s, and it survived only because it runs earlier in the file
- * order, against a quieter database. Inserting two `ANALYZE` statements after
- * the fixture — modelling an autoanalyze firing there — reproduced CI's exact
- * failure signature here. File order is not a guarantee, which is why the
- * plan is forced rather than hoped for.
+ * WHAT ACTUALLY CATCHES A MISSING `ORDER BY`, measured with the clause
+ * deleted from `lockClassRowsOrdered`: the closing id assertions, 3/3. The
+ * deadlock fires 1/3 — once both callers are parked, whether each is granted
+ * its own first row (a cycle) or one caller takes both (no cycle) is a race
+ * this test does not control. So the no-deadlock checks state the invariant
+ * the clause exists for, and the id assertions are what make the guard
+ * deterministic. Both belong here; neither alone is the whole test.
  *
  * WHAT DESC DOES AND DOES NOT CATCH. Under `ORDER BY c.id DESC` both callers
  * request [HIGH, LOW], so they queue on the same row and serialise: the
@@ -111,10 +136,21 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
   let studentId: string;
   let lowClassId: string;
   let highClassId: string;
+  let lowEntryId: string;
+  let highEntryId: string;
 
   beforeAll(async () => {
     lowClassId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
     highClassId = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+    // Entry ids ANTI-correlated with the class ids they carry: the LOW class
+    // gets the HIGH entry and vice versa. That inversion is what gives the
+    // scan side a natural order of [HIGH, LOW] under the forced plan, which
+    // reaches `Class` through `Class_calendarEntryId_key` and so returns rows
+    // in `calendarEntryId` order. Assigned rather than defaulted, because a
+    // `uuid()` default would leave that order to chance — measured 20/20
+    // tracking the random entry id, 12 of 20 in the direction this test needs.
+    lowEntryId = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+    highEntryId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
 
     // `bio` and `pageSlug` are both required and unique-constrained — copied
     // from the working fixture at `gdpr.test.ts:1251`, not invented.
@@ -164,9 +200,19 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
       maxStudents: 10,
       status: 'open' as const,
     };
-    // Classes: HIGH first, so the `Class` scan's natural order is [HIGH, LOW].
-    await createClassFixture(prisma, { ...base, id: highClassId, date: new Date('2099-06-01') });
-    await createClassFixture(prisma, { ...base, id: lowClassId, date: new Date('2099-06-02') });
+    // Insertion order is no longer load-bearing — the entry ids above are.
+    await createClassFixture(prisma, {
+      ...base,
+      id: highClassId,
+      calendarEntryId: highEntryId,
+      date: new Date('2099-06-01'),
+    });
+    await createClassFixture(prisma, {
+      ...base,
+      id: lowClassId,
+      calendarEntryId: lowEntryId,
+      date: new Date('2099-06-02'),
+    });
 
     const student = await prisma.student.create({
       data: {
@@ -204,21 +250,30 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
   });
 
   it('serialises two callers whose natural orders disagree, instead of deadlocking', async () => {
-    // Premise 1: the scan's natural order.
-    const scanOrder = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT c.id FROM "Class" c
-        JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
-       WHERE e."teacherId" = ${teacherId}
-    `;
+    // Premise 1: the scan's natural order, under the SAME forced plan the
+    // scan caller gets below. Unforced this read is a seq scan on `Class` and
+    // hands back heap order, which this test cannot own — see
+    // `forceIndexOrderedPlan`. Forced, it is an index scan on
+    // `Class_calendarEntryId_key`, so the order is the one `beforeAll`
+    // ASSIGNED: verified 24/24, including 12 runs against a heap deliberately
+    // inverted to [LOW, HIGH].
+    const scanOrder = await prisma.$transaction(async (tx) => {
+      await forceIndexOrderedPlan(tx);
+      return tx.$queryRaw<Array<{ id: string }>>`
+        SELECT c.id FROM "Class" c
+          JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+         WHERE e."teacherId" = ${teacherId}
+      `;
+    });
     expect(scanOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
 
     // Premise 2: the join's natural order — the REVERSE. Asserting premise 1
     // proves nothing about this: different tables, different physical layouts.
     // Runs under the forced plan so the planner drives it from `WaitlistEntry`
-    // — see `forceWaitlistDrivenPlan` for why a cost-chosen plan cannot be
+    // — see `forceIndexOrderedPlan` for why a cost-chosen plan cannot be
     // relied on here, and why one setting was not enough.
     const joinOrder = await prisma.$transaction(async (tx) => {
-      await forceWaitlistDrivenPlan(tx);
+      await forceIndexOrderedPlan(tx);
       return tx.$queryRaw<Array<{ id: string }>>`
         SELECT c.id FROM "Class" c
         JOIN "WaitlistEntry" w ON w."classId" = c.id
@@ -256,7 +311,7 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // production shape, driven by `WaitlistEntry`.
     const a = prisma.$transaction(
       async (tx) => {
-        await forceWaitlistDrivenPlan(tx);
+        await forceIndexOrderedPlan(tx);
         const ids = await lockClassRowsOrdered(tx, {
           join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`,
           where: Prisma.sql`w."studentId" = ${studentId}`,
@@ -272,9 +327,12 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
       { timeout: 10_000 },
     );
 
-    // Caller B: the SCAN plan. Unordered it wants HIGH first.
+    // Caller B: the SCAN plan. Unordered it wants HIGH first — and forcing
+    // the plan is what makes that "wants" a construction rather than a hope,
+    // exactly as it is for caller A.
     const b = prisma.$transaction(
       async (tx) => {
+        await forceIndexOrderedPlan(tx);
         const ids = await lockClassRowsOrdered(tx, {
           join: Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
           where: Prisma.sql`e."teacherId" = ${teacherId}`,
