@@ -2161,11 +2161,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(resumed.action).toBe('unarchived');
 
     expect(Object.keys(resumed.template)).not.toContain('scheduleRule');
-    // `teacher` too, and it is the closer miss: `withSlot`'s `rule`
-    // parameter is declared `ScheduleRule`, and this arm is handed the
-    // JOINED rule, which carries `teacher: { defaultTimezone }`. An
-    // adapter that spread `rule` would typecheck and put that object on
-    // the wire.
+    // Kept deliberately after the parameter became the joined type: that makes
+    // the shipped adapters provably teacher-free, but a spread-based adapter
+    // would still compile. This is the second line, not a duplicate of the first.
     expect(Object.keys(resumed.template)).not.toContain('teacher');
     // The flattening itself still happened — otherwise "no `scheduleRule`"
     // would pass on a response that lost the rule's columns altogether.

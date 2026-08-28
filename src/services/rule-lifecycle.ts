@@ -15,12 +15,18 @@ import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 
 /**
+ * A `ScheduleRule` as every joined read in this module returns it: with the one
+ * `Teacher` column the date boundaries need.
+ */
+export type JoinedRule = ScheduleRule & { teacher: { defaultTimezone: string } };
+
+/**
  * A child template with the calendar identity its rule holds, plus the one
  * `Teacher` column the archive's date boundary needs.
  */
 export type ChildWithRule<TChild> = TChild & {
   scheduleRuleId: string;
-  scheduleRule: ScheduleRule & { teacher: { defaultTimezone: string } };
+  scheduleRule: JoinedRule;
 };
 
 /**
@@ -190,14 +196,17 @@ export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
    * joined `scheduleRule` into a response by accident. The adapters can —
    * each family's own lifecycle test pins that its adapter does not.
    *
-   * `rule` is declared `ScheduleRule`, and the call sites below pass something
-   * WIDER than that: every one except the archiving arm's hands over
-   * `template.scheduleRule`, which carries the joined
-   * `teacher: { defaultTimezone }` this function's date boundary needs. An
-   * adapter that spreads `rule` therefore puts a `teacher` object on the wire
-   * while typechecking clean, which is the second thing those tests pin.
+   * `rule` is the JOINED row, and each adapter destructures `teacher` off it the
+   * way it destructures `scheduleRule` off the child. What that buys is exact:
+   * the remainder these adapters spread provably cannot carry `teacher`, and
+   * narrowing the joined read later is a compile error rather than a silent
+   * change. What it does NOT buy is a bar on a differently-written adapter —
+   * TypeScript does not apply excess-property checking to spread-introduced
+   * properties, so an adapter that spread `rule` whole would still compile. The
+   * runtime pins in both lifecycle tests are the second line for exactly that
+   * case, and are not redundant.
    */
-  withSlot: (child: ChildWithRule<TChild>, rule: ScheduleRule) => WithSlot<TChild>;
+  withSlot: (child: ChildWithRule<TChild>, rule: JoinedRule) => WithSlot<TChild>;
   withdraw: WithdrawHook | null;
 };
 
@@ -693,7 +702,7 @@ export async function archiveOrUnarchiveRule<TChild>(
           // them. The child half comes from the pre-transaction read instead,
           // which is still current — the archiving write touches no child
           // column.
-          template: family.withSlot(template, recordedRule),
+          template: family.withSlot(template, { ...recordedRule, teacher: template.scheduleRule.teacher }),
           deleted,
           remaining,
         };

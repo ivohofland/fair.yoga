@@ -1768,9 +1768,11 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
     ),
   standingWhere: (scheduleRuleId, today) => scheduledWhere(scheduleRuleId, { gte: today }),
   // Destructures here, where `ClassTemplate` is concrete, then hands the bare
-  // child to this file's existing exported `withSlot` unchanged.
-  withSlot: ({ scheduleRule, ...bare }, rule) => {
+  // child and the bare rule to this file's existing exported `withSlot`
+  // unchanged.
+  withSlot: ({ scheduleRule, ...bare }, { teacher, ...rule }) => {
     void scheduleRule;
+    void teacher;
     return withSlot(bare, rule);
   },
   withdraw: {

@@ -1430,9 +1430,11 @@ export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate, 'studio'> = {
   deleteWhere: (scheduleRuleId, today) => scheduledWhere(scheduleRuleId, { gt: today }),
   standingWhere: (scheduleRuleId, today) => scheduledWhere(scheduleRuleId, { gte: today }),
   // Destructures here, where `StudioClassTemplate` is concrete, then hands
-  // the bare child to this file's existing exported `withSlot` unchanged.
-  withSlot: ({ scheduleRule, ...bare }, rule) => {
+  // the bare child and the bare rule to this file's existing exported
+  // `withSlot` unchanged.
+  withSlot: ({ scheduleRule, ...bare }, { teacher, ...rule }) => {
     void scheduleRule;
+    void teacher;
     return withSlot(bare, rule);
   },
   // Required and explicitly null, not omitted. `StudioClass` has no
