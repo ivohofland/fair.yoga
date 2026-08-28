@@ -1512,6 +1512,15 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
   // order, which is the whole premise of this test.
   const LOW_CLASS_ID = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
   const HIGH_CLASS_ID = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+  // Entry ids ANTI-correlated with the class ids they carry: the LOW class
+  // gets the HIGH entry and vice versa. Both erasures run under a forced
+  // plan, and under it the teacher's scan reaches `Class` through
+  // `Class_calendarEntryId_key` — so it returns rows in `calendarEntryId`
+  // order, which makes that order this fixture's to choose rather than the
+  // heap's. Assigned rather than defaulted, because a `uuid()` default would
+  // leave it to chance.
+  const LOW_ENTRY_ID = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+  const HIGH_ENTRY_ID = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
   let teacherId: string;
   let accountId: string;
   let roomId: string;
@@ -1566,15 +1575,23 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       maxStudents: 10,
       status: 'open' as const,
     };
-    // HIGH inserted FIRST, which is what USUALLY gives the teacher-side scan
-    // a natural order of [HIGH, LOW] against the student side's [LOW, HIGH].
-    // Usually, not always: an unordered `SELECT` has no guaranteed row order,
-    // and `Class` is one 8 KB page shared with every other file in this tier,
-    // so a neighbour's `DELETE` plus autovacuum frees a low line pointer for
-    // the second insert to take. The test below states what that costs when
-    // it does not hold.
-    await createClassFixture(prisma, { ...base, id: HIGH_CLASS_ID, date: new Date('2099-06-01') });
-    await createClassFixture(prisma, { ...base, id: LOW_CLASS_ID, date: new Date('2099-06-02') });
+    // Insertion order is not load-bearing — the entry ids above are. Under an
+    // unforced plan this would be a seq scan handing back heap order, and heap
+    // order is not this file's to own: `Class` is one 8 KB page shared with
+    // every other file in this tier, so a neighbour's `DELETE` plus autovacuum
+    // frees a low line pointer for the next insert to take.
+    await createClassFixture(prisma, {
+      ...base,
+      id: HIGH_CLASS_ID,
+      calendarEntryId: HIGH_ENTRY_ID,
+      date: new Date('2099-06-01'),
+    });
+    await createClassFixture(prisma, {
+      ...base,
+      id: LOW_CLASS_ID,
+      calendarEntryId: LOW_ENTRY_ID,
+      date: new Date('2099-06-02'),
+    });
 
     const student = await prisma.student.create({
       data: {
@@ -1621,26 +1638,45 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
   });
 
   it('does not deadlock when a teacher erasure and a student erasure overlap on two classes', async () => {
-    // NO PREMISE PROBE ON THE TEACHER SIDE. There used to be one, pinning the
-    // `Class` scan's natural order to [HIGH, LOW], and it was an assertion on
-    // a non-guarantee: PostgreSQL promises no order for an unordered
-    // `SELECT`, `deleteTeacherAccount` reaches these rows by a seq scan, and
-    // seq scans return physical order — which belongs to whichever neighbour
-    // in this parallel tier last churned the page. It failed on CI for that
-    // reason (2026-08-27, the sibling copy in `db-locks.test.ts`), and no
-    // instrument fixes it here: the caller is production code, so this test
-    // cannot force its plan the way it forces the probe below.
+    // Premise 1: the teacher scan's natural order, under the SAME forced plan
+    // `teacherRacing` gives `deleteTeacherAccount` below. Unforced this read
+    // is a seq scan on `Class` and hands back heap order, which this file
+    // cannot own — that is what failed on CI (2026-08-27, the sibling copy in
+    // `db-locks.test.ts`). Forced, it is an index scan on
+    // `Class_calendarEntryId_key`, so the order is the one `beforeAll`
+    // ASSIGNED and the premise is a construction rather than an observation.
     //
-    // WHAT ITS REMOVAL COSTS, precisely: if the two natural orders ever agree,
-    // both erasures park on the same row and serialise, and this test passes
-    // WITHOUT having provoked the cycle. That is vacuity, not a false green on
-    // broken code in the ordinary sense — but it is silent, and it is the
-    // trade being made. It is paid for elsewhere:
-    // `db-locks-lock-order.test.ts` proves `ORDER BY c.id` load-bearing on the
-    // shared primitive both erasures call, from assigned sort keys rather than
-    // an observed heap, and that proof does not depend on this file's luck.
+    // WHY THIS IS ASSERTABLE AT ALL, since the caller is production code: the
+    // test does not need to reach inside it. `deleteTeacherAccount` issues
+    // `setLockTimeout`, and a Prisma `$extends` hook on `$executeRawUnsafe`
+    // rides that one statement to set the plan for its whole transaction —
+    // exactly what the student side has always done. Both erasures are
+    // production functions and BOTH are forcible; treating the teacher's as
+    // unreachable is what left this premise unasserted for one commit.
     //
-    // THE STUDENT SIDE KEEPS ITS PROBE, because that one can be made to hold.
+    // WHAT IT COSTS TO DROP THIS, measured rather than argued, because the
+    // question comes up whenever it flakes: with the heap inverted so the two
+    // natural orders agree, both erasures park on the same row and serialise
+    // — and with `ORDER BY c.id` deleted from the helper the test still passes
+    // 3/3. Not "vacuity in some weaker sense": a green run on broken code.
+    // That is what asserting the premise buys, and why it is asserted rather
+    // than assumed.
+    const scanOrder = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
+      await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
+      await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
+      return tx.$queryRaw<Array<{ id: string }>>`
+        SELECT c.id FROM "Class" c
+        JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+        WHERE e."teacherId" = ${teacherId}
+          AND c.status IN ('draft', 'open', 'in_progress')
+      `;
+    });
+    expect(scanOrder.map((r) => r.id)).toEqual([HIGH_CLASS_ID, LOW_CLASS_ID]);
+
+    // Premise 2: the student side, which was always assertable and always
+    // asserted. Asserting the scan proves nothing about it — different
+    // tables, different plans.
     // `deleteStudentAccount` pre-locks via a `WaitlistEntry` join, and under
     // the forced plan below the order comes from
     // `WaitlistEntry_classId_position_idx` — so from `classId`, which
@@ -1737,6 +1773,32 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // #237; its other `$queryRaw` calls bind class ids.
           if (args.values[0] === teacherId) {
             preLockReached();
+          }
+          return query(args);
+        },
+        async $executeRawUnsafe({ args, query }) {
+          // Force `deleteTeacherAccount`'s pre-lock scan onto an index-driven
+          // plan, the mirror of the student hook below and for the same
+          // reason. Unforced this is a seq scan on `Class`, which returns heap
+          // order — and the heap belongs to whichever neighbour in this
+          // parallel tier last churned the page, so the premise asserted below
+          // would be an assertion on a non-guarantee. Forced, the scan reaches
+          // `Class` through `Class_calendarEntryId_key` and returns the order
+          // `beforeAll` ASSIGNED.
+          //
+          // Hookable at all because `deleteTeacherAccount` calls
+          // `setLockTimeout` (`gdpr.ts`), which is one
+          // `$executeRawUnsafe(LOCK_TIMEOUT_SQL)` — the same statement the
+          // student hook keys on. Same `SET LOCAL` scope argument as that
+          // hook: transaction-only, and `enable_seqscan = off` discourages
+          // rather than forbids, so the erasure's remaining statements are
+          // planned differently and cannot fail on it.
+          if (args[0] === LOCK_TIMEOUT_SQL) {
+            const first = await query(args);
+            await query([`SET LOCAL enable_hashjoin = off`]);
+            await query([`SET LOCAL enable_mergejoin = off`]);
+            await query([`SET LOCAL enable_seqscan = off`]);
+            return first;
           }
           return query(args);
         },

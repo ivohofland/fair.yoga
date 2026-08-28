@@ -2216,20 +2216,34 @@ table above listed two because it was built from CI failures rather than from
 `grep`; the cheap habit that would have caught it is the one §3 already
 states.
 
-**The three sites did not take the same fix, and the reason is who owns the
-caller.** `db-locks-lock-order.test.ts` forces both callers' plans, so its two
-disagreeing orders are now constructed from assigned keys and it is the
-deterministic proof the other two lean on. `db-locks.test.ts` carries
-non-vacuity in a shuffled five-row seed instead. `gdpr.test.ts` could do
-neither — both its callers are production functions whose plans a test cannot
-force — so its teacher-side probe is simply gone.
+**Two of the three sites take the same fix; the third takes a different one.**
+`db-locks-lock-order.test.ts` and `gdpr.test.ts` both force their callers'
+plans and assign the sort keys those plans order by, so both premises are
+constructions rather than observations. `db-locks.test.ts` carries
+non-vacuity in a shuffled five-row seed instead, because it asserts a return
+value rather than staging a race.
 
-**What the last two now risk is vacuity, not flake, and the distinction is the
-whole argument.** `ORDER BY c.id` sorts whatever it is handed, so those
-assertions cannot go red from row order at all. What a hostile heap costs is a
-run that proves less than it appears to — and proving less stays green. The
-five-row seed puts that at 1 arrangement in 120; the erasure pairing's is
-whenever the two natural orders happen to agree.
+**A REVIEW ROUND CORRECTED THIS ENTRY, and the correction is the useful part.**
+`gdpr.test.ts` first shipped with its teacher-side premise simply DELETED, on
+the stated ground that both its callers are production functions whose plans a
+test cannot force. **That was false, and the counter-evidence sat sixty lines
+below the comment asserting it**: the file already forces
+`deleteStudentAccount` — equally production code — through a Prisma `$extends`
+hook on `$executeRawUnsafe`, and `deleteTeacherAccount` issues the same
+`setLockTimeout` statement that hook keys on. Both are forcible. "Could not"
+was "did not", and the difference was one grep.
+
+**What the deletion cost, measured on the way to replacing it.** With the heap
+inverted so the two natural orders agree, and `ORDER BY c.id` deleted from the
+helper, the test passed **3/3** — a green run on broken code, not vacuity in
+some weaker sense. Restored and forced, the same mutation fails **3/3** with a
+real `40P01`, and the premise itself holds 3/3 against that inverted heap.
+
+**So one site still trades, and only one.** `db-locks.test.ts` cannot go red
+from row order — `ORDER BY c.id` sorts whatever it is handed — and what a
+hostile heap costs it is a run that proves less than it appears to, at 1
+arrangement in 120. Vacuity rather than flake, and the whole of the trade this
+round makes. The other two sites make no trade at all.
 
 **Mutation rates, measured with the clause deleted from the helper**, because
 the three are not interchangeable: `gdpr.test.ts` fails 3/3 with a real
