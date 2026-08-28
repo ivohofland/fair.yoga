@@ -117,9 +117,13 @@ export type WithdrawHook = {
  * required and explicitly null for the family without one — because an
  * optional field is exactly the hole where a third family is half-defined and
  * nothing complains.
+ *
+ * `TChild` appears in a return position (`withSlot`'s), so the type is
+ * invariant in it and `TemplateFamily<never>` does not compile. Measured, not
+ * reasoned. `TKind` appears only in a property position, so it is covariant.
  */
-export type TemplateFamily<TChild> = {
-  kind: ClassFamily;
+export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
+  kind: TKind;
   /**
    * The child's table, spliced as a raw identifier into the row lock below.
    * Narrowed to the template children rather than left at `Prisma.ModelName`,

@@ -1409,7 +1409,7 @@ export async function pauseOrResumeStudioTemplate(
 }
 
 /** The studio family's `TemplateFamily` entry (`rule-lifecycle.ts`). */
-export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate> = {
+export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate, 'studio'> = {
   kind: 'studio',
   childTable: 'StudioClassTemplate',
   logNoun: 'studio class',

@@ -15,27 +15,21 @@ const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
 
 /**
- * Every family this repo has, as a union.
+ * Correlates each descriptor's own `kind` with the key it is filed under, at
+ * compile time. The runtime loop this replaces could only observe a
+ * disagreement after the fact; this makes it unrepresentable.
  *
- * Named rather than written as `TemplateFamily<never>`: `TChild` appears in
- * `withSlot`'s return position, so `TemplateFamily<ClassTemplate>` is not
- * assignable to `TemplateFamily<never>` and that spelling does not compile.
- * Measured, not reasoned.
+ * `TKind` sits in a property position and is therefore covariant.
  */
-type AnyTemplateFamily =
-  | TemplateFamily<ClassTemplate>
-  | TemplateFamily<StudioClassTemplate>;
+interface ChildByKind {
+  regular: ClassTemplate;
+  studio: StudioClassTemplate;
+}
 
 /**
  * A third `ClassFamily` variant becomes a compile error HERE rather than a
  * silent gap — the tether `COUNT_KEYS` (`template-action-messages.ts`) and
  * `ROOM_SEARCH_SELECT` (`api/rooms/route.ts`) use, applied to families.
- *
- * The value type is `AnyTemplateFamily`, not `unknown`, and the difference is
- * measured rather than stylistic: with `unknown` this object accepts
- * `{ regular: CLASS_FAMILY, studio: 42 }` without complaint. Both spellings
- * catch a MISSING key; only this one catches a half-defined family, which is
- * the failure the tether exists for.
  *
  * `prisma/schema.prisma`'s own `ClassFamily` docblock anticipates a third
  * variant, which is why this is worth having rather than hypothetical.
@@ -43,15 +37,9 @@ type AnyTemplateFamily =
 const FAMILY_BY_KIND = {
   regular: CLASS_FAMILY,
   studio: STUDIO_FAMILY,
-} satisfies Record<ClassFamily, AnyTemplateFamily>;
+} satisfies { [K in ClassFamily]: TemplateFamily<ChildByKind[K], K> };
 
 describe('rule-lifecycle family descriptors', () => {
-  it('each descriptor declares the kind it is filed under', () => {
-    for (const [kind, family] of Object.entries(FAMILY_BY_KIND)) {
-      expect(family.kind).toBe(kind);
-    }
-  });
-
   it('the family without a withdraw hook says so explicitly rather than omitting it', () => {
     // `null`, not `undefined`. `TemplateFamily.withdraw` is required, so an
     // omission is a compile error — this asserts the runtime half: that the
