@@ -831,23 +831,45 @@ it. Specifically re-read and verdict:
   through that same alternative, so run it and reconcile against this measured
   baseline:
 
-  | Measured on `main` at `f08bf0b2`, before this branch | Value |
-  |---|---|
-  | The filtered grep (`Class`/`CalendarEntry` locks) | **5** — `db-locks.ts` ×4, `room-archive.ts` ×1 |
-  | Template-table `FOR UPDATE` sites | **5** — 1 spliced (`rule-lifecycle.ts`), 4 literal |
+  **There are TWO copies of this census and they do not agree.** Measured
+  2026-08-28; the earlier version of this step characterised one hit wrongly, so
+  work from the table below rather than from memory.
 
-  The four literal ones are two per family: one in each `update*Template`
-  (`class-template-lifecycle.ts:890`, `studio-class-template-lifecycle.ts:632`)
-  and one in each pause (`:1435`, `:1097`).
+  | Command | Filters `family.childTable`? | Returns |
+  |---|---|---|
+  | `db-locks.ts:198` | yes | **5** |
+  | `docs/lock-order.md:171` | **no** | **7** |
 
-  **Predicted after this branch:** the two PAUSE literals collapse into one
-  splice, so template sites go 5 → 4 (2 spliced, 2 literal), and **the filtered
-  count stays 5** because every template site is filtered either way. The two
-  `update*Template` locks stay — that is C2, still blocked on #284.
+  `db-locks.ts:198`'s five are `db-locks.ts` ×4 plus `room-archive.ts:235`.
+  **That fifth is not a `Class`/`CalendarEntry` lock** — it locks `ClassTemplate`
+  rows, but its `"ClassTemplate"` sits on a *preceding* line, and both censuses
+  filter line by line, so neither can see it. It is a false positive in both,
+  pre-existing, and untouched by this branch.
 
-  If the filtered count is not 5 afterwards, the filter has stopped matching a
-  splice and a template lock is being counted as a `Class` one — the #332
-  failure, recurring. Do not adjust the number; fix the filter.
+  `docs/lock-order.md:171` is missing the `family\.childTable` alternative that
+  `db-locks.ts:198` gained when #332 introduced the first spliced lock. So it
+  counts spliced TEMPLATE locks as `Class` ones — the #332 failure still
+  standing in the second copy. It returned **6** at this branch's base and
+  returns **7** now, because `pauseOrResumeRule` adds a second splice. Its prose
+  still says *"Expect FOUR lines and expect all four to be in
+  `src/lib/db-locks.ts`."*
+
+  **This branch made that worse, so this branch fixes it.** Add the
+  `family\.childTable` alternative to the `docs/lock-order.md:171` command so it
+  matches `db-locks.ts:198`, and correct its stated expectation to **five**,
+  naming `room-archive.ts:235` as the multi-line blind spot both commands share
+  rather than pretending the filter catches it. Do not "fix" it by deleting the
+  room-archive line from the expectation without saying why it appears.
+
+  After the fix, both commands return 5 and agree. If `db-locks.ts:198` returns
+  anything other than 5, a filter has stopped matching a splice — fix the
+  filter, never the number.
+
+  **Out of scope, record only:** `docs/lock-order.md:348` says a *different*
+  census "returns thirteen"; its own command returns **fourteen**, at this
+  branch's base and now. Pre-existing and not worsened here, and attributing the
+  fourteenth line is its own reconciliation. Note it in the report so it can be
+  filed at the finish; do not fix it in this branch.
 - Any runtime log string that describes the merged behaviour — the category
   nobody sweeps and the only one that reaches an operator's grep.
 
