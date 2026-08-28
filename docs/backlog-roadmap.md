@@ -1,12 +1,26 @@
 # Open-issue roadmap & bundling
 
-**Snapshot:** 2026-08-20 (after #116 + #117 + #126 merged, PR #273) ·
-**89 open issues**, re-counted with `gh issue list --state open --limit 200`
-= 89. Reconciles: 80 − 3 (#116, #117, #126 — all three in PR #273) + 1 (#272,
-spun out of the branch's own measurement) + 11 (**#274-#284, filed by the
-maintainer at 12:14-12:46Z, outside this round**) = 89. **One in, three out.**
+**Snapshot:** 2026-08-28 (after #272 merged, PR #340) · **106 open issues**,
+re-counted with `gh issue list --state open --limit 300 --json number --jq
+'length'` = 106.
 
-**The +11 is why the arithmetic is written out**, and it is the second
+**THE 89 → 106 DELTA IS NOT ITEMISED HERE, and that is the thing §8 says must
+not be inherited silently.** #272 closed on this round (one out), so seventeen
+of the eighteen are issues filed outside it — the same outside-the-round batch
+problem the previous snapshot wrote its arithmetic out to avoid, now one round
+older and larger. The count above is measured, not derived; the composition is
+NOT, and re-deriving it is the next round's first job. Recorded as an open debt
+rather than papered over with a plausible sum.
+
+The previous snapshot's reconciliation, kept because its arithmetic is still
+the worked example of how this is supposed to read:
+
+> 2026-08-20 (after #116 + #117 + #126 merged, PR #273) · **89 open issues**.
+> Reconciles: 80 − 3 (#116, #117, #126 — all three in PR #273) + 1 (#272,
+> spun out of the branch's own measurement) + 11 (**#274-#284, filed by the
+> maintainer at 12:14-12:46Z, outside this round**) = 89. **One in, three out.**
+
+**The +11 was why that arithmetic was written out**, and it was the second
 consecutive round where the count only reconciles because an outside-the-round
 batch is named. Without #274-#284 itemised the sum reads 78 against a measured
 89, and the next round inherits an eleven-issue error as its baseline — the
@@ -660,8 +674,8 @@ force some of that order.
 | 2 | ~~Template-route seams~~ **DONE** | ~~#86~~ ~~#83~~ (PR #230) ~~#114~~ (PR #271) — all three closed | — |
 | 2b | ~~What #93 left behind~~ **DONE** | ~~#95 #98 #102 #99 #97 #94 #100~~ — all eight closed | — |
 | 3 | Unpinned-list cleanup & types | ~~#59~~ ~~#58~~ ~~#81+#85~~ ~~#101+#115~~ ~~#96~~ ~~#138~~ ~~#136~~ ~~#140~~ ~~#39~~ ~~#121~~ done, then #132 + #133 + #134, **#270** | one design call left (#133) |
-| 3b | Locking follow-ups | ~~#107~~ ✓, ~~#113~~ ✓ (PR #227), ~~#180~~ ✓ (PR #230), ~~#103~~ ✓ (PR #264), ~~#104~~ ✓ (PR #268), ~~#116 + #117 + #126~~ ✓ (PR #273); #122, #229, #232, #269, **#272** | two decisions (#229, #272) |
-| 4 | CI reliability & framework upkeep | ~~#185~~ ✓, ~~#41~~ ✓ (PR #188) — premise disproved; ~~#40~~ ✓ (PR #198) — nine components, not one, and its framework half closed unverified; then #127 (+#189) | none, but hard/uncertain |
+| 3b | Locking follow-ups | ~~#107~~ ✓, ~~#113~~ ✓ (PR #227), ~~#180~~ ✓ (PR #230), ~~#103~~ ✓ (PR #264), ~~#104~~ ✓ (PR #268), ~~#116 + #117 + #126~~ ✓ (PR #273), ~~#272~~ ✓ (PR #340) — decided Option A, enforced declaratively, and it spent five of its thirteen commits paying for lock edges the mechanism hides; then #122, #229, #232, #269, and **#339** (the class half, split out) | one decision (#229) |
+| 4 | CI reliability & framework upkeep | ~~#185~~ ✓, ~~#41~~ ✓ (PR #188) — premise disproved; ~~#40~~ ✓ (PR #198) — nine components, not one, and its framework half closed unverified; then #127 (+#189) **and the three flake classes measured on PR #340's round — see the sequence below** | **no longer uncertain: three classes, measured, one already half-paid** |
 | 5 | Room lifecycle & admin (epic #60) | ~~#73~~ ✓ (PR #261) — rooms born private, sharing behind its own door; ~~#76~~ ✓ (PR #262) — `isArchived` given downstream meaning by five doors; then #52 + **#259** + **#260** | **product decision** (the lock itself stands) |
 | 6 | Feature backlog | ~~#119 + #120~~ ✓; ~~#112~~ ✓; #47, then #46 / #48 / #49 / #51 | product priority |
 | 7 | **The studio class family, end to end** — un-triaged, see the header | #274 (tracking) + #275 ~~#276~~ ✓ (PR #306) #277 #278 ~~#279~~ ✓ (decision, closed) #280 ~~#281~~ ✓ ~~#283~~ ✓ (both PR #303) ~~#282~~ ✓ (PR #308) #284, ~~#304~~ ✓ (PR #305), #309 | **un-triaged**; one decision left on its face (#284) |
@@ -1666,8 +1680,39 @@ finding only because every agent re-checked `git diff` around its runs.
   lock"**~~ ✓ closed. Eight sites, not seven; the eighth was corrected on this
   branch two commits after the comment declaring itself last.
 
-- **#272 — decide how "an active template may not sit on an archived room" is
-  enforced.** **A decision, not a fix**, and spun out of PR #273's own
+- ~~**#272 — decide how "an active template may not sit on an archived room" is
+  enforced.**~~ **DONE — PR #340, rebase-merged 2026-08-28.** 17 commits.
+  **Option A, in a declarative form the issue could not have described when it
+  was filed**: #298 had moved `isActive` to `ScheduleRule`, so the predicate
+  spans three tables and the trigger pair the issue proposed no longer fits.
+  What shipped mirrors each parent's state onto `ClassTemplate` through
+  composite foreign keys and checks the whole predicate on one row
+  (`ClassTemplate_live_needs_open_room`). The five doors survive as pre-checks,
+  for the sentence a teacher can act on, not for enforcement.
+
+  **The cost is recorded where it will be read: `docs/lock-order.md`.**
+  Declarative enforcement did not remove lock ordering — it moved it out of the
+  diff. The design said so in its §4.4 (*"this design does not avoid
+  lock-ordering work, and reading it as doing so is the error to guard
+  against"*) and then drew the boundary one notch too optimistic: *"a cycle
+  still requires two transactions touching two rooms in opposite orders."* A
+  SINGLE-room cycle was measured (`40P01`, archive aborted) against the
+  generator, and five of the branch's thirteen original commits are the payment
+  — pre-lock the children, bound the pre-lock, pin both properties, then two
+  rounds of CI fallout from the contention that pinning created.
+
+  **The one item its own design left open is now closed.** §7.3 asked whether
+  `ClassTemplate.teacherRoomId` warranted an index — *"measure rather than
+  adding one on principle"*. It was never measured on the branch. Measured
+  afterwards at 10k and 100k rows: three paths read the referencing side, two
+  of them while holding the room row, and at 100k the archive cascade runs
+  14.23 ms against 3.60 ms. Index added; numbers and the re-derivation query in
+  `docs/lock-order.md`.
+
+  The original entry follows, unchanged, because its reasoning is what the
+  decision was made from:
+
+- **#272 (as filed) — a decision, not a fix**, spun out of PR #273's own
   measurement rather than from reading. The invariant is currently held by
   **five application doors, every one a non-transactional read**, and door 3
   (`pauseOrResumeTemplate`'s room guard) was measured leaking:
@@ -2091,6 +2136,90 @@ that the *design never needed the framework claim at all*.
 Flaky CI still erodes the "green means green" signal every other PR depends on.
 Sequenced here rather than first only because what remains is uncertain and none
 of it blocks the cheaper work above.
+
+---
+
+### The flakes, measured (PR #340's round, 2026-08-28)
+
+**"Uncertain" above is now out of date for the part below it.** `main`'s last
+20 runs: **17 success, 3 failure — 15%**, not the 60% a five-run sample
+suggested. Re-derive with:
+
+    gh run list --branch main --limit 20 --json conclusion \
+      --jq '[.[].conclusion] | group_by(.) | map({k:.[0], n:length})'
+
+Three failures, and **no two share a cause**. That is the finding: this is not
+one flake, it is three, and they want three PRs in a deliberate order.
+
+| # | Class | Observed | What it actually is |
+|---|---|---|---|
+| A | Heap-order assertion | `db-locks.test.ts > lockClassRowsOrdered > returns the locked ids ascending…` (main, 2026-08-27); `db-locks-lock-order.test.ts > serialises two callers whose natural orders disagree` (local, PR #340) | A **correct intent on an unguaranteed mechanism** |
+| B | Concurrent-create retry safety | `studio-api.test.ts > POST /api/studio-class-templates is retry-safe on the slot key` (main, 2026-08-27) | **Possibly a real race**, not established either way |
+| C | e2e app startup | `App did not become healthy within 30s`, then `page.waitForURL: Test timeout of 30000ms` (main, 2026-08-27) | A **budget**, and possibly a symptom |
+
+**Class A is not a bad test, and that distinction decides the fix.** It reads:
+
+```ts
+// The premise, asserted rather than assumed: unordered, this table hands
+// back insertion order, which is the REVERSE of ascending.
+expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
+```
+
+The intent is exactly right — it stops the real assertion below it from going
+vacuous if the table's natural order ever agrees with sorted order. What flakes
+is the instrument: **an unordered `SELECT` has no guaranteed row order in
+PostgreSQL**, and page reuse, autovacuum or a different plan can flip it. The
+premise needs establishing deterministically (`synchronize_seqscans = off` on
+the probe, or constructing the order rather than observing it), not deleting.
+
+**Two of this class were already paid on PR #340's round** and are the worked
+examples for the rest:
+
+- `room-archive.test.ts`'s busy case started a holder transaction and called
+  the contender without waiting for its `FOR UPDATE` to land. Whichever reached
+  the row first won; locally always the holder, on CI often not. Fixed with an
+  acquisition barrier — **an ordering guarantee, not a longer timeout**.
+- `class-lifecycle.test.ts`'s tier guard runs `ALTER TABLE "Registration" DROP
+  CONSTRAINT` inside the parallel tier. `ACCESS EXCLUSIVE` queues behind every
+  concurrent reader of that table and blocks them in turn — victim and
+  perpetrator. Moved to its own file on `LOCK_CONTENTION_TESTS` rather than
+  given a bigger budget, because a bigger budget would have let it pass while
+  still blocking its neighbours.
+
+`LOCK_CONTENTION_TESTS` (`vitest.config.ts`) exists from that round and is the
+mechanism the rest of this bundle should reach for. Its criterion is stated
+there: a file that **creates** lock timing, or one whose assertion is
+**destroyed** by it.
+
+### The order, and why it is this order
+
+**Fix the known-wrong instruments first, investigate the possibly-real races
+second.** Not because A is more valuable than B — B may be an actual product
+race and therefore worth more — but because **you cannot tell a real race from
+noise while the noise is there.** Every hour spent on B against a 15% background
+failure rate is an hour of ambiguous evidence.
+
+1. **Class A — the heap-order premise.** Cheapest, highest confidence, no
+   product risk, and the most-observed on `main`. Establish the premise
+   deterministically in both `db-locks*.test.ts` files. Success is measurable:
+   the background rate should drop, which is what makes step 3 legible.
+2. **Class C — the e2e health budget.** Second-most-observed, and cheap to
+   bound. But diagnose before raising: `App did not become healthy within 30s`
+   may be a budget that is genuinely too tight on a cold runner, or it may be a
+   startup regression wearing a timeout's clothes. Raising it blindly converts a
+   loud failure into a slow one.
+3. **Class B — `studio-api` retry safety.** Last **because it is the one that
+   might be a real defect**, and it deserves a quiet CI to be judged against.
+   Two identical creates in flight against the slot key is exactly the shape
+   that produced real findings before (#196). Run it in a loop against a green
+   baseline; if it reproduces, it is a product bug and leaves this bundle.
+4. **Preventive sweep.** With A and C closed, audit the remaining suites for
+   the `LOCK_CONTENTION_TESTS` criterion — files that read or create lock
+   timing while sitting in a parallel tier. PR #340 found two by having them
+   fail; the rest should be found by looking.
+
+**None of these are filed as issues yet.** Filing them is the next round's
+first job, alongside the un-itemised 89 → 106 delta at the head of this file.
 
 - ~~**#41 — SSE stream dies instantly in CI.**~~ **DONE — PR #188,
   rebase-merged 2026-08-08.** 11 commits. **The issue was wrong, and the
@@ -2519,6 +2648,75 @@ schema-plus-middleware job — so it settled the controls instead.
   got a **docblock instead of an issue**, because the failure mode is "someone
   greps `cleanup` and picks the wrong one of two", which a signpost beside the
   function fixes and a backlog entry does not.
+
+## This round's spin-outs (#272, PR #340) — three deferred, three declined, and a review that found the branch's own design note
+
+**Nothing was filed.** Recorded here so the next round files them rather than
+re-deriving them; the flake classes are in Bundle 4 above, not repeated.
+
+**Deferred, with the reason:**
+
+- **`@default` on the two mirror columns.** `ruleLive Boolean @default(true)`
+  and `roomArchived Boolean @default(false)` mean the generated create input
+  makes both optional — and a mirror has no safe default, since its only correct
+  value is its parent's. Both create sites are correct today (`createClassTemplate`
+  deliberately *asserts* `roomArchived: false` so the foreign key refuses without
+  a raceable read), so this is defence against a future writer, not a live bug.
+  Needs its own migration; deliberately not folded into a branch that had
+  already grown.
+- **A constraint-name union.** Three of the four `isCheckViolationOn` call sites
+  are unreached by any test, so a stale name there is an uncaught 500 with a
+  green suite. This branch renamed a constraint and needed four independent
+  literal edits to follow it. A named union collapses the next rename to one.
+- **#339, already filed** — the class half of the same invariant, still two racy
+  reads. Split out during the design when the issue's own door table was found
+  to be conflating two invariants.
+
+**Declined, and why the reason matters more than the item:**
+
+Three refactors from the simplifier pass were turned down as *right, but not
+here*: restructuring the PUT pre-check so it never returns its own 400; carrying
+a `roomMove` object instead of `targetRoomIsArchived | undefined`; and
+collapsing nine copies of an integration teardown. All three are real
+improvements. All three touch the path this same review had just fixed a
+cross-tenant leak in, at the tail of a long branch. **Being right about a
+refactor is not the same as it being the right commit to make**, and the
+distinction is the thing worth keeping from this round.
+
+### The finding this round is actually about
+
+**A design can name its own hazard and still get the boundary wrong, and the
+boundary is where the cost lands.** §4.4 of the #272 design says, in terms:
+
+> The foreign keys acquire locks that no application code asks for. This design
+> avoids *hand-written* `FOR UPDATE` acquisition; it does **not** avoid
+> lock-ordering work, and reading it as doing so is the error to guard against.
+
+That is the insight, and it is correct. The next paragraph then says a cycle
+"still requires two transactions touching two rooms in opposite orders, which is
+a pre-existing shape rather than one this change introduces" — and a
+**single-room** cycle was measured against the generator (`40P01`, archive
+aborted). Five of thirteen commits paid for that one sentence.
+
+The general form, worth carrying into #229 and the rest of 3b: **declarative
+enforcement moves lock ordering out of the diff.** A trigger or a foreign key
+takes locks that no reviewer sees in a changed line, so the edges have to be
+enumerated deliberately — and an enumeration that concludes "this shape is
+pre-existing" is exactly the claim to drive rather than reason about.
+
+Two corollaries this round measured directly:
+
+- **PostgreSQL never indexes a foreign key's referencing side.** The branch's
+  own design asked whether one was warranted (§7.3) and the branch never
+  measured it. Three paths read that side, two while holding locks; at 100k rows
+  the archive cascade ran 14.23 ms against 3.60 ms indexed. **An open design
+  sub-choice is an acceptance item, not a footnote.**
+- **`prisma migrate status` compares names, never checksums.** It reported
+  "Database schema is up to date!" across a whole session while two databases
+  carried a drifted migration checksum each — invisible until the first
+  `migrate dev`, which is CLAUDE.md's documented trap, hit in practice.
+
+---
 
 ## This round's spin-outs (#283, PR #303) — one, and a fix that had to be wrong once before the fault was legible
 
