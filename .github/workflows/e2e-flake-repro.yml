@@ -37,8 +37,17 @@ on:
         description: 'Spec file to run'
         default: 'tests/e2e/class-edit.spec.ts'
       grep:
-        description: 'Test name filter (-g). Leave EMPTY to run the whole spec, which is closer to the ordering CI actually runs'
-        default: 'a draft edits fully'
+        # DEFAULTS TO EMPTY ON PURPOSE, and the reason is a `gh` behaviour
+        # worth stating rather than rediscovering: `-f grep=''` does NOT
+        # override a non-empty default. GitHub treats an empty input as
+        # absent and applies the default, so a filter that ships as the
+        # default cannot be turned off from the CLI — measured 2026-08-28,
+        # a run dispatched with `-f grep=''` and `-f spec=tests/e2e` ran
+        # "5 tests" (one test x 5 repeats) instead of the whole directory.
+        # Empty here means the caller opts INTO a filter and can always opt
+        # out. The class C target is `a draft edits fully`.
+        description: 'Test name filter (-g). Empty runs every test the spec path selects — closer to the ordering CI actually runs'
+        default: ''
       project:
         description: 'Playwright project'
         default: 'Mobile Chrome'
