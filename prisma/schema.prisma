@@ -368,6 +368,16 @@ model ClassTemplate {
 
   scheduleRule ScheduleRule @relation(fields: [scheduleRuleId, kind, ruleLive], references: [id, kind, live], onDelete: Cascade)
   teacherRoom  TeacherRoom  @relation(fields: [teacherRoomId, roomArchived], references: [id, isArchived])
+
+  /// The REFERENCING side of `ClassTemplate_teacherRoomId_roomArchived_fkey`.
+  /// PostgreSQL indexes the referenced side automatically and this one never,
+  /// so without this every room archive and every room delete reads the whole
+  /// table. Three paths use it, two of them while holding locks: the archive's
+  /// pre-lock (`room-archive.ts`), the `ON UPDATE CASCADE` that rewrites the
+  /// mirrors when a room's `isArchived` flips, and the `ON DELETE RESTRICT`
+  /// check. Measured rather than added on principle (issue 272 design §7.3) —
+  /// the numbers are in `docs/lock-order.md`.
+  @@index([teacherRoomId, roomArchived])
 }
 
 /// Since #327, carries neither a slot index nor a cross-family trigger: the

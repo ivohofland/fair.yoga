@@ -1802,3 +1802,43 @@ shape this migration introduces — the room-delete wait edge it rides on is
 "The RESTRICT trigger is a wait edge, and a route guard is what closes it
 (#103)" earlier in this file, which describes the edge but not this cycle.
 Probe results for both shapes are in PR #340.
+
+### The referencing side is indexed, and that was measured (#272)
+
+`ClassTemplate_teacherRoomId_roomArchived_fkey` is a foreign key, and
+PostgreSQL indexes a foreign key's REFERENCED side automatically and its
+referencing side never. Three paths read that side, two of them while holding
+locks:
+
+- the archive's pre-lock (`setTeacherRoomArchived`), inside the transaction
+  that holds the room row
+- the `ON UPDATE CASCADE` that rewrites every mirroring child when a room's
+  `isArchived` flips, in that same transaction
+- the `ON DELETE RESTRICT` check behind `ROOM_DELETE_RESTRICT_FKS`
+
+Measured before adding the index rather than after, because the design asked
+for a measurement rather than an index on principle (#272 design §7.3).
+Scratch database built from the real migrations, median of 15 runs:
+
+| rows | path | no index | with index |
+|---|---|---|---|
+| 10k | archive pre-lock | 3.40 ms | 2.98 ms |
+| 10k | archive (FK cascade) | 3.51 ms | 2.86 ms |
+| 10k | room-delete RESTRICT | 2.77 ms | 1.41 ms |
+| 100k | archive pre-lock | 9.63 ms | 2.77 ms |
+| 100k | archive (FK cascade) | 14.23 ms | 3.60 ms |
+| 100k | room-delete RESTRICT | 14.21 ms | 1.82 ms |
+
+The scan alone, which is the part that scales: `Seq Scan … actual time
+4.925..4.949` against `Bitmap Heap Scan … 0.107..0.449` at 100k rows. Index
+size 752 kB against a 13 MB table.
+
+The case for it is the SLOPE and the LOCK HOLD, not the latency: without the
+index the cost grows linearly with the table, and two of the three paths spend
+it while holding the room row against the generator. On a small table the
+planner will still choose a sequential scan, which is correct — the index earns
+its place as the table grows, not today. Re-derive with:
+
+    EXPLAIN (ANALYZE, BUFFERS)
+    SELECT ct."id" FROM "ClassTemplate" ct
+     WHERE ct."teacherRoomId" = '<a room with children>' FOR UPDATE;
