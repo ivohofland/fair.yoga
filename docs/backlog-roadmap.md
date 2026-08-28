@@ -2153,7 +2153,7 @@ one flake, it is three, and they want three PRs in a deliberate order.
 
 | # | Class | Observed | What it actually is |
 |---|---|---|---|
-| A | Heap-order assertion | `db-locks.test.ts > lockClassRowsOrdered > returns the locked ids ascending…` (main, 2026-08-27); `db-locks-lock-order.test.ts > serialises two callers whose natural orders disagree` (local, PR #340) | A **correct intent on an unguaranteed mechanism** |
+| A | Heap-order assertion — **DONE, PR #341** | `db-locks.test.ts > lockClassRowsOrdered > returns the locked ids ascending…` (main, 2026-08-27); `db-locks-lock-order.test.ts > serialises two callers whose natural orders disagree` (local, PR #340); `gdpr.test.ts > does not deadlock when a teacher erasure and a student erasure overlap` (main, 2026-08-16) — **three sites, not the two this row first listed** | A **correct intent on an unguaranteed mechanism** |
 | B | Concurrent-create retry safety | `studio-api.test.ts > POST /api/studio-class-templates is retry-safe on the slot key` (main, 2026-08-27) | **Possibly a real race**, not established either way |
 | C | e2e app startup | `App did not become healthy within 30s`, then `page.waitForURL: Test timeout of 30000ms` (main, 2026-08-27) | A **budget**, and possibly a symptom |
 
@@ -2168,9 +2168,66 @@ expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
 The intent is exactly right — it stops the real assertion below it from going
 vacuous if the table's natural order ever agrees with sorted order. What flakes
 is the instrument: **an unordered `SELECT` has no guaranteed row order in
-PostgreSQL**, and page reuse, autovacuum or a different plan can flip it. The
-premise needs establishing deterministically (`synchronize_seqscans = off` on
-the probe, or constructing the order rather than observing it), not deleting.
+PostgreSQL**, and page reuse, autovacuum or a different plan can flip it.
+
+**PAID — PR #341, 2026-08-28.** Three commits, and the round revised three of
+the claims above.
+
+**The mechanism, measured.** The order is the heap's: both plans observed drive
+from `Seq Scan on "Class"`, so the statement returns physical order. `Class` is
+**one 8 KB page** shared with every file in the parallel tier, and a
+neighbour's `DELETE` plus autovacuum frees a low line pointer that the
+fixture's *second* insert takes. Reproduced deterministically — insert a filler
+row, insert HIGH, delete the filler and `VACUUM`, insert LOW → `LOW@(0,1)`,
+`HIGH@(0,22)`, and the read returns them ascending, which is CI's exact
+signature from run `33060957297`.
+
+**`synchronize_seqscans = off` was the wrong half of the suggestion above, and
+measurement is what says so.** Synchronised seq scans engage only above
+`shared_buffers / 4` — 4096 pages at the default 128 MB. `Class` is one page.
+Re-derive with:
+
+    docker exec fairyoga-db-1 psql -U yoga -d ethical_yoga_test -X \
+      -c 'show shared_buffers' \
+      -c $'select pg_relation_size(\'"Class"\')/8192 as pages'
+
+**Constructing the order was the right half, but not at the probe.** Two
+constructions were measured and rejected before the third worked: forcing the
+plan moves the order onto `Class_calendarEntryId_key`, i.e. onto a *random*
+entry uuid (20/20 tracked it, 12 of 20 the useful way); a function scan with
+ordinality leaves `Class` as the outer relation and changes nothing (15/15
+tracked the heap). What worked was assigning the sort key rather than the
+probe — `calendarEntryId` set anti-correlated with the class id, so the forced
+plan returns the order the fixture chose. 24/24, including 12 runs against a
+deliberately inverted heap.
+
+**There were three sites, not two.** `gdpr.test.ts:1634` carried the same
+premise and its own comment already recorded it failing on 2026-08-16. The
+table above listed two because it was built from CI failures rather than from
+`grep`; the cheap habit that would have caught it is the one §3 already
+states.
+
+**The three sites did not take the same fix, and the reason is who owns the
+caller.** `db-locks-lock-order.test.ts` forces both callers' plans, so its two
+disagreeing orders are now constructed from assigned keys and it is the
+deterministic proof the other two lean on. `db-locks.test.ts` carries
+non-vacuity in a shuffled five-row seed instead. `gdpr.test.ts` could do
+neither — both its callers are production functions whose plans a test cannot
+force — so its teacher-side probe is simply gone.
+
+**What the last two now risk is vacuity, not flake, and the distinction is the
+whole argument.** `ORDER BY c.id` sorts whatever it is handed, so those
+assertions cannot go red from row order at all. What a hostile heap costs is a
+run that proves less than it appears to — and proving less stays green. The
+five-row seed puts that at 1 arrangement in 120; the erasure pairing's is
+whenever the two natural orders happen to agree.
+
+**Mutation rates, measured with the clause deleted from the helper**, because
+the three are not interchangeable: `gdpr.test.ts` fails 3/3 with a real
+`40P01`; `db-locks.test.ts` fails 3/3 on its id assertion;
+`db-locks-lock-order.test.ts` fails 3/3, of which the deadlock accounts for
+1/3 and the id assertions the rest. The primitive test's docblock claimed the
+deadlock was its mechanism — that claim is now corrected in place.
 
 **Two of this class were already paid on PR #340's round** and are the worked
 examples for the rest:
@@ -2199,10 +2256,14 @@ race and therefore worth more — but because **you cannot tell a real race from
 noise while the noise is there.** Every hour spent on B against a 15% background
 failure rate is an hour of ambiguous evidence.
 
-1. **Class A — the heap-order premise.** Cheapest, highest confidence, no
-   product risk, and the most-observed on `main`. Establish the premise
-   deterministically in both `db-locks*.test.ts` files. Success is measurable:
-   the background rate should drop, which is what makes step 3 legible.
+1. ~~**Class A — the heap-order premise.**~~ **DONE — PR #341, 2026-08-28.**
+   Three sites, not the two this line predicted, and three different fixes —
+   see the section above for why the erasure pairing could not take the same
+   one. Success was stated as measurable and is **not yet measured**: the
+   background rate has to be re-derived on `main` after this merges, and until
+   it is, step 3 is still being judged against an unquantified baseline. That
+   re-derivation is the next round's job, with the `gh run list` command at the
+   head of this section.
 2. **Class C — the e2e health budget.** Second-most-observed, and cheap to
    bound. But diagnose before raising: `App did not become healthy within 30s`
    may be a budget that is genuinely too tight on a cold runner, or it may be a
@@ -2218,8 +2279,14 @@ failure rate is an hour of ambiguous evidence.
    timing while sitting in a parallel tier. PR #340 found two by having them
    fail; the rest should be found by looking.
 
-**None of these are filed as issues yet.** Filing them is the next round's
-first job, alongside the un-itemised 89 → 106 delta at the head of this file.
+**None of these are filed as issues yet, and class A shipped without being
+filed either** — on PR #341, the roadmap PR that names it, because it was one
+step of a bundle already written down rather than a new finding. Filing B, C
+and the sweep is the next round's first job, alongside the un-itemised
+89 → 106 delta at the head of this file. Worth stating plainly, since the
+previous snapshot's lesson was that work done outside the tracker is work the
+next round cannot see: **B and C are now the whole of this bundle's unfiled
+remainder**, and nothing in the tracker says so.
 
 - ~~**#41 — SSE stream dies instantly in CI.**~~ **DONE — PR #188,
   rebase-merged 2026-08-08.** 11 commits. **The issue was wrong, and the
