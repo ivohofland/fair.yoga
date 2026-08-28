@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { isCheckViolationOn } from '@/lib/check-violation';
 
 /** Two clients, because one connection cannot hold a transaction open for another. */
 const a = new PrismaClient();
@@ -80,7 +81,10 @@ describe('the room archive that used to slip past door 3', () => {
 
     // The archive was refused...
     expect(archiveError).toBeDefined();
-    expect(String(archiveError)).toContain('ClassTemplate_live_needs_open_room');
+    // The matcher, not a substring of the stringified error: `toContain` here
+    // asserted neither the SQLSTATE nor that Postgres was the one naming the
+    // constraint, which is the whole discrimination `isCheckViolationOn` makes.
+    expect(isCheckViolationOn(archiveError, 'ClassTemplate_live_needs_open_room')).toBe(true);
     // ...and it WAITED for the resume rather than racing past it. Without the
     // wait this assertion is what fails, and the wait is the whole property:
     // a check that merely read the room would have passed and then been wrong.

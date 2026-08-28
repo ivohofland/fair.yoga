@@ -18,9 +18,11 @@
  *   2. A raw query — Prisma's `P2010`, which spells the code `` Code: `23514` ``
  *      and leaves the name quoted as Postgres wrote it.
  *
- * Matching the name as a bare substring covers both quotings without a second
- * branch; the SQLSTATE is matched inside its Postgres framing rather than as a
- * bare number, which is the trap `isTransientDbError` documents.
+ * The name is matched inside Postgres's `violates check constraint "…"` clause
+ * in both quotings, never as a bare substring — see the note on the return
+ * below for what else `err.message` carries. The SQLSTATE is likewise matched
+ * inside its Postgres framing rather than as a bare number, which is the trap
+ * `isTransientDbError` documents.
  */
 export function isCheckViolationOn(err: unknown, constraint: string): boolean {
   if (!(err instanceof Error)) return false;

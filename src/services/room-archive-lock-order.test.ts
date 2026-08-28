@@ -91,13 +91,24 @@ describe('setTeacherRoomArchived — lock discipline (issue 272)', () => {
         },
         { timeout: HOLD_CEILING_MS + 10_000 },
       );
+      // A rejection handler attached now, not later: on the failure path below
+      // `held` is never awaited, and an unobserved rejection would surface as
+      // an unhandled one instead of the body's own failure.
+      held.catch(() => {});
+
       await acquiredSignal;
+      let result: T;
       try {
-        return await body();
+        result = await body();
       } finally {
         release();
-        expect(await held).toBe('released');
       }
+      // AFTER the try, deliberately. Inside its `finally` this assertion runs
+      // even when `body` threw — and both cases below assert inside `body`, so
+      // a real regression would be reported as "the holder did not release"
+      // rather than as the guard that actually failed.
+      expect(await held).toBe('released');
+      return result;
     } finally {
       if (ceiling) clearTimeout(ceiling);
       await holder.$disconnect();

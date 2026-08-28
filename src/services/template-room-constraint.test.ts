@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
+import { isCheckViolationOn } from '@/lib/check-violation';
+import { isRestrictViolationOn } from '@/lib/api-errors';
 
 const prisma = new PrismaClient();
 const suffix = `troom-${Date.now()}`;
@@ -9,19 +11,24 @@ let teacherId: string;
 let openRoomId: string;
 let shelvedRoomId: string;
 
-/** SQLSTATE 23514 raised by `constraint`, in either Prisma error shape. */
-function isCheck(err: unknown, constraint: string): boolean {
-  const m = err instanceof Error ? err.message : '';
-  return (m.includes('code: "23514"') || m.includes('Code: `23514`')) && m.includes(constraint);
-}
-/** SQLSTATE 23503 raised by `constraint` — a mirror that disagrees with its parent. */
-function isFk(err: unknown, constraint: string): boolean {
-  if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
-    return err.meta?.constraint === constraint;
-  }
-  const m = err instanceof Error ? err.message : '';
-  return (m.includes('code: "23503"') || m.includes('Code: `23503`')) && m.includes(constraint);
-}
+/**
+ * THE PRODUCTION MATCHERS, not local copies. This file used to hand-roll both,
+ * and `isCheck` was a copy of `isCheckViolationOn` as it stood before the
+ * review round tightened it — a bare `message.includes(constraint)`, which is
+ * the trap that matcher was rewritten to close. A test asserting a weaker
+ * predicate than the code it stands in for can pass while production fails.
+ *
+ * Safe in that direction and only that one: both production matchers are
+ * strictly NARROWER than the local versions were, so switching can produce a
+ * false failure but never a false pass. What it buys is the other half — the
+ * eight real Postgres refusals this file provokes become live coverage of the
+ * matchers themselves, where `check-violation.test.ts` exercises only
+ * hand-built strings. `room-archive-doors.test.ts` already imports them.
+ */
+const isCheck = (err: unknown, constraint: string): boolean =>
+  isCheckViolationOn(err, constraint);
+const isFk = (err: unknown, constraint: string): boolean =>
+  isRestrictViolationOn(err, [constraint]);
 
 const CHECK = 'ClassTemplate_live_needs_open_room';
 const ROOM_FK = 'ClassTemplate_teacherRoomId_roomArchived_fkey';

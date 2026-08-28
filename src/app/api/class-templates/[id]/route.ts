@@ -87,6 +87,25 @@ export const GET = withErrorHandler(async (
   return respondOk(withSlot(bare, scheduleRule));
 });
 
+/**
+ * The 503 the PUT path answers, from two arms: the service's own `busy`, and
+ * the room-state race that resolves the other way (the room was un-archived
+ * after the mirror was read). One function for the same reason
+ * `roomArchivedResponse` is one — they were measured drifting apart in wording
+ * once already.
+ *
+ * PUT-scoped deliberately. The PATCH pause/resume branch answers a different
+ * sentence ("could not update this recurring class"): this is the edit, that
+ * is the toggle.
+ */
+function templateEditBusyResponse() {
+  return respondError(
+    'The system was busy and could not save your changes to this recurring class. Nothing was changed. Wait a moment, then try again.',
+    503,
+    'TEMPLATE_BUSY',
+  );
+}
+
 export const PUT = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -199,11 +218,7 @@ export const PUT = withErrorHandler(async (
         { err: e, templateId: id, teacherRoomId: data.teacherRoomId },
         'template move lost a room-state race the other way; the room is open again',
       );
-      return respondError(
-        'The system was busy and could not save your changes to this recurring class. Nothing was changed. Wait a moment, then try again.',
-        503,
-        'TEMPLATE_BUSY',
-      );
+      return templateEditBusyResponse();
     }
     throw e;
   }
@@ -250,11 +265,7 @@ export const PUT = withErrorHandler(async (
   // ("could not update this recurring class"): this is the edit, that is the
   // toggle.
   if (result.reason === 'busy') {
-    return respondError(
-      'The system was busy and could not save your changes to this recurring class. Nothing was changed. Wait a moment, then try again.',
-      503,
-      'TEMPLATE_BUSY',
-    );
+    return templateEditBusyResponse();
   }
 
   // Exhaustiveness: a new UpdateClassTemplateResult variant becomes a compile

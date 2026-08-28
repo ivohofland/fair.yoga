@@ -79,12 +79,12 @@ function plural(n: number, one: string, many: string): string {
  * already follow in `src/app/api/rooms/[id]/route.ts`.
  */
 export function describeRoomBlockers(blockers: RoomBlockers): string {
-  // `RoomBlockers` admits `{ classes: 0, templates: 0 }`, and since issue 272
-  // its one caller PRODUCES that state: the constraint-refusal path reports
-  // the counts as it measured them — zero — because the template went live
-  // after they ran. This branch is therefore the live wording for that race,
-  // not the unreachable insurance it was written as. Unreachable is not the
-  // same as safe either: the
+  // `RoomBlockers` admits `{ classes: 0, templates: 0 }`, and its one caller
+  // can now produce it: the constraint-refusal path re-counts after the
+  // rollback, and that re-count comes back zero when the template that tripped
+  // the CHECK was paused again in the meantime. Rare, and reachable — the
+  // sentence below is what a teacher then reads. Unreachable is not the same
+  // as safe either: the
   // precedent one module over is `class-lifecycle.ts`'s `locked`, which
   // carries a NON-EMPTY tuple deliberately, because the bug it replaced (#72)
   // shipped a "locked" response naming no fields. Without this line the empty
@@ -128,6 +128,13 @@ export async function setTeacherRoomArchived(
     return { ok: true, action: 'unchanged', isArchived: link.isArchived };
   }
 
+  // ONE EXPRESSION, TWO READERS. The pre-write count and the post-rollback
+  // re-count in the catch must ask the same question: the catch's `blockers` is
+  // only "the answer the counts would have given a moment later" if it asks
+  // what they asked. Two copies of one predicate is how that stops being true.
+  const countLiveTemplates = (): Promise<number> =>
+    db.classTemplate.count({ where: { teacherRoomId, ...ACTIVE_TEMPLATE_WHERE } });
+
   // Un-archiving is unconditional. It is the release valve that makes every
   // refusal in this lifecycle recoverable in one action, so it must never
   // acquire a guard of its own.
@@ -145,7 +152,7 @@ export async function setTeacherRoomArchived(
           calendarEntry: { cancelledAt: null },
         },
       }),
-      db.classTemplate.count({ where: { teacherRoomId, ...ACTIVE_TEMPLATE_WHERE } }),
+      countLiveTemplates(),
     ]);
     if (classes > 0 || templates > 0) {
       // Not decoration. `respondError` does not log and `withErrorHandler`
@@ -250,9 +257,7 @@ export async function setTeacherRoomArchived(
         { err: e, teacherRoomId, teacherId },
         'room archive refused by the constraint: a template went live mid-request',
       );
-      const templates = await db.classTemplate.count({
-        where: { teacherRoomId, ...ACTIVE_TEMPLATE_WHERE },
-      });
+      const templates = await countLiveTemplates();
       return { ok: false, reason: 'in_use', blockers: { classes: 0, templates } };
     }
     throw e;
