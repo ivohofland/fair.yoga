@@ -3,10 +3,14 @@
  * into calendar dates — the entry layer's counterpart to `rule-lifecycle.ts`,
  * which holds the rule layer's own "written once for both families" logic.
  *
- * Imported BY `class-generator.ts`, `studio-class-generator.ts` and
- * `rule-lifecycle.ts`. The direction is one-way and must stay that way: this
- * module imports none of the three, so nothing here can complete a cycle back
- * through a generator or through the shared rule lifecycle.
+ * One-way import direction, and that is the invariant worth stating — not
+ * the roster of who currently imports it, which grows as more shared logic
+ * lands here and would go stale the moment a file was added: this module
+ * must never import anything that imports it, so nothing above it can
+ * complete a cycle back through here. Check membership against the compiler
+ * rather than against this comment:
+ *
+ *   grep -rl "from '\./entry-generation'\|from '@/services/entry-generation'" src/ tests/
  *
  * Imports `@/lib/timezone` (`mondayOf`), which itself imports `@/lib/log`
  * (pino) — so this module is server-only through that chain. Nothing under
