@@ -904,6 +904,36 @@ in a different file now). Known members before you start:
   #284 carries that half" → **stale**; rewrite the whole clause so the bullet
   states one rule for both families.
 
+- [ ] **Step 2b: The named carry-overs from earlier task reviews**
+
+Four comment defects and one dead symbol, each already located. They are here
+rather than in their own fix rounds because this task already owns this surface;
+each still gets its own verdict.
+
+1. `src/services/studio-class-generator.test.ts:1214` — a **prose census that is
+   false as written**: "every other east-teacher template in this file starts at
+   16:15 or earlier". Measured, `:818` creates one at **16:45**. The conclusion
+   survives (that one is `dayOfWeek: 5` and the exclusion is per-weekday), so
+   replace the census with a sentence the next fixture cannot falsify — the
+   latest east-teacher rule on either day this `describe` uses ends at 17:15.
+2. `src/services/entry-generation.ts:287` — "Both generators' own test files do
+   call this with a bare `prisma`" was a claim about its own file before the
+   merge and is now a claim about two others. Reword it as the property it
+   justifies: the parameter type admits a bare client because the generator
+   suites drive it outside a transaction.
+3. `src/services/entry-generation.ts:329` — carries "The sentence that used to be
+   here said it could not — 'the filter above can only drop the first of five'",
+   which is the `this previously read X` form CLAUDE.md forbids in source. It is
+   inherited rather than introduced, and moving into a new file was the moment to
+   re-cut it. State the constraint; the history belongs in the PR body.
+4. **`isCrossFamilySlotConflict` has no definition left anywhere in `src/`** and
+   is still named in four files (`entry-generation.ts`,
+   `studio-class-template-lifecycle.ts`, `class-template-lifecycle.ts`,
+   `generation-transaction.test.ts`). Pre-existing, not this branch's doing —
+   but it is exactly the shape of #315's lesson, and this sweep is where it gets
+   a verdict. Check each site: some sit inside paragraphs explicitly labelled as
+   describing the superseded trigger era, and those may be legitimate survivors.
+
 - [ ] **Step 3: Read whole docblocks in the touched functions**
 
 The category no grep reaches: a paragraph that names no object and only
