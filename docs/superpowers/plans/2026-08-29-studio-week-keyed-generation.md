@@ -937,7 +937,32 @@ each still gets its own verdict.
    **where this used to be two**" (in the probe), the same forbidden form as
    item 3 and likewise inherited rather than introduced. Two carried instances
    of one pattern in one file is the signal to re-cut both.
-5. **`isCrossFamilySlotConflict` has no definition left anywhere in `src/`** and
+5. `src/services/studio-class-template-lifecycle.ts:519` — names the wrong
+   conversion site: "The conversion happens in `updateStudioClassTemplate`".
+   Since Task 4 it happens in `probeFirstEffectiveWeek`, and this file does not
+   import `mondayOf` at all. **The class twin at
+   `class-template-lifecycle.ts:458-459` carries the identical stale naming**,
+   so the tree now holds two copies — fix both, and say "in the service layer"
+   or point at the probe rather than naming a function that does not do it.
+6. `src/services/studio-class-template-lifecycle.test.ts:2064` — "the block's own
+   `makeTemplate` slots are all 09:xx" is false: `slotTime(counter * 60 - 30)`
+   walks `09:30, 10:30, 11:30, …`, and the same file says so at `:127` and
+   `:678`. The reasoning it supports survives; the roster is wrong on its first
+   reading.
+7. `src/services/studio-class-template-lifecycle.test.ts:1598-1603` — **this
+   branch falsified this one.** The note promises the deliberate-collision
+   literal `'21:45'` sits "well outside" the block's computed range; Task 5's
+   three new `makeTemplate` calls moved the counter ceiling from 10 to 13, so
+   the computed range is now `21:30–22:30` and it OVERLAPS `21:45–22:45`. It
+   passes only because that `ClassTemplate` is torn down in its own `finally`
+   before counter 13 is minted — ordering, not the separation the comment
+   claims. Correct the note, and record that headroom is two calls (counter 16
+   computes `'24:30'` and `slotTime` throws).
+8. `src/services/studio-class-template-lifecycle.ts:605-608` — "but this
+   paragraph is, because it used to frame the absence as a seam" is a third
+   instance of the forbidden form, two lines above a paragraph this branch
+   rewrote for that same rule.
+9. **`isCrossFamilySlotConflict` has no definition left anywhere in `src/`** and
    is still named in four files (`entry-generation.ts`,
    `studio-class-template-lifecycle.ts`, `class-template-lifecycle.ts`,
    `generation-transaction.test.ts`). Pre-existing, not this branch's doing —
