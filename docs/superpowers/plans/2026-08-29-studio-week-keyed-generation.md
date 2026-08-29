@@ -436,7 +436,7 @@ is the proof.
 
 **Files:**
 - Modify: `src/services/entry-generation.ts` (receives `probeFirstEffectiveWeek`)
-- Modify: `src/services/class-template-lifecycle.ts` (loses `:545-738`; imports it)
+- Modify: `src/services/class-template-lifecycle.ts` (loses `:544-737`; imports it)
 
 **Interfaces:**
 - Consumes: Task 1's `isWeekHeld` / `firstFreeWeek`.
