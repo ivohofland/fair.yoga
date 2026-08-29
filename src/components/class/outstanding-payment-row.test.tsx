@@ -334,4 +334,76 @@ describe('OutstandingPaymentRow', () => {
     expect(paidBadge).toBeInTheDocument();
     expect(paidBadge).toHaveClass('text-teal', 'type-caption');
   });
+
+  /**
+   * #134. When the mark-paid network request throws, the error is logged and
+   * surfaced as a network error while the row stays in its unpaid state.
+   */
+  it('reports network failure on mark-paid when the request throws', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+    renderCollidingPair();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
+    );
+
+    expect(
+      await screen.findByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Network error. Try again.');
+    expect(consoleError).toHaveBeenCalledWith(
+      '[payment-mark-paid] request failed',
+      expect.objectContaining({ paymentId: 'pay-morning' }),
+    );
+  });
+
+  /**
+   * #134. A structured error body returned with a non-ok status is extracted
+   * and displayed to the teacher rather than claiming a network error.
+   */
+  it('shows the server error message when mark-paid is refused with a JSON error', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: 'Payment already marked paid' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderCollidingPair();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
+    );
+
+    expect(
+      await screen.findByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Payment already marked paid');
+  });
+
+  /**
+   * #134. A non-ok response whose body does not parse as JSON (e.g. proxy HTML
+   * error page) falls back to the generic server failure copy without claiming
+   * the network failed.
+   */
+  it('reports a server error fallback rather than a network error when mark-paid returns an unreadable body', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON at position 0');
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderCollidingPair();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
+    );
+
+    expect(
+      await screen.findByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not mark as paid. Try again.');
+    expect(screen.queryByText('Network error. Try again.')).not.toBeInTheDocument();
+  });
 });

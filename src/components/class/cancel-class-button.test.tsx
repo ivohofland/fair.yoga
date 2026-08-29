@@ -76,9 +76,8 @@ describe('CancelClassButton', () => {
   });
 
   // `respondError` sends `{ error: '…' }` from some doors and
-  // `{ error: { message: '…' } }` from others, and this component reads both
-  // by hand rather than through `readErrorMessage`. Both shapes, so a
-  // simplification to one of them cannot pass quietly.
+  // `{ error: { message: '…' } }` from others, and `readErrorMessage` reads
+  // both. Both shapes, so a simplification to one of them cannot pass quietly.
   it('reads a bare string error as well as a nested one', async () => {
     fetchMock.mockResolvedValue({
       ok: false,

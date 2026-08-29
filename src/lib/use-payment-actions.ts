@@ -23,19 +23,29 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
     setUpdating(paymentId);
     setError('');
     try {
-      const res = await fetch(`/api/payments/${paymentId}/paid`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ method: 'manual' }),
-      });
+      // Only the request itself is wrapped, so 'Network error' means exactly
+      // that. In the !res.ok branch, readErrorMessage handles extracting
+      // the server's error message or falling back to a generic copy without
+      // falsely claiming the network failed.
+      let res: Response;
+      try {
+        res = await fetch(`/api/payments/${paymentId}/paid`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ method: 'manual' }),
+        });
+      } catch (err) {
+        console.error('[payment-mark-paid] request failed', { paymentId, err });
+        setError('Network error. Try again.');
+        return;
+      }
+
       if (res.ok) {
         setPaymentState((prev) => ({ ...prev, [paymentId]: 'paid' }));
         setJustMarked((prev) => new Set(prev).add(paymentId));
       } else {
         setError(await readErrorMessage(res, 'Could not mark as paid. Try again.'));
       }
-    } catch {
-      setError('Network error. Try again.');
     } finally {
       setUpdating(null);
     }

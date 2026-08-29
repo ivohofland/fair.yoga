@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { readErrorMessage } from '@/lib/client-errors';
 
 interface CancelClassButtonProps {
   classId: string;
@@ -31,9 +32,7 @@ export function CancelClassButton({ classId, registrationCount }: CancelClassBut
       if (res.ok) {
         router.refresh();
       } else {
-        const json = (await res.json()) as { error?: { message?: string } | string };
-        const message = typeof json.error === 'string' ? json.error : json.error?.message;
-        setError(message ?? 'Could not cancel the class. Try again.');
+        setError(await readErrorMessage(res, 'Could not cancel the class. Try again.'));
       }
     } catch {
       setError('Network error. Try again.');
