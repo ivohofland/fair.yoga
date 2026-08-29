@@ -63,6 +63,7 @@ import type {
   TeacherEditableScheduleRuleField as TeacherEditableClassRuleField,
 } from './class-template-lifecycle';
 import {
+  STUDIO_GENERATOR,
   claimStudioTemplateForGeneration,
   generateStudioInstancesForTemplate,
 } from './studio-class-generator';
@@ -827,18 +828,18 @@ const scheduledWhere = (scheduleRuleId: string, date: { gt: Date } | { gte: Date
     cancelledAt: null,
   }) satisfies Prisma.CalendarEntryWhereInput;
 
-/** The studio family's `TemplateFamily` entry (`rule-lifecycle.ts`). */
+/**
+ * The studio family's `TemplateFamily` entry (`rule-lifecycle.ts`).
+ *
+ * `STUDIO_GENERATOR` (`studio-class-generator.ts`) spread rather than
+ * restated: it is this same family's `GeneratorFamily`, and `TemplateFamily`
+ * is that type intersected with the fields only the lifecycle verbs need.
+ * Everything below the spread is one of those.
+ */
 export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate, 'studio'> = {
-  kind: 'studio',
-  childTable: 'StudioClassTemplate',
-  logNoun: 'studio class',
+  ...STUDIO_GENERATOR,
   readChild: (client, templateId) =>
     client.studioClassTemplate.findUnique({
-      where: { id: templateId },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
-    }),
-  readChildOrThrow: (client, templateId) =>
-    client.studioClassTemplate.findUniqueOrThrow({
       where: { id: templateId },
       include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
     }),

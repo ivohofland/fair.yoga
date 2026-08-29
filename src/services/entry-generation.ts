@@ -18,11 +18,12 @@
  * value-import it.
  */
 
-import type { ClassFamily, Prisma, PrismaClient, ScheduleRule } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { ClassFamily, PrismaClient, ScheduleRule } from '@prisma/client';
 import { spansOverlap } from '@/lib/generation';
 import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { probeOverlappingCandidates } from '@/lib/entry-conflict';
-import type { TransactionClientOnly } from '@/lib/db-locks';
+import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
 import { classStartInstant, mondayOf } from '@/lib/timezone';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
@@ -171,19 +172,20 @@ export function firstFreeWeek(
 }
 
 // ---------------------------------------------------------------------------
-// generateEntriesForRule
+// GeneratorFamily
 // ---------------------------------------------------------------------------
 
 /**
- * The noun this family's generation log lines use. A union rather than
- * `string`, matching `TemplateFamily.logNoun` (`rule-lifecycle.ts`): the
- * messages composed from it below are what an operator greps for, so the
- * roster belongs to the compiler rather than to a sentence naming its members.
+ * The noun this family's claim and generation log lines use. A union rather
+ * than `string`: the messages composed from it below are what an operator
+ * greps for, and some are asserted verbatim, so the roster belongs to the
+ * compiler rather than to a sentence naming its members.
  */
 export type GenerationLogNoun = 'recurring class' | 'studio class';
 
 /**
- * Everything the shared generator below needs in order to run over one family.
+ * Everything the shared claim and generator below need in order to run over
+ * one family.
  *
  * A dispatch table, not a runtime discriminator: each family's entry is
  * complete on its own, and nothing in this module ever asks which family it is
@@ -195,8 +197,6 @@ export type GenerationLogNoun = 'recurring class' | 'studio class';
  * NO FIELD IS OPTIONAL, deliberately, for the reason `TemplateFamily`
  * (`rule-lifecycle.ts`) gives at greater length: an optional field is exactly
  * the hole where a third family is half-defined and nothing complains.
- * `readChildOrThrow` is declared here and called nowhere yet, so that the two
- * descriptors are written once rather than grown a field at a time.
  *
  * `TChild` appears in a parameter position (`createChildren`'s) and inside
  * `ChildWithRule` in a return position (`readChildOrThrow`'s), so the type is
@@ -213,11 +213,17 @@ export type GeneratorFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
   kind: TKind;
   logNoun: GenerationLogNoun;
   /**
-   * The child's table. Narrowed to the template children rather than left at
-   * `Prisma.ModelName`, which admits every model in the schema, so a third
-   * family becomes a deliberate edit here rather than a silent widening —
-   * `TemplateFamily.childTable` (`rule-lifecycle.ts`) carries the same
-   * narrowing and the pin that proves the compiler enforces it.
+   * The child's table, spliced as a raw identifier into every row lock that
+   * takes one for whichever family it was handed — `claimRuleForGeneration`
+   * below, and the two shared lifecycle verbs that reach this field through
+   * `TemplateFamily` (`rule-lifecycle.ts`).
+   * Narrowed to the template children rather than left at `Prisma.ModelName`,
+   * which admits every model in the schema: the type here is the tether, so
+   * nothing outside it can reach that splice, and a third family becomes a
+   * deliberate edit here rather than a silent widening. Pinned by
+   * `rule-lifecycle.test.ts`, `@ts-expect-error` on a model name that is not a
+   * template child — a claim about what the compiler refuses is worth only the
+   * pin that makes the compiler refuse it.
    */
   childTable: Extract<Prisma.ModelName, 'ClassTemplate' | 'StudioClassTemplate'>;
   readChildOrThrow: (
@@ -238,6 +244,171 @@ export type GeneratorFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
     entries: readonly { id: string; date: Date }[],
   ) => Promise<void>;
 };
+
+// ---------------------------------------------------------------------------
+// claimRuleForGeneration
+// ---------------------------------------------------------------------------
+
+/**
+ * Claims one template of either family for generation, or reports it is no
+ * longer eligible. One function rather than a pair, so the two families cannot
+ * lock differently.
+ *
+ * `FOR UPDATE OF c` is the point, not the `SELECT`. It locks the same child row
+ * that this family's own template update and both shared verbs
+ * (`archiveOrUnarchiveRule` and `pauseOrResumeRule`, `rule-lifecycle.ts`) each
+ * take as their own first statement (issue 298 / #315, `docs/lock-order.md`,
+ * "The child row is the lock node for the template families") — every one of
+ * them a plain `SELECT … FOR UPDATE`, the same exclusive mode this statement
+ * takes, so the sweep and any of the three serialise on that row rather than
+ * interleaving:
+ *
+ *   - claim first  → the other statement's own `FOR UPDATE` waits; we
+ *                    generate and commit; an archive that was the one waiting
+ *                    then withdraws what we made — all but an entry dated
+ *                    today, which the archive's own predicate spares and its
+ *                    own count still reports (`TemplateFamily.deleteWhere` and
+ *                    `standingWhere`, `rule-lifecycle.ts`, which own that
+ *                    boundary and the reason the two differ). One publicly
+ *                    bookable class under a just-archived template is this
+ *                    interleaving's correct outcome, not a gap this lock
+ *                    failed to close.
+ *   - archive first → we wait on the child row, then re-verify eligibility
+ *                    against a FRESH read once we hold it (see below) and
+ *                    skip.
+ *
+ * A plain re-read would not do this. Under READ COMMITTED each statement takes
+ * a fresh snapshot, so an archive committing between the re-read and the
+ * `create` is invisible to the re-read and still lost. Do not "simplify" the
+ * locking `SELECT` below into a plain `findUnique`.
+ *
+ * The `sr."isActive"`/`sr."isArchived"` predicate in that `SELECT` is a fast
+ * path, not the guarantee, and the distinction is load-bearing rather than
+ * pedantic. `FOR UPDATE OF c` locks only `c` — deliberately, per the decision
+ * linked above, which rejected locking `sr` too — so when this statement
+ * itself has to WAIT for that lock, Postgres's WHERE clause was already
+ * evaluated against the snapshot taken when the statement STARTED, before the
+ * wait. On unblock, `EvalPlanQual` re-verifies the columns of the row actually
+ * being locked (`c`) if THAT row changed; it does not re-fetch `sr` on `c`'s
+ * account, because `sr` was never part of the lock set. So a `c` row that was
+ * eligible when this statement started, and still IS `c` itself unchanged, can
+ * come back as a "match" via `rows.length === 1` even though the archive that
+ * made it wait committed `sr."isArchived" = true` while this statement was
+ * parked. Measured directly, isolated from Prisma: two throwaway tables shaped
+ * like a template child and its rule, one session holding the child row `FOR
+ * UPDATE` and updating (but never committing) the parent's flag, a second
+ * session's joined `FOR UPDATE OF` blocking on the first and then unblocking
+ * on commit — the second session's join predicate still read the PRE-commit
+ * flag, in six of six runs, and stayed stale even when the first session also
+ * issued a real `UPDATE` on the child row itself (to force `EvalPlanQual`)
+ * rather than only locking it. `rows.length === 1` is therefore necessary but
+ * not sufficient for eligibility whenever this statement actually waited —
+ * which is exactly the interleaving above one finds itself needing "archive
+ * first" to work.
+ *
+ * `family.readChildOrThrow` below is what closes it, because it is a SEPARATE
+ * statement issued only after this one returns — i.e., only after the lock is
+ * actually held, wait or no wait — and a separate statement takes its own
+ * fresh READ COMMITTED snapshot regardless of what the statement before it
+ * waited on. Its own `scheduleRule.isActive`/`isArchived` are re-checked
+ * against THAT snapshot before this function trusts the row, which is what
+ * "archive first → skip" above actually depends on, not the raw statement's
+ * own `WHERE`.
+ *
+ * Must be called with a transaction client, never a bare `PrismaClient` —
+ * `Prisma.TransactionClient` is structurally just `Omit<PrismaClient,
+ * ITXClientDenyList>`, so a bare client type-checks without complaint. It
+ * would make `SET LOCAL` a no-op (there is no transaction for "local" to scope
+ * to) and release the row lock the instant the `SELECT` completes, which costs
+ * two things at once: the row handed back would be authoritative of nothing
+ * (#102), and `readChildOrThrow` would run unlocked too and can throw P2025 if
+ * the row is deleted out from under it before that second statement runs.
+ * `TransactionClientOnly`'s brand on `tx` is what refuses it.
+ *
+ * Do not weaken `FOR UPDATE` to `FOR NO KEY UPDATE` to stop blocking the
+ * child-entry inserts `generateEntriesForRule` goes on to make — it looks like
+ * a free optimisation but isn't. `FOR UPDATE` is what makes a concurrent
+ * insert for this template impossible, because an insert's FK check takes `FOR
+ * KEY SHARE` on this row, which `FOR UPDATE` conflicts with and `FOR NO KEY
+ * UPDATE` does not. Measured on #164, both directions.
+ *
+ * That is a claim about races, not about correctness under one:
+ * `generateEntriesForRule` below has no P2002 branch to be broken. Its `ON
+ * CONFLICT DO NOTHING` makes a lost race cost one date and abort nothing, with
+ * or without this lock. The lock still earns its place by keeping the values
+ * this claim returns authoritative (#102).
+ *
+ * Returns the locked row rather than a boolean, so a caller cannot generate
+ * from the snapshot its outer `findMany` read minutes earlier (#102). The raw
+ * statement below still does the locking and a first-pass eligibility filter;
+ * the Prisma read after it is what makes both the VALUES and the eligibility
+ * VERDICT authoritative, for the reason above — and it is safe precisely
+ * because the lock is still held when it runs. Two statements rather than one
+ * `SELECT *` because a raw row does not hand back Prisma's `Decimal` for the
+ * money columns a caller then does arithmetic on, and `readChildOrThrow` does.
+ */
+export async function claimRuleForGeneration<TChild>(
+  tx: TransactionClientOnly,
+  family: GeneratorFamily<TChild>,
+  templateId: string,
+): Promise<ChildWithRule<TChild> | null> {
+  // `LOCK_TIMEOUT_SQL` (`@/lib/db-locks`) — shared with `lockClassRow`, which
+  // takes the `Class` row lock this one deadlocks against, so the two waits
+  // are the same length by construction rather than by coincidence. Its
+  // docblock carries the reason `$executeRawUnsafe` is safe for it.
+  await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);
+  // `Prisma.raw` because a table name cannot be a bind parameter; `templateId`
+  // still is one. What bounds the splice is `childTable`'s type, not this
+  // comment. The alias is a fixed `c` for either family — nothing downstream
+  // reads it, so there is no reason for the two to differ.
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT c."id" FROM ${Prisma.raw(`"${family.childTable}"`)} c
+      JOIN "ScheduleRule" sr ON sr."id" = c."scheduleRuleId"
+    WHERE c."id" = ${templateId}
+      AND sr."isActive" = true
+      AND sr."isArchived" = false
+    FOR UPDATE OF c`;
+  // Silent on purpose: this row's own `WHERE` did not match, which for the
+  // sweep's caller is the ordinary "not selected" case — the pre-filter
+  // `findMany` runs unlocked and is routinely minutes stale by the time this
+  // statement executes. Logging every one of those would be noise, not
+  // signal. The re-check below is the branch this comment's sibling exists
+  // to distinguish from this one.
+  if (rows.length !== 1) return null;
+
+  // Under the lock taken above, so nothing can change `c` itself before we
+  // commit. `OrThrow` because the row provably still exists: the `FOR UPDATE`
+  // just matched it and no deleter can reach it without taking the same lock,
+  // so an impossible `| null` would force every caller to pretend to handle
+  // it.
+  const fresh = await family.readChildOrThrow(tx, templateId);
+
+  // The authoritative eligibility check — see this function's docblock for
+  // why the raw statement's own `WHERE` cannot be trusted alone when it had
+  // to wait. This read is a fresh statement taken under the lock, so it sees
+  // whatever the row that made us wait actually committed.
+  if (!fresh.scheduleRule.isActive || fresh.scheduleRule.isArchived) {
+    // The signal the sweep's own `if (!fresh) return 0` cannot give: THIS
+    // null is the measured `EvalPlanQual` race actually landing — the raw
+    // statement above matched and waited, and what it waited on committed a
+    // change the wait made it miss. `pauseOrResumeRule` (`rule-lifecycle.ts`)
+    // reaches this function through `TemplateFamily.claim` and treats a null
+    // as impossible, throwing right after; logging here first costs it
+    // nothing and gives the sweep's silent `return 0` the trace it does not
+    // otherwise get.
+    log.warn(
+      { templateId },
+      `${family.logNoun} generation claim matched but found the row ineligible on re-check`,
+    );
+    return null;
+  }
+
+  return fresh;
+}
+
+// ---------------------------------------------------------------------------
+// generateEntriesForRule
+// ---------------------------------------------------------------------------
 
 /**
  * Generates the rolling 4-week window for ONE template of either family,

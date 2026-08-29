@@ -16,7 +16,7 @@ import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
-import type { JoinedRule, ChildWithRule } from './entry-generation';
+import type { JoinedRule, ChildWithRule, GeneratorFamily } from './entry-generation';
 
 /**
  * A child template with its rule's columns flattened onto it, `startTime`
@@ -100,7 +100,11 @@ export type WithdrawHook = {
 
 /**
  * Everything the shared lifecycle functions below need in order to run over one
- * family.
+ * family, BEYOND what generation already needs. `GeneratorFamily`
+ * (`entry-generation.ts`) declares that other half, and each family's
+ * descriptor is its generator constant spread into this one — so the fields
+ * both layers read are written once rather than twice, and the two copies
+ * cannot come apart.
  *
  * A dispatch table, not a runtime discriminator: each family's entry is
  * complete on its own, and nothing in this module ever asks which family it is
@@ -119,36 +123,14 @@ export type WithdrawHook = {
  * expression, and no family descriptor is assignable to it. Measured, not
  * reasoned. `TKind` appears only in a property position, so it is covariant.
  */
-export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
-  kind: TKind;
-  /**
-   * The child's table, spliced as a raw identifier into the row locks below —
-   * `archiveOrUnarchiveRule`'s and `pauseOrResumeRule`'s, each of which takes
-   * one for whichever family it was handed.
-   * Narrowed to the template children rather than left at `Prisma.ModelName`,
-   * which admits every model in the schema: the type below is the tether, so
-   * nothing outside it can reach that splice, and a third family becomes a
-   * deliberate edit here rather than a silent widening. Pinned by
-   * `rule-lifecycle.test.ts`, `@ts-expect-error` on a model name that is not a
-   * template child — a claim about what the compiler refuses is worth only the
-   * pin that makes the compiler refuse it.
-   */
-  childTable: Extract<Prisma.ModelName, 'ClassTemplate' | 'StudioClassTemplate'>;
-  /**
-   * The noun this family's log lines use. A union rather than `string`: the
-   * log messages composed from it below are asserted verbatim by tests keyed
-   * on the exact string, so the roster belongs to the compiler rather than to
-   * a sentence naming its members.
-   */
-  logNoun: 'recurring class' | 'studio class';
+export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = GeneratorFamily<
+  TChild,
+  TKind
+> & {
   readChild: (
     client: PrismaClient | TransactionClientOnly,
     templateId: string,
   ) => Promise<ChildWithRule<TChild> | null>;
-  readChildOrThrow: (
-    client: TransactionClientOnly,
-    templateId: string,
-  ) => Promise<ChildWithRule<TChild>>;
   /**
    * The entries an archive of this family withdraws: this rule's, dated
    * strictly after the teacher's `today`, minus whatever else this family

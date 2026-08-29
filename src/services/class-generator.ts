@@ -8,12 +8,16 @@
 import { Prisma } from '@prisma/client';
 import type { ClassTemplate, PrismaClient } from '@prisma/client';
 import type { GenerationResult } from '@/lib/generation';
-import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
+import type { TransactionClientOnly } from '@/lib/db-locks';
 import { isLockTimeout } from '@/lib/api-errors';
 import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
 import { log } from '@/lib/log';
 
-import { generateEntriesForRule, type GeneratorFamily } from './entry-generation';
+import {
+  claimRuleForGeneration,
+  generateEntriesForRule,
+  type GeneratorFamily,
+} from './entry-generation';
 
 // ---------------------------------------------------------------------------
 // generateClassInstances
@@ -24,14 +28,13 @@ type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
 }>;
 
 /**
- * The class family's half of the shared generator (`generateEntriesForRule`,
- * `entry-generation.ts`).
+ * The class family's half of the shared claim and generator
+ * (`claimRuleForGeneration` and `generateEntriesForRule`,
+ * `entry-generation.ts`), and — spread into `CLASS_FAMILY`
+ * (`class-template-lifecycle.ts`) — of the shared lifecycle verbs above it.
  *
  * A dispatch table, not a runtime discriminator — `GeneratorFamily`'s own
  * docblock carries the stop condition and the reason no field is optional.
- * `readChildOrThrow` has no caller yet: it is the `findUniqueOrThrow`
- * `claimTemplateForGeneration` below already runs, lifted here so the
- * descriptor is written once rather than grown a field at a time.
  */
 export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
   kind: 'regular',
@@ -79,162 +82,22 @@ export const generateInstancesForTemplate = (
 ): Promise<GenerationResult> => generateEntriesForRule(db, CLASS_GENERATOR, template, from);
 
 /**
- * Claims a template for generation, or reports it is no longer eligible.
+ * Claims a class template for generation, or reports it is no longer eligible
+ * — `claimRuleForGeneration` (`entry-generation.ts`) parameterised with this
+ * family's descriptor. That function carries the lock, the re-check under it,
+ * and why neither may be weakened.
  *
- * `FOR UPDATE OF ct` is the point, not the `SELECT`. It locks the same
- * `ClassTemplate` row `updateClassTemplate` and both shared verbs
- * (`archiveOrUnarchiveRule` and `pauseOrResumeRule`, `rule-lifecycle.ts`)
- * each take as their own first statement (issue 298 / #315,
- * `docs/lock-order.md`, "The child row is the lock node for the template
- * families") — every one of them a plain `SELECT … FOR UPDATE`, the same
- * exclusive mode this statement takes, so the sweep and any of the three
- * serialise on that row rather than interleaving:
- *
- *   - claim first  → the other statement's own `FOR UPDATE` waits; we
- *                    generate and commit; the archive's own `deleteMany` (if
- *                    it was an archive waiting) then withdraws what we made —
- *                    all but a class dated today. Its boundary is `gt: today`
- *                    (`scheduledWhere` in `class-template-lifecycle.ts`), the
- *                    same deliberate spare-today carve-out applied everywhere
- *                    else: a class hours from starting should not disappear
- *                    out from under students who already see it as open.
- *                    `remaining` counts with `gte`, so the teacher is told
- *                    honestly that one class survived rather than being
- *                    handed a total that quietly excludes it. One publicly
- *                    bookable class under a just-archived template is this
- *                    interleaving's correct outcome, not a gap this lock
- *                    failed to close. The studio side reaches this same
- *                    outcome at the same rate, not more often (#94):
- *                    `generateStudioInstancesForTemplate`
- *                    (`studio-class-generator.ts`) now applies the same
- *                    `classStartInstant` "start is still ahead" filter this
- *                    file's `generateInstancesForTemplate` does, so neither
- *                    family generates an already-started today's instance.
- *   - archive first → we wait on the child row, then re-verify eligibility
- *                    against a FRESH read once we hold it (see below) and
- *                    skip.
- *
- * A plain re-read would not do this. Under READ COMMITTED each statement takes
- * a fresh snapshot, so an archive committing between the re-read and the
- * `create` is invisible to the re-read and still lost. Do not "simplify" the
- * locking `SELECT` above into a plain `findUnique`.
- *
- * The `sr."isActive"`/`sr."isArchived"` predicate in that `SELECT` is a fast
- * path, not the guarantee, and the distinction is load-bearing rather than
- * pedantic. `FOR UPDATE OF ct` locks only `ct` — deliberately, per the
- * decision linked above, which rejected locking `sr` too — so when this
- * statement itself has to WAIT for that lock, Postgres's WHERE clause was
- * already evaluated against the snapshot taken when the statement STARTED,
- * before the wait. On unblock, `EvalPlanQual` re-verifies the columns of the
- * row actually being locked (`ct`) if THAT row changed; it does not re-fetch
- * `sr` on `ct`'s account, because `sr` was never part of the lock set. So a
- * `ct` row that was eligible when this statement started, and still IS `ct`
- * itself unchanged, can come back as a "match" via `rows.length === 1` even
- * though the archive that made it wait committed `sr."isArchived" = true`
- * while this statement was parked. Measured directly, isolated from Prisma:
- * two throwaway tables shaped like `ClassTemplate`/`ScheduleRule`, one session
- * holding the child row `FOR UPDATE` and updating (but never committing) the
- * parent's flag, a second session's joined `FOR UPDATE OF` blocking on the
- * first and then unblocking on commit — the second session's join predicate
- * still read the PRE-commit flag, in six of six runs, and stayed stale even
- * when the first session also issued a real `UPDATE` on the child row itself
- * (to force `EvalPlanQual`) rather than only locking it. `rows.length === 1`
- * is therefore necessary but not sufficient for eligibility whenever this
- * statement actually waited — which is exactly the interleaving above one
- * finds itself needing "archive first" to work.
- *
- * `findUniqueOrThrow` below is what closes it, because it is a SEPARATE
- * statement issued only after this one returns — i.e., only after the lock is
- * actually held, wait or no wait — and a separate statement takes its own
- * fresh READ COMMITTED snapshot regardless of what the statement before it
- * waited on. Its own `scheduleRule.isActive`/`isArchived` are re-checked
- * against THAT snapshot before this function trusts the row, which is what
- * "archive first → skip" above actually depends on, not the raw statement's
- * own `WHERE`.
- *
- * Must be called with a transaction client, never a bare `PrismaClient` —
- * `Prisma.TransactionClient` is structurally just `Omit<PrismaClient,
- * ITXClientDenyList>`, so `claimTemplateForGeneration(prisma, id)` type-checks
- * without complaint. It would make `SET LOCAL` a no-op (there is no
- * transaction for "local" to scope to) and release the row lock the instant
- * the `SELECT` completes. That used to mean the claim returned `true` while
- * holding nothing; it is not gone, and it now has a second consequence: the
- * `findUniqueOrThrow` below then runs unlocked too, and can throw P2025 if
- * the row is deleted out from under it before that second statement runs.
- *
- * Do not weaken `FOR UPDATE` to `FOR NO KEY UPDATE` to stop blocking `Class`
- * inserts — it looks like a free optimisation but isn't. `FOR UPDATE` is what
- * makes a concurrent insert for this template impossible, because an insert's
- * FK check takes `FOR KEY SHARE` on this row, which `FOR UPDATE` conflicts with
- * and `FOR NO KEY UPDATE` does not. Measured on #164, both directions.
- *
- * That is a claim about races, not about correctness under one:
- * `generateInstancesForTemplate` no longer has a P2002 branch to be broken.
- * Its `ON CONFLICT DO NOTHING` makes a lost race cost one date and abort
- * nothing, with or without this lock. The lock still earns its place by
- * keeping the values this claim returns authoritative (#102).
- *
- * Returns the locked row rather than a boolean, so a caller cannot generate
- * from the snapshot its outer `findMany` read minutes earlier (#102). The raw
- * statement above still does the locking and a first-pass eligibility filter;
- * the Prisma read below is what makes both the VALUES and the eligibility
- * VERDICT authoritative, for the reason above — and it is safe precisely
- * because the lock is still held when it runs. Two statements rather than one
- * `SELECT *` because `roomCost`, `minRate` and `targetRate` are
- * `DECIMAL(10,2)` and a raw row does not hand back Prisma's `Decimal`.
+ * Kept as its own exported name and its own return type because both are
+ * named from outside this file: `TemplateWithTimezone` is what
+ * `generateInstancesForTemplate` below takes, and several call sites and
+ * comments name this function — `db-locks.test.ts` among them, where the
+ * branded parameter is pinned to refuse a bare client.
  */
-export async function claimTemplateForGeneration(
+export const claimTemplateForGeneration = (
   tx: TransactionClientOnly,
   templateId: string,
-): Promise<TemplateWithTimezone | null> {
-  // `LOCK_TIMEOUT_SQL` (`@/lib/db-locks`) — shared with `lockClassRow`, which
-  // takes the `Class` row lock this one deadlocks against, so the two waits
-  // are the same length by construction rather than by coincidence. Its
-  // docblock carries the reason `$executeRawUnsafe` is safe for it.
-  await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);
-  const rows = await tx.$queryRaw<Array<{ id: string }>>`
-    SELECT ct."id" FROM "ClassTemplate" ct
-      JOIN "ScheduleRule" sr ON sr."id" = ct."scheduleRuleId"
-    WHERE ct."id" = ${templateId}
-      AND sr."isActive" = true
-      AND sr."isArchived" = false
-    FOR UPDATE OF ct`;
-  // Silent on purpose: this row's own `WHERE` did not match, which for the
-  // sweep's caller is the ordinary "not selected" case — the pre-filter
-  // `findMany` runs unlocked and is routinely minutes stale by the time this
-  // statement executes. Logging every one of those would be noise, not
-  // signal. The re-check below is the branch this comment's sibling exists
-  // to distinguish from this one.
-  if (rows.length !== 1) return null;
-
-  // Under the lock taken above, so nothing can change `ct` itself before we
-  // commit. `OrThrow` because the child row provably exists — the FOR UPDATE
-  // just matched it, and nothing in `src/` deletes a `ClassTemplate` — so an
-  // impossible `| null` would force every caller to pretend to handle it.
-  const fresh = await tx.classTemplate.findUniqueOrThrow({
-    where: { id: templateId },
-    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
-  });
-
-  // The authoritative eligibility check — see this function's docblock for
-  // why the raw statement's own `WHERE` cannot be trusted alone when it had
-  // to wait. This read is a fresh statement taken under the lock, so it sees
-  // whatever the row that made us wait actually committed.
-  if (!fresh.scheduleRule.isActive || fresh.scheduleRule.isArchived) {
-    // The signal the sweep's own `if (!fresh) return 0` cannot give: THIS
-    // null is the measured `EvalPlanQual` race actually landing — the raw
-    // statement above matched and waited, and what it waited on committed a
-    // change the wait made it miss. `pauseOrResumeRule` (`rule-lifecycle.ts`)
-    // reaches this function through `CLASS_FAMILY.claim` and treats a null as
-    // impossible, throwing right after; logging here first costs it nothing
-    // and gives the sweep's silent `return 0` the trace it does not otherwise
-    // get.
-    log.warn({ templateId }, 'class generation claim matched but found the row ineligible on re-check');
-    return null;
-  }
-
-  return fresh;
-}
+): Promise<TemplateWithTimezone | null> =>
+  claimRuleForGeneration(tx, CLASS_GENERATOR, templateId);
 
 /**
  * Cron / teacher-wide entry point: tops up the rolling window for all

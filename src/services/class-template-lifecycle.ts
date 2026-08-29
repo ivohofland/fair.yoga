@@ -46,7 +46,11 @@ import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 // value-imports anything in this chain.
 import { log } from '@/lib/log';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
-import { generateInstancesForTemplate, claimTemplateForGeneration } from './class-generator';
+import {
+  CLASS_GENERATOR,
+  generateInstancesForTemplate,
+  claimTemplateForGeneration,
+} from './class-generator';
 import { getNextOccurrences, firstFreeWeek, DEFAULT_WEEKS } from './entry-generation';
 import { CHARGED_STATUSES } from './class-lifecycle';
 import type { GenerationResult } from '@/lib/generation';
@@ -1184,18 +1188,18 @@ const scheduledWhere = (
     classes: { some: { status: { in: [...SCHEDULED_STATUSES] }, ...alsoOnClass } },
   }) satisfies Prisma.CalendarEntryWhereInput;
 
-/** The recurring-class family's `TemplateFamily` entry (`rule-lifecycle.ts`). */
+/**
+ * The recurring-class family's `TemplateFamily` entry (`rule-lifecycle.ts`).
+ *
+ * `CLASS_GENERATOR` (`class-generator.ts`) spread rather than restated: it is
+ * this same family's `GeneratorFamily`, and `TemplateFamily` is that type
+ * intersected with the fields only the lifecycle verbs need. Everything below
+ * the spread is one of those.
+ */
 export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
-  kind: 'regular',
-  childTable: 'ClassTemplate',
-  logNoun: 'recurring class',
+  ...CLASS_GENERATOR,
   readChild: (client, templateId) =>
     client.classTemplate.findUnique({
-      where: { id: templateId },
-      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
-    }),
-  readChildOrThrow: (client, templateId) =>
-    client.classTemplate.findUniqueOrThrow({
       where: { id: templateId },
       include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
     }),

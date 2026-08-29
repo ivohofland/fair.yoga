@@ -2079,10 +2079,10 @@ describe('deleteTeacherAccount serialises against a claim in progress (#315)', (
  * two statements, two tables, and the review round that added this test found
  * that the suite above's own mutation (removing both together) had proved
  * only the pair, not either lock individually. `claimStudioTemplateForGeneration`
- * (`studio-class-generator.ts`) is a separate function with its own claim
- * logic from `claimTemplateForGeneration`, so this is not redundant with the
- * class-family case above — it is what makes the `sct` lock's necessity a
- * measurement rather than an inference from the `ct` one.
+ * (`studio-class-generator.ts`) takes its row lock on `StudioClassTemplate`,
+ * not on `ClassTemplate`, so this is not redundant with the class-family case
+ * above — it is what makes the `sct` lock's necessity a measurement rather
+ * than an inference from the `ct` one.
  */
 describe('deleteTeacherAccount serialises against a studio claim in progress (#315)', () => {
   const prisma = new PrismaClient();
