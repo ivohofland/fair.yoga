@@ -11,6 +11,7 @@ import { spansOverlap } from '@/lib/generation';
 import { probeOverlappingCandidates } from '@/lib/entry-conflict';
 import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
+import { isLockTimeout } from '@/lib/api-errors';
 import { classStartInstant, mondayOf } from '@/lib/timezone';
 import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
 import { timeToHHmm } from '@/lib/time-of-day';
@@ -793,8 +794,11 @@ export async function claimTemplateForGeneration(
 /**
  * Cron / teacher-wide entry point: tops up the rolling window for all
  * active templates (or one teacher's). Each template is isolated — one
- * template whose generation throws is logged and skipped, the rest still
- * generate, and the first error is rethrown at the end for job-health
+ * template whose generation throws is logged and skipped. If the throw is
+ * a Postgres lock timeout (55P03), it means a concurrent writer (such as a
+ * teacher resume or edit) holds the row; this is logged at warn and skipped
+ * without failing the sweep (#122). Genuine failures are logged at error,
+ * collected, and the first error is rethrown at the end for job-health
  * visibility.
  */
 export async function generateClassInstances(
@@ -860,14 +864,28 @@ export async function generateClassInstances(
         { timeout: 10_000 },
       );
     } catch (err) {
-      log.error(
-        { err, templateId: template.id, teacherId: template.scheduleRule.teacherId },
-        'class generation failed for template',
-      );
-      errors.push(err);
+      // Per-template isolation. A lock timeout (55P03) against a concurrent
+      // writer means someone else has the template right now, not that
+      // generation failed (#122) — so it is logged at warn and skipped without
+      // failing the job health check.
+      if (isLockTimeout(err)) {
+        log.warn(
+          { err, templateId: template.id, teacherId: template.scheduleRule.teacherId },
+          'class generation skipped template due to lock contention',
+        );
+      } else {
+        log.error(
+          { err, templateId: template.id, teacherId: template.scheduleRule.teacherId },
+          'class generation failed for template',
+        );
+        errors.push(err);
+      }
     }
   }
 
   if (errors.length > 0) throw errors[0];
   return totalCreated;
 }
+
+
+

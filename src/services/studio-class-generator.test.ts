@@ -1269,4 +1269,56 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
     expect(loggedTemplateIds).toContain('C');
     spy.mockRestore();
   });
+
+  it('does not rethrow when a template fails with a 55P03 lock timeout, but logs at warn and generates others', async () => {
+    const created: string[] = [];
+    const from = new Date('2099-01-05T00:00:00Z');
+    const lockTimeoutError = new Prisma.PrismaClientUnknownRequestError(
+      'Error occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "55P03", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })',
+      { clientVersion: 'test' },
+    );
+    const stub = {
+      studioClassTemplate: {
+        findMany: async () => [tmpl('A', 't1'), tmpl('B', 't1')],
+        findUniqueOrThrow: async ({ where: { id } }: { where: { id: string } }) => tmpl(id, 't1'),
+      },
+      calendarEntry: {
+        findMany: async () => [],
+        createManyAndReturn: async ({
+          data,
+        }: {
+          data: Array<{ scheduleRuleId: string; date: Date }>;
+        }) => {
+          for (const row of data) {
+            if (row.scheduleRuleId === 'rule-A') throw lockTimeoutError;
+            created.push(row.scheduleRuleId.replace('rule-', ''));
+          }
+          return data.map((row) => ({ id: `entry-${row.scheduleRuleId}`, date: row.date }));
+        },
+      },
+      studioClass: {
+        createMany: async () => ({ count: 0 }),
+      },
+      $executeRawUnsafe: async () => 0,
+      $queryRaw: async () => [{ id: 'stub' }],
+      $transaction: async (fn: (tx: unknown) => Promise<number>) => fn(stub),
+    } as unknown as import('@prisma/client').PrismaClient;
+
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => log);
+
+    const count = await generateStudioClassInstances(stub, from);
+
+    expect(count).toBe(4);
+    expect(created).toContain('B');
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ templateId: 'A', teacherId: 't1' }),
+      'studio class generation skipped template due to lock contention',
+    );
+    expect(errorSpy).not.toHaveBeenCalled();
+
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
 });
+

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Prisma } from '@prisma/client';
 import {
   classifyApiError,
+  isLockTimeout,
   isRestrictViolationOn,
   isTransientDbError,
   TERMINAL_TRIGGER_TAILS,
@@ -785,3 +786,63 @@ describe('isRestrictViolationOn', () => {
     );
   });
 });
+
+describe('isLockTimeout', () => {
+  it('matches a model write error with Postgres code 55P03 (PrismaClientUnknownRequestError)', () => {
+    const unknownError = new Prisma.PrismaClientUnknownRequestError(
+      'Invalid `prisma.class.updateMany()` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "55P03", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })',
+      { clientVersion: 'test' },
+    );
+    expect(isLockTimeout(unknownError)).toBe(true);
+  });
+
+  it('matches a raw FOR UPDATE query error with Postgres Code 55P03 (PrismaClientKnownRequestError P2010)', () => {
+    const knownError = new Prisma.PrismaClientKnownRequestError(
+      'Invalid `prisma.$queryRaw()` invocation:\n\n\nRaw query failed. Code: `55P03`. Message: `ERROR: canceling statement due to lock timeout`',
+      { code: 'P2010', clientVersion: 'test' },
+    );
+    expect(isLockTimeout(knownError)).toBe(true);
+  });
+
+  it.each<[string, Error]>([
+    [
+      'a deadlock (40P01)',
+      new Prisma.PrismaClientUnknownRequestError(
+        'ConnectorError(ConnectorError { kind: QueryError(PostgresError { code: "40P01", message: "deadlock detected" }) })',
+        { clientVersion: 'test' },
+      ),
+    ],
+    [
+      'a serialization failure (40001)',
+      new Prisma.PrismaClientUnknownRequestError(
+        'ConnectorError(ConnectorError { kind: QueryError(PostgresError { code: "40001", message: "could not serialize access" }) })',
+        { clientVersion: 'test' },
+      ),
+    ],
+    ['transaction budget expired (P2028)', prismaError('P2028')],
+    ['connection pool timeout (P2024)', prismaError('P2024')],
+    ['write conflict / deadlock (P2034)', prismaError('P2034')],
+    ['record not found (P2025)', prismaError('P2025')],
+    ['generic Error', new Error('canceling statement due to lock timeout')],
+  ])('does not match %s', (_label, err) => {
+    expect(isLockTimeout(err)).toBe(false);
+  });
+
+  it('does not match an unrelated error that merely contains 55P03 as a substring', () => {
+    const substringError = new Prisma.PrismaClientKnownRequestError(
+      'Unique constraint failed: postcode "55P03" already exists',
+      { code: 'P2002', clientVersion: 'test' },
+    );
+    expect(isLockTimeout(substringError)).toBe(false);
+  });
+
+  it.each<[string, unknown]>([
+    ['undefined', undefined],
+    ['null', null],
+    ['a string', 'code: "55P03"'],
+    ['a plain object', { message: 'code: "55P03"' }],
+  ])('returns false for non-Error value %s', (_label, val) => {
+    expect(isLockTimeout(val)).toBe(false);
+  });
+});
+

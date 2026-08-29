@@ -245,6 +245,21 @@ export function isTransientDbError(error: unknown): boolean {
 }
 
 /**
+ * True when the failure is a Postgres lock_timeout expiry (`55P03`).
+ *
+ * Two different error shapes carry this SQLSTATE:
+ * - `PrismaClientUnknownRequestError` for model writes, matching `code: "55P03"`
+ * - `PrismaClientKnownRequestError` (P2010) for raw queries, matching `Code: \`55P03\``
+ *
+ * Matched inside its Postgres framing rather than as a bare substring, following
+ * the same rule documented in `isTransientDbError`.
+ */
+export function isLockTimeout(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes('code: "55P03"') || error.message.includes('Code: `55P03`');
+}
+
+/**
  * True when Prisma refused a write because the row it was told to touch is
  * not there — `P2025`, "An operation failed because it depends on one or more
  * records that were required but not found."

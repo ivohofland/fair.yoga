@@ -11,6 +11,7 @@ import { probeOverlappingCandidates } from '@/lib/entry-conflict';
 import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { getNextOccurrences } from './class-generator';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
+import { isLockTimeout } from '@/lib/api-errors';
 import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
 
@@ -404,10 +405,12 @@ function logSkippedStudioSlots(
  * reach of a single PATCH: see `pauseOrResumeStudioTemplate`
  * (`studio-class-template-lifecycle.ts`), which reaches for
  * `generateStudioInstancesForTemplate` instead, and says so.
- * Each template is isolated: one template whose generation throws — now
- * including a claim's lock timeout, a new way to fail this sweep did not
- * previously have — is logged and skipped, the rest still generate, and the
- * first error is rethrown at the end for job-health visibility.
+ * Each template is isolated: one template whose generation throws is logged
+ * and skipped. If the throw is a Postgres lock timeout (55P03), it means
+ * a concurrent writer (such as a teacher resume or edit) holds the row;
+ * this is logged at warn and skipped without failing the sweep (#122).
+ * Genuine failures are logged at error, collected, and the first error is
+ * rethrown at the end for job-health visibility.
  *
  * This changes what a throw means to both callers
  * (`api/cron/generate-classes/route.ts` and `lib/scheduler.ts`'s
@@ -456,19 +459,28 @@ export async function generateStudioClassInstances(
         { timeout: 10_000 },
       );
     } catch (err) {
-      // Per-template isolation, matching `generateClassInstances`. The class
-      // family already had this; the studio sweep did not, and the claim's
-      // lock timeout above is a new way for one template to throw — without
-      // this, one contended template would stop every other teacher's studio
-      // classes from generating.
-      log.error(
-        { err, templateId: template.id, teacherId: template.scheduleRule.teacherId },
-        'studio class generation failed for template',
-      );
-      errors.push(err);
+      // Per-template isolation, matching `generateClassInstances`. A lock
+      // timeout (55P03) against a concurrent writer means someone else has
+      // the template right now, not that generation failed (#122) — so it is
+      // logged at warn and skipped without failing the job health check.
+      if (isLockTimeout(err)) {
+        log.warn(
+          { err, templateId: template.id, teacherId: template.scheduleRule.teacherId },
+          'studio class generation skipped template due to lock contention',
+        );
+      } else {
+        log.error(
+          { err, templateId: template.id, teacherId: template.scheduleRule.teacherId },
+          'studio class generation failed for template',
+        );
+        errors.push(err);
+      }
     }
   }
 
   if (errors.length > 0) throw errors[0];
   return totalCreated;
 }
+
+
+
