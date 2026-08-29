@@ -228,7 +228,7 @@ test.describe('Recurring classes', () => {
     const expected =
       'Template updated. It takes effect for newly generated classes — your first class on the new schedule is the week starting ' +
       `Monday, ${weekFive.getUTCDate()} ${MONTHS[weekFive.getUTCMonth()]!}. ` +
-      'Change existing classes individually if needed.';
+      'Change or cancel existing classes individually if needed.';
     await expect(page.getByText(expected)).toBeVisible({ timeout: 10_000 });
 
     // The template moved.

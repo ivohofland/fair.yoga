@@ -638,14 +638,14 @@ describe('templateUpdatedMessage', () => {
     // The argument is always a MONDAY (the probe converts before returning),
     // so `formatDayHeader` renders "Monday, 21 Sep" and the sentence reads
     // "the week starting Monday, 21 Sep".
-    expect(templateUpdatedMessage(new Date('2026-09-21T00:00:00.000Z'), 'active')).toBe(
-      'Template updated. It takes effect for newly generated classes — your first class on the new schedule is the week starting Monday, 21 Sep. Change existing classes individually if needed.',
+    expect(templateUpdatedMessage(new Date('2026-09-21T00:00:00.000Z'), 'active', 'recurring class')).toBe(
+      'Template updated. It takes effect for newly generated classes — your first class on the new schedule is the week starting Monday, 21 Sep. Change or cancel existing classes individually if needed.',
     );
   });
 
   it('drops the middle clause when no free week is in view', () => {
-    expect(templateUpdatedMessage(null, 'active')).toBe(
-      'Template updated. It takes effect for newly generated classes. Change existing classes individually if needed.',
+    expect(templateUpdatedMessage(null, 'active', 'recurring class')).toBe(
+      'Template updated. It takes effect for newly generated classes. Change or cancel existing classes individually if needed.',
     );
   });
 
@@ -663,8 +663,8 @@ describe('templateUpdatedMessage', () => {
    * single point of failure for a sentence rendered on the client.
    */
   it('names the resume, not a week, for a paused recurring class', () => {
-    expect(templateUpdatedMessage(new Date('2026-09-21T00:00:00.000Z'), 'paused')).toBe(
-      'Template updated. It takes effect for newly generated classes — this recurring class is paused, so nothing is generated until you resume it. Change existing classes individually if needed.',
+    expect(templateUpdatedMessage(new Date('2026-09-21T00:00:00.000Z'), 'paused', 'recurring class')).toBe(
+      'Template updated. It takes effect for newly generated classes — this recurring class is paused, so nothing is generated until you resume it. Change or cancel existing classes individually if needed.',
     );
   });
 
@@ -677,8 +677,8 @@ describe('templateUpdatedMessage', () => {
    * are about to read there.
    */
   it('names the un-archive and the resume for an archived recurring class', () => {
-    expect(templateUpdatedMessage(new Date('2026-09-21T00:00:00.000Z'), 'archived')).toBe(
-      'Template updated. It takes effect for newly generated classes — this recurring class is archived, so nothing is generated until you un-archive and resume it. Change existing classes individually if needed.',
+    expect(templateUpdatedMessage(new Date('2026-09-21T00:00:00.000Z'), 'archived', 'recurring class')).toBe(
+      'Template updated. It takes effect for newly generated classes — this recurring class is archived, so nothing is generated until you un-archive and resume it. Change or cancel existing classes individually if needed.',
     );
   });
 
@@ -688,9 +688,47 @@ describe('templateUpdatedMessage', () => {
   // archived one adds the step before it.
   it('agrees with UNARCHIVE_MESSAGE about what un-archiving does not do', () => {
     expect(UNARCHIVE_MESSAGE).toContain('resume it');
-    expect(templateUpdatedMessage(null, 'archived')).toContain('un-archive and resume it');
-    expect(templateUpdatedMessage(null, 'paused')).toContain('resume it');
-    expect(templateUpdatedMessage(null, 'paused')).not.toContain('un-archive');
+    expect(templateUpdatedMessage(null, 'archived', 'recurring class')).toContain('un-archive and resume it');
+    expect(templateUpdatedMessage(null, 'paused', 'recurring class')).toContain('resume it');
+    expect(templateUpdatedMessage(null, 'paused', 'recurring class')).not.toContain('un-archive');
+  });
+
+  // The studio family's four cases, mirroring the four above but with
+  // `noun: 'template'` — `UNARCHIVE_STUDIO_MESSAGE` (above) uses the same
+  // word for the same reason: that is what this family calls the thing
+  // throughout its own copy.
+  it('names the week the change first takes effect, for a studio template', () => {
+    expect(templateUpdatedMessage(new Date('2026-09-21T00:00:00.000Z'), 'active', 'template')).toBe(
+      'Template updated. It takes effect for newly generated classes — your first class on the new schedule is the week starting Monday, 21 Sep. Change or cancel existing classes individually if needed.',
+    );
+  });
+
+  it('drops the middle clause when no free week is in view, for a studio template', () => {
+    expect(templateUpdatedMessage(null, 'active', 'template')).toBe(
+      'Template updated. It takes effect for newly generated classes. Change or cancel existing classes individually if needed.',
+    );
+  });
+
+  it('names the resume, not a week, for a paused studio template', () => {
+    expect(templateUpdatedMessage(null, 'paused', 'template')).toBe(
+      'Template updated. It takes effect for newly generated classes — this template is paused, so nothing is generated until you resume it. Change or cancel existing classes individually if needed.',
+    );
+  });
+
+  it('names the un-archive and the resume for an archived studio template', () => {
+    expect(templateUpdatedMessage(null, 'archived', 'template')).toBe(
+      'Template updated. It takes effect for newly generated classes — this template is archived, so nothing is generated until you un-archive and resume it. Change or cancel existing classes individually if needed.',
+    );
+  });
+
+  // The mirror of `resumeStudioMessage`'s agreement pin, one direction over:
+  // there the two families' sentences must be identical and a test pins that
+  // they agree; here they must differ in exactly the noun, and this pins
+  // that they do not collapse to the same string.
+  it('does not agree with the class family — the noun makes the two sentences differ', () => {
+    expect(templateUpdatedMessage(null, 'paused', 'template')).not.toBe(
+      templateUpdatedMessage(null, 'paused', 'recurring class'),
+    );
   });
 });
 

@@ -820,7 +820,7 @@ describe('TemplateForm', () => {
     // the entire content of this change.
     expect(
       await screen.findByText(
-        'Template updated. It takes effect for newly generated classes — your first class on the new schedule is the week starting Monday, 21 Sep. Change existing classes individually if needed.',
+        'Template updated. It takes effect for newly generated classes — your first class on the new schedule is the week starting Monday, 21 Sep. Change or cancel existing classes individually if needed.',
       ),
     ).toBeInTheDocument();
   });
@@ -861,7 +861,7 @@ describe('TemplateForm', () => {
 
     expect(
       await screen.findByText(
-        'Template updated. It takes effect for newly generated classes. Change existing classes individually if needed.',
+        'Template updated. It takes effect for newly generated classes. Change or cancel existing classes individually if needed.',
       ),
     ).toBeInTheDocument();
   });
@@ -914,7 +914,7 @@ describe('TemplateForm', () => {
 
     expect(
       await screen.findByText(
-        'Template updated. It takes effect for newly generated classes — this recurring class is paused, so nothing is generated until you resume it. Change existing classes individually if needed.',
+        'Template updated. It takes effect for newly generated classes — this recurring class is paused, so nothing is generated until you resume it. Change or cancel existing classes individually if needed.',
       ),
     ).toBeInTheDocument();
   });
@@ -968,7 +968,7 @@ describe('TemplateForm', () => {
 
     expect(
       await screen.findByText(
-        'Template updated. It takes effect for newly generated classes — this recurring class is archived, so nothing is generated until you un-archive and resume it. Change existing classes individually if needed.',
+        'Template updated. It takes effect for newly generated classes — this recurring class is archived, so nothing is generated until you un-archive and resume it. Change or cancel existing classes individually if needed.',
       ),
     ).toBeInTheDocument();
   });
@@ -1015,7 +1015,7 @@ describe('TemplateForm', () => {
 
     expect(
       await screen.findByText(
-        'Template updated. It takes effect for newly generated classes. Change existing classes individually if needed.',
+        'Template updated. It takes effect for newly generated classes. Change or cancel existing classes individually if needed.',
       ),
     ).toBeInTheDocument();
   });

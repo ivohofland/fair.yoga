@@ -425,7 +425,11 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         const generationState: TemplateGenerationState =
           wireState === 'paused' || wireState === 'archived' ? wireState : 'active';
         setSuccess(
-          templateUpdatedMessage(firstEffective ? new Date(firstEffective) : null, generationState),
+          templateUpdatedMessage(
+            firstEffective ? new Date(firstEffective) : null,
+            generationState,
+            'recurring class',
+          ),
         );
         router.refresh();
       }

@@ -320,6 +320,16 @@ export const UNARCHIVE_MESSAGE =
   'Un-archived. This recurring class is paused — resume it to put classes back on your schedule.';
 
 /**
+ * The noun `templateUpdatedMessage` uses for the thing being edited —
+ * teacher-facing copy's own vocabulary, distinct from the generation and
+ * edit-path logs' `'studio class'`/`'studio template'` pair. This is the pair
+ * `UNARCHIVE_MESSAGE`/`UNARCHIVE_STUDIO_MESSAGE` already spell out by hand;
+ * this type gives the same two words a name so a third spelling cannot enter
+ * silently at a new call site.
+ */
+export type TemplateCopyNoun = 'recurring class' | 'template';
+
+/**
  * Shown after a template edit (#194). The edit changes nothing that already
  * exists, so this sentence carries the whole of what happened.
  *
@@ -339,13 +349,20 @@ export const UNARCHIVE_MESSAGE =
  * than as noise.
  *
  * The closing clause is deliberately conditional in tone ("if needed") rather
- * than a promise. `settingsLocked` refuses economic edits on a booked class,
- * so "change existing classes individually" is not universally available —
- * true before #194 too, since the deleted sync skipped those same instances,
- * but this sentence is new and must not over-promise. It is kept on all four
+ * than a promise, and names both "change" and "cancel" because "change" alone
+ * is not available on either family's whole set of existing classes.
+ * `settingsLocked` refuses economic edits on a booked class, so the class
+ * family cannot always change one — true before #194 too, since the deleted
+ * sync skipped those same instances. The studio family's gap is wider still:
+ * `studioClassEditability` (`@/services/studio-class-editability.ts`) ties
+ * `dateEditable` to `scheduleRuleId === null`, so a *generated* studio class's
+ * date cannot move at all — moving it would free its `(scheduleRuleId, date)`
+ * key and the hourly sweep would recreate the class on the old date within
+ * the hour. Cancelling is the remedy that exists on both sides regardless of
+ * which gap applies, which is what the clause names. It is kept on all four
  * forms below, the archived one included: archiving withdraws only the
- * unbooked future window, so a booked class of a shelved template can still
- * be sitting on the schedule for a teacher to change.
+ * unbooked future window, so a class still bound by one of these gaps can be
+ * sitting on the schedule for a teacher to act on.
  *
  * ## Why `generationState` is a second argument and not an inference
  *
@@ -367,21 +384,29 @@ export const UNARCHIVE_MESSAGE =
  * Register borrowed from `UNARCHIVE_MESSAGE` — state, em-dash, remedy — but
  * not its words: that constant describes what just happened to a template,
  * and these describe when a change will reach the schedule.
+ *
+ * `noun` is the third argument (#284) because this sentence now serves both
+ * template families, and they call the thing different words — the pair
+ * `UNARCHIVE_MESSAGE`/`UNARCHIVE_STUDIO_MESSAGE` already differ by exactly
+ * this ("recurring class" vs "template"), named at that constant's own
+ * docblock. It appears only in the `paused`/`archived` clauses; the `active`
+ * head and the tail name no family.
  */
 export function templateUpdatedMessage(
   firstEffective: Date | null,
   generationState: TemplateGenerationState,
+  noun: TemplateCopyNoun,
 ): string {
   const head = 'Template updated. It takes effect for newly generated classes';
-  const tail = 'Change existing classes individually if needed.';
+  const tail = 'Change or cancel existing classes individually if needed.';
   switch (generationState) {
     case 'active':
       if (!firstEffective) return `${head}. ${tail}`;
       return `${head} — your first class on the new schedule is the week starting ${formatDayHeader(firstEffective)}. ${tail}`;
     case 'paused':
-      return `${head} — this recurring class is paused, so nothing is generated until you resume it. ${tail}`;
+      return `${head} — this ${noun} is paused, so nothing is generated until you resume it. ${tail}`;
     case 'archived':
-      return `${head} — this recurring class is archived, so nothing is generated until you un-archive and resume it. ${tail}`;
+      return `${head} — this ${noun} is archived, so nothing is generated until you un-archive and resume it. ${tail}`;
     default: {
       // The `const unhandled: never` idiom this file already uses at both
       // resolvers. A fourth state on `TemplateGenerationState` would compile
