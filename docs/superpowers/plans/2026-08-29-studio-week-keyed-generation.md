@@ -926,7 +926,11 @@ each still gets its own verdict.
    which is the `this previously read X` form CLAUDE.md forbids in source. It is
    inherited rather than introduced, and moving into a new file was the moment to
    re-cut it. State the constraint; the history belongs in the PR body.
-4. **`isCrossFamilySlotConflict` has no definition left anywhere in `src/`** and
+4. `src/services/entry-generation.ts` — "ONE READ FOR BOTH FAMILIES since #327,
+   **where this used to be two**" (in the probe), the same forbidden form as
+   item 3 and likewise inherited rather than introduced. Two carried instances
+   of one pattern in one file is the signal to re-cut both.
+5. **`isCrossFamilySlotConflict` has no definition left anywhere in `src/`** and
    is still named in four files (`entry-generation.ts`,
    `studio-class-template-lifecycle.ts`, `class-template-lifecycle.ts`,
    `generation-transaction.test.ts`). Pre-existing, not this branch's doing —
