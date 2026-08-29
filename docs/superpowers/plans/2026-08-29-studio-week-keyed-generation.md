@@ -497,7 +497,11 @@ on, answered by shipping it.
 - Test: `src/services/studio-class-template-lifecycle.test.ts` (`updateStudioClassTemplate (DB)`, `:1587`)
 
 **Interfaces:**
-- Consumes: Task 4's `probeFirstEffectiveWeek`; `templateGenerationState` and `TemplateGenerationState` from `@/lib/template-selection`; `DEFAULT_WEEKS` and `getNextOccurrences` from `@/services/entry-generation`.
+- Consumes: Task 4's `probeFirstEffectiveWeek`; `templateGenerationState` and
+  `TemplateGenerationState` from `@/lib/template-selection`; `DEFAULT_WEEKS` and
+  `getNextOccurrences` from `@/services/entry-generation`; `classStartInstant`
+  from `@/lib/timezone`. **Measured: this file imports none of these today** —
+  all four import statements are new.
 - Produces: `UpdateStudioClassTemplateResult`'s `ok: true` arm gains
   `firstEffective: Date | null` and `generationState: TemplateGenerationState`.
 
