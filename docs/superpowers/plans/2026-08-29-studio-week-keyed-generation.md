@@ -481,6 +481,17 @@ comment reaching past its own file has no owner (CLAUDE.md). `DEFAULT_WEEKS`'s "
 probe" — the probe is in this module now and the class service is no longer the
 only consumer.
 
+**And the header docblock's own `grep`, carried over from Task 1's fix round.**
+It ships a command that re-derives the importer census instead of a roster,
+which is right — but the docblock quotes the needle, so the file SELF-MATCHES
+and the command returns one line more than there are importers. `generation.ts`
+solves this two ways at once and this file should pick one: filter the module
+out of its own output (`| grep -v "^src/services/entry-generation"`), or say in
+prose that the file appears in its own output because the docblock quotes the
+grep back at itself. An unexplained off-by-one in a check whose whole purpose is
+"re-derive this rather than trusting the comment" undermines the thing it was
+written for.
+
 - [ ] **Step 3: Run the class family's suites**
 
 ```bash
