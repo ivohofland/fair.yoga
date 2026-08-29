@@ -358,7 +358,7 @@ test.describe('Teacher journey', () => {
     // Both charged registrations start unpaid; payment state is text, not a badge.
     await expect(page.getByText('○ Unpaid')).toHaveCount(2);
     await page
-      .getByRole('button', { name: 'Mark Journey s. payment as paid' })
+      .getByRole('button', { name: 'Mark paid — Journey s.' })
       .click();
     await expect(page.getByText('✓ Paid')).toBeVisible();
     await expect(page.getByText('○ Unpaid')).toHaveCount(1);
@@ -367,7 +367,7 @@ test.describe('Teacher journey', () => {
     await page.getByRole('button', { name: 'Undo marking Journey s. as paid' }).click();
     await expect(page.getByText('○ Unpaid')).toHaveCount(2, { timeout: 10_000 });
     await page
-      .getByRole('button', { name: 'Mark Journey s. payment as paid' })
+      .getByRole('button', { name: 'Mark paid — Journey s.' })
       .click();
     await expect(page.getByText('✓ Paid')).toBeVisible();
   });

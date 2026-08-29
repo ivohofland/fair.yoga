@@ -109,10 +109,12 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
                       : 'border-[1.5px] border-teal text-teal hover:bg-teal-tint'}
                     ${isUpdating ? 'opacity-50' : ''}
                   `}
+                  // Unpaid branch leads with visible label for WCAG 2.5.3 (Label in Name)
+                  // and speech-input matching; paid branch contains "paid" contiguously.
                   aria-label={
                     isPaid
                       ? `${item.studentName} payment is paid`
-                      : `Mark ${item.studentName} payment as paid`
+                      : `Mark paid — ${item.studentName}`
                   }
                 >
                   {isPaid ? 'Paid' : 'Mark paid'}
