@@ -53,11 +53,17 @@ import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib
 import { isRecordNotFound, isTransientDbError } from '@/lib/api-errors';
 import { setLockTimeout } from '@/lib/db-locks';
 import type { GenerationResult } from '@/lib/generation';
+import { templateGenerationState, type TemplateGenerationState } from '@/lib/template-selection';
 // Server-only (pino). Safe here: this module's sole importer is
 // `api/studio-class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
 // transitively through `studio-class-generator`. No `'use client'` component
 // value-imports anything in this chain.
 import { log } from '@/lib/log';
+// Server-only too, and for the same reason: `@/lib/timezone` and
+// `entry-generation` both value-import pino. They join the chain the note
+// above describes rather than widening it.
+import { classStartInstant } from '@/lib/timezone';
+import { DEFAULT_WEEKS, getNextOccurrences, probeFirstEffectiveWeek } from './entry-generation';
 import type {
   PlainUpdateForbiddenScheduleRuleField as PlainUpdateForbiddenClassRuleField,
   TeacherEditableScheduleRuleField as TeacherEditableClassRuleField,
@@ -491,7 +497,64 @@ export function withSlot(template: StudioClassTemplate, rule: ScheduleRule): Stu
  * callers own the user-facing wording.
  */
 export type UpdateStudioClassTemplateResult =
-  | { ok: true; template: StudioClassTemplateWithSlot }
+  | {
+      ok: true;
+      template: StudioClassTemplateWithSlot;
+      /**
+       * The **Monday of the first week the new schedule reaches**, or `null`
+       * when there is no such week to name (#284).
+       *
+       * `null` has TWO causes and they are not the same fact, which is why
+       * `generationState` sits beside it rather than being left for the copy
+       * layer to infer: either no free week is inside the probe's horizon, or
+       * the template is not eligible to generate at all and the probe was
+       * never run. Reading `null` alone as "no free week" would confirm a
+       * week the sweep never fills for every edit to a paused or archived
+       * template.
+       *
+       * Named as a week rather than as a date on purpose. `firstFreeWeek`
+       * answers with a candidate *occurrence* — a Thursday, say — and the
+       * sentence built from this speaks about weeks; a bare `Date` here
+       * invites the occurrence reading and would put the wrong day in front
+       * of a teacher. The conversion happens in `updateStudioClassTemplate`
+       * rather than in the copy layer because `mondayOf` lives in
+       * `@/lib/timezone`, which imports pino, and
+       * `components/settings/template-action-messages.ts` is value-imported
+       * by `studio-template-form.tsx`, a `'use client'` component.
+       *
+       * A prediction, not a report: this PUT generates nothing and moves no
+       * existing studio class, so the class it names does not exist yet and
+       * will be created by the hourly sweep.
+       */
+      firstEffective: Date | null;
+      /**
+       * Whether the sweep will act on this edit at all, and if not, what the
+       * teacher has to do first (#284).
+       *
+       * This PUT is deliberately open to a paused or archived template and
+       * nothing here changes that — the edit commits either way. What differs
+       * is WHEN it takes effect, and for an ineligible template the answer is
+       * not a date: the hourly sweep never reaches it
+       * (`ACTIVE_TEMPLATE_WHERE` at `generateStudioClassInstances`'s
+       * `findMany`, and again under the row lock in
+       * `claimStudioTemplateForGeneration`), so no week can be named honestly
+       * until the teacher resumes — or un-archives and then resumes.
+       *
+       * Derived by `templateGenerationState` from the rule row this call just
+       * wrote, not from the row read at the top: `isActive`/`isArchived` are
+       * both on the forbidden list, so no PUT can move them, but reading the
+       * post-write row is what keeps that a fact about the code rather than a
+       * memory of it.
+       *
+       * Carried as its own field rather than left to the client to derive
+       * from the `isActive`/`isArchived` columns `withSlot` already flattens
+       * on. Those two booleans are the INPUT to a rule that lives in
+       * `@/lib/template-selection`; re-deriving it in a `'use client'` copy
+       * layer would put a copy of the generator's eligibility gate in the one
+       * place nobody would look when it changes.
+       */
+      generationState: TemplateGenerationState;
+    }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'no_fields' }
@@ -544,10 +607,12 @@ export type UpdateStudioClassTemplateResult =
  * frame the absence as a seam a future branch would attach a propagation to.
  * Nothing should attach here.
  *
- * What this family still owes #194 is tracked on #284: week-keyed generation,
- * so a `dayOfWeek` edit cannot lay a second class into a week that already
- * holds one from this template, and a response that names the week the new day
- * first appears. Neither of those is a propagation.
+ * What it answers instead is WHEN the new schedule first reaches the calendar:
+ * `firstEffective` and `generationState` on the success arm (#284). Both are
+ * predictions about the hourly sweep, computed after the write commits and
+ * read-only — a prediction is the only honest thing a function that moves no
+ * existing class can offer, and it is not a propagation returning by another
+ * name.
  */
 export async function updateStudioClassTemplate(
   db: PrismaClient,
@@ -556,9 +621,15 @@ export async function updateStudioClassTemplate(
   data: StudioClassTemplateUpdateData &
     Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>>,
 ): Promise<UpdateStudioClassTemplateResult> {
+  // `defaultTimezone` joined for the probe at the foot of this function, which
+  // has to drop an occurrence whose start has already passed exactly the way
+  // the generator drops its own candidates. `StudioClassTemplate` carries no
+  // zone of its own — it is a `Teacher` column, reached through the rule — and
+  // no PUT can move it, so reading it before the write rather than after
+  // changes nothing.
   const template = await db.studioClassTemplate.findUnique({
     where: { id: templateId },
-    include: { scheduleRule: true },
+    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
   });
   // All three returns in this pre-transaction block are silent. #231's
   // acceptance criterion allows that when a comment says why, so here is why,
@@ -590,9 +661,16 @@ export async function updateStudioClassTemplate(
   const hasEdit = Object.values(data).some((v) => v !== undefined);
   if (!hasEdit) return { ok: false, reason: 'no_fields' };
 
+  // Declared out here rather than returned from inside the `try`, so the probe
+  // below sits OUTSIDE the catch. Inside it, a transient failure of a
+  // read-only probe would be mapped to `busy` — "nothing was changed" — about
+  // an edit that had already committed. The catch either returns or rethrows
+  // on every path, so both are definitely assigned by the time the probe runs.
+  let updated: StudioClassTemplateWithSlot;
+  let updatedRule: ScheduleRule;
   try {
-    return await db.$transaction(
-      async (tx): Promise<UpdateStudioClassTemplateResult> => {
+    const written = await db.$transaction(
+      async (tx) => {
         // Bounds the wait for this row. Two siblings hold it long enough to
         // matter, on the same 10s budget: `archiveOrUnarchiveStudioTemplate`
         // holds it through the `calendarEntry.deleteMany` and the count inside
@@ -654,7 +732,11 @@ export async function updateStudioClassTemplate(
         const writeData: Prisma.StudioClassTemplateUncheckedUpdateManyInput &
           Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>> = childData;
 
-        const updated = await tx.studioClassTemplate.update({
+        // `updatedChild`, not `updated`: the value this transaction returns is
+        // combined with the rule below into the outer `updated`, and the two
+        // are not the same shape — one is the bare child row, the other the
+        // flattened `WithSlot` the caller sees.
+        const updatedChild = await tx.studioClassTemplate.update({
           where: { id: templateId },
           data: writeData,
         });
@@ -680,10 +762,12 @@ export async function updateStudioClassTemplate(
             ? await tx.scheduleRule.update({ where: { id: template.scheduleRuleId }, data: ruleData })
             : template.scheduleRule;
 
-        return { ok: true, template: withSlot(updated, newRule) };
+        return { updatedChild, newRule };
       },
       { timeout: 10_000 },
     );
+    updated = withSlot(written.updatedChild, written.newRule);
+    updatedRule = written.newRule;
   } catch (err) {
     // Transient first. `isTransientDbError` matches the SQLSTATE inside its
     // Postgres framing, and a lock timeout arrives as `55P03` wrapped in a
@@ -770,6 +854,68 @@ export async function updateStudioClassTemplate(
 
     throw err;
   }
+
+  // The edit is committed; everything below is read-only and cannot undo it.
+  //
+  // This PUT creates nothing — generation still happens only on the hourly
+  // sweep, on create and on resume — so the confirmation has to PREDICT where
+  // the new schedule first lands rather than report it.
+  //
+  // A longer horizon than the generator's own window, and that asymmetry is
+  // the point rather than an inconsistency: when all four of the generator's
+  // weeks are held by the superseded schedule, the honest answer is week five,
+  // which the generator cannot see. Derived from `DEFAULT_WEEKS` rather than
+  // written as 8, so widening the window widens the prediction with it.
+  //
+  // The same past-start filter the generator applies to its own candidates,
+  // with the same two inputs. Without it this probe can name the CURRENT week
+  // on the template's own weekday once the class hour has gone —
+  // `getNextOccurrences` includes today and the generator drops it — so the
+  // sentence would name a week the sweep never fills. That is the one
+  // direction the staleness note below does not cover, and it is the
+  // dishonest one.
+  //
+  // Staleness the other way is possible and harmless: if the sweep runs
+  // between this read and the teacher reading the sentence, the class can only
+  // land EARLIER than predicted, never later.
+  //
+  // `updatedRule.startTime` straight through, where the class family's call
+  // site converts with `hhmmToTime`: that one reads its `WithSlot`, which
+  // carries the wire's "HH:MM" string, while this reads the rule row, whose
+  // `startTime` is already the `@db.Time` `Date` `classStartInstant` wants. A
+  // real difference between the two call sites, not one to erase.
+  const now = new Date();
+  const horizon = getNextOccurrences(updatedRule.dayOfWeek, now, DEFAULT_WEEKS * 2).filter(
+    (date) =>
+      classStartInstant({ date, startTime: updatedRule.startTime }, template.scheduleRule.teacher.defaultTimezone) >
+      now,
+  );
+
+  // The gate the probe cannot apply for itself, because it is not about a
+  // date: the sweep reaches only templates matching `ACTIVE_TEMPLATE_WHERE`,
+  // so for a paused or archived one there is no week to predict at all. Every
+  // per-date ground the probe reproduces sits INSIDE the generator, and for
+  // these two states that function is never called — which is why the probe's
+  // own docblock can enumerate its grounds exhaustively and still say nothing
+  // about this one.
+  //
+  // Deterministic, not a race: `isActive` is a committed column read by every
+  // generation path.
+  //
+  // Not probed-then-discarded: two reads for an answer that cannot be used are
+  // two reads too many, and skipping them makes the precondition visible at
+  // the call site rather than buried in a `null` return.
+  const generationState = templateGenerationState(updatedRule);
+
+  return {
+    ok: true,
+    template: updated,
+    firstEffective:
+      generationState === 'active'
+        ? await probeFirstEffectiveWeek(db, updated, horizon, 'studio template')
+        : null,
+    generationState,
+  };
 }
 
 /**

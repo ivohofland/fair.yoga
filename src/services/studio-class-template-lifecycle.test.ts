@@ -5,9 +5,12 @@ import {
   pauseOrResumeStudioTemplate,
   updateStudioClassTemplate,
 } from './studio-class-template-lifecycle';
+import { generateStudioInstancesForTemplate } from './studio-class-generator';
+import { getNextOccurrences } from './entry-generation';
 import { log } from '@/lib/log';
+import { mondayOf } from '@/lib/timezone';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
-import { createStudioClassFixture } from '../../tests/class-fixtures';
+import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -1712,6 +1715,31 @@ describe('updateStudioClassTemplate (DB)', () => {
     expect(Number(result.template.hourlyRate)).toBe(62.5);
     // Untouched fields survive a partial update.
     expect(result.template.location).toBe('Update Studio');
+    // Exhaustive on the success arm's own keys, and the class family pins the
+    // same shape for the same reason (`class-template-lifecycle.test.ts`): a
+    // field added to the arm and not to the route reaches nobody, and this is
+    // where that shows up. `Object.keys`, not a whole-result `toEqual`, because
+    // the template row's own fields are asserted above and re-listing them here
+    // would make this case fail on every unrelated schema change.
+    //
+    // Both new keys are PREDICTIONS about the sweep, not reports of work this
+    // call did. A key counting rows this call touched would be the propagation
+    // #194 deleted coming back, and it fails here first.
+    expect(Object.keys(result).sort()).toEqual([
+      'firstEffective',
+      'generationState',
+      'ok',
+      'template',
+    ]);
+    // A live template, so the state is `active` and the week is a real
+    // prediction rather than the absence of one.
+    expect(result.generationState).toBe('active');
+    // And it is a week, not a class date: a Monday, never the Friday this
+    // block's `makeTemplate` puts the template on. The copy renders it as "the
+    // week starting …", so a candidate occurrence left unconverted would put
+    // the wrong weekday in front of a teacher.
+    expect(result.firstEffective).not.toBeNull();
+    expect(result.firstEffective!.getUTCDay()).toBe(1);
   });
 
   it('returns slot_conflict with heldBy: studio when the edit lands on a live sibling slot, and logs it', async () => {
@@ -1946,6 +1974,323 @@ describe('updateStudioClassTemplate (DB)', () => {
   });
 
   /**
+   * The eligibility gate, paused half — the studio twin of
+   * `class-template-lifecycle.test.ts`'s "names no week for a paused
+   * template".
+   *
+   * The probe reproduces the grounds on which the generator declines a
+   * candidate DATE. `ACTIVE_TEMPLATE_WHERE` declines whole TEMPLATES, one
+   * layer up, before any candidate exists — so for a paused template the
+   * generator is never called, no date is ever declined, and every week the
+   * probe could name is a week nothing will fill. That gate is not a
+   * `SkipReason` and could not have been found by completing the probe's own
+   * enumeration; it needs its own case.
+   *
+   * The edit itself still succeeds, and must: this PUT is deliberately open to
+   * a paused template. What is refused is the dated sentence, not the write.
+   *
+   * Paused through `pauseOrResumeStudioTemplate` rather than by setting the
+   * column, so this pins the state a teacher can actually reach from the
+   * toggle.
+   */
+  it('names no week for a paused template, and reports the state instead', async () => {
+    const t = await makeTemplate(teacherId, 'Paused Edit');
+    const paused = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
+    expect(paused.ok).toBe(true);
+
+    const result = await updateStudioClassTemplate(prisma, t.id, teacherId, {
+      classType: 'Paused Edit, Renamed',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    // The write landed — the gate is on the prediction, not on the edit.
+    expect(result.template.classType).toBe('Paused Edit, Renamed');
+    expect(result.template.isActive).toBe(false);
+    // No week, and the reason for the absence is on the result rather than
+    // left for the copy layer to guess from a bare `null`.
+    expect(result.firstEffective).toBeNull();
+    expect(result.generationState).toBe('paused');
+  });
+
+  /**
+   * The eligibility gate, archived half — and the sharper of the two.
+   *
+   * Archiving withdraws the future window, so an archived template has no held
+   * week at all. An ungated probe therefore returns the EARLIEST answer it can
+   * give, this week's Monday, for the template least likely to produce a class.
+   *
+   * `archived`, not `paused`, and the distinction is load-bearing rather than
+   * cosmetic: `archiveOrUnarchiveStudioTemplate` forces `isActive: false` on
+   * both directions, so un-archiving alone puts nothing back. A teacher told
+   * to resume an archived studio template has been given a remedy that does
+   * not work.
+   */
+  it('distinguishes an archived template from a merely paused one', async () => {
+    const t = await makeTemplate(teacherId, 'Archived Edit');
+    const archived = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
+    expect(archived.ok).toBe(true);
+
+    const result = await updateStudioClassTemplate(prisma, t.id, teacherId, {
+      classType: 'Archived Edit, Renamed',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.template.classType).toBe('Archived Edit, Renamed');
+    // Both flags, because both halves of the state are what the answer below
+    // depends on: the archive forced `isActive: false` as well.
+    expect(result.template.isArchived).toBe(true);
+    expect(result.template.isActive).toBe(false);
+    expect(result.firstEffective).toBeNull();
+    expect(result.generationState).toBe('archived');
+  });
+
+  /**
+   * #296/#327 from this side: the probe must decline a date the OTHER family
+   * holds, for the same reason it declines one this family holds — the
+   * generator will skip it (`blocked_by_overlap`), so naming its week promises
+   * a class the sweep does not deliver. The mirror of
+   * `class-template-lifecycle.test.ts`'s "declines a date a live studio class
+   * holds", families swapped: a live `Class` against a `StudioClassTemplate`'s
+   * candidate.
+   *
+   * Getting this wrong lands the prediction EARLIER than the sweep delivers,
+   * which is the dishonest direction.
+   *
+   * `23:59` so the first candidate is never dropped by the probe's own
+   * already-started filter, which would move the answer a week for a reason
+   * that has nothing to do with what this pins — the block's own
+   * `makeTemplate` slots are all 09:xx, where that filter fires for most of
+   * the day. Both halves asserted: the week it IS and the week it is NOT,
+   * because the failure is off by exactly one week and `not.toBe` alone would
+   * pass for any other wrong answer.
+   *
+   * TODAY's weekday, so the blocked candidate is today; the cancelled twin
+   * below takes TOMORROW's, because at 23:59 two rules on one weekday would
+   * be the same slot and `ScheduleRule_teacher_slot_excl` refuses the second.
+   * Everything this case creates is torn down in a `finally`, so a failure
+   * here cannot become a create-time failure there.
+   */
+  it('declines a date a live class from the other family holds, and names the week after', async () => {
+    const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
+    const t = await prisma.studioClassTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Cross Family Probe',
+            dayOfWeek: todaySchemaDay,
+            startTime: hhmmToTime('23:59'),
+            durationMinutes: 60,
+          },
+        },
+        location: 'Update Studio',
+        hourlyRate: 45,
+      },
+    });
+
+    const occurrences = getNextOccurrences(todaySchemaDay, new Date(), 2);
+    const blocked = occurrences[0]!;
+    const nextWeek = occurrences[1]!;
+
+    // The other family needs a room; `StudioClassTemplate` has no room
+    // relation, so this block seeds none of its own.
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Cross Probe Venue', address: `${t.id} Cross Probe Street`, city: 'Amsterdam',
+        postcode: '1011AB', floor: '1', roomName: 'Main', maxCapacity: 12,
+        isPublic: false, createdById: teacherId,
+      },
+    });
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId: room.id, rentalRate: 20, capacityOverride: 12 },
+    });
+    const holder = await createClassFixture(prisma, {
+      teacherId,
+      scheduleRuleId: null,
+      classType: 'Cross Family Holder',
+      date: blocked,
+      startTime: hhmmToTime('23:59'),
+      durationMinutes: 60,
+      teacherRoomId: teacherRoom.id,
+      roomCost: 20,
+      minRate: 30,
+      targetRate: 60,
+      minStudents: 3,
+      maxStudents: 10,
+      status: 'open',
+    });
+
+    try {
+      const result = await updateStudioClassTemplate(prisma, t.id, teacherId, {
+        classType: 'Cross Family Probe, Renamed',
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.firstEffective).not.toBeNull();
+      expect(result.firstEffective!.getTime()).toBe(mondayOf(nextWeek));
+      expect(result.firstEffective!.getTime()).not.toBe(mondayOf(blocked));
+    } finally {
+      await prisma.calendarEntry.delete({ where: { id: holder.calendarEntryId } });
+      await prisma.teacherRoom.delete({ where: { id: teacherRoom.id } });
+      await prisma.room.delete({ where: { id: room.id } });
+      // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
+      // 298), so deleting the rule removes the template with it.
+      await prisma.scheduleRule.delete({ where: { id: t.scheduleRuleId } });
+    }
+  });
+
+  /**
+   * The liveness half. Since #327 `cancelledAt IS NULL` is the ONE spelling
+   * both families use, on the entry, and it is the exclusion constraint's own
+   * partial predicate — so a cancelled class holds no slot and the date stays
+   * reachable. Widen the probe's slot read past liveness and this goes red.
+   *
+   * TOMORROW's weekday, for the slot reason the case above gives. That moves
+   * the first candidate to tomorrow, which is what `notBlocked` names; nothing
+   * else about the case changes, since `23:59` tomorrow is ahead of now at
+   * every hour this can run.
+   */
+  it('does not decline a date a CANCELLED class from the other family holds', async () => {
+    const tomorrowSchemaDay = ((new Date().getUTCDay() + 6) % 7 + 1) % 7;
+    const t = await prisma.studioClassTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Cross Family Probe Cancelled',
+            dayOfWeek: tomorrowSchemaDay,
+            startTime: hhmmToTime('23:59'),
+            durationMinutes: 60,
+          },
+        },
+        location: 'Update Studio',
+        hourlyRate: 45,
+      },
+    });
+
+    const notBlocked = getNextOccurrences(tomorrowSchemaDay, new Date(), 1)[0]!;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Cross Cancelled Venue', address: `${t.id} Cross Cancelled Street`, city: 'Amsterdam',
+        postcode: '1011AB', floor: '1', roomName: 'Main', maxCapacity: 12,
+        isPublic: false, createdById: teacherId,
+      },
+    });
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId: room.id, rentalRate: 20, capacityOverride: 12 },
+    });
+    const holder = await createClassFixture(prisma, {
+      teacherId,
+      scheduleRuleId: null,
+      classType: 'Cross Family Cancelled Holder',
+      date: notBlocked,
+      startTime: hhmmToTime('23:59'),
+      durationMinutes: 60,
+      cancelledAt: new Date(),
+      teacherRoomId: teacherRoom.id,
+      roomCost: 20,
+      minRate: 30,
+      targetRate: 60,
+      minStudents: 3,
+      maxStudents: 10,
+      status: 'open',
+    });
+
+    try {
+      const result = await updateStudioClassTemplate(prisma, t.id, teacherId, {
+        classType: 'Cross Family Probe Cancelled, Renamed',
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.firstEffective).not.toBeNull();
+      expect(result.firstEffective!.getTime()).toBe(mondayOf(notBlocked));
+    } finally {
+      await prisma.calendarEntry.delete({ where: { id: holder.calendarEntryId } });
+      await prisma.teacherRoom.delete({ where: { id: teacherRoom.id } });
+      await prisma.room.delete({ where: { id: room.id } });
+      await prisma.scheduleRule.delete({ where: { id: t.scheduleRuleId } });
+    }
+  });
+
+  /**
+   * The probe's past-start filter, and it is here because nothing else catches
+   * it: with the five cases this task shipped in place, deleting the
+   * `.filter(...)` from `updateStudioClassTemplate`'s horizon left all of them
+   * green. The class family's twin was added for exactly that measurement one
+   * file over, so this side starts with the guard covered rather than
+   * discovering it later.
+   *
+   * The horizon drops an occurrence whose start instant has already passed,
+   * the same predicate the generator applies to its own candidates. Without
+   * it this names the CURRENT week on the template's own weekday once the
+   * class hour has gone — the sweep never fills it, and the prediction lands
+   * earlier than delivery, which is the dishonest direction.
+   *
+   * All three inputs are deliberate and none can drift with the calendar:
+   *
+   *   - `dayOfWeek` is TODAY's, computed from `new Date()`, so
+   *     `getNextOccurrences` yields today as its first occurrence — its own
+   *     comment says it includes today.
+   *   - `startTime` is `'00:00'` and this block's teacher is pinned to UTC, so
+   *     the start instant for today is today's midnight UTC, never strictly
+   *     after `now`. Today is dropped on every run, at every hour, rather than
+   *     only after some cutoff. It is also the opposite arrangement from the
+   *     two cross-family cases above, which pick `23:59` to keep today's
+   *     occurrence alive.
+   *   - No entry exists for this rule, so no week is held and the answer is
+   *     simply the first surviving candidate's week. Nothing else can be
+   *     responsible for the difference.
+   *
+   * Both halves asserted — the week it IS and the week it is NOT — because the
+   * failure is off by exactly one week and `not.toBe` alone would pass for any
+   * other wrong answer.
+   */
+  it('drops an occurrence whose start has already passed, and names the week after', async () => {
+    const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
+    const t = await prisma.studioClassTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Past Start Probe',
+            dayOfWeek: todaySchemaDay,
+            startTime: hhmmToTime('00:00'),
+            durationMinutes: 60,
+          },
+        },
+        location: 'Update Studio',
+        hourlyRate: 45,
+      },
+    });
+
+    const occurrences = getNextOccurrences(todaySchemaDay, new Date(), 2);
+    const todayOccurrence = occurrences[0]!;
+    const nextWeekOccurrence = occurrences[1]!;
+
+    try {
+      const result = await updateStudioClassTemplate(prisma, t.id, teacherId, {
+        classType: 'Past Start Probe, Renamed',
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.firstEffective).not.toBeNull();
+      expect(result.firstEffective!.getTime()).toBe(mondayOf(nextWeekOccurrence));
+      expect(result.firstEffective!.getTime()).not.toBe(mondayOf(todayOccurrence));
+    } finally {
+      await prisma.scheduleRule.delete({ where: { id: t.scheduleRuleId } });
+    }
+  });
+
+  /**
    * #194, pinned rather than merely asserted in prose.
    *
    * `updateStudioClassTemplate`'s docblock says editing `dayOfWeek` or
@@ -2000,5 +2345,71 @@ describe('updateStudioClassTemplate (DB)', () => {
     expect(after?.location).toBe('Update Studio');
     expect(after?.calendarEntry.cancelledAt).toBeNull();
     expect(after?.calendarEntry.scheduleRuleId).toBe(t.scheduleRuleId);
+  });
+
+  /**
+   * #284's first acceptance bullet, and the strongest form of the case above
+   * it: an edit leaves every already-generated studio class BYTE-IDENTICAL.
+   *
+   * Whole rows, not a chosen field list. The case above names four fields, and
+   * a list can only prove the fields whoever wrote it thought of — a
+   * propagation that rewrote a fifth would pass it. `findMany` with no
+   * `select` compares every column of both rows, so any write to either table
+   * fails here whether or not anyone anticipated the column.
+   *
+   * Both tables, because the split is where a propagation would land: #327 put
+   * the schedule on `CalendarEntry` and the economics on `StudioClass`, and a
+   * sync that moved the day would touch the first while a sync that mirrored
+   * the location would touch the second.
+   *
+   * A real generated window rather than hand-made fixtures — these are the
+   * rows the sweep actually produces, complete with their `scheduleRuleId`
+   * back-reference, which is what a propagation would follow.
+   *
+   * `dayOfWeek` AND `startTime` in ONE call, because both are the fields a
+   * sync would have to rewrite and an edit that moved only one would leave the
+   * other's path untested. The template's own row is asserted to have moved,
+   * so a no-op edit cannot be what makes the comparison hold.
+   */
+  it('leaves every generated studio class byte-identical when the schedule moves (#284)', async () => {
+    const t = await makeTemplate(teacherId, 'Byte Identical');
+    const withZone = await prisma.studioClassTemplate.findUniqueOrThrow({
+      where: { id: t.id },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+    });
+    const generated = await generateStudioInstancesForTemplate(prisma, withZone);
+    expect(generated.created).toBe(4);
+
+    const readEntries = () =>
+      prisma.calendarEntry.findMany({
+        where: { scheduleRuleId: t.scheduleRuleId },
+        orderBy: { date: 'asc' },
+      });
+    const readChildren = () =>
+      prisma.studioClass.findMany({
+        where: { calendarEntry: { scheduleRuleId: t.scheduleRuleId } },
+        orderBy: { calendarEntryId: 'asc' },
+      });
+
+    const entriesBefore = await readEntries();
+    const childrenBefore = await readChildren();
+    expect(entriesBefore).toHaveLength(4);
+    expect(childrenBefore).toHaveLength(4);
+
+    // Thursday in the schema's convention (0 = Monday), which is where no
+    // other rule of this teacher sits: `makeTemplate` puts every one of them
+    // on `dayOfWeek: 4`, so the move cannot collide with a sibling slot.
+    const result = await updateStudioClassTemplate(prisma, t.id, teacherId, {
+      dayOfWeek: 3,
+      startTime: '06:15',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.template.dayOfWeek).toBe(3);
+    expect(result.template.startTime).toBe('06:15');
+
+    expect(await readEntries()).toEqual(entriesBefore);
+    expect(await readChildren()).toEqual(childrenBefore);
   });
 });
