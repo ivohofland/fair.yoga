@@ -2,13 +2,14 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { RegistrationStatus } from '@prisma/client';
 import { Icon } from '@/components/ui/icon';
 import { readErrorMessage } from '@/lib/client-errors';
 
 export interface AttendanceItem {
   registrationId: string;
   studentName: string;
-  status: string;
+  status: RegistrationStatus;
 }
 
 interface AttendanceListProps {
@@ -35,14 +36,14 @@ interface AttendanceListProps {
 export function AttendanceList({ items }: AttendanceListProps) {
   const router = useRouter();
   const [attendanceState, setAttendanceState] = useState<
-    Record<string, string>
-  >(
+    Record<string, RegistrationStatus>
+  >(() =>
     Object.fromEntries(items.map((item) => [item.registrationId, item.status])),
   );
   const [updating, setUpdating] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function toggleAttendance(registrationId: string, originalStatus: string) {
+  async function toggleAttendance(registrationId: string, originalStatus: RegistrationStatus) {
     const currentStatus = attendanceState[registrationId] ?? 'registered';
     // A student who cancelled late is not a no-show — they told the teacher they
     // were not coming, and were charged for saying so. The only correction that
@@ -52,7 +53,7 @@ export function AttendanceList({ items }: AttendanceListProps) {
     // `/bookings` page shows them ("Cancelled after the deadline — this class is
     // still charged"). `updateRegistrationSchema` accepts `late_cancel`, so the
     // round trip is expressible.
-    const newStatus =
+    const newStatus: RegistrationStatus =
       originalStatus === 'late_cancel'
         ? currentStatus === 'attended'
           ? 'late_cancel'

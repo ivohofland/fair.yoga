@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { WaitlistStatus } from '@prisma/client';
-import { ACTIVE_REGISTRATION_STATUSES } from './registration-status';
+import { ACTIVE_REGISTRATION_STATUSES, isRegistrationStatus } from './registration-status';
 
 /**
  * The membership check this constant's shape exists to keep, pinned so that
@@ -43,3 +43,35 @@ describe('ACTIVE_REGISTRATION_STATUSES', () => {
     expect(ACTIVE_REGISTRATION_STATUSES).toEqual(['registered', 'attended', 'no_show']);
   });
 });
+
+describe('isRegistrationStatus', () => {
+  it('accepts every member of the schema enum', () => {
+    expect(isRegistrationStatus('registered')).toBe(true);
+    expect(isRegistrationStatus('attended')).toBe(true);
+    expect(isRegistrationStatus('no_show')).toBe(true);
+    expect(isRegistrationStatus('late_cancel')).toBe(true);
+    expect(isRegistrationStatus('cancelled')).toBe(true);
+  });
+
+  it('rejects near-misses and non-strings', () => {
+    expect(isRegistrationStatus('register')).toBe(false);
+    expect(isRegistrationStatus('attende')).toBe(false);
+    expect(isRegistrationStatus('')).toBe(false);
+    expect(isRegistrationStatus('REGISTERED')).toBe(false); // case-sensitive on purpose
+    expect(isRegistrationStatus(null)).toBe(false);
+    expect(isRegistrationStatus(undefined)).toBe(false);
+    expect(isRegistrationStatus(42)).toBe(false);
+  });
+
+  /**
+   * The reason this is a `Set` and not `value in REGISTRATION_ROLE`: an `in`
+   * check against a plain object walks the prototype chain, so 'constructor'
+   * and 'toString' would both pass. A Set has no such members.
+   */
+  it('rejects inherited Object.prototype keys', () => {
+    expect(isRegistrationStatus('constructor')).toBe(false);
+    expect(isRegistrationStatus('toString')).toBe(false);
+    expect(isRegistrationStatus('hasOwnProperty')).toBe(false);
+  });
+});
+

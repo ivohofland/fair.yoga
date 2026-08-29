@@ -1,5 +1,6 @@
 /**
- * The registration statuses that occupy a seat.
+ * What each `RegistrationStatus` means for seat occupancy, and the subset the
+ * app derives from it.
  *
  * One definition, in `lib/` and import-free at runtime, for the same reason
  * `class-fields.ts` and `tiers.ts` are: a `'use client'` component that ever
@@ -7,29 +8,10 @@
  * (pino, server-only) into the browser bundle. The `import type` below erases
  * completely, so this module emits no runtime import at all.
  *
- * `cancelled` and `late_cancel` are absent deliberately — both freed the seat.
- * `late_cancel` still bills (it is in `CHARGED_STATUSES`,
- * `services/class-lifecycle.ts`), which is why the two sets exist and differ
- * by exactly that one member.
- *
- * The annotation pins MEMBERSHIP, not completeness: every entry must be a real
- * `RegistrationStatus`, so a renamed enum member fails `tsc`. It does NOT
- * assert the list is exhaustive, and must not be "fixed" into something that
- * does — this list is a subset by design. (#39 shipped the opposite mistake: a
- * `satisfies` read as a completeness pin when it only ever pinned membership.)
- *
- * **If you are here because you are ADDING a `RegistrationStatus`, nothing will
- * stop you forgetting this file.** Verified during #218's review: there is no
- * `Record<RegistrationStatus, …>`, no indexed type and no exhaustive `switch`
- * anywhere in `src/`, so a new member compiles clean and is silently absent
- * from both subsets — it would occupy no seat (here) and bill nothing
- * (`CHARGED_STATUSES`, `services/class-lifecycle.ts`). Deliberately a comment
- * and not a tracker entry: the failure needs to be read at the moment someone
- * edits the enum, which is this docblock and that one, and an issue nobody
- * opens is worse than a note everybody hits. The mechanical fix, if it ever
- * earns its keep, is one `Record<RegistrationStatus, 'occupies' | 'frees'>`
- * that both lists derive from — `Record` over an enum is exhaustive, so a new
- * member becomes a compile error exactly where the decision belongs.
+ * `cancelled` and `late_cancel` are absent from `ACTIVE_REGISTRATION_STATUSES`
+ * deliberately — both freed the seat. `late_cancel` still bills (it is in
+ * `CHARGED_STATUSES`, `services/class-lifecycle.ts`), which is why the two sets
+ * exist and differ by exactly that one member.
  *
  * **Annotated and frozen, NOT `as const satisfies`** — the same shape as
  * `CHARGED_STATUSES`, and the difference is not cosmetic. `as const` infers the
@@ -55,8 +37,46 @@
  */
 import type { RegistrationStatus } from '@prisma/client';
 
-export const ACTIVE_REGISTRATION_STATUSES: readonly RegistrationStatus[] = Object.freeze([
-  'registered',
-  'attended',
-  'no_show',
-]);
+/**
+ * Every status, and whether it occupies or frees a seat in the class.
+ *
+ * `Record` over the enum is EXHAUSTIVE — adding a sixth member to the schema
+ * is a compile error here until it is classified, which is the mechanical fix
+ * #132 established following #218.
+ *
+ * The values are hand-listed rather than derived from Prisma's runtime enum
+ * export because this module is reached from client components and every
+ * `@prisma/client` import in a `'use client'` path in this repo is type-only —
+ * a value import would pull the Prisma runtime into the browser bundle.
+ */
+const REGISTRATION_ROLE: Record<RegistrationStatus, 'occupies' | 'frees'> = {
+  registered: 'occupies',
+  attended: 'occupies',
+  no_show: 'occupies',
+  late_cancel: 'frees',
+  cancelled: 'frees',
+};
+
+/**
+ * A `Set`, not `Object.hasOwn` or `in`: `tsc` accepts `Object.hasOwn` only
+ * because `lib` includes `esnext`, while `target` is ES2017. A Set also has no
+ * prototype keys, so 'constructor' and 'toString' cannot sneak through.
+ */
+const REGISTRATION_STATUS_KEYS: ReadonlySet<string> = new Set(Object.keys(REGISTRATION_ROLE));
+
+export function isRegistrationStatus(value: unknown): value is RegistrationStatus {
+  return typeof value === 'string' && REGISTRATION_STATUS_KEYS.has(value);
+}
+
+/**
+ * The registration statuses that occupy a seat.
+ *
+ * Derived from `REGISTRATION_ROLE` so it cannot drift from the exhaustive
+ * classification above.
+ */
+export const ACTIVE_REGISTRATION_STATUSES: readonly RegistrationStatus[] = Object.freeze(
+  (Object.keys(REGISTRATION_ROLE) as RegistrationStatus[]).filter(
+    (status) => REGISTRATION_ROLE[status] === 'occupies',
+  ),
+);
+
