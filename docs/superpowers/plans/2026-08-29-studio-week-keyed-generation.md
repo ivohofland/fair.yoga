@@ -518,7 +518,7 @@ Rule 4's service half. This is the decision stage C2's `update` merge is blocked
 on, answered by shipping it.
 
 **Files:**
-- Modify: `src/services/studio-class-template-lifecycle.ts` (`UpdateStudioClassTemplateResult` `:492`, `updateStudioClassTemplate` `:551`)
+- Modify: `src/services/studio-class-template-lifecycle.ts` (`UpdateStudioClassTemplateResult` `:493`, `updateStudioClassTemplate` `:552`)
 - Test: `src/services/studio-class-template-lifecycle.test.ts` (`updateStudioClassTemplate (DB)`, `:1587`)
 
 **Interfaces:**
@@ -532,7 +532,7 @@ on, answered by shipping it.
 
 - [ ] **Step 1: Write the failing tests**
 
-Four, mirroring `class-template-lifecycle.test.ts:330-360, 520-575, 640-735`:
+Four, mirroring `class-template-lifecycle.test.ts:313-360, 519-573, 628-731`:
 
 1. the `ok: true` arm has exactly four keys — assert
    `Object.keys(result).sort()` equals `['firstEffective', 'generationState', 'ok', 'template']`.
@@ -545,7 +545,7 @@ Four, mirroring `class-template-lifecycle.test.ts:330-360, 520-575, 640-735`:
    running the probe;
 4. a date held by a **live class from the other family** is not counted as
    reachable, and a date held by a **cancelled** one is. Mirror
-   `class-template-lifecycle.test.ts:640-735` with the families swapped —
+   `class-template-lifecycle.test.ts:628-731` with the families swapped —
    a `Class` fixture blocking a `StudioClassTemplate`'s candidate.
 5. **the edit leaves every already-generated `StudioClass` byte-identical** —
    the issue's first acceptance bullet, already true and never pinned. Generate
@@ -567,7 +567,7 @@ result. Record the exact text.
 
 - [ ] **Step 3: Widen the head read**
 
-`:552` becomes:
+`:561`, the `include` of the read at `:559`, becomes:
 
 ```ts
 include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
@@ -578,7 +578,7 @@ carries none of its own.
 
 - [ ] **Step 4: Hoist `updated` / `updatedRule` out of the transaction**
 
-Exactly the shape `updateClassTemplate:852-956` uses — `let updated:
+Exactly the shape `updateClassTemplate:650-758` uses — `let updated:
 StudioClassTemplateWithSlot; let updatedRule: ScheduleRule;` declared before the
 `try`, the transaction returning `{ updatedChild, newRule }`, and the assignment
 after it. Carry the reason across in a comment on the declarations: **the probe
@@ -776,6 +776,13 @@ Route: mirror `api/class-templates/[id]/route.ts:226-245`, including the comment
 explaining that `firstEffective` is serialized as an ISO string and
 `generationState` is not redundant with the `isActive`/`isArchived` columns the
 response already spreads.
+
+**And fix a stale claim you will be editing around** (found by Task 5, left for
+you deliberately): the comment on `const unhandled: never = result;` in the
+studio route says *"the class twin's success arm already carries `sync`, and its
+route spreads it."* `sync` no longer exists anywhere. Rewrite the sentence to
+state what is true now — do not work around it, and do not record what it used
+to say.
 
 Form: mirror `template-form.tsx:395-430` — parse as untrusted JSON, validate
 `generationState` against the three literals rather than casting, and default to
