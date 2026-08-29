@@ -89,7 +89,7 @@ export const generateInstancesForTemplate = (
  *
  * Kept as its own exported name and its own return type because both are
  * named from outside this file: `TemplateWithTimezone` is what
- * `generateInstancesForTemplate` below takes, and several call sites and
+ * `generateInstancesForTemplate` above takes, and several call sites and
  * comments name this function — `db-locks.test.ts` among them, where the
  * branded parameter is pinned to refuse a bare client.
  */

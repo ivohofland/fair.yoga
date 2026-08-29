@@ -1305,8 +1305,8 @@ describe('generateClassInstances (DB)', () => {
      * the case below pins what a generator reports when it does. Nothing
      * connected them, and the gap was a live user-facing defect.
      *
-     * The chain: both generators read occupancy as `date: { in: dates }` and
-     * compare with `spansOverlap`, which is minutes-since-midnight on ONE date.
+     * The chain: the generator reads occupancy as `date: { in: dates }` and
+     * compares with `spansOverlap`, which is minutes-since-midnight on ONE date.
      * A neighbour carried into a candidate from the previous calendar date is
      * therefore invisible to the pre-check; the date goes to `free`; the
      * constraint refuses the insert; `ON CONFLICT DO NOTHING` absorbs it; and

@@ -106,10 +106,10 @@ describe('countSkipReasons', () => {
 /**
  * `spansOverlap`'s HALF-OPEN BOUNDARY, which nothing pinned.
  *
- * Non-exact-start overlap is pinned behaviourally by both generators' suites,
- * but every fixture there overlaps by a comfortable margin — no live entry sits
- * exactly back-to-back with a candidate. So mutating `<` to `<=` survived the
- * whole tree, and that mutation makes both generators skip dates
+ * Non-exact-start overlap is pinned behaviourally by both families' generator
+ * suites, but every fixture there overlaps by a comfortable margin — no live
+ * entry sits exactly back-to-back with a candidate. So mutating `<` to `<=`
+ * survived the whole tree, and that mutation makes the generator skip dates
  * `CalendarEntry_teacher_slot_excl` would have ADMITTED: a pre-check STRICTER
  * than the guard it mirrors, which the stage B spec §4.1 calls the only real
  * defect, because a window silently comes back short and nothing raises.

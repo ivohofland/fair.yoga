@@ -1214,7 +1214,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     // between: the latest east-teacher rule on either of those two weekdays
     // ends at 17:15, an hour and a half before this one starts. The exclusion
     // is per-weekday, so an east-teacher rule on any OTHER day is free to sit
-    // later than that and several do.
+    // later than that, and the `dayOfWeek: 5` rule at 16:45 above does.
     let weekTemplateId: string;
     let weekRuleId: string;
 

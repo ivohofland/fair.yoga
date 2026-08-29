@@ -119,7 +119,7 @@ function liveOverlapOf(
  * silently absorbed the refusal, about the dates that did not come back.
  *
  * WHY A SECOND LOOK IS NEEDED AT ALL, which is the whole of this function.
- * Both generators pre-check occupancy with `spansOverlap` (`@/lib/generation`)
+ * The generator pre-checks occupancy with `spansOverlap` (`@/lib/generation`)
  * over a `date: { in: dates }` read — minutes-since-midnight on ONE calendar
  * date. A neighbour whose duration carries it past midnight overlaps a
  * candidate on the NEXT date, and that read cannot see it. The constraint can,

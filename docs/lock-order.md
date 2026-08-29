@@ -1145,10 +1145,11 @@ second writer waits on the first's index entry rather than reading past it.
 
 ### What keeps the realistic path away from the constraint
 
-Both generators pre-check — there is ONE entry table now, so the pre-check
-reads it directly rather than reaching across to a sibling — and decline the
-date as `blocked_by_overlap` (`class-generator.ts`, `studio-class-generator.ts`)
-rather than letting `CalendarEntry_teacher_slot_excl` refuse the insert. Behind
+The generator pre-checks — one function for both families since #284
+(`generateEntriesForRule`, `services/entry-generation.ts`), and there is ONE
+entry table, so the pre-check reads it directly rather than reaching across to
+a sibling — and declines the date as `blocked_by_overlap` rather than letting
+`CalendarEntry_teacher_slot_excl` refuse the insert. Behind
 them, **ten write endpoints across eight route files** answer 409, in two
 groups that answer differently because the two layers can say different things:
 

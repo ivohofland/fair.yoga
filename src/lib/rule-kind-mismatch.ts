@@ -15,11 +15,12 @@ import { log } from './log';
  * express the fix while Prisma's schema language cannot.
  *
  * WHY IT NEEDS A DETECTOR RATHER THAN ONLY A TICKET. What keeps the edge sound
- * today is a property of the two generators — each takes `scheduleRuleId` from
- * a template row it already holds, so the rule's `kind` is already pinned to
- * the entry's. That property expires the moment anything sets the column
- * WITHOUT routing through a template: a backfill, an import, a repair script,
- * a future family. And the state it produces is INVISIBLE: a studio entry
+ * today is a property of the one generator both families run
+ * (`generateEntriesForRule`, `services/entry-generation.ts`): it takes
+ * `scheduleRuleId` from a template row it already holds, so the rule's `kind`
+ * is already pinned to the entry's. That property expires the moment anything
+ * sets the column WITHOUT routing through a template: a backfill, an import, a
+ * repair script, a future family. And the state it produces is INVISIBLE: a studio entry
  * pointing at a regular rule finds no `studioClassTemplates`, so both readers
  * below render "no template" — which is exactly how a legitimately manual
  * studio class renders. The teacher sees a plausible page, the operator sees

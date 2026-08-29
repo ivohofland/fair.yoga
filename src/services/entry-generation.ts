@@ -934,10 +934,12 @@ export type EditLogNoun = 'recurring class' | 'studio template';
  * That precondition is the caller's, not this function's, and it is stated in
  * the contract rather than assumed because it is not a `SkipReason` and so
  * cannot appear in the enumeration below. `generateEntriesForRule` refuses
- * candidate DATES; the eligibility predicate (`ACTIVE_TEMPLATE_WHERE`,
- * `@/lib/template-selection`) refuses whole TEMPLATES, one layer up, before
- * any candidate is considered — at either family's sweep `findMany` and again
- * under the row lock in `claimRuleForGeneration`. For a paused or archived
+ * candidate DATES; the eligibility rule — `isActive` true and `isArchived`
+ * false on the `ScheduleRule` — refuses whole TEMPLATES, one layer up, before
+ * any candidate is considered, at each family's sweep `findMany` and again
+ * under the row lock in `claimRuleForGeneration`. `@/lib/template-selection`
+ * owns that rule's canonical spelling and the state name each caller reports
+ * it under. For a paused or archived
  * template the generator is never called, no date is ever declined, and every
  * answer this function could give would name a week nothing will fill. Each
  * family's `update…Template` therefore calls it only when

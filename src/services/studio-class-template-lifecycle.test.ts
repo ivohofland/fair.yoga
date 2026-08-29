@@ -2069,8 +2069,9 @@ describe('updateStudioClassTemplate (DB)', () => {
    * already-started filter, which would move the answer a week for a reason
    * that has nothing to do with what this pins. The block's own `makeTemplate`
    * walks its slots up from `'09:30'` an hour at a time, and that filter fires
-   * on any of them for most of the day; `23:59` is the one start a run at any
-   * hour still has ahead of it.
+   * on any of them for most of the day. `23:59` is the last start a calendar
+   * day has, so only a run inside its final minute could find today's
+   * candidate already begun.
    *
    * Both halves asserted: the week it IS and the week it is NOT, because the
    * failure is off by exactly one week and `not.toBe` alone would pass for any

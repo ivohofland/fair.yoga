@@ -142,7 +142,7 @@ export type SkipReason =
    * row.
    *
    * A THIRD CONDITION REACHES IT, AND NOT FROM THE PRE-CHECK. A neighbour
-   * spilling past midnight is invisible to both generators' occupancy read —
+   * spilling past midnight is invisible to the generator's occupancy read —
    * that read is `date: { in: dates }` and compares with `spansOverlap` below,
    * which is minutes-since-midnight on ONE date, so a neighbour carried into a
    * candidate from the PREVIOUS calendar date cannot be seen there
@@ -364,7 +364,7 @@ export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
  * Whether two same-date entries occupy overlapping minutes of the day.
  *
  * The shape `CalendarEntry_teacher_slot_excl` refuses, expressed in
- * TypeScript so the two generators can NAME a blocked date rather than
+ * TypeScript so the generator can NAME a blocked date rather than
  * discovering it as a `23P01`. The constraint is the enforcement; this is the
  * pre-check that produces a `SkipReason`.
  *
@@ -373,12 +373,12 @@ export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
  * conversion `minutesSinceMidnight` (`lib/rule-slot-holder.ts`) makes for the
  * rule layer's `int4range`, one layer down.
  *
- * SAME-DATE ONLY, and the caller is what supplies that: both generators filter
- * their occupancy read to the candidate date before calling this. An entry
+ * SAME-DATE ONLY, and the caller is what supplies that: the generator filters
+ * its occupancy read to the candidate date before calling this. An entry
  * whose duration carries it past midnight overlaps a candidate on the NEXT
  * calendar date, and neither the caller's filter nor this function sees that —
  * the constraint still does, so such a candidate is refused at insert rather
- * than named here. What names it is the second look both generators take
+ * than named here. What names it is the second look the generator takes
  * afterwards (`probeOverlappingCandidates`, `@/lib/entry-conflict`), which asks
  * the database with the constraint's own range instead of re-deriving one here.
  * Widening this function to reach across midnight is NOT the fix: it would need

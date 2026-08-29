@@ -77,9 +77,9 @@ export const PUT = withErrorHandler(async (
   //
   // Pinned by `studio-api.test.ts`'s "rejects a malformed body before
   // revealing that the template is not yours", ported from the class family's
-  // twin. This comment used to cite the ownership case instead, which sends a
-  // valid `{ hourlyRate: 1 }` and pins the well-formed 403 rather than
-  // anything about ordering.
+  // twin. That case, not the plain ownership one beside it: the ownership
+  // case sends a valid `{ hourlyRate: 1 }` and pins the well-formed 403, which
+  // says nothing about the order the two checks run in.
   const parsed = await parseBody(request, updateStudioClassTemplateSchema);
   if ('error' in parsed) return parsed.error;
 

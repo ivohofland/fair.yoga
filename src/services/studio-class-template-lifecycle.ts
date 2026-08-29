@@ -535,11 +535,12 @@ export type UpdateStudioClassTemplateResult =
        * This PUT is deliberately open to a paused or archived template and
        * nothing here changes that — the edit commits either way. What differs
        * is WHEN it takes effect, and for an ineligible template the answer is
-       * not a date: the hourly sweep never reaches it
-       * (`ACTIVE_TEMPLATE_WHERE` at `generateStudioClassInstances`'s
-       * `findMany`, and again under the row lock in
-       * `claimStudioTemplateForGeneration`), so no week can be named honestly
-       * until the teacher resumes — or un-archives and then resumes.
+       * not a date: the hourly sweep never reaches it. Both gates ask the
+       * rule for `isActive` true and `isArchived` false — the `findMany` in
+       * `generateStudioClassInstances` spells that pair inline, and the row
+       * lock in `claimStudioTemplateForGeneration` re-checks the same two
+       * columns — so no week can be named honestly until the teacher resumes,
+       * or un-archives and then resumes.
        *
        * Derived by `templateGenerationState` from the rule row this call just
        * wrote, not from the row read at the top: `isActive`/`isArchived` are
@@ -956,9 +957,10 @@ export type ArchiveStudioTemplateResult = ArchiveRuleResult<StudioClassTemplate>
  * `deleteMany` that cascades `CalendarEntry -> Class ->
  * Registration/Payment/WaitlistEntry`.
  *
- * What made that safe was a property of two OTHER files: both generators take
- * `scheduleRuleId` from a template they already hold, so a rule's `kind` and
- * its entries' always agree. `CalendarEntry.scheduleRuleId`'s own docblock
+ * What made that safe was a property of ANOTHER file: the generator
+ * (`generateEntriesForRule`, `entry-generation.ts`) takes `scheduleRuleId`
+ * from a template it already holds, so a rule's `kind` and its entries'
+ * always agree. `CalendarEntry.scheduleRuleId`'s own docblock
  * records that the schema does NOT enforce it (issue 328) and says outright:
  * "Anyone writing one is standing here: check the rule's `kind` against the
  * entry's yourself, because nothing below will." A deleting path is the last

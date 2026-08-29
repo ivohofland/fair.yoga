@@ -179,9 +179,9 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         //
         // That is a property of CREATE, not of the studio generator — since
         // #284 it produces `already_this_week` like the class one, and the
-        // EDIT branch below and the resume button both meet it. Read from the
-        // wire rather than hard-coded all the same, so the day a create path
-        // can reach a held week the count is already here. Do not add the term
+        // resume button meets it. Read from the wire rather than hard-coded all
+        // the same, so the day a create path can reach a held week the count is
+        // already here. Do not add the term
         // to the gate on that argument alone: without a reachable reason it
         // pins nothing, and the gate's job is the #196 failure — never
         // navigating away from a short window in silence.

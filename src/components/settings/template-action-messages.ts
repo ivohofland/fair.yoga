@@ -369,7 +369,7 @@ export type TemplateCopyNoun = 'recurring class' | 'template';
  * a paused or archived one means the sweep will not run at all. Rendering the
  * dated sentence for the second case is the failure this argument exists to
  * end — a confirmation naming a week that would never be filled, for 100% of
- * edits to a paused or archived recurring class.
+ * edits to a paused or archived template of either family.
  *
  * `paused` and `archived` get DIFFERENT sentences rather than one "not
  * currently generating" clause, because the remedies differ and the sentence
@@ -552,17 +552,19 @@ const COUNT_KEYS = {
  * #296 failure this whole issue exists to fix, surviving at the one boundary
  * its type does not cover.
  *
- * That said "a truncated payload" until PR #300's fourth pass, contradicting
- * the rolled-back-server paragraph above. A body that will not parse reaches
- * this guard from nowhere: `res.json()` sits inside a `try` in all six
- * components that lead here — the two create forms, which call this directly,
- * and the four toggle/archive buttons, which reach it through the two
- * resolvers below — and every one of those six catches sets "Network error".
- * That mismatch is the whole of what this guard defends against.
+ * NOT a truncated payload, and that distinction is the whole of what this
+ * guard defends against. A body that will not parse reaches it from nowhere:
+ * every component on a path here — the create forms, which call this directly,
+ * and the toggle/archive buttons, which reach it through the two resolvers
+ * below — puts `res.json()` inside a `try` whose catch sets "Network error".
+ * That is a property of the CALLERS, so re-derive them rather than trust a
+ * roster here:
  *
- * "Both callers" is what this paragraph said when it was first corrected, and
- * it was wrong in the same direction as the sentence it was fixing: this
- * function has FOUR direct call sites, not two. Counted, not assumed.
+ *   grep -rln "hasIntegerCounts\|resolveTemplateConfirmation\|resolveStudioConfirmation" \
+ *     src/components/ | grep -v "template-action-messages"
+ *
+ * What DOES reach this guard is a body that parses cleanly into the wrong
+ * shape — the rolled-back-server case above.
  *
  * Note the direction the two guards reduce in, because it is the difference
  * that matters. This one iterates `COUNT_KEYS` — the SCHEMA's members — so a
