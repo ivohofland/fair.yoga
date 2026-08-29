@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { log } from '@/lib/log';
@@ -1173,6 +1173,171 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     const result = await generateStudioInstancesForTemplate(prisma, tpl, now);
     expect(result.created).toBe(4);
     expect(result.skipped).toEqual([]);
+  });
+
+  describe('week-keyed generation (#284)', () => {
+    // A studio template is a stamp, not a live link — the promise the class
+    // family got in #194, arriving here. Editing a template rewrites nothing
+    // already generated, so the only thing standing between a day edit and a
+    // doubled schedule is this: no second class into a week this template
+    // already occupies.
+    //
+    // Monday 2026-04-06 is the anchor because the four Tuesdays that follow
+    // (Apr 7/14/21/28) and the four Thursdays (Apr 9/16/23/30) pair up
+    // one-for-one inside the same four Monday-anchored weeks — Apr 6, 13, 20,
+    // 27. That pairing IS the fixture: pick an anchor where the new day falls
+    // BEFORE the old one and the fourth candidate lands in a fifth week the
+    // old window never reached, which is a legitimate create and would make
+    // these assertions wrong rather than failing.
+    //
+    // A fixed `from` rather than this describe's usual `new Date()`,
+    // deliberately: these assertions name calendar weeks, and a run that
+    // straddled a Sunday/Monday boundary would move which Monday a candidate
+    // belongs to. The suite pins `TZ=America/New_York` (`vitest.config.ts`) —
+    // west of UTC, the direction in which reading one of these UTC-midnight
+    // `@db.Date` values with a local accessor moves the calendar day back one
+    // and a Monday back a whole week. So the weeks below are load-bearing.
+    const from = new Date('2026-04-06T00:00:00.000Z');
+    const TUESDAY = 1; // schema convention: 0=Mon, 1=Tue, ..., 6=Sun
+    const THURSDAY = 3;
+    const TUESDAYS = [
+      '2026-04-07T00:00:00.000Z',
+      '2026-04-14T00:00:00.000Z',
+      '2026-04-21T00:00:00.000Z',
+      '2026-04-28T00:00:00.000Z',
+    ];
+
+    // One template moved between the two days, rather than one per test:
+    // `ScheduleRule_teacher_slot_excl` refuses a second live rule overlapping
+    // this teacher's own weekday slot, so three same-day, same-hour templates
+    // could not coexist. 18:45 is free on both days this describe moves
+    // between — every other east-teacher template in this file starts at 16:15
+    // or earlier, and none of them is on a Tuesday at all.
+    let weekTemplateId: string;
+    let weekRuleId: string;
+
+    /** Every date this template holds, oldest first — cancelled ones included. */
+    const heldDates = async (): Promise<string[]> =>
+      (await datesFor(weekTemplateId)).map((r) => r.calendarEntry.date.toISOString());
+
+    beforeAll(async () => {
+      weekTemplateId = await makeTemplate(eastTeacherId, TUESDAY, '18:45');
+      weekRuleId = (await withZone(weekTemplateId)).scheduleRuleId;
+    });
+
+    beforeEach(async () => {
+      await prisma.calendarEntry.deleteMany({ where: { scheduleRuleId: weekRuleId } });
+      await prisma.scheduleRule.update({
+        where: { id: weekRuleId },
+        data: { dayOfWeek: TUESDAY },
+      });
+      // The window every test here starts from. Asserted rather than assumed:
+      // a seed that quietly created three would make `created: 0` below mean
+      // something other than what it claims.
+      const seeded = await generateStudioInstancesForTemplate(
+        prisma,
+        await withZone(weekTemplateId),
+        from,
+      );
+      expect(seeded.created).toBe(4);
+    });
+
+    afterEach(async () => {
+      await prisma.calendarEntry.deleteMany({ where: { scheduleRuleId: weekRuleId } });
+      // Restored, not left on Thursday: the next test's seed generates on
+      // Tuesday, and the rule has to be back on that day before it runs.
+      await prisma.scheduleRule.update({
+        where: { id: weekRuleId },
+        data: { dayOfWeek: TUESDAY },
+      });
+    });
+
+    it('does not generate into a week that already holds a class from this template', async () => {
+      // Window generated on Tuesday, then the template moves to Thursday.
+      // Every candidate Thursday falls in a week a Tuesday class already holds.
+      expect(await heldDates()).toEqual(TUESDAYS);
+
+      await prisma.scheduleRule.update({
+        where: { id: weekRuleId },
+        data: { dayOfWeek: THURSDAY },
+      });
+      const result = await generateStudioInstancesForTemplate(
+        prisma,
+        await withZone(weekTemplateId),
+        from,
+      );
+
+      expect(result.created).toBe(0);
+      expect(result.skipped.map((s) => s.reason)).toEqual([
+        'already_this_week',
+        'already_this_week',
+        'already_this_week',
+        'already_this_week',
+      ]);
+
+      // The whole issue in one assertion: four classes on the schedule, not
+      // the eight a per-DATE key produces, and still the Tuesdays.
+      expect(await heldDates()).toEqual(TUESDAYS);
+    });
+
+    it('a CANCELLED class still holds its week', async () => {
+      // Cancel one Tuesday, move to Thursday: that week must stay empty rather
+      // than flipping to the new day for one week and back. This is the one
+      // place this codebase does NOT read cancelled as free —
+      // `CalendarEntry_teacher_slot_excl` is partial on `"cancelledAt" IS
+      // NULL` and does, and this file's "does not treat a cancelled neighbour
+      // as occupying the slot" pins that. With a `cancelledAt: null` filter on
+      // the week read — which is keyed `scheduleRuleId` and deliberately
+      // carries none — week 2 alone would move to Thursday while weeks 1, 3
+      // and 4 stayed Tuesday.
+      await prisma.calendarEntry.updateMany({
+        where: { scheduleRuleId: weekRuleId, date: new Date(TUESDAYS[1]!) },
+        data: { cancelledAt: new Date() },
+      });
+      await prisma.scheduleRule.update({
+        where: { id: weekRuleId },
+        data: { dayOfWeek: THURSDAY },
+      });
+
+      const result = await generateStudioInstancesForTemplate(
+        prisma,
+        await withZone(weekTemplateId),
+        from,
+      );
+
+      expect(result.created).toBe(0);
+      // Length before `every`, which is vacuously true on a short array: a
+      // liveness-filtered week read does not mis-label week 2, it CREATES week
+      // 2 and that date never reaches `skipped` at all.
+      expect(result.skipped).toHaveLength(4);
+      expect(result.skipped.every((s) => s.reason === 'already_this_week')).toBe(true);
+      // The dates, not only the reasons, for that same reason: this is the
+      // assertion that no Thursday row was written.
+      expect(await heldDates()).toEqual(TUESDAYS);
+    });
+
+    it('still reports already_generated, not already_this_week, on a steady-state re-run', async () => {
+      // Evaluation order: the week set contains the candidate's OWN week, so a
+      // week-first check would mask `already_generated` on every re-run. Not
+      // cosmetic — `countSkipReasons` counts `already_this_week` into the
+      // resume sentence the teacher reads (`resumeStudioMessage`, reached from
+      // `studio-template-form.tsx` through the studio template PATCH) and
+      // deliberately ignores `already_generated`, so week-first would report
+      // four blocked weeks after a run that did exactly what it was asked to.
+      const result = await generateStudioInstancesForTemplate(
+        prisma,
+        await withZone(weekTemplateId),
+        from,
+      );
+
+      expect(result.created).toBe(0);
+      expect(result.skipped.map((s) => s.reason)).toEqual([
+        'already_generated',
+        'already_generated',
+        'already_generated',
+        'already_generated',
+      ]);
+    });
   });
 });
 
