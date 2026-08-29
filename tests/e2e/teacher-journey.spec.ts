@@ -233,6 +233,7 @@ test.describe('Teacher journey', () => {
     await expect(page.getByText('Step 3 of 4')).toBeVisible();
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     await expect(page.getByText('Review your class')).toBeVisible();
+    await expect(page.getByText('1 Jun 2099 at 09:00 · 60 min')).toBeVisible();
     const created = page.waitForResponse(
       (resp) =>
         resp.url().endsWith('/api/classes') && resp.request().method() === 'POST' && resp.ok(),

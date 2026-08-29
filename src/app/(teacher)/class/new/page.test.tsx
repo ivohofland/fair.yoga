@@ -141,6 +141,32 @@ describe('NewClassPage', () => {
     });
   });
 
+  it('renders formatted date, time, and class summary on the step 4 review screen', async () => {
+    stubFetch();
+    render(<CreateClassPage />);
+
+    // Step 1: Basics
+    const roomSelect = await screen.findByLabelText('Room');
+    fireEvent.change(roomSelect, { target: { value: ROOM_ID } });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+    // Step 2: Pricing
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+
+    // Step 3: Policies
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+
+    // Step 4: Review
+    expect(await screen.findByText('Review your class')).toBeInTheDocument();
+    expect(screen.getByText('Date & time')).toBeInTheDocument();
+    expect(screen.getByText(/10 Aug 2026 at 09:00 · 60 min/)).toBeInTheDocument();
+    expect(screen.getByText('Vinyasa')).toBeInTheDocument();
+    expect(screen.getByText('Studio A at Main Venue')).toBeInTheDocument();
+  });
+
   /**
    * #40, whole-branch review F1. This wizard was outside the branch's census,
    * which was scoped to `src/components/` and `src/lib/` — but it is the same

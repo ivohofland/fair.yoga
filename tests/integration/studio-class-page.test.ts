@@ -118,6 +118,13 @@ describe('the studio class page: which classes offer removal', () => {
     // assertion below would pass against a page that rendered nothing useful.
     expect(html).toContain('Community Studio');
     expect(html).toContain('>Location</span>');
+    expect(html).toContain('>Date</span>');
+    expect(html).toContain('5 Aug 2099');
+    expect(html).toContain('>Time</span>');
+    expect(html).toContain('07:00');
+    expect(html).toMatch(/60.*min/);
+    expect(html).toContain('>Hourly rate</span>');
+    expect(html).toContain('45.00');
     expect(html).toMatch(/<h1[^>]*>Page Case<\/h1>/);
     expect(html).not.toContain('Remove this class');
   });
@@ -171,6 +178,9 @@ describe('the studio class page: which classes offer removal', () => {
     // gating the details block on the live branch passes every other
     // assertion in this file.
     expect(html).toMatch(/<h1[^>]*>Page Case<\/h1>/);
+    expect(html).toContain('5 Aug 2020');
+    expect(html).toContain('07:15');
+    expect(html).toMatch(/60.*min/);
     expect(html).toMatch(/>Location<\/span>\s*<p[^>]*>Community Studio<\/p>/);
     expect(html).toContain('Remove this class');
   });

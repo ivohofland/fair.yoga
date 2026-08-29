@@ -193,6 +193,7 @@ export default defineConfig(({ mode }) => {
             // over HTTP. #290 measured four parallel runs producing four
             // different victims. Do not flip this to match its siblings.
             fileParallelism: false,
+            env: { DATABASE_URL: devUrl },
           },
         },
         {

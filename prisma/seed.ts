@@ -802,6 +802,23 @@ async function main() {
     },
   );
 
+  // Studio class for Maya in Portland: past studio class so her /settings/reporting
+  // page and timezone boundary are immediately observable in the dev app.
+  await createStudioClass(
+    {
+      teacherId: maya.id,
+      classType: 'Portland Yin Studio',
+      date: daysAgo(2),
+      startTime: hhmmToTime('10:00'),
+      durationMinutes: 60,
+    },
+    {
+      location: 'Portland Community Yoga, SE Hawthorne',
+      studentCount: 12,
+      hourlyRate: new Prisma.Decimal('45.00'),
+    },
+  );
+
   // ==========================================================================
   // STUDIO CLASS TEMPLATE + INSTANCES
   // ==========================================================================
