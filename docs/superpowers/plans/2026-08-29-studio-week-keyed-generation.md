@@ -966,7 +966,16 @@ each still gets its own verdict.
    paragraph is, because it used to frame the absence as a seam" is a third
    instance of the forbidden form, two lines above a paragraph this branch
    rewrote for that same rule.
-9. **`isCrossFamilySlotConflict` has no definition left anywhere in `src/`** and
+9. `src/components/settings/template-action-messages.ts` — the new tail's
+   docblock restates `studioClassEditability`'s internal tie
+   (`dateEditable ⟺ scheduleRuleId === null`) and the sweep-recreation race
+   that motivates it. Both facts are owned by
+   `src/services/studio-class-editability.ts`, whose own docblock states them —
+   and CLAUDE.md names **this file by name** as one of the two whose paragraphs
+   reaching past themselves cost PR #300 five review rounds. Cut it to a
+   citation: name the predicate and the file, drop the restated mechanics. (My
+   brief asked for the reason in prose, so this one is mine.)
+10. **`isCrossFamilySlotConflict` has no definition left anywhere in `src/`** and
    is still named in four files (`entry-generation.ts`,
    `studio-class-template-lifecycle.ts`, `class-template-lifecycle.ts`,
    `generation-transaction.test.ts`). Pre-existing, not this branch's doing —
