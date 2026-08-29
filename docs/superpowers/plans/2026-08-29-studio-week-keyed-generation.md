@@ -247,8 +247,14 @@ Three tests:
 - [ ] **Step 2: Run them and record the failure**
 
 ```bash
-npx vitest run --project unit src/services/studio-class-generator.test.ts -t "week-keyed"
+npx vitest run --project unit-sweeps src/services/studio-class-generator.test.ts -t "week-keyed"
 ```
+
+**`unit-sweeps`, not `unit`, and this is load-bearing.** That file is in
+`SWEEP_TESTS` (`vitest.config.ts:18`), so `--project unit` EXCLUDES it, runs
+nothing, and **exits 1** — which in a step that expects a failure is
+indistinguishable from the failure you are looking for. Measured on this branch.
+Read the `Tests` line, not the exit code: it must name your three new tests.
 
 Expected: tests 1 and 2 FAIL — `created` is 4 where 0 is expected and `skipped`
 is empty, because today's studio generator has no week predicate. Test 3 PASSES
@@ -301,9 +307,12 @@ several comments name them.
 - [ ] **Step 5: Run the tests**
 
 ```bash
-npx vitest run --project unit src/services/studio-class-generator.test.ts src/services/class-generator.test.ts src/services/generation-transaction.test.ts
+npx vitest run --project unit-sweeps src/services/studio-class-generator.test.ts
+npx vitest run --project unit src/services/class-generator.test.ts src/services/generation-transaction.test.ts
 ```
 
+Two commands, because the studio generator suite lives in `unit-sweeps` and a
+single `--project unit` invocation naming all three silently drops it (Step 2).
 Expected: all pass, including the three new ones.
 
 - [ ] **Step 6: Confirm the class family's skip-log string moved, and only that**
@@ -463,7 +472,12 @@ where the next person to reach for `logNoun` will read it.
 
 `isWeekHeld`'s "both call sites build it the same way" — the two call sites are
 now the generator's loop and the probe, both in this file, and the sentence
-should say so. `DEFAULT_WEEKS`'s "Exported since #194 for `updateClassTemplate`'s
+should say so. **Both `isWeekHeld`'s and `firstFreeWeek`'s docblocks also say
+"below" about `generateInstancesForTemplate`**, which stayed in
+`class-generator.ts` — Task 1 surfaced these and was told to leave them, because
+after Task 2 the merged generator IS in this file and "below" becomes true
+again. Verify that, and where it is still a cross-file claim, rewrite it: a
+comment reaching past its own file has no owner (CLAUDE.md). `DEFAULT_WEEKS`'s "Exported since #194 for `updateClassTemplate`'s
 probe" — the probe is in this module now and the class service is no longer the
 only consumer.
 
@@ -838,13 +852,13 @@ mirror-image defect.
 ```bash
 {
   echo "== A: the pending-producer claims =="
-  grep -rn "#284" src/ docs/*.md CLAUDE.md | grep -v backlog-roadmap
+  grep -rn "#284" src/ tests/ docs/*.md CLAUDE.md | grep -v backlog-roadmap
   echo "== B: objects that no longer exist =="
-  grep -rn "logSkippedSlots\|logSkippedStudioSlots\|'class generation could not fill" src/ docs/
+  grep -rn "logSkippedSlots\|logSkippedStudioSlots\|'class generation could not fill" src/ tests/ docs/
   echo "== C: descriptions of a pair that is now one =="
-  grep -rn "studio twin\|class twin\|second copy\|parallel-but-separate" src/services/ docs/
+  grep -rn "studio twin\|class twin\|second copy\|parallel-but-separate" src/services/ tests/ docs/
   echo "== D: the week-predicate absence =="
-  grep -rn "no week predicate\|has no week key\|week-keyed" src/ docs/ CLAUDE.md | grep -v backlog-roadmap
+  grep -rn "no week predicate\|has no week key\|week-keyed" src/ tests/ docs/ CLAUDE.md | grep -v backlog-roadmap
 } | tee /tmp/284-invalidation.txt
 wc -l /tmp/284-invalidation.txt
 ```
