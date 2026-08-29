@@ -712,7 +712,7 @@ force some of that order.
 | 2 | ~~Template-route seams~~ **DONE** | ~~#86~~ ~~#83~~ (PR #230) ~~#114~~ (PR #271) — all three closed | — |
 | 2b | ~~What #93 left behind~~ **DONE** | ~~#95 #98 #102 #99 #97 #94 #100~~ — all eight closed | — |
 | 3 | Unpinned-list cleanup & types | ~~#59~~ ~~#58~~ ~~#81+#85~~ ~~#101+#115~~ ~~#96~~ ~~#138~~ ~~#136~~ ~~#140~~ ~~#39~~ ~~#121~~ done, then #132 + #133 + #134, **#270** | one design call left (#133) |
-| 3b | Locking follow-ups | ~~#107~~ ✓, ~~#113~~ ✓ (PR #227), ~~#180~~ ✓ (PR #230), ~~#103~~ ✓ (PR #264), ~~#104~~ ✓ (PR #268), ~~#116 + #117 + #126~~ ✓ (PR #273), ~~#272~~ ✓ (PR #340) — decided Option A, enforced declaratively, and it spent five of its thirteen commits paying for lock edges the mechanism hides; then #122, #229, #232, #269, and **#339** (the class half, split out) | one decision (#229) |
+| 3b | Locking follow-ups | ~~#107~~ ✓, ~~#113~~ ✓ (PR #227), ~~#180~~ ✓ (PR #230), ~~#103~~ ✓ (PR #264), ~~#104~~ ✓ (PR #268), ~~#116 + #117 + #126~~ ✓ (PR #273), ~~#272~~ ✓ (PR #340) — decided Option A, enforced declaratively, and it spent five of its thirteen commits paying for lock edges the mechanism hides; ~~#122~~ ✓; then #229, #232, #269, and **#339** (the class half, split out) | one decision (#229) |
 | 4 | CI reliability & framework upkeep | ~~#185~~ ✓, ~~#41~~ ✓ (PR #188) — premise disproved; ~~#40~~ ✓ (PR #198) — nine components, not one, and its framework half closed unverified; then #127 (+#189) **and the three flake classes measured on PR #340's round — see the sequence below** | **no longer uncertain: three classes, measured, one already half-paid** |
 | 5 | Room lifecycle & admin (epic #60) | ~~#73~~ ✓ (PR #261) — rooms born private, sharing behind its own door; ~~#76~~ ✓ (PR #262) — `isArchived` given downstream meaning by five doors; then #52 + **#259** + **#260** | **product decision** (the lock itself stands) |
 | 6 | Feature backlog | ~~#119 + #120~~ ✓; ~~#112~~ ✓; #47, then #46 / #48 / #49 / #51 | product priority |
@@ -1777,16 +1777,18 @@ finding only because every agent re-checked `git diff` around its runs.
   accepting it *undetectably* is a different one, and it does not look like it
   was taken deliberately.
 
-- **#122 — a teacher's studio resume can turn the hourly job red on `/api/health`.**
+- ~~**#122 — a teacher's studio resume can turn the hourly job red on `/api/health`.**~~ **DONE.**
   New surface from #118: the resume now holds the same template row the sweep
   claims, so a teacher winning that race makes the sweep's claim time out at its
   2 s `lock_timeout`, which the per-template isolation logs and then rethrows —
   reddening the `class-generation` job. Nothing is lost (the resume generated
-  that window itself, and the next hourly run covers the rest), so this is a
-  pure false-alarm channel that routine teacher activity can now open on a
-  background job. Cheap fix: skip the `errors.push` for `55P03` specifically —
-  a lock timeout against a concurrent writer means "someone else has this
-  template", not "generation failed".
+  that window itself, and the next hourly run covers the rest), so this was a
+  pure false-alarm channel that routine teacher activity opened on a background
+  job. Resolved symmetrically across both generator sweeps
+  (`studio-class-generator.ts` and `class-generator.ts`) via `isLockTimeout`:
+  the transient contention (`55P03`) is logged at `warn` and skipped without
+  pushing to `errors`, keeping the health check green, while non-lock errors
+  remain logged at `error` and rethrown.
 - **#113 — an archive that loses the lock race says "Internal server error".**
   The sharpest of the three, and the only one a teacher can see. The archive
   transaction's 10 s budget can be spent entirely *waiting* on the sweep's row
@@ -4522,7 +4524,7 @@ PR #93 ──closed──> #86            (archive rule)   └─ spun out ─�
 #102 ──closed──> PR #108 └─ spun out ──> #107
 #107 ──closed──> PR #109 └─ spun out ──> nothing
 #97 ──closed──> PR #111  └─ spun out ──> #112 , #113 , #114 , #115
-#94 ──closed──> PR #118  └─ spun out ──> #119✓, #120✓, #121 , #122 , #123✓
+#94 ──closed──> PR #118  └─ spun out ──> #119✓, #120✓, #121 , #122✓, #123✓
 #100 ──closed──> PR #125 └─ spun out ──> #124 , #126
 #93 ──closed──> Bundle 2b: eight issues in, all eight now out ── DONE
 #116 ‖ #117 ‖ #126 ── the class family measured against #118/#125's studio work
