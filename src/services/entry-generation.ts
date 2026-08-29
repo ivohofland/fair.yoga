@@ -1032,11 +1032,18 @@ export type EditLogNoun = 'recurring class' | 'studio template';
  * for the week read, its own members for the slot read — so nothing here can
  * disagree with anything else about which dates are in play.
  *
- * Answers `null` rather than throwing when a read fails. The edit has already
- * committed by the time this runs, so a probe failure must not turn a saved
- * template into a 500 — and `templateUpdatedMessage` already has a `null`
- * branch that says nothing about weeks rather than something unfounded. Logged
- * so the silence is not also invisible.
+ * Answers `null` rather than throwing, on both of the ways it can fail: a read
+ * that raises, and the week arithmetic that runs on what the reads returned.
+ * The edit has already committed by the time this runs, so a probe failure
+ * must not turn a saved template into a 500 — and `templateUpdatedMessage`
+ * already has a `null` branch that says nothing about weeks rather than
+ * something unfounded.
+ *
+ * TWO GUARDS RATHER THAN ONE, and two different warn lines. A failed read is a
+ * question about the database; a throw from the arithmetic is a bug in this
+ * function, and one shared message would send an operator to a healthy
+ * database to look for it. Both are logged, so the silence is never also
+ * invisible.
  */
 export async function probeFirstEffectiveWeek(
   db: PrismaClient,
@@ -1070,8 +1077,16 @@ export async function probeFirstEffectiveWeek(
   // above promises. Wrapping the whole body instead reports a programming
   // error in `mondayOf`, `hhmmToTime`, `spansOverlap` or `firstFreeWeek` as
   // "the probe failed", sending an operator to look at a healthy database
-  // while the week arithmetic is the bug. Everything after the `await`
-  // throws to the caller.
+  // while the week arithmetic is the bug. That arithmetic is guarded
+  // separately below and answers `null` too, so narrowing this `catch` does
+  // not put a throw back on the caller — it only stops the two faults sharing
+  // one sentence.
+  //
+  // The two `mondayOf` calls in the first read's `where` sit inside neither
+  // guard: the argument object is built before `Promise.all` is entered, so a
+  // throw there escapes synchronously. Both operands come from
+  // `getNextOccurrences` and are `undefined`-guarded immediately above, which
+  // is what keeps that gap closed.
   const reads = await Promise.all([
     // The weeks this template already occupies. Keyed on `scheduleRuleId`,
     // which rides `@@unique([scheduleRuleId, date])`, and bounded by the
@@ -1132,43 +1147,56 @@ export async function probeFirstEffectiveWeek(
   if (reads === null) return null;
   const [ownRows, slotHolders] = reads;
 
-  const heldWeeks = new Set(ownRows.map((e) => mondayOf(e.date)));
-  // What every candidate would occupy — one span for the whole horizon,
-  // since a template has one start time and one duration. Built exactly as
-  // `generateEntriesForRule` above builds its own `candidateSpan`, so the
-  // two cannot disagree about which dates are reachable.
-  const candidateSpan = {
-    startTime: hhmmToTime(template.startTime),
-    durationMinutes: template.durationMinutes,
-  };
-  // Both families' slot holders in one set, which is now what the table is
-  // rather than something this function assembles. They are not told apart,
-  // and deliberately: a date is unreachable for the same reason whichever
-  // family holds it. The GENERATOR tells them apart, because its two reasons
-  // carry two different remedies for the teacher.
-  //
-  // `spansOverlap` is same-date-only and the read above supplies that. It
-  // therefore misses a neighbour spilling over midnight into a candidate,
-  // exactly as the generator's pre-check does — so the two agree on that
-  // case too, and the constraint refuses it at insert either way.
-  const takenDates = new Set(
-    slotHolders
-      .filter((e) => spansOverlap(e, candidateSpan))
-      .map((e) => e.date.getTime()),
-  );
+  // THE SECOND GUARD. Everything from here on is arithmetic over rows already
+  // in hand, so a throw is a defect in this function rather than a database
+  // fault — but the caller is past its commit either way, and the contract
+  // above is `null`, not 500. Its own message, so the log still tells the two
+  // apart.
+  try {
+    const heldWeeks = new Set(ownRows.map((e) => mondayOf(e.date)));
+    // What every candidate would occupy — one span for the whole horizon,
+    // since a template has one start time and one duration. Built exactly as
+    // `generateEntriesForRule` above builds its own `candidateSpan`, so the
+    // two cannot disagree about which dates are reachable.
+    const candidateSpan = {
+      startTime: hhmmToTime(template.startTime),
+      durationMinutes: template.durationMinutes,
+    };
+    // Both families' slot holders in one set, which is now what the table is
+    // rather than something this function assembles. They are not told apart,
+    // and deliberately: a date is unreachable for the same reason whichever
+    // family holds it. The GENERATOR tells them apart, because its two reasons
+    // carry two different remedies for the teacher.
+    //
+    // `spansOverlap` is same-date-only and the read above supplies that. It
+    // therefore misses a neighbour spilling over midnight into a candidate,
+    // exactly as the generator's pre-check does — so the two agree on that
+    // case too, and the constraint refuses it at insert either way.
+    const takenDates = new Set(
+      slotHolders
+        .filter((e) => spansOverlap(e, candidateSpan))
+        .map((e) => e.date.getTime()),
+    );
 
-  // Removed from the candidates rather than folded into `heldWeeks`. Folding
-  // would be shorter and would say something false: a taken slot does not
-  // make the WEEK unavailable to this template in general, it makes this
-  // one date unfillable — and since a weekly template has exactly one
-  // candidate per week, the week is lost as a consequence, not as a
-  // definition. The generator draws the same distinction, which is why it
-  // reports two different reasons.
-  const candidates = horizon.filter((date) => !takenDates.has(date.getTime()));
+    // Removed from the candidates rather than folded into `heldWeeks`. Folding
+    // would be shorter and would say something false: a taken slot does not
+    // make the WEEK unavailable to this template in general, it makes this
+    // one date unfillable — and since a weekly template has exactly one
+    // candidate per week, the week is lost as a consequence, not as a
+    // definition. The generator draws the same distinction, which is why it
+    // reports two different reasons.
+    const candidates = horizon.filter((date) => !takenDates.has(date.getTime()));
 
-  const free = firstFreeWeek(candidates, heldWeeks);
-  // Converted to the WEEK's Monday before leaving this function, not left as
-  // the candidate date — see either family's `firstEffective` note for why
-  // the conversion cannot live in the copy layer.
-  return free === null ? null : new Date(mondayOf(free));
+    const free = firstFreeWeek(candidates, heldWeeks);
+    // Converted to the WEEK's Monday before leaving this function, not left as
+    // the candidate date — see either family's `firstEffective` note for why
+    // the conversion cannot live in the copy layer.
+    return free === null ? null : new Date(mondayOf(free));
+  } catch (err: unknown) {
+    log.warn(
+      { err, templateId: template.id },
+      `${editNoun} edit saved, but the first-effective-week probe's own week arithmetic threw — the confirmation will not name a week`,
+    );
+    return null;
+  }
 }

@@ -35,10 +35,11 @@
  *   grep -rl "/generation'" src/ tests/ --include="*.ts" --include="*.tsx" \
  *     | grep -vE '/generation(\.test)?\.ts$'
  *
- * `src/ tests/`, not `src/` alone: a `src/`-only census has already shipped in
- * this repo missing two real importers. `-l`, not `-n`: one line per importer,
- * where `-n` runs ahead of it because an importer may split a value and a type
- * across two lines and because this docblock quotes the needle back at itself.
+ * `src/ tests/`, not `src/` alone: scoped to both trees so an importer that
+ * lives only under `tests/` cannot hide from the check. `-l`, not `-n`: one
+ * line per importer, where `-n` runs ahead of it because an importer may split
+ * a value and a type across two lines and because this docblock quotes the
+ * needle back at itself.
  * The filter drops this file and its own test; every line left is a real
  * importer, tests included, and a test is not a bundle.
  *

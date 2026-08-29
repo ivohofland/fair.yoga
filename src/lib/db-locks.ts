@@ -190,9 +190,23 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  *
  * The bound itself is `LOCK_TIMEOUT_SQL` above, shared with every other site
  * that bounds a lock wait — `claimRuleForGeneration` (`entry-generation.ts`)
- * among them, which is the one this lock deadlocks against. No roster here:
- * `grep -rn 'setLockTimeout\|LOCK_TIMEOUT_SQL' src/ --include='*.ts'` is the
- * current set.
+ * among them, which is the one this lock deadlocks against. No roster here;
+ * derive it, and derive it FILTERED, for the reason the `FOR UPDATE` check
+ * below spells out about its own filters — unfiltered, the needle is mostly
+ * test files, prose, and this docblock quoting itself:
+ *
+ *   grep -rn 'setLockTimeout\|LOCK_TIMEOUT_SQL' src/ --include='*.ts' \
+ *     | grep -v "\.test\.ts:" \
+ *     | grep -vE ":[0-9]+: *(\*|//)" \
+ *     | grep -vE ":[0-9]+:import "
+ *
+ * The comment filter is what drops this paragraph's own quotation; the
+ * `import` one drops the lines that name the helper without issuing it. What
+ * survives is the constant, the helper that issues it, and the call sites —
+ * which is the question a reader has. The expected line count lives in
+ * `docs/lock-order.md`, "Every site that bounds a lock wait", which runs the
+ * identical command and owns its figure; the same division of labour the
+ * `FOR UPDATE` check below already uses.
  *
  * Every `SELECT … FOR UPDATE` on a `Class` or `CalendarEntry` row goes through
  * this function or `lockClassRowsOrdered` below now — no site keeps its own

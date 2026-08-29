@@ -613,8 +613,8 @@ export async function archiveOrUnarchiveRule<TChild>(
         // timestamp recorded below. `CalendarEntry.date` is `@db.Date`, so both sides
         // of every comparison below are calendar dates — the comparison the
         // generator that created these rows already makes
-        // (`generateEntriesForRule` filters candidate dates on
-        // `classStartInstant`, `entry-generation.ts:523-535`). Comparing the
+        // (`generateEntriesForRule` filters its candidate dates on
+        // `classStartInstant`, `entry-generation.ts`). Comparing the
         // column to a raw instant instead would, east of UTC, delete a class
         // running that same evening, and west of UTC leave tomorrow's class
         // bookable under an archived template — the exact leak #86 exists to

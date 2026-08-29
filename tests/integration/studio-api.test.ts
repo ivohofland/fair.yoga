@@ -692,13 +692,25 @@ describe('PUT /api/studio-class-templates/[id] — the teacher-editable boundary
  * closes the FAILURE half.
  *
  * Every case here takes its weekdays from `sameWeekDayPair()` rather than a
- * fixed pair, so each also needs an hour NO other fixture in this file spends
- * on ANY weekday: `ScheduleRule_teacher_slot_excl` (issue 298) refuses a RANGE
- * overlap anywhere in `(teacherId, dayOfWeek)`, these rules outlive their test
- * — only the generated entries are cleared between tests — and a variable
- * weekday cannot dodge a collision by sitting on a different day. Hence 15:00,
- * 17:00 and 21:00, each of which merely abuts its neighbours; the constraint's
- * range is half-open, so abutting is legal.
+ * fixed pair, so each also needs a SPAN — a start AND a duration — that no
+ * other live rule of this teacher overlaps on ANY weekday. A span, not "a free
+ * hour", because a span is what the constraint compares:
+ * `ScheduleRule_teacher_slot_excl` (issue 298) excludes on `teacherId` `=`,
+ * `dayOfWeek` `=` and the generated `slot` column `&&`, where `slot` is an
+ * `int4range` of minutes-since-midnight from `startTime` to
+ * `startTime + durationMinutes`. So a neighbour at 14:30 for 90 minutes
+ * spends no whole hour on the clock and still refuses a 15:00 create, and the
+ * durations in this file are not uniformly 60 minutes. Live is
+ * `isArchived = false` and nothing else — a PAUSED rule still holds its span.
+ * These rules also outlive their test (only the generated entries are cleared
+ * between tests), and a variable weekday cannot dodge a collision by sitting
+ * on a different day, so the weekday buys nothing here.
+ *
+ * The one relief the constraint offers is that the range is half-open: a span
+ * starting exactly where a neighbour ends is legal, which is what makes a
+ * start on the hour a workable convention. It is not a guarantee that any
+ * particular hour is free — check a new fixture's whole span against this
+ * teacher's other rules before adding it.
  */
 describe('PUT /api/studio-class-templates/[id] names the week the edit reaches (#284)', () => {
   it('answers a dayOfWeek move with the Monday of a week and the state that earned it', async () => {

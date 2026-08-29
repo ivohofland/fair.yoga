@@ -137,9 +137,18 @@ describe('generateStudioClassInstances (DB)', () => {
    */
   it('writes the template\'s own economics onto every generated instance', async () => {
     const from = new Date('2099-01-01T00:00:00Z');
-    // Idempotent, so this case does not depend on the one above having run —
-    // it re-establishes the same four rows rather than assuming them.
-    await generateStudioClassInstances(prisma, from);
+    // Generated through the PER-TEMPLATE entry point, not the sweep. Idempotent
+    // either way, so this case still does not depend on the one above having
+    // run — it re-establishes the same four rows rather than assuming them.
+    // What the sweep adds is reach it has no use for: it reads every active,
+    // unarchived template in the database and rethrows the first error any of
+    // them raises, and this tier's database keeps rows across tiers and across
+    // runs. A leftover template this case asserts nothing about could redden it.
+    const template = await prisma.studioClassTemplate.findUniqueOrThrow({
+      where: { id: templateId },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+    });
+    await generateStudioInstancesForTemplate(prisma, template, from);
 
     const rows = await prisma.studioClass.findMany({
       where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } } },

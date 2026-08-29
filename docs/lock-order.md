@@ -403,9 +403,11 @@ a call):
    (`entry-generation.ts`), whose single `FOR UPDATE OF tpl` splices its table
    name from the family descriptor and serves either family.
 
-   The nine lines added since, less that merge's one, are of three kinds. Six
-   come from the split "The child row is the lock node for the template
-   families" below describes: four single-id plain `FOR UPDATE`s on a child
+   That accounts for three of today's twelve: the two `db-locks.ts` `Class`
+   helpers, plus the merged claim standing where two lines used to. The other
+   nine were added since, and are of three kinds. Six come from the split
+   "The child row is the lock node for the template families" below describes:
+   four single-id plain `FOR UPDATE`s on a child
    template row — one each in `updateClassTemplate` and
    `updateStudioClassTemplate`, plus two in `rule-lifecycle.ts` whose table
    name is likewise spliced rather than written literally,
@@ -420,12 +422,13 @@ a call):
    `room-archive.ts`'s cascade pre-lock, which holds every `ClassTemplate` row
    of the room being archived; it belongs to no convention on this page and is
    the line the two `Class`-scoped censuses above cannot filter out, because
-   its table name sits on the preceding line. Twelve lines
-   total: eight of them lock a `ClassTemplate` or `StudioClassTemplate` row —
-   the merged claim, the four single-id lifecycle locks, the two ordered
-   bulk-archive locks and the room archive's pre-lock — and the remaining
-   four are in `db-locks.ts`, which is where every `Class` and `CalendarEntry`
-   row lock still lives. A
+   its table name sits on the preceding line. Two plus one plus nine is the
+   twelve the command returns, and that sum is the only reconciliation this
+   paragraph offers. Cut a different way: eight of the twelve lock a
+   `ClassTemplate` or `StudioClassTemplate` row — the merged claim, the four
+   single-id lifecycle locks, the two ordered bulk-archive locks and the room
+   archive's pre-lock — and the remaining four are in `db-locks.ts`, which is
+   where every `Class` and `CalendarEntry` row lock still lives. A
    count that stays right while the membership changes is the one error
    nothing that counts can catch, and this document has already made that
    mistake once (`db-locks.ts`'s register named `deleteStudentAccount` as a
@@ -638,6 +641,41 @@ and `archiveOrUnarchiveTemplate` take theirs as a pre-lock ahead of their
 (#237). The template edit was a third until #194 deleted its propagation.
 A per-row `lockClassRow` loop over a sorted read also works and is what `deleteStudentAccount` used before
 #216/#182; it costs 2N round trips, which is why it was replaced.
+
+### Every site that bounds a lock wait
+
+`db-locks.ts`'s `lockClassRow` docblock defers this figure here, the same way
+it defers the `FOR UPDATE OF` one, and for the same reason: a count belongs
+where somebody owns it, and the comment owns only the code it sits on.
+
+`LOCK_TIMEOUT_SQL` (`db-locks.ts`) is the single bound. It reaches a
+transaction two ways — through `setLockTimeout`, or spliced straight into a
+`$executeRawUnsafe` where the caller already holds a raw client. The check:
+
+```
+grep -rn 'setLockTimeout\|LOCK_TIMEOUT_SQL' src/ --include='*.ts' \
+  | grep -v "\.test\.ts:" \
+  | grep -vE ":[0-9]+: *(\*|//)" \
+  | grep -vE ":[0-9]+:import "
+```
+
+The filters are not cosmetic. Unfiltered the same needle returns 88 lines
+across 27 files: 41 of them in `.test.ts` files, 27 more comment prose outside
+the tests — five of those in `db-locks.ts` itself, quoting the needle back at
+its own reader. That is the failure the `FOR UPDATE` census one section up
+already records: a reader who runs the unfiltered version concludes on first
+use that the convention is not worth checking.
+
+**It returned 14 when this section was written** (re-derived 2026-08-29 for
+issue 284). Three of those are the bound itself and the helper that issues it,
+all in `db-locks.ts`; the other eleven are transactions arming it, spread over
+`db-locks.ts` (its own two helpers), `rule-lifecycle.ts`,
+`studio-class-template-lifecycle.ts`, `class-template-lifecycle.ts`,
+`entry-generation.ts`, `gdpr.ts` and `room-archive.ts`. What the number is for
+is noticing a MOVE — a new transaction that takes a contended row lock without
+arming the bound does not appear here at all, so a count that has not moved is
+not on its own evidence that nothing was missed. Re-derive the list, not the
+total.
 
 ### The slot key is a wait edge, and the ascending-by-`id` rule cannot see it (#196)
 
