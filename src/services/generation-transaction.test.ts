@@ -42,7 +42,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, type Prisma } from '@prisma/client';
-import { generateInstancesForTemplate, getNextOccurrences } from './class-generator';
+import { generateInstancesForTemplate } from './class-generator';
+import { getNextOccurrences } from './entry-generation';
 import { generateStudioInstancesForTemplate } from './studio-class-generator';
 import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime } from '@/lib/time-of-day';

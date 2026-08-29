@@ -41,7 +41,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
-import { getNextOccurrences } from '@/services/class-generator';
+import { getNextOccurrences } from '@/services/entry-generation';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, createStudioClassFixture } from '../class-fixtures';
 

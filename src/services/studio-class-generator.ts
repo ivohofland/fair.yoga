@@ -9,13 +9,11 @@ import type { PrismaClient } from '@prisma/client';
 import { spansOverlap } from '@/lib/generation';
 import { probeOverlappingCandidates } from '@/lib/entry-conflict';
 import type { GenerationResult, SkippedSlot } from '@/lib/generation';
-import { getNextOccurrences } from './class-generator';
+import { DEFAULT_WEEKS, getNextOccurrences } from './entry-generation';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
 import { isLockTimeout } from '@/lib/api-errors';
 import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
-
-const DEFAULT_WEEKS = 4;
 
 /**
  * The studio mirror of `class-generator.ts`'s `TemplateWithTimezone`. The

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { generateInstancesForTemplate, getNextOccurrences } from '@/services/class-generator';
+import { generateInstancesForTemplate } from '@/services/class-generator';
+import { getNextOccurrences } from '@/services/entry-generation';
 // The production week key, used here as the assertion's own notion of "same
 // week". Deliberately the real one rather than a local reimplementation: the
 // claim under test is that the probe and the generator agree about weeks, and

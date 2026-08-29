@@ -46,13 +46,8 @@ import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 // value-imports anything in this chain.
 import { log } from '@/lib/log';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
-import {
-  generateInstancesForTemplate,
-  claimTemplateForGeneration,
-  getNextOccurrences,
-  firstFreeWeek,
-  DEFAULT_WEEKS,
-} from './class-generator';
+import { generateInstancesForTemplate, claimTemplateForGeneration } from './class-generator';
+import { getNextOccurrences, firstFreeWeek, DEFAULT_WEEKS } from './entry-generation';
 import { CHARGED_STATUSES } from './class-lifecycle';
 import type { GenerationResult } from '@/lib/generation';
 import {

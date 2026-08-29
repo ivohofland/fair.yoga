@@ -9,7 +9,7 @@ import {
 } from './class-template-lifecycle';
 import { isTransientDbError } from '@/lib/api-errors';
 import { startOfLocalDay, classStartInstant, mondayOf } from '@/lib/timezone';
-import { getNextOccurrences } from './class-generator';
+import { getNextOccurrences } from './entry-generation';
 import { formatDayHeader } from '@/lib/format';
 import { setLockTimeout } from '@/lib/db-locks';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';

@@ -6,7 +6,7 @@
  */
 
 import { Prisma } from '@prisma/client';
-import type { PrismaClient, ScheduleRule, ClassFamily } from '@prisma/client';
+import type { PrismaClient, ClassFamily } from '@prisma/client';
 import type { TransactionClientOnly } from '@/lib/db-locks';
 import { setLockTimeout } from '@/lib/db-locks';
 import { startOfLocalDay } from '@/lib/timezone';
@@ -16,21 +16,7 @@ import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
-
-/**
- * A `ScheduleRule` as every joined read in this module returns it: with the one
- * `Teacher` column the date boundaries need.
- */
-export type JoinedRule = ScheduleRule & { teacher: { defaultTimezone: string } };
-
-/**
- * A child template with the calendar identity its rule holds, plus the one
- * `Teacher` column the date boundaries below need.
- */
-export type ChildWithRule<TChild> = TChild & {
-  scheduleRuleId: string;
-  scheduleRule: JoinedRule;
-};
+import type { JoinedRule, ChildWithRule } from './entry-generation';
 
 /**
  * A child template with its rule's columns flattened onto it, `startTime`

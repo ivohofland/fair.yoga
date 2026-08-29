@@ -14,7 +14,7 @@ import {
 // The studio family shares the class family's date maths (#94), so the tests
 // compute candidate dates the same way the generator does rather than
 // hardcoding them — a window-logic change then fails loudly instead of drifting.
-import { getNextOccurrences } from './class-generator';
+import { getNextOccurrences } from './entry-generation';
 import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
