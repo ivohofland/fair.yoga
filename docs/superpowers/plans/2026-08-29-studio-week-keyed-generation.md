@@ -647,7 +647,11 @@ git commit -m "feat: the studio edit predicts its first reachable week (issue 28
 
 **Files:**
 - Modify: `src/components/settings/template-action-messages.ts` (`templateUpdatedMessage` `:371`)
-- Test: `src/components/settings/template-action-messages.test.ts`
+- Test: `src/components/settings/template-action-messages.test.ts` — **`unit`,
+  not `components`.** That project's include glob is `.tsx`-only and
+  `vitest.config.ts:201-207` states the disjointness explicitly; naming
+  `components` for a `.ts` file collects nothing and exits 1, which in a
+  failing-first step is indistinguishable from the expected failure.
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
@@ -681,7 +685,7 @@ direction over — there the two must agree, here they must differ.
 - [ ] **Step 2: Run and record**
 
 ```bash
-npx vitest run --project components src/components/settings/template-action-messages.test.ts -t "templateUpdatedMessage"
+npx vitest run --project unit src/components/settings/template-action-messages.test.ts -t "templateUpdatedMessage"
 ```
 
 Expected: FAIL — third argument not accepted, and the class tail still lacks
