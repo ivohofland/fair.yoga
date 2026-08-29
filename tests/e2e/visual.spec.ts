@@ -24,9 +24,6 @@ const snapshotDir = path.join(__dirname, 'visual.spec.ts-snapshots');
 const hasBaselines =
   fs.existsSync(snapshotDir) &&
   fs.readdirSync(snapshotDir).some((f) => f.includes(process.platform));
-// Outside CI a missing baseline should fail loudly (it writes the actual
-// for review); in CI a baseline-less platform silently has no coverage.
-test.skip(Boolean(process.env.CI) && !hasBaselines, 'no visual baselines for this platform');
 
 const prisma = new PrismaClient();
 
@@ -83,14 +80,13 @@ const MONTHS_ABBR_NO_MAY = 'Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec';
 // but even if that ever changed, the heading must stay *unmatched* here so
 // it stays visible to DATE_SMELL below, not silently frozen away.
 //
-// The exception is May: `MONTHS_ABBR` includes "May" because it is also its
-// own three-letter abbreviation, so a genuine "Week of 4 May" heading *is*
-// matched and frozen here ("Someday, Mmm 0"), unprotected. Do not "fix" this
-// by excluding May from the weekday-less alternatives — a real
-// `formatDateShort` output of "12 May" would then escape freezing, and
-// DATE_SMELL drops "May" too (see above), so it would drift a baseline
-// silently instead of failing the run. That trade — one month's week
-// heading goes unprotected rather than a real date escaping — is deliberate.
+// In May, `MONTHS_ABBR` includes "May" because it is both a full month and
+// its own three-letter abbreviation. To prevent "Week of 4 May" from being
+// matched and frozen away, the bare alternative uses a negative lookbehind
+// `(?<!Week of )\b\d{1,2}` (Issue 142). The leading `\b` is load-bearing:
+// without it, a two-digit date like "Week of 14 May" would fail the lookbehind
+// at "1" and then step forward to match "4 May", corrupting the string into
+// "Week of 1Someday, Mmm 0" and evading DATE_SMELL.
 //
 // A trailing `\b` after the abbreviation stops it matching as a bare prefix
 // of a full month word (e.g. "Aug" inside "August"), which would otherwise
@@ -108,10 +104,10 @@ const MONTHS_ABBR_NO_MAY = 'Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec';
 // own optional year tail, matching its month-first sibling's, or
 // "Friday, 12 Jun 2026" matches only "Friday, 12 Jun" and leaves " 2026"
 // stranded behind it.
-const DATE_PATTERN = new RegExp(
+export const DATE_PATTERN = new RegExp(
   `(?:${WEEKDAYS}), (?:(?:${MONTHS_FULL}|${MONTHS_ABBR}) \\d{1,2}(?:, \\d{4})?|\\d{1,2} (?:${MONTHS_FULL}|${MONTHS_ABBR})(?: \\d{4})?)` +
-    `|\\d{1,2} (?:${MONTHS_ABBR})\\b \\d{4}` +
-    `|\\d{1,2} (?:${MONTHS_ABBR})\\b`,
+    `|\\b\\d{1,2} (?:${MONTHS_ABBR})\\b \\d{4}` +
+    `|(?<!Week of )\\b\\d{1,2} (?:${MONTHS_ABBR})\\b`,
 );
 
 // Looser than DATE_PATTERN on purpose: any weekday/month token that
@@ -120,10 +116,16 @@ const DATE_PATTERN = new RegExp(
 // The day-first alternative mirrors DATE_PATTERN's bare "21 Jul" shape
 // (formatDateShort); without it, a lone day-first date could escape
 // freezing and drift a baseline silently instead of failing the run.
-const DATE_SMELL = new RegExp(
+//
+// DATE_SMELL excludes bare "May" from its month lists because "May" is an
+// ordinary English word ("You may cancel"). To close the May gap (Issue 142),
+// it includes digit-prefixed May (`\d{1,2} May\b`), which is date-shaped
+// in a way bare English prose is not.
+export const DATE_SMELL = new RegExp(
   `\\b(?:${WEEKDAYS}|${MONTHS_FULL_NO_MAY})\\b` +
     `|\\b(?:${MONTHS_ABBR_NO_MAY}) \\d` +
-    `|\\d{1,2} (?:${MONTHS_FULL_NO_MAY}|${MONTHS_ABBR_NO_MAY})`,
+    `|\\d{1,2} (?:${MONTHS_FULL_NO_MAY}|${MONTHS_ABBR_NO_MAY})` +
+    `|\\d{1,2} May\\b`,
 );
 
 // Runs in the browser via page.evaluate (hence the pattern arriving as a
@@ -208,6 +210,9 @@ async function freezeDates(page: Page): Promise<void> {
 const hideDevOverlay = path.join(__dirname, 'visual-hide-dev-overlay.css');
 
 test.describe('Visual regression', () => {
+  // Outside CI a missing baseline should fail loudly (it writes the actual
+  // for review); in CI a baseline-less platform silently has no coverage.
+  test.skip(Boolean(process.env.CI) && !hasBaselines, 'no visual baselines for this platform');
   test.describe.configure({ mode: 'serial' });
 
   test.beforeAll(async () => {
@@ -414,3 +419,78 @@ test.describe('Visual regression', () => {
     });
   });
 });
+
+test.describe('Visual harness date freeze & smell detection (issue 142)', () => {
+  function freezeText(input: string): string {
+    return input.replace(new RegExp(DATE_PATTERN.source, 'g'), 'Someday, Mmm 0');
+  }
+
+  test('catches leaked week headings in all twelve months', () => {
+    // Single and double-digit May headings must NOT freeze and MUST smell loudly (#142)
+    const maySingle = freezeText('Week of 4 May');
+    expect(maySingle).toBe('Week of 4 May');
+    expect(maySingle).toMatch(DATE_SMELL);
+
+    const mayDouble = freezeText('Week of 14 May');
+    expect(mayDouble).toBe('Week of 14 May');
+    expect(mayDouble).toMatch(DATE_SMELL);
+
+    // Other months also do not freeze and smell loudly
+    const augustSingle = freezeText('Week of 4 August');
+    expect(augustSingle).toBe('Week of 4 August');
+    expect(augustSingle).toMatch(DATE_SMELL);
+
+    const augustDouble = freezeText('Week of 14 August');
+    expect(augustDouble).toBe('Week of 14 August');
+    expect(augustDouble).toMatch(DATE_SMELL);
+  });
+
+  test('freezes genuine dates in all months without date smell', () => {
+    // formatDateShort in May
+    const shortMay = freezeText('12 May');
+    expect(shortMay).toBe('Someday, Mmm 0');
+    expect(shortMay).not.toMatch(DATE_SMELL);
+
+    const shortMaySingle = freezeText('4 May');
+    expect(shortMaySingle).toBe('Someday, Mmm 0');
+    expect(shortMaySingle).not.toMatch(DATE_SMELL);
+
+    const shortMayDouble = freezeText('14 May');
+    expect(shortMayDouble).toBe('Someday, Mmm 0');
+    expect(shortMayDouble).not.toMatch(DATE_SMELL);
+
+    // formatDateShort in other months
+    const shortJun = freezeText('12 Jun');
+    expect(shortJun).toBe('Someday, Mmm 0');
+    expect(shortJun).not.toMatch(DATE_SMELL);
+
+    // formatDateWithYear
+    const yearMay = freezeText('12 May 2026');
+    expect(yearMay).toBe('Someday, Mmm 0');
+    expect(yearMay).not.toMatch(DATE_SMELL);
+
+    const yearJun = freezeText('12 Jun 2026');
+    expect(yearJun).toBe('Someday, Mmm 0');
+    expect(yearJun).not.toMatch(DATE_SMELL);
+
+    // formatDayHeader
+    const headerMay = freezeText('Friday, 12 May');
+    expect(headerMay).toBe('Someday, Mmm 0');
+    expect(headerMay).not.toMatch(DATE_SMELL);
+
+    const headerJul = freezeText('Tuesday, 21 Jul');
+    expect(headerJul).toBe('Someday, Mmm 0');
+    expect(headerJul).not.toMatch(DATE_SMELL);
+  });
+
+  test('ignores English prose with modal "may"', () => {
+    const prose1 = freezeText('You may cancel your booking up to 24 hours before class.');
+    expect(prose1).toBe('You may cancel your booking up to 24 hours before class.');
+    expect(prose1).not.toMatch(DATE_SMELL);
+
+    const prose2 = freezeText('Teachers may schedule recurring studio classes.');
+    expect(prose2).toBe('Teachers may schedule recurring studio classes.');
+    expect(prose2).not.toMatch(DATE_SMELL);
+  });
+});
+
