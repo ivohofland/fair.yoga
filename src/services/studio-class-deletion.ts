@@ -90,20 +90,23 @@ import { startOfLocalDay } from '@/lib/timezone';
  *
  * ── AFTER WEEK-KEYED GENERATION (issue 284) ────────────────────────────────
  *
- * AS SPECIFIED, NOT AS IMPLEMENTED — #284 has not shipped, so nothing below is
- * pinned by a test and this paragraph is the fastest-rotting prose in the file.
- *
  * Issue 284 makes occupancy per `(template, week)` rather than per
  * `(template, date)`, cancelled rows included. A PAST class occupies its week
  * just as a future one does, so removing a past GENERATED class can free that
  * week and let the sweep fill a still-future candidate in the same week — for
  * instance a template moved Tuesday → Thursday mid-week.
  *
- * The rule does not change and this predicate does not narrow. What changes is
- * the sentence above: removal never resurrects the removed class, but under
- * week-keying it may free that class's WEEK, which is the week rule working as
- * specified. A manual class belongs to no template's week and is unaffected in
- * either era. See the spec's §5 for the worked path.
+ * The rule does not change and this predicate does not narrow: removal never
+ * resurrects the removed class, but under week-keying it may free that
+ * class's WEEK, which is the week rule working as specified, not a defect.
+ * A manual class belongs to no template's week and is unaffected. See the
+ * spec's §5 for the worked path.
+ *
+ * Pinned by `studio-class-deletion.test.ts`, "a removed past generated class
+ * frees its week (issue 284)" — both halves asserted: the `already_this_week`
+ * skip before the removal, and the created row after. The first is what makes
+ * the second mean anything — a generator degraded back to a per-DATE key
+ * creates that same row on that same call, removal or not.
  */
 export type StudioClassRefusal = 'regenerates';
 
