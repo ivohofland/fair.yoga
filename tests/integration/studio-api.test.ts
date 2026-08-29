@@ -104,6 +104,36 @@ const makeTemplate = (
     },
   });
 
+/**
+ * Two weekdays whose next occurrences fall in the SAME Monday-week: the day a
+ * template starts on and the day it is moved to.
+ *
+ * `getNextOccurrences` counts from today, so a weekday at or after today's own
+ * lands in this week and one before it lands in the next. Pick both from the
+ * same side of that line and the four weeks the old schedule generated are
+ * exactly the four the generator will next consider for the new day — which is
+ * the premise the week-held resume case below rests on ("every week the
+ * generator can see is held"). A fixed offset from a fixed day holds that
+ * identity on some days of the week and not others, and on those the answer
+ * lands inside the generator's own window and the case quietly stops testing
+ * what it is named for.
+ *
+ * Neither day is ever today, so the generator's past-start filter never has an
+ * occurrence to drop and cannot shift one window relative to the other.
+ *
+ * Returned in schema convention (0=Monday … 6=Sunday), like every other
+ * `dayOfWeek` in this file. The class family's twin
+ * (`class-templates-api.test.ts`) is the same function for the same reason;
+ * it is copied rather than shared, per this repo's per-file test-helper
+ * convention.
+ */
+function sameWeekDayPair(): [number, number] {
+  const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
+  // Both at or after today (and neither today) while there is room for two;
+  // otherwise both before it, where they share next week instead.
+  return todaySchemaDay <= 4 ? [todaySchemaDay + 1, todaySchemaDay + 2] : [0, 1];
+}
+
 beforeAll(async () => {
   await prisma.$connect();
 
@@ -1121,6 +1151,102 @@ describe('PATCH /api/studio-class-templates/[id] — resume reporting', () => {
     expect(data.action).toBe('active');
     expect(data.added).toBe(4);
     expect(data.scheduled).toBe(4);
+  });
+
+  /**
+   * The studio twin of `class-templates-api.test.ts`'s week-held resume case,
+   * and the branch's headline hop observed for the first time on this side
+   * (#284).
+   *
+   * Until this case, every studio fixture that carries `alreadyThisWeek`
+   * asserts it at ZERO — the value it structurally had before this branch, when
+   * `studio-class-generator.ts` had no week predicate at all. A zero pins
+   * nothing: the count travels generator → `countSkipReasons` →
+   * `pauseOrResumeRule`'s `active` arm → the PATCH body → `resumeStudioMessage`,
+   * and with every fixture at 0 alongside a `slotTaken` of 0, mis-wiring
+   * `alreadyThisWeek: result.slotTaken` at either hop passes `tsc` and every
+   * test. That is the shape recorded at `template-action-messages.ts`, where
+   * transposing two arguments at a call site stayed green *because every
+   * fixture passed equal numbers*.
+   *
+   * So this case drives an UNEQUAL, NON-ZERO value the whole way: four dates
+   * declined for `already_this_week` and none for anything else. The counts are
+   * asserted one at a time rather than as a shape, because it is their
+   * differing from each other that carries the guarantee.
+   *
+   * 22:00 for the same reason every other fixture here picks its own hour:
+   * `ScheduleRule_teacher_slot_excl` refuses a RANGE overlap in
+   * `(teacherId, dayOfWeek)`, `sameWeekDayPair()` can land on any weekday, and
+   * these rules outlive their test.
+   *
+   * The resume is what a teacher actually does after moving a paused studio
+   * class, and the sentence it produces — "4 classes on your schedule. 4 dates
+   * are still held by classes on your previous day." — is the whole reason the
+   * count is carried: before the week key reached this family, the same request
+   * laid four Thursdays down beside the four standing Tuesdays.
+   */
+  it('carries a non-zero alreadyThisWeek, distinct from slotTaken, to the PATCH body', async () => {
+    const [OLD_DAY, NEW_DAY] = sameWeekDayPair();
+
+    const create = await send('POST', ownerToken, '/api/studio-class-templates', {
+      classType: 'Week Held Studio Resume',
+      dayOfWeek: OLD_DAY,
+      startTime: '22:00',
+      durationMinutes: 60,
+      location: 'Community Studio',
+      hourlyRate: 45,
+    });
+    expect(create.status).toBe(201);
+    const { data: created } = (await create.json()) as { data: { id: string } };
+    const id = created.id;
+    const ownWhere = { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id } } } } };
+    expect(await prisma.studioClass.count({ where: ownWhere })).toBe(4);
+
+    const pause = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=paused`);
+    expect(pause.status).toBe(200);
+
+    // The edit that makes the four standing classes wrong-day: it moves the
+    // template and, since #194, moves nothing else.
+    const put = await send('PUT', ownerToken, `/api/studio-class-templates/${id}`, {
+      dayOfWeek: NEW_DAY,
+    });
+    expect(put.status).toBe(200);
+
+    const resume = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=active`);
+    expect(resume.status).toBe(200);
+    const { data: resumed } = (await resume.json()) as {
+      data: {
+        scheduled: number;
+        added: number;
+        counts: {
+          blockedByCancelled: number;
+          slotTaken: number;
+          alreadyThisWeek: number;
+          blockedByOverlap: number;
+        };
+      };
+    };
+
+    // Non-zero, and different from every other count on the body. A hop wired
+    // to `slotTaken`, `blockedByCancelled`, `blockedByOverlap` or `added`
+    // reports 0 here.
+    expect(resumed.counts.alreadyThisWeek).toBe(4);
+    expect(resumed.counts.slotTaken).toBe(0);
+    expect(resumed.counts.blockedByCancelled).toBe(0);
+    expect(resumed.counts.blockedByOverlap).toBe(0);
+    // Nothing was created: all four candidate weeks are held by the old day's
+    // classes, which is the state that produces the count above.
+    expect(resumed.added).toBe(0);
+    expect(resumed.scheduled).toBe(4);
+    // And the classes really are still on the old weekday — the count means
+    // what its clause says it means, and #194's no-propagation rule holds for
+    // this family too.
+    const still = await prisma.studioClass.findMany({
+      where: ownWhere,
+      include: { calendarEntry: true },
+    });
+    expect(still.length).toBe(4);
+    expect(still.every((c) => c.calendarEntry.date.getUTCDay() === (OLD_DAY + 1) % 7)).toBe(true);
   });
 });
 

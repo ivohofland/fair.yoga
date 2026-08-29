@@ -246,9 +246,9 @@ async function dispatch(notification: CreateNotification): Promise<void> {
 }
 ```
 
-### Class Generator (`services/class-generator.ts`)
+### Entry Generator (`services/entry-generation.ts`)
 
-Runs hourly as part of the in-process scheduler (see Background Jobs below). For each `ClassTemplate` whose `ScheduleRule` is active and unarchived it tops up the rolling 4-week window — **at most one class per week per template** (#194) — and reports every candidate date it could **not** fill along with the reason:
+Runs hourly as part of the in-process scheduler (see Background Jobs below). For each template whose `ScheduleRule` is active and unarchived it tops up the rolling 4-week window — **at most one entry per week per template** (#194) — and reports every candidate date it could **not** fill along with the reason:
 
 ```typescript
 // generateEntriesForRule — one template, one window, either family.

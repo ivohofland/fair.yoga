@@ -11,6 +11,8 @@ import {
 } from './rule-lifecycle';
 import { CLASS_FAMILY } from './class-template-lifecycle';
 import { STUDIO_FAMILY } from './studio-class-template-lifecycle';
+import { CLASS_GENERATOR } from './class-generator';
+import { STUDIO_GENERATOR } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
 
 const prisma = new PrismaClient();
@@ -42,6 +44,23 @@ const FAMILY_BY_KIND = {
 } satisfies { [K in ClassFamily]: TemplateFamily<ChildByKind[K], K> };
 
 describe('rule-lifecycle family descriptors', () => {
+  /**
+   * `TemplateFamily`'s docblock says each descriptor is its generator constant
+   * spread into this one, so the fields both layers read cannot come apart.
+   * The spread does not carry that on its own: an override written AFTER
+   * `...CLASS_GENERATOR` — the other family's `childTable`, or its `logNoun` —
+   * satisfies every type in `TemplateFamily` and compiles clean. Measured,
+   * both fields, which is why the claim is worth only this pin.
+   *
+   * `toMatchObject` rather than `toEqual`: `TemplateFamily` adds fields of its
+   * own, so what is asserted is that the generator half survives the spread
+   * intact — not that the two objects are the same size.
+   */
+  it('each descriptor carries its generator constant through the spread unchanged', () => {
+    expect(CLASS_FAMILY).toMatchObject(CLASS_GENERATOR);
+    expect(STUDIO_FAMILY).toMatchObject(STUDIO_GENERATOR);
+  });
+
   it('the family without a withdraw hook says so explicitly rather than omitting it', () => {
     // `null`, not `undefined`. `TemplateFamily.withdraw` is required, so an
     // omission is a compile error — this asserts the runtime half: that the

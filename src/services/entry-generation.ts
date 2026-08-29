@@ -187,10 +187,19 @@ export function firstFreeWeek(
 // ---------------------------------------------------------------------------
 
 /**
- * The noun this family's claim and generation log lines use. A union rather
- * than `string`: the messages composed from it below are what an operator
- * greps for, and some are asserted verbatim, so the roster belongs to the
- * compiler rather than to a sentence naming its members.
+ * The noun a family's log lines use. A union rather than `string`: the
+ * messages composed from it are what an operator greps for, and some are
+ * asserted verbatim, so the roster belongs to the compiler rather than to a
+ * sentence naming its members.
+ *
+ * ITS REACH IS NOT THIS FILE, and the property is the honest way to say so:
+ * the field rides `GeneratorFamily`, so every module that holds a family
+ * descriptor composes lines from it — the claim and the generator below, and
+ * the archive and pause/resume verbs in `rule-lifecycle.ts`, which reach the
+ * same field through `TemplateFamily`. Re-derive the lines rather than trust
+ * a roster here:
+ *
+ *   grep -rn 'logNoun}' src/services/*.ts
  */
 export type GenerationLogNoun = 'recurring class' | 'studio class';
 
@@ -690,7 +699,9 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
     // (`WHERE "cancelledAt" IS NULL`); the constraint backs it since #327;
     // this pre-check is what names the reason, not what enforces it. Widen or
     // narrow one without the other and this pre-check starts disagreeing with
-    // the constraint that backs it — see the spec's §4.1.
+    // the constraint that backs it — see
+    // `docs/superpowers/specs/2026-08-11-generator-slot-reporting-design.md`
+    // §4.1.
     const live = onDate.filter((e) => e.cancelledAt === null);
 
     // Exact start, this family — the report a teacher can act on without
@@ -902,8 +913,10 @@ function logSkippedEntries(
 
 /**
  * The noun an EDIT-PATH log line uses — a separate vocabulary from
- * `GenerationLogNoun` ('recurring class' | 'studio class') above, which
- * GENERATION-path lines use instead. Never compose one from the other: every
+ * `GenerationLogNoun` ('recurring class' | 'studio class') above, which every
+ * line composed from a family DESCRIPTOR uses instead: the claim and generator
+ * lines here, and the archive and pause/resume lines `rule-lifecycle.ts`
+ * builds from the same field. Never compose one from the other: every
  * edit-path line in `studio-class-template-lifecycle.ts` already reads
  * "studio template edit …", so a line built from `GenerationLogNoun` would
  * read "studio class edit …" instead and be the odd one out beside its own

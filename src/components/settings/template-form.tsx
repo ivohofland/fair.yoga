@@ -333,20 +333,22 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // this brand-new template before this create.
         //
         // `alreadyThisWeek` rides along inside `counts` — it is not a field of
-        // this payload in its own right (#296) — and the GATE below
-        // deliberately does not test it. On create that count is structurally
-        // 0: `already_this_week` requires a class of THIS template already
-        // holding the week, and the template was created moments earlier in
-        // the same transaction with no `Class` rows of its own — the generator
-        // reads them by `templateId`, and there are none. A gate term that can
-        // never fire would tell the next reader that create can produce this
-        // reason, which it cannot.
+        // this payload in its own right (#296) — and the GATE below covers it
+        // like every other member, because `anyBlocked` (`@/lib/generation`)
+        // reduces over `Object.values` rather than listing its terms. On
+        // create that count is structurally 0: `already_this_week` requires an
+        // entry of THIS template already holding the week, and the template
+        // was created moments earlier in the same transaction with none of its
+        // own — the generator reads them by `scheduleRuleId`, and there are
+        // none. A provably-zero term is free, which is `anyBlocked`'s own
+        // argument for reducing rather than enumerating.
         //
         // Read from the wire rather than hard-coded to 0 all the same: the
         // POST route already sends it, and a literal would be a claim where
         // this is a measurement. If create ever CAN produce the reason, this
-        // gate must gain the term in the same change — otherwise the window
-        // comes back short and the page navigates away without saying so.
+        // gate needs no edit to meet it — that is exactly what stops the
+        // window coming back short and the page navigating away without saying
+        // so, which is the #196 failure the paragraph below records.
         // `counts` is optional in this parse shape even though the route always
         // sends it — see `studio-template-form.tsx`'s twin for why nesting makes
         // that distinction load-bearing rather than pedantic.

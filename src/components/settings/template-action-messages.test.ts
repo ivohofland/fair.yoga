@@ -155,12 +155,12 @@ describe('resolveTemplateConfirmation', () => {
   });
 
   /**
-   * The wire guard, one count over. `alreadyThisWeek` is the newest field on
+   * The wire guard, one count over. `blockedByOverlap` is the newest field on
    * this arm, so a tab holding this bundle against a server that predates it
    * receives an `active` payload without it — and an unguarded
-   * `${undefined} dates are still held…` is what the four older counts already
-   * have a test against. Silence is the contract for a payload this resolver
-   * cannot read.
+   * `${undefined} dates overlap other classes…` is what the older counts
+   * already have a test against. Silence is the contract for a payload this
+   * resolver cannot read.
    */
   it('says nothing rather than rendering undefined when the NEWEST count is missing', () => {
     // The newest count is `blockedByOverlap` (#296), not `alreadyThisWeek`
@@ -598,7 +598,9 @@ describe('the two families resume with one sentence', () => {
     // The fifth column is `alreadyThisWeek` (#194 for the class family, #284
     // for the studio one — one generator produces it for both now). The two
     // functions must answer identically across its whole range, or the
-    // delegation has a hole exactly where the newest count lives.
+    // delegation has a hole exactly where the week key lives. Not the NEWEST
+    // count — `blockedByOverlap` (#296) is, and the sixth column carries it
+    // for the reason the paragraph above gives.
     const cases: Array<[number, number, number, number, number, number]> = [
       [4, 4, 0, 0, 0, 0],
       [0, 4, 0, 0, 0, 0],

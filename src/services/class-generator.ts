@@ -179,12 +179,12 @@ export async function generateClassInstances(
       if (isLockTimeout(err)) {
         log.warn(
           { err, templateId: template.id, teacherId: template.scheduleRule.teacherId },
-          'class generation skipped template due to lock contention',
+          'recurring class generation skipped template due to lock contention',
         );
       } else {
         log.error(
           { err, templateId: template.id, teacherId: template.scheduleRule.teacherId },
-          'class generation failed for template',
+          'recurring class generation failed for template',
         );
         errors.push(err);
       }

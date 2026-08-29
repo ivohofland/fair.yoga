@@ -99,7 +99,11 @@ Classes move through states: `draft → open → in_progress → completed` (eve
   a stamp and the generator filters on the template's current one, so after a
   template time edit a started class can
   still be a candidate that same day — the date rule is immune, since no start
-  time on a past date is still ahead. A `StudioClassTemplate` is never removed
+  time on a past date is still ahead. Removal is not undo, though, and since
+  #284 it can ADD: a past generated class holds its template's **week**, so
+  removing it frees that week and the sweep may fill a still-future candidate
+  date in it — deleting an income record can put a new class on the schedule.
+  A `StudioClassTemplate` is never removed
   at all: archiving withdraws its future window and records what it withdrew
   (`archivedAt`/`withdrawnCount`), and a delete would destroy that record. A
   cancelled studio class is **not** an income record — reporting excludes it —

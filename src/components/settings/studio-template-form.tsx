@@ -170,21 +170,23 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // nothing existed under this brand-new template before this create.
         //
         // `alreadyThisWeek` rides along inside `counts` — it is not a field of
-        // this payload in its own right (#296) — and the GATE below
-        // deliberately does not test it. It is structurally 0 on CREATE: the
-        // generator keys the reason on weeks this template already holds
-        // (`isWeekHeld`, `services/entry-generation.ts`), and a template
-        // created by this very POST holds none. A gate term that can never
-        // fire would read as a case this page handles.
+        // this payload in its own right (#296) — and the GATE below covers it
+        // like every other member, because `anyBlocked` (`@/lib/generation`)
+        // reduces over `Object.values` rather than listing its terms. It is
+        // structurally 0 on CREATE: the generator keys the reason on weeks
+        // this template already holds (`isWeekHeld`,
+        // `services/entry-generation.ts`), and a template created by this very
+        // POST holds none. A provably-zero term is free — that is
+        // `anyBlocked`'s own argument for reducing rather than enumerating,
+        // and it is what makes the gate's job (the #196 failure: never
+        // navigating away from a short window in silence) survive a count
+        // nobody remembered to add.
         //
-        // That is a property of CREATE, not of the studio generator — since
-        // #284 it produces `already_this_week` like the class one, and the
-        // resume button meets it. Read from the wire rather than hard-coded all
-        // the same, so the day a create path can reach a held week the count is
-        // already here. Do not add the term
-        // to the gate on that argument alone: without a reachable reason it
-        // pins nothing, and the gate's job is the #196 failure — never
-        // navigating away from a short window in silence.
+        // Structurally zero is a property of CREATE, not of the studio
+        // generator — since #284 it produces `already_this_week` like the
+        // class one, and the resume button meets it. Read from the wire rather
+        // than hard-coded all the same, so the day a create path can reach a
+        // held week the count is already here and the gate already reads it.
         // `counts` is optional in this parse shape even though the route always
         // sends it: this is untrusted JSON, and nesting means a payload without
         // the object would THROW on the first member read rather than compare

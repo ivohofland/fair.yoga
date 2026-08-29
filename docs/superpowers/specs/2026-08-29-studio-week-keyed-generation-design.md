@@ -390,8 +390,10 @@ with no copy change: the count already rides the wire as a zero.
 **Teacher, class family.** One sentence gains two words. Nothing else.
 
 **Operator.** `'class generation could not fill every date in the window'`
-becomes `'recurring class generation could not fill…'` (§1.8). A grep on the
-old string finds nothing after this branch.
+becomes `'recurring class generation could not fill…'` (§1.8). The old string
+is a SUFFIX of the new one, so a plain grep for it still matches every line the
+new wording produces — an operator looking for the pre-branch message has to
+anchor at the start of it (`'^class generation'`) to tell the two apart.
 
 **Interaction with #279, and the acceptance its spec asked for.** Removing a
 **past generated** studio class now frees that class's week, so the sweep can

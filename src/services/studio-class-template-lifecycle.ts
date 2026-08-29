@@ -892,8 +892,11 @@ export async function updateStudioClassTemplate(
   );
 
   // The gate the probe cannot apply for itself, because it is not about a
-  // date: the sweep reaches only templates matching `ACTIVE_TEMPLATE_WHERE`,
-  // so for a paused or archived one there is no week to predict at all. Every
+  // date: the sweep reaches only templates whose rule has `isActive` true and
+  // `isArchived` false — the `findMany` in `generateStudioClassInstances`
+  // spells that pair inline, and the row lock in
+  // `claimStudioTemplateForGeneration` re-checks the same two columns — so for
+  // a paused or archived one there is no week to predict at all. Every
   // per-date ground the probe reproduces sits INSIDE the generator, and for
   // these two states that function is never called — which is why the probe's
   // own docblock can enumerate its grounds exhaustively and still say nothing

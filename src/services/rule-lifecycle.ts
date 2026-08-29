@@ -104,7 +104,11 @@ export type WithdrawHook = {
  * (`entry-generation.ts`) declares that other half, and each family's
  * descriptor is its generator constant spread into this one — so the fields
  * both layers read are written once rather than twice, and the two copies
- * cannot come apart.
+ * cannot come apart. The spread does not carry that on its own: an override
+ * written AFTER it satisfies every type here and compiles clean, measured on
+ * `childTable` and `logNoun` both. What closes it is the pin in
+ * `rule-lifecycle.test.ts`, which matches each descriptor against the
+ * generator constant it spreads.
  *
  * A dispatch table, not a runtime discriminator: each family's entry is
  * complete on its own, and nothing in this module ever asks which family it is
