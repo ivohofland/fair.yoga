@@ -455,10 +455,12 @@ export type UpdateClassTemplateResult =
        * answers with a candidate *occurrence* — a Thursday, say — and the
        * sentence built from this speaks about weeks; a bare `Date` here
        * invites the occurrence reading and would put the wrong day in front
-       * of a teacher. The conversion happens in `updateClassTemplate` rather
-       * than in the copy layer because `mondayOf` lives in `@/lib/timezone`,
-       * which imports pino, and `template-action-messages.ts` is
-       * value-imported by a `'use client'` component.
+       * of a teacher. The conversion happens in the service layer —
+       * `probeFirstEffectiveWeek` (`entry-generation.ts`) returns the Monday,
+       * so this field is already one — rather than in the copy layer, because
+       * `mondayOf` lives in `@/lib/timezone`, which imports pino, and
+       * `template-action-messages.ts` is value-imported by a `'use client'`
+       * component.
        *
        * A prediction, not a report: this PUT generates nothing, so the class
        * it names does not exist yet and will be created by the sweep.
@@ -820,12 +822,12 @@ export async function updateClassTemplate(
     // transaction writes no `Class` row at all now, so that P2002 has no way
     // to be raised from here.
     //
-    // Two separate branches stood here until this task — `isUniqueConflictOn`
-    // for a same-family collision, `isCrossFamilySlotConflict` for the other
-    // family's — because two different DB objects raised them. Issue 298
-    // replaced both objects with the ONE exclusion constraint below, and a
-    // `23P01` cannot say which family it refused, so `ruleSlotHolder` probes
-    // `ScheduleRule` itself to answer that. LOGGED for the reason the shared
+    // ONE branch, because issue 298 replaced the two DB objects that used to
+    // sit here — one per family — with the single exclusion constraint below.
+    // A `23P01` cannot say which family it refused, so `ruleSlotHolder` probes
+    // `ScheduleRule` itself to answer that; do not split this back into a
+    // per-family pair of error tests, there is only one raiser to match.
+    // LOGGED for the reason the shared
     // archive's own `23P01` branch gives (`archiveOrUnarchiveRule`,
     // `rule-lifecycle.ts`): a returned failure never reaches
     // `withErrorHandler`, so catching here is what would otherwise remove the

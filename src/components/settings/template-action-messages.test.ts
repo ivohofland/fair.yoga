@@ -300,9 +300,8 @@ describe('resolveStudioConfirmation', () => {
     // All five distinct — see the class sibling above. Two unequal numbers
     // caught a transposition of arguments 1 and 2; it took four to catch one of
     // 3 and 4, which passed 43/43 until this fixture changed. `alreadyThisWeek`
-    // is 0 in production here until #284 (see this resolver's `active` case),
-    // and is non-zero in this FIXTURE for exactly the same reason the others
-    // are unequal: a value that is always 0 pins no position.
+    // is non-zero here for the same reason the others are unequal: a value
+    // that is always the same pins no position.
     expect(
       resolveStudioConfirmation({
         action: 'active',
@@ -596,10 +595,10 @@ describe('the two families resume with one sentence', () => {
   // claim those were the counter-examples, and under this one they are the
   // newest thing worth agreeing about.
   it('answers identically for every case pinned above', () => {
-    // The fifth column is `alreadyThisWeek` (#194). It is 0 in production on
-    // the studio side until #284 gives that generator a producer for the
-    // reason — but the two functions must still answer identically when it is
-    // not, or the delegation has a hole exactly where the newest count lives.
+    // The fifth column is `alreadyThisWeek` (#194 for the class family, #284
+    // for the studio one — one generator produces it for both now). The two
+    // functions must answer identically across its whole range, or the
+    // delegation has a hole exactly where the newest count lives.
     const cases: Array<[number, number, number, number, number, number]> = [
       [4, 4, 0, 0, 0, 0],
       [0, 4, 0, 0, 0, 0],

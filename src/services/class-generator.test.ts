@@ -1841,7 +1841,8 @@ describe('generateClassInstances (DB)', () => {
      * deliberately not refined. #272 made that prediction the outcome: the
      * date is consumed by the pre-check itself as `already_generated`, never
      * reaching the `short` list or the probe. The filter below takes every
-     * reason but `already_generated`, which is what `logSkippedSlots` logs, so
+     * reason but `already_generated`, which is what `logSkippedEntries`
+     * (`entry-generation.ts`) logs, so
      * a clash now yields an empty `collidedDates` — the two callers assert
      * that instead of a name, and the count assertions carry the load the name
      * used to.

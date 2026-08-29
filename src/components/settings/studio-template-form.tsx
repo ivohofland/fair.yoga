@@ -171,19 +171,20 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         //
         // `alreadyThisWeek` rides along inside `counts` — it is not a field of
         // this payload in its own right (#296) — and the GATE below
-        // deliberately does not test it. It is structurally 0 on create twice
-        // over: a brand-new template holds no week of its own yet, and the
-        // studio generator has no week key to produce the reason with until
-        // #284. A gate term that can never fire would read as a case this
-        // page handles.
+        // deliberately does not test it. It is structurally 0 on CREATE: the
+        // generator keys the reason on weeks this template already holds
+        // (`isWeekHeld`, `services/entry-generation.ts`), and a template
+        // created by this very POST holds none. A gate term that can never
+        // fire would read as a case this page handles.
         //
-        // Read from the wire rather than hard-coded so the count arrives on
-        // its own when #284 lands. That is when this gate needs the term —
-        // and it needs it only if #284 also makes the reason reachable on
-        // CREATE, which the first of the two arguments above says it will
-        // not. Without the term a short window would navigate away in
-        // silence, which is the #196 failure this branch of the code exists
-        // to answer.
+        // That is a property of CREATE, not of the studio generator — since
+        // #284 it produces `already_this_week` like the class one, and the
+        // EDIT branch below and the resume button both meet it. Read from the
+        // wire rather than hard-coded all the same, so the day a create path
+        // can reach a held week the count is already here. Do not add the term
+        // to the gate on that argument alone: without a reachable reason it
+        // pins nothing, and the gate's job is the #196 failure — never
+        // navigating away from a short window in silence.
         // `counts` is optional in this parse shape even though the route always
         // sends it: this is untrusted JSON, and nesting means a payload without
         // the object would THROW on the first member read rather than compare

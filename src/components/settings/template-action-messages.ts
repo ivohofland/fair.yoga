@@ -334,16 +334,16 @@ export type TemplateCopyNoun = 'recurring class' | 'template';
  * exists, so this sentence carries the whole of what happened.
  *
  * `firstEffective` is the Monday of the first week the new schedule reaches —
- * computed by `updateClassTemplate`'s probe from the same `isWeekHeld` the
- * generator decides with, so the sentence cannot claim a week the sweep will
- * not fill. `null` when no free week is in the probe's horizon: the clause is
- * dropped rather than a date invented, matching this file's rule that saying
- * nothing beats saying something unfounded.
+ * computed by `probeFirstEffectiveWeek` (`services/entry-generation.ts`) from
+ * the same `isWeekHeld` the generator decides with, so the sentence cannot
+ * claim a week the sweep will not fill. `null` when no free week is in the
+ * probe's horizon: the clause is dropped rather than a date invented, matching
+ * this file's rule that saying nothing beats saying something unfounded.
  *
  * A MONDAY, not the candidate class date, and the conversion deliberately
  * happens in the service rather than here — `mondayOf` lives in
- * `@/lib/timezone`, which imports pino, and `template-form.tsx` (`'use
- * client'`) value-imports this file. `formatDayHeader` is reused rather than a
+ * `@/lib/timezone`, which imports pino, and both template forms (`'use
+ * client'`) value-import this file. `formatDayHeader` is reused rather than a
  * bare day-and-month formatter being added, and the sentence says "week
  * *starting* Monday" so the weekday it renders reads as intentional rather
  * than as noise.
@@ -353,13 +353,11 @@ export type TemplateCopyNoun = 'recurring class' | 'template';
  * is not available on either family's whole set of existing classes.
  * `settingsLocked` refuses economic edits on a booked class, so the class
  * family cannot always change one — true before #194 too, since the deleted
- * sync skipped those same instances. The studio family's gap is wider still:
- * `studioClassEditability` (`@/services/studio-class-editability.ts`) ties
- * `dateEditable` to `scheduleRuleId === null`, so a *generated* studio class's
- * date cannot move at all — moving it would free its `(scheduleRuleId, date)`
- * key and the hourly sweep would recreate the class on the old date within
- * the hour. Cancelling is the remedy that exists on both sides regardless of
- * which gap applies, which is what the clause names. It is kept on all four
+ * sync skipped those same instances. The studio family has a gap of its own,
+ * owned and stated by `studioClassEditability`
+ * (`@/services/studio-class-editability.ts`). Cancelling is the remedy that
+ * exists on both sides regardless of which gap applies, which is what the
+ * clause names. It is kept on all four
  * forms below, the archived one included: archiving withdraws only the
  * unbooked future window, so a class still bound by one of these gaps can be
  * sitting on the schedule for a teacher to act on.
@@ -483,17 +481,15 @@ export type StudioTemplateToggleResponse =
       scheduled: number;
       added: number;
       /**
-       * `counts.alreadyThisWeek` is always 0 today, and that is not a bug.
-       * `countSkipReasons` returns all four counts for both families, so the
-       * value flows through the studio chain by the same route the other three
-       * do — but nothing on the studio side PRODUCES `already_this_week` yet:
-       * `generateStudioInstancesForTemplate` has no week key, which is #284.
-       * Carried rather than hard-coded to 0 precisely so that when #284 lands,
-       * the count arrives here with no wiring left to remember.
+       * The whole `SkipCounts`, carried rather than mapped member by member.
+       * `countSkipReasons` returns every member for both families, and since
+       * #284 both families PRODUCE every member too — one generator, one week
+       * key — so this arm needs no per-family branch and no field the studio
+       * route leaves at a constant.
        *
-       * Carrying the whole `SkipCounts` rather than its members one by one is
-       * that same argument generalised: it is what makes the next count's
-       * arrival free instead of merely cheap.
+       * Carrying the object rather than its members one by one is what made
+       * `alreadyThisWeek`'s arrival free when it landed on this side, and is
+       * what makes the next count's arrival free in turn.
        */
       counts: SkipCounts;
     }
@@ -541,11 +537,11 @@ const COUNT_KEYS = {
  * `Number.isInteger`. The object check has to come first, and a type guard is
  * what lets it narrow for the call rather than being re-asserted with a cast.
  *
- * Members are checked even where the server cannot currently produce them —
- * `alreadyThisWeek` until #284 gives the studio generator a week key. The guard
- * is about what the WIRE carries, not about what the server counts today, and
- * an `active` payload missing a field is a bundle-vs-server mismatch either
- * way. One guard for both families.
+ * Every member is checked regardless of what any one route currently produces.
+ * The guard is about what the WIRE carries, not about what the server counts:
+ * an `active` payload missing a field is a bundle-vs-server mismatch whether
+ * the field was omitted or the server never set it. One guard for both
+ * families.
  *
  * EXPORTED since PR #300's third review pass, and the reason is a measurement
  * rather than tidiness. It was module-private, so the CREATE path — which reads

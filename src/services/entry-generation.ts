@@ -57,9 +57,9 @@ export type ChildWithRule<TChild> = TChild & {
  * The rolling window, in occurrences — four weeks (`CLAUDE.md`).
  *
  * `generateEntriesForRule` below reads it directly, for both families.
- * Exported since #194 because `updateClassTemplate`
- * (`class-template-lifecycle.ts`) also reads it, to build the horizon it
- * hands `probeFirstEffectiveWeek`, which deliberately looks TWICE this far.
+ * Exported because each family's `update…Template` reads it too, to build the
+ * horizon it hands `probeFirstEffectiveWeek`, which deliberately looks TWICE
+ * this far.
  * The asymmetry is the point rather than a disagreement: when all four of the
  * generator's weeks are held by the superseded schedule, the honest answer to
  * "when does this edit take effect" is week five, and no window this
@@ -153,8 +153,8 @@ export function isWeekHeld(date: Date, heldWeeks: ReadonlySet<number>): boolean 
  * or `null` if every candidate's week is taken (#194).
  *
  * Pure. Its caller is `probeFirstEffectiveWeek`, further below in this file —
- * called in turn by `updateClassTemplate` (`class-template-lifecycle.ts`)
- * deciding what to tell the teacher.
+ * called in turn by each family's `update…Template`, deciding what to tell the
+ * teacher.
  *
  * `generateEntriesForRule` below does NOT call it, and the plan's
  * "one function, two callers" line is corrected here rather than upheld: the
@@ -465,10 +465,11 @@ export async function claimRuleForGeneration<TChild>(
  * production path into this function already runs inside an interactive
  * transaction, so the transaction a caught `P2002` would abort is the
  * CALLER'S. Stated as that property rather than as a roster of call sites: a
- * roster reaches past this file and has no owner here. Both generators' own
- * test files do call this with a bare `prisma`, which is why the parameter
- * type admits one. Do not reintroduce a `catch` here; there is nothing it can
- * do that the constraint does not.
+ * roster reaches past this file and has no owner here. The parameter type
+ * still admits a bare `PrismaClient` because the generator suites drive this
+ * function outside a transaction, where each statement is its own. Do not
+ * reintroduce a `catch` here; there is nothing it can do that the constraint
+ * does not.
  *
  * Accepts a transaction client so a route can create the template and its
  * window atomically.
@@ -508,20 +509,19 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
     .map(({ date }) => date)
     .slice(0, DEFAULT_WEEKS);
 
-  // `dates` CAN be empty. The sentence that used to be here said it could not
-  // — "the filter above can only drop the first of five" — and that holds only
-  // while every start instant is READABLE. `classStartInstant`
-  // (`@/lib/timezone`) fails soft by design: an unparseable `startTime`
-  // returns `new Date(NaN)` rather than throwing, `NaN > startDate` is
-  // `false`, and the filter drops all five.
+  // `dates` CAN be empty, and the filter above is not what stops it. The
+  // filter drops a candidate whose start is not strictly ahead of
+  // `startDate`, and it can drop ALL FIVE: `classStartInstant`
+  // (`@/lib/timezone`) fails soft by design, so an unparseable `startTime`
+  // returns `new Date(NaN)` rather than throwing, and `NaN > startDate` is
+  // `false` for every candidate at once.
   //
-  // What actually keeps that out of reach is the WRITE path, not this filter.
-  // Every route that sets a template's `startTime` validates it with
-  // `timeHHmm` (`@/lib/schemas`), so no stored row can carry a value
-  // `classStartInstant` cannot read, and no path reaches the empty case today.
-  // But that is a guarantee about the WRITERS — wideable by a new route, a
-  // migration, or a manual `UPDATE` — where the old sentence claimed one about
-  // this function, which was never there.
+  // What keeps that out of reach is the WRITE path. Every route that sets a
+  // template's `startTime` validates it with `timeHHmm` (`@/lib/schemas`), so
+  // no stored row can carry a value `classStartInstant` cannot read, and no
+  // path reaches the empty case today. That is a guarantee about the WRITERS —
+  // wideable by a new route, a migration, or a manual `UPDATE` — and not a
+  // property of this function.
   //
   // Guarded rather than asserted for a second, independent reason: the week
   // bounds below dereference both ends of the array, and under
@@ -556,9 +556,9 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
   }
 
   // ONE query for the whole window, over `CalendarEntry` — which since #327 is
-  // where both families' occupancy lives. It replaces two reads per family: the
-  // per-family child scan this used to be, and the separate cross-family read
-  // beside it that named the cross-family reason. Scoped to this teacher because
+  // where both families' occupancy lives, so a single read answers the
+  // same-family and the cross-family question at once and neither needs a scan
+  // of its own. Scoped to this teacher because
   // `CalendarEntry_teacher_slot_excl` is `("teacherId" WITH =, span WITH &&)`,
   // so another teacher's entry can never block this one and must not be read.
   //
@@ -918,24 +918,32 @@ function logSkippedEntries(
 export type EditLogNoun = 'recurring class' | 'studio template';
 
 /**
- * The probe behind `UpdateClassTemplateResult.firstEffective` (#194): the
- * Monday of the first week in `horizon` whose candidate date
- * `generateInstancesForTemplate` would actually fill, GIVEN that the template
- * is eligible to generate at all.
+ * The probe behind each family's `firstEffective`
+ * (`UpdateClassTemplateResult`, #194; `UpdateStudioClassTemplateResult`,
+ * #284): the Monday of the first week in `horizon` whose candidate date
+ * `generateEntriesForRule` would actually fill, GIVEN that the template is
+ * eligible to generate at all.
+ *
+ * ONE PROBE FOR BOTH FAMILIES, matching the one generator it predicts. That
+ * is what keeps a prediction and a behaviour from drifting apart per family,
+ * and the family enters here only through `editNoun`, which reaches nothing
+ * but the failure warn below. Do not add a family parameter to the reads:
+ * every question this function asks is answered by `CalendarEntry` columns
+ * both families share.
  *
  * That precondition is the caller's, not this function's, and it is stated in
  * the contract rather than assumed because it is not a `SkipReason` and so
- * cannot appear in the enumeration below. `generateInstancesForTemplate`
- * refuses candidate DATES; `ACTIVE_TEMPLATE_WHERE` refuses whole TEMPLATES,
- * one layer up, before any candidate is considered — at the sweep's
- * `findMany` (`class-generator.ts`) and again under the row lock in
- * `claimTemplateForGeneration`. For a paused or archived template the
- * generator is never called, no date is ever declined, and every answer this
- * function could give would name a week nothing will fill. `updateClassTemplate`
- * therefore calls it only when `templateGenerationState(updated) === 'active'`
- * and reports the other two states as themselves; a reader completing the
- * bullet list below would still be missing that case, which is why it is up
- * here and not in it.
+ * cannot appear in the enumeration below. `generateEntriesForRule` refuses
+ * candidate DATES; the eligibility predicate (`ACTIVE_TEMPLATE_WHERE`,
+ * `@/lib/template-selection`) refuses whole TEMPLATES, one layer up, before
+ * any candidate is considered — at either family's sweep `findMany` and again
+ * under the row lock in `claimRuleForGeneration`. For a paused or archived
+ * template the generator is never called, no date is ever declined, and every
+ * answer this function could give would name a week nothing will fill. Each
+ * family's `update…Template` therefore calls it only when
+ * `templateGenerationState` answers `'active'` and reports the other two
+ * states as themselves; a reader completing the bullet list below would still
+ * be missing that case, which is why it is up here and not in it.
  *
  * Read-only, and it must stay that way — this endpoint creates no class, so
  * everything in the sentence it feeds is a prediction about the sweep.
@@ -1054,13 +1062,13 @@ export async function probeFirstEffectiveWeek(
       // itself rather than a second pair of bounds, so the two reads cannot
       // drift apart about the range; `@@index([teacherId, date])` backs it.
       //
-      // ONE READ FOR BOTH FAMILIES since #327, where this used to be two — the
-      // second was a `StudioClass` scan added in #296, and it was not an
-      // extension of the probe but a REPAIR of it: a probe blind to the other
-      // family counted a cross-family date as a free candidate and named a
-      // week the sweep would then skip, landing EARLIER than delivered, which
-      // this function's own docblock calls the dishonest direction. With one
-      // occupancy table that blindness is not expressible.
+      // ONE READ FOR BOTH FAMILIES (#327), and it must stay unnarrowed. No
+      // `kind` filter belongs here: a probe blind to the other family counts a
+      // cross-family date as a free candidate and names a week the sweep then
+      // skips, landing EARLIER than delivered — the dishonest direction this
+      // function's own docblock names. `CalendarEntry` holds both families'
+      // occupancy, so that blindness is not expressible unless someone adds it
+      // back.
       //
       // OVERLAP, NOT EXACT START, and that is the SAME defect one shape over.
       // #327 made `CalendarEntry_teacher_slot_excl` a RANGE constraint, so a
@@ -1083,7 +1091,7 @@ export async function probeFirstEffectiveWeek(
     const heldWeeks = new Set(ownRows.map((e) => mondayOf(e.date)));
     // What every candidate would occupy — one span for the whole horizon,
     // since a template has one start time and one duration. Built exactly as
-    // `generateInstancesForTemplate` builds its own `candidateSpan`, so the
+    // `generateEntriesForRule` above builds its own `candidateSpan`, so the
     // two cannot disagree about which dates are reachable.
     const candidateSpan = {
       startTime: hhmmToTime(template.startTime),
@@ -1116,7 +1124,7 @@ export async function probeFirstEffectiveWeek(
 
     const free = firstFreeWeek(candidates, heldWeeks);
     // Converted to the WEEK's Monday before leaving this function, not left as
-    // the candidate date — see `UpdateClassTemplateResult`'s own note for why
+    // the candidate date — see either family's `firstEffective` note for why
     // the conversion cannot live in the copy layer.
     return free === null ? null : new Date(mondayOf(free));
   } catch (err) {

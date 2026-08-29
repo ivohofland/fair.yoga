@@ -516,9 +516,10 @@ export type UpdateStudioClassTemplateResult =
        * answers with a candidate *occurrence* — a Thursday, say — and the
        * sentence built from this speaks about weeks; a bare `Date` here
        * invites the occurrence reading and would put the wrong day in front
-       * of a teacher. The conversion happens in `updateStudioClassTemplate`
-       * rather than in the copy layer because `mondayOf` lives in
-       * `@/lib/timezone`, which imports pino, and
+       * of a teacher. The conversion happens in the service layer —
+       * `probeFirstEffectiveWeek` (`entry-generation.ts`) returns the Monday,
+       * so this field is already one — rather than in the copy layer, because
+       * `mondayOf` lives in `@/lib/timezone`, which imports pino, and
        * `components/settings/template-action-messages.ts` is value-imported
        * by `studio-template-form.tsx`, a `'use client'` component.
        *
@@ -602,10 +603,9 @@ export type UpdateStudioClassTemplateResult =
  * No instance sync, and that is the rule rather than an omission. Editing
  * `dayOfWeek` or `startTime` here leaves every generated `StudioClass` exactly
  * where it is, which is what #194 decided for BOTH families on 2026-08-20: a
- * template is a stamp, not a live link. This function is unchanged by that
- * decision — it never propagated — but this paragraph is, because it used to
- * frame the absence as a seam a future branch would attach a propagation to.
- * Nothing should attach here.
+ * template is a stamp, not a live link. The absence is not a seam — nothing
+ * may attach a propagation here, and the teacher cancels the classes the old
+ * schedule left standing, individually.
  *
  * What it answers instead is WHEN the new schedule first reaches the calendar:
  * `firstEffective` and `generationState` on the success arm (#284). Both are
@@ -824,13 +824,12 @@ export async function updateStudioClassTemplate(
     // `dayOfWeek` and `startTime` are both teacher-editable and both write
     // onto the rule now (issue 298), so an edit can move this template onto a
     // slot another of its owner's live rules — either family — already holds.
-    // Two separate branches stood here until this task — `isUniqueConflictOn`
-    // for a same-family collision, `isCrossFamilySlotConflict` for the other
-    // family's — because two different DB objects raised them.
-    // `ScheduleRule_teacher_slot_excl` (issue 298) replaced both with ONE
-    // exclusion constraint, and its `23P01` cannot say which family it
-    // refused, so `ruleSlotHolder` probes `ScheduleRule` itself to answer
-    // that.
+    // ONE branch, because `ScheduleRule_teacher_slot_excl` (issue 298) is one
+    // exclusion constraint spanning both families where two DB objects used to
+    // sit. Its `23P01` cannot say which family it refused, so `ruleSlotHolder`
+    // probes `ScheduleRule` itself to answer that — do not split this back
+    // into a per-family pair of error tests; there is only one raiser to
+    // match.
     //
     // The log line is the point of catching rather than rethrowing. #231:
     // "`classifyApiError` logs this same error at `warn` when it escapes;

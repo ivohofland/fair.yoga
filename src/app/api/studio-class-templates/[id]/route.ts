@@ -254,11 +254,11 @@ export const PATCH = withErrorHandler(async (
           templateKind: 'studio' as const,
           scheduled: result.scheduled,
           added: result.added,
-          // Passed whole, not mapped member by member (#296). `alreadyThisWeek`
-          // is 0 on every response until #284 gives the studio generator a week
-          // key — carried anyway, so the wire and the class family's stay one
-          // shape and the copy layer needs no branch. See the service's
-          // `active` arm for the full note.
+          // Passed whole, not mapped member by member (#296): the wire and the
+          // class family's stay one shape and the copy layer needs no branch.
+          // Every member is a real measurement on this side too since #284 put
+          // both families on one generator. See the service's `active` arm for
+          // the full note.
           counts: result.counts,
         });
       case 'unchanged':

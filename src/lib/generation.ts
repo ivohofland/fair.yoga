@@ -191,12 +191,13 @@ export interface GenerationResult {
  * `resumeMessage` names it as "N dates are still held by classes on your
  * previous day", which is what stops a resume after a day edit reporting
  * "4 classes on your schedule. Nothing needed adding." about four classes on
- * the weekday the teacher just abandoned. It is 0 on the studio side until
- * #284 gives that generator a week key — carried, not special-cased.
- * `already_generated` and `raced` are both deliberately
+ * the weekday the teacher just abandoned. Both families produce it: one
+ * generator keys both on the week (#194, #284), so this count is a real
+ * measurement on either side rather than a field one of them always leaves at
+ * 0. `already_generated` and `raced` are both deliberately
  * excluded, for different reasons: `already_generated` is the expected,
  * steady-state outcome of an idempotent re-run and saying so would be noise
- * (`logSkippedSlots` in `class-generator.ts` already treats it the same
+ * (`logSkippedEntries` in `entry-generation.ts` already treats it the same
  * way); `raced` is "a free date that did not come back AND that nothing live
  * overlaps any more" — a lost contention race whose date will simply be picked
  * up on the next run.
@@ -207,9 +208,9 @@ export interface GenerationResult {
  * see it and the constraint refuses it every hour, forever. While `raced` meant
  * only "did not come back", that permanent case landed in the one reason
  * nothing surfaces, and `template-form.tsx` navigated a teacher away from a
- * window that generated nothing without a word. Both generators now re-ask the
+ * window that generated nothing without a word. The generator re-asks the
  * database about a short date (`probeOverlappingCandidates`,
- * `@/lib/entry-conflict`) and report a still-held one as `blocked_by_overlap`,
+ * `@/lib/entry-conflict`) and reports a still-held one as `blocked_by_overlap`,
  * so what is left under `raced` is transient by construction rather than by
  * assumption. Do not widen it back.
  */

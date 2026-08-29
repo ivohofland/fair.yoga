@@ -1597,10 +1597,17 @@ describe('updateStudioClassTemplate (DB)', () => {
   let otherAccountId: string;
   // `ScheduleRule_teacher_slot_excl` (issue 298) excludes on RANGE overlap,
   // so each slot below is spaced a full `durationMinutes` (60) from the
-  // last (`counter * 60 - 30`) rather than a minute — this describe's own
-  // deliberate collisions (`'21:45'` in the cross-family case) are written
-  // as explicit literals well outside this range, not derived from the
-  // counter.
+  // last (`counter * 60 - 30`) rather than a minute: counter 1 is `'09:30'`
+  // and every call after it climbs an hour. Two calls of headroom are left —
+  // counter 16 computes `'24:30'`, which `slotTime` refuses.
+  //
+  // This describe's deliberate collisions are written as explicit literals
+  // rather than derived from the counter, and `'21:45'` in the cross-family
+  // case is INSIDE the range the counter now reaches. What keeps it from
+  // colliding is ORDERING, not distance: that holder is a `ClassTemplate`
+  // created and dropped inside its own test's `finally`, so no later slot is
+  // ever minted while it exists. A new literal collision needs the same
+  // teardown — it cannot rely on sitting past the counter's ceiling.
   let counter = 0;
 
   const makeTemplate = async (owner: string, classType: string) => {
@@ -2060,11 +2067,14 @@ describe('updateStudioClassTemplate (DB)', () => {
    *
    * `23:59` so the first candidate is never dropped by the probe's own
    * already-started filter, which would move the answer a week for a reason
-   * that has nothing to do with what this pins — the block's own
-   * `makeTemplate` slots are all 09:xx, where that filter fires for most of
-   * the day. Both halves asserted: the week it IS and the week it is NOT,
-   * because the failure is off by exactly one week and `not.toBe` alone would
-   * pass for any other wrong answer.
+   * that has nothing to do with what this pins. The block's own `makeTemplate`
+   * walks its slots up from `'09:30'` an hour at a time, and that filter fires
+   * on any of them for most of the day; `23:59` is the one start a run at any
+   * hour still has ahead of it.
+   *
+   * Both halves asserted: the week it IS and the week it is NOT, because the
+   * failure is off by exactly one week and `not.toBe` alone would pass for any
+   * other wrong answer.
    *
    * TODAY's weekday, so the blocked candidate is today; the cancelled twin
    * below takes TOMORROW's, because at 23:59 two rules on one weekday would

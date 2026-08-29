@@ -1211,8 +1211,10 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     // `ScheduleRule_teacher_slot_excl` refuses a second live rule overlapping
     // this teacher's own weekday slot, so three same-day, same-hour templates
     // could not coexist. 18:45 is free on both days this describe moves
-    // between — every other east-teacher template in this file starts at 16:15
-    // or earlier, and none of them is on a Tuesday at all.
+    // between: the latest east-teacher rule on either of those two weekdays
+    // ends at 17:15, an hour and a half before this one starts. The exclusion
+    // is per-weekday, so an east-teacher rule on any OTHER day is free to sit
+    // later than that and several do.
     let weekTemplateId: string;
     let weekRuleId: string;
 

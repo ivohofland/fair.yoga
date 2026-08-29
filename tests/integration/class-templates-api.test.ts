@@ -1527,10 +1527,14 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(res.status).toBe(200);
 
     const { data } = (await res.json()) as { data: { firstEffective: string | null } };
-    // Not null: every week the generator can see is held, so the honest answer
-    // is one the generator cannot see — which is the case a probe sharing the
-    // generator's own four-week horizon gets wrong by answering "no free week".
-    expect(data.firstEffective).not.toBeNull();
+    // A week, not nothing: every week the generator can see is held, so the
+    // honest answer is one the generator cannot see — which is the case a probe
+    // sharing the generator's own four-week horizon gets wrong by answering
+    // "no free week".
+    // `typeof`, not `not.toBeNull()`: an absent field is `undefined`, which is
+    // not null, so the weaker assertion passes on exactly the route this case
+    // exists to catch and leaves the whole verdict to the lines below.
+    expect(typeof data.firstEffective).toBe('string');
     const predicted = new Date(data.firstEffective as string);
     // A Monday, in UTC — the copy renders it as "the week starting <this>".
     expect(predicted.getUTCDay()).toBe(1);
@@ -1645,7 +1649,10 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(res.status).toBe(200);
 
     const { data } = (await res.json()) as { data: { firstEffective: string | null } };
-    expect(data.firstEffective).not.toBeNull();
+    // `typeof`, not `not.toBeNull()`: an absent field is `undefined`, which is
+    // not null, so the weaker assertion passes on exactly the route this case
+    // exists to catch and leaves the whole verdict to the lines below.
+    expect(typeof data.firstEffective).toBe('string');
     const predicted = new Date(data.firstEffective as string);
 
     // Week SIX, not week five. Stated as both halves — what it is and what it
@@ -1734,7 +1741,10 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(res.status).toBe(200);
 
     const { data } = (await res.json()) as { data: { firstEffective: string | null } };
-    expect(data.firstEffective).not.toBeNull();
+    // `typeof`, not `not.toBeNull()`: an absent field is `undefined`, which is
+    // not null, so the weaker assertion passes on exactly the route this case
+    // exists to catch and leaves the whole verdict to the lines below.
+    expect(typeof data.firstEffective).toBe('string');
     const predicted = new Date(data.firstEffective as string);
 
     // Both halves — what it is and what it is not — because a status-filtered
@@ -1836,7 +1846,10 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(res.status).toBe(200);
 
     const { data } = (await res.json()) as { data: { firstEffective: string | null } };
-    expect(data.firstEffective).not.toBeNull();
+    // `typeof`, not `not.toBeNull()`: an absent field is `undefined`, which is
+    // not null, so the weaker assertion passes on exactly the route this case
+    // exists to catch and leaves the whole verdict to the lines below.
+    expect(typeof data.firstEffective).toBe('string');
     const predicted = new Date(data.firstEffective as string);
 
     // Week five, not week six. Both halves again, and the wrong answer here is
