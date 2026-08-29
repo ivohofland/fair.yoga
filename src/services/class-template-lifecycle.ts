@@ -32,12 +32,11 @@ import type { PrismaClient, ClassTemplate, ScheduleRule, ClassStatus } from '@pr
 import type { z } from 'zod';
 import type { createClassTemplateSchema, updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
-import { mondayOf, classStartInstant } from '@/lib/timezone';
+import { classStartInstant } from '@/lib/timezone';
 import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
-import { spansOverlap } from '@/lib/generation';
 import { isTransientDbError } from '@/lib/api-errors';
 import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 // Server-only (pino). Safe here: this module's sole importer is
@@ -51,7 +50,7 @@ import {
   generateInstancesForTemplate,
   claimTemplateForGeneration,
 } from './class-generator';
-import { getNextOccurrences, firstFreeWeek, DEFAULT_WEEKS } from './entry-generation';
+import { getNextOccurrences, DEFAULT_WEEKS, probeFirstEffectiveWeek } from './entry-generation';
 import { CHARGED_STATUSES } from './class-lifecycle';
 import type { GenerationResult } from '@/lib/generation';
 import {
@@ -542,201 +541,6 @@ export type UpdateClassTemplateResult =
   | { ok: false; reason: 'busy' };
 
 /**
- * The probe behind `UpdateClassTemplateResult.firstEffective` (#194): the
- * Monday of the first week in `horizon` whose candidate date
- * `generateInstancesForTemplate` would actually fill, GIVEN that the template
- * is eligible to generate at all.
- *
- * That precondition is the caller's, not this function's, and it is stated in
- * the contract rather than assumed because it is not a `SkipReason` and so
- * cannot appear in the enumeration below. `generateInstancesForTemplate`
- * refuses candidate DATES; `ACTIVE_TEMPLATE_WHERE` refuses whole TEMPLATES,
- * one layer up, before any candidate is considered — at the sweep's
- * `findMany` (`class-generator.ts`) and again under the row lock in
- * `claimTemplateForGeneration`. For a paused or archived template the
- * generator is never called, no date is ever declined, and every answer this
- * function could give would name a week nothing will fill. `updateClassTemplate`
- * therefore calls it only when `templateGenerationState(updated) === 'active'`
- * and reports the other two states as themselves; a reader completing the
- * bullet list below would still be missing that case, which is why it is up
- * here and not in it.
- *
- * Read-only, and it must stay that way — this endpoint creates no class, so
- * everything in the sentence it feeds is a prediction about the sweep.
- *
- * ## Which of the generator's refusals this reproduces, and which it does not
- *
- * The generator declines a candidate date on six named grounds (`SkipReason`,
- * `@/lib/generation`, whose own header says "Six reasons, six distinct
- * origins" — one number, derived from the type, not two conventions counting
- * the same union). Stated one at a time rather than as a parity claim, because
- * the parity claim is what this docblock said before `slot_taken` was found
- * missing — and a reader who trusted it had no way to check it. Named rather
- * than numbered, because "the Nth ground" resolves against no ordering anyone
- * has written down:
- *
- *   - `already_generated` and `blocked_by_cancelled` — this template's own row
- *     on the date itself, live or cancelled. Both reproduced by the FIRST read:
- *     a row on a date is a row in that date's week, and the read carries no
- *     status filter, so a cancelled row holds its week too. That absent filter
- *     is deliberate and is the one place this codebase does not read cancelled
- *     as free —
- *     `docs/superpowers/specs/2026-08-20-template-stamp-not-link-design.md`
- *     §3.2 has the flip-flop schedule the alternative produces.
- *   - `already_this_week` — the same read, and the same `isWeekHeld` the
- *     generator's loop decides with. That sharing is the point of the
- *     function existing.
- *   - `slot_taken` (#196) and `blocked_by_overlap` (#296) — somebody
- *     ELSE's row: another LIVE entry of this teacher whose SPAN overlaps the
- *     candidate's. Invisible to a rule-keyed read, which is why there
- *     is a SECOND read. Missing it made the prediction land EARLIER than the
- *     sweep delivers, which is the dishonest direction: rule 1 of #194 leaves
- *     a moved-off template's instances standing, so a second template edited
- *     onto that day and time finds its own weeks empty and every date
- *     occupied. The two reasons took two reads until #327 put both families
- *     in one `CalendarEntry`; they take one now, and the probe does not tell
- *     them apart because the answer it gives is the same either way.
- *
- *     Overlap rather than an identical start time, and that distinction is
- *     #327's: the constraint behind both reasons is a RANGE now. A read keyed
- *     on `startTime` reproduced neither reason fully, and erred in the
- *     dishonest direction while this bullet claimed it reproduced both.
- *   - `raced` — **not reproduced, and not reproducible.** It is a concurrent
- *     insert landing between the generator's pre-check and its write, so at
- *     probe time it has not happened yet and there is nothing to read. Its
- *     effect on this prediction is bounded and self-correcting: the sweep loses
- *     that one date and picks the template up again on its next run, so the
- *     class arrives late rather than never. This is the one divergence, and it
- *     is the only one that errs later-than-promised.
- *
- * The two facts are kept apart rather than merged into one set, because they
- * are not the same fact: a WEEK this template already occupies versus a single
- * DATE whose slot another entry holds. Slot-taken dates are removed from the
- * candidate list; `firstFreeWeek` then answers the week question over what is
- * left. BOTH reads are bounded by `horizon` itself — its first and last weeks
- * for the week read, its own members for the slot read — so nothing here can
- * disagree with anything else about which dates are in play.
- *
- * Answers `null` rather than throwing when a read fails. The edit has already
- * committed by the time this runs, so a probe failure must not turn a saved
- * template into a 500 — and `templateUpdatedMessage` already has a `null`
- * branch that says nothing about weeks rather than something unfounded. Logged
- * so the silence is not also invisible.
- */
-async function probeFirstEffectiveWeek(
-  db: PrismaClient,
-  template: ClassTemplateWithSlot,
-  horizon: readonly Date[],
-): Promise<Date | null> {
-  // Guarded rather than `!`-asserted: under `noUncheckedIndexedAccess` a `!`
-  // here would be a claim about `getNextOccurrences` and its filter several
-  // lines away, and both ends are dereferenced below.
-  const first = horizon[0];
-  const last = horizon[horizon.length - 1];
-  if (first === undefined || last === undefined) return null;
-
-  try {
-    const [ownRows, slotHolders] = await Promise.all([
-      // The weeks this template already occupies. Keyed on `scheduleRuleId`,
-      // which rides `@@unique([scheduleRuleId, date])`, and bounded by the
-      // horizon's own first and last weeks. No liveness filter — see the
-      // docblock.
-      db.calendarEntry.findMany({
-        where: {
-          scheduleRuleId: template.scheduleRuleId,
-          date: {
-            gte: new Date(mondayOf(first)),
-            lt: new Date(mondayOf(last) + 7 * 24 * 60 * 60 * 1000),
-          },
-        },
-        select: { date: true },
-      }),
-      // This teacher's LIVE entries on the candidate dates, whatever their
-      // start time — the SPAN comparison happens below, in `spansOverlap`, the
-      // same function the generator's own pre-check decides with.
-      // `cancelledAt: null` rather than no filter, matching
-      // `CalendarEntry_teacher_slot_excl`'s partial scope (`WHERE
-      // "cancelledAt" IS NULL`) — the opposite of the read above, and for the
-      // opposite reason: a cancelled entry does not hold a slot, and a
-      // cancelled entry does hold a week. `date: { in: … }` over the horizon
-      // itself rather than a second pair of bounds, so the two reads cannot
-      // drift apart about the range; `@@index([teacherId, date])` backs it.
-      //
-      // ONE READ FOR BOTH FAMILIES since #327, where this used to be two — the
-      // second was a `StudioClass` scan added in #296, and it was not an
-      // extension of the probe but a REPAIR of it: a probe blind to the other
-      // family counted a cross-family date as a free candidate and named a
-      // week the sweep would then skip, landing EARLIER than delivered, which
-      // this function's own docblock calls the dishonest direction. With one
-      // occupancy table that blindness is not expressible.
-      //
-      // OVERLAP, NOT EXACT START, and that is the SAME defect one shape over.
-      // #327 made `CalendarEntry_teacher_slot_excl` a RANGE constraint, so a
-      // generator declines a candidate that merely runs into a neighbour. An
-      // exact-start read here counts such a date as free, names a week the
-      // sweep then skips, and lands EARLIER than delivered — the dishonest
-      // direction again, and #194's original failure. Erring the other way is
-      // not on offer: matching the generator exactly is what makes the answer
-      // right rather than merely safe.
-      db.calendarEntry.findMany({
-        where: {
-          teacherId: template.teacherId,
-          cancelledAt: null,
-          date: { in: [...horizon] },
-        },
-        select: { date: true, startTime: true, durationMinutes: true },
-      }),
-    ]);
-
-    const heldWeeks = new Set(ownRows.map((e) => mondayOf(e.date)));
-    // What every candidate would occupy — one span for the whole horizon,
-    // since a template has one start time and one duration. Built exactly as
-    // `generateInstancesForTemplate` builds its own `candidateSpan`, so the
-    // two cannot disagree about which dates are reachable.
-    const candidateSpan = {
-      startTime: hhmmToTime(template.startTime),
-      durationMinutes: template.durationMinutes,
-    };
-    // Both families' slot holders in one set, which is now what the table is
-    // rather than something this function assembles. They are not told apart,
-    // and deliberately: a date is unreachable for the same reason whichever
-    // family holds it. The GENERATOR tells them apart, because its two reasons
-    // carry two different remedies for the teacher.
-    //
-    // `spansOverlap` is same-date-only and the read above supplies that. It
-    // therefore misses a neighbour spilling over midnight into a candidate,
-    // exactly as the generator's pre-check does — so the two agree on that
-    // case too, and the constraint refuses it at insert either way.
-    const takenDates = new Set(
-      slotHolders
-        .filter((e) => spansOverlap(e, candidateSpan))
-        .map((e) => e.date.getTime()),
-    );
-
-    // Removed from the candidates rather than folded into `heldWeeks`. Folding
-    // would be shorter and would say something false: a taken slot does not
-    // make the WEEK unavailable to this template in general, it makes this
-    // one date unfillable — and since a weekly template has exactly one
-    // candidate per week, the week is lost as a consequence, not as a
-    // definition. The generator draws the same distinction, which is why it
-    // reports two different reasons.
-    const candidates = horizon.filter((date) => !takenDates.has(date.getTime()));
-
-    const free = firstFreeWeek(candidates, heldWeeks);
-    // Converted to the WEEK's Monday before leaving this function, not left as
-    // the candidate date — see `UpdateClassTemplateResult`'s own note for why
-    // the conversion cannot live in the copy layer.
-    return free === null ? null : new Date(mondayOf(free));
-  } catch (err) {
-    log.warn(
-      { err, templateId: template.id },
-      'recurring class edit saved, but the first-effective-week probe failed — the confirmation will not name a week',
-    );
-    return null;
-  }
-}
-
-/**
  * Apply a partial update to a class template. The template row, and nothing
  * else.
  *
@@ -1100,7 +904,9 @@ export async function updateClassTemplate(
     ok: true,
     template: updated,
     firstEffective:
-      generationState === 'active' ? await probeFirstEffectiveWeek(db, updated, horizon) : null,
+      generationState === 'active'
+        ? await probeFirstEffectiveWeek(db, updated, horizon, 'recurring class')
+        : null,
     generationState,
   };
 }
