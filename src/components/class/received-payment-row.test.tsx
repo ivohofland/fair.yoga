@@ -63,4 +63,16 @@ describe('ReceivedPaymentRow', () => {
     expect(screen.queryByText(/✓ paid/)).not.toBeInTheDocument();
     expect(screen.getByText(/Vinyasa · 12 Jun · 09:30/)).toBeInTheDocument();
   });
+
+  /**
+   * #128. ReceivedPaymentRow threads studentName and classContext to
+   * MarkUnpaidButton so the button has a distinct accessible name.
+   */
+  it('renders the mark-unpaid button with a disambiguated accessible name', () => {
+    render(<ReceivedPaymentRow {...base} paidAt={null} timeZone="America/Los_Angeles" />);
+
+    expect(
+      screen.getByRole('button', { name: 'Mark unpaid — Ana d., Vinyasa · 12 Jun · 09:30' }),
+    ).toBeInTheDocument();
+  });
 });

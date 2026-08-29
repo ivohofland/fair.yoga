@@ -7,6 +7,8 @@ import { SettledNotice } from '@/components/ui/settled-notice';
 
 interface MarkUnpaidButtonProps {
   paymentId: string;
+  studentName: string;
+  classContext: string;
 }
 
 /**
@@ -15,7 +17,11 @@ interface MarkUnpaidButtonProps {
  * takes a second tap to confirm. The row returns to Outstanding on
  * refresh ('overdue' re-derives from age via the daily sweep).
  */
-export function MarkUnpaidButton({ paymentId }: MarkUnpaidButtonProps) {
+export function MarkUnpaidButton({
+  paymentId,
+  studentName,
+  classContext,
+}: MarkUnpaidButtonProps) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -84,6 +90,7 @@ export function MarkUnpaidButton({ paymentId }: MarkUnpaidButtonProps) {
       <button
         type="button"
         onClick={() => setConfirming(true)}
+        aria-label={`Mark unpaid — ${studentName}, ${classContext}`}
         className="type-caption text-brown min-h-[44px] px-1"
       >
         Mark unpaid
@@ -97,6 +104,11 @@ export function MarkUnpaidButton({ paymentId }: MarkUnpaidButtonProps) {
         type="button"
         onClick={handleUnpaid}
         disabled={busy}
+        aria-label={
+          busy
+            ? `Updating... — ${studentName}, ${classContext}`
+            : `Confirm unpaid — ${studentName}, ${classContext}`
+        }
         className="type-caption text-danger font-medium min-h-[44px] px-1"
       >
         {busy ? 'Updating...' : 'Confirm unpaid'}
@@ -106,6 +118,7 @@ export function MarkUnpaidButton({ paymentId }: MarkUnpaidButtonProps) {
       <button
         type="button"
         onClick={handleKeep}
+        aria-label={`Keep — ${studentName}, ${classContext}`}
         className="type-caption text-teal min-h-[44px] px-1"
       >
         Keep

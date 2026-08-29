@@ -43,18 +43,12 @@ describe('SettledNotice', () => {
   });
 
   /**
-   * Review F5. This never arrives on a page the user is reading: it replaces
-   * the control they just activated, so focus drops to `document.body` at the
-   * same moment. Before #40 that control stayed mounted-but-disabled, so at
-   * least focus survived. `role="status"` is what makes the swap audible —
-   * the first polite live region in `src/`, and the only one on a path where
-   * the mutation *succeeded*; the pre-existing `role="alert"` regions are
-   * assertive form-error announcements and none of them is reachable from
-   * here — and the focus ring is what makes the one remaining exit findable
-   * by keyboard once tabbed back to.
-   *
-   * Moving focus into the notice is the fuller answer and is not in this
-   * change; this pins the two halves that are.
+   * #40, #128. This never arrives on a page the user is reading: it replaces
+   * the control they just activated, so without focus management focus drops
+   * to `document.body` at the same moment. `role="status"` is what makes the
+   * swap audible, `focus-visible:shadow-focus` is what makes the exit visible,
+   * and shifting focus to the action button on mount (#128) is what keeps
+   * keyboard and screen-reader users anchored on a deliberate control.
    */
   it('announces itself as a live region, and rings its action on focus', () => {
     render(<SettledNotice label="Marked unpaid" actionLabel="Refresh" onAction={() => {}} />);
@@ -62,5 +56,10 @@ describe('SettledNotice', () => {
     expect(screen.getByRole('button', { name: 'Refresh' })).toHaveClass(
       'focus-visible:shadow-focus',
     );
+  });
+
+  it('moves focus to the action button on mount', () => {
+    render(<SettledNotice label="Marked unpaid" actionLabel="Refresh" onAction={() => {}} />);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Refresh' }));
   });
 });

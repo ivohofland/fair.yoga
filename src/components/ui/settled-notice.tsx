@@ -1,3 +1,7 @@
+'use client';
+
+import { useEffect, useRef } from 'react';
+
 type SettledSize = 'caption' | 'sm';
 
 interface SettledNoticeProps {
@@ -47,8 +51,9 @@ const sizeClasses: Record<SettledSize, string> = {
  * this is a text-scale control with no filled surface, so the browser's own
  * outline is worth keeping as well as the ring.)
  *
- * Moving focus *into* the notice is a further step, deliberately not taken
- * here and filed separately.
+ * Moving focus into the notice (#128): on mount, focus shifts to the notice's
+ * action button so focus does not drop to `document.body` when the preceding
+ * control unmounts.
  */
 export function SettledNotice({
   label,
@@ -57,6 +62,11 @@ export function SettledNotice({
   size = 'caption',
 }: SettledNoticeProps) {
   const scale = sizeClasses[size];
+  const actionRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    actionRef.current?.focus();
+  }, []);
 
   return (
     <span role="status" className="inline-flex items-center gap-2">
@@ -65,6 +75,7 @@ export function SettledNotice({
         ·
       </span>
       <button
+        ref={actionRef}
         type="button"
         onClick={onAction}
         className={`${scale} text-teal min-h-[44px] px-1 focus-visible:shadow-focus`}

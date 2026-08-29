@@ -16,15 +16,81 @@ import { routerRefresh } from '../../../tests/setup/components';
 describe('MarkUnpaidButton', () => {
   const fetchMock = vi.fn();
 
+  const baseProps = {
+    studentName: 'Ana de Vries',
+    classContext: 'Vinyasa · 12 Jun · 09:30',
+  };
+
   afterEach(() => {
     fetchMock.mockReset();
     vi.unstubAllGlobals();
   });
 
-  function openConfirm() {
-    render(<MarkUnpaidButton paymentId="pay-1" />);
+  function openConfirm(props = {}) {
+    render(<MarkUnpaidButton paymentId="pay-1" {...baseProps} {...props} />);
     fireEvent.click(screen.getByRole('button', { name: /mark unpaid/i }));
   }
+
+  function renderCollidingPair() {
+    render(
+      <>
+        <MarkUnpaidButton
+          paymentId="pay-morning"
+          studentName="Ana de Vries"
+          classContext="Vinyasa · 12 Jun · 09:30"
+        />
+        <MarkUnpaidButton
+          paymentId="pay-evening"
+          studentName="Ana de Vries"
+          classContext="Vinyasa · 12 Jun · 18:00"
+        />
+      </>,
+    );
+  }
+
+  it('gives the initial mark-unpaid buttons distinct accessible names', () => {
+    renderCollidingPair();
+
+    expect(
+      screen.getByRole('button', { name: 'Mark unpaid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Mark unpaid — Ana de Vries, Vinyasa · 12 Jun · 18:00' }),
+    ).toBeInTheDocument();
+  });
+
+  it('gives the confirm-unpaid and keep buttons distinct accessible names', () => {
+    renderCollidingPair();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Mark unpaid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Confirm unpaid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Keep — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps each button visible text inside its accessible name', () => {
+    renderCollidingPair();
+
+    const initial = screen.getAllByRole('button', { name: /^Mark unpaid/ });
+    expect(initial).toHaveLength(2);
+    initial.forEach((button) => expect(button).toHaveTextContent('Mark unpaid'));
+
+    const [first] = initial;
+    expect(first).toBeDefined();
+    fireEvent.click(first!);
+
+    const confirm = screen.getByRole('button', { name: /^Confirm unpaid/ });
+    expect(confirm).toHaveTextContent('Confirm unpaid');
+
+    const keep = screen.getByRole('button', { name: /^Keep/ });
+    expect(keep).toHaveTextContent('Keep');
+  });
 
   it('POSTs to the unpaid endpoint and refreshes', async () => {
     fetchMock.mockResolvedValue({ ok: true });
@@ -40,7 +106,7 @@ describe('MarkUnpaidButton', () => {
   });
 
   // G1
-  it('settles to "Marked unpaid" when the refresh commits nothing', async () => {
+  it('settles to "Marked unpaid" and shifts focus to Refresh when the refresh commits nothing', async () => {
     fetchMock.mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
     openConfirm();
@@ -50,6 +116,9 @@ describe('MarkUnpaidButton', () => {
     expect(await screen.findByText('Marked unpaid')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /updating/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /confirm unpaid/i })).toBeNull();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Refresh' }));
+    });
   });
 
   // G1, second half: the settled state must not re-offer the action.
@@ -123,7 +192,7 @@ describe('MarkUnpaidButton', () => {
     fireEvent.click(screen.getByRole('button', { name: /mark unpaid/i }));
 
     expect(screen.queryByRole('button', { name: /updating/i })).toBeNull();
-    expect(screen.getByRole('button', { name: /^confirm unpaid$/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^confirm unpaid/i })).toBeEnabled();
   });
 
   /**

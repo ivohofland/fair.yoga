@@ -69,13 +69,14 @@ export function ReceivedPaymentRow({
       <div className="flex items-center gap-3 shrink-0">
         <span className="type-number">€{amount.toFixed(2)}</span>
         {/*
-          The caption above disambiguates two same-day payments for one
-          student (#59), but only visibly — this button's accessible name is
-          the bare "Mark unpaid" on every row, so a screen-reader user cannot
-          tell which row's button they are activating. That gap is #128,
-          deliberately not closed here.
+          #128. `studentName` and `classContext` are threaded through so every
+          row's button has a distinct accessible name for screen readers.
         */}
-        <MarkUnpaidButton paymentId={paymentId} />
+        <MarkUnpaidButton
+          paymentId={paymentId}
+          studentName={studentName}
+          classContext={classContext}
+        />
       </div>
     </div>
   );
