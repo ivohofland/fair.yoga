@@ -9,7 +9,11 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
-import { resumeStudioMessage } from '@/components/settings/template-action-messages';
+import {
+  resumeStudioMessage,
+  templateUpdatedMessage,
+} from '@/components/settings/template-action-messages';
+import type { TemplateGenerationState } from '@/lib/template-selection';
 import { anyBlocked } from '@/lib/generation';
 import { hasIntegerCounts } from '@/components/settings/template-action-messages';
 
@@ -225,7 +229,52 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
           router.push(STUDIO_CLASSES_PATH);
         }
       } else {
-        setSuccess('Saved');
+        // Nothing to count: an edit changes the template row and no generated
+        // studio class (#194), so there is no arrival, delete or kept tally to
+        // report. What there IS to say is WHEN — the service probes for the
+        // first week the new schedule reaches and sends its Monday back as
+        // `firstEffective`, an ISO string on the wire (#284).
+        //
+        // `?? null` rather than a bare read, and the type says `string | null`
+        // rather than `string`: `null` is what the service sends when no free
+        // week is inside its horizon, `undefined` is what a server predating
+        // this field sends, and `templateUpdatedMessage` answers both by
+        // dropping the clause. Neither may become `new Date(undefined)`, which
+        // renders "Invalid Date" into the middle of the sentence.
+        //
+        // `generationState` is the other half of the same sentence and cannot
+        // be inferred from `firstEffective`: `null` means "no free week in
+        // view" for a live template and "the sweep will never run" for a
+        // paused or archived one, and only the service can tell them apart
+        // (`@/lib/template-selection`). Re-deriving it here from the
+        // `isActive`/`isArchived` columns this body also carries would put
+        // another copy of the generator's eligibility gate in the copy layer.
+        //
+        // Narrowed by comparison rather than cast. This is wire data: a server
+        // predating the field sends nothing, and anything unrecognised must
+        // land on `'active'`, which is the plain sentence and the only one
+        // safe to say about a template whose state we do not know. A cast
+        // would hand an unknown string to an exhaustive `switch` that throws
+        // on it — an unhandled error where a teacher expects a confirmation.
+        //
+        // `'template'` is this family's `TemplateCopyNoun` — the word its own
+        // teacher-facing copy uses throughout, `UNARCHIVE_STUDIO_MESSAGE`
+        // included. That type's docblock owns why the copy vocabulary is kept
+        // apart from the log ones.
+        const json: {
+          data?: { firstEffective?: string | null; generationState?: string };
+        } = await res.json();
+        const firstEffective = json.data?.firstEffective ?? null;
+        const wireState = json.data?.generationState;
+        const generationState: TemplateGenerationState =
+          wireState === 'paused' || wireState === 'archived' ? wireState : 'active';
+        setSuccess(
+          templateUpdatedMessage(
+            firstEffective ? new Date(firstEffective) : null,
+            generationState,
+            'template',
+          ),
+        );
         router.refresh();
       }
     } catch {

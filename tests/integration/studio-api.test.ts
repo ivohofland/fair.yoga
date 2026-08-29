@@ -650,6 +650,100 @@ describe('PUT /api/studio-class-templates/[id] — the teacher-editable boundary
   );
 });
 
+/**
+ * #284, the wire half. `updateStudioClassTemplate` computes `firstEffective`
+ * and `generationState` on its success arm and
+ * `studio-class-template-lifecycle.test.ts` owns what those two values MEAN —
+ * which week, and why a paused or archived template gets none. What no service
+ * test can see is whether the route carries them at all: the PUT reads
+ * `result.template` and a handler that kept doing only that would compile
+ * clean, answer 200, and drop both. That is the shape #93's wrong-shape bug
+ * had, and the `never` guard at the end of the handler cannot catch it — it
+ * closes the FAILURE half.
+ *
+ * Both cases pick a slot nothing else in this file holds, on a weekday and at
+ * an hour no other fixture spends: `ScheduleRule_teacher_slot_excl` (issue
+ * 298) refuses a RANGE overlap anywhere in `(teacherId, dayOfWeek)`, and these
+ * rules outlive their test — only the generated entries are cleared between
+ * tests.
+ */
+describe('PUT /api/studio-class-templates/[id] names the week the edit reaches (#284)', () => {
+  it('answers a dayOfWeek move with the Monday of a week and the state that earned it', async () => {
+    const create = await send('POST', ownerToken, '/api/studio-class-templates', {
+      classType: 'Effective Week Studio',
+      dayOfWeek: 1,
+      startTime: '14:00',
+      durationMinutes: 60,
+      location: 'Community Studio',
+      hourlyRate: 45,
+    });
+    expect(create.status).toBe(201);
+    const { data: created } = (await create.json()) as { data: { id: string } };
+
+    const res = await send('PUT', ownerToken, `/api/studio-class-templates/${created.id}`, {
+      dayOfWeek: 2,
+    });
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as {
+      data: { dayOfWeek: number; firstEffective: string | null; generationState: string };
+    };
+    // Alongside the template row, not instead of it: the edited column is
+    // still on the body, which is what the form's other readers depend on.
+    expect(data.dayOfWeek).toBe(2);
+    // `typeof`, not `not.toBeNull()`: an absent field is `undefined`, which is
+    // not null, so the weaker assertion passes on exactly the route this case
+    // exists to catch and leaves the whole verdict to the line below.
+    expect(typeof data.firstEffective).toBe('string');
+    // A MONDAY, in UTC — the copy renders it as "the week starting <this>", so
+    // a candidate occurrence arriving here would put the wrong day in front of
+    // a teacher. `respondOk`'s JSON encoding is what turns the service's
+    // `Date` into this string, and the form turns it back.
+    expect(new Date(data.firstEffective as string).getUTCDay()).toBe(1);
+    expect(data.generationState).toBe('active');
+  });
+
+  /**
+   * The gate is on the PREDICTION, not on the write: this PUT is deliberately
+   * open to a paused template, and `/settings/studio-classes/[id]` renders the
+   * edit form for one exactly as for a live one. So this is what a teacher who
+   * paused for the summer and then moved their studio class sends.
+   *
+   * `generationState` is the half that cannot be inferred here. Pausing
+   * deletes nothing, so the four generated weeks are still held and an ungated
+   * probe would read them and name week five — a specific, plausible, checkable
+   * date for a week the sweep never reaches.
+   */
+  it('names no week for a paused template, and says which state it is in', async () => {
+    const create = await send('POST', ownerToken, '/api/studio-class-templates', {
+      classType: 'Paused Edit Studio',
+      dayOfWeek: 1,
+      startTime: '16:00',
+      durationMinutes: 60,
+      location: 'Community Studio',
+      hourlyRate: 45,
+    });
+    expect(create.status).toBe(201);
+    const { data: created } = (await create.json()) as { data: { id: string } };
+
+    const pause = await send('PATCH', ownerToken, `/api/studio-class-templates/${created.id}?state=paused`);
+    expect(pause.status).toBe(200);
+    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: created.id } } } } } })).toBe(4);
+
+    const res = await send('PUT', ownerToken, `/api/studio-class-templates/${created.id}`, {
+      dayOfWeek: 2,
+    });
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as {
+      data: { dayOfWeek: number; firstEffective: string | null; generationState: string };
+    };
+    expect(data.dayOfWeek).toBe(2);
+    expect(data.firstEffective).toBeNull();
+    expect(data.generationState).toBe('paused');
+  });
+});
+
 describe('PATCH /api/studio-class-templates/[id]', () => {
   it('reaches paused then active as named, and archiving forces inactive', async () => {
     const id = (await makeTemplate(ownerId, 'Toggle Target', 0, '16:00')).id;

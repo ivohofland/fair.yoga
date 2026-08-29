@@ -53,6 +53,21 @@ describe('StudioTemplateForm', () => {
   const SIX_KEYS = ['classType', 'dayOfWeek', 'durationMinutes', 'hourlyRate', 'location', 'startTime'];
 
   /**
+   * The `initial` prop for the edit-mode cases below, which assert on the
+   * confirmation rather than on the body — none of them touches a field, so
+   * the values only have to be a valid template. Spread at each call site, so
+   * no case can hand its neighbour a mutated object.
+   */
+  const EDIT_INITIAL = {
+    classType: 'Vinyasa',
+    dayOfWeek: 2,
+    startTime: '09:30',
+    durationMinutes: 60,
+    location: 'Studio A',
+    hourlyRate: 20,
+  };
+
+  /**
    * One body serves two endpoints, so the key-set has to hold in both modes —
    * a create-only or edit-only assertion would miss a schema that drifted
    * only on the other endpoint. Each mode gets its own `render`/`unmount`
@@ -478,6 +493,158 @@ describe('StudioTemplateForm', () => {
       await screen.findByText(/2 dates overlap other classes on your schedule\./i),
     ).toBeInTheDocument();
     expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The edit branch's whole content since #284. This PUT generates nothing, so
+   * what it has to say is WHEN the new schedule reaches the calendar: the
+   * service predicts the Monday of the first week the sweep can fill and the
+   * route sends it as `firstEffective`, an ISO string on the wire.
+   *
+   * The whole string, not a prefix: a form that dropped the middle clause
+   * would still match a "Template updated" regex, and the middle clause is the
+   * entire content of this change. A Monday, because that is what the service
+   * converts to before returning and what the copy's "week starting …"
+   * phrasing depends on.
+   */
+  it('names the week an edit takes effect, from the field the route sends', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: { id: 'tpl-1', firstEffective: '2026-09-21T00:00:00.000Z' },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+    expect(
+      await screen.findByText(
+        'Template updated. It takes effect for newly generated classes — your first class on the new schedule is the week starting Monday, 21 Sep. Change or cancel existing classes individually if needed.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The `null` arm of the same seam, and the reason the form reads `?? null`
+   * rather than trusting the field to be there. `new Date(undefined)` is an
+   * Invalid Date and `formatDayHeader` renders one as "undefined, NaN
+   * undefined" — a sentence, in teal, on the settings page. A body carrying no
+   * `firstEffective` at all is what a server predating the field sends, and it
+   * has to answer exactly as an explicit `null` does.
+   */
+  it('drops the week clause when the response names no week', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { id: 'tpl-1' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+    expect(
+      await screen.findByText(
+        'Template updated. It takes effect for newly generated classes. Change or cancel existing classes individually if needed.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The noun, at the one seam that picks it. `templateUpdatedMessage` takes
+   * `'recurring class' | 'template'` and spends it only in the paused and
+   * archived clauses, so this case and the one below are the only two that can
+   * observe this form handing over the class family's word.
+   *
+   * Not an exotic request: `/settings/studio-classes/[id]` renders this form
+   * for a paused template exactly as for a live one — the only conditionals on
+   * that page pick which toggle buttons to show — so this branch runs for
+   * every edit a teacher makes to a template they paused.
+   *
+   * `firstEffective: null` cannot stand in for `generationState` here. A LIVE
+   * template with no free week inside the probe's horizon sends the same
+   * `null`, and that case correctly drops the clause (the case above);
+   * rendering the same silent sentence for a template that will never generate
+   * is the failure the second field exists to end.
+   */
+  it('names the resume when the route says the template is paused', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: { id: 'tpl-1', firstEffective: null, generationState: 'paused' },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+    expect(
+      await screen.findByText(
+        'Template updated. It takes effect for newly generated classes — this template is paused, so nothing is generated until you resume it. Change or cancel existing classes individually if needed.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The third real state, and the only one whose remedy is not obvious: both
+   * archive directions force `isActive: false`, so un-archiving ALONE puts
+   * nothing back — which is what `UNARCHIVE_STUDIO_MESSAGE` warns about on this
+   * same page.
+   *
+   * Covered separately from the paused case because the whitelist this
+   * exercises is a two-armed comparison whose arms are independently
+   * deletable: drop only the `'archived'` disjunct and the paused case above
+   * and the unknown-value fallback below both stay green, while an archived
+   * template falls through to `'active'` and the route's own answer is
+   * discarded at the last hop before the reader.
+   */
+  it('names the un-archive when the route says the template is archived', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: { id: 'tpl-1', firstEffective: null, generationState: 'archived' },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+    expect(
+      await screen.findByText(
+        'Template updated. It takes effect for newly generated classes — this template is archived, so nothing is generated until you un-archive and resume it. Change or cancel existing classes individually if needed.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The wire is data, not a type. `generationState` is narrowed by comparison
+   * against the two states that change the sentence, so an unrecognised value
+   * — a newer server, a proxy rewriting the body, a typo in a future arm —
+   * lands on `'active'` and renders the plain sentence rather than reaching
+   * `templateUpdatedMessage`'s exhaustive `switch`, which throws on anything it
+   * does not know. A throw here would replace the confirmation with a blank
+   * panel after a save that already committed.
+   */
+  it('falls back to the plain sentence when the route names a state it does not know', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: { id: 'tpl-1', firstEffective: null, generationState: 'hibernating' },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+    expect(
+      await screen.findByText(
+        'Template updated. It takes effect for newly generated classes. Change or cancel existing classes individually if needed.',
+      ),
+    ).toBeInTheDocument();
   });
 
   /**

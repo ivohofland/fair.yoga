@@ -95,7 +95,27 @@ export const PUT = withErrorHandler(async (
 
   const result = await updateStudioClassTemplate(prisma, id, session.teacherId, data);
 
-  if (result.ok) return respondOk(result.template);
+  // `firstEffective` and `generationState` ride alongside the template row
+  // rather than replacing it: everything else on this body is the row, and
+  // these two are PREDICTIONS about a sweep that has not run — this PUT
+  // generates nothing and moves no existing studio class (#194/#284). They are
+  // what let `studio-template-form.tsx` say WHEN the edit reaches the
+  // calendar. `firstEffective` is serialized as an ISO string by `respondOk`'s
+  // JSON encoding and the form converts it back; `generationState` is already
+  // a string.
+  //
+  // `generationState` is not redundant with the `isActive`/`isArchived`
+  // columns `withSlot` flattens onto the same body. Those two are the rule's
+  // INPUTS; this is the service's own answer to them, read from the row the
+  // write produced. The form must not re-derive the sweep's eligibility gate —
+  // see `templateGenerationState` (`@/lib/template-selection`).
+  if (result.ok) {
+    return respondOk({
+      ...result.template,
+      firstEffective: result.firstEffective,
+      generationState: result.generationState,
+    });
+  }
 
   // Narrowed one reason at a time so each maps to the response this route
   // returned before the service existed.
@@ -126,14 +146,17 @@ export const PUT = withErrorHandler(async (
   // type 'never'`.
   //
   // It does not cover the success half, and that is the part worth stating.
-  // `if (result.ok) return respondOk(result.template)` reads one field, so a
-  // SECOND success arm carrying a new field compiles clean and drops it
-  // silently. Not hypothetical: the class twin's success arm already carries
-  // `sync`, and its route spreads it. It is also the exact failure the PATCH
-  // handlers below record twice about their own ternaries. No `switch` here
-  // because a single-variant success has no discriminant to switch on and
-  // inventing one would be ceremony — but nobody should read this guard as
-  // covering more than it does.
+  // The `ok` branch above forwards its fields BY NAME, so a field added to
+  // that arm and not added there compiles clean, answers 200, and is dropped
+  // in silence. Not hypothetical, and not the kind of hypothetical a future
+  // second arm would make it: `UpdateStudioClassTemplateResult`'s single
+  // success arm already carries `firstEffective` and `generationState` beside
+  // `template`, and nothing but that branch's own spread puts them on the
+  // wire. It is also the exact failure the PATCH handlers below record twice
+  // about their own ternaries. No `switch` here because a single-variant
+  // success has no discriminant to switch on and inventing one would be
+  // ceremony — but nobody should read this guard as covering more than it
+  // does.
   const unhandled: never = result;
   return unhandled;
 });
