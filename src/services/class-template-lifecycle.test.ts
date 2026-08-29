@@ -2161,10 +2161,12 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(resumed.action).toBe('unarchived');
 
     expect(Object.keys(resumed.template)).not.toContain('scheduleRule');
-    // Kept even though `withSlot`'s `rule` parameter is the joined type: that
-    // makes the shipped adapters provably teacher-free, but a spread-based
-    // adapter would still compile. This is the second line, not a duplicate of
-    // the first.
+    // This assertion IS the guarantee, not a backstop behind a compile-time
+    // one. What keeps `teacher` off the wire is that `withSlot` picks the
+    // rule's columns by name rather than spreading the rule; `withSlot`'s
+    // `rule` parameter being the joined type makes the shipped adapters
+    // provably teacher-free but makes no leak a compile error, because an
+    // adapter sits where TypeScript applies no excess-property check at all.
     expect(Object.keys(resumed.template)).not.toContain('teacher');
     // The flattening itself still happened — otherwise "no `scheduleRule`"
     // would pass on a response that lost the rule's columns altogether.
@@ -3178,9 +3180,10 @@ describe('pauseOrResumeTemplate (DB)', () => {
     expect(result.action).toBe('unchanged');
 
     expect(Object.keys(result.template)).not.toContain('scheduleRule');
-    // The second line, not a duplicate of the first: the adapter's `rule`
-    // parameter is the joined row too, and one that spread it whole would
-    // still compile.
+    // As at the archive twin above, this assertion IS the guarantee: the
+    // adapter's `rule` parameter is the joined row, and one that spread it
+    // whole — or wrote `teacher:` by hand — would still compile. What keeps
+    // `teacher` off the wire is `withSlot` picking the rule's columns by name.
     expect(Object.keys(result.template)).not.toContain('teacher');
     // The flattening itself still happened — otherwise "no `scheduleRule`"
     // would pass on a response that lost the rule's columns altogether.

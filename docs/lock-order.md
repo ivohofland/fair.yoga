@@ -387,8 +387,8 @@ a call):
    verb's entry points (issue 332 merged the two archive lines into the first,
    issue 336 the two pause lines into the second) — plus two ordered
    `FOR UPDATE OF` locks in `deleteTeacherAccount`'s bulk archive (`gdpr.ts`),
-   one per template family, the fourth and fifth entries the `FOR UPDATE OF`
-   census one section up gained alongside the two claims. Two more are
+   one per template family, which the `FOR UPDATE OF` census one section up
+   counts alongside the two claims. Two more are
    #327's `FOR UPDATE OF e` companions inside `lockClassRow` and
    `lockClassRowsOrdered`, which now take two lines each. The ninth is
    `room-archive.ts`'s cascade pre-lock, which holds every `ClassTemplate` row
@@ -1881,8 +1881,8 @@ its place as the table grows, not today. Re-derive with:
 
 ### Where a resume onto an archived room is refused (issue 336)
 
-Three sites are involved and only one of them enforces anything. The
-enforcement is `ClassTemplate_live_needs_open_room`, `CHECK (NOT ("ruleLive"
+Three sites are involved in a resume, and only one of them enforces anything.
+The enforcement is `ClassTemplate_live_needs_open_room`, `CHECK (NOT ("ruleLive"
 AND "roomArchived"))` on `ClassTemplate`
 (`20260827120000_template_room_archive_invariant`). It keys on the two mirror
 columns, so it fires on the write itself and needs no second read — the
@@ -1909,6 +1909,27 @@ the write, and renders the same sentence.
 The studio family has no such constraint and no such door.
 `StudioClassTemplate` has no room, no `roomArchived` mirror, and `PATCH
 /api/studio-class-templates/[id]` carries neither pre-check nor catch — a room
-refusal cannot arise on that side at all. Re-derive the set of sites:
+refusal cannot arise on that side at all.
 
-    grep -rn 'ClassTemplate_live_needs_open_room' src/ prisma/
+The CHECK refuses more writes than a resume, and the three sites above are only
+the ones a resume passes through. Its production refusal handlers — every place
+in `src/` that catches this constraint by name and turns it into an answer —
+re-derive as:
+
+    grep -rn "isCheckViolationOn(.*'ClassTemplate_live_needs_open_room'" src/ \
+      | grep -v '\.test\.ts'
+
+which returns four lines in three files. Two are the class-template route's:
+the resume catch described above, in `PATCH /api/class-templates/[id]`, and the
+edit catch in the `PUT` on the same file, which covers a template moved onto an
+archived room. The other two belong to different writes entirely, and are named
+here so this section is not mistaken for a census of the constraint: `POST
+/api/class-templates`, where a template is created live onto an archived room,
+and `archiveRoom` (`room-archive.ts`), where the room is the thing being
+archived out from under a live template. Neither is a further door onto a
+resume.
+
+The unqualified `grep -rn 'ClassTemplate_live_needs_open_room' src/ prisma/`
+answers a different question: it returns 21 lines across 12 files — the
+migration, the schema comment, the tests, and the prose about all of it — which
+is the constraint's whole footprint rather than the set of sites that refuse.

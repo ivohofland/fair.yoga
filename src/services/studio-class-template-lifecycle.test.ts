@@ -635,10 +635,12 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     expect(resumed.action).toBe('unarchived');
 
     expect(Object.keys(resumed.template)).not.toContain('scheduleRule');
-    // Kept even though `withSlot`'s `rule` parameter is the joined type: that
-    // makes the shipped adapters provably teacher-free, but a spread-based
-    // adapter would still compile. This is the second line, not a duplicate of
-    // the first.
+    // This assertion IS the guarantee, not a backstop behind a compile-time
+    // one. What keeps `teacher` off the wire is that `withSlot` picks the
+    // rule's columns by name rather than spreading the rule; `withSlot`'s
+    // `rule` parameter being the joined type makes the shipped adapters
+    // provably teacher-free but makes no leak a compile error, because an
+    // adapter sits where TypeScript applies no excess-property check at all.
     expect(Object.keys(resumed.template)).not.toContain('teacher');
     // The flattening itself still happened — otherwise "no `scheduleRule`"
     // would pass on a response that lost the rule's columns altogether.
@@ -1104,7 +1106,8 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
    * already learns this (`resumeStudioMessage`'s `scheduled === 0` branch);
    * what this pins is that the result names *which* mechanism filled the
    * window's dates — the count that makes the operator-facing `log.warn` (and
-   * the Task 6 copy) a measured number rather than an inference.
+   * the Task 6 copy) a measured number rather than an inference. The warn
+   * itself is asserted here too, on the exact string it composes.
    */
   it('reports the cancelled classes holding the window', async () => {
     const t = await makeTemplate('Blocked By Cancelled');
@@ -1124,15 +1127,39 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     await prisma.calendarEntry.updateMany({ where: { scheduleRule: { studioClassTemplates: { some: { id: t.id } } } }, data: { cancelledAt: new Date() } });
 
     await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
-    const resumed = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
 
-    expect(resumed).toMatchObject({
-      ok: true,
-      action: 'active',
-      added: 0,
-      scheduled: 0,
-      counts: { blockedByCancelled: 4 },
-    });
+    // Spied with `mockImplementation` so the real line does not print on a
+    // passing run, the way the residual-branch test further down does it.
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    try {
+      const resumed = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
+
+      expect(resumed).toMatchObject({
+        ok: true,
+        action: 'active',
+        added: 0,
+        scheduled: 0,
+        counts: { blockedByCancelled: 4 },
+      });
+
+      // The operator-facing half, keyed on the exact string. This is the only
+      // resume in this block that reaches the empty-window branch, and
+      // `TemplateFamily.logNoun`'s docblock (`rule-lifecycle.ts`) claims every
+      // message composed from it is held by an assertion on that string; this
+      // is that assertion for this one.
+      const emptyWindow = warn.mock.calls.find(
+        (call) => call[1] === 'studio class template resumed live with an empty window',
+      );
+      expect(emptyWindow).toBeDefined();
+      expect(emptyWindow?.[0]).toMatchObject({
+        templateId: t.id,
+        teacherId,
+        added: 0,
+        blockedByCancelled: 4,
+      });
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   /**
@@ -1209,18 +1236,19 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   });
 
   /**
-   * The race a reviewer of this fix reproduced against
-   * `pauseOrResumeStudioTemplate`'s own "provably unreachable" claim: that
-   * function's two fast-path guards are read outside any lock, so a
-   * concurrent archive can commit in the gap between those reads and its own
-   * transaction. Constructed the same way as this
-   * file's `archiveOrUnarchiveStudioTemplate` concurrent-archive test — a
-   * third transaction holds the row lock so both requests queue behind it —
-   * except archive is started and confirmed queued first, so Postgres's FIFO
-   * lock grant hands it the row before resume's CAS gets a turn. Resume must
-   * then see the row already archived and answer `{ reason: 'archived' }`,
-   * not throw the "claim predicate diverged" error the old comment warned
-   * about.
+   * The race a reviewer of this fix reproduced against a "provably
+   * unreachable" claim. `pauseOrResumeStudioTemplate`'s body is a single
+   * `return` that parameterises `pauseOrResumeRule` (`rule-lifecycle.ts`) with
+   * `STUDIO_FAMILY`; the guards are in that shared body, where both fast paths
+   * are read outside any lock and before the transaction opens, so a
+   * concurrent archive can commit in the gap between those reads and the CAS.
+   * Constructed the same way as this file's
+   * `archiveOrUnarchiveStudioTemplate` concurrent-archive test — a third
+   * transaction holds the row lock so both requests queue behind it — except
+   * archive is started and confirmed queued first, so Postgres's FIFO lock
+   * grant hands it the row before resume's CAS gets a turn. Resume must then
+   * see the row already archived and answer `{ reason: 'archived' }`, which is
+   * what the CAS-miss branch's `isArchived` check is there to produce.
    */
   it('a concurrent archive mid-resume is reported as archived, not thrown', async () => {
     const t = await makeTemplate('Resume Vs Archive Race');
@@ -1544,9 +1572,10 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(result.action).toBe('unchanged');
 
     expect(Object.keys(result.template)).not.toContain('scheduleRule');
-    // The second line, not a duplicate of the first: the adapter's `rule`
-    // parameter is the joined row too, and one that spread it whole would
-    // still compile.
+    // As at the archive twin above, this assertion IS the guarantee: the
+    // adapter's `rule` parameter is the joined row, and one that spread it
+    // whole — or wrote `teacher:` by hand — would still compile. What keeps
+    // `teacher` off the wire is `withSlot` picking the rule's columns by name.
     expect(Object.keys(result.template)).not.toContain('teacher');
     // The flattening itself still happened — otherwise "no `scheduleRule`"
     // would pass on a response that lost the rule's columns altogether.

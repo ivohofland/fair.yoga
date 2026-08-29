@@ -129,13 +129,16 @@ export type WithdrawHook = {
  * nothing complains.
  *
  * `TChild` appears in a return position (`withSlot`'s), so the type is
- * invariant in it and `TemplateFamily<never>` does not compile. Measured, not
+ * invariant in it: `TemplateFamily<never>` is a perfectly good type
+ * expression, and no family descriptor is assignable to it. Measured, not
  * reasoned. `TKind` appears only in a property position, so it is covariant.
  */
 export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
   kind: TKind;
   /**
-   * The child's table, spliced as a raw identifier into the row lock below.
+   * The child's table, spliced as a raw identifier into the row locks below —
+   * `archiveOrUnarchiveRule`'s and `pauseOrResumeRule`'s, each of which takes
+   * one for whichever family it was handed.
    * Narrowed to the template children rather than left at `Prisma.ModelName`,
    * which admits every model in the schema: the type below is the tether, so
    * nothing outside it can reach that splice, and a third family becomes a
@@ -202,17 +205,26 @@ export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
    * The shape also makes one property structural rather than conventional:
    * nothing in this module ever holds a bare child, so it cannot spread a
    * joined `scheduleRule` into a response by accident. The adapters can —
-   * each family's own lifecycle test pins that its adapter does not.
+   * each family's own lifecycle test file pins that its adapter does not.
    *
-   * `rule` is the JOINED row, and each adapter destructures `teacher` off it the
-   * way it destructures `scheduleRule` off the child. What that buys is exact:
-   * the remainder these adapters spread provably cannot carry `teacher`, and
-   * narrowing the joined read later is a compile error rather than a silent
-   * change. What it does NOT buy is a bar on a differently-written adapter —
-   * TypeScript does not apply excess-property checking to spread-introduced
-   * properties, so an adapter that spread `rule` whole would still compile. The
-   * runtime pins in both lifecycle tests are the second line for exactly that
-   * case, and are not redundant.
+   * `rule` is the JOINED row, and each adapter destructures `teacher` off it
+   * the way it destructures `scheduleRule` off the child. What actually keeps
+   * `teacher` off the wire is neither that destructure nor this type: it is
+   * that the `withSlot` each adapter delegates to composes its result by
+   * PICKING the rule's columns by name rather than spreading the rule. Drop
+   * the destructure on its own and `tsc` exits 0 and every pin stays green,
+   * because nothing leaked.
+   *
+   * The joined parameter type still earns its place: it makes the shipped
+   * adapters provably teacher-free, and narrowing the joined read later is a
+   * compile error rather than a silent change. What it does NOT buy is a
+   * compile error on a leak, and the reason is broader than spreads — an
+   * adapter is written as an arrow whose return type comes from a contextual
+   * function type, and in that position TypeScript applies no excess-property
+   * check at all. Measured: an adapter that spreads `rule` whole compiles, and
+   * so does one that writes `teacher:` by hand. The runtime pins in both
+   * lifecycle test files are therefore the first line and the last, not a
+   * backstop behind a compile-time one.
    */
   withSlot: (child: ChildWithRule<TChild>, rule: JoinedRule) => WithSlot<TChild>;
   /**
@@ -807,6 +819,14 @@ export async function archiveOrUnarchiveRule<TChild>(
       );
       return { ok: false, reason: 'slot_conflict', heldBy };
     }
+    // Everything else is rethrown, and `withErrorHandler` (`src/lib/api-utils.ts`)
+    // does log it — with `err`, `method` and `path`, which on this route name
+    // neither the template, the teacher, nor the direction. This line is what
+    // makes a rethrow attributable. The pause verb's catch carries its twin.
+    log.error(
+      { err, templateId, teacherId, target, kind: family.kind },
+      'template archive/un-archive failed',
+    );
     throw err;
   }
 }
@@ -845,19 +865,24 @@ export type PauseRuleResult<TChild> =
        */
       scheduled: number;
       /**
-       * Rows this resume created. `scheduled >= added`, always — and by
-       * construction rather than by assertion, which is why no test tries to
-       * pin the relation directly. The count runs *after* generation, inside
-       * the same transaction, over a superset of what generation inserts: the
-       * same rule, live (a row this transaction just created is), dated at or
-       * after a boundary the generator's own date filter already cleared, and
-       * — where a family's `standingWhere` filters on its child's status too —
-       * in a status generation creates, `class-generator.ts` creating `open`
-       * and `SCHEDULED_STATUSES` holding it. Nothing else can insert for this
-       * rule while the claim holds it, and this transaction's own uncommitted
-       * rows cannot be cancelled by anyone else. See the `scheduled` count in
-       * `pauseOrResumeRule` below for the one input that could break it — a
-       * second, disagreeing read of `defaultTimezone`.
+       * Rows this resume created. `scheduled >= added`, always — and it holds
+       * by construction, not by assertion. **No test pins the relation,
+       * deliberately — know that before trusting it.** The argument below is
+       * the entire guard; break a step of it and nothing will stop you.
+       *
+       * The count runs *after* generation, inside the same transaction, over a
+       * superset of what generation inserts: the same rule, live (a row this
+       * transaction just created is), dated at or after a boundary the
+       * generator's own date filter already cleared, and — where a family's
+       * `standingWhere` filters on its child's status too — in a status that
+       * same predicate admits. That last conjunct is a property of how one
+       * descriptor pairs its `standingWhere` with its `generate`, which is
+       * where it has to be checked; nothing here can check it. Nothing else
+       * can insert for this rule while the claim holds it, and this
+       * transaction's own uncommitted rows cannot be cancelled by anyone else.
+       * See the `scheduled` count in `pauseOrResumeRule` below for the one
+       * input that could break it — a second, disagreeing read of
+       * `defaultTimezone`.
        */
       added: number;
       /**
@@ -1040,7 +1065,18 @@ export async function pauseOrResumeRule<TChild>(
         // this comment.
         const childLock = await tx.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM ${Prisma.raw(`"${family.childTable}"`)} WHERE "id" = ${templateId} FOR UPDATE`;
-        if (childLock.length === 0) return { outcome: 'not_found' };
+        if (childLock.length === 0) {
+          // Logged at `error` rather than returned quietly, for the reason
+          // `archiveOrUnarchiveRule`'s twin of this branch sets out above: the
+          // pre-transaction read found this child, so reaching here means it
+          // was deleted between that read and this lock, and both verbs' CAS
+          // rests on the same invariant. The teacher still gets a plain 404.
+          log.error(
+            { templateId, scheduleRuleId: template.scheduleRuleId, kind: family.kind, teacherId },
+            'pause/resume found no child row to lock for a template it had just read',
+          );
+          return { outcome: 'not_found' };
+        }
 
         // Compare-and-swap, mirroring the one `archiveOrUnarchiveRule` above
         // runs: constraining the write to the exact `isActive`/`isArchived`
@@ -1085,7 +1121,17 @@ export async function pauseOrResumeRule<TChild>(
           // repeating it here, and see there for why taking a lock here on
           // purpose would not be worth it.
           const current = await family.readChild(tx, templateId);
-          if (!current) return { outcome: 'not_found' };
+          if (!current) {
+            // Same impossible-by-invariant shape as the child lock above, and
+            // logged for the same reason the archive's twin is: the child
+            // `FOR UPDATE` this transaction still holds means no other
+            // transaction can have deleted this row since.
+            log.error(
+              { templateId, scheduleRuleId: template.scheduleRuleId, kind: family.kind, teacherId },
+              'pause/resume re-read found no child row while holding its row lock',
+            );
+            return { outcome: 'not_found' };
+          }
           // `isActive === desiredActive` before `isArchived`, deliberately —
           // the same order as the fast paths above, and for the same reason:
           // archiving forces `isActive: false`, so an archived row racing a
@@ -1276,19 +1322,30 @@ export async function pauseOrResumeRule<TChild>(
       { timeout: 10_000 },
     );
   } catch (err) {
-    // Transient only, and everything else rethrown. A returned failure never
-    // reaches `withErrorHandler`, so the line here is the only record of this
-    // one; the message names the operation because the wrapper cannot — a
-    // pause and a resume reach the same route with the same method and the
+    // Transient is the one branch that RETURNS, and a returned failure never
+    // reaches `withErrorHandler`, so the line inside it is the only record of
+    // that case. The message names this VERB because the wrapper cannot — a
+    // pause and an archive reach the same route with the same method and the
     // same path, and the query parameter that separates them is deliberately
     // excluded from request logs.
     if (isTransientDbError(err)) {
+      // `target` because the message names the verb and stops there: it reads
+      // "pause/resume", so this field is the only thing telling a pause from a
+      // resume. The route's copy does distinguish the two.
       log.warn(
         { err, templateId, teacherId, target },
         `${family.logNoun} pause/resume lost the template lock race`,
       );
       return { ok: false, reason: 'busy' };
     }
+    // Everything else is rethrown, and `withErrorHandler` (`src/lib/api-utils.ts`)
+    // does log it — with `err`, `method` and `path`, which on this route name
+    // neither the template, the teacher, nor the direction. This line is what
+    // makes a rethrow attributable.
+    log.error(
+      { err, templateId, teacherId, target, kind: family.kind },
+      'template pause/resume failed',
+    );
     throw err;
   }
 
