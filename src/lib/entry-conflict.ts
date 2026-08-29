@@ -147,9 +147,9 @@ function liveOverlapOf(
  * correctly refused write as one that may have happened. This one runs INSIDE
  * the generating transaction, before the result exists, and its answer is the
  * result: swallowing a failure here would hand back the very `'raced'` that
- * silently discards the window, which is the defect this exists to close. Both
- * generators state "NO CATCH" as doctrine for the same reason. Either sweep
- * isolates a throwing template and carries on (`class-generator.ts`,
+ * silently discards the window, which is the defect this exists to close. The
+ * shared generator states "NO CATCH" as doctrine for the same reason. Either
+ * sweep isolates a throwing template and carries on (`class-generator.ts`,
  * `studio-class-generator.ts`); the two template POSTs roll their create back,
  * and a teacher who retries gets an honest answer rather than a quiet one.
  *

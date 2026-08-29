@@ -126,11 +126,16 @@ export type WithdrawHook = {
  * invariant in it: `TemplateFamily<never>` is a perfectly good type
  * expression, and no family descriptor is assignable to it. Measured, not
  * reasoned. `TKind` appears only in a property position, so it is covariant.
+ *
+ * `Readonly<>` on both halves, for the reason `GeneratorFamily` gives about
+ * its own: a descriptor is a module-level constant whose fields decide which
+ * table a `FOR UPDATE` locks and which function a verb calls, and a
+ * post-construction assignment to one of them compiled clean until this.
  */
 export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = GeneratorFamily<
   TChild,
   TKind
-> & {
+> & Readonly<{
   readChild: (
     client: PrismaClient | TransactionClientOnly,
     templateId: string,
@@ -222,7 +227,7 @@ export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = Ge
     claimed: ChildWithRule<TChild>,
   ) => Promise<GenerationResult>;
   withdraw: WithdrawHook | null;
-};
+}>;
 
 /**
  * Archiving and un-archiving are different operations and report different
@@ -607,11 +612,13 @@ export async function archiveOrUnarchiveRule<TChild>(
         // One clock reading serves both the calendar boundary and the
         // timestamp recorded below. `CalendarEntry.date` is `@db.Date`, so both sides
         // of every comparison below are calendar dates — the comparison the
-        // generator that created these rows already makes (`class-generator.ts`
-        // filters on `classStartInstant`). Comparing the column to a raw
-        // instant instead would, east of UTC, delete a class running that same
-        // evening, and west of UTC leave tomorrow's class bookable under an
-        // archived template — the exact leak #86 exists to close.
+        // generator that created these rows already makes
+        // (`generateEntriesForRule` filters candidate dates on
+        // `classStartInstant`, `entry-generation.ts:523-535`). Comparing the
+        // column to a raw instant instead would, east of UTC, delete a class
+        // running that same evening, and west of UTC leave tomorrow's class
+        // bookable under an archived template — the exact leak #86 exists to
+        // close.
         const now = new Date();
         const today = startOfLocalDay(now, timeZone);
         const ctx: WithdrawContext = { scheduleRuleId: template.scheduleRuleId, today };
@@ -1230,8 +1237,10 @@ export async function pauseOrResumeRule<TChild>(
         // Kept whole rather than destructured (#296): naming the members here
         // is what made every count after the first a hand-thread through four
         // hops, and carrying the object means the next one needs no edit at
-        // this site at all. A member this family's generator cannot yet produce
-        // is carried the same way rather than replaced with a literal 0.
+        // this site at all. A member that happens to be zero for the family
+        // this call is running for is carried the same way rather than
+        // replaced with a literal 0 — which is also why this site never asks
+        // which family it holds.
         const counts = countSkipReasons(generation.skipped);
 
         // `standingWhere`, the same predicate and boundary the archive's

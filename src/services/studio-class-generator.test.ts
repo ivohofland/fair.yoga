@@ -117,6 +117,58 @@ describe('generateStudioClassInstances (DB)', () => {
   });
 
   /**
+   * WHAT a generated row contains, which no other studio generation test
+   * reads: every case in this file checks dates, counts and ids and nothing
+   * else. The class family's twin is the field sweep in
+   * `class-generator.test.ts`'s "generates 4 class instances from a template".
+   *
+   * `STUDIO_GENERATOR.createChildren` writes two values of its own —
+   * `location` and `hourlyRate` — and everything else on the row comes from
+   * the entry the shared generator inserted. Both halves are asserted, because
+   * a wrong source is invisible to a count: `location: rule.classType` is
+   * `string` to `string`, compiles, and ships the class type as the venue on
+   * every generated studio class. This fixture's `location` and `classType`
+   * are deliberately different strings, which is what makes that swap fail
+   * here — keep them different.
+   *
+   * `studentCount` is pinned at `null` for the same reason `status` is pinned
+   * on the class side: it is the field a later "helpful" default would land
+   * in, and a generated class has no attendance yet to report.
+   */
+  it('writes the template\'s own economics onto every generated instance', async () => {
+    const from = new Date('2099-01-01T00:00:00Z');
+    // Idempotent, so this case does not depend on the one above having run —
+    // it re-establishes the same four rows rather than assuming them.
+    await generateStudioClassInstances(prisma, from);
+
+    const rows = await prisma.studioClass.findMany({
+      where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: templateId } } } } },
+      orderBy: { calendarEntry: { date: 'asc' } },
+      include: { calendarEntry: true },
+    });
+    expect(rows).toHaveLength(4);
+
+    for (const sc of rows) {
+      // The child's own two columns, from the TEMPLATE.
+      expect(sc.location).toBe('Studio Gen Test');
+      expect(Number(sc.hourlyRate)).toBe(45);
+      expect(sc.studentCount).toBeNull();
+      expect(sc.kind).toBe('studio');
+
+      // The entry's columns, from the RULE.
+      expect(sc.calendarEntry.kind).toBe('studio');
+      expect(sc.calendarEntry.classType).toBe('Hatha');
+      expect(sc.calendarEntry.teacherId).toBe(teacherId);
+      expect(sc.calendarEntry.scheduleRuleId).toBe(templateScheduleRuleId);
+      expect(timeToHHmm(sc.calendarEntry.startTime)).toBe('10:00');
+      expect(sc.calendarEntry.durationMinutes).toBe(60);
+      expect(sc.calendarEntry.cancelledAt).toBeNull();
+      // `dayOfWeek: 1` is Tuesday in the schema's Monday-first convention.
+      expect(sc.calendarEntry.date.getUTCDay()).toBe(2);
+    }
+  });
+
+  /**
    * Named for what it can see, which is not the row lock. This used to be
    * called "never creates duplicates under concurrent runs (row lock
    * serialises the sweeps)", and the distinctness assertion below cannot

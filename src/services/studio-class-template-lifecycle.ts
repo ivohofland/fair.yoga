@@ -1100,11 +1100,13 @@ export async function createStudioClassTemplate(
       // FIRST STATEMENT, per every sibling in this file. FOUR statements in
       // this transaction can wait on a lock — this insert, the template
       // insert below, and generation's own two writes
-      // (`calendarEntry.createManyAndReturn` and `studioClass.createMany`,
-      // `studio-class-generator.ts`); its occupancy `findMany` is a plain
-      // read and does not wait under READ COMMITTED. So 4 x 2s sits inside
-      // the 10s budget with 2s of headroom; redo that sum before adding a
-      // fifth waiting statement (issue 228, docs/lock-order.md).
+      // (`calendarEntry.createManyAndReturn` at `entry-generation.ts:814`
+      // and the `family.createChildren` call after it, which for this family
+      // is `studioClass.createMany`); its two reads — the date-scoped
+      // occupancy `findMany` and the `scheduleRuleId`-scoped week read — are
+      // plain reads and do not wait under READ COMMITTED. So 4 x 2s sits
+      // inside the 10s budget with 2s of headroom; redo that sum before
+      // adding a fifth waiting statement (issue 228, docs/lock-order.md).
       await setLockTimeout(tx);
       const [rule] = await tx.scheduleRule.createManyAndReturn({
         data: [{

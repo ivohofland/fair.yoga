@@ -242,8 +242,9 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // rather than `string`: `null` is what the service sends when no free
         // week is inside its horizon, `undefined` is what a server predating
         // this field sends, and `templateUpdatedMessage` answers both by
-        // dropping the clause. Neither may become `new Date(undefined)`, which
-        // renders "Invalid Date" into the middle of the sentence.
+        // dropping the clause. Neither may become `new Date(undefined)`: it is
+        // an Invalid Date, and `formatDayHeader` (`@/lib/format`) renders one
+        // as "undefined, NaN undefined" in the middle of the sentence.
         //
         // `generationState` is the other half of the same sentence and cannot
         // be inferred from `firstEffective`: `null` means "no free week in

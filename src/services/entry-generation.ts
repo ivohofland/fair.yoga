@@ -222,8 +222,17 @@ export type GenerationLogNoun = 'recurring class' | 'studio class';
  * `ChildWithRule` in a return position (`readChildOrThrow`'s), so the type is
  * invariant in it. `TKind` appears only in a property position, so it is
  * covariant.
+ *
+ * `Readonly<>`, and it is a guard rather than a style: a descriptor is a
+ * module-level constant read by the claim's raw `FOR UPDATE` and by both
+ * shared lifecycle verbs, so `CLASS_FAMILY.childTable = 'StudioClassTemplate'`
+ * would silently point every one of the class family's row locks at the other
+ * family's table. Without this it compiles clean; with it, it does not
+ * (`TS2540`). The existing constants still assign, the spread into
+ * `TemplateFamily` (`rule-lifecycle.ts`) still works, and a readonly
+ * descriptor still passes into every parameter position that takes one.
  */
-export type GeneratorFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
+export type GeneratorFamily<TChild, TKind extends ClassFamily = ClassFamily> = Readonly<{
   /**
    * The `CalendarEntry.kind` this family's entries carry. Written onto every
    * row the generator inserts, and the value its same-family `slot_taken`
@@ -263,7 +272,7 @@ export type GeneratorFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
     template: ChildWithRule<TChild>,
     entries: readonly { id: string; date: Date }[],
   ) => Promise<void>;
-};
+}>;
 
 // ---------------------------------------------------------------------------
 // claimRuleForGeneration
@@ -274,7 +283,7 @@ export type GeneratorFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
  * longer eligible. One function rather than a pair, so the two families cannot
  * lock differently.
  *
- * `FOR UPDATE OF c` is the point, not the `SELECT`. It locks the same child row
+ * `FOR UPDATE OF tpl` is the point, not the `SELECT`. It locks the same child row
  * that this family's own template update and both shared verbs
  * (`archiveOrUnarchiveRule` and `pauseOrResumeRule`, `rule-lifecycle.ts`) each
  * take as their own first statement (issue 298 / #315, `docs/lock-order.md`,
@@ -304,17 +313,17 @@ export type GeneratorFamily<TChild, TKind extends ClassFamily = ClassFamily> = {
  *
  * The `sr."isActive"`/`sr."isArchived"` predicate in that `SELECT` is a fast
  * path, not the guarantee, and the distinction is load-bearing rather than
- * pedantic. `FOR UPDATE OF c` locks only `c` — deliberately, per the decision
- * linked above, which rejected locking `sr` too — so when this statement
- * itself has to WAIT for that lock, Postgres's WHERE clause was already
- * evaluated against the snapshot taken when the statement STARTED, before the
- * wait. On unblock, `EvalPlanQual` re-verifies the columns of the row actually
- * being locked (`c`) if THAT row changed; it does not re-fetch `sr` on `c`'s
- * account, because `sr` was never part of the lock set. So a `c` row that was
- * eligible when this statement started, and still IS `c` itself unchanged, can
- * come back as a "match" via `rows.length === 1` even though the archive that
- * made it wait committed `sr."isArchived" = true` while this statement was
- * parked. Measured directly, isolated from Prisma: two throwaway tables shaped
+ * pedantic. `FOR UPDATE OF tpl` locks only `tpl` — deliberately, per the
+ * decision linked above, which rejected locking `sr` too — so when this
+ * statement itself has to WAIT for that lock, Postgres's WHERE clause was
+ * already evaluated against the snapshot taken when the statement STARTED,
+ * before the wait. On unblock, `EvalPlanQual` re-verifies the columns of the
+ * row actually being locked (`tpl`) if THAT row changed; it does not re-fetch
+ * `sr` on `tpl`'s account, because `sr` was never part of the lock set. So a
+ * `tpl` row that was eligible when this statement started, and still IS `tpl`
+ * itself unchanged, can come back as a "match" via `rows.length === 1` even
+ * though the archive that made it wait committed `sr."isArchived" = true`
+ * while this statement was parked. Measured directly, isolated from Prisma: two throwaway tables shaped
  * like a template child and its rule, one session holding the child row `FOR
  * UPDATE` and updating (but never committing) the parent's flag, a second
  * session's joined `FOR UPDATE OF` blocking on the first and then unblocking
@@ -379,15 +388,22 @@ export async function claimRuleForGeneration<TChild>(
   await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);
   // `Prisma.raw` because a table name cannot be a bind parameter; `templateId`
   // still is one. What bounds the splice is `childTable`'s type, not this
-  // comment. The alias is a fixed `c` for either family — nothing downstream
-  // reads it, so there is no reason for the two to differ.
+  // comment. The alias is a fixed `tpl` for either family — nothing
+  // downstream reads it, so there is no reason for the two to differ. `tpl`
+  // and not `c`, and that is not cosmetic: `c` is this codebase's alias for
+  // `Class`, the lock censuses that tell a `Class` row lock from a template
+  // one match line by line, and the spliced table name sits five lines up
+  // where no such filter can see it. Under `c` this statement reads as a
+  // `Class` lock taken outside `db-locks.ts`. See `docs/lock-order.md`,
+  // "Ordering BETWEEN `Class` and its `CalendarEntry`", which owns those
+  // filters.
   const rows = await tx.$queryRaw<Array<{ id: string }>>`
-    SELECT c."id" FROM ${Prisma.raw(`"${family.childTable}"`)} c
-      JOIN "ScheduleRule" sr ON sr."id" = c."scheduleRuleId"
-    WHERE c."id" = ${templateId}
+    SELECT tpl."id" FROM ${Prisma.raw(`"${family.childTable}"`)} tpl
+      JOIN "ScheduleRule" sr ON sr."id" = tpl."scheduleRuleId"
+    WHERE tpl."id" = ${templateId}
       AND sr."isActive" = true
       AND sr."isArchived" = false
-    FOR UPDATE OF c`;
+    FOR UPDATE OF tpl`;
   // Silent on purpose: this row's own `WHERE` did not match, which for the
   // sweep's caller is the ordinary "not selected" case — the pre-filter
   // `findMany` runs unlocked and is routinely minutes stale by the time this
@@ -396,7 +412,7 @@ export async function claimRuleForGeneration<TChild>(
   // to distinguish from this one.
   if (rows.length !== 1) return null;
 
-  // Under the lock taken above, so nothing can change `c` itself before we
+  // Under the lock taken above, so nothing can change `tpl` itself before we
   // commit. `OrThrow` because the row provably still exists: the `FOR UPDATE`
   // just matched it and no deleter can reach it without taking the same lock,
   // so an impossible `| null` would force every caller to pretend to handle
@@ -1050,103 +1066,109 @@ export async function probeFirstEffectiveWeek(
   const last = horizon[horizon.length - 1];
   if (first === undefined || last === undefined) return null;
 
-  try {
-    const [ownRows, slotHolders] = await Promise.all([
-      // The weeks this template already occupies. Keyed on `scheduleRuleId`,
-      // which rides `@@unique([scheduleRuleId, date])`, and bounded by the
-      // horizon's own first and last weeks. No liveness filter — see the
-      // docblock.
-      db.calendarEntry.findMany({
-        where: {
-          scheduleRuleId: template.scheduleRuleId,
-          date: {
-            gte: new Date(mondayOf(first)),
-            lt: new Date(mondayOf(last) + 7 * 24 * 60 * 60 * 1000),
-          },
+  // The `catch` is on the READS and nothing else, which is what the docblock
+  // above promises. Wrapping the whole body instead reports a programming
+  // error in `mondayOf`, `hhmmToTime`, `spansOverlap` or `firstFreeWeek` as
+  // "the probe failed", sending an operator to look at a healthy database
+  // while the week arithmetic is the bug. Everything after the `await`
+  // throws to the caller.
+  const reads = await Promise.all([
+    // The weeks this template already occupies. Keyed on `scheduleRuleId`,
+    // which rides `@@unique([scheduleRuleId, date])`, and bounded by the
+    // horizon's own first and last weeks. No liveness filter — see the
+    // docblock.
+    db.calendarEntry.findMany({
+      where: {
+        scheduleRuleId: template.scheduleRuleId,
+        date: {
+          gte: new Date(mondayOf(first)),
+          lt: new Date(mondayOf(last) + 7 * 24 * 60 * 60 * 1000),
         },
-        select: { date: true },
-      }),
-      // This teacher's LIVE entries on the candidate dates, whatever their
-      // start time — the SPAN comparison happens below, in `spansOverlap`, the
-      // same function the generator's own pre-check decides with.
-      // `cancelledAt: null` rather than no filter, matching
-      // `CalendarEntry_teacher_slot_excl`'s partial scope (`WHERE
-      // "cancelledAt" IS NULL`) — the opposite of the read above, and for the
-      // opposite reason: a cancelled entry does not hold a slot, and a
-      // cancelled entry does hold a week. `date: { in: … }` over the horizon
-      // itself rather than a second pair of bounds, so the two reads cannot
-      // drift apart about the range; `@@index([teacherId, date])` backs it.
-      //
-      // ONE READ FOR BOTH FAMILIES (#327), and it must stay unnarrowed. No
-      // `kind` filter belongs here: a probe blind to the other family counts a
-      // cross-family date as a free candidate and names a week the sweep then
-      // skips, landing EARLIER than delivered — the dishonest direction this
-      // function's own docblock names. `CalendarEntry` holds both families'
-      // occupancy, so that blindness is not expressible unless someone adds it
-      // back.
-      //
-      // OVERLAP, NOT EXACT START, and that is the SAME defect one shape over.
-      // #327 made `CalendarEntry_teacher_slot_excl` a RANGE constraint, so a
-      // generator declines a candidate that merely runs into a neighbour. An
-      // exact-start read here counts such a date as free, names a week the
-      // sweep then skips, and lands EARLIER than delivered — the dishonest
-      // direction again, and #194's original failure. Erring the other way is
-      // not on offer: matching the generator exactly is what makes the answer
-      // right rather than merely safe.
-      db.calendarEntry.findMany({
-        where: {
-          teacherId: template.teacherId,
-          cancelledAt: null,
-          date: { in: [...horizon] },
-        },
-        select: { date: true, startTime: true, durationMinutes: true },
-      }),
-    ]);
-
-    const heldWeeks = new Set(ownRows.map((e) => mondayOf(e.date)));
-    // What every candidate would occupy — one span for the whole horizon,
-    // since a template has one start time and one duration. Built exactly as
-    // `generateEntriesForRule` above builds its own `candidateSpan`, so the
-    // two cannot disagree about which dates are reachable.
-    const candidateSpan = {
-      startTime: hhmmToTime(template.startTime),
-      durationMinutes: template.durationMinutes,
-    };
-    // Both families' slot holders in one set, which is now what the table is
-    // rather than something this function assembles. They are not told apart,
-    // and deliberately: a date is unreachable for the same reason whichever
-    // family holds it. The GENERATOR tells them apart, because its two reasons
-    // carry two different remedies for the teacher.
+      },
+      select: { date: true },
+    }),
+    // This teacher's LIVE entries on the candidate dates, whatever their
+    // start time — the SPAN comparison happens below, in `spansOverlap`, the
+    // same function the generator's own pre-check decides with.
+    // `cancelledAt: null` rather than no filter, matching
+    // `CalendarEntry_teacher_slot_excl`'s partial scope (`WHERE
+    // "cancelledAt" IS NULL`) — the opposite of the read above, and for the
+    // opposite reason: a cancelled entry does not hold a slot, and a
+    // cancelled entry does hold a week. `date: { in: … }` over the horizon
+    // itself rather than a second pair of bounds, so the two reads cannot
+    // drift apart about the range; `@@index([teacherId, date])` backs it.
     //
-    // `spansOverlap` is same-date-only and the read above supplies that. It
-    // therefore misses a neighbour spilling over midnight into a candidate,
-    // exactly as the generator's pre-check does — so the two agree on that
-    // case too, and the constraint refuses it at insert either way.
-    const takenDates = new Set(
-      slotHolders
-        .filter((e) => spansOverlap(e, candidateSpan))
-        .map((e) => e.date.getTime()),
-    );
-
-    // Removed from the candidates rather than folded into `heldWeeks`. Folding
-    // would be shorter and would say something false: a taken slot does not
-    // make the WEEK unavailable to this template in general, it makes this
-    // one date unfillable — and since a weekly template has exactly one
-    // candidate per week, the week is lost as a consequence, not as a
-    // definition. The generator draws the same distinction, which is why it
-    // reports two different reasons.
-    const candidates = horizon.filter((date) => !takenDates.has(date.getTime()));
-
-    const free = firstFreeWeek(candidates, heldWeeks);
-    // Converted to the WEEK's Monday before leaving this function, not left as
-    // the candidate date — see either family's `firstEffective` note for why
-    // the conversion cannot live in the copy layer.
-    return free === null ? null : new Date(mondayOf(free));
-  } catch (err) {
+    // ONE READ FOR BOTH FAMILIES (#327), and it must stay unnarrowed. No
+    // `kind` filter belongs here: a probe blind to the other family counts a
+    // cross-family date as a free candidate and names a week the sweep then
+    // skips, landing EARLIER than delivered — the dishonest direction this
+    // function's own docblock names. `CalendarEntry` holds both families'
+    // occupancy, so that blindness is not expressible unless someone adds it
+    // back.
+    //
+    // OVERLAP, NOT EXACT START, and that is the SAME defect one shape over.
+    // #327 made `CalendarEntry_teacher_slot_excl` a RANGE constraint, so a
+    // generator declines a candidate that merely runs into a neighbour. An
+    // exact-start read here counts such a date as free, names a week the
+    // sweep then skips, and lands EARLIER than delivered — the dishonest
+    // direction again, and #194's original failure. Erring the other way is
+    // not on offer: matching the generator exactly is what makes the answer
+    // right rather than merely safe.
+    db.calendarEntry.findMany({
+      where: {
+        teacherId: template.teacherId,
+        cancelledAt: null,
+        date: { in: [...horizon] },
+      },
+      select: { date: true, startTime: true, durationMinutes: true },
+    }),
+  ]).catch((err: unknown) => {
     log.warn(
       { err, templateId: template.id },
       `${editNoun} edit saved, but the first-effective-week probe failed — the confirmation will not name a week`,
     );
     return null;
-  }
+  });
+  if (reads === null) return null;
+  const [ownRows, slotHolders] = reads;
+
+  const heldWeeks = new Set(ownRows.map((e) => mondayOf(e.date)));
+  // What every candidate would occupy — one span for the whole horizon,
+  // since a template has one start time and one duration. Built exactly as
+  // `generateEntriesForRule` above builds its own `candidateSpan`, so the
+  // two cannot disagree about which dates are reachable.
+  const candidateSpan = {
+    startTime: hhmmToTime(template.startTime),
+    durationMinutes: template.durationMinutes,
+  };
+  // Both families' slot holders in one set, which is now what the table is
+  // rather than something this function assembles. They are not told apart,
+  // and deliberately: a date is unreachable for the same reason whichever
+  // family holds it. The GENERATOR tells them apart, because its two reasons
+  // carry two different remedies for the teacher.
+  //
+  // `spansOverlap` is same-date-only and the read above supplies that. It
+  // therefore misses a neighbour spilling over midnight into a candidate,
+  // exactly as the generator's pre-check does — so the two agree on that
+  // case too, and the constraint refuses it at insert either way.
+  const takenDates = new Set(
+    slotHolders
+      .filter((e) => spansOverlap(e, candidateSpan))
+      .map((e) => e.date.getTime()),
+  );
+
+  // Removed from the candidates rather than folded into `heldWeeks`. Folding
+  // would be shorter and would say something false: a taken slot does not
+  // make the WEEK unavailable to this template in general, it makes this
+  // one date unfillable — and since a weekly template has exactly one
+  // candidate per week, the week is lost as a consequence, not as a
+  // definition. The generator draws the same distinction, which is why it
+  // reports two different reasons.
+  const candidates = horizon.filter((date) => !takenDates.has(date.getTime()));
+
+  const free = firstFreeWeek(candidates, heldWeeks);
+  // Converted to the WEEK's Monday before leaving this function, not left as
+  // the candidate date — see either family's `firstEffective` note for why
+  // the conversion cannot live in the copy layer.
+  return free === null ? null : new Date(mondayOf(free));
 }

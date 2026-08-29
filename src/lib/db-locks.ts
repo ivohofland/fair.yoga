@@ -16,9 +16,15 @@ import { Prisma } from '@prisma/client';
  *
  *   adopt  `lockClassRow`, `lockClassRowsOrdered`, `setLockTimeout` and
  *          `lockAnnouncementSlot` below.
+ *   adopt  `claimRuleForGeneration` (`entry-generation.ts`) — issues
+ *          `LOCK_TIMEOUT_SQL` and then a `FOR UPDATE`, for either template
+ *          family from the one statement.
  *   adopt  `claimTemplateForGeneration` (`class-generator.ts`) and
- *          `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) —
- *          each issues `LOCK_TIMEOUT_SQL` and then a `FOR UPDATE`.
+ *          `claimStudioTemplateForGeneration` (`studio-class-generator.ts`)
+ *          — the two per-family names for the entry above, one line each.
+ *          Branded even though neither issues anything itself: they pass
+ *          `tx` straight on, so a bare client reaching either evaporates the
+ *          lock one call deeper, where the brand can no longer refuse it.
  *   adopt  `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) — calls
  *          `lockClassRowsOrdered` below, `FOR UPDATE
  *          OF c` inside the statement that selects the rows, with the
@@ -182,10 +188,11 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * lock set spans every status, and priced none of the reorder loop). The
  * reasoning lives there, not here.
  *
- * The bound itself is `LOCK_TIMEOUT_SQL` above, shared with the two
- * template-claim sites (`claimTemplateForGeneration`,
- * `claimStudioTemplateForGeneration`) — the only other bounded lock waits in
- * the codebase, and the ones this lock deadlocks against.
+ * The bound itself is `LOCK_TIMEOUT_SQL` above, shared with every other site
+ * that bounds a lock wait — `claimRuleForGeneration` (`entry-generation.ts`)
+ * among them, which is the one this lock deadlocks against. No roster here:
+ * `grep -rn 'setLockTimeout\|LOCK_TIMEOUT_SQL' src/ --include='*.ts'` is the
+ * current set.
  *
  * Every `SELECT … FOR UPDATE` on a `Class` or `CalendarEntry` row goes through
  * this function or `lockClassRowsOrdered` below now — no site keeps its own
@@ -197,7 +204,7 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  *
  *   grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" \
  *     | grep -vE ":[0-9]+: *(\*|//)" \
- *     | grep -vE 'OF (ct|sct)`|"ClassTemplate"|"StudioClassTemplate"|family\.childTable'
+ *     | grep -vE 'OF (ct|sct|tpl)`|"ClassTemplate"|"StudioClassTemplate"|family\.childTable'
  *
  * That last alternative earns its place: `archiveOrUnarchiveRule` and
  * `pauseOrResumeRule` (`rule-lifecycle.ts`) each lock the child template row
@@ -210,6 +217,13 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * which is a hit this register exists to show rather than hide. Without the
  * alternative at all, a template-row lock shows up here as if it were a
  * `Class` one.
+ *
+ * `tpl` in the FIRST alternative is the same problem one statement further on:
+ * `claimRuleForGeneration` (`entry-generation.ts`) splices its table name in
+ * too, several lines above its own `FOR UPDATE OF`, so the alias is all this
+ * line-by-line filter has left to match on — which is why that statement may
+ * not call its child row `c`. `ct` and `sct` are the aliases `gdpr.ts`'s bulk
+ * archive still uses for the same two tables.
  *
  * What that settles is a PROPERTY, not a number: every `Class` and
  * `CalendarEntry` row lock in `src/` is one of this file's own statements —

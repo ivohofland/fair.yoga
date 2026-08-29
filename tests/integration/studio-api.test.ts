@@ -20,7 +20,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { generateStudioInstancesForTemplate } from '@/services/studio-class-generator';
-import { startOfLocalDay } from '@/lib/timezone';
+import { startOfLocalDay, mondayOf } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, createStudioClassFixture } from '../class-fixtures';
@@ -691,18 +691,23 @@ describe('PUT /api/studio-class-templates/[id] — the teacher-editable boundary
  * had, and the `never` guard at the end of the handler cannot catch it — it
  * closes the FAILURE half.
  *
- * Both cases pick a slot nothing else in this file holds, on a weekday and at
- * an hour no other fixture spends: `ScheduleRule_teacher_slot_excl` (issue
- * 298) refuses a RANGE overlap anywhere in `(teacherId, dayOfWeek)`, and these
- * rules outlive their test — only the generated entries are cleared between
- * tests.
+ * Every case here takes its weekdays from `sameWeekDayPair()` rather than a
+ * fixed pair, so each also needs an hour NO other fixture in this file spends
+ * on ANY weekday: `ScheduleRule_teacher_slot_excl` (issue 298) refuses a RANGE
+ * overlap anywhere in `(teacherId, dayOfWeek)`, these rules outlive their test
+ * — only the generated entries are cleared between tests — and a variable
+ * weekday cannot dodge a collision by sitting on a different day. Hence 15:00,
+ * 17:00 and 21:00, each of which merely abuts its neighbours; the constraint's
+ * range is half-open, so abutting is legal.
  */
 describe('PUT /api/studio-class-templates/[id] names the week the edit reaches (#284)', () => {
   it('answers a dayOfWeek move with the Monday of a week and the state that earned it', async () => {
+    const [OLD_DAY, NEW_DAY] = sameWeekDayPair();
+
     const create = await send('POST', ownerToken, '/api/studio-class-templates', {
       classType: 'Effective Week Studio',
-      dayOfWeek: 1,
-      startTime: '14:00',
+      dayOfWeek: OLD_DAY,
+      startTime: '15:00',
       durationMinutes: 60,
       location: 'Community Studio',
       hourlyRate: 45,
@@ -711,7 +716,7 @@ describe('PUT /api/studio-class-templates/[id] names the week the edit reaches (
     const { data: created } = (await create.json()) as { data: { id: string } };
 
     const res = await send('PUT', ownerToken, `/api/studio-class-templates/${created.id}`, {
-      dayOfWeek: 2,
+      dayOfWeek: NEW_DAY,
     });
     expect(res.status).toBe(200);
 
@@ -720,7 +725,7 @@ describe('PUT /api/studio-class-templates/[id] names the week the edit reaches (
     };
     // Alongside the template row, not instead of it: the edited column is
     // still on the body, which is what the form's other readers depend on.
-    expect(data.dayOfWeek).toBe(2);
+    expect(data.dayOfWeek).toBe(NEW_DAY);
     // `typeof`, not `not.toBeNull()`: an absent field is `undefined`, which is
     // not null, so the weaker assertion passes on exactly the route this case
     // exists to catch and leaves the whole verdict to the line below.
@@ -745,10 +750,12 @@ describe('PUT /api/studio-class-templates/[id] names the week the edit reaches (
    * date for a week the sweep never reaches.
    */
   it('names no week for a paused template, and says which state it is in', async () => {
+    const [OLD_DAY, NEW_DAY] = sameWeekDayPair();
+
     const create = await send('POST', ownerToken, '/api/studio-class-templates', {
       classType: 'Paused Edit Studio',
-      dayOfWeek: 1,
-      startTime: '16:00',
+      dayOfWeek: OLD_DAY,
+      startTime: '17:00',
       durationMinutes: 60,
       location: 'Community Studio',
       hourlyRate: 45,
@@ -761,16 +768,124 @@ describe('PUT /api/studio-class-templates/[id] names the week the edit reaches (
     expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: created.id } } } } } })).toBe(4);
 
     const res = await send('PUT', ownerToken, `/api/studio-class-templates/${created.id}`, {
-      dayOfWeek: 2,
+      dayOfWeek: NEW_DAY,
     });
     expect(res.status).toBe(200);
 
     const { data } = (await res.json()) as {
       data: { dayOfWeek: number; firstEffective: string | null; generationState: string };
     };
-    expect(data.dayOfWeek).toBe(2);
+    expect(data.dayOfWeek).toBe(NEW_DAY);
     expect(data.firstEffective).toBeNull();
     expect(data.generationState).toBe('paused');
+  });
+
+  /**
+   * The studio twin of `class-templates-api.test.ts`'s "names the week the
+   * generator then fills, and no earlier one", and the case that pins the
+   * PREDICTION ITSELF on this side (#284).
+   *
+   * The two cases above cannot. Both assert a `firstEffective` that is merely
+   * a string and merely a Monday, and against a template whose weeks are held
+   * that pair of assertions is satisfied by any Monday at all — including the
+   * one a probe that never read the held weeks would return. So the exact
+   * date is asserted here, twice over and from both sides of the seam: once
+   * arithmetically (the Monday AFTER the last week the four standing classes
+   * hold) and once behaviourally, by handing the predicted date straight back
+   * to `generateStudioInstancesForTemplate` and checking that the sweep lands
+   * in that week and in no earlier one.
+   *
+   * Across the seam for the same reason the class twin is: the PUT for the
+   * sentence, the generator for the behaviour. A unit test of either half can
+   * only prove that half agrees with itself, and the claim the probe exists to
+   * make is that the two agree with EACH OTHER — a probe sharing the
+   * generator's own four-week horizon answers "no free week" here, and one
+   * blind to the held weeks answers a week the sweep has already filled.
+   */
+  it('names the week the generator then fills, and no earlier one', async () => {
+    const [OLD_DAY, NEW_DAY] = sameWeekDayPair();
+
+    const create = await send('POST', ownerToken, '/api/studio-class-templates', {
+      classType: 'Effective Week Fills Studio',
+      dayOfWeek: OLD_DAY,
+      startTime: '21:00',
+      durationMinutes: 60,
+      location: 'Community Studio',
+      hourlyRate: 45,
+    });
+    expect(create.status).toBe(201);
+    const { data: created } = (await create.json()) as { data: { id: string } };
+    const id = created.id;
+    const ownWhere = { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id } } } } };
+
+    const before = await prisma.studioClass.findMany({
+      where: ownWhere,
+      orderBy: { calendarEntry: { date: 'asc' } },
+      include: { calendarEntry: true },
+    });
+    expect(before.length).toBe(4);
+
+    const res = await send('PUT', ownerToken, `/api/studio-class-templates/${id}`, {
+      dayOfWeek: NEW_DAY,
+    });
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as { data: { firstEffective: string | null } };
+    // A week, not nothing: every week the generator can see is held, so the
+    // honest answer is one the generator cannot see — which is the case a
+    // probe sharing the generator's own four-week horizon gets wrong by
+    // answering "no free week".
+    expect(typeof data.firstEffective).toBe('string');
+    const predicted = new Date(data.firstEffective as string);
+    expect(predicted.getUTCDay()).toBe(1);
+    // The EXACT week, derived from the rows rather than restated: the four
+    // standing classes are consecutive weekly occurrences, so the last one's
+    // Monday plus seven days is the first week nothing of this template's
+    // holds. A probe that read no held weeks names the FIRST horizon week
+    // instead and fails here — the assertion neither case above can make,
+    // because both are satisfied by any Monday.
+    expect(predicted.getTime()).toBe(mondayOf(before[3]!.calendarEntry.date) + 7 * 24 * 60 * 60 * 1000);
+
+    const template = await prisma.studioClassTemplate.findUniqueOrThrow({
+      where: { id },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
+    });
+
+    // The sweep as it runs today. Its four-occurrence window is entirely held
+    // by the superseded schedule, so it creates nothing — and the reason it
+    // gives for each date is the week key this branch brought to this family.
+    const today = await generateStudioInstancesForTemplate(prisma, template);
+    expect(today.created).toBe(0);
+    expect(today.skipped.map((s) => s.reason)).toEqual([
+      'already_this_week',
+      'already_this_week',
+      'already_this_week',
+      'already_this_week',
+    ]);
+
+    // The same sweep once time has reached the week the teacher was told
+    // about. `from` is the only way a four-occurrence window can see week
+    // five, and it is what the hourly cron reaches by simply running later.
+    const later = await generateStudioInstancesForTemplate(prisma, template, predicted);
+    expect(later.created).toBeGreaterThan(0);
+
+    const after = await prisma.studioClass.findMany({
+      where: { ...ownWhere, id: { notIn: before.map((c) => c.id) } },
+      orderBy: { calendarEntry: { date: 'asc' } },
+      include: { calendarEntry: true },
+    });
+    expect(after.length).toBe(later.created);
+    const first = after[0]!;
+    // The week the sentence named, and the weekday the teacher moved to.
+    expect(mondayOf(first.calendarEntry.date)).toBe(predicted.getTime());
+    expect(first.calendarEntry.date.getUTCDay()).toBe((NEW_DAY + 1) % 7);
+
+    // And nothing landed earlier than the sentence promised — the assertion a
+    // probe that merely happened to agree on the first date would still pass,
+    // but one that named a week the old schedule still holds would not.
+    for (const c of after) {
+      expect(mondayOf(c.calendarEntry.date)).toBeGreaterThanOrEqual(predicted.getTime());
+    }
   });
 });
 

@@ -20,11 +20,14 @@ import { startOfLocalDay } from '@/lib/timezone';
  * the shipped rule until PR #295's review caught it.
  *
  * A class's `startTime` is a STAMP. The generator filters candidates on the
- * TEMPLATE's current `startTime` (`studio-class-generator.ts:141`) and probes
- * occupancy with it too (`:177`). Editing a template moves the template's and
- * leaves every standing class untouched — "a template is a stamp, not a live
- * link", CLAUDE.md — so the two disagree BY DESIGN, and a start-instant rule
- * answers from the wrong one.
+ * TEMPLATE's current `startTime` (`generateEntriesForRule`,
+ * `entry-generation.ts:523-535`) and probes occupancy with it too (the entry
+ * read at `:596-606`, whose `startTime` the loop below it compares).
+ * One generator serves both families since #284, so those citations are into
+ * shared code, not the studio adapter. Editing a template moves the
+ * template's and leaves every standing class untouched — "a template is a
+ * stamp, not a live link", CLAUDE.md — so the two disagree BY DESIGN, and a
+ * start-instant rule answers from the wrong one.
  *
  * Worked: template moved Wed 09:00 → 19:00; the standing class keeps 09:00. At
  * 10:30 its own start has passed, so the old rule allowed removal — and the
@@ -67,7 +70,7 @@ import { startOfLocalDay } from '@/lib/timezone';
  *
  *   2. `cancelledAt`. Removability is about whether the sweep brings the class
  *      back, and the sweep counts a cancelled own-row as occupancy either way
- *      (`studio-class-generator.ts:166`, `blocked_by_cancelled`). Making
+ *      (`entry-generation.ts:668-674`, `blocked_by_cancelled`). Making
  *      cancellation a precondition would force the teacher to create the litter
  *      before they could clear it.
  *

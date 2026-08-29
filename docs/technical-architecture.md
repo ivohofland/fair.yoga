@@ -74,7 +74,7 @@ ethical-yoga/
 │   │   ├── notifications.test.ts
 │   │   ├── payments.ts        # Payment creation & tracking
 │   │   ├── payments.test.ts
-│   │   └── class-generator.ts # Rolling 4-week instance generation
+│   │   └── class-generator.ts # Class family's half of the shared entry generator
 │   ├── lib/                   # Shared utilities
 │   │   ├── auth.ts            # Session management, magic link tokens
 │   │   ├── db.ts              # Prisma client singleton
@@ -296,7 +296,7 @@ const heldWeeks = new Set(
 // compiles to a bare `ON CONFLICT DO NOTHING` — no conflict target, so it
 // covers `CalendarEntry_teacher_slot_excl` as well as the unique key — and a
 // date lost to a concurrent insert costs that date and nothing else. The
-// `Class` rows below are keyed on the entry ids that landed, so nothing is
+// child rows below are keyed on the entry ids that landed, so nothing is
 // left for a second `ON CONFLICT` to catch.
 const inserted = await db.calendarEntry.createManyAndReturn({
   data: free.map((date) => ({ /* rule's calendar fields + date */ })),
@@ -304,9 +304,10 @@ const inserted = await db.calendarEntry.createManyAndReturn({
   select: { id: true, date: true },
 });
 if (inserted.length > 0) {
-  await db.class.createMany({
-    data: inserted.map((entry) => ({ /* template's economics + entry.id */ })),
-  });
+  // The family's own write, not this function's: `class.createMany` under
+  // `CLASS_GENERATOR`, `studioClass.createMany` under `STUDIO_GENERATOR`,
+  // each keyed on `entry.id` and carrying only that family's economics.
+  await family.createChildren(db, template, inserted);
 }
 
 return { created: inserted.length, skipped }; // GenerationResult

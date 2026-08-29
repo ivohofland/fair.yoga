@@ -91,21 +91,32 @@ through it, and it is the only production `SELECT … FOR UPDATE OF c` **on
       | grep -vE ':[0-9]+: *(//|\*|/\*)'
 
 **That claimed to return exactly one line, and Task 3 (#315, issue 298)
-falsified it — measured, not merely noticed: it now returns five.** The point
+falsified it — measured, not merely noticed: it returns six today.** The point
 was never the count of exactly one; it was that every multi-row `Class` lock
 goes through this one helper, and that is still true. `src/lib/db-locks.ts`
-(`lockClassRowsOrdered`) is the only line locking `Class`. The other four are
-legitimate holders of a DIFFERENT row entirely, added by the template-family
-extraction: `claimTemplateForGeneration` (`class-generator.ts`) and
-`claimStudioTemplateForGeneration` (`studio-class-generator.ts`) each take
-`FOR UPDATE OF ct`/`FOR UPDATE OF sct` on a single `ClassTemplate` /
-`StudioClassTemplate` row, and `deleteTeacherAccount`'s bulk archive
-(`gdpr.ts`) takes the ordered multi-row form of the same two locks — "The
-child row is the lock node for the template families" below is the section
-that names and explains all four. None of the five is `lockClassRowsOrdered`
-locking a second `Class` row in a different form; a sixth line appearing here
-in the future is what would actually be the regression this check exists to
-catch, not a rising count by itself.
+(`lockClassRowsOrdered`) is the only line locking `Class`. The other five lock
+a DIFFERENT row entirely, in three groups. Two are #327's `FOR UPDATE OF e`
+companions on the `CalendarEntry` side, one inside `lockClassRow` and one
+inside `lockClassRowsOrdered` — same file, same convention, a second row per
+class rather than a second class. One is `claimRuleForGeneration`
+(`entry-generation.ts`), whose `FOR UPDATE OF tpl` takes a single
+`ClassTemplate` / `StudioClassTemplate` row with the table name spliced from
+the family descriptor: ONE line serving both families, where
+`class-generator.ts` and `studio-class-generator.ts` each had one of their own
+(`FOR UPDATE OF ct` / `FOR UPDATE OF sct`) until issue 284 merged them. The
+last two are `deleteTeacherAccount`'s bulk archive (`gdpr.ts`), the ordered
+multi-row form of that same lock, one per family. "The child row is the lock
+node for the template families" below is the section that names and explains
+the template-side three.
+
+The regression this check exists to catch is a line locking `Class` or
+`CalendarEntry` from outside `db-locks.ts`, not a rising count by itself —
+which is why the ALIAS in that spliced statement is load-bearing. `c` is this
+codebase's alias for `Class`, so a template lock written `FOR UPDATE OF c`
+reads here exactly like a stray `Class` lock, and the spliced table name that
+would tell them apart sits several lines up where a line-by-line filter cannot
+see it. `claimRuleForGeneration` uses `tpl` for that reason, and its own
+comment says so.
 
 `lockClassRowsOrdered` owns the order, the `FOR UPDATE OF c` lock mode, the
 shared 2s bound and the dedupe for `Class`; a new `Class` site inherits all
@@ -171,7 +182,7 @@ grep the section above prescribes, minus the template tables:
     grep -rn 'FOR UPDATE' --include='*.ts' src/ \
       | grep -v '\.test\.ts:' \
       | grep -vE ':[0-9]+: *(\*|//)' \
-      | grep -vE 'OF (ct|sct)`|"ClassTemplate"|"StudioClassTemplate"|family\.childTable'
+      | grep -vE 'OF (ct|sct|tpl)`|"ClassTemplate"|"StudioClassTemplate"|family\.childTable'
 
 **Expect FIVE lines: the four in `src/lib/db-locks.ts` — `lockClassRow`'s two
 and `lockClassRowsOrdered`'s two — plus `src/services/room-archive.ts:235`,
@@ -202,12 +213,23 @@ bounded by its type rather than by this filter: `TemplateFamily.childTable` is
 quoting; their FILTERS must stay identical, and both times they have drifted it
 was this one that was missing an alternative.
 
+`tpl` in the FIRST alternative is the same problem one statement further on,
+and it is why `claimRuleForGeneration` (`entry-generation.ts`) may not go back
+to calling its child row `c`. Issue 284 merged the two claims into one spliced
+statement whose table name sits several lines above its `FOR UPDATE OF`, out
+of reach of every filter here; the alias is the only thing left on that line
+to match on, and `c` is `Class`'s. `ct` and `sct` are the aliases the two
+per-family claims used before the merge, still issued by `gdpr.ts`'s bulk
+archive.
+
 The third filter is not optional, and leaving it off is how this check shipped
-broken. Without it the grep returns **11** lines across four files, ten of them
-prose *about* the convention rather than uses of it — this codebase discusses
-`FOR UPDATE OF c` far more often than it issues it, so a reader running the
-unfiltered version concludes on first use that the convention is already
-abandoned. Caught by #239's review, which is to say: after it shipped.
+broken. Drop it and the same command returns **85** lines across sixteen files
+where it returns five with it — this codebase discusses `FOR UPDATE` far more
+often than it issues it, so a reader running the unfiltered version concludes
+on first use that the convention is already abandoned. Caught by #239's
+review, which is to say: after it shipped. The two figures are the same command
+run with and without that one filter; do not carry either forward without
+re-running both.
 
 **Before #237 this section was a five-row table**, and it was corrected about
 its own membership four times — the last of them by the round that filed the
@@ -370,33 +392,37 @@ a call):
    `grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" |
    grep -vE ":[0-9]+: *(\*|//)"` is the check, not a number kept here.
    **It returned four hits when this check was first written, and returns
-   thirteen when re-run today** — re-derived for issue 336, not carried
-   forward. Of the original four, two were never `Class` locks at all —
-   `claimTemplateForGeneration` (`class-generator.ts`)
-   and `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) take
-   `FOR UPDATE OF ct`/`FOR UPDATE OF sct` on a `ClassTemplate` /
+   twelve when re-run today** — re-derived for issue 284, not carried
+   forward. Of the original four, two were never `Class` locks at all — the
+   two generators' template claims, then written per family as
+   `FOR UPDATE OF ct` / `FOR UPDATE OF sct` on a `ClassTemplate` /
    `StudioClassTemplate` row — so the claim above holds over them rather than
    being violated by them, and the other two were the `Class` helpers in
-   `db-locks.ts`, which is the whole point. The nine lines added since are of
-   three kinds. Six come from the split "The child row is the lock node for
-   the template families" below describes: four single-id plain `FOR UPDATE`s
-   on a child template row — one each in `updateClassTemplate` and
+   `db-locks.ts`, which is the whole point. Those two claim lines are now ONE:
+   issue 284 merged both generators onto `claimRuleForGeneration`
+   (`entry-generation.ts`), whose single `FOR UPDATE OF tpl` splices its table
+   name from the family descriptor and serves either family.
+
+   The nine lines added since, less that merge's one, are of three kinds. Six
+   come from the split "The child row is the lock node for the template
+   families" below describes: four single-id plain `FOR UPDATE`s on a child
+   template row — one each in `updateClassTemplate` and
    `updateStudioClassTemplate`, plus two in `rule-lifecycle.ts` whose table
-   name is spliced from the family descriptor rather than written literally,
+   name is likewise spliced rather than written literally,
    `archiveOrUnarchiveRule` and `pauseOrResumeRule`, each serving BOTH of its
    verb's entry points (issue 332 merged the two archive lines into the first,
    issue 336 the two pause lines into the second) — plus two ordered
    `FOR UPDATE OF` locks in `deleteTeacherAccount`'s bulk archive (`gdpr.ts`),
    one per template family, which the `FOR UPDATE OF` census one section up
-   counts alongside the two claims. Two more are
+   counts alongside the merged claim. Two more are
    #327's `FOR UPDATE OF e` companions inside `lockClassRow` and
    `lockClassRowsOrdered`, which now take two lines each. The ninth is
    `room-archive.ts`'s cascade pre-lock, which holds every `ClassTemplate` row
    of the room being archived; it belongs to no convention on this page and is
    the line the two `Class`-scoped censuses above cannot filter out, because
-   its table name sits on the preceding line. Thirteen lines
-   total: nine of them lock a `ClassTemplate` or `StudioClassTemplate` row —
-   the two claims, the four single-id lifecycle locks, the two ordered
+   its table name sits on the preceding line. Twelve lines
+   total: eight of them lock a `ClassTemplate` or `StudioClassTemplate` row —
+   the merged claim, the four single-id lifecycle locks, the two ordered
    bulk-archive locks and the room archive's pre-lock — and the remaining
    four are in `db-locks.ts`, which is where every `Class` and `CalendarEntry`
    row lock still lives. A
@@ -1254,12 +1280,18 @@ child row's `FOR UPDATE` as its own first statement, before touching
 and the claim continues to join the rule for its predicate but lock only the
 child:
 
-    SELECT ct."id" FROM "ClassTemplate" ct
-      JOIN "ScheduleRule" sr ON sr."id" = ct."scheduleRuleId"
-     WHERE ct."id" = $1
+    SELECT tpl."id" FROM "ClassTemplate" tpl
+      JOIN "ScheduleRule" sr ON sr."id" = tpl."scheduleRuleId"
+     WHERE tpl."id" = $1
        AND sr."isActive" = true
        AND sr."isArchived" = false
-     FOR UPDATE OF ct;
+     FOR UPDATE OF tpl;
+
+`"ClassTemplate"` is spliced from the family descriptor rather than written,
+so this one statement is also the `StudioClassTemplate` one. `tpl` and not
+`ct`, `sct` or `c`: the alias is the only part of that line a line-by-line
+census can read, and `c` is `Class`'s — see "Ordering BETWEEN `Class` and its
+`CalendarEntry`" above.
 
 **Rejected: lock both rows.** That would add `ScheduleRule` as a second node
 to an ordering this document has twice declined to extend for lesser reasons,
@@ -1271,15 +1303,16 @@ needs that column on the rule, so keeping a copy of the lifecycle flags on the
 child would restore the two-sources-of-truth drift this extraction exists to
 remove.
 
-Nine call sites hold the child row `FOR UPDATE` today, across eight
+Nine call sites hold the child row `FOR UPDATE` today, across seven
 statements: `deleteTeacherAccount`'s bulk archive takes one per family, the
+two claim entry points share the one inside `claimRuleForGeneration`, the
 two archive entry points share the one inside `archiveOrUnarchiveRule`, and
 the two pause entry points share the one inside `pauseOrResumeRule`:
 
 | Site | File | Shape |
 |---|---|---|
-| `claimTemplateForGeneration` | `class-generator.ts` | joined predicate, `FOR UPDATE OF ct` |
-| `claimStudioTemplateForGeneration` | `studio-class-generator.ts` | joined predicate, `FOR UPDATE OF sct` |
+| `claimTemplateForGeneration` | statement in `entry-generation.ts`, family in `class-generator.ts` | joined predicate, `FOR UPDATE OF tpl`, table name spliced from `CLASS_GENERATOR.childTable` |
+| `claimStudioTemplateForGeneration` | statement in `entry-generation.ts`, family in `studio-class-generator.ts` | joined predicate, `FOR UPDATE OF tpl`, table name spliced from `STUDIO_GENERATOR.childTable` |
 | `updateClassTemplate` | `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
 | `pauseOrResumeTemplate` | statement in `rule-lifecycle.ts`, family in `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `CLASS_FAMILY.childTable` |
 | `archiveOrUnarchiveTemplate` | statement in `rule-lifecycle.ts`, family in `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `CLASS_FAMILY.childTable` |
@@ -1300,15 +1333,15 @@ table above is independently proven necessary in `class-generator.test.ts`,
 lock was removed in isolation and the specific case it protects was confirmed
 to redden, then restored (Task 3c report, `.superpowers/sdd/`).
 
-**The claim's own `FOR UPDATE OF ct` is not, by itself, sufficient — and this
-was measured, not assumed.** `FOR UPDATE OF ct` locks only `ct`, deliberately
+**The claim's own `FOR UPDATE OF tpl` is not, by itself, sufficient — and this
+was measured, not assumed.** `FOR UPDATE OF tpl` locks only `tpl`, deliberately
 (the "reject locking both rows" decision above), so when the claim's own
 `SELECT` has to WAIT for that lock — because one of the nine sites above
 already holds it — Postgres evaluates the join's `sr."isActive"`/
 `sr."isArchived"` predicate against the snapshot the statement took when it
 STARTED, before the wait. `EvalPlanQual`, Postgres's re-check on unblock,
-re-verifies the columns of the LOCKED row (`ct`) if that row changed; it does
-not re-fetch `sr` on `ct`'s account, because `sr` was never part of the lock
+re-verifies the columns of the LOCKED row (`tpl`) if that row changed; it does
+not re-fetch `sr` on `tpl`'s account, because `sr` was never part of the lock
 set. Measured directly, isolated from Prisma — two throwaway tables shaped
 like the real ones, one session holding the child row and updating (but not
 committing) the parent's flag, a second session's joined `FOR UPDATE OF`
@@ -1317,13 +1350,12 @@ predicate read the PRE-commit flag, six of six runs, unchanged even when the
 first session also issued a real `UPDATE` on the child row itself to force
 `EvalPlanQual`. So `rows.length === 1` in the claim's raw statement is a fast
 path, not the verdict, whenever the statement actually waited. What closes it:
-`claimTemplateForGeneration`/`claimStudioTemplateForGeneration`'s own
-`findUniqueOrThrow` immediately after is a SEPARATE statement, issued only
-once the lock is actually held, and a separate statement takes its own fresh
-READ COMMITTED snapshot regardless of what the statement before it waited on
-— so eligibility is re-checked against THAT read, not trusted from the raw
-statement's `WHERE`. See `claimTemplateForGeneration`'s own docblock
-(`class-generator.ts`) for the same argument at the call site.
+the family's own `readChildOrThrow` immediately after is a SEPARATE statement,
+issued only once the lock is actually held, and a separate statement takes its
+own fresh READ COMMITTED snapshot regardless of what the statement before it
+waited on — so eligibility is re-checked against THAT read, not trusted from
+the raw statement's `WHERE`. See `claimRuleForGeneration`'s own docblock
+(`entry-generation.ts`) for the same argument at the call site.
 
 **`deleteTeacherAccount`'s bulk archive needed the same fix, and the need was
 measured rather than assumed to be absent.** Before issue 298 its bulk
