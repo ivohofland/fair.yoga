@@ -5,6 +5,7 @@ import {
   formatDateShort,
   formatMonthLabel,
   paymentStateText,
+  paymentStateInlineText,
   formatRoomLocation,
   formatStudentName,
   timeAgo,
@@ -207,6 +208,34 @@ describe('paymentStateText', () => {
   it('renders pending as unstyled unpaid', () => {
     // No colour class: unpaid is the resting state, not an alarm.
     expect(paymentStateText('pending')).toEqual({ label: '○ Unpaid', className: '' });
+  });
+});
+
+/**
+ * #133. Inline payment state for row captions (e.g. ` · ! overdue`).
+ * Lowercase sentence style with leading interpunct, matching caption conventions.
+ * Asserted as whole objects so className changes are caught.
+ */
+describe('paymentStateInlineText', () => {
+  it('renders inline overdue in danger with leading interpunct', () => {
+    expect(paymentStateInlineText('overdue')).toEqual({
+      label: ' · ! overdue',
+      className: 'text-danger',
+    });
+  });
+
+  it('renders inline paid in teal with check', () => {
+    expect(paymentStateInlineText('paid')).toEqual({
+      label: ' · ✓ paid',
+      className: 'text-teal',
+    });
+  });
+
+  it('renders inline pending as unstyled unpaid', () => {
+    expect(paymentStateInlineText('pending')).toEqual({
+      label: ' · ○ unpaid',
+      className: '',
+    });
   });
 });
 

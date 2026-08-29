@@ -30,9 +30,9 @@ export function timeAgo(date: Date): string {
  * is deliberately quiet at runtime and loud at compile time \u2014 see below.
  */
 export function paymentStateText(status: PaymentStatus): { label: string; className: string } {
-  if (status === 'paid') return { label: '\u2713 Paid', className: 'text-teal' };
+  if (status === 'paid') return { label: '✓ Paid', className: 'text-teal' };
   if (status === 'overdue') return { label: '! Overdue', className: 'text-danger font-medium' };
-  if (status === 'pending') return { label: '\u25cb Unpaid', className: '' };
+  if (status === 'pending') return { label: '○ Unpaid', className: '' };
   // Unreachable for any status the schema can produce, and the `never` is what
   // keeps it that way: adding a member to the enum fails the *build* here
   // instead of the member rendering silently as "Unpaid". That guard is the
@@ -42,16 +42,30 @@ export function paymentStateText(status: PaymentStatus): { label: string; classN
   // strictly worse than the catch-all `return` it replaced: `bookings/page.tsx`
   // is an async server component with `force-dynamic` that calls this during
   // render, and the app's only error boundary (`app/error.tsx`, plus
-  // `global-error.tsx`) logs nothing \u2014 so on enum/deploy drift a throw takes
+  // `global-error.tsx`) logs nothing — so on enum/deploy drift a throw takes
   // down an entire student-facing page on every request, with no diagnostic
-  // trail. Log it and mislabel one row instead; '\u25cb Unpaid' is the calmest
+  // trail. Log it and mislabel one row instead; '○ Unpaid' is the calmest
   // of the three states this design system has and never overclaims payment.
   //
   // `console.error`, not `lib/log.ts`: that module is pino and server-only, and
   // this file is imported by `'use client'` components.
   const unhandled: never = status;
   console.error('[payment-state-text] unhandled payment status', { status: String(unhandled) });
-  return { label: '\u25cb Unpaid', className: '' };
+  return { label: '○ Unpaid', className: '' };
+}
+
+/**
+ * Inline payment state suffix for row captions (e.g. " · ! overdue").
+ * Lowercase sentence style with leading interpunct, matching caption conventions.
+ */
+export function paymentStateInlineText(status: PaymentStatus): { label: string; className: string } {
+  if (status === 'overdue') return { label: ' · ! overdue', className: 'text-danger' };
+  if (status === 'paid') return { label: ' · ✓ paid', className: 'text-teal' };
+  if (status === 'pending') return { label: ' · ○ unpaid', className: '' };
+
+  const unhandled: never = status;
+  console.error('[payment-state-inline-text] unhandled payment status', { status: String(unhandled) });
+  return { label: ' · ○ unpaid', className: '' };
 }
 
 /**

@@ -224,7 +224,9 @@ describe('OutstandingPaymentRow', () => {
       }),
     );
 
-    expect(await screen.findByText(/! overdue/)).toBeInTheDocument();
+    const overdueMarker = await screen.findByText('· ! overdue');
+    expect(overdueMarker).toBeInTheDocument();
+    expect(overdueMarker).toHaveClass('text-danger');
   });
 
   /**
@@ -311,5 +313,25 @@ describe('OutstandingPaymentRow', () => {
       '[payment-undo] undone, but the response body was unreadable',
       expect.objectContaining({ paymentId: 'pay-morning' }),
     );
+  });
+
+  /**
+   * #133. The paid state renders from paymentStateText: label and className
+   * are the contract.
+   */
+  it('renders the paid label with paymentStateText copy and styling', () => {
+    render(
+      <OutstandingPaymentRow
+        {...base}
+        paymentId="pay-paid"
+        classId="cls-paid"
+        classContext="Vinyasa · 12 Jun · 09:30"
+        status="paid"
+      />,
+    );
+
+    const paidBadge = screen.getByText('✓ Paid');
+    expect(paidBadge).toBeInTheDocument();
+    expect(paidBadge).toHaveClass('text-teal', 'type-caption');
   });
 });

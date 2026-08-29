@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { PaymentStatus } from '@prisma/client';
-import { timeAgo } from '@/lib/format';
+import { paymentStateInlineText, paymentStateText, timeAgo } from '@/lib/format';
 import { usePaymentActions } from '@/lib/use-payment-actions';
 import { SendReminderButton } from '@/components/class/send-reminder-button';
 
@@ -66,7 +66,11 @@ export function OutstandingPaymentRow({
             <Link href={`/class/${classId}`} className="no-underline text-brown-light">
               {classContext}
             </Link>
-            {current === 'overdue' && <span className="text-danger"> · ! overdue</span>}
+            {current === 'overdue' && (
+              <span className={paymentStateInlineText('overdue').className}>
+                {paymentStateInlineText('overdue').label}
+              </span>
+            )}
           </p>
           {remindedAt && <p className="type-caption">Reminded {timeAgo(remindedAt)}</p>}
         </div>
@@ -83,7 +87,9 @@ export function OutstandingPaymentRow({
           )}
           {isPaid ? (
             <span className="inline-flex items-center gap-2">
-              <span className="type-caption text-teal">✓ Paid</span>
+              <span className={`type-caption ${paymentStateText('paid').className}`}>
+                {paymentStateText('paid').label}
+              </span>
               {justMarked.has(paymentId) && (
                 <button
                   type="button"
