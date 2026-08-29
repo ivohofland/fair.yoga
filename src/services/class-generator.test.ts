@@ -2362,7 +2362,7 @@ describe('generateClassInstances (per-template isolation)', () => {
     expect(created).toContain('B');
     expect(warnSpy).toHaveBeenCalledWith(
       expect.objectContaining({ templateId: 'A', teacherId: 't1' }),
-      'class generation skipped template due to lock contention',
+      'recurring class generation skipped template due to lock contention',
     );
     expect(errorSpy).not.toHaveBeenCalled();
 
