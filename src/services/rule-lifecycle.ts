@@ -129,8 +129,10 @@ export type WithdrawHook = {
  *
  * `Readonly<>` on both halves, for the reason `GeneratorFamily` gives about
  * its own: a descriptor is a module-level constant whose fields decide which
- * table a `FOR UPDATE` locks and which function a verb calls, and a
- * post-construction assignment to one of them compiled clean until this.
+ * table a `FOR UPDATE` locks, and a post-construction assignment to one of
+ * them compiled clean until this. One level deep only — `withdraw` is a
+ * readonly slot, but `WithdrawHook`'s own members stay assignable, so the
+ * type does not reach which function the hook runs.
  */
 export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = GeneratorFamily<
   TChild,

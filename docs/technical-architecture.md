@@ -74,7 +74,7 @@ ethical-yoga/
 │   │   ├── notifications.test.ts
 │   │   ├── payments.ts        # Payment creation & tracking
 │   │   ├── payments.test.ts
-│   │   └── class-generator.ts # Class family's half of the shared entry generator
+│   │   └── class-generator.ts # Class family's half — see Entry Generator below
 │   ├── lib/                   # Shared utilities
 │   │   ├── auth.ts            # Session management, magic link tokens
 │   │   ├── db.ts              # Prisma client singleton

@@ -66,7 +66,7 @@ import { startOfLocalDay } from '@/lib/timezone';
  *      remove. It is not: template state is REVERSIBLE. Un-archive → resume →
  *      generation restarts, and a date released under the archived reading is
  *      refilled. A predicate that reads reversible state is a predicate that
- *      can flip. `room-deletion.ts:14-21` gives this exact warning one model
+ *      can flip. `room-deletion.ts` gives this exact warning one model
  *      over — "the single most likely wrong edit here: it compiles, it passes
  *      any test written against a live template".
  *
@@ -191,7 +191,7 @@ export function studioClassDeletability(
   // column — `startOfLocalDay` returns midnight UTC of the teacher's local date,
   // the same representation Prisma hands back for `sc.date`. Comparing either
   // one to a raw instant treats the teacher's calendar as UTC's, wrong in both
-  // directions away from offset 0 (`timezone.ts:70-77`).
+  // directions away from offset 0 — `startOfLocalDay`'s own docblock argues it.
   if (startOfLocalDay(now, timeZone) > sc.date) return { deletable: true };
 
   return { deletable: false, reason: 'regenerates' };

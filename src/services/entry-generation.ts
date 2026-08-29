@@ -389,14 +389,12 @@ export async function claimRuleForGeneration<TChild>(
   // `Prisma.raw` because a table name cannot be a bind parameter; `templateId`
   // still is one. What bounds the splice is `childTable`'s type, not this
   // comment. The alias is a fixed `tpl` for either family — nothing
-  // downstream reads it, so there is no reason for the two to differ. `tpl`
-  // and not `c`, and that is not cosmetic: `c` is this codebase's alias for
-  // `Class`, the lock censuses that tell a `Class` row lock from a template
-  // one match line by line, and the spliced table name sits five lines up
-  // where no such filter can see it. Under `c` this statement reads as a
-  // `Class` lock taken outside `db-locks.ts`. See `docs/lock-order.md`,
-  // "Ordering BETWEEN `Class` and its `CalendarEntry`", which owns those
-  // filters.
+  // downstream reads it, so there is no reason for the two to differ. It may
+  // not be `c`: that is this codebase's alias for `Class`, and under it this
+  // statement reads as a `Class` lock taken outside `db-locks.ts`. Nothing
+  // enforces that — see `docs/lock-order.md`, "Ordering BETWEEN `Class` and
+  // its `CalendarEntry`", which owns the censuses and the reason they cannot
+  // see this statement's table name.
   const rows = await tx.$queryRaw<Array<{ id: string }>>`
     SELECT tpl."id" FROM ${Prisma.raw(`"${family.childTable}"`)} tpl
       JOIN "ScheduleRule" sr ON sr."id" = tpl."scheduleRuleId"
