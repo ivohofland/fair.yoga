@@ -975,7 +975,16 @@ each still gets its own verdict.
    reaching past themselves cost PR #300 five review rounds. Cut it to a
    citation: name the predicate and the file, drop the restated mechanics. (My
    brief asked for the reason in prose, so this one is mine.)
-10. **`isCrossFamilySlotConflict` has no definition left anywhere in `src/`** and
+10. **Not an invalidation — a quality carry-over, labelled so the distinction
+    stays visible.** `tests/integration/class-templates-api.test.ts:1533, 1648,
+    1737, 1839` assert `expect(data.firstEffective).not.toBeNull()` and then
+    read it through `as string`. `undefined` is not `null`, so on a route that
+    stopped sending the field the named assertion passes in silence and the
+    failure surfaces two lines later as `expected NaN to be 1`. Task 7's
+    implementer hit exactly that and switched its own new case to
+    `typeof … === 'string'`; these four are its class-family twins. Four
+    one-line changes.
+11. **`isCrossFamilySlotConflict` has no definition left anywhere in `src/`** and
    is still named in four files (`entry-generation.ts`,
    `studio-class-template-lifecycle.ts`, `class-template-lifecycle.ts`,
    `generation-transaction.test.ts`). Pre-existing, not this branch's doing —
