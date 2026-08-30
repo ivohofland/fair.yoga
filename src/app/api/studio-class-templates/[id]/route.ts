@@ -138,6 +138,11 @@ export const PUT = withErrorHandler(async (
       'STUDIO_TEMPLATE_BUSY',
     );
   }
+  if (result.reason === 'invalid_room') {
+    // Structurally unreachable: StudioClassTemplate has no room relation.
+    // Present in the union because UpdateRuleResult is shared across families.
+    throw new Error('Unreachable: studio templates have no room');
+  }
 
   // Exhaustiveness, and only of the FAILURE half. A new
   // `UpdateStudioClassTemplateResult` reason becomes a compile error here

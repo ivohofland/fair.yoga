@@ -4,7 +4,26 @@ import {
   archiveOrUnarchiveStudioTemplate,
   pauseOrResumeStudioTemplate,
   updateStudioClassTemplate,
+  type StudioClassTemplateUpdateData,
 } from './studio-class-template-lifecycle';
+
+/**
+ * Compile-time pin asserting updateStudioClassTemplate rejects forbidden fields.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _studioTemplateForbiddenFieldsAreRejected(
+  db: PrismaClient,
+  reparent: StudioClassTemplateUpdateData & { scheduleRuleId: string },
+  activeRule: StudioClassTemplateUpdateData & { isActive: boolean },
+  archivedRule: StudioClassTemplateUpdateData & { isArchived: boolean },
+): Promise<void> {
+  // @ts-expect-error `scheduleRuleId` is identity — a plain edit may never re-parent.
+  await updateStudioClassTemplate(db, 'never-called', 'never-called', reparent);
+  // @ts-expect-error `isActive` belongs to PATCH, never to a plain edit.
+  await updateStudioClassTemplate(db, 'never-called', 'never-called', activeRule);
+  // @ts-expect-error `isArchived` belongs to PATCH, never to a plain edit.
+  await updateStudioClassTemplate(db, 'never-called', 'never-called', archivedRule);
+}
 import { generateStudioInstancesForTemplate } from './studio-class-generator';
 import { getNextOccurrences } from './entry-generation';
 import { log } from '@/lib/log';

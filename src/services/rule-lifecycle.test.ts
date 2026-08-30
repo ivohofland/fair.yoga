@@ -6,6 +6,7 @@ import {
   pauseOrResumeRule,
   type ArchiveRuleResult,
   type PauseRuleResult,
+  type UpdateRuleResult,
   type TemplateFamily,
   type WithSlot,
 } from './rule-lifecycle';
@@ -197,6 +198,32 @@ describe("the two families' lifecycle results are not interchangeable", () => {
     // @ts-expect-error a class pause result must never satisfy the studio one
     takesStudio(classResult);
     // @ts-expect-error a studio pause result must never satisfy the class one
+    takesClass(studioResult);
+
+    expect(takesStudio(studioResult)).toBe(true);
+    expect(takesClass(classResult)).toBe(true);
+  });
+
+  it('rejects each family update result where the other family is required', () => {
+    const takesStudio = (r: UpdateRuleResult<StudioClassTemplate>) => r.ok;
+    const takesClass = (r: UpdateRuleResult<ClassTemplate>) => r.ok;
+
+    const classResult: UpdateRuleResult<ClassTemplate> = {
+      ok: true,
+      template: {} as WithSlot<ClassTemplate>,
+      firstEffective: null,
+      generationState: 'active',
+    };
+    const studioResult: UpdateRuleResult<StudioClassTemplate> = {
+      ok: true,
+      template: {} as WithSlot<StudioClassTemplate>,
+      firstEffective: null,
+      generationState: 'active',
+    };
+
+    // @ts-expect-error a class update result must never satisfy the studio one
+    takesStudio(classResult);
+    // @ts-expect-error a studio update result must never satisfy the class one
     takesClass(studioResult);
 
     expect(takesStudio(studioResult)).toBe(true);

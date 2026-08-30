@@ -9,14 +9,30 @@ import { Prisma } from '@prisma/client';
 import type { PrismaClient, ClassFamily } from '@prisma/client';
 import type { TransactionClientOnly } from '@/lib/db-locks';
 import { setLockTimeout } from '@/lib/db-locks';
-import { startOfLocalDay } from '@/lib/timezone';
-import { timeToHHmm } from '@/lib/time-of-day';
+import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
+import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
 import { countSkipReasons, type GenerationResult, type SkipCounts } from '@/lib/generation';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
-import { isTransientDbError } from '@/lib/api-errors';
+import { isRecordNotFound, isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
-import type { JoinedRule, ChildWithRule, GeneratorFamily } from './entry-generation';
+import {
+  type JoinedRule,
+  type ChildWithRule,
+  type GeneratorFamily,
+  type EditLogNoun,
+  DEFAULT_WEEKS,
+  getNextOccurrences,
+  probeFirstEffectiveWeek,
+} from './entry-generation';
+import {
+  templateGenerationState,
+  type TemplateGenerationState,
+} from '@/lib/template-selection';
+import type {
+  TeacherEditableScheduleRuleField,
+  PlainUpdateForbiddenScheduleRuleField,
+} from './class-template-lifecycle';
 
 /**
  * A child template with its rule's columns flattened onto it, `startTime`
@@ -229,6 +245,39 @@ export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = Ge
     claimed: ChildWithRule<TChild>,
   ) => Promise<GenerationResult>;
   withdraw: WithdrawHook | null;
+  /**
+   * The noun this family's edit-path log lines and firstEffective probe use.
+   */
+  editNoun: EditLogNoun;
+  /**
+   * Room validation for the class family; `null` for studio.
+   * Called BEFORE the transaction, outside the lock — same position the
+   * ownership check currently occupies in `updateClassTemplate`.
+   */
+  validateRoom: ((
+    db: PrismaClient,
+    roomId: string,
+    teacherId: string,
+  ) => Promise<{ ok: true; isArchived: boolean } | { ok: false }>) | null;
+  /**
+   * Write the child row inside the transaction, with family-specific typing.
+   *
+   * Each family implements this with its own `Prisma.…UncheckedUpdateManyInput
+   * & Partial<Record<PlainUpdateForbidden…, never>>` guard, so the
+   * forbidden-field exclusion survives the generic boundary rather than being
+   * erased by `Record<string, unknown>`.
+   *
+   * The room result (from `validateRoom`) is passed in so the class family
+   * can write `roomArchived` onto the child row without a second read.
+   */
+  updateChild: (
+    tx: TransactionClientOnly,
+    templateId: string,
+    childData: Record<string, unknown>,
+    roomResult: { isArchived: boolean } | null,
+    template: ChildWithRule<TChild>,
+    data: Record<string, unknown>,
+  ) => Promise<TChild>;
 }>;
 
 /**
@@ -1384,4 +1433,244 @@ export async function pauseOrResumeRule<TChild>(
     startTime: timeToHHmm(lastScheduledRow.startTime),
   };
   return { ok: true, action: 'paused', template: result.template, lastScheduled };
+}
+
+// ---------------------------------------------------------------------------
+// updateRule (issue 284 / stage C2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Why an update did or did not happen. Every business outcome is a variant;
+ * callers own the user-facing wording.
+ */
+export type UpdateRuleResult<TChild> =
+  | {
+      ok: true;
+      template: WithSlot<TChild>;
+      /**
+       * The **Monday of the first week the new schedule reaches**, or `null`
+       * when there is no such week to name (#194/#284).
+       *
+       * `null` has TWO causes and they are not the same fact, which is why
+       * `generationState` sits beside it rather than being left for the copy
+       * layer to infer: either no free week is inside the probe's horizon, or
+       * the template is not eligible to generate at all and the probe was
+       * never run. Reading `null` alone as "no free week" is what produced a
+       * confirmation naming a week the sweep would never fill for every edit
+       * to a paused or archived template.
+       *
+       * Named as a week rather than as a date on purpose. `firstFreeWeek`
+       * answers with a candidate *occurrence* — a Thursday, say — and the
+       * sentence built from this speaks about weeks; a bare `Date` here
+       * invites the occurrence reading and would put the wrong day in front
+       * of a teacher. The conversion happens in the service layer —
+       * `probeFirstEffectiveWeek` (`entry-generation.ts`) returns the Monday,
+       * so this field is already one — rather than in the copy layer, because
+       * `mondayOf` lives in `@/lib/timezone`, which imports pino, and
+       * `template-action-messages.ts` is value-imported by a `'use client'`
+       * component.
+       *
+       * A prediction, not a report: this PUT generates nothing, so the class
+       * it names does not exist yet and will be created by the sweep.
+       */
+      firstEffective: Date | null;
+      /**
+       * Whether the sweep will act on this edit at all, and if not, what the
+       * teacher has to do first (#194/#284).
+       *
+       * This PUT is deliberately open to a paused or archived template — the
+       * edit commits either way. What differs is WHEN it takes effect, and
+       * for an ineligible template the answer is not a date: the hourly sweep
+       * never reaches it, so no week can be named honestly until the teacher
+       * resumes — or un-archives and then resumes.
+       *
+       * Derived by `templateGenerationState` from the row this call just
+       * wrote, not from the row read at the top: `isActive`/`isArchived` are
+       * both on the forbidden list, so no PUT can move them, but reading the
+       * post-write row is what keeps that a fact about the code rather than a
+       * memory of it.
+       */
+      generationState: TemplateGenerationState;
+    }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'forbidden' }
+  | { ok: false; reason: 'no_fields' }
+  | { ok: false; reason: 'invalid_room' }
+  /**
+   * A live rule occupies the requested slot (#196/#296) — enforced by
+   * `ScheduleRule_teacher_slot_excl`, one exclusion constraint spanning both
+   * class families (issue 298). `heldBy` is what tells the two apart now:
+   * the constraint's `23P01` cannot say which family raised it, so a fresh
+   * probe of `ScheduleRule` answers separately (`ruleSlotHolder`,
+   * `src/lib/rule-slot-holder.ts`).
+   */
+  | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
+  /**
+   * This transaction lost a contention race and rolled back whole, so nothing
+   * was applied and the identical request can win the next attempt.
+   */
+  | { ok: false; reason: 'busy' };
+
+/**
+ * Apply a partial update to a template child and its schedule rule.
+ *
+ * One function parameterized by `TemplateFamily` descriptor (issue 284, stage C2),
+ * sharing lock ordering, transient DB error handling, exclusion conflict probing,
+ * and prediction probe logic.
+ */
+export async function updateRule<TChild>(
+  db: PrismaClient,
+  family: TemplateFamily<TChild>,
+  templateId: string,
+  teacherId: string,
+  data: Record<string, unknown>,
+): Promise<UpdateRuleResult<TChild>> {
+  const template = await family.readChild(db, templateId);
+  if (!template) return { ok: false, reason: 'not_found' };
+  if (template.scheduleRule.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
+
+  // Defined-value scan: a key present with value `undefined` is not an edit.
+  // A key-count check would let `{ description: undefined }` through and issue
+  // a no-op `update` that takes the row lock for nothing and still reports `ok: true`.
+  const hasEdit = Object.values(data).some((v) => v !== undefined);
+  if (!hasEdit) return { ok: false, reason: 'no_fields' };
+
+  // Room validation for families with room relations (class family).
+  let roomResult: { isArchived: boolean } | null = null;
+  if (family.validateRoom !== null && data.teacherRoomId !== undefined) {
+    if (typeof data.teacherRoomId !== 'string') {
+      return { ok: false, reason: 'invalid_room' };
+    }
+    const validated = await family.validateRoom(db, data.teacherRoomId, teacherId);
+    if (!validated.ok) {
+      return { ok: false, reason: 'invalid_room' };
+    }
+    roomResult = { isArchived: validated.isArchived };
+  }
+
+  let updated: WithSlot<TChild>;
+  let updatedRule: JoinedRule;
+  try {
+    const written = await db.$transaction(
+      async (tx) => {
+        // First statement, deliberately: bounds the wait for the row lock.
+        await setLockTimeout(tx);
+
+        // The child's row lock, explicit rather than incidental. Every other
+        // writer of this template's lifecycle or calendar columns takes this
+        // same lock as its first statement (`archiveOrUnarchiveRule` and
+        // `pauseOrResumeRule`), so this one must as well.
+        await tx.$queryRaw`SELECT "id" FROM ${Prisma.raw(`"${family.childTable}"`)} WHERE "id" = ${templateId} FOR UPDATE`;
+
+        const { classType, dayOfWeek, startTime, durationMinutes, ...childData } = data;
+
+        const updatedChild = await family.updateChild(
+          tx,
+          templateId,
+          childData,
+          roomResult,
+          template,
+          data,
+        );
+
+        const ruleData: Partial<Pick<Prisma.ScheduleRuleUncheckedUpdateManyInput, TeacherEditableScheduleRuleField>> &
+          Partial<Record<PlainUpdateForbiddenScheduleRuleField, never>> = {};
+        if (classType !== undefined && typeof classType === 'string') ruleData.classType = classType;
+        if (dayOfWeek !== undefined && typeof dayOfWeek === 'number') ruleData.dayOfWeek = dayOfWeek;
+        if (startTime !== undefined && typeof startTime === 'string') ruleData.startTime = hhmmToTime(startTime);
+        if (durationMinutes !== undefined && typeof durationMinutes === 'number') ruleData.durationMinutes = durationMinutes;
+
+        const newRule =
+          Object.keys(ruleData).length > 0
+            ? await tx.scheduleRule.update({
+                where: { id: template.scheduleRuleId },
+                data: ruleData,
+                include: { teacher: { select: { defaultTimezone: true } } },
+              })
+            : template.scheduleRule;
+
+        return { updatedChild, newRule };
+      },
+      { timeout: 10_000 },
+    );
+    updated = family.withSlot(
+      {
+        ...written.updatedChild,
+        scheduleRuleId: written.newRule.id,
+        scheduleRule: written.newRule,
+      },
+      written.newRule,
+    );
+    updatedRule = written.newRule;
+  } catch (err) {
+    if (isTransientDbError(err)) {
+      log.warn(
+        { err, templateId, teacherId },
+        `${family.editNoun} edit lost a lock race — nothing committed`,
+      );
+      return { ok: false, reason: 'busy' };
+    }
+
+    if (isRecordNotFound(err)) {
+      log.warn(
+        { err, templateId, teacherId },
+        `${family.editNoun} vanished between the ownership read and the write — nothing committed`,
+      );
+      return { ok: false, reason: 'not_found' };
+    }
+
+    if (isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')) {
+      const heldBy = await ruleSlotHolder(db, {
+        teacherId,
+        dayOfWeek: typeof data.dayOfWeek === 'number' ? data.dayOfWeek : template.scheduleRule.dayOfWeek,
+        startMinutes: minutesSinceMidnight(
+          typeof data.startTime === 'string' ? hhmmToTime(data.startTime) : template.scheduleRule.startTime,
+        ),
+        durationMinutes:
+          typeof data.durationMinutes === 'number'
+            ? data.durationMinutes
+            : template.scheduleRule.durationMinutes,
+        excludeRuleId: template.scheduleRuleId,
+      });
+      log.warn(
+        { err, templateId, teacherId, heldBy },
+        `${family.editNoun} edit refused: that slot is taken`,
+      );
+      return { ok: false, reason: 'slot_conflict', heldBy };
+    }
+
+    throw err;
+  }
+
+  const now = new Date();
+  const horizon = getNextOccurrences(updatedRule.dayOfWeek, now, DEFAULT_WEEKS * 2).filter(
+    (date) =>
+      classStartInstant(
+        { date, startTime: updatedRule.startTime },
+        template.scheduleRule.teacher.defaultTimezone,
+      ) > now,
+  );
+
+  const generationState = templateGenerationState(updatedRule);
+
+  return {
+    ok: true,
+    template: updated,
+    firstEffective:
+      generationState === 'active'
+        ? await probeFirstEffectiveWeek(
+            db,
+            {
+              id: templateId,
+              scheduleRuleId: template.scheduleRuleId,
+              teacherId,
+              startTime: updated.startTime,
+              durationMinutes: updated.durationMinutes,
+            },
+            horizon,
+            family.editNoun,
+          )
+        : null,
+    generationState,
+  };
 }

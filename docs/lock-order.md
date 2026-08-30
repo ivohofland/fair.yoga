@@ -1341,20 +1341,21 @@ needs that column on the rule, so keeping a copy of the lifecycle flags on the
 child would restore the two-sources-of-truth drift this extraction exists to
 remove.
 
-Nine call sites hold the child row `FOR UPDATE` today, across seven
+Nine call sites hold the child row `FOR UPDATE` today, across six
 statements: `deleteTeacherAccount`'s bulk archive takes one per family, the
 two claim entry points share the one inside `claimRuleForGeneration`, the
-two archive entry points share the one inside `archiveOrUnarchiveRule`, and
-the two pause entry points share the one inside `pauseOrResumeRule`:
+two archive entry points share the one inside `archiveOrUnarchiveRule`,
+the two pause entry points share the one inside `pauseOrResumeRule`, and
+the two update entry points share the one inside `updateRule`:
 
 | Site | File | Shape |
 |---|---|---|
 | `claimTemplateForGeneration` | statement in `entry-generation.ts`, family in `class-generator.ts` | joined predicate, `FOR UPDATE OF tpl`, table name spliced from `CLASS_GENERATOR.childTable` |
 | `claimStudioTemplateForGeneration` | statement in `entry-generation.ts`, family in `studio-class-generator.ts` | joined predicate, `FOR UPDATE OF tpl`, table name spliced from `STUDIO_GENERATOR.childTable` |
-| `updateClassTemplate` | `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
+| `updateClassTemplate` | statement in `rule-lifecycle.ts`, family in `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `CLASS_FAMILY.childTable` |
 | `pauseOrResumeTemplate` | statement in `rule-lifecycle.ts`, family in `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `CLASS_FAMILY.childTable` |
 | `archiveOrUnarchiveTemplate` | statement in `rule-lifecycle.ts`, family in `class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `CLASS_FAMILY.childTable` |
-| `updateStudioClassTemplate` | `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE` |
+| `updateStudioClassTemplate` | statement in `rule-lifecycle.ts`, family in `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `STUDIO_FAMILY.childTable` |
 | `pauseOrResumeStudioTemplate` | statement in `rule-lifecycle.ts`, family in `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `STUDIO_FAMILY.childTable` |
 | `archiveOrUnarchiveStudioTemplate` | statement in `rule-lifecycle.ts`, family in `studio-class-template-lifecycle.ts` | single-id, plain `FOR UPDATE`, table name spliced from `STUDIO_FAMILY.childTable` |
 | `deleteTeacherAccount` (bulk archive) | `gdpr.ts` | ordered, `FOR UPDATE OF ct` **and** `FOR UPDATE OF sct` |

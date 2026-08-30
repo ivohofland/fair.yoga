@@ -44,6 +44,8 @@ async function _templateForbiddenFieldsAreRejected(
   reparent: ClassTemplateUpdateData & { scheduleRuleId: string },
   roomMirror: ClassTemplateUpdateData & { roomArchived: boolean },
   ruleMirror: ClassTemplateUpdateData & { ruleLive: boolean },
+  activeRule: ClassTemplateUpdateData & { isActive: boolean },
+  archivedRule: ClassTemplateUpdateData & { isArchived: boolean },
 ): Promise<void> {
   // @ts-expect-error `scheduleRuleId` is identity — a plain edit may never re-parent.
   await updateClassTemplate(db, 'never-called', 'never-called', reparent);
@@ -51,6 +53,10 @@ async function _templateForbiddenFieldsAreRejected(
   await updateClassTemplate(db, 'never-called', 'never-called', roomMirror);
   // @ts-expect-error the rule mirror belongs to Postgres, never to a plain edit.
   await updateClassTemplate(db, 'never-called', 'never-called', ruleMirror);
+  // @ts-expect-error `isActive` belongs to PATCH, never to a plain edit.
+  await updateClassTemplate(db, 'never-called', 'never-called', activeRule);
+  // @ts-expect-error `isArchived` belongs to PATCH, never to a plain edit.
+  await updateClassTemplate(db, 'never-called', 'never-called', archivedRule);
 }
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 

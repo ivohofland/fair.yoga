@@ -48,22 +48,15 @@ import type { z } from 'zod';
 import type { createStudioClassTemplateSchema, updateStudioClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
-import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
-import { isRecordNotFound, isTransientDbError } from '@/lib/api-errors';
+import { isTransientDbError } from '@/lib/api-errors';
 import { setLockTimeout } from '@/lib/db-locks';
 import type { GenerationResult } from '@/lib/generation';
-import { templateGenerationState, type TemplateGenerationState } from '@/lib/template-selection';
 // Server-only (pino). Safe here: this module's sole importer is
 // `api/studio-class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
 // transitively through `studio-class-generator`. No `'use client'` component
 // value-imports anything in this chain.
 import { log } from '@/lib/log';
-// Server-only too, and for the same reason: `@/lib/timezone` and
-// `entry-generation` both value-import pino. They join the chain the note
-// above describes rather than widening it.
-import { classStartInstant } from '@/lib/timezone';
-import { DEFAULT_WEEKS, getNextOccurrences, probeFirstEffectiveWeek } from './entry-generation';
 import type {
   PlainUpdateForbiddenScheduleRuleField as PlainUpdateForbiddenClassRuleField,
   TeacherEditableScheduleRuleField as TeacherEditableClassRuleField,
@@ -76,8 +69,10 @@ import {
 import {
   archiveOrUnarchiveRule,
   pauseOrResumeRule,
+  updateRule,
   type ArchiveRuleResult,
   type PauseRuleResult,
+  type UpdateRuleResult,
   type TemplateFamily,
   type WithSlot,
 } from './rule-lifecycle';
@@ -495,430 +490,25 @@ export function withSlot(template: StudioClassTemplate, rule: ScheduleRule): Stu
 /**
  * Why an update did or did not happen. Every business outcome is a variant;
  * callers own the user-facing wording.
+ *
+ * Aliased to `UpdateRuleResult` (`rule-lifecycle.ts`), parameterised by `StudioClassTemplate`.
  */
-export type UpdateStudioClassTemplateResult =
-  | {
-      ok: true;
-      template: StudioClassTemplateWithSlot;
-      /**
-       * The **Monday of the first week the new schedule reaches**, or `null`
-       * when there is no such week to name (#284).
-       *
-       * `null` has TWO causes and they are not the same fact, which is why
-       * `generationState` sits beside it rather than being left for the copy
-       * layer to infer: either no free week is inside the probe's horizon, or
-       * the template is not eligible to generate at all and the probe was
-       * never run. Reading `null` alone as "no free week" would confirm a
-       * week the sweep never fills for every edit to a paused or archived
-       * template.
-       *
-       * Named as a week rather than as a date on purpose. `firstFreeWeek`
-       * answers with a candidate *occurrence* — a Thursday, say — and the
-       * sentence built from this speaks about weeks; a bare `Date` here
-       * invites the occurrence reading and would put the wrong day in front
-       * of a teacher. The conversion happens in the service layer —
-       * `probeFirstEffectiveWeek` (`entry-generation.ts`) returns the Monday,
-       * so this field is already one — rather than in the copy layer, because
-       * `mondayOf` lives in `@/lib/timezone`, which imports pino, and
-       * `components/settings/template-action-messages.ts` is value-imported
-       * by `studio-template-form.tsx`, a `'use client'` component.
-       *
-       * A prediction, not a report: this PUT generates nothing and moves no
-       * existing studio class, so the class it names does not exist yet and
-       * will be created by the hourly sweep.
-       */
-      firstEffective: Date | null;
-      /**
-       * Whether the sweep will act on this edit at all, and if not, what the
-       * teacher has to do first (#284).
-       *
-       * This PUT is deliberately open to a paused or archived template and
-       * nothing here changes that — the edit commits either way. What differs
-       * is WHEN it takes effect, and for an ineligible template the answer is
-       * not a date: the hourly sweep never reaches it. Both gates ask the
-       * rule for `isActive` true and `isArchived` false — the `findMany` in
-       * `generateStudioClassInstances` spells that pair inline, and the row
-       * lock in `claimStudioTemplateForGeneration` re-checks the same two
-       * columns — so no week can be named honestly until the teacher resumes,
-       * or un-archives and then resumes.
-       *
-       * Derived by `templateGenerationState` from the rule row this call just
-       * wrote, not from the row read at the top: `isActive`/`isArchived` are
-       * both on the forbidden list, so no PUT can move them, but reading the
-       * post-write row is what keeps that a fact about the code rather than a
-       * memory of it.
-       *
-       * Carried as its own field rather than left to the client to derive
-       * from the `isActive`/`isArchived` columns `withSlot` already flattens
-       * on. Those two booleans are the INPUT to a rule that lives in
-       * `@/lib/template-selection`; re-deriving it in a `'use client'` copy
-       * layer would put a copy of the generator's eligibility gate in the one
-       * place nobody would look when it changes.
-       */
-      generationState: TemplateGenerationState;
-    }
-  | { ok: false; reason: 'not_found' }
-  | { ok: false; reason: 'forbidden' }
-  | { ok: false; reason: 'no_fields' }
-  /**
-   * A live rule occupies the requested slot (#196/#296) — enforced by
-   * `ScheduleRule_teacher_slot_excl`, one exclusion constraint spanning both
-   * class families (issue 298), in place of the partial unique index and the
-   * cross-family trigger this reason used to split across two. `heldBy` is
-   * what tells the two apart now: the constraint's `23P01` cannot say which
-   * family raised it, so a fresh probe of `ScheduleRule` answers separately
-   * (`ruleSlotHolder`, `src/lib/rule-slot-holder.ts`).
-   */
-  | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
-  | { ok: false; reason: 'busy' };
+export type UpdateStudioClassTemplateResult = UpdateRuleResult<StudioClassTemplate>;
 
 /**
  * Applies a teacher's edit to their own studio template.
  *
- * Ownership lives here, not in the route, so the guard travels with the
- * function — the same choice `updateClassTemplate` made and for the same
- * reason.
- *
- * The `data` parameter's intersection with
- * `Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>>` is what
- * makes the forbidden list bind *callers*, not just the wire schema. The pins
- * above only prove the allowlist and the schema agree; they say nothing about
- * a caller. TypeScript's excess-property check fires only on a fresh object
- * literal — build `data` as a variable first
- * (`const patch = { classType: 'Yin', isActive: true };
- * updateStudioClassTemplate(db, id, me, patch)`) and it never triggers, so a
- * value with no matching type declaration would sail straight through to
- * `update`. Marking each forbidden key optional-and-`never` forces TypeScript
- * to reject that argument however it arrives *as a typed object*.
- *
- * That qualifier is measured, not hedging. After the intersection the type has
- * zero required properties, and TypeScript will not use a source's index
- * signature to satisfy a target's named optional properties — so
- * `const bag: Record<string, unknown>` assigns to this parameter with no
- * error, and `updateStudioClassTemplate(db, id, me, await req.json() as
- * Record<string, unknown>)` would type-check and write whatever the bag holds.
- * Bounded today by there being exactly one production caller
- * (`api/studio-class-templates/[id]/route.ts`) which passes a `z.infer` of a
- * `.strict()` schema. Worth knowing before adding a second.
- *
- * No instance sync, and that is the rule rather than an omission. Editing
- * `dayOfWeek` or `startTime` here leaves every generated `StudioClass` exactly
- * where it is, which is what #194 decided for BOTH families on 2026-08-20: a
- * template is a stamp, not a live link. The absence is not a seam — nothing
- * may attach a propagation here, and the teacher cancels the classes the old
- * schedule left standing, individually.
- *
- * What it answers instead is WHEN the new schedule first reaches the calendar:
- * `firstEffective` and `generationState` on the success arm (#284). Both are
- * predictions about the hourly sweep, computed after the write commits and
- * read-only — a prediction is the only honest thing a function that moves no
- * existing class can offer, and it is not a propagation returning by another
- * name.
+ * Runs on `updateRule` in `rule-lifecycle.ts` parameterised by `STUDIO_FAMILY` (issue 284 / stage C2).
  */
-export async function updateStudioClassTemplate(
+export function updateStudioClassTemplate(
   db: PrismaClient,
   templateId: string,
   teacherId: string,
   data: StudioClassTemplateUpdateData &
-    Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>>,
+    Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>> &
+    Partial<Record<PlainUpdateForbiddenClassRuleField, never>>,
 ): Promise<UpdateStudioClassTemplateResult> {
-  // `defaultTimezone` joined for the probe at the foot of this function, which
-  // has to drop an occurrence whose start has already passed exactly the way
-  // the generator drops its own candidates. `StudioClassTemplate` carries no
-  // zone of its own — it is a `Teacher` column, reached through the rule — and
-  // no PUT can move it, so reading it before the write rather than after
-  // changes nothing.
-  const template = await db.studioClassTemplate.findUnique({
-    where: { id: templateId },
-    include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true } } } } },
-  });
-  // All three returns in this pre-transaction block are silent. #231's
-  // acceptance criterion allows that when a comment says why, so here is why,
-  // one at a time — and one of them is a live question, not a settled one.
-  //
-  //   - `not_found`: a 404 for a row that is not there. A stale bookmark.
-  //     Near-zero signal; #231 accepts this case.
-  //   - `no_fields`: pure input validation with nothing behind it.
-  //   - `forbidden`: #231 explicitly does NOT settle this — "`forbidden` is
-  //     the one worth arguing about — it is an ownership rejection, and
-  //     template-id enumeration across teachers is currently invisible to an
-  //     operator." The route answers 404 and 403 differently, so id-existence
-  //     is probeable, and neither arm logs. Left silent here to match the
-  //     three sibling functions rather than to answer the question; #231 owns
-  //     answering it for the family at once. An earlier revision of this
-  //     comment claimed #231 had allowed it, which inverted the issue.
-  //
-  // The `catch` below has THREE returns and logs all three — the third is
-  // `slot_conflict`, which now carries both #196's within-family case and
-  // #296's cross-family one, told apart by `heldBy`.
-  if (!template) return { ok: false, reason: 'not_found' };
-  if (template.scheduleRule.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
-
-  // Defined-value scan, not a key count, matching `updateClassTemplate`: a key
-  // present with value `undefined` is not an edit. A key-count check would let
-  // `{ classType: undefined }` through and issue a no-op `update` that still
-  // reported `ok: true`. The wire cannot produce that shape — JSON has no
-  // `undefined` — but this function is callable without a wire.
-  const hasEdit = Object.values(data).some((v) => v !== undefined);
-  if (!hasEdit) return { ok: false, reason: 'no_fields' };
-
-  // Declared out here rather than returned from inside the `try`, so the probe
-  // below sits OUTSIDE the catch. Inside it, a transient failure of a
-  // read-only probe would be mapped to `busy` — "nothing was changed" — about
-  // an edit that had already committed. The catch either returns or rethrows
-  // on every path, so both are definitely assigned by the time the probe runs.
-  let updated: StudioClassTemplateWithSlot;
-  let updatedRule: ScheduleRule;
-  try {
-    const written = await db.$transaction(
-      async (tx) => {
-        // Bounds the wait for this row. Two siblings hold it long enough to
-        // matter, on the same 10s budget: `archiveOrUnarchiveStudioTemplate`
-        // holds it through the `calendarEntry.deleteMany` and the count inside
-        // `archiveOrUnarchiveRule` (`rule-lifecycle.ts`), and
-        // `pauseOrResumeStudioTemplate` holds it from its CAS through the
-        // generation claim and generation itself, inside `pauseOrResumeRule`
-        // (`rule-lifecycle.ts`). So a concurrent edit really can queue behind
-        // one. The archive never generates — that is the resume arm's work
-        // alone.
-        //
-        // Without this the wait is bounded by NOTHING — a stronger statement
-        // than the 10s budget below and the one that is true: Prisma checks
-        // that budget at statement boundaries, so it "cannot roll back a
-        // statement already blocked inside Postgres, only refuse to start a
-        // new one" (`db-locks.ts`). The mutation record measures it: removing
-        // this line ends in a hung test, never a budget expiry.
-        //
-        await setLockTimeout(tx);
-
-        // The child's row lock, explicit rather than incidental. Every
-        // column the archive/pause CAS writes (`isActive`, `isArchived`,
-        // `archivedAt`, `withdrawnCount`) left this model for `ScheduleRule`
-        // (issue 298), and `classType`/`dayOfWeek`/`startTime`/
-        // `durationMinutes` below write `ScheduleRule` too — so a PUT that
-        // touches only rule fields would otherwise reach that write without
-        // ever locking `StudioClassTemplate`, and the sibling functions'
-        // CAS would have nothing to wait on. This statement is what closes
-        // that: calling `archiveOrUnarchiveStudioTemplate` — via
-        // `archiveOrUnarchiveRule` (`rule-lifecycle.ts`) — and
-        // `pauseOrResumeStudioTemplate` — via `pauseOrResumeRule`
-        // (`rule-lifecycle.ts`) — both take the same lock near the start of
-        // their own transaction. See `docs/lock-order.md`, "The
-        // child row is the lock node for the template families" for the
-        // decision this implements.
-        await tx.$queryRaw`SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${templateId} FOR UPDATE`;
-
-        // The parameter's intersection guards the DOOR; this guards the
-        // WRITE. Without it the invariant holds only as long as nobody edits
-        // this call — `data: { ...data, isActive: false }` compiles clean with
-        // the pins above still green, which is precisely what they exist to
-        // prevent, one level down.
-        //
-        // Honest about its reach: it catches the natural regression, which is
-        // a spread added to this initializer. A future edit that bypasses
-        // `writeData` entirely and spreads at the call site is not caught —
-        // there is no way to annotate an object literal in argument position.
-        // It raises the bar; it is not a proof.
-        //
-        // The wire data covers both models now (issue 298): the fields named
-        // in `TeacherEditableScheduleRuleField` route to `ScheduleRule`,
-        // `location`/`hourlyRate` stay `StudioClassTemplate` columns.
-        // Destructuring those out — rather than hand-picking the rest — is
-        // tethered to the pins above:
-        // `_studioTemplateFieldsArePermitted`/`_studioTemplateAllowlistHasNoStaleFields`
-        // together prove `childData`'s keys equal `TeacherEditableStudioTemplateField`
-        // exactly, so nothing wider can reach `studioClassTemplate.update` this way.
-        const { classType, dayOfWeek, startTime, durationMinutes, ...childData } = data;
-
-        const writeData: Prisma.StudioClassTemplateUncheckedUpdateManyInput &
-          Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>> = childData;
-
-        // `updatedChild`, not `updated`: the value this transaction returns is
-        // combined with the rule below into the outer `updated`, and the two
-        // are not the same shape — one is the bare child row, the other the
-        // flattened `WithSlot` the caller sees.
-        const updatedChild = await tx.studioClassTemplate.update({
-          where: { id: templateId },
-          data: writeData,
-        });
-
-        // Built field-by-field rather than spread, and typed with the same
-        // `Partial<Record<PlainUpdateForbiddenScheduleRuleField, never>>`
-        // guard `data` itself carries: a future edit that tried to fold a
-        // forbidden name (`isActive`, say) into this object would fail here,
-        // at the point it would actually reach the rule row.
-        const ruleData: Partial<Pick<Prisma.ScheduleRuleUncheckedUpdateManyInput, TeacherEditableScheduleRuleField>> &
-          Partial<Record<PlainUpdateForbiddenScheduleRuleField, never>> = {};
-        if (classType !== undefined) ruleData.classType = classType;
-        if (dayOfWeek !== undefined) ruleData.dayOfWeek = dayOfWeek;
-        if (startTime !== undefined) ruleData.startTime = hhmmToTime(startTime);
-        if (durationMinutes !== undefined) ruleData.durationMinutes = durationMinutes;
-
-        // Only written when the PUT actually touched one of
-        // `TeacherEditableScheduleRuleField`'s members — sparing the rule row
-        // a lock and an `updatedAt` bump on an edit that is purely economics
-        // (location, hourly rate).
-        const newRule =
-          Object.keys(ruleData).length > 0
-            ? await tx.scheduleRule.update({ where: { id: template.scheduleRuleId }, data: ruleData })
-            : template.scheduleRule;
-
-        return { updatedChild, newRule };
-      },
-      { timeout: 10_000 },
-    );
-    updated = withSlot(written.updatedChild, written.newRule);
-    updatedRule = written.newRule;
-  } catch (err) {
-    // Transient first. `isTransientDbError` matches the SQLSTATE inside its
-    // Postgres framing, and a lock timeout arrives as `55P03` wrapped in a
-    // `PrismaClientUnknownRequestError` from a model write — the first of the
-    // two shapes its docblock records.
-    if (isTransientDbError(err)) {
-      log.warn(
-        { err, templateId, teacherId },
-        'studio template edit lost a lock race (its own row, or the slot exclusion constraint against a concurrent write) — nothing committed',
-      );
-      return { ok: false, reason: 'busy' };
-    }
-
-    // The read above and the write inside the transaction are not the same
-    // statement, so a delete landing in the gap surfaces here as P2025.
-    //
-    // Defensive parity with the class family, NOT a bug fix: nothing in
-    // production deletes a `StudioClassTemplate`. `deleteTeacherAccount`
-    // (`gdpr.ts`) archives, there is no `DELETE` route, and the only reachable
-    // path is the `Teacher` cascade, which takes the caller's own row with it.
-    // Mapped anyway because `classifyApiError` has no P2025 branch and would
-    // fall through to a bare 500 — see `isRecordNotFound`'s own docblock.
-    //
-    // Logs, like the two arms either side of it. An earlier revision left this
-    // silent on the grounds that it is unreachable, and that was wrong twice
-    // over.
-    //
-    // Wrong on the rule: `classifyApiError` has NO P2025 branch, so an
-    // uncaught one falls through to its default arm — 500 at `level: 'error'`,
-    // the level that pages someone. Catching it here therefore removes an
-    // ERROR line, where the other two arms each replace a `warn` with a richer
-    // `warn`. #231's acceptance criterion is exactly this: "Catching an error
-    // that `classifyApiError` would have logged never reduces what an operator
-    // sees." There is no trade being made — the 404 is the right status AND
-    // the line costs one call.
-    //
-    // Wrong on the instrument, even though the reachability claim itself
-    // holds (nothing in `src/` deletes a `Teacher`, an `Account` or a
-    // `StudioClassTemplate`; GDPR erasure sets `deletedAt`). `api-errors.ts`
-    // has already litigated depending on that kind of argument: "An earlier
-    // revision admitted only the Unknown shape and argued the raw one was
-    // unreachable. The argument was true, and it was the wrong thing to depend
-    // on." Hinging observability on a whole-repo census nothing keeps honest
-    // is the same mistake one file over. By that same census the line can
-    // never fire, so it cannot flood anything either.
-    if (isRecordNotFound(err)) {
-      log.warn(
-        { err, templateId, teacherId },
-        'studio template vanished between the ownership read and the write — nothing committed',
-      );
-      return { ok: false, reason: 'not_found' };
-    }
-
-    // `dayOfWeek` and `startTime` are both teacher-editable and both write
-    // onto the rule now (issue 298), so an edit can move this template onto a
-    // slot another of its owner's live rules — either family — already holds.
-    // ONE branch, because `ScheduleRule_teacher_slot_excl` (issue 298) is one
-    // exclusion constraint spanning both families where two DB objects used to
-    // sit. Its `23P01` cannot say which family it refused, so `ruleSlotHolder`
-    // probes `ScheduleRule` itself to answer that — do not split this back
-    // into a per-family pair of error tests; there is only one raiser to
-    // match.
-    //
-    // The log line is the point of catching rather than rethrowing. #231:
-    // "`classifyApiError` logs this same error at `warn` when it escapes;
-    // catching it here must not be what removes that."
-    if (isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')) {
-      const heldBy = await ruleSlotHolder(db, {
-        teacherId,
-        dayOfWeek: data.dayOfWeek ?? template.scheduleRule.dayOfWeek,
-        startMinutes: minutesSinceMidnight(
-          data.startTime !== undefined ? hhmmToTime(data.startTime) : template.scheduleRule.startTime,
-        ),
-        durationMinutes: data.durationMinutes ?? template.scheduleRule.durationMinutes,
-        excludeRuleId: template.scheduleRuleId,
-      });
-      log.warn(
-        { err, templateId, teacherId, heldBy },
-        'studio template edit refused: that slot is taken',
-      );
-      return { ok: false, reason: 'slot_conflict', heldBy };
-    }
-
-    throw err;
-  }
-
-  // The edit is committed; everything below is read-only and cannot undo it.
-  //
-  // This PUT creates nothing — generation still happens only on the hourly
-  // sweep, on create and on resume — so the confirmation has to PREDICT where
-  // the new schedule first lands rather than report it.
-  //
-  // A longer horizon than the generator's own window, and that asymmetry is
-  // the point rather than an inconsistency: when all four of the generator's
-  // weeks are held by the superseded schedule, the honest answer is week five,
-  // which the generator cannot see. Derived from `DEFAULT_WEEKS` rather than
-  // written as 8, so widening the window widens the prediction with it.
-  //
-  // The same past-start filter the generator applies to its own candidates,
-  // with the same two inputs. Without it this probe can name the CURRENT week
-  // on the template's own weekday once the class hour has gone —
-  // `getNextOccurrences` includes today and the generator drops it — so the
-  // sentence would name a week the sweep never fills. That is the one
-  // direction the staleness note below does not cover, and it is the
-  // dishonest one.
-  //
-  // Staleness the other way is possible and harmless: if the sweep runs
-  // between this read and the teacher reading the sentence, the class can only
-  // land EARLIER than predicted, never later.
-  //
-  // `updatedRule.startTime` straight through, where the class family's call
-  // site converts with `hhmmToTime`: that one reads its `WithSlot`, which
-  // carries the wire's "HH:MM" string, while this reads the rule row, whose
-  // `startTime` is already the `@db.Time` `Date` `classStartInstant` wants. A
-  // real difference between the two call sites, not one to erase.
-  const now = new Date();
-  const horizon = getNextOccurrences(updatedRule.dayOfWeek, now, DEFAULT_WEEKS * 2).filter(
-    (date) =>
-      classStartInstant({ date, startTime: updatedRule.startTime }, template.scheduleRule.teacher.defaultTimezone) >
-      now,
-  );
-
-  // The gate the probe cannot apply for itself, because it is not about a
-  // date: the sweep reaches only templates whose rule has `isActive` true and
-  // `isArchived` false — the `findMany` in `generateStudioClassInstances`
-  // spells that pair inline, and the row lock in
-  // `claimStudioTemplateForGeneration` re-checks the same two columns — so for
-  // a paused or archived one there is no week to predict at all. Every
-  // per-date ground the probe reproduces sits INSIDE the generator, and for
-  // these two states that function is never called — which is why the probe's
-  // own docblock can enumerate its grounds exhaustively and still say nothing
-  // about this one.
-  //
-  // Deterministic, not a race: `isActive` is a committed column read by every
-  // generation path.
-  //
-  // Not probed-then-discarded: two reads for an answer that cannot be used are
-  // two reads too many, and skipping them makes the precondition visible at
-  // the call site rather than buried in a `null` return.
-  const generationState = templateGenerationState(updatedRule);
-
-  return {
-    ok: true,
-    template: updated,
-    firstEffective:
-      generationState === 'active'
-        ? await probeFirstEffectiveWeek(db, updated, horizon, 'studio template')
-        : null,
-    generationState,
-  };
+  return updateRule(db, STUDIO_FAMILY, templateId, teacherId, data);
 }
 
 /**
@@ -1015,6 +605,17 @@ export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate, 'studio'> = {
   // registrations and no waitlist, so there is nothing to withdraw beyond the
   // entries the shared delete already removes.
   withdraw: null,
+  editNoun: 'studio template',
+  validateRoom: null,
+  updateChild: async (tx, templateId, childData) => {
+    const writeData: Prisma.StudioClassTemplateUncheckedUpdateManyInput &
+      Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>> =
+      childData as StudioTemplateOwnUpdateData;
+    return tx.studioClassTemplate.update({
+      where: { id: templateId },
+      data: writeData,
+    });
+  },
 };
 
 /**
