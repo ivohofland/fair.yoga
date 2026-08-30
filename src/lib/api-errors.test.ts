@@ -171,7 +171,27 @@ const terminalCompletionErrorFixture = new Prisma.PrismaClientUnknownRequestErro
 );
 
 /**
- * The FIFTH shape, and the one that is not a trigger: a `23514` terminality
+ * The SIXTH, `entry_rule_kind_mismatch_guard` (#328,
+ * `20260829120000_entry_rule_kind_guard`) — an entry referencing a rule of a
+ * different kind.
+ */
+const terminalEntryRuleKindErrorFixture = new Prisma.PrismaClientUnknownRequestError(
+  `Invalid \`prisma.calendarEntry.create()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "CalendarEntry e3b0c442-98fc-1c14-9afb-4c8996fb9242 references ScheduleRule 12345678-1234-1234-1234-123456789abc of kind studio, which is terminal; cannot attach to mismatched rule kind", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+  { clientVersion: 'test' },
+);
+
+/**
+ * The SEVENTH, `schedule_rule_kind_immutability_guard` (#328,
+ * `20260829120000_entry_rule_kind_guard`) — an attempt to change a ScheduleRule's
+ * kind after creation.
+ */
+const terminalRuleKindErrorFixture = new Prisma.PrismaClientUnknownRequestError(
+  `Invalid \`prisma.scheduleRule.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "ScheduleRule 12345678-1234-1234-1234-123456789abc is regular, which is terminal; cannot change its kind", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+  { clientVersion: 'test' },
+);
+
+/**
+ * The EIGHTH shape, and the one that is not a trigger: a `23514` terminality
  * fire whose tail `TERMINAL_TRIGGER_TAILS` does not carry.
  *
  * It answers `unknown` at `error`, and both halves are the correction #327's
@@ -268,6 +288,8 @@ describe('classifyApiError', () => {
     ['date', terminalDateErrorFixture, 'error'],
     ['liveness', terminalLivenessErrorFixture, 'warn'],
     ['completion', terminalCompletionErrorFixture, 'error'],
+    ['entry_rule_kind', terminalEntryRuleKindErrorFixture, 'error'],
+    ['rule_kind', terminalRuleKindErrorFixture, 'error'],
     ['unknown', terminalUnplaceableErrorFixture, 'error'],
   ] as const)('maps the terminal-%s trigger to a 409 logged at %s', (column, fixture, level) => {
     const failure = classifyApiError(fixture);

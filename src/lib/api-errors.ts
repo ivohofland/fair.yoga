@@ -359,7 +359,14 @@ export const TERMINAL_TRIGGER_TAILS = {
   liveness: 'cannot change its cancellation',
   /** `entry_completion_marker_guard` — the completion marker is write-once. */
   completion: 'cannot change its completion',
-} as const satisfies Record<'status' | 'date' | 'liveness' | 'completion', string>;
+  /** `entry_rule_kind_mismatch_guard` — an entry cannot reference a rule of a different kind. */
+  entry_rule_kind: 'cannot attach to mismatched rule kind',
+  /** `schedule_rule_kind_immutability_guard` — schedule rule kind is immutable. */
+  rule_kind: 'cannot change its kind',
+} as const satisfies Record<
+  'status' | 'date' | 'liveness' | 'completion' | 'entry_rule_kind' | 'rule_kind',
+  string
+>;
 
 /**
  * The facet `detail.trigger` carries. `'unknown'` is not a trigger — it is what

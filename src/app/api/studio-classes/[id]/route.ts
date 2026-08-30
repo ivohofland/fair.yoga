@@ -15,7 +15,6 @@ import { entryConflictMessage, probeConflictingEntry } from '@/lib/entry-conflic
 import { isRecordNotFound } from '@/lib/api-errors';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
-import { reportRuleKindMismatch } from '@/lib/rule-kind-mismatch';
 import {
   studioClassDeletability,
   STUDIO_CLASS_REFUSALS,
@@ -53,11 +52,6 @@ export const GET = withErrorHandler(async (
   // most one template per family.
   const { calendarEntry, ...sc } = studioClass;
   const template = calendarEntry.scheduleRule?.studioClassTemplates[0] ?? null;
-  // A rule id with no studio template under it is issue 328's condition, and it
-  // reaches this response as `template: null` — the same value a genuinely
-  // manual class sends. `reportRuleKindMismatch` owns why that is the only
-  // reading and why it is `error`.
-  reportRuleKindMismatch('GET /api/studio-classes/[id]', calendarEntry, template);
   return respondOk({
     ...sc,
     teacherId: calendarEntry.teacherId,

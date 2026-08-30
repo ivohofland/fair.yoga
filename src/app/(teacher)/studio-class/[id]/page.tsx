@@ -11,7 +11,6 @@ import { studioClassEditability } from '@/services/studio-class-editability';
 import { startOfLocalDay } from '@/lib/timezone';
 import { formatDateWithYear } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
-import { reportRuleKindMismatch } from '@/lib/rule-kind-mismatch';
 
 export default async function StudioClassDetailPage({
   params,
@@ -39,12 +38,6 @@ export default async function StudioClassDetailPage({
 
   const entry = studioClass.calendarEntry;
   const template = entry.scheduleRule?.studioClassTemplates[0] ?? null;
-
-  // A rule id with no studio template under it is issue 328's condition, and
-  // this page renders it as "no template" — indistinguishable from a
-  // legitimately manual class, which is the whole reason it needs a line of its
-  // own. `reportRuleKindMismatch` owns why that is the only reading.
-  reportRuleKindMismatch('/studio-class/[id]', entry, template);
 
   // TWO PREDICATES, ON PURPOSE. They overlap almost everywhere and disagree in
   // the places that matter, so neither may be derived from the other. Both are
