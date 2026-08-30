@@ -76,6 +76,21 @@ In-process job scheduler starts with the server. Set `CRON_SCHEDULER="off"` to d
 - Mobile-first, 640px content column, no motion/transitions.
 - Reference docs: `docs/design-brief.md`, vendored system in `docs/design_handoff_fairyoga/`.
 
+## Mutation testing protocol
+
+"A guard that cannot fail certifies nothing." When executing mutation probes (breaking a guard to watch tests go red, then restoring) or running concurrent review agents:
+
+- **Parallel agents must use isolated worktrees**: Mutating agents sharing a checkout cause false greens and false reds (#178, #282). Use git worktrees or branched agent workspaces with symlinked `node_modules`.
+- **Worktree probe recipe**:
+  ```bash
+  git worktree add -f /tmp/mutation-probe HEAD
+  ln -s "$(pwd)/node_modules" /tmp/mutation-probe/node_modules
+  cd /tmp/mutation-probe && <mutate> && npx vitest run --project <tier> <files>
+  git worktree remove --force /tmp/mutation-probe
+  ```
+- **Single-agent runs**: Safe in-place because no background non-agent writers exist. Always verify `git diff` before measuring and `git status` after restoring.
+- Full details & empirical findings: `docs/mutation-testing.md`.
+
 ## Key references
 
 | File | Purpose |
@@ -83,3 +98,4 @@ In-process job scheduler starts with the server. Set `CRON_SCHEDULER="off"` to d
 | `CLAUDE.md` | Stack overview, data model, design philosophy |
 | `docs/product-concept.md` | Pricing engine algorithm, class lifecycle |
 | `docs/data-model.md` | Full schema with fields, types, relationships |
+| `docs/mutation-testing.md` | Safe mutation testing & worktree isolation protocol |
