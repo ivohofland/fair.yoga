@@ -29,8 +29,8 @@ The interference runs both ways:
 2. Service/unit tests run against a deterministic, empty-by-default
    database.
 3. Zero changes to CI (its database is already throwaway). **Superseded
-   by #321**, which split CI's single `test` job into `test-components`,
-   `test-unit` and `test-integration-e2e`.
+   by #321 and #325**, which split CI's single `test` job into `test-components`,
+   `test-unit`, `test-integration` and `test-e2e`.
 4. Zero extra steps in the daily loop — no manual database creation, no
    separate migrate command to remember.
 

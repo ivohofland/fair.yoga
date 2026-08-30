@@ -14,8 +14,8 @@ name: CI
 # So everything runs on everything. This is a public repo, so the minutes are
 # free; the cost is wall-clock on docs-only pull requests. If that becomes
 # annoying, short-circuit the expensive *steps* inside the
-# `test-integration-e2e` job rather than filtering the workflow trigger —
-# the job must still run and report.
+# `test-integration` / `test-e2e` jobs rather than filtering the workflow trigger —
+# the jobs must still run and report.
 on:
   push:
     branches: [main]
@@ -182,9 +182,9 @@ jobs:
       - name: Whole-database sweep tests
         run: npx vitest run --project unit-sweeps
 
-  test-integration-e2e:
+  test-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
 
     services:
       postgres:
@@ -273,6 +273,70 @@ jobs:
           tail -n 500 server.log
           echo "::endgroup::"
 
+      - name: Upload server log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: server-log-integration
+          path: server.log
+          retention-days: 7
+
+  test-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ethical_yoga
+          POSTGRES_USER: yoga
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://yoga:test_password@localhost:5432/ethical_yoga
+      PASSKEY_RP_ID: localhost
+      PASSKEY_RP_NAME: fair.yoga
+      CRON_SECRET: ci-cron-secret
+      CRON_SCHEDULER: 'off'
+      RESEND_API_KEY: re_test
+      EMAIL_DRY_RUN: '1'
+      EMAIL_FROM: noreply@test.local
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies # postinstall runs prisma generate
+        run: npm ci
+
+      - name: Run migrations
+        run: npx prisma migrate deploy
+
+      # Next.js incremental compile cache — cuts repeat builds roughly in half.
+      - name: Cache Next.js build
+        uses: actions/cache@v6
+        with:
+          path: .next-build/cache
+          key: nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'prisma/schema.prisma') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+
+      - name: Build
+        run: npm run build
+
       - name: Get Playwright version
         id: playwright-version
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
@@ -288,10 +352,33 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      # The app from the start step is still listening; playwright.config
+      # E2E tests run against the built app on :3000.
+      - name: Start app
+        run: |
+          npm run start > server.log 2>&1 &
+          for i in {1..30}; do
+            curl -sf http://localhost:3000/api/health > /dev/null && exit 0
+            sleep 1
+          done
+          echo "::error::App did not become healthy within 30s"
+          cat server.log
+          exit 1
+
+      # The app from the start step is listening; playwright.config
       # reuses an existing server on :3000.
       - name: End-to-end tests
         run: npx playwright test
+
+      - name: App log (on failure)
+        if: failure()
+        run: |
+          if [ ! -f server.log ]; then echo "no server.log — app never started"; exit 0; fi
+          echo "::group::contention and error lines"
+          grep -aE 'contention|lock_not_available|deadlock|55P03|40P01|40001|P2024|P2028|P2034' server.log || echo "(none)"
+          echo "::endgroup::"
+          echo "::group::server.log (last 500 lines)"
+          tail -n 500 server.log
+          echo "::endgroup::"
 
       - name: Upload Playwright report
         if: failure()
@@ -305,7 +392,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: server-log
+          name: server-log-e2e
           path: server.log
           retention-days: 7
 
@@ -334,7 +421,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [test-components, test-unit, test-integration-e2e]
+    needs: [test-components, test-unit, test-integration, test-e2e]
     if: always()
     steps:
       - name: Verify every test job succeeded
