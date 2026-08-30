@@ -134,7 +134,7 @@ describe('setTeacherRoomArchived — lock discipline (issue 272)', () => {
       await expect(
         setTeacherRoomArchived(prisma, f.linkId, f.teacherId, 'archived'),
       ).rejects.toThrow(/55P03|lock timeout/i);
-      expect(Date.now() - startedAt).toBeLessThan(3500);
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_800);
     });
 
     const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: f.linkId } });

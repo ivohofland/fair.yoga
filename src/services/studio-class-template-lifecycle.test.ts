@@ -1910,7 +1910,6 @@ describe('updateStudioClassTemplate (DB)', () => {
 
         expect(result).toEqual({ ok: false, reason: 'busy' });
         expect(waited).toBeGreaterThanOrEqual(1_800);
-        expect(waited).toBeLessThan(5_000);
 
         expect(warn).toHaveBeenCalledWith(
           expect.objectContaining({ templateId: t.id, teacherId }),

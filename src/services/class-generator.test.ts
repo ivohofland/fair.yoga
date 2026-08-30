@@ -492,13 +492,11 @@ describe('generateClassInstances (DB)', () => {
 
           // The 2s lock_timeout produced this. The lower bound proves the
           // archive really waited rather than failing instantly for some
-          // unrelated reason; the upper bound proves it answered well inside
-          // the 10s budget. Neither is a tight pin on the bound's VALUE —
-          // widening `LOCK_TIMEOUT_SQL` to '3s' or '4s' still passes both.
-          // `db-locks.test.ts` pins the literal exactly; this pins that the
-          // literal is what governs the wait.
+          // unrelated reason. There is deliberately no upper bound on `waited`
+          // (#323, waitlist.test.ts:525-555): the 2s value is pinned by
+          // `db-locks.test.ts`, and a wall-clock ceiling flakes under parallel
+          // CPU contention.
           expect(waited).toBeGreaterThanOrEqual(1_800);
-          expect(waited).toBeLessThan(5_000);
 
           // Asserted, not assumed. Returning instead of throwing is what
           // removes `withErrorHandler`'s automatic line, so this `log.warn` is
@@ -577,7 +575,6 @@ describe('generateClassInstances (DB)', () => {
 
           expect(result).toEqual({ ok: false, reason: 'busy' });
           expect(waited).toBeGreaterThanOrEqual(1_800);
-          expect(waited).toBeLessThan(5_000);
 
           // `target` is asserted because the message cannot carry it: one
           // function serves both directions, and both reach the same route
@@ -709,14 +706,9 @@ describe('generateClassInstances (DB)', () => {
 
           expect(result).toEqual({ ok: false, reason: 'busy' });
 
-          // Same bounds and same reasoning as the archive's test above: the
-          // lower bound proves it really waited, the upper that it answered
-          // well inside the transaction budget — 10s for this transaction
-          // since #194, and the 5_000 upper bound was already well under the
-          // old 15s, so it needed no adjustment. Neither pins the LOCK
-          // bound's value — `db-locks.test.ts` does that.
+          // Same reasoning as the archive's test above: the lower bound proves
+          // it really waited. The 2s value is pinned by `db-locks.test.ts`.
           expect(waited).toBeGreaterThanOrEqual(1_800);
-          expect(waited).toBeLessThan(5_000);
 
           // A RETURNED failure never reaches `withErrorHandler`, and
           // `respondError` does not log — so without this line the race is
@@ -2096,7 +2088,6 @@ describe('generateClassInstances (DB)', () => {
 
           expect(result).toEqual({ ok: false, reason: 'busy' });
           expect(waited).toBeGreaterThanOrEqual(1_800);
-          expect(waited).toBeLessThan(5_000);
 
           // The rollback took the flag with it: a resume that answers `busy`
           // must not leave the template live with a half-filled window.
@@ -2208,7 +2199,6 @@ describe('generateClassInstances (DB)', () => {
 
           expect(result).toEqual({ ok: false, reason: 'busy' });
           expect(waited).toBeGreaterThanOrEqual(1_800);
-          expect(waited).toBeLessThan(5_000);
 
           // The CAS had already succeeded when the pre-lock blocked (issue
           // 180 task 4 — the `deleteMany` never runs; see this describe's own

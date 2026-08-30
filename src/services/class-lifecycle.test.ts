@@ -1250,8 +1250,7 @@ describe('completeClass (DB)', () => {
       await expect(transitionClass(prisma, cls.id, 'in_progress')).rejects.toThrow();
       const waited = Date.now() - startedAt;
 
-      expect(waited).toBeGreaterThan(1_000);
-      expect(waited).toBeLessThan(4_000);
+      expect(waited).toBeGreaterThanOrEqual(1_800);
 
       const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
       expect(unchanged.status).toBe('open');

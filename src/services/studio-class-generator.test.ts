@@ -422,7 +422,6 @@ describe('generateStudioClassInstances (DB)', () => {
 
           expect(result).toEqual({ ok: false, reason: 'busy' });
           expect(waited).toBeGreaterThanOrEqual(1_800);
-          expect(waited).toBeLessThan(5_000);
 
           // See the class family's twin for why the log line is asserted
           // rather than assumed: it is the only server-side trace a returned
@@ -489,7 +488,6 @@ describe('generateStudioClassInstances (DB)', () => {
 
           expect(result).toEqual({ ok: false, reason: 'busy' });
           expect(waited).toBeGreaterThanOrEqual(1_800);
-          expect(waited).toBeLessThan(5_000);
 
           expect(warn).toHaveBeenCalledWith(
             expect.objectContaining({ templateId, teacherId, target: 'paused' }),

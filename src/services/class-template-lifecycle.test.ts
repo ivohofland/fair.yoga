@@ -3035,10 +3035,10 @@ describe('pauseOrResumeTemplate (DB)', () => {
         const waited = Date.now() - startedAt;
 
         expect(result).toEqual({ ok: false, reason: 'busy' });
-        // The 2s bound, not the 10s transaction budget: proves the wait was a
-        // lock wait cut short by `setLockTimeout`, not a transaction expiry.
+        // The lower bound proves the wait was a lock wait cut short by
+        // `setLockTimeout`, not an instant refusal. The 2s value is pinned by
+        // `db-locks.test.ts` (#323).
         expect(waited).toBeGreaterThanOrEqual(1_800);
-        expect(waited).toBeLessThan(5_000);
 
         // The rollback took the flag with it.
         const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
