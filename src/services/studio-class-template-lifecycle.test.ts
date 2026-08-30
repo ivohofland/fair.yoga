@@ -1914,7 +1914,7 @@ describe('updateStudioClassTemplate (DB)', () => {
 
         expect(warn).toHaveBeenCalledWith(
           expect.objectContaining({ templateId: t.id, teacherId }),
-          'studio template edit lost a lock race (its own row, or the slot exclusion constraint against a concurrent write) — nothing committed',
+          'studio template edit lost a lock race — nothing committed',
         );
       } finally {
         warn.mockRestore();
