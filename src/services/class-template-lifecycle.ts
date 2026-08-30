@@ -603,12 +603,10 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
       // `deleteStudentAccount` argued above was reproduced (issue 180), and
       // the pre-lock below is what closed it — except through the narrow
       // window recorded further down, which is still open. The other lock
-      // case, an archive queued behind the generation sweep's claim, has no
-      // cycle at all and ends in `55P03`. So a deadlock here now points at
-      // that window, or at the still-open `{Class, ClassTemplate}` ordering
-      // question this hook is one side of (`docs/lock-order.md`, "Known
-      // violation, not fixed here"; the decision is issue #229) — an
-      // unresolved disagreement, never itself reproduced as a live deadlock —
+      // case, an archive queued behind the generation sweep's
+      // claim, has no cycle at all and ends in `55P03`. So a deadlock here now
+      // points at that window (the `{Class, ClassTemplate}` ordering question
+      // this hook is one side of is standardized in #229: `ClassTemplate → Class`)
       // rather than at the pairing this pre-lock already handles.
       // `ArchiveRuleResult`'s `busy` arm (`rule-lifecycle.ts`) lists the codes
       // that reach it; this calibration sits here instead, because a family

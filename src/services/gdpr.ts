@@ -1016,12 +1016,62 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         },
       });
 
+      // Template child rows locked first, ordered by id (#229). This is the
+      // transaction's FIRST lock acquisition. Five other sites —
+      // `claimTemplateForGeneration` (`entry-generation.ts`),
+      // `pauseOrResumeTemplate`, `archiveOrUnarchiveTemplate`,
+      // `POST /api/class-templates`, `updateClassTemplate`
+      // (`class-template-lifecycle.ts`) — all take `ClassTemplate` before
+      // `Class`. Before #229 this function was the sole site taking the
+      // opposite order, documented in `docs/lock-order.md` as a known
+      // violation. Moving these locks ahead of `lockClassRowsOrdered` below
+      // standardises on the majority's `ClassTemplate → Class` direction.
+      //
+      // Mirrors `lockClassRowsOrdered`'s discipline (`db-locks.ts`): two
+      // transactions locking an overlapping set of `ClassTemplate` rows in
+      // different orders is an AB-BA cycle exactly like the `Class` case
+      // that helper exists for. This is the fix for a gap Task 3 left
+      // `known-open` here: before issue 298 this bulk write targeted
+      // `ClassTemplate` directly, and a bare `updateMany` locks the rows it
+      // matches, so it already serialised against
+      // `claimTemplateForGeneration`'s `FOR UPDATE OF ct`
+      // (`class-generator.ts`) for free. `isActive`/`isArchived` moved to
+      // `ScheduleRule`, so that free lock stopped covering the child.
+      //
+      // Not a theoretical gap — measured. `ACTIVE_TEMPLATE_WHERE`
+      // (`lib/template-selection.ts`), which the sweep's own `findMany`
+      // selects candidates with, carries no `teacher.deletedAt` filter at
+      // all: it tests only `scheduleRule.isActive`/`isArchived`. So an
+      // hourly sweep already mid-loop for this teacher when this transaction
+      // opens is not merely possible in theory, it is a candidate set the
+      // sweep's own selection query cannot distinguish from any other live
+      // teacher's. Restoring the child lock is what makes the sweep's claim
+      // wait here the same way it waits on `archiveOrUnarchiveTemplate`.
+      //
+      // `setLockTimeout` called explicitly here — `lockClassRowsOrdered`
+      // below calls it again internally, but `SET LOCAL` is transaction-
+      // scoped, so the second call is a harmless no-op.
+      await setLockTimeout(tx);
+      await tx.$queryRaw`
+        SELECT ct."id" FROM "ClassTemplate" ct
+          JOIN "ScheduleRule" sr ON sr."id" = ct."scheduleRuleId"
+        WHERE sr."teacherId" = ${teacherId}
+        ORDER BY ct."id"
+        FOR UPDATE OF ct`;
+      await tx.$queryRaw`
+        SELECT sct."id" FROM "StudioClassTemplate" sct
+          JOIN "ScheduleRule" sr ON sr."id" = sct."scheduleRuleId"
+        WHERE sr."teacherId" = ${teacherId}
+        ORDER BY sct."id"
+        FOR UPDATE OF sct`;
+
       // Every class this erasure may cancel, locked ascending in ONE statement
       // before the cancel loop below — #237.
       //
-      // This is the transaction's FIRST lock acquisition: the read above takes
-      // no locks, so the order of this statement — not the read's `orderBy` —
-      // is what orders the locks the loop's CAS re-takes.
+      // This is the transaction's first CLASS lock acquisition — the template
+      // locks above are first overall. The read above takes no locks, so the
+      // order of this statement — not the read's `orderBy` — is what orders
+      // the locks the loop's CAS re-takes.
       //
       // What this replaces: the `orderBy: { id: 'asc' }` on that read, which
       // WAS this transaction's lock acquisition order, because the loop below
@@ -1270,43 +1320,10 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         data: { cancelledAt: new Date() },
       });
 
-      // Child rows locked first, ordered by id — mirrors `lockClassRowsOrdered`'s
-      // discipline (`db-locks.ts`) for the same reason: two transactions
-      // locking an overlapping set of `ClassTemplate` rows in different
-      // orders is an AB-BA cycle exactly like the `Class` case that helper
-      // exists for. This is the fix for a gap Task 3 left `known-open` here:
-      // before issue 298 this bulk write targeted `ClassTemplate` directly,
-      // and a bare `updateMany` locks the rows it matches, so it already
-      // serialised against `claimTemplateForGeneration`'s `FOR UPDATE OF ct`
-      // (`class-generator.ts`) for free. `isActive`/`isArchived` moved to
-      // `ScheduleRule`, so that free lock stopped covering the child.
-      //
-      // Not a theoretical gap — measured. `ACTIVE_TEMPLATE_WHERE`
-      // (`lib/template-selection.ts`), which the sweep's own `findMany`
-      // selects candidates with, carries no `teacher.deletedAt` filter at
-      // all: it tests only `scheduleRule.isActive`/`isArchived`. So an
-      // hourly sweep already mid-loop for this teacher when this transaction
-      // opens is not merely possible in theory, it is a candidate set the
-      // sweep's own selection query cannot distinguish from any other live
-      // teacher's. Restoring the child lock is what makes the sweep's claim
-      // wait here the same way it waits on `archiveOrUnarchiveTemplate`.
-      //
-      // `setLockTimeout` not repeated here — already in effect for the rest
-      // of this transaction from the `Class` pre-lock earlier in it
-      // (`db-locks.ts`, "`SET LOCAL` ... governs the whole rest of the
-      // transaction").
-      await tx.$queryRaw`
-        SELECT ct."id" FROM "ClassTemplate" ct
-          JOIN "ScheduleRule" sr ON sr."id" = ct."scheduleRuleId"
-        WHERE sr."teacherId" = ${teacherId}
-        ORDER BY ct."id"
-        FOR UPDATE OF ct`;
-      await tx.$queryRaw`
-        SELECT sct."id" FROM "StudioClassTemplate" sct
-          JOIN "ScheduleRule" sr ON sr."id" = sct."scheduleRuleId"
-        WHERE sr."teacherId" = ${teacherId}
-        ORDER BY sct."id"
-        FOR UPDATE OF sct`;
+      // ClassTemplate/StudioClassTemplate child row locks moved to the top
+      // of this transaction (#229) — before the `Class` pre-lock — to
+      // resolve the `Class`-before-`ClassTemplate` inversion that
+      // `docs/lock-order.md` documented as a known violation.
 
       // `isActive`/`isArchived` live on `ScheduleRule` now (issue 298), kept
       // as two statements — one per `kind` — mirroring the pre-split shape

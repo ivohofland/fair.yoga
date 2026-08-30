@@ -1333,9 +1333,9 @@ census can read, and `c` is `Class`'s — see "Ordering BETWEEN `Class` and its
 
 **Rejected: lock both rows.** That would add `ScheduleRule` as a second node
 to an ordering this document has twice declined to extend for lesser reasons,
-with a named AB-BA against `updateClassTemplate`, in a codebase already
-carrying one open unfixed `ClassTemplate`-vs-`Class` ordering violation —
-"Known violation, not fixed here" below (#229). **Rejected: narrowing the
+with a named AB-BA against `updateClassTemplate`, in a codebase that previously
+carried a `ClassTemplate`-vs-`Class` ordering violation (since resolved
+in #229). **Rejected: narrowing the
 extraction.** The cross-family slot constraint's `WHERE isArchived = false`
 needs that column on the rule, so keeping a copy of the lifecycle flags on the
 child would restore the two-sources-of-truth drift this extraction exists to
@@ -1423,13 +1423,10 @@ release the child row before archiving the teacher templates"
 (#315)`), mutation-proven the same way
 as the other nine sites.
 
-Not a new node on the canonical `Class → WaitlistEntry → …` ordering above,
-and not in tension with "Known violation, not fixed here" below — restoring
-this lock returns `deleteTeacherAccount` to the SAME `Class`-before-
-`ClassTemplate` direction that violation already documents as accepted, since
-before issue 298 this same bulk write already implicitly took it. It does not
-make #229 worse; it makes this function's post-298 behaviour match its
-pre-298 shape again.
+Not a new node on the canonical `Class → WaitlistEntry → …` ordering above.
+Since #229 `deleteTeacherAccount` takes `ClassTemplate` before `Class` —
+consistent with every other site — so these child locks are the transaction's
+first lock acquisition, ahead of `lockClassRowsOrdered`.
 
 ## A CAS miss no re-read can classify answers `busy`, not a throw (issue 332)
 
@@ -1799,40 +1796,24 @@ the function that WAS reasoned about for lock safety, rather than the one
 that wasn't, is the basis for the choice — not a claim that
 `unlinkTeacher`'s direction is inherently safer on its own merits.
 
-## Known violation, not fixed here
+## Resolved: `{Class, ClassTemplate}` order standardised (#229)
 
-`deleteTeacherAccount` takes `Class` before `ClassTemplate`; the generator
-(`src/services/class-generator.ts`) and four template paths take them in the
-opposite order, and that counterparty is a sweep that runs continuously.
-Choosing a canonical order there touches the whole template family, so it is
-filed as a decision rather than resolved from here. See issue #229.
+`ClassTemplate` before `Class` is the canonical order. Every site that locks
+both now takes them in that direction.
 
-**Inherited from an earlier draft of this document, not re-verified in #174
-task 7.** This entry is unrelated to either pair task 7 fixed, and nothing in
-that task's work re-derived it from the code. In particular, "three template
-paths" was not re-counted at that time and should not have been trusted at
-that precision without an independent check — the count and file list then
-were as-inherited, not as-confirmed.
+**History.** `deleteTeacherAccount` (`gdpr.ts`) was the sole site taking
+`Class` before `ClassTemplate`. Five other sites — `claimTemplateForGeneration`
+(`entry-generation.ts`), `pauseOrResumeTemplate`,
+`archiveOrUnarchiveTemplate`, `POST /api/class-templates`, and
+`updateClassTemplate` (`class-template-lifecycle.ts`) — took the opposite
+order. No deadlock was ever reproduced between them, but the inversion was
+documented and tracked.
 
-**Re-counted for the atomic-template-update branch (issue 180 §2.5).** The
-`ClassTemplate → Class` side is `1 generator + 4 template paths = 5`:
-`claimTemplateForGeneration` plus its refill, inside `generateClassInstances`
-(`class-generator.ts`); `pauseOrResumeTemplate`; `archiveOrUnarchiveTemplate`;
-`POST /api/class-templates` — all four counted before this branch — and, new
-here, `updateClassTemplate` (`class-template-lifecycle.ts`) as a **fifth**:
-now that its write and its instance sync are one transaction, it locks the
-template row before any `Class` row the same way the other four do.
-`deleteTeacherAccount` (`gdpr.ts`) remains the sole site on the inverse side,
-and carries a flat `{ timeout: 10_000 }` **transaction** budget already argued
-to be tight for the per-class cancel loop it walks — which is part of why
-re-ordering it is not free. (Not a *lock* timeout. This distinction used to carry
-weight for #229: `deleteStudentAccount` had a TUNED budget,
-`Math.min(5_000 + waitingCount * 2_000, 20_000)`, which was argued to be the
-one that could absorb a re-ordering where a flat one could not. #240 removed
-the term, so both erasures now carry flat budgets — `20_000` here, `10_000`
-there — and that half of the argument no longer applies. What remains is the
-raw size difference, which is a weaker reason than the one it replaces.) Still filed as a decision, not resolved
-here. See issue #229.
+**Resolution.** `deleteTeacherAccount`'s `ClassTemplate`/`StudioClassTemplate`
+ordered locks were moved ahead of its `lockClassRowsOrdered` call, with an
+explicit `setLockTimeout(tx)` before them. The transaction budget
+(`{ timeout: 10_000 }`) is unchanged — the same bounded waits are present in
+both orderings, just resequenced.
 
 ## Related, but not a lock-order issue — found while fixing the above, not fixed
 

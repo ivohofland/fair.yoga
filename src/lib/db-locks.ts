@@ -83,11 +83,9 @@ export type TransactionClientOnly = Prisma.TransactionClient & { $transaction?: 
  * Lives here rather than in each caller because it had drifted into three
  * separate copies of the same string literal (this module and the two
  * template-claim sites), and a bound that is silently different in one place
- * is worse than one that is uniformly wrong: the two template claims and the
- * `Class` row lock are ordered in opposite directions (`docs/lock-order.md`,
- * "Known violation, not fixed here" — the `{Class, ClassTemplate}`
- * inversion), and reasoning about which side loses that race assumes both
- * sides wait the same length of time.
+ * is worse than one that is uniformly wrong. Having one shared constant
+ * prevents silent drift across callers, ensuring that lock timeout bounds
+ * remain uniform across the codebase.
  */
 export const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
 
