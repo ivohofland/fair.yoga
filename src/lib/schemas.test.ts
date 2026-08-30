@@ -493,13 +493,13 @@ const EXPECTED: Record<string, readonly string[]> = {
   updatePrivacySchema: ['teacherId'],
   // Attendance status on the teacher's own class.
   updateRegistrationSchema: ['status'],
-  // KNOWN GAP: a client can backdate, forward-date or null a cancellation
-  // timestamp. Ownership is checked, so the blast radius is the teacher's own
-  // bookkeeping.
+  // KNOWN GAP: a client can backdate or null a cancellation timestamp (forward-
+  // dating is clamped to now by the route; issue 277). Ownership is checked, so
+  // the blast radius is the teacher's own bookkeeping.
   //
   // Both names here are TRANSFORMED SERVER-SIDE: each arrives over HTTP as a
   // string and becomes a Date only inside the PUT route
-  // (`cancelledAt ? new Date(cancelledAt) : null`; `new Date(dateString)`),
+  // (`cancelledAt ? new Date(Math.min(new Date(cancelledAt).getTime(), now.getTime())) : null`; `new Date(dateString)`),
   // which is why neither can be validated at rest against the column. `date`
   // joined under #276/D2, gated there to manual, not-yet-past rows.
   updateStudioClassSchema: ['cancelledAt', 'date'],

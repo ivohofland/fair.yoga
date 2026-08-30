@@ -1512,15 +1512,14 @@ describe('/api/studio-classes', () => {
   });
 
   // `cancelledAt` is the one field the route transforms rather than passes
-  // through — a string becomes a Date, and null clears it.
+  // through — a string becomes a Date, clamped to now, and null clears it.
   it('sets and clears cancelledAt', async () => {
     const cancel = await send('PUT', ownerToken, `/api/studio-classes/${studioClassId}`, {
-      cancelledAt: '2099-06-02T10:00:00.000Z',
+      cancelledAt: '2020-06-02T10:00:00.000Z',
     });
     expect(cancel.status).toBe(200);
-    expect(
-      (await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId }, include: { calendarEntry: true } })).calendarEntry.cancelledAt,
-    ).not.toBeNull();
+    const entry = (await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId }, include: { calendarEntry: true } })).calendarEntry;
+    expect(entry.cancelledAt).toEqual(new Date('2020-06-02T10:00:00.000Z'));
 
     const restore = await send('PUT', ownerToken, `/api/studio-classes/${studioClassId}`, {
       cancelledAt: null,
@@ -1529,6 +1528,21 @@ describe('/api/studio-classes', () => {
     expect(
       (await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId }, include: { calendarEntry: true } })).calendarEntry.cancelledAt,
     ).toBeNull();
+  });
+
+  it('clamps a future cancelledAt timestamp to now (issue 277)', async () => {
+    const before = new Date();
+    const cancel = await send('PUT', ownerToken, `/api/studio-classes/${studioClassId}`, {
+      cancelledAt: '2099-06-02T10:00:00.000Z',
+    });
+    const after = new Date();
+    expect(cancel.status).toBe(200);
+
+    const saved = (await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId }, include: { calendarEntry: true } })).calendarEntry;
+    expect(saved.cancelledAt).not.toBeNull();
+    // Clamped: the timestamp must be between `before` and `after`, never in 2099
+    expect(saved.cancelledAt!.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(saved.cancelledAt!.getTime()).toBeLessThanOrEqual(after.getTime());
   });
 
   // #276's cheapest true claim, pinned before this branch changes anything:

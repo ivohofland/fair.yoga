@@ -190,7 +190,11 @@ export const PUT = withErrorHandler(async (
     ...(dateString !== undefined ? { date: new Date(dateString) } : {}),
     ...(startTime !== undefined ? { startTime: hhmmToTime(startTime) } : {}),
     ...(cancelledAt !== undefined
-      ? { cancelledAt: cancelledAt ? new Date(cancelledAt) : null }
+      ? {
+          cancelledAt: cancelledAt
+            ? new Date(Math.min(new Date(cancelledAt).getTime(), now.getTime()))
+            : null,
+        }
       : {}),
   };
 
