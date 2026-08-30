@@ -226,14 +226,11 @@ describe('ScheduleRule composite foreign key', () => {
         roomCost: 20, minRate: 30, targetRate: 60, minStudents: 3, maxStudents: 10,
       },
     });
-    // Not /foreign key/i: both composite FKs carry ON UPDATE CASCADE (the
-    // migration's block 3, matching Prisma's own convention), so flipping the
-    // parent's kind cascades into the attached child's own kind column FIRST
-    // — and it is that child's `ClassTemplate_kind_check` CHECK, not the FK
-    // itself, that raises. Measured, not assumed: the FK never gets a chance
-    // to reject anything here because the cascade already satisfies it.
+    // The `schedule_rule_kind_immutability_guard` trigger refuses flipping
+    // a ScheduleRule's kind once written (raising ERRCODE 23514).
     await expect(
       prisma.$executeRawUnsafe(`UPDATE "ScheduleRule" SET "kind"='studio' WHERE "id"=$1`, r.id),
-    ).rejects.toThrow(/check constraint/i);
+    ).rejects.toThrow(/cannot change its kind/i);
   });
 });
+

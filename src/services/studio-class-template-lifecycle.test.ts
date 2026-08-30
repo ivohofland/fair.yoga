@@ -1180,13 +1180,13 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
 
     // Exactly on the `gte: today` boundary.
     await makeClass(t.scheduleRuleId, new Date(), '07:00');
-    // Inside the boundary but cancelled. `futureOn(1)` cannot collide with the
-    // generated window, which starts two days out by construction.
+    // Inside the boundary but cancelled. Placed beyond the 4-week generated
+    // window so week-keyed generation is not blocked by this fixture.
     await createStudioClassFixture(prisma, {
         teacherId,
         scheduleRuleId: t.scheduleRuleId,
         classType: 'Pause Rule',
-        date: futureOn(1),
+        date: futureOn(35),
         startTime: hhmmToTime('07:30'),
         durationMinutes: 60,
         location: 'Studio Loft',
