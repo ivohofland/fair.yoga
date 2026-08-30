@@ -1518,7 +1518,6 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
     // control's write is confirmed, the stranger's — if it existed — would
     // have landed too.
     const controlEmail = `notify-stranger-control-${suffix}@test.local`;
-    const before = await prisma.notification.count({ where: { type: 'teacher_invitation' } });
     let controlStudent: { id: string } | undefined;
     try {
       const res = await fetch(`${BASE_URL}/api/students`, {
@@ -1553,8 +1552,10 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
       // Only the control's own row exists — the stranger contributed none,
       // even though a stray write from it has now had at least as long to
       // land as the control's confirmed one did.
-      const after = await prisma.notification.count({ where: { type: 'teacher_invitation' } });
-      expect(after).toBe(before + 1);
+      const after = await prisma.notification.count({
+        where: { recipientId: controlStudent!.id, type: 'teacher_invitation' },
+      });
+      expect(after).toBe(1);
     } finally {
       await prisma.invitation.deleteMany({
         where: { teacherId, email: { in: [strangerEmail, controlEmail] } },

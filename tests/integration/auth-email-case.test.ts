@@ -68,7 +68,7 @@ describe('sign-in and signup are case-insensitive on email', () => {
   });
 
   it('does not create a second Account for a mixed-case signup', async () => {
-    const before = await prisma.account.count();
+    const before = await prisma.account.count({ where: { email: { contains: suffix } } });
 
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
@@ -80,7 +80,7 @@ describe('sign-in and signup are case-insensitive on email', () => {
     });
     expect(res.status).toBe(200);
 
-    expect(await prisma.account.count()).toBe(before);
+    expect(await prisma.account.count({ where: { email: { contains: suffix } } })).toBe(before);
     expect(await prisma.account.count({ where: { email: studentEmail } })).toBe(1);
   });
 

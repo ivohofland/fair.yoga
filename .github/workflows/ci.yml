@@ -253,7 +253,7 @@ jobs:
           exit 1
 
       - name: Integration tests
-        run: npx vitest run --project integration
+        run: npx vitest run --project integration --file-parallelism
 
       # THE APP'S LOG IS THE ONLY PLACE A 503's CAUSE IS NAMED. `api-utils.ts`
       # logs the thrown error beside `classifyApiError`'s verdict, and every

@@ -17,13 +17,10 @@ export default defineConfig({
   // `!!process.env.CI`: locally `retries` is 0, so nothing can ever be
   // classified flaky and a ternary would be decoration.
   failOnFlakyTests: true,
-  // Serialized unconditionally (#290): every extra worker drives another
-  // browser against the same single dev server on :3000 this checkout
-  // serves, and four parallel full runs during #285's gates produced four
-  // different victims, each green alone. CI already ran at 1, so this
-  // changes only local behaviour: slower, but a red run means what it says.
-  // Unpinned, Playwright defaults to "50%" of cores, so a full local run
-  // drove that many browsers at the one server.
+  // Serialized locally (#290): every extra worker drives another browser
+  // against the single dev server on :3000, where lazy recompilation caused
+  // flakes. In CI (which runs against the pre-built standalone production
+  // server and isolated DB container), 2 workers match the 2 vCPU runner.
   //
   // The fan-out unit is the (spec file × project) pair, not the test: every
   // spec wraps its tests in `test.describe.configure({ mode: 'serial' })`,
@@ -34,7 +31,7 @@ export default defineConfig({
   // ceil(tests / workers) groups, re-running `beforeAll` per chunk, so
   // dropping serial mode would duplicate every spec's Teacher/Account
   // fixture the moment anyone raises the worker count.
-  workers: 1,
+  workers: process.env.CI ? 2 : 1,
   reporter: 'html',
   use: {
     // Shares one override with the integration suite (`tests/helpers.ts`),
