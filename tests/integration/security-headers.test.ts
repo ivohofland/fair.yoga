@@ -8,7 +8,7 @@ import { BASE_URL } from '../helpers';
 describe('security headers', () => {
   it('serves the full set on pages', async () => {
     const res = await fetch(`${BASE_URL}/login`);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(999);
 
     const csp = res.headers.get('content-security-policy') ?? '';
     expect(csp).toContain("default-src 'self'");
