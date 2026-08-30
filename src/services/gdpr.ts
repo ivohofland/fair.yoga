@@ -20,6 +20,7 @@ import { handleSpotFreed, reorderWaitingEntries } from './waitlist';
 import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
+import { startOfLocalDay } from '@/lib/timezone';
 import { withSlot as withClassSlot } from './class-template-lifecycle';
 import { withSlot as withStudioSlot } from './studio-class-template-lifecycle';
 
@@ -896,7 +897,7 @@ const CANCELLABLE_STATUSES_SQL = Prisma.raw(CANCELLABLE_STATUSES.map((s) => `'${
 export async function deleteTeacherAccount(db: PrismaClient, teacherId: string): Promise<void> {
   const teacher = await db.teacher.findUniqueOrThrow({
     where: { id: teacherId },
-    select: { email: true, accountId: true },
+    select: { email: true, accountId: true, defaultTimezone: true },
   });
 
   // A class already underway has happened — complete it (pricing, payment
@@ -1254,6 +1255,20 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
           await createBulkNotifications(tx, notifications);
         }
       }
+
+      // Cancel future studio entries (#280). Studio classes have no student
+      // registrations or waitlists to notify, so a single bulk write suffices.
+      // Uses `gt: today` matching `archiveOrUnarchiveStudioTemplate`'s boundary
+      // to preserve today's and past classes as income records.
+      await tx.calendarEntry.updateMany({
+        where: {
+          teacherId,
+          kind: 'studio',
+          cancelledAt: null,
+          date: { gt: startOfLocalDay(new Date(), teacher.defaultTimezone) },
+        },
+        data: { cancelledAt: new Date() },
+      });
 
       // Child rows locked first, ordered by id — mirrors `lockClassRowsOrdered`'s
       // discipline (`db-locks.ts`) for the same reason: two transactions

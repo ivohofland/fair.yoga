@@ -13,6 +13,7 @@ import { log } from '@/lib/log';
 import { claimTemplateForGeneration } from './class-generator';
 import { claimStudioTemplateForGeneration } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { startOfLocalDay } from '@/lib/timezone';
 import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
@@ -2175,4 +2176,159 @@ describe('deleteTeacherAccount serialises against a studio claim in progress (#3
     expect(rule.isArchived).toBe(true);
     expect(rule.isActive).toBe(false);
   }, 20_000);
+});
+
+/**
+ * #280: deleteTeacherAccount cancels future studio classes on teacher erasure,
+ * while sparing past and today's studio classes as income records.
+ */
+describe('deleteTeacherAccount cancels future studio classes (#280)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-studio-cancel-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+  let templateId: string;
+  let pastClassId: string;
+  let todayClassId: string;
+  let futureClassId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Studio Cancel',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Erasure studio cancel fixture',
+        pageSlug: suffix,
+        defaultTimezone: 'America/New_York',
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+
+    const template = await prisma.studioClassTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Studio Cancel vs Erasure',
+            dayOfWeek: 3,
+            startTime: hhmmToTime('08:00'),
+            durationMinutes: 60,
+          },
+        },
+        location: 'Studio Cancel Test',
+        hourlyRate: 50,
+      },
+      select: { id: true },
+    });
+    templateId = template.id;
+
+    const localToday = startOfLocalDay(new Date(), 'America/New_York');
+    const localPast = new Date(localToday);
+    localPast.setUTCDate(localPast.getUTCDate() - 7);
+    const localFuture = new Date(localToday);
+    localFuture.setUTCDate(localFuture.getUTCDate() + 7);
+
+    const pastClass = await prisma.studioClass.create({
+      data: {
+        location: 'Studio Cancel Test',
+        hourlyRate: 50,
+        calendarEntry: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Studio Cancel vs Erasure',
+            date: localPast,
+            startTime: hhmmToTime('08:00'),
+            durationMinutes: 60,
+          },
+        },
+      },
+      select: { id: true, calendarEntryId: true },
+    });
+    pastClassId = pastClass.calendarEntryId;
+
+    const todayClass = await prisma.studioClass.create({
+      data: {
+        location: 'Studio Cancel Test',
+        hourlyRate: 50,
+        calendarEntry: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Studio Cancel vs Erasure',
+            date: localToday,
+            startTime: hhmmToTime('08:00'),
+            durationMinutes: 60,
+          },
+        },
+      },
+      select: { id: true, calendarEntryId: true },
+    });
+    todayClassId = todayClass.calendarEntryId;
+
+    const futureClass = await prisma.studioClass.create({
+      data: {
+        location: 'Studio Cancel Test',
+        hourlyRate: 50,
+        calendarEntry: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Studio Cancel vs Erasure',
+            date: localFuture,
+            startTime: hhmmToTime('08:00'),
+            durationMinutes: 60,
+          },
+        },
+      },
+      select: { id: true, calendarEntryId: true },
+    });
+    futureClassId = futureClass.calendarEntryId;
+  });
+
+  afterAll(async () => {
+    await prisma.calendarEntry.deleteMany({
+      where: { teacherId },
+    });
+    await prisma.studioClassTemplate.deleteMany({ where: { id: templateId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  it('cancels future studio classes while sparing past and today studio classes', async () => {
+    await deleteTeacherAccount(prisma, teacherId);
+
+    // Future studio class must be cancelled
+    const futureEntry = await prisma.calendarEntry.findUniqueOrThrow({
+      where: { id: futureClassId },
+    });
+    expect(futureEntry.cancelledAt).not.toBeNull();
+
+    // Past studio class must NOT be cancelled (income record)
+    const pastEntry = await prisma.calendarEntry.findUniqueOrThrow({
+      where: { id: pastClassId },
+    });
+    expect(pastEntry.cancelledAt).toBeNull();
+
+    // Today's studio class must NOT be cancelled (income record)
+    const todayEntry = await prisma.calendarEntry.findUniqueOrThrow({
+      where: { id: todayClassId },
+    });
+    expect(todayEntry.cancelledAt).toBeNull();
+
+    // Template's schedule rule must be archived
+    const rule = await prisma.scheduleRule.findUniqueOrThrow({
+      where: {
+        id: (await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } })).scheduleRuleId,
+      },
+    });
+    expect(rule.isArchived).toBe(true);
+    expect(rule.isActive).toBe(false);
+  });
 });
