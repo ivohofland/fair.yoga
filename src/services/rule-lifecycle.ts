@@ -20,7 +20,7 @@ import {
   type JoinedRule,
   type ChildWithRule,
   type GeneratorFamily,
-  type EditLogNoun,
+  type FamilyMetadataMap,
   DEFAULT_WEEKS,
   getNextOccurrences,
   probeFirstEffectiveWeek,
@@ -248,7 +248,7 @@ export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = Ge
   /**
    * The noun this family's edit-path log lines and firstEffective probe use.
    */
-  editNoun: EditLogNoun;
+  editNoun: FamilyMetadataMap[TKind]['editNoun'];
   /**
    * Room validation for the class family; `null` for studio.
    * Called BEFORE the transaction, outside the lock — same position the

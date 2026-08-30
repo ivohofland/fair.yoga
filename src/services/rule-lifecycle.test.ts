@@ -86,10 +86,34 @@ describe('rule-lifecycle family descriptors', () => {
    * the compiler refuse it, which is the rule `ArchiveRuleResult`'s docblock
    * states and the non-interchangeability pin below already follows.
    */
-  it('refuses a childTable that is not a template child', () => {
+  it('refuses a childTable, logNoun, or editNoun that belongs to the other family', () => {
     // @ts-expect-error `CalendarEntry` is a model, but not a template child
     const notATemplateChild: TemplateFamily<ClassTemplate>['childTable'] = 'CalendarEntry';
     void notATemplateChild;
+
+    // @ts-expect-error 'StudioClassTemplate' must not satisfy the regular family childTable
+    const regularChildWrong: TemplateFamily<ClassTemplate, 'regular'>['childTable'] = 'StudioClassTemplate';
+    void regularChildWrong;
+
+    // @ts-expect-error 'ClassTemplate' must not satisfy the studio family childTable
+    const studioChildWrong: TemplateFamily<StudioClassTemplate, 'studio'>['childTable'] = 'ClassTemplate';
+    void studioChildWrong;
+
+    // @ts-expect-error 'studio class' must not satisfy the regular family logNoun
+    const regularLogWrong: TemplateFamily<ClassTemplate, 'regular'>['logNoun'] = 'studio class';
+    void regularLogWrong;
+
+    // @ts-expect-error 'recurring class' must not satisfy the studio family logNoun
+    const studioLogWrong: TemplateFamily<StudioClassTemplate, 'studio'>['logNoun'] = 'recurring class';
+    void studioLogWrong;
+
+    // @ts-expect-error 'studio template' must not satisfy the regular family editNoun
+    const regularEditWrong: TemplateFamily<ClassTemplate, 'regular'>['editNoun'] = 'studio template';
+    void regularEditWrong;
+
+    // @ts-expect-error 'recurring class' must not satisfy the studio family editNoun
+    const studioEditWrong: TemplateFamily<StudioClassTemplate, 'studio'>['editNoun'] = 'recurring class';
+    void studioEditWrong;
   });
 
   /**

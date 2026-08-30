@@ -187,6 +187,27 @@ export function firstFreeWeek(
 // ---------------------------------------------------------------------------
 
 /**
+ * Compile-time correlation linking each `ClassFamily` literal to its canonical
+ * table name and logging nouns.
+ *
+ * Correlating here prevents a descriptor from declaring `kind: 'regular'` with
+ * `childTable: 'StudioClassTemplate'` (spliced into raw SQL row locks) or
+ * swapped log nouns.
+ */
+export type FamilyMetadataMap = {
+  regular: {
+    childTable: 'ClassTemplate';
+    logNoun: 'recurring class';
+    editNoun: 'recurring class';
+  };
+  studio: {
+    childTable: 'StudioClassTemplate';
+    logNoun: 'studio class';
+    editNoun: 'studio template';
+  };
+};
+
+/**
  * The noun a family's log lines use. A union rather than `string`: the
  * messages composed from it are what an operator greps for, and some are
  * asserted verbatim, so the roster belongs to the compiler rather than to a
@@ -201,7 +222,7 @@ export function firstFreeWeek(
  *
  *   grep -rn 'logNoun}' src/services/*.ts
  */
-export type GenerationLogNoun = 'recurring class' | 'studio class';
+export type GenerationLogNoun = FamilyMetadataMap[ClassFamily]['logNoun'];
 
 /**
  * Everything the shared claim and generator below need in order to run over
@@ -240,21 +261,17 @@ export type GeneratorFamily<TChild, TKind extends ClassFamily = ClassFamily> = R
    * or a family reports its neighbour's entries as its own.
    */
   kind: TKind;
-  logNoun: GenerationLogNoun;
+  logNoun: FamilyMetadataMap[TKind]['logNoun'];
   /**
    * The child's table, spliced as a raw identifier into every row lock that
    * takes one for whichever family it was handed — `claimRuleForGeneration`
    * below, and the two shared lifecycle verbs that reach this field through
    * `TemplateFamily` (`rule-lifecycle.ts`).
-   * Narrowed to the template children rather than left at `Prisma.ModelName`,
-   * which admits every model in the schema: the type here is the tether, so
-   * nothing outside it can reach that splice, and a third family becomes a
-   * deliberate edit here rather than a silent widening. Pinned by
-   * `rule-lifecycle.test.ts`, `@ts-expect-error` on a model name that is not a
-   * template child — a claim about what the compiler refuses is worth only the
-   * pin that makes the compiler refuse it.
+   * Correlated to `TKind` via `FamilyMetadataMap` so nothing outside it can
+   * reach that splice, and a descriptor cannot misdirect its row locks at the
+   * wrong table. Pinned by `rule-lifecycle.test.ts`.
    */
-  childTable: Extract<Prisma.ModelName, 'ClassTemplate' | 'StudioClassTemplate'>;
+  childTable: FamilyMetadataMap[TKind]['childTable'];
   readChildOrThrow: (
     tx: TransactionClientOnly,
     templateId: string,
@@ -942,7 +959,7 @@ function logSkippedEntries(
  * §3.7, which also names the third, teacher-facing vocabulary this module
  * never touches.)
  */
-export type EditLogNoun = 'recurring class' | 'studio template';
+export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
 
 /**
  * The probe behind each family's `firstEffective`
