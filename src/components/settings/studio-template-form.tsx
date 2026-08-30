@@ -71,24 +71,35 @@ const DAY_OPTIONS = [
  */
 const STUDIO_CLASSES_PATH = '/settings/studio-classes';
 
-const INITIAL_VALUES: StudioTemplateFormValues = {
-  classType: '',
-  dayOfWeek: 0,
-  startTime: '09:00',
-  durationMinutes: 60,
-  location: '',
-  hourlyRate: 0,
-};
+interface FormState {
+  classType: string;
+  dayOfWeek: number;
+  startTime: string;
+  durationMinutes: string;
+  location: string;
+  hourlyRate: string;
+}
+
+function toFormState(initial?: StudioTemplateFormValues): FormState {
+  return {
+    classType: initial?.classType ?? '',
+    dayOfWeek: initial?.dayOfWeek ?? 0,
+    startTime: initial?.startTime ?? '09:00',
+    durationMinutes: String(initial?.durationMinutes ?? 60),
+    location: initial?.location ?? '',
+    hourlyRate: String(initial?.hourlyRate ?? 0),
+  };
+}
 
 export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplateFormProps) {
   const router = useRouter();
-  const [form, setForm] = useState(initial ?? INITIAL_VALUES);
+  const [form, setForm] = useState<FormState>(() => toFormState(initial));
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState(false);
 
-  function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
+  function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
     setSuccess('');
   }
@@ -111,6 +122,18 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
       return;
     }
 
+    const duration = Number(form.durationMinutes);
+    if (!form.durationMinutes.trim() || !Number.isInteger(duration) || duration <= 0) {
+      setError('Enter how many minutes the class runs.');
+      return;
+    }
+
+    const rate = Number(form.hourlyRate);
+    if (!form.hourlyRate.trim() || Number.isNaN(rate) || rate < 0) {
+      setError('Enter an hourly rate — 0 if this class is unpaid.');
+      return;
+    }
+
     setSubmitting(true);
     setError('');
     setSuccess('');
@@ -125,9 +148,12 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
       // it has to satisfy both schemas. See template-form.tsx's identical
       // payload annotation for why this matters beyond the key-set pins above.
       const payload: CreateStudioTemplateWire & UpdateStudioTemplateWire = {
-        ...form,
         classType: form.classType.trim(),
         location: form.location.trim(),
+        dayOfWeek: form.dayOfWeek,
+        startTime: form.startTime,
+        durationMinutes: duration,
+        hourlyRate: rate,
       };
 
       const res = await fetch(url, {
@@ -325,16 +351,16 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
       <Input
         label="Duration (minutes)"
         type="number"
-        value={String(form.durationMinutes)}
-        onChange={(e) => update('durationMinutes', Number(e.target.value))}
+        value={form.durationMinutes}
+        onChange={(e) => update('durationMinutes', e.target.value)}
       />
 
       <Input
         label="Hourly rate"
         type="number"
         step="0.01"
-        value={String(form.hourlyRate)}
-        onChange={(e) => update('hourlyRate', Number(e.target.value))}
+        value={form.hourlyRate}
+        onChange={(e) => update('hourlyRate', e.target.value)}
       />
 
       {error && <p className="text-sm text-danger">{error}</p>}

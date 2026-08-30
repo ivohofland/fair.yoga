@@ -131,12 +131,9 @@ describe('StudioTemplateForm', () => {
   });
 
   /**
-   * #282. `classType` is the only wire-required field of this form with
-   * neither a valid default nor a client check — every other required value
-   * ships a default (`INITIAL_VALUES`) or is guarded (`location`) — so an
-   * empty one reached the server as `''` and came back as raw Zod developer
-   * copy, where the class-family twin (`template-form.tsx`) already refuses
-   * client-side with product copy.
+   * #282 / #310. All wire-required fields of `StudioTemplateFormValues` are
+   * validated client-side before any request, refusing invalid values with
+   * product copy rather than letting raw Zod developer copy return from the server.
    *
    * The two assertions pin different things — the request not being sent, and
    * the exact copy. On the realistic continuing-guard mutant (the guard fires
@@ -170,6 +167,80 @@ describe('StudioTemplateForm', () => {
     // on stale state — deleting this click leaves it green. The whitespace
     // boundary is a request-count fact; the copy is pinned above.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #310. Clearing durationMinutes or entering a non-positive / non-integer
+   * duration refuses before any request with product copy.
+   */
+  it('refuses a blank or invalid duration before any request, with product copy', async () => {
+    stubFetch();
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+
+    fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText('Enter how many minutes the class runs.')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '0' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '-15' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '45.5' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #310. Clearing hourlyRate or entering a negative value refuses before any
+   * request with product copy. Explicit 0 is allowed for unpaid classes.
+   */
+  it('refuses a blank or negative hourly rate before any request, with product copy', async () => {
+    stubFetch();
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+
+    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText('Enter an hourly rate — 0 if this class is unpaid.')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '-5' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #310. Holding hourly rate as string state allows typing decimal values like
+   * '22.5' without snapping to 0.
+   */
+  it('allows typing decimal hourly rate without snapping to 0', async () => {
+    stubFetch();
+    render(<StudioTemplateForm mode="create" />);
+    const rateInput = screen.getByLabelText('Hourly rate') as HTMLInputElement;
+
+    fireEvent.change(rateInput, { target: { value: '22.5' } });
+    expect(rateInput.value).toBe('22.5');
+  });
+
+  it('allows 0 as an explicit hourly rate', async () => {
+    stubFetch();
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '0' } });
+
+    const created = await submit();
+    expect(created.body.hourlyRate).toBe(0);
   });
 
   /**

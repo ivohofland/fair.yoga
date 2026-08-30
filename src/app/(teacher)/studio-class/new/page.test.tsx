@@ -111,13 +111,9 @@ describe('NewStudioClassPage', () => {
   }
 
   /**
-   * #282. `classType` is the only wire-required field of this form with
-   * neither a valid default nor a client check — every other required value
-   * ships a default (`startTime` '09:00', `durationMinutes` 60,
-   * `hourlyRate` 0) or is guarded (`location`, `date`) — so an empty one
-   * reached the server as `''` and came back as raw Zod developer copy,
-   * where the class-family twin (`template-form.tsx`) already refuses
-   * client-side with product copy.
+   * #282 / #310. All wire-required fields of `StudioClassFormValues` are validated
+   * client-side before any request, refusing invalid values with product copy
+   * rather than letting raw Zod developer copy return from the server.
    *
    * The two assertions pin different things — the request not being sent, and
    * the exact copy. On the realistic continuing-guard mutant (the guard fires
@@ -157,6 +153,68 @@ describe('NewStudioClassPage', () => {
     // on stale state — deleting this click leaves it green. The whitespace
     // boundary is a request-count fact; the copy is pinned above.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #310. Clearing durationMinutes or entering a non-positive / non-integer
+   * duration refuses before any request with product copy.
+   */
+  it('refuses a blank or invalid duration before any request, with product copy', () => {
+    stubFetch();
+    render(<NewStudioClassPage />);
+    fillRequired();
+
+    fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText('Enter how many minutes the class runs.')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '-15' } });
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '45.5' } });
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #310. Clearing hourlyRate or entering a negative value refuses before any
+   * request with product copy. Explicit 0 is allowed for unpaid classes.
+   */
+  it('refuses a blank or negative hourly rate before any request, with product copy', () => {
+    stubFetch();
+    render(<NewStudioClassPage />);
+    fillRequired();
+
+    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText('Enter an hourly rate — 0 if this class is unpaid.')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '-5' } });
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('allows 0 as an explicit hourly rate', async () => {
+    stubFetch();
+    render(<NewStudioClassPage />);
+    fillRequired();
+
+    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, options] = fetchMock.mock.calls.at(-1) ?? [];
+    const body = JSON.parse(options?.body as string);
+    expect(body.hourlyRate).toBe(0);
   });
 
   /**

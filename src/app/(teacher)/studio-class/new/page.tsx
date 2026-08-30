@@ -102,6 +102,18 @@ export default function NewStudioClassPage() {
       return;
     }
 
+    const duration = Number(durationMinutes);
+    if (!durationMinutes.trim() || !Number.isInteger(duration) || duration <= 0) {
+      setError('Enter how many minutes the class runs.');
+      return;
+    }
+
+    const rate = Number(hourlyRate);
+    if (!hourlyRate.trim() || Number.isNaN(rate) || rate < 0) {
+      setError('Enter an hourly rate — 0 if this class is unpaid.');
+      return;
+    }
+
     setSubmitting(true);
     setError('');
 
@@ -111,8 +123,8 @@ export default function NewStudioClassPage() {
         location: location.trim(),
         date,
         startTime,
-        durationMinutes: Number(durationMinutes),
-        hourlyRate: Number(hourlyRate),
+        durationMinutes: duration,
+        hourlyRate: rate,
       };
 
       const res = await fetch('/api/studio-classes', {

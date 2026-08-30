@@ -23,11 +23,10 @@ Every claim checked against the merge base (`9cf17ec`) before designing.
    (`docker compose exec -T db psql -U yoga -d ethical_yoga -c "SELECT …"` → `0 | 0`,
    2026-08-23). The legacy save-blocker is real in mechanism and currently empty in
    instance. No migration is warranted — a backfill cannot invent a class type.
-2. **`classType` is the only wire-required field in either form that lacks both a valid
-   default and a client check.** `createStudioClassTemplateSchema` /
-   `createStudioClassSchema` require six fields each; `dayOfWeek` ships `0`,
-   `startTime` `'09:00'`, `durationMinutes` `60`, `hourlyRate` `0`, `location` and
-   `date` already have guards. Nothing else can reach the server invalid.
+2. **All wire-required fields are validated client-side before sending.**
+   `createStudioClassTemplateSchema` / `createStudioClassSchema` require six fields
+   each; all required values (`classType`, `location`, `date`, `durationMinutes`,
+   `hourlyRate`) are validated before the request with product copy (#310).
 3. **The class-family twins already do this.** `template-form.tsx:248`
    ("Class type is required") and the wizard `class/new/page.tsx:245`
    ("Enter a class type"). The studio forms are missing exactly their mirror's check —
