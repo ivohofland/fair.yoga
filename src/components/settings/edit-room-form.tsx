@@ -127,20 +127,21 @@ export function EditRoomForm({ roomId, teacherRoomId, initial }: EditRoomFormPro
     }
   }
 
-  function clearSuccess() {
-    setSuccess('');
+  function clearStatus() {
+    if (error) setError('');
+    if (success) setSuccess('');
   }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <Input label="Venue name" value={venueName} onChange={(e) => { setVenueName(e.target.value); clearSuccess(); }} />
-      <Input label="Room name" value={roomName} onChange={(e) => { setRoomName(e.target.value); clearSuccess(); }} placeholder="e.g. Main Studio" />
-      <Input label="Address" value={address} onChange={(e) => { setAddress(e.target.value); clearSuccess(); }} />
-      <Input label="City" value={city} onChange={(e) => { setCity(e.target.value); clearSuccess(); }} />
-      <Input label="Postcode" value={postcode} onChange={(e) => { setPostcode(e.target.value); clearSuccess(); }} />
-      <Input label="Floor" value={floor} onChange={(e) => { setFloor(e.target.value); clearSuccess(); }} placeholder="e.g. Ground, 1st" />
-      <Input label="Max capacity" type="number" value={maxCapacity} onChange={(e) => { setMaxCapacity(e.target.value); clearSuccess(); }} />
-      <Input label="Rental rate" type="number" step="0.01" value={rentalRate} onChange={(e) => { setRentalRate(e.target.value); clearSuccess(); }} />
+      <Input label="Venue name" value={venueName} onChange={(e) => { setVenueName(e.target.value); clearStatus(); }} />
+      <Input label="Room name" value={roomName} onChange={(e) => { setRoomName(e.target.value); clearStatus(); }} placeholder="e.g. Main Studio" />
+      <Input label="Address" value={address} onChange={(e) => { setAddress(e.target.value); clearStatus(); }} />
+      <Input label="City" value={city} onChange={(e) => { setCity(e.target.value); clearStatus(); }} />
+      <Input label="Postcode" value={postcode} onChange={(e) => { setPostcode(e.target.value); clearStatus(); }} />
+      <Input label="Floor" value={floor} onChange={(e) => { setFloor(e.target.value); clearStatus(); }} placeholder="e.g. Ground, 1st" />
+      <Input label="Max capacity" type="number" value={maxCapacity} onChange={(e) => { setMaxCapacity(e.target.value); clearStatus(); }} />
+      <Input label="Rental rate" type="number" step="0.01" value={rentalRate} onChange={(e) => { setRentalRate(e.target.value); clearStatus(); }} />
 
       <fieldset className="flex flex-col gap-1">
         <legend className="text-brown mb-2">Available props</legend>
@@ -149,7 +150,7 @@ export function EditRoomForm({ roomId, teacherRoomId, initial }: EditRoomFormPro
             <input
               type="checkbox"
               checked={equipment[key] ?? false}
-              onChange={(e) => { setEquipment((prev) => ({ ...prev, [key]: e.target.checked })); clearSuccess(); }}
+              onChange={(e) => { setEquipment((prev) => ({ ...prev, [key]: e.target.checked })); clearStatus(); }}
               className="w-5 h-5 accent-teal"
             />
             <span className="text-base text-ink">{label}</span>
@@ -162,14 +163,14 @@ export function EditRoomForm({ roomId, teacherRoomId, initial }: EditRoomFormPro
         <textarea
           id="room-notes"
           value={notes}
-          onChange={(e) => { setNotes(e.target.value); clearSuccess(); }}
+          onChange={(e) => { setNotes(e.target.value); clearStatus(); }}
           rows={3}
           placeholder="e.g. key code for entrance, bring your own mat"
           className="bg-sand-soft border border-border rounded-field px-4 py-3 min-h-24 text-ink text-base focus:outline-none focus:shadow-focus w-full"
         />
       </div>
 
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
 
       <Button type="submit" disabled={submitting}>

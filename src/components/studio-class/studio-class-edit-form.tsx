@@ -289,7 +289,7 @@ export function StudioClassEditForm({
         </Button>
         {/* One slot, never both: "Saved" and a failure describe the same click. */}
         {error
-          ? <span className="type-caption text-danger">{error}</span>
+          ? <span role="alert" className="type-caption text-danger">{error}</span>
           : success && <span className="type-caption text-teal">{success}</span>}
       </div>
     </div>

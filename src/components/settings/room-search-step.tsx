@@ -82,7 +82,7 @@ export function RoomSearchStep({
         </Button>
       </form>
 
-      {searchError && <p className="text-sm text-danger mb-4">{searchError}</p>}
+      {searchError && <p role="alert" className="text-sm text-danger mb-4">{searchError}</p>}
 
       {results !== null && (
         <div>

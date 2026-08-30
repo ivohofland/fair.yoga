@@ -62,7 +62,7 @@ export function CancelBookingButton({ registrationId, cancelDeadline }: CancelBo
           Keep booking
         </Button>
       </div>
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </div>
   );
 }

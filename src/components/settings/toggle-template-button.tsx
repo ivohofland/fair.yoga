@@ -53,7 +53,7 @@ export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateBut
           ? (isActive ? 'Pausing...' : 'Resuming...')
           : (isActive ? 'Pause recurring class' : 'Resume recurring class')}
       </button>
-      {error && <p className="text-sm text-danger mt-2">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger mt-2">{error}</p>}
       {message && <p className="type-caption mt-2">{message}</p>}
     </div>
   );

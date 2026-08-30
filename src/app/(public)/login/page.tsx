@@ -64,7 +64,7 @@ export default function LoginPage() {
               {status === 'sending' ? 'Sending...' : 'Send me the link'}
             </Button>
             {status === 'error' && (
-              <p className="text-[13px] leading-[1.4] text-danger">
+              <p role="alert" className="text-[13px] leading-[1.4] text-danger">
                 Something went wrong. Please try again.
               </p>
             )}

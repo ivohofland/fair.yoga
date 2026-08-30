@@ -57,7 +57,7 @@ export function AddPasskey() {
       <p className="type-caption max-w-[380px]">
         Sign in with your fingerprint, face, or device PIN — faster than the email link.
       </p>
-      {state === 'error' && <p className="text-[13px] text-danger">{message}</p>}
+      {state === 'error' && <p role="alert" className="text-[13px] text-danger">{message}</p>}
     </div>
   );
 }

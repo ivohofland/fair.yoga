@@ -211,7 +211,7 @@ export function BookingFlow({
               : `Book — around €${tierPrices[tier - 1]!.toFixed(2)}`}
         </Button>
       </div>
-      {error && <p className="text-sm text-danger mt-3">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger mt-3">{error}</p>}
     </div>
   );
 }

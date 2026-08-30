@@ -126,7 +126,7 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
           Close
         </Button>
       </div>
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </div>
   );
 }

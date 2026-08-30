@@ -53,7 +53,7 @@ export function ToggleStudioTemplateButton({ templateId, isActive }: ToggleStudi
           ? (isActive ? 'Pausing...' : 'Resuming...')
           : (isActive ? 'Pause studio class' : 'Resume studio class')}
       </button>
-      {error && <p className="text-sm text-danger mt-2">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger mt-2">{error}</p>}
       {message && <p className="type-caption mt-2">{message}</p>}
     </div>
   );

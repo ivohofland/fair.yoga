@@ -51,7 +51,7 @@ export function JoinAsStudent({ firstName }: JoinAsStudentProps) {
         </Button>
       </div>
       {state === 'error' && (
-        <p className="text-[13px] leading-[1.4] text-danger mt-3">{message}</p>
+        <p role="alert" className="text-[13px] leading-[1.4] text-danger mt-3">{message}</p>
       )}
     </div>
   );

@@ -117,7 +117,7 @@ export function DeleteStudioClassButton({
           Keep
         </Button>
       </div>
-      {error && <p className="type-caption text-danger">{error}</p>}
+      {error && <p role="alert" className="type-caption text-danger">{error}</p>}
     </div>
   );
 }

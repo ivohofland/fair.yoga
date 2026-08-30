@@ -51,7 +51,7 @@ export function ArchiveTemplateButton({ templateId, isArchived }: ArchiveTemplat
           ? (isArchived ? 'Unarchiving...' : 'Archiving...')
           : (isArchived ? 'Unarchive recurring class' : 'Archive recurring class')}
       </button>
-      {error && <p className="text-sm text-danger mt-2">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger mt-2">{error}</p>}
       {message && <p className="type-caption mt-2">{message}</p>}
     </div>
   );

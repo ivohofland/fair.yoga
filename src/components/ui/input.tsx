@@ -10,6 +10,7 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 export function Input({ label, error, id, className = '', ...props }: InputProps) {
   const generatedId = useId();
   const inputId = id ?? generatedId;
+  const errorId = error ? `${inputId}-error` : undefined;
   const fieldColors = error
     ? 'border-danger bg-danger-tint'
     : 'border-border bg-sand-soft';
@@ -23,10 +24,20 @@ export function Input({ label, error, id, className = '', ...props }: InputProps
       )}
       <input
         id={inputId}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={errorId}
         className={`border rounded-field px-4 min-h-12 text-ink text-base ${fieldColors} focus:outline-none focus:shadow-focus ${className}`.trim()}
         {...props}
       />
-      {error && <span className="text-[13px] leading-[1.4] text-danger">{error}</span>}
+      {error && (
+        <span
+          id={errorId}
+          role="alert"
+          className="text-[13px] leading-[1.4] text-danger"
+        >
+          {error}
+        </span>
+      )}
     </div>
   );
 }

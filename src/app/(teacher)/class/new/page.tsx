@@ -635,7 +635,7 @@ export default function CreateClassPage() {
           </div>
 
           {submitError && (
-            <p className="text-sm text-danger mt-2">{submitError}</p>
+            <p role="alert" className="text-sm text-danger mt-2">{submitError}</p>
           )}
         </div>
       )}

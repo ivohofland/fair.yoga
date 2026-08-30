@@ -129,7 +129,7 @@ export function RoomSettingsStep({ selectedRoom, onSaved, onBack }: RoomSettings
           onChange={(e) => setEquipmentNotes(e.target.value)}
         />
 
-        {settingsError && <p className="text-sm text-danger">{settingsError}</p>}
+        {settingsError && <p role="alert" className="text-sm text-danger">{settingsError}</p>}
 
         <div className="flex justify-between mt-4">
           <Button variant="secondary" type="button" onClick={onBack}>

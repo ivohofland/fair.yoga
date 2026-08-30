@@ -97,33 +97,38 @@ export function EditTeacherRoomForm({
     }
   }
 
+  function clearStatus() {
+    if (error) setError('');
+    if (success) setSuccess('');
+  }
+
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <Input
         label="Capacity override"
         type="number"
         value={capacityOverride}
-        onChange={(e) => { setCapacityOverride(e.target.value); setSuccess(''); }}
+        onChange={(e) => { setCapacityOverride(e.target.value); clearStatus(); }}
       />
       <Input
         label="Rental rate"
         type="number"
         step="0.01"
         value={rentalRate}
-        onChange={(e) => { setRentalRate(e.target.value); setSuccess(''); }}
+        onChange={(e) => { setRentalRate(e.target.value); clearStatus(); }}
       />
       <div className="flex flex-col gap-1">
         <label htmlFor="equipmentNotes" className="text-brown">Notes</label>
         <textarea
           id="equipmentNotes"
           value={equipmentNotes}
-          onChange={(e) => { setEquipmentNotes(e.target.value); setSuccess(''); }}
+          onChange={(e) => { setEquipmentNotes(e.target.value); clearStatus(); }}
           rows={3}
           className="bg-sand-soft border border-border rounded-field px-4 py-3 min-h-24 text-ink text-base focus:outline-none focus:shadow-focus w-full"
         />
       </div>
 
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
 
       <Button type="submit" disabled={submitting}>

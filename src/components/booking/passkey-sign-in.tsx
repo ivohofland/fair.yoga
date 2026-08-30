@@ -67,7 +67,7 @@ export function PasskeySignIn({ email, redirect }: PasskeySignInProps) {
         {state === 'working' ? 'Follow your device…' : 'Sign in with a passkey'}
       </Button>
       {state === 'error' && (
-        <p className="text-[13px] leading-[1.4] text-danger">
+        <p role="alert" className="text-[13px] leading-[1.4] text-danger">
           Passkey sign-in didn&apos;t work here — use the email link instead.
         </p>
       )}

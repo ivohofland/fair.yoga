@@ -206,6 +206,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
+    setError('');
     setSuccess('');
   }
 
@@ -223,6 +224,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         minStudents: Math.min(prev.minStudents, maxStudents),
       };
     });
+    setError('');
     setSuccess('');
   }
 
@@ -621,7 +623,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         ))}
       </Select>
 
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
 
       {created ? (

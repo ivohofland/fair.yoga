@@ -57,7 +57,7 @@ export function ArchiveRoomButton({ teacherRoomId, isArchived }: ArchiveRoomButt
           ? (isArchived ? 'Unarchiving...' : 'Archiving...')
           : (isArchived ? 'Unarchive room' : 'Archive room')}
       </button>
-      {error && <p className="text-sm text-danger mt-2">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger mt-2">{error}</p>}
     </div>
   );
 }

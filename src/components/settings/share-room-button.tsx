@@ -173,7 +173,7 @@ export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonP
         </>
       )}
 
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
 
       <div className="flex gap-3">
         {!exact && (

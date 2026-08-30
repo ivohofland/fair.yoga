@@ -188,7 +188,7 @@ export function RoomCreateStep({
         <PublicRoomNotice />
       </div>
 
-      {createError && <p className="text-sm text-danger">{createError}</p>}
+      {createError && <p role="alert" className="text-sm text-danger">{createError}</p>}
 
       <div className="flex justify-between mt-4">
         <Button variant="secondary" type="button" onClick={onBack}>

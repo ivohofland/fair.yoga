@@ -149,24 +149,34 @@ describe('StudioTemplateForm', () => {
    * `'   '` reaches the wire schema's `min(1)` and raw Zod returns. The edit
    * form's test (`studio-class-edit-form.test.tsx`) pins the same boundary.
    */
-  it('refuses a blank class type before any request, with product copy', async () => {
+  it('refuses a blank class type before any request, with product copy and alert role', async () => {
     stubFetch();
     render(<StudioTemplateForm mode="create" />);
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByText('Class type is required.')).toBeInTheDocument();
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Class type is required.');
 
+    // Editing the field immediately clears the complaint banner before the next submit (#313)
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: '   ' } });
-    fireEvent.click(screen.getByRole('button', { name: /create/i }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 
-    // Only the request count is pinned on this second submit. `handleSubmit`
-    // clears `error` after its guards, never before, so the banner raised by
-    // the first submit is still mounted here and a copy assertion would pass
-    // on stale state — deleting this click leaves it green. The whitespace
-    // boundary is a request-count fact; the copy is pinned above.
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('Class type is required.');
+  });
+
+  it('clears error banner when any input field is edited', async () => {
+    stubFetch();
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Class type is required.');
+
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio B' } });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   /**

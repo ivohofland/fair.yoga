@@ -79,6 +79,7 @@ export function ProfileForm({ teacherId, initial }: ProfileFormProps) {
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
+    setError('');
     setSuccess('');
   }
 
@@ -229,7 +230,7 @@ export function ProfileForm({ teacherId, initial }: ProfileFormProps) {
         />
       </section>
 
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
 
       <Button type="submit" disabled={submitting}>

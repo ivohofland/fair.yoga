@@ -101,6 +101,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
+    setError('');
     setSuccess('');
   }
 
@@ -363,7 +364,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         onChange={(e) => update('hourlyRate', e.target.value)}
       />
 
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
 
       {created ? (

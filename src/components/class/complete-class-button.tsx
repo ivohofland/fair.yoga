@@ -47,7 +47,7 @@ export function CompleteClassButton({ classId }: CompleteClassButtonProps) {
       >
         {submitting ? 'Completing...' : 'Complete class'}
       </button>
-      {error && <p className="type-caption text-danger text-right">{error}</p>}
+      {error && <p role="alert" className="type-caption text-danger text-right">{error}</p>}
     </div>
   );
 }

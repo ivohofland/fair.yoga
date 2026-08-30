@@ -69,6 +69,7 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
   function set<K extends keyof ClassEditInitial>(key: K, value: ClassEditInitial[K]) {
     setForm((f) => ({ ...f, [key]: value }));
     setSaved(false);
+    setError('');
   }
 
   async function handleSave() {
@@ -261,7 +262,7 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
         </Button>
         {saved && <span className="type-caption text-teal">Saved</span>}
       </div>
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </div>
   );
 }

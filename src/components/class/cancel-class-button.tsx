@@ -69,7 +69,7 @@ export function CancelClassButton({ classId, registrationCount }: CancelClassBut
           Keep class
         </Button>
       </div>
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </div>
   );
 }

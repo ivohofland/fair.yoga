@@ -80,7 +80,7 @@ export function DataAndDeletion({ role }: DataAndDeletionProps) {
         >
           {exporting ? 'Preparing download...' : 'Download your data (JSON)'}
         </button>
-        {exportError && <p className="text-sm text-danger">{exportError}</p>}
+        {exportError && <p role="alert" className="text-sm text-danger">{exportError}</p>}
       </div>
 
       <div className="mt-6">
@@ -108,7 +108,7 @@ export function DataAndDeletion({ role }: DataAndDeletionProps) {
                 Keep account
               </Button>
             </div>
-            {error && <p className="text-sm text-danger">{error}</p>}
+            {error && <p role="alert" className="text-sm text-danger">{error}</p>}
           </div>
         )}
       </div>

@@ -59,7 +59,7 @@ export function PublishClassButton({ classId }: PublishClassButtonProps) {
       >
         {submitting ? 'Publishing...' : 'Publish'}
       </button>
-      {error && <p className="type-caption text-danger text-right">{error}</p>}
+      {error && <p role="alert" className="type-caption text-danger text-right">{error}</p>}
     </div>
   );
 }

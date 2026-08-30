@@ -81,6 +81,13 @@ export default function NewStudioClassPage() {
    */
   const [createdId, setCreatedId] = useState<string | null>(null);
 
+  function updateField(setter: (val: string) => void) {
+    return (e: React.ChangeEvent<HTMLInputElement>) => {
+      setter(e.target.value);
+      setError('');
+    };
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     // #40 (whole-branch review F4). Defence-in-depth, not a path the UI can
@@ -172,14 +179,14 @@ export default function NewStudioClassPage() {
         and it logs itself.
       </p>
       <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-        <Input label="Class type" value={classType} onChange={(e) => setClassType(e.target.value)} placeholder="e.g. Vinyasa, Hatha, Yin" />
-        <Input label="Location" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Yoga Studio Centrum, Amsterdam" />
-        <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-        <Input label="Start time" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
-        <Input label="Duration (minutes)" type="number" value={durationMinutes} onChange={(e) => setDurationMinutes(e.target.value)} />
-        <Input label="Hourly rate" type="number" step="0.01" value={hourlyRate} onChange={(e) => setHourlyRate(e.target.value)} />
+        <Input label="Class type" value={classType} onChange={updateField(setClassType)} placeholder="e.g. Vinyasa, Hatha, Yin" />
+        <Input label="Location" value={location} onChange={updateField(setLocation)} placeholder="e.g. Yoga Studio Centrum, Amsterdam" />
+        <Input label="Date" type="date" value={date} onChange={updateField(setDate)} />
+        <Input label="Start time" type="time" value={startTime} onChange={updateField(setStartTime)} />
+        <Input label="Duration (minutes)" type="number" value={durationMinutes} onChange={updateField(setDurationMinutes)} />
+        <Input label="Hourly rate" type="number" step="0.01" value={hourlyRate} onChange={updateField(setHourlyRate)} />
 
-        {error && <p className="text-sm text-danger">{error}</p>}
+        {error && <p role="alert" className="text-sm text-danger">{error}</p>}
 
         {createdId ? (
           <SettledNotice

@@ -44,7 +44,7 @@ export function RestoreStudioClassButton({ studioClassId }: RestoreStudioClassBu
       >
         {restoring ? 'Restoring...' : 'Restore class'}
       </button>
-      {error && <p className="type-caption text-danger mt-1">{error}</p>}
+      {error && <p role="alert" className="type-caption text-danger mt-1">{error}</p>}
     </div>
   );
 }
