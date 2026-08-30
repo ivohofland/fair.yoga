@@ -40,26 +40,23 @@ A git worktree creates an isolated filesystem tree pointing to the same git repo
 To measure a mutation probe without touching the primary checkout:
 
 ```bash
-# 1. Create a detached worktree at the target commit/HEAD
-git worktree add -f /tmp/mutation-probe HEAD
+# 1. Create a dynamic detached worktree (avoids collision between parallel agents)
+WT_DIR="/tmp/mutation-probe-$$"
+git worktree add -f "$WT_DIR" HEAD
 
 # 2. Symlink node_modules from the primary checkout (instant, 0 install overhead)
-ln -s "$(pwd)/node_modules" /tmp/mutation-probe/node_modules
+ln -s "$(pwd)/node_modules" "$WT_DIR/node_modules"
 
-# 3. Enter the worktree and apply the deliberate mutation
-cd /tmp/mutation-probe
-# <apply mutation to target file>
+# 3. Subshell preserves caller's PWD; `|| true` ensures cleanup runs even when tests fail (the expected probe outcome)
+(
+  cd "$WT_DIR"
+  # <apply mutation to target file>
+  git diff <modified-file>
+  npx vitest run --project <tier> <files>
+) || true
 
-# 4. Belt-and-braces: verify the mutation is on disk
-git diff <modified-file>
-
-# 5. Run the targeted test project against the mutated code
-npx vitest run --project <components|unit|integration> <test-file>
-
-# 6. Confirm the test fails as expected with the named failure
-# 7. Clean up the worktree
-cd /path/to/main/repo
-git worktree remove --force /tmp/mutation-probe
+# 4. Clean up the worktree
+git worktree remove --force "$WT_DIR"
 ```
 
 ### B. Single-Agent In-Place Probes
@@ -67,7 +64,7 @@ git worktree remove --force /tmp/mutation-probe
 When running in a confirmed single-agent context where no other agent is active:
 1. In-place mutation is permissible.
 2. The agent must verify `git diff` immediately before executing the test.
-3. The agent must immediately restore the file and verify `git status` is clean before proceeding.
+3. The agent must immediately run `git restore <modified-file>` (avoiding manual edits that can leave trailing whitespace) and verify `git status` is clean before proceeding.
 
 ---
 

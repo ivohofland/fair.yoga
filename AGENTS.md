@@ -83,12 +83,18 @@ In-process job scheduler starts with the server. Set `CRON_SCHEDULER="off"` to d
 - **Parallel agents must use isolated worktrees**: Mutating agents sharing a checkout cause false greens and false reds (#178, #282). Use git worktrees or branched agent workspaces with symlinked `node_modules`.
 - **Worktree probe recipe**:
   ```bash
-  git worktree add -f /tmp/mutation-probe HEAD
-  ln -s "$(pwd)/node_modules" /tmp/mutation-probe/node_modules
-  cd /tmp/mutation-probe && <mutate> && npx vitest run --project <tier> <files>
-  git worktree remove --force /tmp/mutation-probe
+  WT_DIR="/tmp/mutation-probe-$$"
+  git worktree add -f "$WT_DIR" HEAD
+  ln -s "$(pwd)/node_modules" "$WT_DIR/node_modules"
+  (
+    cd "$WT_DIR"
+    # <apply mutation to target file>
+    git diff <modified-file>
+    npx vitest run --project <tier> <files>
+  ) || true
+  git worktree remove --force "$WT_DIR"
   ```
-- **Single-agent runs**: Safe in-place because no background non-agent writers exist. Always verify `git diff` before measuring and `git status` after restoring.
+- **Single-agent runs**: Safe in-place because no background non-agent writers exist. Always verify `git diff` before measuring and use `git restore <file>` immediately after measuring.
 - Full details & empirical findings: `docs/mutation-testing.md`.
 
 ## Key references
