@@ -325,7 +325,7 @@ export const updateTeacherRoomSchema = z.object({
 
 export const createClassSchema = z.object({
   teacherRoomId: z.string().uuid(),
-  classType: z.string().min(1),
+  classType: z.string().trim().min(1),
   description: z.string().nullable().optional(),
   date: isoDate,
   startTime: timeHHmm,
@@ -352,7 +352,7 @@ export const createClassSchema = z.object({
   });
 
 export const updateClassSchema = z.object({
-  classType: z.string().min(1).optional(),
+  classType: z.string().trim().min(1).optional(),
   description: z.string().nullable().optional(),
   date: isoDate.optional(),
   startTime: timeHHmm.optional(),
@@ -394,7 +394,7 @@ export const transitionClassSchema = z.object({
 
 export const createClassTemplateSchema = z.object({
   teacherRoomId: z.string().uuid(),
-  classType: z.string().min(1),
+  classType: z.string().trim().min(1),
   description: z.string().nullable().optional(),
   dayOfWeek: z.number().int().min(0).max(6),
   startTime: timeHHmm,
@@ -421,7 +421,7 @@ export const createClassTemplateSchema = z.object({
   });
 
 export const updateClassTemplateSchema = z.object({
-  classType: z.string().min(1).optional(),
+  classType: z.string().trim().min(1).optional(),
   description: z.string().nullable().optional(),
   teacherRoomId: z.string().uuid().optional(),
   dayOfWeek: z.number().int().min(0).max(6).optional(),
@@ -449,20 +449,20 @@ export const updateClassTemplateSchema = z.object({
 // ============================================================================
 
 export const createStudioClassTemplateSchema = z.object({
-  classType: z.string().min(1),
+  classType: z.string().trim().min(1),
   dayOfWeek: z.number().int().min(0).max(6),
   startTime: timeHHmm,
   durationMinutes: z.number().int().positive(),
-  location: z.string().min(1),
+  location: z.string().trim().min(1),
   hourlyRate: z.number().nonnegative(),
 });
 
 export const updateStudioClassTemplateSchema = z.object({
-  classType: z.string().min(1).optional(),
+  classType: z.string().trim().min(1).optional(),
   dayOfWeek: z.number().int().min(0).max(6).optional(),
   startTime: timeHHmm.optional(),
   durationMinutes: z.number().int().positive().optional(),
-  location: z.string().min(1).optional(),
+  location: z.string().trim().min(1).optional(),
   hourlyRate: z.number().nonnegative().optional(),
 }).strict();
 
@@ -471,18 +471,18 @@ export const updateStudioClassTemplateSchema = z.object({
 // ============================================================================
 
 export const createStudioClassSchema = z.object({
-  classType: z.string().min(1),
+  classType: z.string().trim().min(1),
   date: isoDate,
   startTime: timeHHmm,
   durationMinutes: z.number().int().positive(),
-  location: z.string().min(1),
+  location: z.string().trim().min(1),
   hourlyRate: z.number().nonnegative(),
 });
 
 export const updateStudioClassSchema = z.object({
   studentCount: z.number().int().nonnegative().nullable().optional(),
-  classType: z.string().min(1).optional(),
-  location: z.string().min(1).optional(),
+  classType: z.string().trim().min(1).optional(),
+  location: z.string().trim().min(1).optional(),
   date: isoDate.optional(),
   startTime: timeHHmm.optional(),
   durationMinutes: z.number().int().positive().optional(),

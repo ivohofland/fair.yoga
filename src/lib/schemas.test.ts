@@ -676,3 +676,93 @@ describe('createRoomSchema isPublic default', () => {
     expect(parsed.isPublic).toBe(true);
   });
 });
+
+describe('classType and location whitespace trimming and validation (#311)', () => {
+  const classTypeSchemas = [
+    'createClassSchema',
+    'updateClassSchema',
+    'createClassTemplateSchema',
+    'updateClassTemplateSchema',
+    'createStudioClassTemplateSchema',
+    'updateStudioClassTemplateSchema',
+    'createStudioClassSchema',
+    'updateStudioClassSchema',
+  ] as const;
+
+  const locationSchemas = [
+    'createStudioClassTemplateSchema',
+    'updateStudioClassTemplateSchema',
+    'createStudioClassSchema',
+    'updateStudioClassSchema',
+  ] as const;
+
+  it('covers exactly the eight schemas carrying classType', () => {
+    const discovered: string[] = [];
+    for (const [name, schema] of Object.entries(schemas)) {
+      if (!(schema instanceof z.ZodType)) continue;
+      const shape =
+        (schema as { shape?: Record<string, unknown> }).shape ??
+        (schema as { _def?: { schema?: { shape?: Record<string, unknown> } } })._def?.schema?.shape;
+      if (!shape || !('classType' in shape)) continue;
+      discovered.push(name);
+    }
+    expect(discovered.sort()).toEqual([...classTypeSchemas].sort());
+  });
+
+  it('covers exactly the four schemas carrying studio location', () => {
+    const discovered: string[] = [];
+    for (const [name, schema] of Object.entries(schemas)) {
+      if (!(schema instanceof z.ZodType)) continue;
+      const shape =
+        (schema as { shape?: Record<string, unknown> }).shape ??
+        (schema as { _def?: { schema?: { shape?: Record<string, unknown> } } })._def?.schema?.shape;
+      if (!shape || !('location' in shape)) continue;
+      discovered.push(name);
+    }
+    expect(discovered.sort()).toEqual([...locationSchemas].sort());
+  });
+
+  it.each(classTypeSchemas)('%s rejects empty and whitespace-only classType', (name) => {
+    const schema = (schemas as Record<string, unknown>)[name] as z.ZodType;
+    const shape =
+      (schema as { shape?: Record<string, z.ZodType> }).shape ??
+      (schema as { _def?: { schema?: { shape?: Record<string, z.ZodType> } } })._def?.schema?.shape;
+    const field = shape?.classType;
+    expect(field).toBeDefined();
+    expect(field!.safeParse('').success).toBe(false);
+    expect(field!.safeParse('   ').success).toBe(false);
+    expect(field!.safeParse('\t\n  ').success).toBe(false);
+  });
+
+  it.each(classTypeSchemas)('%s trims padded classType before validation and storage', (name) => {
+    const schema = (schemas as Record<string, unknown>)[name] as z.ZodType;
+    const shape =
+      (schema as { shape?: Record<string, z.ZodType> }).shape ??
+      (schema as { _def?: { schema?: { shape?: Record<string, z.ZodType> } } })._def?.schema?.shape;
+    const field = shape?.classType;
+    expect(field).toBeDefined();
+    expect(field!.parse('  Vinyasa Flow  ')).toBe('Vinyasa Flow');
+  });
+
+  it.each(locationSchemas)('%s rejects empty and whitespace-only location', (name) => {
+    const schema = (schemas as Record<string, unknown>)[name] as z.ZodType;
+    const shape =
+      (schema as { shape?: Record<string, z.ZodType> }).shape ??
+      (schema as { _def?: { schema?: { shape?: Record<string, z.ZodType> } } })._def?.schema?.shape;
+    const field = shape?.location;
+    expect(field).toBeDefined();
+    expect(field!.safeParse('').success).toBe(false);
+    expect(field!.safeParse('   ').success).toBe(false);
+    expect(field!.safeParse('\t\n  ').success).toBe(false);
+  });
+
+  it.each(locationSchemas)('%s trims padded location before validation and storage', (name) => {
+    const schema = (schemas as Record<string, unknown>)[name] as z.ZodType;
+    const shape =
+      (schema as { shape?: Record<string, z.ZodType> }).shape ??
+      (schema as { _def?: { schema?: { shape?: Record<string, z.ZodType> } } })._def?.schema?.shape;
+    const field = shape?.location;
+    expect(field).toBeDefined();
+    expect(field!.parse('  Studio Centrum  ')).toBe('Studio Centrum');
+  });
+});

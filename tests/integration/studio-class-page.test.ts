@@ -240,7 +240,7 @@ describe('the studio class page: the template link', () => {
 describe('the studio class page: how it titles itself', () => {
   /**
    * The `|| location` half of the header, which nothing else reaches. Every
-   * studio write schema validates `.min(1)`, so only a row written straight to
+   * studio write schema validates `.trim().min(1)`, so only a row written straight to
    * the database — as this file does — can carry an empty class type. The
    * column permits it (`String @default("")`), which is why the fallback is
    * there at all.

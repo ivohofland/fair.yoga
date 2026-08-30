@@ -2659,4 +2659,63 @@ describe('PUT /api/class-templates/[id]', () => {
       await prisma.account.delete({ where: { id: owner.accountId } });
     }
   });
+
+  describe('whitespace trimming and validation on POST /api/class-templates (#311)', () => {
+    it('rejects whitespace-only classType with 400', async () => {
+      const res = await fetch(`${BASE_URL}/api/class-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+        body: JSON.stringify({
+          teacherRoomId,
+          classType: '   ',
+          dayOfWeek: 6,
+          startTime: '04:00',
+          durationMinutes: 60,
+          roomCost: 20,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 1,
+          maxStudents: 10,
+        }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('persists trimmed classType on create', async () => {
+      const isolated = await seedTeacher('trimtest');
+      try {
+        const res = await fetch(`${BASE_URL}/api/class-templates`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...cookie(isolated.sessionToken) },
+          body: JSON.stringify({
+            teacherRoomId: isolated.teacherRoomId,
+            classType: '  Padded Ashtanga  ',
+            dayOfWeek: 2,
+            startTime: '10:00',
+            durationMinutes: 60,
+            roomCost: 20,
+            minRate: 10,
+            targetRate: 20,
+            minStudents: 1,
+            maxStudents: 10,
+          }),
+        });
+        expect(res.status).toBe(201);
+        const json = (await res.json()) as { data: { id: string } };
+        const saved = await prisma.classTemplate.findUniqueOrThrow({
+          where: { id: json.data.id },
+          include: { scheduleRule: true },
+        });
+        expect(saved.scheduleRule.classType).toBe('Padded Ashtanga');
+      } finally {
+        await prisma.calendarEntry.deleteMany({ where: { teacherId: isolated.teacherId } });
+        await prisma.scheduleRule.deleteMany({ where: { teacherId: isolated.teacherId } });
+        await prisma.teacherRoom.deleteMany({ where: { teacherId: isolated.teacherId } });
+        await prisma.room.delete({ where: { id: isolated.roomId } });
+        await prisma.session.deleteMany({ where: { accountId: isolated.accountId } });
+        await prisma.teacher.delete({ where: { id: isolated.teacherId } });
+        await prisma.account.delete({ where: { id: isolated.accountId } });
+      }
+    });
+  });
 });

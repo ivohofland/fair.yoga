@@ -1506,4 +1506,54 @@ describe('POST /api/classes', () => {
       expect(rows.find((r) => r.id === created.id)?.calendarEntry.cancelledAt).not.toBeNull();
     });
   });
+
+  describe('whitespace trimming and validation on POST /api/classes (#311)', () => {
+    it('rejects whitespace-only classType with 400', async () => {
+      const body = {
+        teacherRoomId,
+        classType: '   ',
+        date: '2099-08-01',
+        startTime: '10:00',
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 10,
+      };
+      const res = await fetch(`${BASE_URL}/api/classes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('persists trimmed classType on create', async () => {
+      const body = {
+        teacherRoomId,
+        classType: '  Padded Hatha  ',
+        date: '2099-08-02',
+        startTime: '10:00',
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 10,
+      };
+      const res = await fetch(`${BASE_URL}/api/classes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(201);
+      const json = (await res.json()) as { data: { id: string } };
+      const saved = await prisma.class.findUniqueOrThrow({
+        where: { id: json.data.id },
+        include: { calendarEntry: true },
+      });
+      expect(saved.calendarEntry.classType).toBe('Padded Hatha');
+    });
+  });
 });

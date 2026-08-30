@@ -2277,4 +2277,88 @@ describe('DELETE /api/studio-classes/[id]', () => {
     expect((await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`)).status).toBe(200);
     expect((await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`)).status).toBe(404);
   });
+
+  describe('whitespace trimming and validation on studio endpoints (#311)', () => {
+    it('rejects whitespace-only classType and location on POST /api/studio-classes', async () => {
+      const res1 = await send('POST', ownerToken, '/api/studio-classes', {
+        classType: '   ',
+        location: 'Studio A',
+        date: '2099-07-01',
+        startTime: '08:00',
+        durationMinutes: 60,
+        hourlyRate: 40,
+      });
+      expect(res1.status).toBe(400);
+
+      const res2 = await send('POST', ownerToken, '/api/studio-classes', {
+        classType: 'Vinyasa',
+        location: '   ',
+        date: '2099-07-01',
+        startTime: '08:00',
+        durationMinutes: 60,
+        hourlyRate: 40,
+      });
+      expect(res2.status).toBe(400);
+    });
+
+    it('persists trimmed classType and location on POST /api/studio-classes', async () => {
+      const res = await send('POST', ownerToken, '/api/studio-classes', {
+        classType: '  Padded Vinyasa  ',
+        location: '  Padded Studio  ',
+        date: '2099-07-02',
+        startTime: '08:00',
+        durationMinutes: 60,
+        hourlyRate: 40,
+      });
+      expect(res.status).toBe(201);
+      const json = (await res.json()) as { data: { id: string } };
+      const saved = await prisma.studioClass.findUniqueOrThrow({
+        where: { id: json.data.id },
+        include: { calendarEntry: true },
+      });
+      expect(saved.calendarEntry.classType).toBe('Padded Vinyasa');
+      expect(saved.location).toBe('Padded Studio');
+    });
+
+    it('rejects whitespace-only classType and location on POST /api/studio-class-templates', async () => {
+      const res1 = await send('POST', ownerToken, '/api/studio-class-templates', {
+        classType: '   ',
+        location: 'Studio A',
+        dayOfWeek: 1,
+        startTime: '08:00',
+        durationMinutes: 60,
+        hourlyRate: 40,
+      });
+      expect(res1.status).toBe(400);
+
+      const res2 = await send('POST', ownerToken, '/api/studio-class-templates', {
+        classType: 'Vinyasa',
+        location: '   ',
+        dayOfWeek: 1,
+        startTime: '08:00',
+        durationMinutes: 60,
+        hourlyRate: 40,
+      });
+      expect(res2.status).toBe(400);
+    });
+
+    it('persists trimmed classType and location on POST /api/studio-class-templates', async () => {
+      const res = await send('POST', ownerToken, '/api/studio-class-templates', {
+        classType: '  Padded Template  ',
+        location: '  Padded Template Studio  ',
+        dayOfWeek: 2,
+        startTime: '08:00',
+        durationMinutes: 60,
+        hourlyRate: 40,
+      });
+      expect(res.status).toBe(201);
+      const json = (await res.json()) as { data: { id: string } };
+      const saved = await prisma.studioClassTemplate.findUniqueOrThrow({
+        where: { id: json.data.id },
+        include: { scheduleRule: true },
+      });
+      expect(saved.scheduleRule.classType).toBe('Padded Template');
+      expect(saved.location).toBe('Padded Template Studio');
+    });
+  });
 });
