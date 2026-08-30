@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
-import { startOfLocalDay } from '@/lib/timezone';
+import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatMonthLabel } from '@/lib/format';
@@ -16,6 +16,7 @@ function monthKey(date: Date): string {
 // shown to students — transparent, no charts, no growth talk.
 export default async function ReportingPage() {
   const session = await requireTeacherSession();
+  const now = new Date();
   // #101. `CalendarEntry.date` is a `@db.Date` calendar date; `new Date()` is an
   // instant. Comparing them directly meant that west of UTC, in the teacher's
   // local evening, UTC had already rolled over and a studio class dated
@@ -23,7 +24,7 @@ export default async function ReportingPage() {
   // their earnings and their class count — this page reports classes, students
   // and earnings, and a studio class contributes to all three. The end of the
   // teacher's today is the boundary that belongs here.
-  const endOfToday = startOfLocalDay(new Date(), session.defaultTimezone);
+  const endOfToday = startOfLocalDay(now, session.defaultTimezone);
   endOfToday.setUTCHours(23, 59, 59, 999);
 
   const [completedClasses, studioClasses, distinctStudents] = await Promise.all([
@@ -52,7 +53,7 @@ export default async function ReportingPage() {
       select: {
         hourlyRate: true,
         studentCount: true,
-        calendarEntry: { select: { date: true, durationMinutes: true } },
+        calendarEntry: { select: { date: true, durationMinutes: true, startTime: true } },
       },
       orderBy: { calendarEntry: { date: 'desc' } },
     }),
@@ -66,13 +67,20 @@ export default async function ReportingPage() {
     }),
   ]);
 
+  // #278. A studio class contributes to earnings, class count and the month
+  // rollup only once its start instant has passed — `classStartInstant` <= now.
+  // Classes dated today with a start time in the future are excluded.
+  const completedStudioClasses = studioClasses.filter(
+    (s) => classStartInstant(s.calendarEntry, session.defaultTimezone) <= now,
+  );
+
   const classEarnings = (c: (typeof completedClasses)[number]) =>
     Number(c.totalRevenue ?? 0) - Number(c.roomCost);
-  const studioEarnings = (s: (typeof studioClasses)[number]) =>
+  const studioEarnings = (s: (typeof completedStudioClasses)[number]) =>
     (Number(s.hourlyRate) * s.calendarEntry.durationMinutes) / 60;
 
   const totalClassEarnings = completedClasses.reduce((sum, c) => sum + classEarnings(c), 0);
-  const totalStudioEarnings = studioClasses.reduce((sum, s) => sum + studioEarnings(s), 0);
+  const totalStudioEarnings = completedStudioClasses.reduce((sum, s) => sum + studioEarnings(s), 0);
   const totalRoomCosts = completedClasses.reduce((sum, c) => sum + Number(c.roomCost), 0);
 
   // Last six calendar months, newest first
@@ -85,7 +93,7 @@ export default async function ReportingPage() {
     entry.earnings += classEarnings(c);
     byMonth.set(key, entry);
   }
-  for (const s of studioClasses) {
+  for (const s of completedStudioClasses) {
     const key = monthKey(s.calendarEntry.date);
     const entry = byMonth.get(key) ?? { classes: 0, students: 0, earnings: 0 };
     entry.classes += 1;
@@ -101,7 +109,7 @@ export default async function ReportingPage() {
       return { label: formatMonthLabel(Number(year), Number(month)), ...v };
     });
 
-  const nothingYet = completedClasses.length === 0 && studioClasses.length === 0;
+  const nothingYet = completedClasses.length === 0 && completedStudioClasses.length === 0;
 
   return (
     <div>
@@ -120,7 +128,7 @@ export default async function ReportingPage() {
               €{(totalClassEarnings + totalStudioEarnings).toFixed(2)}
             </p>
             <p className="type-caption mt-0.5">
-              {completedClasses.length + studioClasses.length} classes · {distinctStudents.length}{' '}
+              {completedClasses.length + completedStudioClasses.length} classes · {distinctStudents.length}{' '}
               {distinctStudents.length === 1 ? 'student' : 'students'} reached
             </p>
           </div>

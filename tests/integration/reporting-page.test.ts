@@ -399,14 +399,14 @@ describe('GET /settings/reporting (reporting page)', () => {
       const localTomorrow = new Date(localToday);
       localTomorrow.setUTCDate(localTomorrow.getUTCDate() + 1);
 
-      // Studio Class A: Dated TODAY in America/Los_Angeles -> INCLUDED
+      // Studio Class A: Dated TODAY in America/Los_Angeles, already started (00:00) -> INCLUDED
       // Hourly rate: 50.00, 60 min -> 50.00
       await createStudioClassFixture(prisma, {
         teacherId: pacificTeacherId,
         classType: 'Pacific Today Class',
         location: 'Portland Studio',
         date: localToday,
-        startTime: hhmmToTime('10:00'),
+        startTime: hhmmToTime('00:00'),
         durationMinutes: 60,
         hourlyRate: new Prisma.Decimal('50.00'),
         studentCount: 5,
@@ -453,6 +453,35 @@ describe('GET /settings/reporting (reporting page)', () => {
       expect(html).not.toContain('100.00');
       expect(html).not.toContain('130.00');
       expect(html).not.toContain('230.00');
+    });
+
+    it('excludes a studio class dated today whose start instant is in the future (issue 278)', async () => {
+      const now = new Date();
+      const localToday = startOfLocalDay(now, 'America/Los_Angeles');
+
+      // Studio Class D: Dated TODAY in America/Los_Angeles, but in the future (23:59) -> EXCLUDED
+      // Hourly rate: 60.00, 60 min -> 60.00
+      await createStudioClassFixture(prisma, {
+        teacherId: pacificTeacherId,
+        classType: 'Pacific Late Today Class',
+        location: 'Portland Studio',
+        date: localToday,
+        startTime: hhmmToTime('23:59'),
+        durationMinutes: 60,
+        hourlyRate: new Prisma.Decimal('60.00'),
+        studentCount: 7,
+      });
+
+      const res = await reportingPage(pacificTeacherToken);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+
+      // Total must still be 50.00 from Class A (not 110.00), class count still 1 (not 2)
+      expect(html).toContain('Total earned teaching');
+      expect(html).toContain('50.00');
+      expect(html).not.toContain('60.00');
+      expect(html).not.toContain('110.00');
+      expect(html).toMatch(/1.*classes.*·.*0.*students.*reached/);
     });
   });
 });
