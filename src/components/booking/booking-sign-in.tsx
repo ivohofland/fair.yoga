@@ -72,13 +72,13 @@ export function BookingSignIn({ redirect }: BookingSignInProps) {
             <Input
               label="First name"
               value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
+              onChange={(e) => { setFirstName(e.target.value); if (status === 'error') setStatus('idle'); }}
               required
             />
             <Input
               label="Last name"
               value={lastName}
-              onChange={(e) => setLastName(e.target.value)}
+              onChange={(e) => { setLastName(e.target.value); if (status === 'error') setStatus('idle'); }}
               required
             />
           </>
@@ -87,7 +87,7 @@ export function BookingSignIn({ redirect }: BookingSignInProps) {
           label="Email"
           type="email"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => { setEmail(e.target.value); if (status === 'error') setStatus('idle'); }}
           placeholder="you@example.com"
           required
         />

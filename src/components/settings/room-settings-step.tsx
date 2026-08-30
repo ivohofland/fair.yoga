@@ -114,19 +114,19 @@ export function RoomSettingsStep({ selectedRoom, onSaved, onBack }: RoomSettings
           label={`Capacity override (max ${selectedRoom.maxCapacity})`}
           type="number"
           value={capacityOverride}
-          onChange={(e) => setCapacityOverride(e.target.value)}
+          onChange={(e) => { setCapacityOverride(e.target.value); if (settingsError) setSettingsError(''); }}
         />
         <Input
           label="Rental rate"
           type="number"
           step="0.01"
           value={rentalRate}
-          onChange={(e) => setRentalRate(e.target.value)}
+          onChange={(e) => { setRentalRate(e.target.value); if (settingsError) setSettingsError(''); }}
         />
         <Input
           label="Notes (optional)"
           value={equipmentNotes}
-          onChange={(e) => setEquipmentNotes(e.target.value)}
+          onChange={(e) => { setEquipmentNotes(e.target.value); if (settingsError) setSettingsError(''); }}
         />
 
         {settingsError && <p role="alert" className="text-sm text-danger">{settingsError}</p>}

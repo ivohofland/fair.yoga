@@ -68,13 +68,13 @@ export function RoomSearchStep({
         <Input
           label="Postcode"
           value={postcode}
-          onChange={(e) => onPostcodeChange(e.target.value)}
+          onChange={(e) => { onPostcodeChange(e.target.value); if (searchError) setSearchError(''); }}
           placeholder="e.g. 1018 DT"
         />
         <Input
           label="Street"
           value={street}
-          onChange={(e) => onStreetChange(e.target.value)}
+          onChange={(e) => { onStreetChange(e.target.value); if (searchError) setSearchError(''); }}
           placeholder="e.g. Keizersgracht"
         />
         <Button type="submit" disabled={searching || !postcode.trim() || !street.trim()}>

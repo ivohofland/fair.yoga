@@ -70,8 +70,10 @@ export function RoomCreateStep({
   onPostcodeChange, onStreetChange, onCreated, onBack,
 }: RoomCreateStepProps) {
   const { venueName, roomName, floor, city, maxCapacity, equipmentChecks, notes, isPublic } = form;
-  const set = <K extends keyof NewRoomForm>(key: K, value: NewRoomForm[K]) =>
+  const set = <K extends keyof NewRoomForm>(key: K, value: NewRoomForm[K]) => {
     onFormChange({ ...form, [key]: value });
+    if (createError) setCreateError('');
+  };
 
   // Transient: these describe one in-flight submission, so losing them when
   // the teacher steps Back is correct.
@@ -135,9 +137,9 @@ export function RoomCreateStep({
   return (
     <form onSubmit={handleCreateRoom} className="flex flex-col gap-4">
       <Input label="Venue name" value={venueName} onChange={(e) => set('venueName', e.target.value)} placeholder="e.g. De Yogaschool" />
-      <Input label="Address" value={street} onChange={(e) => onStreetChange(e.target.value)} />
+      <Input label="Address" value={street} onChange={(e) => { onStreetChange(e.target.value); if (createError) setCreateError(''); }} />
       <Input label="City" value={city} onChange={(e) => set('city', e.target.value)} />
-      <Input label="Postcode" value={postcode} onChange={(e) => onPostcodeChange(e.target.value)} />
+      <Input label="Postcode" value={postcode} onChange={(e) => { onPostcodeChange(e.target.value); if (createError) setCreateError(''); }} />
       <Input label="Floor" value={floor} onChange={(e) => set('floor', e.target.value)} placeholder="e.g. Ground, 1st" />
       <Input label="Room name" value={roomName} onChange={(e) => set('roomName', e.target.value)} placeholder="e.g. Main Studio" />
       <Input label="Max capacity" type="number" value={maxCapacity} onChange={(e) => set('maxCapacity', e.target.value)} />

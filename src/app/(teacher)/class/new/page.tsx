@@ -205,6 +205,7 @@ export default function CreateClassPage() {
 
   function updateField<K extends keyof FormData>(key: K, value: FormData[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
+    setSubmitError('');
     setErrors((prev) => {
       const next = { ...prev };
       delete next[key];
@@ -226,6 +227,7 @@ export default function CreateClassPage() {
         minStudents: Math.min(prev.minStudents, maxStudents),
       };
     });
+    setSubmitError('');
     setErrors((prev) => {
       const next = { ...prev };
       delete next.teacherRoomId;

@@ -30,13 +30,13 @@ This document establishes the house standards for form validation error presenta
 | **Studio Class Edit** | `src/components/studio-class/studio-class-edit-form.tsx` | Per-field (`validate`) & API banner | `<Input error={...} />` + `<span role="alert">` | `set()` calling `setError('')` & clearing `fieldErrors[key]` |
 | **Class Template Form** | `src/components/settings/template-form.tsx` | API error banner | `<p role="alert" className="text-sm text-danger">` | `update()` & `handleRoomChange()` calling `setError('')` |
 | **Class Edit Form** | `src/components/class/class-edit-form.tsx` | Client pre-check & API error | `<p role="alert" className="text-sm text-danger">` | `set()` calling `setError('')` |
-| **Class Create Wizard** | `src/app/(teacher)/class/new/page.tsx` | Multi-step client validation & API banner | `<Input error={...} />` + `<p role="alert">` | `updateField()` deleting `errors[key]` on change |
+| **Class Create Wizard** | `src/app/(teacher)/class/new/page.tsx` | Multi-step client validation & API banner | `<Input error={...} />` + `<p role="alert">` | `updateField()` & `handleRoomChange()` clearing `submitError` and `errors[key]` |
 | **Edit Room Form** | `src/components/settings/edit-room-form.tsx` | Client pre-check & API error | `<p role="alert" className="text-sm text-danger">` | `clearStatus()` on input changes |
 | **Edit Teacher Room Form** | `src/components/settings/edit-teacher-room-form.tsx` | Client pre-check & API error | `<p role="alert" className="text-sm text-danger">` | `clearStatus()` on input changes |
 | **Teacher Profile Form** | `src/components/settings/profile-form.tsx` | Client pre-check & API error | `<p role="alert" className="text-sm text-danger">` | `update()` calling `setError('')` |
-| **Room Creation Step** | `src/components/settings/room-create-step.tsx` | API error banner | `<p role="alert" className="text-sm text-danger">` | Clears on resubmit / step transitions |
-| **Room Search Step** | `src/components/settings/room-search-step.tsx` | API error banner | `<p role="alert" className="text-sm text-danger">` | Clears on search query change |
-| **Room Settings Step** | `src/components/settings/room-settings-step.tsx` | API error banner | `<p role="alert" className="text-sm text-danger">` | Clears on step transitions |
+| **Room Creation Step** | `src/components/settings/room-create-step.tsx` | API error banner | `<p role="alert" className="text-sm text-danger">` | `set()`, `onStreetChange()`, `onPostcodeChange()` clearing `createError` |
+| **Room Search Step** | `src/components/settings/room-search-step.tsx` | API error banner | `<p role="alert" className="text-sm text-danger">` | `onPostcodeChange()` & `onStreetChange()` clearing `searchError` |
+| **Room Settings Step** | `src/components/settings/room-settings-step.tsx` | API error banner | `<p role="alert" className="text-sm text-danger">` | Input `onChange` handlers clearing `settingsError` |
 
 ---
 
