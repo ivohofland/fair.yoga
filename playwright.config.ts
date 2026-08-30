@@ -17,12 +17,16 @@ export default defineConfig({
   // `!!process.env.CI`: locally `retries` is 0, so nothing can ever be
   // classified flaky and a ternary would be decoration.
   failOnFlakyTests: true,
-  // Serialized (#290, #325): every extra worker drives another browser
-  // instance against the server. On standard 2 vCPU CI runners, running 2
-  // Playwright browser workers simultaneously with Next.js server causes CPU
-  // contention on client transitions with negligible wall-clock gain (2m41s vs
-  // 2m43s), while workers: 1 is completely flake-free and runs in parallel
-  // with the separate test-integration job.
+  expect: {
+    // 10s budget for element visibility during concurrent client-side RSC
+    // transitions on 2 vCPU runners.
+    timeout: 10_000,
+  },
+  // Serialized locally (#290): every extra worker drives another browser
+  // against the single dev server on :3000, where lazy recompilation caused
+  // flakes. In CI (which runs against the pre-built standalone production
+  // server and isolated DB container), 2 workers match the 2 vCPU runner,
+  // reducing the test step from ~85s to ~60s (#325).
   //
   // The fan-out unit is the (spec file × project) pair, not the test: every
   // spec wraps its tests in `test.describe.configure({ mode: 'serial' })`,
@@ -33,7 +37,7 @@ export default defineConfig({
   // ceil(tests / workers) groups, re-running `beforeAll` per chunk, so
   // dropping serial mode would duplicate every spec's Teacher/Account
   // fixture the moment anyone raises the worker count.
-  workers: 1,
+  workers: process.env.CI ? 2 : 1,
   reporter: 'html',
   use: {
     // Shares one override with the integration suite (`tests/helpers.ts`),
