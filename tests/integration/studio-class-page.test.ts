@@ -182,6 +182,8 @@ describe('the studio class page: which classes offer removal', () => {
     expect(html).toContain('07:15');
     expect(html).toMatch(/60.*min/);
     expect(html).toMatch(/>Location<\/span>\s*<p[^>]*>Community Studio<\/p>/);
+    expect(html).toContain('Restore class');
+    expect(html).not.toContain('Cancel class');
     expect(html).toContain('Remove this class');
   });
 });
@@ -634,3 +636,36 @@ describe('the studio class edit page', () => {
     expect(html).toContain('Edit class');
   });
 });
+
+/**
+ * Issue 275 — the restore action for cancelled studio classes.
+ *
+ * A cancelled studio class renders "Restore class", which clears `cancelledAt`
+ * via `PUT /api/studio-classes/[id]` with `{ cancelledAt: null }`. A live class
+ * renders "Cancel class" and offers no restoration.
+ */
+describe('the studio class page: the restore action (issue 275)', () => {
+  it('offers restoration on a cancelled class and offers no cancellation', async () => {
+    const sc = await makeClass({
+      date: new Date('2099-08-11T00:00:00.000Z'),
+      startTime: '09:00',
+      cancelledAt: new Date('2026-08-01T10:00:00.000Z'),
+    });
+    const html = await page(sc.id);
+    expect(html).toContain('This class was cancelled.');
+    expect(html).toContain('Restore class');
+    expect(html).not.toContain('Cancel class');
+  });
+
+  it('offers cancellation on a live class and offers no restoration', async () => {
+    const sc = await makeClass({
+      date: new Date('2099-08-12T00:00:00.000Z'),
+      startTime: '09:15',
+      cancelledAt: null,
+    });
+    const html = await page(sc.id);
+    expect(html).toContain('Cancel class');
+    expect(html).not.toContain('Restore class');
+  });
+});
+

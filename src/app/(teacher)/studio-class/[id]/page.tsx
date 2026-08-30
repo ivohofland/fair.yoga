@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/layout/page-header';
 import { StudentCountEditor } from '@/components/studio-class/student-count-editor';
 import { CancelStudioClassButton } from '@/components/studio-class/cancel-studio-class-button';
 import { DeleteStudioClassButton } from '@/components/studio-class/delete-studio-class-button';
+import { RestoreStudioClassButton } from '@/components/studio-class/restore-studio-class-button';
 import { studioClassDeletability } from '@/services/studio-class-deletion';
 import { studioClassEditability } from '@/services/studio-class-editability';
 import { startOfLocalDay } from '@/lib/timezone';
@@ -141,29 +142,27 @@ export default async function StudioClassDetailPage({
             This class was cancelled.
           </div>
 
-          {/* D4 (issue 276): the edit link stays on cancelled NON-past rows.
-              A cancellation is recoverable and gates nothing — hiding the door
-              here while the API still accepts would re-create this issue's own
-              defect shape one state over. */}
-          {scheduleEditable && (
-            <section className="mt-2 pt-6 border-t border-border">
+          <section className="mt-8 pt-6 border-t border-border flex flex-col items-start gap-3">
+            <RestoreStudioClassButton studioClassId={studioClass.id} />
+            {/* D4 (issue 276): the edit link stays on cancelled NON-past rows.
+                A cancellation is recoverable and gates nothing — hiding the door
+                here while the API still accepts would re-create this issue's own
+                defect shape one state over. */}
+            {scheduleEditable && (
               <Link
                 href={`/studio-class/${studioClass.id}/edit`}
                 className="text-teal text-sm no-underline"
               >
                 Edit class<span className="inline-block ml-1.5">&rarr;</span>
               </Link>
-            </section>
-          )}
-
-          {deletable && (
-            <section className="mt-2 pt-6 border-t border-border">
+            )}
+            {deletable && (
               <DeleteStudioClassButton
                 studioClassId={studioClass.id}
                 earningsAtRisk={earningsAtRisk}
               />
-            </section>
-          )}
+            )}
+          </section>
         </>
       ) : (
         <>
