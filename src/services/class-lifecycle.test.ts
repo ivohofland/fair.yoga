@@ -1247,9 +1247,12 @@ describe('completeClass (DB)', () => {
 
     try {
       const startedAt = Date.now();
-      await expect(transitionClass(prisma, cls.id, 'in_progress')).rejects.toThrow();
+      await expect(transitionClass(prisma, cls.id, 'in_progress')).rejects.toThrow(/55P03|lock timeout/i);
       const waited = Date.now() - startedAt;
 
+      // Lower bound proves it waited rather than failing instantly. The 2s
+      // value is pinned by `db-locks.test.ts`, and there is deliberately no
+      // wall-clock upper bound (#323, waitlist.test.ts:525-555).
       expect(waited).toBeGreaterThanOrEqual(1_800);
 
       const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });

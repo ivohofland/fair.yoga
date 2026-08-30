@@ -1909,6 +1909,7 @@ describe('updateStudioClassTemplate (DB)', () => {
         const waited = Date.now() - startedAt;
 
         expect(result).toEqual({ ok: false, reason: 'busy' });
+        // Lower bound proves it waited on the lock. Pinned by db-locks.test.ts (#323, waitlist.test.ts:525-555).
         expect(waited).toBeGreaterThanOrEqual(1_800);
 
         expect(warn).toHaveBeenCalledWith(

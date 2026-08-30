@@ -574,6 +574,7 @@ describe('generateClassInstances (DB)', () => {
           const waited = Date.now() - startedAt;
 
           expect(result).toEqual({ ok: false, reason: 'busy' });
+          // Lower bound proves it waited on the lock. Pinned by db-locks.test.ts (#323, waitlist.test.ts:525-555).
           expect(waited).toBeGreaterThanOrEqual(1_800);
 
           // `target` is asserted because the message cannot carry it: one
@@ -2087,6 +2088,7 @@ describe('generateClassInstances (DB)', () => {
           const waited = Date.now() - startedAt;
 
           expect(result).toEqual({ ok: false, reason: 'busy' });
+          // Lower bound proves it waited on the lock. Pinned by db-locks.test.ts (#323, waitlist.test.ts:525-555).
           expect(waited).toBeGreaterThanOrEqual(1_800);
 
           // The rollback took the flag with it: a resume that answers `busy`
@@ -2198,6 +2200,7 @@ describe('generateClassInstances (DB)', () => {
           const waited = Date.now() - startedAt;
 
           expect(result).toEqual({ ok: false, reason: 'busy' });
+          // Lower bound proves it waited on the lock. Pinned by db-locks.test.ts (#323, waitlist.test.ts:525-555).
           expect(waited).toBeGreaterThanOrEqual(1_800);
 
           // The CAS had already succeeded when the pre-lock blocked (issue
