@@ -1370,6 +1370,18 @@ export async function pauseOrResumeRule<TChild>(
       );
       return { ok: false, reason: 'busy' };
     }
+
+    // A slot exclusion during resume generation is a 409 contention outcome
+    // (issue 301), classified at warn by `classifyApiError`. Log it at warn
+    // here too rather than paging as a service error before rethrowing.
+    if (isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')) {
+      log.warn(
+        { err, templateId, teacherId, target, kind: family.kind },
+        `${family.logNoun} resume generation hit concurrent calendar entry slot exclusion`,
+      );
+      throw err;
+    }
+
     // Everything else is rethrown, and `withErrorHandler` (`src/lib/api-utils.ts`)
     // does log it — with `err`, `method` and `path`, which on this route name
     // neither the template, the teacher, nor the direction. This line is what

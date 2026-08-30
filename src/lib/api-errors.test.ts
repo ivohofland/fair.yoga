@@ -226,6 +226,14 @@ const exclusionConflictErrorFixture = new Prisma.PrismaClientUnknownRequestError
   { clientVersion: 'test' },
 );
 
+const calendarEntryExclusionConflictErrorFixture = new Prisma.PrismaClientUnknownRequestError(
+  'Invalid `db.calendarEntry.create()` invocation\n\nError occurred during query execution:\n' +
+    'ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError ' +
+    '{ code: "23P01", message: "conflicting key value violates exclusion constraint \\"CalendarEntry_teacher_slot_excl\\"", ' +
+    'severity: "ERROR", detail: Some("Key ..."), column: None, hint: None }), transient: false })',
+  { clientVersion: 'test' },
+);
+
 describe('classifyApiError', () => {
   it('maps P2002 to a 409 logged at warn, naming the constraint that fired', () => {
     const failure = classifyApiError(prismaError('P2002', { target: ['teacherId', 'roomId'] }));
@@ -263,6 +271,24 @@ describe('classifyApiError', () => {
     expect(failure.message).toBe(
       'You already have a recurring class or studio class at an overlapping time on that day.',
     );
+    expect(failure.level).toBe('warn');
+  });
+
+  /**
+   * The backstop issue 301 introduced: `CalendarEntry_teacher_slot_excl` is
+   * the entry-level counterpart of `ScheduleRule_teacher_slot_excl`. An
+   * uncaught entry slot exclusion (e.g. from an unlocked-read race during
+   * template resume generation, or an unhandled entry write) maps to a 409
+   * at warn rather than falling through to the generic 500 default.
+   */
+  it('maps a CalendarEntry slot exclusion to a 409 logged at warn, naming neither family', () => {
+    const failure = classifyApiError(calendarEntryExclusionConflictErrorFixture);
+
+    expect(failure.status).toBe(409);
+    expect(failure.message).toBe(
+      'You already have a class or studio class at an overlapping time on that date.',
+    );
+    expect(failure.logMessage).toBe('calendar entry slot exclusion escaped a route to the 409 fallback');
     expect(failure.level).toBe('warn');
   });
 

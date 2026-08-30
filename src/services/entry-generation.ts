@@ -785,9 +785,9 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
   // correctly declines, and the rethrow costs the whole window anyway. It also
   // cost more than that: the escaping error stopped being the `YG001` that the
   // two template POST catches used to match, and the other generation-wrapping
-  // callers let it reach `withErrorHandler`, where `classifyApiError` has no
-  // arm for it and answers 500 — filed as #301. So a 409 the app knew how to
-  // word became a 500 here too. Two template POSTs — not the count of
+  // callers let it reach `withErrorHandler`, where `classifyApiError` had no
+  // arm for it and answered 500 — filed as #301, and since closed by adding
+  // `CalendarEntry_teacher_slot_excl` to `classifyApiError`. Two template POSTs — not the count of
   // endpoints answering a cross-family 409, and not the count of route files
   // holding them. `docs/lock-order.md` owns that census; the three numbers are
   // not interchangeable.

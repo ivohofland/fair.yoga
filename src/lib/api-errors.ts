@@ -528,6 +528,21 @@ export function classifyApiError(error: unknown): ApiFailure {
     };
   }
 
+  // The entry-level equivalent of the ScheduleRule exclusion branch above
+  // (issue 301): an uncaught violation of `CalendarEntry_teacher_slot_excl`
+  // (e.g. from an unlocked-read race during template resume generation, or
+  // an entry write that raced and lost). Like the ScheduleRule branch, this has
+  // neither a probe nor a teacher in scope, so it answers 409 with the
+  // non-family-specific date fallback sentence.
+  if (isExclusionConflictOn(error, 'CalendarEntry_teacher_slot_excl')) {
+    return {
+      status: 409,
+      message: 'You already have a class or studio class at an overlapping time on that date.',
+      logMessage: 'calendar entry slot exclusion escaped a route to the 409 fallback',
+      level: 'warn',
+    };
+  }
+
   return {
     status: 500,
     message: 'Internal server error',
