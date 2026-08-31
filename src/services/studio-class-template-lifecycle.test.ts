@@ -776,7 +776,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   const dayOfWeekNeverToday = () => {
     const jsDay = new Date().getUTCDay(); // 0=Sun … 6=Sat
     const schemaToday = (jsDay + 6) % 7; // schema: 0=Mon … 6=Sun
-    return (schemaToday + 6) % 7; // yesterday's weekday in schema: occurrences always begin in next week
+    return (schemaToday + 2) % 7;
   };
 
   // Counter-derived startTime, separate from makeTemplate's own counter
@@ -1213,11 +1213,13 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw new Error('expected ok');
     if (resumed.action !== 'active') throw new Error('expected the active action');
-    expect(resumed.added).toBe(4);
-    // Four generated plus today's = 5. The cancelled one does not count. This
+    // Under week-keyed generation (issue 284), today's class on t.scheduleRuleId
+    // occupies week 1, so generation adds 3 occurrences (weeks 2, 3, 4).
+    expect(resumed.added).toBe(3);
+    // Three generated plus today's = 4. The cancelled one does not count. This
     // is the only place in the branch where the two numbers genuinely differ,
     // which is what makes it the isolator for the `cancelledAt` filter.
-    expect(resumed.scheduled).toBe(5);
+    expect(resumed.scheduled).toBe(4);
   });
 
   it('generates nothing when pausing', async () => {
