@@ -107,10 +107,21 @@ test.describe('Recurring classes', () => {
       // closes the window today; this closes the hole (#290).
       await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     }
-    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
-    await prisma.room.delete({ where: { id: roomId } });
-    await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
+    if (teacherId) {
+      await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+      const tAcct = await accountIdOfTeacher(prisma, teacherId);
+      if (tAcct) {
+        await prisma.session.deleteMany({ where: { accountId: tAcct } });
+      }
+    }
+    if (roomId) {
+      await prisma.room.deleteMany({ where: { id: roomId } });
+    }
+    if (teacherId) {
+      await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    }
+    // Issue 177: Account must be deleted after Teacher due to FK reference
+    await prisma.account.deleteMany({ where: { email: `e2e-recurring-${suffix}@test.local` } });
     await prisma.$disconnect();
   });
 

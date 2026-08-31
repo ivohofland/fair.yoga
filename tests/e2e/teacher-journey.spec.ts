@@ -17,6 +17,7 @@ const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
 
 let teacherId: string;
+let teacherAccountId: string;
 let teacherToken: string;
 let bookingStudentId: string;
 let bookingStudentToken: string;
@@ -55,7 +56,8 @@ test.describe('Teacher journey', () => {
       },
     });
     teacherId = teacher.id;
-    teacherToken = await seedSession(prisma, await accountIdOfTeacher(prisma, teacherId));
+    teacherAccountId = teacher.accountId;
+    teacherToken = await seedSession(prisma, teacherAccountId);
 
     // This student signs in to book, so they are claimed, and their privacy
     // row shares NOTHING — so wherever this spec renders their name through
@@ -177,7 +179,13 @@ test.describe('Teacher journey', () => {
     // Both students are claimed now, so both own an Account — delete them
     // after the Student rows that point at them.
     await prisma.account.deleteMany({ where: { id: { in: studentAccountIds } } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
+    if (teacherId) {
+      await prisma.teacher.delete({ where: { id: teacherId } });
+    }
+    // Issue 177: Account must be deleted after Teacher due to FK reference
+    if (teacherAccountId) {
+      await prisma.account.deleteMany({ where: { id: teacherAccountId } });
+    }
     await prisma.$disconnect();
   });
 

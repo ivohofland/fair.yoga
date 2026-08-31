@@ -19,6 +19,8 @@ describe('Room.isPublic column default', () => {
     await prisma.teacher.deleteMany({
       where: { pageSlug: { in: [`roomdefault-${suffix}`, `roomrawdefault-${suffix}`] } },
     });
+    // Issue 177: Account must be deleted after Teacher due to FK reference
+    await prisma.account.deleteMany({ where: { email: { contains: suffix } } });
     await prisma.$disconnect();
   });
 

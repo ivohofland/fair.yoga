@@ -53,10 +53,19 @@ describe('POST /api/notifications/[id]/read — student recipients', () => {
       where: { id: { in: studentIds } },
       select: { accountId: true },
     });
-    await prisma.session.deleteMany({
-      where: { accountId: { in: accounts.map((a) => a.accountId!) } },
-    });
+    const accountIds = accounts.map((a) => a.accountId).filter((id): id is string => Boolean(id));
+    if (accountIds.length > 0) {
+      await prisma.session.deleteMany({
+        where: { accountId: { in: accountIds } },
+      });
+    }
     await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    // Issue 177: Account must be deleted after Student due to FK reference
+    if (accountIds.length > 0) {
+      await prisma.account.deleteMany({
+        where: { id: { in: accountIds } },
+      });
+    }
     await prisma.$disconnect();
   });
 

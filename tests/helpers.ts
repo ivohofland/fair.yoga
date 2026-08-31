@@ -224,3 +224,65 @@ export async function waitFor<T>(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 }
+
+/**
+ * Teardown helper for tests that manage a Teacher fixture.
+ * Deletes associated sessions, passkeys, teacher, and finally the parent Account (FK order).
+ */
+export async function teardownTeacher(
+  db: PrismaClient,
+  teacherId: string | undefined | null,
+  accountId?: string | null,
+): Promise<void> {
+  if (!teacherId) return;
+
+  let resolvedAccountId = accountId ?? undefined;
+  if (!resolvedAccountId) {
+    const teacher = await db.teacher.findUnique({
+      where: { id: teacherId },
+      select: { accountId: true },
+    });
+    resolvedAccountId = teacher?.accountId;
+  }
+
+  if (resolvedAccountId) {
+    await db.session.deleteMany({ where: { accountId: resolvedAccountId } });
+    await db.passkeyCredential.deleteMany({ where: { accountId: resolvedAccountId } });
+  }
+  await db.teacher.deleteMany({ where: { id: teacherId } });
+  if (resolvedAccountId) {
+    await db.account.deleteMany({ where: { id: resolvedAccountId } });
+  }
+}
+
+/**
+ * Teardown helper for tests that manage a Student fixture.
+ * Deletes associated sessions, passkeys, student, and finally the parent Account (FK order).
+ */
+export async function teardownStudent(
+  db: PrismaClient,
+  studentId: string | undefined | null,
+  accountId?: string | null,
+): Promise<void> {
+  if (!studentId) return;
+
+  let resolvedAccountId = accountId ?? undefined;
+  if (!resolvedAccountId) {
+    const student = await db.student.findUnique({
+      where: { id: studentId },
+      select: { accountId: true },
+    });
+    resolvedAccountId = student?.accountId ?? undefined;
+  }
+
+  if (resolvedAccountId) {
+    await db.session.deleteMany({ where: { accountId: resolvedAccountId } });
+    await db.passkeyCredential.deleteMany({ where: { accountId: resolvedAccountId } });
+  }
+  await db.student.deleteMany({ where: { id: studentId } });
+  if (resolvedAccountId) {
+    await db.account.deleteMany({ where: { id: resolvedAccountId } });
+  }
+}
+
+

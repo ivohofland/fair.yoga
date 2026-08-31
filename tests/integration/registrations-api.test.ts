@@ -267,19 +267,25 @@ afterAll(async () => {
     where: { id: { in: studentIds } },
     select: { accountId: true },
   });
-  await prisma.session.deleteMany({
-    where: {
-      accountId: {
-        in: [
-          ownerAccountIdForCleanup,
-          otherAccountIdForCleanup,
-          ...studentAccounts.map((a) => a.accountId!),
-        ],
-      },
-    },
-  });
+  const allAccountIds = [
+    ownerAccountIdForCleanup,
+    otherAccountIdForCleanup,
+    ...studentAccounts.map((a) => a.accountId),
+  ].filter((id): id is string => Boolean(id));
+
+  if (allAccountIds.length > 0) {
+    await prisma.session.deleteMany({
+      where: { accountId: { in: allAccountIds } },
+    });
+  }
   await prisma.student.deleteMany({ where: { id: { in: [...studentIds, unlinkedStudentId] } } });
   await prisma.teacher.deleteMany({ where: { id: { in: [ownerId, otherTeacherId] } } });
+  // Issue 177: Account must be deleted after Student/Teacher due to FK reference
+  if (allAccountIds.length > 0) {
+    await prisma.account.deleteMany({
+      where: { id: { in: allAccountIds } },
+    });
+  }
   await prisma.$disconnect();
 });
 

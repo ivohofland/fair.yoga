@@ -152,6 +152,8 @@ test.describe('Studio class templates', () => {
       await prisma.scheduleRule.deleteMany({ where: { teacherId } });
       await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });
       await prisma.teacher.delete({ where: { id: teacherId } });
+      // Issue 177: Account must be deleted after Teacher due to FK reference
+      await prisma.account.deleteMany({ where: { email: `e2e-studio-${suffix}@test.local` } });
     }
     await prisma.$disconnect();
   });
@@ -476,6 +478,8 @@ test.describe('One-off studio classes', () => {
         where: { accountId: await accountIdOfTeacher(prisma, soloTeacherId) },
       });
       await prisma.teacher.delete({ where: { id: soloTeacherId } });
+      // Issue 177: Account must be deleted after Teacher due to FK reference
+      await prisma.account.deleteMany({ where: { email: `e2e-studio-solo-${suffix}@test.local` } });
     }
     await prisma.$disconnect();
   });

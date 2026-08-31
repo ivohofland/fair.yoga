@@ -19,6 +19,7 @@ const slug = `e2e-sjourney-${suffix}`;
 let tokens: { alice: string; bram: string };
 
 let teacherId: string;
+let teacherAccountId: string;
 let roomId: string;
 let classId: string;
 let aliceId: string;
@@ -53,6 +54,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
       },
     });
     teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
 
     const room = await prisma.room.create({
       data: {
@@ -130,13 +132,28 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     }
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
+    const studentAccountIds: string[] = [];
     for (const sid of [aliceId, bramId]) {
-      await prisma.session.deleteMany({
-        where: { accountId: await accountIdOfStudent(prisma, sid) },
+      const student = await prisma.student.findUnique({
+        where: { id: sid },
+        select: { accountId: true },
       });
+      if (student?.accountId) {
+        await prisma.session.deleteMany({ where: { accountId: student.accountId } });
+        studentAccountIds.push(student.accountId);
+      }
     }
     await prisma.student.deleteMany({ where: { id: { in: [aliceId, bramId] } } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
+    if (teacherId) {
+      await prisma.teacher.delete({ where: { id: teacherId } });
+    }
+    // Issue 177: Account must be deleted after Student/Teacher due to FK reference
+    if (studentAccountIds.length > 0) {
+      await prisma.account.deleteMany({ where: { id: { in: studentAccountIds } } });
+    }
+    if (teacherAccountId) {
+      await prisma.account.deleteMany({ where: { id: teacherAccountId } });
+    }
     await prisma.$disconnect();
   });
 

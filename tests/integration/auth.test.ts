@@ -54,10 +54,13 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  const accountIds = [teacherAccountId, studentAccountId].filter((id): id is string => Boolean(id));
   // Clean up sessions and tokens first, then users
-  await prisma.session.deleteMany({
-    where: { accountId: { in: [teacherAccountId, studentAccountId] } },
-  });
+  if (accountIds.length > 0) {
+    await prisma.session.deleteMany({
+      where: { accountId: { in: accountIds } },
+    });
+  }
   await prisma.magicLinkToken.deleteMany({
     where: {
       email: {
@@ -68,8 +71,18 @@ afterAll(async () => {
       },
     },
   });
-  await prisma.student.delete({ where: { id: studentId } });
-  await prisma.teacher.delete({ where: { id: teacherId } });
+  if (studentId) {
+    await prisma.student.deleteMany({ where: { id: studentId } });
+  }
+  if (teacherId) {
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+  }
+  // Issue 177: Account must be deleted after Student/Teacher due to FK reference
+  if (accountIds.length > 0) {
+    await prisma.account.deleteMany({
+      where: { id: { in: accountIds } },
+    });
+  }
   await prisma.$disconnect();
 });
 

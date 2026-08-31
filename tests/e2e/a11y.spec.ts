@@ -122,30 +122,34 @@ test.describe('Accessibility sweep', () => {
   });
 
   test.afterAll(async () => {
-    await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
-    await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.teacherStudent.deleteMany({ where: { teacherId } });
-    // Guarded, because the delete widened at #327. `class.deleteMany({ where:
-    // { teacherId } })` used to sit here; the calendar identity moved, so it is
-    // the ENTRY that carries `teacherId` and the entry that has to go (the
-    // classes ride its cascade). Prisma DROPS an `undefined` where-clause
-    // rather than matching nothing, and Playwright runs `afterAll` even when
-    // `beforeAll` threw before this id was assigned — so the unguarded form
-    // used to empty `Class` and would now empty BOTH families' calendars for
-    // every teacher in the database.
-    if (teacherId) {
-      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    if (classId) {
+      await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+      await prisma.registration.deleteMany({ where: { classId } });
     }
-    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
-    await prisma.room.delete({ where: { id: roomId } });
-    await prisma.session.deleteMany({
-      where: { accountId: await accountIdOfTeacher(prisma, teacherId) },
-    });
-    await prisma.session.deleteMany({
-      where: { accountId: await accountIdOfStudent(prisma, studentId) },
-    });
-    await prisma.student.delete({ where: { id: studentId } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
+    if (teacherId) {
+      await prisma.teacherStudent.deleteMany({ where: { teacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+      const tAcct = await accountIdOfTeacher(prisma, teacherId);
+      if (tAcct) {
+        await prisma.session.deleteMany({ where: { accountId: tAcct } });
+      }
+    }
+    if (roomId) {
+      await prisma.room.deleteMany({ where: { id: roomId } });
+    }
+    if (studentId) {
+      const sAcct = await accountIdOfStudent(prisma, studentId);
+      if (sAcct) {
+        await prisma.session.deleteMany({ where: { accountId: sAcct } });
+      }
+      await prisma.student.deleteMany({ where: { id: studentId } });
+    }
+    if (teacherId) {
+      await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    }
+    // Issue 177: Account must be deleted after Student/Teacher due to FK reference
+    await prisma.account.deleteMany({ where: { email: { contains: suffix } } });
     await prisma.$disconnect();
   });
 

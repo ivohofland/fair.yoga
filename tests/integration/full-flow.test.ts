@@ -73,6 +73,8 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
     if (teacherId) {
       await prisma.teacher.delete({ where: { id: teacherId } });
     }
+    // Issue 177: Account must be deleted after Student/Teacher due to FK reference
+    await prisma.account.deleteMany({ where: { email: { contains: suffix } } });
     await prisma.$disconnect();
   });
 

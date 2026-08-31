@@ -67,10 +67,18 @@ afterAll(async () => {
       where: { accountId: teacherAccountId },
     });
   }
-  await prisma.student.deleteMany({
-    where: { id: { in: studentIds } },
-  });
-  await prisma.teacher.delete({ where: { id: teacherId } });
+  if (studentIds.length > 0) {
+    await prisma.student.deleteMany({
+      where: { id: { in: studentIds } },
+    });
+  }
+  if (teacherId) {
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+  }
+  // Issue 177: Account must be deleted after Teacher due to FK reference
+  if (teacherAccountId) {
+    await prisma.account.deleteMany({ where: { id: teacherAccountId } });
+  }
   await prisma.$disconnect();
 });
 

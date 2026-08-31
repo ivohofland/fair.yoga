@@ -139,6 +139,8 @@ export function fixtureRun(prefix: string) {
     await db.teacherRoom.deleteMany({ where: mine });
     await db.room.deleteMany({ where: { createdBy: { pageSlug: { startsWith: suffix } } } });
     await db.teacher.deleteMany({ where: { pageSlug: { startsWith: suffix } } });
+    // Issue 177: Account must be deleted after Teacher due to FK reference
+    await db.account.deleteMany({ where: { email: { startsWith: suffix } } });
   }
 
   return { suffix, makeFixture, addClass, addTemplate, cleanup };

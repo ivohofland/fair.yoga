@@ -47,9 +47,16 @@ test.describe('Magic link authentication', () => {
   });
 
   test.afterAll(async () => {
-    await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });
+    if (teacherId) {
+      const tAcct = await accountIdOfTeacher(prisma, teacherId);
+      if (tAcct) {
+        await prisma.session.deleteMany({ where: { accountId: tAcct } });
+      }
+      await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    }
     await prisma.magicLinkToken.deleteMany({ where: { email: teacherEmail } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
+    // Issue 177: Account must be deleted after Teacher due to FK reference
+    await prisma.account.deleteMany({ where: { email: teacherEmail } });
     await prisma.$disconnect();
   });
 

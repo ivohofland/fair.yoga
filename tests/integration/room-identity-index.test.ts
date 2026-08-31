@@ -55,6 +55,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.room.deleteMany({ where: { address: { in: [address, variantAddress] } } });
   await prisma.teacher.deleteMany({ where: { pageSlug: `roomagree-${suffix}` } });
+  // Issue 177: Account must be deleted after Teacher due to FK reference
+  await prisma.account.deleteMany({ where: { email: { contains: suffix } } });
   await prisma.$disconnect();
 });
 
