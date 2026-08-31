@@ -13,16 +13,38 @@ interface Bucket {
   expiresAt: number;
 }
 
-const buckets = new Map<string, Bucket>();
+interface PrefixState {
+  buckets: Map<string, Bucket>;
+  lastEvictionLogTime: number;
+  suppressedEvictions: number;
+}
 
-/** Bound the map so a scanner cycling keys cannot grow memory unbounded. */
-export const MAX_KEYS = 10_000;
+const prefixStates = new Map<string, PrefixState>();
+
+export const DEFAULT_PREFIX_CAPACITY = 2_000;
+
+export const PREFIX_CAPACITIES: Record<string, number> = {
+  'magic-link': 5_000,
+  'students': 2_000,
+  'student-signup': 2_000,
+  'teacher-signup': 1_000,
+};
 
 /** Bounded scan limit to reclaim dead buckets without hot-path latency spikes. */
 const MAX_SCAN = 50;
 
-let lastEvictionLogTime = 0;
-let suppressedEvictions = 0;
+function getPrefixState(prefix: string): PrefixState {
+  let state = prefixStates.get(prefix);
+  if (!state) {
+    state = {
+      buckets: new Map<string, Bucket>(),
+      lastEvictionLogTime: 0,
+      suppressedEvictions: 0,
+    };
+    prefixStates.set(prefix, state);
+  }
+  return state;
+}
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -40,6 +62,10 @@ export function checkRateLimit(
   windowMs: number,
   now: number = Date.now(),
 ): RateLimitResult {
+  const prefix = key.includes(':') ? key.split(':')[0]! : 'default';
+  const state = getPrefixState(prefix);
+  const buckets = state.buckets;
+  const capacity = PREFIX_CAPACITIES[prefix] ?? DEFAULT_PREFIX_CAPACITY;
   const cutoff = now - windowMs;
 
   let bucket = buckets.get(key);
@@ -48,7 +74,7 @@ export function checkRateLimit(
     buckets.delete(key);
     buckets.set(key, bucket);
   } else {
-    if (buckets.size >= MAX_KEYS) {
+    if (buckets.size >= capacity) {
       // Bounded scan from head for expired buckets to reclaim dead slots
       let scanned = 0;
       for (const [k, v] of buckets) {
@@ -56,24 +82,23 @@ export function checkRateLimit(
         if (v.expiresAt <= now) {
           buckets.delete(k);
         }
-        if (buckets.size < MAX_KEYS || scanned >= MAX_SCAN) break;
+        if (buckets.size < capacity || scanned >= MAX_SCAN) break;
       }
 
       // If still at capacity, evict the true LRU entry at the head of the Map
-      if (buckets.size >= MAX_KEYS) {
+      if (buckets.size >= capacity) {
         const oldestKey = buckets.keys().next().value;
         if (oldestKey !== undefined) {
           buckets.delete(oldestKey);
-          const keyPrefix = oldestKey.split(':')[0]!;
-          if (now - lastEvictionLogTime >= 60_000 || lastEvictionLogTime === 0) {
+          if (now - state.lastEvictionLogTime >= 60_000 || state.lastEvictionLogTime === 0) {
             log.warn(
-              { keyPrefix, capacity: MAX_KEYS, evictedCount: suppressedEvictions + 1 },
+              { keyPrefix: prefix, capacity, evictedCount: state.suppressedEvictions + 1 },
               'Rate limit bucket evicted under memory pressure',
             );
-            lastEvictionLogTime = now;
-            suppressedEvictions = 0;
+            state.lastEvictionLogTime = now;
+            state.suppressedEvictions = 0;
           } else {
-            suppressedEvictions++;
+            state.suppressedEvictions++;
           }
         }
       }
@@ -118,9 +143,7 @@ export function checkStudentWriteLimit(teacherId: string): RateLimitResult {
 
 /** Test helper: forget all recorded hits. */
 export function resetRateLimits(): void {
-  buckets.clear();
-  lastEvictionLogTime = 0;
-  suppressedEvictions = 0;
+  prefixStates.clear();
 }
 
 /**
