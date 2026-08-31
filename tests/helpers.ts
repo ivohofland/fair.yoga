@@ -106,22 +106,21 @@ export function uniqueSuffix(): string {
  * A unique `x-forwarded-for` per call, so a request lands in a rate-limit
  * bucket nothing else has touched.
  *
- * Three routes throttle per IP — `POST /api/auth/magic-link/send`,
- * `POST /api/auth/student-signup` and `POST /api/teachers` — and
- * `clientIp()` (`src/lib/rate-limit.ts`) reads the last comma-separated
- * entry of this header. Before this helper existed, the suite hard-coded
+ * Every route with an IP-keyed bucket — one per member of `IpRateLimitPrefix`
+ * (`src/lib/rate-limit.ts`) — reads the last comma-separated entry of this
+ * header via `clientIp()`. Before this helper existed, the suite hard-coded
  * IPs and shared them across calls; five calls against `student-signup`'s
  * 5/hour budget left exactly zero headroom, so one pass spent it and the
  * next 429'd. The suite could not be run twice in an hour and therefore was
  * never run whole.
  *
  * A fresh address *per request* — not per file — is what fixes that: every
- * bucket the suite builds this way stays at 1, so no aggregate call count
- * matters any more. See `docs/technical-architecture.md`'s "Rate-limited
- * auth routes" section for the tests that deliberately reuse one address
- * instead, to exercise that reused bucket itself. Per-file uniqueness alone
- * would not have been enough — it would have left every route's calls within
- * one file sharing a bucket, the same tripwire with a bigger number.
+ * bucket a call builds this way stays at 1, unless a test deliberately
+ * reuses the result to exercise that bucket itself. See
+ * `docs/technical-architecture.md`'s "Rate-limited auth routes" section for
+ * which tests do that. Per-file uniqueness alone would not have been
+ * enough — it would have left every route's calls within one file sharing a
+ * bucket, the same tripwire with a bigger number.
  *
  * A random 24-bit base picks the starting point somewhere in 10.0.0.0/8, and
  * the sequence walks forward from there by construction — not chance — so

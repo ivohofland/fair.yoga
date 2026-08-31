@@ -346,7 +346,7 @@ describe('checkIpRateLimit', () => {
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenLastCalledWith(
       { route: 'teachers' },
-      'Rate limit IP check skipped: client IP could not be resolved',
+      'Rate limit IP check degraded to a shared bucket: client IP could not be resolved',
     );
 
     // A second unresolved-IP call on a DIFFERENT route within 60s is throttled — this is a

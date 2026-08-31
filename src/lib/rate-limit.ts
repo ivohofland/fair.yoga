@@ -49,8 +49,11 @@ export const PREFIX_CAPACITIES = {
   'teacher-signup': 1_000,
 } as const satisfies Record<RateLimitPrefix, number>;
 
-// Longest-registered-prefix first, so e.g. 'student-signup:email' matches
-// before the shorter 'student-signup:ip' sibling could.
+// Longest first: today's registered prefixes are mutually exclusive
+// siblings (':ip' can never prefix-match ':email' or vice versa), so this
+// order is inert for them — it only matters if a future prefix is itself a
+// colon-prefix of another (e.g. registering both 'magic-link' and
+// 'magic-link:ip'), in which case it resolves to the more specific one.
 const REGISTERED_PREFIXES = Object.keys(PREFIX_CAPACITIES).sort((a, b) => b.length - a.length);
 
 /**
@@ -219,10 +222,10 @@ let lastUnresolvedIpLogTime = 0;
 function warnUnresolvedClientIp(route: string, now: number): void {
   if (now - lastUnresolvedIpLogTime < WARNING_LOG_THROTTLE_MS) return;
   lastUnresolvedIpLogTime = now;
-  log.warn({ route }, 'Rate limit IP check skipped: client IP could not be resolved');
+  log.warn({ route }, 'Rate limit IP check degraded to a shared bucket: client IP could not be resolved');
 }
 
-type IpRateLimitPrefix = Extract<RateLimitPrefix, 'magic-link:ip' | 'student-signup:ip' | 'teacher-signup'>;
+export type IpRateLimitPrefix = Extract<RateLimitPrefix, 'magic-link:ip' | 'student-signup:ip' | 'teacher-signup'>;
 
 /**
  * IP-keyed rate limit for an unauthenticated route. An unresolved IP is

@@ -102,6 +102,38 @@ describe('POST /api/teachers', () => {
     expect(teacher).not.toBeNull();
     expect(teacher!.account.email).toBe(email);
   });
+
+  /**
+   * #168 follow-up: this route has no per-email backstop (an unclaimed email
+   * is exactly what a legitimate signup submits), so its IP check used to
+   * fail OPEN when `clientIp()` couldn't resolve an address — a broken
+   * nginx config would silently remove all throttling. `checkIpRateLimit`
+   * now routes every such caller into one shared bucket instead.
+   *
+   * That bucket (capacity 3/hour) is shared process-wide, not per-test, so a
+   * prior run may have already spent part of it — hammering it 5 times
+   * (more than its capacity) and asserting at least one 429 shows up holds
+   * regardless of how much budget was already gone going in.
+   */
+  it('does not bypass the IP limit when neither x-forwarded-for nor x-real-ip is present', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const res = await fetch(`${BASE_URL}/api/teachers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, // deliberately no IP header
+        body: JSON.stringify({
+          firstName: 'NoIp',
+          lastName: 'Attempt',
+          email: `signup-no-ip-${i}-${suffix}@test.local`,
+          bio: 'No-IP-header fixtures',
+          pageSlug: `signup-no-ip-${i}-${suffix}`,
+        }),
+      });
+      statuses.push(res.status);
+    }
+    statuses.forEach((status) => expect([201, 429]).toContain(status));
+    expect(statuses).toContain(429);
+  });
 });
 
 describe('POST /api/auth/student-signup', () => {
