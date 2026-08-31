@@ -2,7 +2,26 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { mondayOf } from '@/lib/timezone';
 import { log } from '@/lib/log';
-import { getNextOccurrences, firstFreeWeek, probeFirstEffectiveWeek } from './entry-generation';
+import { getNextOccurrences, isWeekHeld, firstFreeWeek, probeFirstEffectiveWeek } from './entry-generation';
+
+/**
+ * Compile-time assertion that `isWeekHeld` and `firstFreeWeek` require branded
+ * `WeekKey`s rather than plain `number`s (epoch timestamps).
+ *
+ * `tsconfig.json` includes every `.ts` file in the repo, so loosening `WeekKey`
+ * back to `number` makes `tsc --noEmit` fail on the unused `@ts-expect-error`
+ * directives below (issue #286). Mirrors `src/lib/db-locks.test.ts`.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _theBrandRejectsUnbrandedEpochMs(
+  epochTimestamps: ReadonlySet<number>,
+  date: Date,
+): void {
+  // @ts-expect-error Set<number> of epoch timestamps must not satisfy ReadonlySet<WeekKey>
+  isWeekHeld(date, epochTimestamps);
+  // @ts-expect-error Set<number> of epoch timestamps must not satisfy ReadonlySet<WeekKey>
+  firstFreeWeek([date], epochTimestamps);
+}
 
 // ===========================================================================
 // Pure logic tests — getNextOccurrences

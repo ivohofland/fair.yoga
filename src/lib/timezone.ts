@@ -120,18 +120,24 @@ export function startOfLocalWeek(instant: Date, timeZone: string): Date {
   return day;
 }
 
+declare const WeekKeyBrand: unique symbol;
+
 /**
- * The UTC-midnight Monday of the week containing `date`, as epoch-ms.
+ * A branded timestamp (epoch-ms at UTC midnight on Monday) representing a calendar week.
  *
- * Takes a CALENDAR DATE — a `@db.Date` value, or anything built with
- * `Date.UTC` — and takes no timezone, deliberately. Contrast
- * `startOfLocalWeek` directly above, which takes an INSTANT and resolves it
- * through `Intl` first. The two are not interchangeable and confusing them is
- * a live defect, not a style question: feeding a `@db.Date` (midnight UTC) to
- * `startOfLocalWeek` reads that instant in the target zone, and west of UTC
- * that is the previous calendar day — for a Monday class, the previous week.
- * Issue #194's own text told an implementer to do exactly that; see the spec's
- * §1.4.
+ * Distinct from arbitrary epoch-ms timestamps (`date.getTime()`) to prevent
+ * accidental transpositions in functions that accept both week keys and date timestamps
+ * (Issue #286).
+ */
+export type WeekKey = number & { readonly [WeekKeyBrand]: true };
+
+/**
+ * The Monday of the week containing a calendar date, at 00:00:00.000 UTC.
+ *
+ * Pure UTC calendar arithmetic, taking a DATE, not an instant (rule one).
+ * Contrast with `startOfLocalWeek`: that takes an instant and an IANA zone,
+ * producing a local-midnight instant whose UTC representation depends on the
+ * zone.
  *
  * `class-list.tsx` is the worked example of the pair: it calls this on
  * `item.data.date` (a calendar date, no zone) and `startOfLocalWeek` on `now`
@@ -142,11 +148,11 @@ export function startOfLocalWeek(instant: Date, timeZone: string): Date {
  * forward one — which is what puts a Sunday and the following Monday in
  * different weeks.
  */
-export function mondayOf(date: Date): number {
+export function mondayOf(date: Date): WeekKey {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const day = d.getUTCDay();
   d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
-  return d.getTime();
+  return d.getTime() as WeekKey;
 }
 
 /**

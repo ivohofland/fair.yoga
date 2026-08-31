@@ -30,7 +30,7 @@ import { spansOverlap } from '@/lib/generation';
 import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { probeOverlappingCandidates } from '@/lib/entry-conflict';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
-import { classStartInstant, mondayOf } from '@/lib/timezone';
+import { classStartInstant, mondayOf, type WeekKey } from '@/lib/timezone';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
@@ -144,7 +144,7 @@ export function getNextOccurrences(
  * construction is the one half of "held" this function cannot enforce for
  * them.
  */
-export function isWeekHeld(date: Date, heldWeeks: ReadonlySet<number>): boolean {
+export function isWeekHeld(date: Date, heldWeeks: ReadonlySet<WeekKey>): boolean {
   return heldWeeks.has(mondayOf(date));
 }
 
@@ -155,6 +155,9 @@ export function isWeekHeld(date: Date, heldWeeks: ReadonlySet<number>): boolean 
  * Pure. Its caller is `probeFirstEffectiveWeek`, further below in this file —
  * called in turn by each family's `update…Template`, deciding what to tell the
  * teacher.
+ *
+ * Precondition: `candidates` must be ordered chronologically ascending so that
+ * "first" genuinely names the earliest available week (#286).
  *
  * `generateEntriesForRule` below does NOT call it, and the plan's
  * "one function, two callers" line is corrected here rather than upheld: the
@@ -174,7 +177,7 @@ export function isWeekHeld(date: Date, heldWeeks: ReadonlySet<number>): boolean 
  */
 export function firstFreeWeek(
   candidates: readonly Date[],
-  heldWeeks: ReadonlySet<number>,
+  heldWeeks: ReadonlySet<WeekKey>,
 ): Date | null {
   for (const date of candidates) {
     if (!isWeekHeld(date, heldWeeks)) return date;

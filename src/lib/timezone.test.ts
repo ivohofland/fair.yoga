@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { classStartInstant, startsInPast, startOfLocalDay, startOfLocalWeek, mondayOf } from './timezone';
+import { classStartInstant, startsInPast, startOfLocalDay, startOfLocalWeek, mondayOf, type WeekKey } from './timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
@@ -433,3 +433,12 @@ describe('mondayOf', () => {
     expect(iso(mondayOf(new Date('2026-09-14T00:00:00.000Z')))).toBe('2026-09-14T00:00:00.000Z');
   });
 });
+
+/**
+ * Compile-time assertion that `WeekKey` cannot be assigned from a plain `number` without a cast (#286).
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _theBrandRejectsPlainNumber(n: number): WeekKey {
+  // @ts-expect-error Plain number cannot be assigned to WeekKey
+  return n;
+}
