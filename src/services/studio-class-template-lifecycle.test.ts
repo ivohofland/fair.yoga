@@ -752,16 +752,16 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
       });
 
   /**
-   * A `dayOfWeek` two days out, so a generated window never contains a class
-   * dated today. The archive's delete boundary is `gt: today` while the counts
-   * are `gte: today`, so a today-dated class changes the expected numbers in
-   * the two tests below — and whether one exists depends on what weekday the
-   * suite happens to run on. Pinned rather than left to chance: a test whose
-   * expectations shift with the calendar is the #138 shape, where a check
-   * passed because both code paths agreed at the hour it ran.
+   * A `dayOfWeek` set to yesterday's weekday in schema terms (e.g. Sunday on Monday,
+   * Monday on Tuesday), so that the first generated occurrence is guaranteed to
+   * land in week 1 (next week) on every day of the week (Monday through Sunday).
    *
-   * Two days rather than one so a run that crosses local midnight cannot turn
-   * "tomorrow" into "today" mid-test.
+   * Under week-keyed generation (issue 284), a fixture on `new Date()` (today, week 0)
+   * would hold week 1 if the template's day-of-week fell later in the same calendar week,
+   * causing generated `added` to vary between 3 (on weekdays) and 4 (on weekends).
+   * By choosing yesterday's weekday, the current week has always already elapsed for this
+   * weekday, ensuring the 4 generated occurrences are in weeks 1-4 and strictly disjoint
+   * from today (week 0) across all 7 days of the week.
    *
    * This helper is only date-independent because `seedTeacher` pins
    * `defaultTimezone: 'UTC'` (see its comment, which #123 put there). That pin
@@ -776,7 +776,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   const dayOfWeekNeverToday = () => {
     const jsDay = new Date().getUTCDay(); // 0=Sun … 6=Sat
     const schemaToday = (jsDay + 6) % 7; // schema: 0=Mon … 6=Sun
-    return (schemaToday + 2) % 7;
+    return (schemaToday + 6) % 7;
   };
 
   // Counter-derived startTime, separate from makeTemplate's own counter
@@ -1213,13 +1213,13 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw new Error('expected ok');
     if (resumed.action !== 'active') throw new Error('expected the active action');
-    // Under week-keyed generation (issue 284), today's class on t.scheduleRuleId
-    // occupies week 1, so generation adds 3 occurrences (weeks 2, 3, 4).
-    expect(resumed.added).toBe(3);
-    // Three generated plus today's = 4. The cancelled one does not count. This
+    // Four generated (weeks 1-4, starting next week because dayOfWeek is yesterday's).
+    expect(resumed.added).toBe(4);
+    // Four generated plus today's = 5. The cancelled one does not count. This
     // is the only place in the branch where the two numbers genuinely differ,
     // which is what makes it the isolator for the `cancelledAt` filter.
-    expect(resumed.scheduled).toBe(4);
+    expect(resumed.scheduled).toBe(5);
+    expect(resumed.scheduled).toBe(resumed.added + 1);
   });
 
   it('generates nothing when pausing', async () => {
