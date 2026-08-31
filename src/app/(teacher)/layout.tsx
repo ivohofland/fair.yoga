@@ -13,7 +13,7 @@ export default async function TeacherLayout({
   const session = await getSession();
   // A signed-in student-only account belongs on its own home, not a
   // sign-in form it cannot use — except /settings, which courteously
-  // maps to their own settings (x-pathname stamped by the middleware).
+  // maps to their own settings (x-pathname stamped by the proxy).
   if (!session?.teacherId) {
     if (session?.studentId) {
       const pathname = (await headers()).get('x-pathname') ?? '';

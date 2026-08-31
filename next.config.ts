@@ -47,6 +47,8 @@ const nextConfig: NextConfig = {
     if (isDev) {
       // Safari reuses cached dev chunks on plain reload despite
       // no-cache+ETag — stale CSS made every design change look broken.
+      // Next.js emits a "Custom Cache-Control headers detected" warning on boot;
+      // this is an accepted trade-off to preserve local Safari DX (#127).
       rules.push({
         source: "/_next/static/:path*",
         headers: [{ key: "Cache-Control", value: "no-store" }],

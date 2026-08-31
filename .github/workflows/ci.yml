@@ -239,11 +239,14 @@ jobs:
         run: npm run build
 
       # Integration tests hit the HTTP API, so the built app must be
-      # running. Fail HERE with the server log when it never comes up —
-      # not three steps later with a wall of ECONNREFUSED.
-      - name: Start app
+      # running. Start via the standalone server bundle (matching production Docker)
+      # to ensure standalone-parity (#127). Fail HERE with the server log when
+      # it never comes up — not three steps later with a wall of ECONNREFUSED.
+      - name: Start app (standalone bundle)
         run: |
-          npm run start > server.log 2>&1 &
+          cp -r .next-build/static .next-build/standalone/.next-build/static
+          [ -d public ] && cp -r public .next-build/standalone/public || true
+          node .next-build/standalone/server.js > server.log 2>&1 &
           for i in {1..30}; do
             curl -sf http://localhost:3000/api/health > /dev/null && exit 0
             sleep 1
@@ -352,10 +355,12 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      # E2E tests run against the built app on :3000.
-      - name: Start app
+      # E2E tests run against the standalone app on :3000 (matching production Docker, #127).
+      - name: Start app (standalone bundle)
         run: |
-          npm run start > server.log 2>&1 &
+          cp -r .next-build/static .next-build/standalone/.next-build/static
+          [ -d public ] && cp -r public .next-build/standalone/public || true
+          node .next-build/standalone/server.js > server.log 2>&1 &
           for i in {1..30}; do
             curl -sf http://localhost:3000/api/health > /dev/null && exit 0
             sleep 1

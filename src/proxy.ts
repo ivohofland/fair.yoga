@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Duplicated here intentionally — middleware runs in Edge Runtime
-// which may not support all Node.js imports. Keep it simple.
+// Duplicated here intentionally to keep proxy startup lightweight
+// without pulling in database or server-only session dependencies.
 const SESSION_COOKIE_NAME = 'fair_yoga_session';
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const sessionToken = request.cookies.get(SESSION_COOKIE_NAME)?.value;
 
   if (!sessionToken) {
     const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('redirect', request.nextUrl.pathname);
+    loginUrl.searchParams.set('redirect', request.nextUrl.pathname + request.nextUrl.search);
     return NextResponse.redirect(loginUrl);
   }
 
@@ -17,7 +17,7 @@ export function middleware(request: NextRequest) {
   // send a student-only session from /settings to their own settings.
   const requestHeaders = new Headers(request.headers);
   // Belt and suspenders: set() replaces, but never let a client-supplied
-  // value even transit (unmatched teacher routes skip this middleware, so
+  // value even transit (unmatched teacher routes skip this proxy, so
   // the layout treats the header as advisory with hardcoded targets only).
   requestHeaders.delete('x-pathname');
   requestHeaders.set('x-pathname', request.nextUrl.pathname);

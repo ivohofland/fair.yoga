@@ -158,17 +158,27 @@ test.describe('Magic link authentication', () => {
     await page.goto(`/verify?token=${rawToken}`);
     await page.waitForURL('/', { timeout: 10_000 });
 
-    // Navigate to a protected route (middleware-protected)
+    // Navigate to a protected route (proxy-protected)
     await page.goto('/settings');
     // Should not be redirected to login
     await expect(page).not.toHaveURL(/\/login/);
   });
 
-  test('unauthenticated user is redirected to login from protected route', async ({
+  test('unauthenticated user is redirected to login from protected routes', async ({
     page,
   }) => {
-    await page.goto('/settings');
+    const protectedRoutes = ['/settings', '/students', '/inbox', '/bookings', '/class/new'];
+    for (const route of protectedRoutes) {
+      await page.goto(route);
+      await expect(page).toHaveURL(new RegExp(`/login\\?redirect=${encodeURIComponent(route)}`));
+    }
+  });
 
-    await expect(page).toHaveURL(/\/login\?redirect=/);
+  test('unauthenticated user can access public routes without proxy redirect', async ({
+    page,
+  }) => {
+    await page.goto('/login');
+    await expect(page).toHaveURL('/login');
+    await expect(page.getByRole('heading', { name: /sign in/i })).toBeVisible();
   });
 });
