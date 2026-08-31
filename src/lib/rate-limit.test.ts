@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   checkRateLimit,
+  checkIpRateLimit,
   resetRateLimits,
   clientIp,
+  rateLimitKey,
   DEFAULT_PREFIX_CAPACITY,
   PREFIX_CAPACITIES,
+  UNRESOLVED_IP_ID,
 } from './rate-limit';
 import { log } from '@/lib/log';
 
@@ -75,6 +78,41 @@ describe('checkRateLimit', () => {
     // 'sweep:protected' must survive: 2nd hit allowed, 3rd hit blocked
     expect(checkRateLimit('sweep:protected', 2, HOUR, t1 + 100).allowed).toBe(true);
     expect(checkRateLimit('sweep:protected', 2, HOUR, t1 + 200).allowed).toBe(false);
+  });
+
+  it('bounds the reclaim scan to MAX_SCAN (50): a dead bucket beyond the 50th position is not reached, and the true LRU head is evicted instead', () => {
+    const t0 = 1_000_000;
+
+    // 50 live buckets at the head (oldest-first in Map insertion order), 1-hour window.
+    // 'maxscan:head-victim' is the true head — the one the LRU fallback must evict.
+    checkRateLimit('maxscan:head-victim', 1, HOUR, t0);
+    for (let i = 1; i < 50; i++) {
+      checkRateLimit(`maxscan:live:${i}`, 1, HOUR, t0);
+    }
+
+    // A dead bucket at position 51 — a 1-second window, expired by the time the scan runs.
+    // If the scan reached it, this is what it "should" reclaim instead of the live head.
+    checkRateLimit('maxscan:dead-beyond-scan', 2, 1000, t0);
+
+    // Fill the rest of the partition to capacity.
+    for (let i = 0; i < DEFAULT_PREFIX_CAPACITY - 51; i++) {
+      checkRateLimit(`maxscan:fill:${i}`, 5, HOUR, t0 + 100);
+    }
+
+    // 'maxscan:dead-beyond-scan' has expired (1s window); the 50 head entries (1hr window) have not.
+    const t1 = t0 + 5000;
+
+    // Trigger a sweep + eviction: the scan examines only the first 50 entries (all live),
+    // never reaches position 51, and gives up — so the fallback evicts the true LRU head.
+    checkRateLimit('maxscan:trigger', 5, HOUR, t1);
+
+    // The true head was evicted: its single pre-existing hit is gone, so a fresh hit is allowed.
+    expect(checkRateLimit('maxscan:head-victim', 1, HOUR, t1 + 100).allowed).toBe(true);
+
+    // Every one of the 49 live entries the scan walked over (but did not delete, since none
+    // were expired) is untouched: each still carries its original hit, so a further hit is blocked.
+    expect(checkRateLimit('maxscan:live:1', 1, HOUR, t1 + 100).allowed).toBe(false);
+    expect(checkRateLimit('maxscan:live:49', 1, HOUR, t1 + 100).allowed).toBe(false);
   });
 
   it('re-touching an older key preserves it over older untouched keys (LRU order)', () => {
@@ -155,33 +193,51 @@ describe('checkRateLimit', () => {
     expect(checkRateLimit('roll:rolling-key', 3, MINUTE, t0 + 70_300).allowed).toBe(false);
   });
 
-  it('flooding one prefix with 15,000 keys never evicts state in another prefix (cross-prefix isolation)', () => {
+  it('flooding the magic-link:email partition with 15,000 keys never evicts state in another prefix (cross-prefix isolation)', () => {
     const t0 = 1_000_000;
     // Record 2 hits on teacher in 'students' prefix with limit 3 (expires in 1 hour)
     expect(checkRateLimit('students:teacher-target', 3, HOUR, t0).allowed).toBe(true);
     expect(checkRateLimit('students:teacher-target', 3, HOUR, t0 + 1000).allowed).toBe(true);
 
-    // Flood 'magic-link' prefix with 15,000 distinct keys (exceeding any global 10k capacity)
+    // Flood 'magic-link:email' with 15,000 distinct keys (exceeding any global 10k capacity)
     for (let i = 0; i < 15_000; i++) {
       checkRateLimit(`magic-link:email:flood-${i}@test.local`, 5, HOUR, t0 + 2000);
     }
 
-    // In a partitioned architecture, magic-link capped at its own 5,000 capacity.
-    // 'students:teacher-target' in the 'students' partition must be completely untouched.
-    // (If partitioned storage were mutated to a global map of 10,000, 15,000 keys would have evicted it!)
+    // In a partitioned architecture, magic-link's email partition is capped at its own
+    // 5,000 capacity. 'students:teacher-target' in the 'students' partition must be
+    // completely untouched. (If partitioned storage were mutated to a global map of
+    // 10,000, 15,000 keys would have evicted it!)
     expect(checkRateLimit('students:teacher-target', 3, HOUR, t0 + 3000).allowed).toBe(true);
     expect(checkRateLimit('students:teacher-target', 3, HOUR, t0 + 4000).allowed).toBe(false);
+  });
+
+  it('magic-link:ip and magic-link:email are independent partitions despite sharing the "magic-link" prefix', () => {
+    const t0 = 1_000_000;
+    const ipCapacity = PREFIX_CAPACITIES['magic-link:ip'];
+
+    expect(checkRateLimit('magic-link:email:victim@example.com', 3, HOUR, t0).allowed).toBe(true);
+    expect(checkRateLimit('magic-link:email:victim@example.com', 3, HOUR, t0 + 1000).allowed).toBe(true);
+
+    // Flood the magic-link:ip partition past its own (smaller) capacity.
+    for (let i = 0; i < ipCapacity + 100; i++) {
+      checkRateLimit(`magic-link:ip:flood-${i}`, 10, HOUR, t0 + 2000);
+    }
+
+    // The email-keyed bucket, in a different partition, is untouched by the ip-partition flood.
+    expect(checkRateLimit('magic-link:email:victim@example.com', 3, HOUR, t0 + 3000).allowed).toBe(true);
+    expect(checkRateLimit('magic-link:email:victim@example.com', 3, HOUR, t0 + 4000).allowed).toBe(false);
   });
 
   it('eviction warnings and log throttling are isolated per prefix', () => {
     const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => log);
 
     const t0 = 1_000_000;
-    const magicCapacity = PREFIX_CAPACITIES['magic-link']!;
-    const studentsCapacity = PREFIX_CAPACITIES['students']!;
+    const magicEmailCapacity = PREFIX_CAPACITIES['magic-link:email'];
+    const studentsCapacity = PREFIX_CAPACITIES['students'];
 
-    // Fill 'magic-link' partition to capacity and trigger 1 eviction
-    for (let i = 0; i < magicCapacity; i++) {
+    // Fill 'magic-link:email' partition to capacity and trigger 1 eviction
+    for (let i = 0; i < magicEmailCapacity; i++) {
       checkRateLimit(`magic-link:email:user-${i}@example.com`, 5, HOUR, t0);
     }
     checkRateLimit('magic-link:email:overflow', 5, HOUR, t0);
@@ -189,18 +245,18 @@ describe('checkRateLimit', () => {
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        keyPrefix: 'magic-link',
-        capacity: magicCapacity,
+        keyPrefix: 'magic-link:email',
+        capacity: magicEmailCapacity,
         evictedCount: 1,
       }),
       'Rate limit bucket evicted under memory pressure',
     );
 
-    // Second eviction in 'magic-link' within 60s is throttled
+    // Second eviction in 'magic-link:email' within 60s is throttled
     checkRateLimit('magic-link:email:overflow-2', 5, HOUR, t0 + 1000);
     expect(warnSpy).toHaveBeenCalledTimes(1);
 
-    // Eviction in 'students' prefix happens at same timestamp: must NOT be throttled by magic-link!
+    // Eviction in 'students' prefix happens at same timestamp: must NOT be throttled by magic-link:email!
     for (let i = 0; i < studentsCapacity; i++) {
       checkRateLimit(`students:teacher-${i}`, 5, HOUR, t0);
     }
@@ -215,6 +271,92 @@ describe('checkRateLimit', () => {
       }),
       'Rate limit bucket evicted under memory pressure',
     );
+
+    warnSpy.mockRestore();
+  });
+
+  it('flushes a suppressed eviction count on the next call to the same prefix, even if that call does not itself evict', () => {
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    const t0 = 1_000_000;
+    const capacity = PREFIX_CAPACITIES['teacher-signup'];
+
+    // Fill 'teacher-signup' to capacity.
+    for (let i = 0; i < capacity; i++) {
+      checkRateLimit(`teacher-signup:host-${i}`, 5, HOUR, t0);
+    }
+    // First eviction: logged immediately (nothing was pending before it).
+    checkRateLimit('teacher-signup:overflow-1', 5, HOUR, t0);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenLastCalledWith(expect.objectContaining({ evictedCount: 1 }), expect.any(String));
+
+    // Two more evictions inside the 60s throttle window are suppressed, not logged.
+    checkRateLimit('teacher-signup:overflow-2', 5, HOUR, t0 + 1000);
+    checkRateLimit('teacher-signup:overflow-3', 5, HOUR, t0 + 2000);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+
+    // Attack pressure stops — no further eviction ever happens on this prefix. Time passes the
+    // throttle window, and this next call only re-touches an EXISTING key (no eviction).
+    checkRateLimit('teacher-signup:overflow-1', 5, HOUR, t0 + 61_000);
+
+    // The 2 suppressed evictions from the cooldown are flushed here rather than lost forever.
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ evictedCount: 2 }),
+      'Rate limit bucket evicted under memory pressure',
+    );
+
+    warnSpy.mockRestore();
+  });
+});
+
+describe('rateLimitKey', () => {
+  it('joins a registered prefix and an id with a colon', () => {
+    expect(rateLimitKey('magic-link:ip', '203.0.113.1')).toBe('magic-link:ip:203.0.113.1');
+    expect(rateLimitKey('students', 'teacher-42')).toBe('students:teacher-42');
+  });
+});
+
+describe('checkIpRateLimit', () => {
+  beforeEach(() => resetRateLimits());
+
+  const MINUTE = 60_000;
+
+  it('rate-limits a resolved IP under its own key', () => {
+    const t0 = 1_000_000;
+    expect(checkIpRateLimit('magic-link:ip', '203.0.113.1', 2, MINUTE, 'test', t0).allowed).toBe(true);
+    expect(checkIpRateLimit('magic-link:ip', '203.0.113.1', 2, MINUTE, 'test', t0 + 10).allowed).toBe(true);
+    expect(checkIpRateLimit('magic-link:ip', '203.0.113.1', 2, MINUTE, 'test', t0 + 20).allowed).toBe(false);
+    // A different IP is unaffected.
+    expect(checkIpRateLimit('magic-link:ip', '203.0.113.2', 2, MINUTE, 'test', t0 + 30).allowed).toBe(true);
+  });
+
+  it('shares one bucket across every caller whose IP could not be resolved, and warns (throttled)', () => {
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    const t0 = 1_000_000;
+
+    // Two different "unresolved" callers land in the same shared bucket rather than
+    // bypassing the limit entirely.
+    expect(checkIpRateLimit('teacher-signup', 'unknown', 2, MINUTE, 'teachers', t0).allowed).toBe(true);
+    expect(checkIpRateLimit('teacher-signup', 'unknown', 2, MINUTE, 'teachers', t0 + 10).allowed).toBe(true);
+    expect(checkIpRateLimit('teacher-signup', 'unknown', 2, MINUTE, 'teachers', t0 + 20).allowed).toBe(false);
+    expect(checkRateLimit(rateLimitKey('teacher-signup', UNRESOLVED_IP_ID), 2, MINUTE, t0 + 20).allowed).toBe(
+      false,
+    );
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenLastCalledWith(
+      { route: 'teachers' },
+      'Rate limit IP check skipped: client IP could not be resolved',
+    );
+
+    // A second unresolved-IP call on a DIFFERENT route within 60s is throttled — this is a
+    // global signal ("the trusted-proxy assumption broke"), not a per-route counter.
+    checkIpRateLimit('magic-link:ip', 'unknown', 2, MINUTE, 'magic-link/send', t0 + 30);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+
+    // A resolved IP never triggers the warning.
+    checkIpRateLimit('magic-link:ip', '203.0.113.5', 2, MINUTE, 'magic-link/send', t0 + 40);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
 
     warnSpy.mockRestore();
   });
@@ -251,6 +393,15 @@ describe('clientIp', () => {
   it('returns unknown when neither header is set', () => {
     const request = {
       headers: new Headers(),
+    };
+    expect(clientIp(request)).toBe('unknown');
+  });
+
+  it('treats a trailing empty segment as unresolved rather than an empty-string IP', () => {
+    const request = {
+      headers: new Headers({
+        'x-forwarded-for': '1.1.1.1, 2.2.2.2,',
+      }),
     };
     expect(clientIp(request)).toBe('unknown');
   });

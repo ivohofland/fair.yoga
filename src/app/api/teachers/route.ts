@@ -2,19 +2,19 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { createTeacherSchema } from '@/lib/schemas';
-import { checkRateLimit, clientIp } from '@/lib/rate-limit';
+import { checkIpRateLimit, clientIp } from '@/lib/rate-limit';
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   // Unauthenticated endpoint: throttle per IP so it cannot be used to
-  // mass-create accounts or squat email addresses in bulk. Only applies
-  // when a proxy forwarded a real address — see magic-link/send.
+  // mass-create accounts or squat email addresses in bulk. There is no
+  // per-email backstop here — an unclaimed email is exactly what a legitimate
+  // signup submits — so this IP check is this route's only defense; see
+  // checkIpRateLimit for what happens when the IP can't be resolved.
   // (Email-ownership verification at signup is tracked as follow-up work.)
   const ip = clientIp(request);
-  if (ip !== 'unknown') {
-    const ipCheck = checkRateLimit(`teacher-signup:${ip}`, 3, 60 * 60 * 1000);
-    if (!ipCheck.allowed) {
-      return respondError('Too many signup attempts. Try again later.', 429);
-    }
+  const ipCheck = checkIpRateLimit('teacher-signup', ip, 3, 60 * 60 * 1000, 'teachers');
+  if (!ipCheck.allowed) {
+    return respondError('Too many signup attempts. Try again later.', 429);
   }
 
   const parsed = await parseBody(request, createTeacherSchema);

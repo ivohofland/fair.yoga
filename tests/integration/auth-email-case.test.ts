@@ -131,6 +131,8 @@ describe('POST /api/auth/magic-link/send — IP rate limit short-circuit', () =>
       body: JSON.stringify({ email: victimEmail }),
     });
     expect(blockedRes.status).toBe(429);
+    const blockedBody = await blockedRes.json();
+    expect(blockedBody.error.message).toMatch(/^Too many sign-in requests\. Try again in \d{1,2} minutes?\.$/);
 
     // 3. From a fresh IP, victimEmail must still have its full 3/15min email budget untouched.
     // In pre-fix code (without short-circuiting), request #2 consumed 1 hit, leaving only 2 allowed hits.
@@ -150,5 +152,9 @@ describe('POST /api/auth/magic-link/send — IP rate limit short-circuit', () =>
       body: JSON.stringify({ email: victimEmail }),
     });
     expect(emailBlockedRes.status).toBe(429);
+    const emailBlockedBody = await emailBlockedRes.json();
+    expect(emailBlockedBody.error.message).toMatch(
+      /^Too many sign-in requests\. Try again in \d{1,2} minutes?\.$/,
+    );
   });
 });

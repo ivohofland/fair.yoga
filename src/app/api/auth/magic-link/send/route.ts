@@ -4,46 +4,38 @@ import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-
 import { prisma } from '@/lib/db';
 import { sendMagicLinkEmail } from '@/lib/email';
 import { magicLinkSendSchema } from '@/lib/schemas';
-import { checkRateLimit, clientIp } from '@/lib/rate-limit';
+import { checkRateLimit, checkIpRateLimit, clientIp, rateLimitKey, RateLimitResult } from '@/lib/rate-limit';
 
 const WINDOW_MS = 15 * 60 * 1000;
 const PER_EMAIL_LIMIT = 3;
 const PER_IP_LIMIT = 10;
 
+function tooManyRequests(result: RateLimitResult) {
+  const retry = result.retryAfterSeconds;
+  return respondError(
+    `Too many sign-in requests. Try again in ${Math.ceil(retry / 60)} minute${retry > 60 ? 's' : ''}.`,
+    429,
+  );
+}
+
 export const POST = withErrorHandler(async (request: NextRequest) => {
+  // Throttle before doing any work: each accepted request can trigger a
+  // real email send, so an unthrottled endpoint is an email-bombing and
+  // quota-exhaustion vector. Checked before parsing the body so a flood is
+  // rejected as cheaply as possible.
+  const ip = clientIp(request);
+  const ipCheck = checkIpRateLimit('magic-link:ip', ip, PER_IP_LIMIT, WINDOW_MS, 'magic-link/send');
+  if (!ipCheck.allowed) return tooManyRequests(ipCheck);
+
   const parsed = await parseBody(request, magicLinkSendSchema);
   if ('error' in parsed) return parsed.error;
   const { email, redirect } = parsed.data;
 
-  // Throttle before doing any work: each accepted request can trigger a
-  // real email send, so an unthrottled endpoint is an email-bombing and
-  // quota-exhaustion vector. The IP check only applies when a proxy
-  // forwarded a real address — without one, all callers would share a
-  // single bucket and lock each other out.
-  const ip = clientIp(request);
-  if (ip !== 'unknown') {
-    const ipCheck = checkRateLimit(`magic-link:ip:${ip}`, PER_IP_LIMIT, WINDOW_MS);
-    if (!ipCheck.allowed) {
-      const retry = ipCheck.retryAfterSeconds;
-      return respondError(
-        `Too many sign-in requests. Try again in ${Math.ceil(retry / 60)} minute${retry > 60 ? 's' : ''}.`,
-        429,
-      );
-    }
-  }
-
-  const emailCheck = checkRateLimit(
-    `magic-link:email:${email}`,
-    PER_EMAIL_LIMIT,
-    WINDOW_MS,
-  );
-  if (!emailCheck.allowed) {
-    const retry = emailCheck.retryAfterSeconds;
-    return respondError(
-      `Too many sign-in requests. Try again in ${Math.ceil(retry / 60)} minute${retry > 60 ? 's' : ''}.`,
-      429,
-    );
-  }
+  // Must return above on an IP block rather than falling through — a
+  // fall-through would let an IP-blocked caller still consume a hit from
+  // an arbitrary target email's own budget.
+  const emailCheck = checkRateLimit(rateLimitKey('magic-link:email', email), PER_EMAIL_LIMIT, WINDOW_MS);
+  if (!emailCheck.allowed) return tooManyRequests(emailCheck);
 
   // Look up user in Teacher table first, then Student
   const teacher = await prisma.teacher.findUnique({ where: { email } });

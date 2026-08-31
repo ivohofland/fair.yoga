@@ -5,7 +5,7 @@ import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-
 import { studentSignupSchema } from '@/lib/schemas';
 import { generateMagicLinkToken } from '@/lib/auth';
 import { sendMagicLinkEmail } from '@/lib/email';
-import { checkRateLimit, clientIp } from '@/lib/rate-limit';
+import { checkRateLimit, checkIpRateLimit, clientIp, rateLimitKey } from '@/lib/rate-limit';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { log } from '@/lib/log';
 
@@ -20,17 +20,15 @@ import { log } from '@/lib/log';
  */
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const ip = clientIp(request);
-  if (ip !== 'unknown') {
-    const ipCheck = checkRateLimit(`student-signup:${ip}`, 5, 60 * 60 * 1000);
-    if (!ipCheck.allowed) {
-      return respondError('Too many signup attempts. Try again later.', 429);
-    }
+  const ipCheck = checkIpRateLimit('student-signup:ip', ip, 5, 60 * 60 * 1000, 'student-signup');
+  if (!ipCheck.allowed) {
+    return respondError('Too many signup attempts. Try again later.', 429);
   }
   const emailParsed = await parseBody(request, studentSignupSchema);
   if ('error' in emailParsed) return emailParsed.error;
   const { firstName, lastName, email, redirect } = emailParsed.data;
 
-  const emailCheck = checkRateLimit(`student-signup:email:${email}`, 3, 15 * 60 * 1000);
+  const emailCheck = checkRateLimit(rateLimitKey('student-signup:email', email), 3, 15 * 60 * 1000);
   if (!emailCheck.allowed) {
     return respondError('Too many signup attempts. Try again later.', 429);
   }
