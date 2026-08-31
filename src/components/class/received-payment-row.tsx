@@ -1,31 +1,22 @@
-import { formatDateShort } from '@/lib/format';
+import { formatClassContext, formatDateShort } from '@/lib/format';
 import { startOfLocalDay } from '@/lib/timezone';
 import { MarkUnpaidButton } from '@/components/class/mark-unpaid-button';
 
 interface ReceivedPaymentRowProps {
   paymentId: string;
   studentName: string;
+  classType: string;
+  classDate: Date;
+  startTime: Date;
   /**
-   * `"{classType} · {date} · {startTime}"`, pre-formatted by the page — the
-   * same shape and the same reason as `OutstandingPaymentRow`'s (#59): without
-   * the start time, two paid classes of one type on one day read identically
-   * for the same student, and the amount alone does not tell them apart.
-   *
-   * Pre-formatted rather than derived, matching its sibling. **#154** converts
-   * both to raw props so the component builds its own labels; until then these
-   * two agree with each other, which is worth more than one of them being
-   * right on its own.
-   */
-  classContext: string;
-  /**
-   * The raw instant, deliberately not pre-formatted — unlike `classContext`.
+   * The raw instant, deliberately not pre-formatted.
    * `startOfLocalDay` runs *here* so the conversion sits inside the tested
    * unit; formatting it in the page would leave the bug this component exists
    * to fix untestable, because the page is an async server component RTL
    * cannot render.
    *
    * This matches `ClassList` and `ArchivedRecord`, which both take raw values
-   * plus a `timeZone`. See #154.
+   * plus a `timeZone`. See #140, #154.
    */
   paidAt: Date | null;
   timeZone: string;
@@ -41,11 +32,14 @@ interface ReceivedPaymentRowProps {
 export function ReceivedPaymentRow({
   paymentId,
   studentName,
-  classContext,
+  classType,
+  classDate,
+  startTime,
   paidAt,
   timeZone,
   amount,
 }: ReceivedPaymentRowProps) {
+  const classContext = formatClassContext(classType, classDate, startTime);
   return (
     <div className="flex items-center justify-between gap-3 min-h-14 py-2 border-b border-border last:border-b-0">
       <div className="min-w-0">

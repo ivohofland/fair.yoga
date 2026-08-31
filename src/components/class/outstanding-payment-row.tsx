@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { PaymentStatus } from '@prisma/client';
-import { paymentStateInlineText, paymentStateText, timeAgo } from '@/lib/format';
+import { formatClassContext, paymentStateInlineText, paymentStateText, timeAgo } from '@/lib/format';
 import { usePaymentActions } from '@/lib/use-payment-actions';
 import { SendReminderButton } from '@/components/class/send-reminder-button';
 
@@ -12,15 +12,9 @@ interface OutstandingPaymentRowProps {
   paymentId: string;
   studentName: string;
   classId: string;
-  /**
-   * `"{classType} · {date} · {startTime}"` — the row's visible sub-label *and*
-   * the disambiguator in all three button labels. One string on purpose: two
-   * rows for the same student are told apart by this and nothing else, so a
-   * separate aria-only value could drift from what is on screen (#59). The
-   * time is what makes a morning and an evening class of the same type on one
-   * day distinguishable.
-   */
-  classContext: string;
+  classType: string;
+  classDate: Date;
+  startTime: Date;
   amount: number;
   status: PaymentStatus;
   reminderSentAt: Date | null;
@@ -40,7 +34,9 @@ export function OutstandingPaymentRow({
   paymentId,
   studentName,
   classId,
-  classContext,
+  classType,
+  classDate,
+  startTime,
   amount,
   status,
   reminderSentAt,
@@ -51,6 +47,11 @@ export function OutstandingPaymentRow({
   });
   const [remindedAt, setRemindedAt] = useState<Date | null>(reminderSentAt);
   const [reminderError, setReminderError] = useState('');
+
+  // #59, #154. Derived internally so all four consumers — visible caption,
+  // reminder button context, undo aria-label, and mark-paid aria-label —
+  // are guaranteed byte-identical from a single source of truth.
+  const classContext = formatClassContext(classType, classDate, startTime);
 
   const current = paymentState[paymentId] ?? status;
   const isPaid = current === 'paid';

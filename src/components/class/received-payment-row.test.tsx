@@ -22,7 +22,9 @@ describe('ReceivedPaymentRow', () => {
   const base = {
     paymentId: 'pay-1',
     studentName: 'Ana d.',
-    classContext: 'Vinyasa · 12 Jun · 09:30',
+    classType: 'Vinyasa',
+    classDate: new Date('2026-06-12T00:00:00.000Z'),
+    startTime: new Date('1970-01-01T09:30:00.000Z'),
     amount: 14,
   };
 

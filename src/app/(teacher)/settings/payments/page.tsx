@@ -4,9 +4,7 @@ import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { OutstandingPaymentRow } from '@/components/class/outstanding-payment-row';
 import { ReceivedPaymentRow } from '@/components/class/received-payment-row';
-import { formatDateShort } from '@/lib/format';
 import { teacherVisibleName, studentNameSelect } from '@/lib/student-visibility';
-import { timeToHHmm } from '@/lib/time-of-day';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,7 +75,9 @@ export default async function PaymentsOverviewPage() {
               paymentId={p.id}
               studentName={studentName(p)}
               classId={p.registration.class.id}
-              classContext={`${p.registration.class.calendarEntry.classType} · ${formatDateShort(p.registration.class.calendarEntry.date)} · ${timeToHHmm(p.registration.class.calendarEntry.startTime)}`}
+              classType={p.registration.class.calendarEntry.classType}
+              classDate={p.registration.class.calendarEntry.date}
+              startTime={p.registration.class.calendarEntry.startTime}
               amount={Number(p.amount)}
               status={p.status}
               reminderSentAt={p.reminderSentAt}
@@ -96,7 +96,9 @@ export default async function PaymentsOverviewPage() {
               key={p.id}
               paymentId={p.id}
               studentName={studentName(p)}
-              classContext={`${p.registration.class.calendarEntry.classType} · ${formatDateShort(p.registration.class.calendarEntry.date)} · ${timeToHHmm(p.registration.class.calendarEntry.startTime)}`}
+              classType={p.registration.class.calendarEntry.classType}
+              classDate={p.registration.class.calendarEntry.date}
+              startTime={p.registration.class.calendarEntry.startTime}
               paidAt={p.paidAt}
               timeZone={session.defaultTimezone}
               amount={Number(p.amount)}

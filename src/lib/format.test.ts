@@ -3,6 +3,7 @@ import {
   formatDayHeader,
   formatDateWithYear,
   formatDateShort,
+  formatClassContext,
   formatMonthLabel,
   paymentStateText,
   paymentStateInlineText,
@@ -143,6 +144,42 @@ describe('formatDateShort', () => {
    */
   it('reads the calendar date, not the host-local one', () => {
     expect(formatDateShort(new Date('2026-03-01T00:00:00.000Z'))).toBe('1 Mar');
+  });
+});
+
+/**
+ * #154. Class context string for cross-class payment overviews:
+ * `"{classType} · {date} · {startTime}"`. Disambiguates rows for the same
+ * student on the same day. One string by design so visible copy and ARIA
+ * labels never drift (#59).
+ */
+describe('formatClassContext', () => {
+  it('combines classType, formatDateShort date, and HH:mm start time', () => {
+    const result = formatClassContext(
+      'Vinyasa',
+      new Date('2026-06-12T00:00:00.000Z'),
+      new Date('1970-01-01T09:30:00.000Z'),
+    );
+    expect(result).toBe('Vinyasa · 12 Jun · 09:30');
+  });
+
+  it('formats afternoon/evening start times in 24h format', () => {
+    const result = formatClassContext(
+      'Yin Yoga',
+      new Date('2026-06-12T00:00:00.000Z'),
+      new Date('1970-01-01T18:00:00.000Z'),
+    );
+    expect(result).toBe('Yin Yoga · 12 Jun · 18:00');
+  });
+
+  it('reads the calendar date in UTC accessors', () => {
+    // 1 March midnight UTC: local read in western TZ would produce '28 Feb'
+    const result = formatClassContext(
+      'Hatha',
+      new Date('2026-03-01T00:00:00.000Z'),
+      new Date('1970-01-01T07:00:00.000Z'),
+    );
+    expect(result).toBe('Hatha · 1 Mar · 07:00');
   });
 });
 

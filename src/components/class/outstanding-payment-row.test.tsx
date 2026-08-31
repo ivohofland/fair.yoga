@@ -54,6 +54,8 @@ import { OutstandingPaymentRow } from './outstanding-payment-row';
 describe('OutstandingPaymentRow', () => {
   const base = {
     studentName: 'Ana de Vries',
+    classType: 'Vinyasa',
+    classDate: new Date('2026-06-12T00:00:00.000Z'),
     amount: 18,
     status: 'pending' as const,
     reminderSentAt: null,
@@ -76,13 +78,13 @@ describe('OutstandingPaymentRow', () => {
           {...base}
           paymentId="pay-morning"
           classId="cls-morning"
-          classContext="Vinyasa · 12 Jun · 09:30"
+          startTime={new Date('1970-01-01T09:30:00.000Z')}
         />
         <OutstandingPaymentRow
           {...base}
           paymentId="pay-evening"
           classId="cls-evening"
-          classContext="Vinyasa · 12 Jun · 18:00"
+          startTime={new Date('1970-01-01T18:00:00.000Z')}
         />
       </>,
     );
@@ -325,9 +327,9 @@ describe('OutstandingPaymentRow', () => {
         {...base}
         paymentId="pay-paid"
         classId="cls-paid"
-        classContext="Vinyasa · 12 Jun · 09:30"
+        startTime={new Date('1970-01-01T09:30:00.000Z')}
         status="paid"
-      />,
+      />
     );
 
     const paidBadge = screen.getByText('✓ Paid');

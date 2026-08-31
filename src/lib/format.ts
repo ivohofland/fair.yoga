@@ -1,4 +1,5 @@
 import type { PaymentStatus } from '@prisma/client';
+import { timeToHHmm } from '@/lib/time-of-day';
 
 export function formatRoomLocation(roomName: string, venueName: string): string {
   return roomName ? `${roomName} at ${venueName}` : venueName;
@@ -157,6 +158,18 @@ export function formatDateWithYear(date: Date): string {
 export function formatDateShort(date: Date): string {
   const d = new Date(date);
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+}
+
+/**
+ * Class context string for cross-class payment overviews: `"{classType} · {date} · {startTime}"`.
+ *
+ * Disambiguates rows for the same student on the same day. One string on
+ * purpose: visible text and all button ARIA labels share it (#59, #154).
+ * `date` is a `@db.Date` (midnight UTC) and formatted via `formatDateShort`.
+ * `startTime` is a `@db.Time` formatted via `timeToHHmm`.
+ */
+export function formatClassContext(classType: string, date: Date, startTime: Date): string {
+  return `${classType} · ${formatDateShort(date)} · ${timeToHHmm(startTime)}`;
 }
 
 /**
