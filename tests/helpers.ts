@@ -108,7 +108,7 @@ export function uniqueSuffix(): string {
  *
  * Three routes throttle per IP — `POST /api/auth/magic-link/send` (10/15min),
  * `POST /api/auth/student-signup` (5/hour) and `POST /api/teachers` (3/hour) —
- * and `clientIp()` reads the first comma-separated entry of this header.
+ * and `clientIp()` reads the last comma-separated entry of this header.
  * Before this helper the suite made 8 such calls, and *five of them* hit
  * `student-signup`'s 5/hour budget — exactly zero headroom, so one pass spent
  * it and the next 429'd. The suite could not be run twice in an hour and

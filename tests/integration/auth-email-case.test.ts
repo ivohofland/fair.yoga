@@ -101,3 +101,54 @@ describe('sign-in and signup are case-insensitive on email', () => {
     expect(body).toHaveProperty('data.options');
   });
 });
+
+/**
+ * #168: Short-circuiting IP rate limit before email rate limit.
+ *
+ * An IP-blocked caller hammering `/api/auth/magic-link/send` must be stopped
+ * at the IP check and never insert or increment a per-email rate limit bucket
+ * for the target address.
+ */
+describe('POST /api/auth/magic-link/send — IP rate limit short-circuit', () => {
+  it('does not consume a victim address email budget when request is rejected by IP limit', async () => {
+    const throttledIp = freshIp();
+    const victimEmail = `victim-${uniqueSuffix()}@test.local`;
+
+    // 1. Spend the 10/15min IP budget from throttledIp using distinct throwaway emails
+    for (let i = 0; i < 10; i++) {
+      const res = await fetch(`${BASE_URL}/api/auth/magic-link/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...throttledIp },
+        body: JSON.stringify({ email: `dummy-${i}-${suffix}@test.local` }),
+      });
+      expect(res.status).toBe(200);
+    }
+
+    // 2. The 11th request from throttledIp targeting victimEmail is 429'd by the IP check
+    const blockedRes = await fetch(`${BASE_URL}/api/auth/magic-link/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...throttledIp },
+      body: JSON.stringify({ email: victimEmail }),
+    });
+    expect(blockedRes.status).toBe(429);
+
+    // 3. From a fresh IP, victimEmail must still have its full 3/15min email budget untouched.
+    // In pre-fix code (without short-circuiting), request #2 consumed 1 hit, leaving only 2 allowed hits.
+    for (let i = 0; i < 3; i++) {
+      const res = await fetch(`${BASE_URL}/api/auth/magic-link/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...freshIp() },
+        body: JSON.stringify({ email: victimEmail }),
+      });
+      expect(res.status).toBe(200);
+    }
+
+    // 4. The 4th request from a fresh IP for victimEmail is now blocked by the per-email limit
+    const emailBlockedRes = await fetch(`${BASE_URL}/api/auth/magic-link/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ email: victimEmail }),
+    });
+    expect(emailBlockedRes.status).toBe(429);
+  });
+});

@@ -8,25 +8,26 @@ import { log } from '@/lib/log';
  * which is acceptable for abuse throttling (not billing).
  */
 
-interface Window {
+interface Bucket {
   timestamps: number[];
   expiresAt: number;
 }
 
-const buckets = new Map<string, Window>();
+const buckets = new Map<string, Bucket>();
 
 /** Bound the map so a scanner cycling keys cannot grow memory unbounded. */
-const MAX_KEYS = 10_000;
+export const MAX_KEYS = 10_000;
+
+/** Bounded scan limit to reclaim dead buckets without hot-path latency spikes. */
+const MAX_SCAN = 50;
+
+let lastEvictionLogTime = 0;
+let suppressedEvictions = 0;
 
 export interface RateLimitResult {
   allowed: boolean;
   /** Seconds until the oldest counted hit leaves the window. */
   retryAfterSeconds: number;
-}
-
-function sanitizeRateLimitKey(key: string): string {
-  // Redact email addresses in keys like magic-link:email:alice@example.com
-  return key.replace(/:[^:@]+@[^:]+$/, ':***');
 }
 
 /**
@@ -55,7 +56,7 @@ export function checkRateLimit(
         if (v.expiresAt <= now) {
           buckets.delete(k);
         }
-        if (buckets.size < MAX_KEYS || scanned >= 50) break;
+        if (buckets.size < MAX_KEYS || scanned >= MAX_SCAN) break;
       }
 
       // If still at capacity, evict the true LRU entry at the head of the Map
@@ -63,11 +64,17 @@ export function checkRateLimit(
         const oldestKey = buckets.keys().next().value;
         if (oldestKey !== undefined) {
           buckets.delete(oldestKey);
-          const sanitizedKey = sanitizeRateLimitKey(oldestKey);
-          log.warn(
-            { key: sanitizedKey, mapSize: buckets.size },
-            'Rate limit bucket evicted under memory pressure',
-          );
+          const keyPrefix = oldestKey.split(':')[0]!;
+          if (now - lastEvictionLogTime >= 60_000 || lastEvictionLogTime === 0) {
+            log.warn(
+              { keyPrefix, capacity: MAX_KEYS, evictedCount: suppressedEvictions + 1 },
+              'Rate limit bucket evicted under memory pressure',
+            );
+            lastEvictionLogTime = now;
+            suppressedEvictions = 0;
+          } else {
+            suppressedEvictions++;
+          }
         }
       }
     }
@@ -112,9 +119,19 @@ export function checkStudentWriteLimit(teacherId: string): RateLimitResult {
 /** Test helper: forget all recorded hits. */
 export function resetRateLimits(): void {
   buckets.clear();
+  lastEvictionLogTime = 0;
+  suppressedEvictions = 0;
 }
 
-/** Best-effort client IP for rate-limit keying (nginx sets x-forwarded-for). */
+/**
+ * Best-effort client IP for rate-limit keying.
+ *
+ * Reads the LAST entry in `x-forwarded-for` because deploy/nginx.conf.example
+ * configures `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`,
+ * which appends the real client IP ($remote_addr) to the end of any incoming
+ * X-Forwarded-For header. Taking the first entry (`[0]`) would trust an untrusted
+ * client's spoofed prefix and allow per-IP rate limit bypasses.
+ */
 export function clientIp(request: { headers: { get(name: string): string | null } }): string {
   const forwarded = request.headers.get('x-forwarded-for');
   if (forwarded) {
