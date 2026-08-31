@@ -189,18 +189,21 @@ export default defineConfig(({ mode }) => {
           test: {
             name: 'integration',
             include: ['tests/integration/**/*.test.ts'],
-            // Serial locally, and load-bearing here: this tier drives the
-            // one dev server on :3000 over HTTP, and #290 measured four
-            // parallel runs against it producing four different victims,
-            // each green alone. Do not flip this project's own setting to
-            // match its parallel siblings.
+            // Serial locally: this tier shares the dev server on :3000 with
+            // whatever the person running it has open. #290's own design
+            // spec is explicit that integration files do NOT contend with
+            // EACH OTHER even so ("vitest.config.ts sets
+            // fileParallelism: false, so integration tests never contend
+            // with each other") — its local flakiness came from `next dev`'s
+            // lazy recompilation during mutation testing, not fan-out. See
+            // docs/superpowers/specs/2026-08-21-local-gate-reliability-design.md.
+            // (The "four different victims" finding in that same issue is
+            // Playwright's, not this tier's — `playwright.config.ts`.)
             //
-            // This is only the LOCAL default, though: CI's own invocation
+            // CI does not inherit this default, though: its own invocation
             // overrides it with the `--file-parallelism` CLI flag (#325),
             // which wins over a project's setting — see
-            // docs/test-database.md §2 for the mechanism and the
-            // measurement. CI runs this tier against the pre-built
-            // standalone server, not the dev server #290 measured against.
+            // docs/test-database.md §2 for the mechanism.
             fileParallelism: false,
             env: { DATABASE_URL: devUrl },
           },

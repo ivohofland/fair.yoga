@@ -10,6 +10,17 @@ route was sent first after every edit to warm it — an unwarmed first request
 can blow the test's own timeout and read as a false RED (`solve-issue`'s
 mutation-testing hazard note).
 
+**Reading the line numbers below.** Every line number named in the prose or
+inside a captured `vitest` output block is *as recorded at the moment each
+mutation ran* — before this PR's own review fix round added to
+`pollForStatus`'s docblock, rewrote two other comments, and widened its
+default timeout. That round shifted every assertion a few lines down (the
+three this file mutates moved from 515/531/538 to 523/539/546). The numbers
+below are deliberately **not** rewritten, for the same reason the sibling
+`2026-08-08-sse-stream-liveness-mutations.md` gives: a verbatim block edited
+after capture is no longer verbatim. Locate an assertion by the source line
+printed underneath it in each block, not by the number.
+
 **Premise check, before any mutation.** The issue's own proposed shape —
 open 5, close ALL 5, reopen once — was measured against a mutation it does not
 name: an unconditional `sseCounts.delete(userKey)` in `cleanup` instead of a
@@ -84,7 +95,7 @@ AssertionError: expected 200 to be 429 // Object.is equality
 ```
 
 Matches the prediction exactly: lines 515 and 538 fail (soft, both surfaced in
-one run); the control at line 527 (`reopened.status`) is absent from the
+one run); the control at line 531 (`reopened.status`) is absent from the
 failure list — it passed.
 
 Restored via `git checkout src/app/api/notifications/stream/route.ts`;
@@ -211,6 +222,53 @@ property wearing three assertions.
 Restored via `git checkout src/app/api/notifications/stream/route.ts`;
 `diff` against the pre-mutation copy showed no residual change. Re-verified
 green: `Test Files 1 passed (1)`, `Tests 6 passed (6)`.
+
+## Standalone-build verification
+
+Every mutation above ran against `next dev`. That leaves open exactly the
+question issue #41's whole lineage exists to ask: does the property hold in
+the runtime CI (and production) actually use, or only in a dev server that
+recompiles lazily and never runs another file concurrently?
+
+Built and ran the real thing: `npm run build`, started
+`.next-build/standalone/server.js` on an alternate port (`:3099` — the
+running dev server owns `:3000` and was never touched or restarted), with
+`RESEND_API_KEY`/`EMAIL_DRY_RUN=1`/`EMAIL_FROM` set to match
+`.github/workflows/ci.yml`'s integration job exactly. Then:
+
+```
+INTEGRATION_BASE_URL=http://localhost:3099 npx vitest run --project integration --file-parallelism
+```
+
+— CI's own invocation, verbatim, against the standalone bundle, all 35
+integration files running concurrently per the `--file-parallelism` flag
+this PR's `vitest.config.ts`/`docs/test-database.md` correction describes.
+
+**First run: 8 failures, all in `signup-api.test.ts` and
+`auth-email-case.test.ts`, all 500s.** Investigated before concluding
+anything about the guard: the standalone server's log named the cause —
+`RESEND_API_KEY is not configured — cannot send magic-link email`, from
+`src/lib/email.ts`'s `sendMagicLinkEmail`. The server had been started by
+sourcing this repo's own `.env` (a real, non-placeholder key) rather than
+CI's `RESEND_API_KEY: re_test` / `EMAIL_DRY_RUN: '1'`, and
+`emailDryRun()`'s `NODE_ENV === 'production'` branch throws rather than
+falling back to a console-logged link — by design (`email.ts`'s own comment:
+an unintentional missing key must fail loudly, not leak a sign-in link to
+stdout while telling the user to check their inbox). Restarted with CI's
+exact three env vars; both files then passed clean (16/16). This was a gap
+in the verification harness, not in `route.ts` or in application behaviour —
+recorded here rather than silently redone, since a wrong first reading would
+otherwise be indistinguishable from a real regression to a future reader of
+this log.
+
+**Second run, correctly configured: green.** `Test Files 35 passed (35)`,
+`Tests 565 passed (565)`, including all 6 tests in
+`notifications-stream.test.ts` — the new slot-release test among them. The
+property this PR exists to prove — a closed stream frees its slot — holds
+under the exact runtime and concurrency CI uses, not only under `next dev`.
+
+Standalone server stopped afterward; `.next-build/` is gitignored and
+untouched by this PR's diff.
 
 ## Signature table
 

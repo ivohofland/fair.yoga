@@ -35,7 +35,6 @@ let student2Email: string;
 let capStudentId: string;
 let capAccountId: string;
 let capToken: string;
-let capEmail: string;
 
 interface OpenStream {
   status: number;
@@ -146,14 +145,20 @@ function firstDataFrame(stream: OpenStream): string | undefined {
  * Reopens `token`'s stream until its status matches `want` or `timeoutMs`
  * passes, returning whichever attempt it stopped on — not `waitFor`, which
  * throws on timeout and would report only "condition not met" instead of the
- * status actually observed. Every non-matching attempt is closed before the
- * next retry, so a slow release cannot pile up extra open streams against
- * the cap while this polls.
+ * status actually observed.
+ *
+ * Safe to retry without inflating the count it polls for: a non-matching
+ * attempt here is a 429, and `route.ts`'s cap check runs BEFORE the
+ * `sseCounts` increment, so a rejected attempt never occupies a slot. That
+ * only holds for polling toward a FREED slot (`want: 200` after a close,
+ * this file's only use) — polling toward `want: 429` would have the
+ * opposite problem, since a non-matching 200 attempt DOES hold a slot until
+ * its own async release.
  */
 async function pollForStatus(
   token: string,
   want: number,
-  timeoutMs = 2_000,
+  timeoutMs = 5_000,
 ): Promise<OpenStream> {
   const deadline = Date.now() + timeoutMs;
   let attempt = await openStream(token);
@@ -219,11 +224,14 @@ describe('GET /api/notifications/stream', () => {
     student2Token = await seedSession(prisma, student2AccountId);
 
     // A THIRD student, dedicated to the slot-release test below. That test
-    // parks five streams on one account key — reusing `studentAccountId`
-    // would let a mid-test failure there leave slots occupied and redden
-    // this file's other tests, since `sseCounts` keys on `accountId` and
-    // every account here shares one process.
-    capEmail = `sse-stream-cap-${suffix}@test.local`;
+    // parks five streams on one account key, and `sseCounts` keys on
+    // `accountId` (`route.ts`) — reusing `studentAccountId` would mean
+    // starting it with 1-2 slots possibly still held from an EARLIER test's
+    // `close()`, whose server-side release runs asynchronously off
+    // `request.signal`'s abort. That could turn one of this test's own
+    // first five opens into a spurious 429 unrelated to the property under
+    // test.
+    const capEmail = `sse-stream-cap-${suffix}@test.local`;
     const capStudent = await makeStudent(capEmail);
     capStudentId = capStudent.id;
     capAccountId = capStudent.accountId!;
@@ -524,8 +532,8 @@ describe('GET /api/notifications/stream', () => {
 
         // CONTROL: proves the decrement ran at all. `pollForStatus` covers
         // the case where the runtime doesn't fire `request.signal`'s abort
-        // synchronously with our own `close()` — measured at under 25ms on
-        // this route locally, but not a guarantee this asserts on directly.
+        // synchronously with our own `close()` — see its own docblock for
+        // why polling doesn't inflate the count this checks.
         const reopened = await pollForStatus(capToken, 200);
         toClose.push(reopened);
         expect.soft(reopened.status).toBe(200);
@@ -540,8 +548,8 @@ describe('GET /api/notifications/stream', () => {
         toClose.forEach((s) => s.close());
       }
     },
-    // Generous margin over `pollForStatus`'s own 2_000ms ceiling plus six
+    // Generous margin over `pollForStatus`'s own 5_000ms ceiling plus six
     // initial round trips and the exactness probe.
-    10_000,
+    15_000,
   );
 });

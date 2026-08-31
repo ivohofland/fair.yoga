@@ -43,15 +43,22 @@ The interference runs both ways:
   machinery than this codebase needs). Since #321 `fileParallelism` is
   per-project, not global: `unit` and `components` run their files in
   parallel; `unit-sweeps` never does. `integration`'s project config is also
-  `fileParallelism: false`, but that is only its LOCAL default — a bare
-  `vitest run --project integration`, or `npm run verify`. CI's own
-  integration step passes `--file-parallelism` on the command line (#325),
-  and a CLI flag overrides a project's own setting: measured on vitest
-  **4.1.10**, two files with a 2s sleep each completed in ~2.1s under the
-  flag versus ~4.3s without it, in this repo's own `integration` project.
-  CI's integration tier has run its files in parallel, against the
-  pre-built standalone server, since #325. What keeps the parallel `unit`
-  pool honest is that each file mutates only rows it owns —
+  `fileParallelism: false`, but that is only its LOCAL default: a bare
+  `vitest run --project integration`, or `npm run verify`, both still run it
+  serially. CI's own integration step passes `--file-parallelism` on the
+  command line (#325), and a CLI flag overrides a project's own setting —
+  re-derive on vitest **4.1.10** with
+  `grep -n -A 25 "const cliOverrides = \[" node_modules/vitest/dist/chunks/cli-api.*.js`:
+  `fileParallelism` is in that list, and a few lines further down the same
+  file spreads `cliOverrides` LAST into each project's `test` config
+  (`test: { ...options.test, ...cliOverrides }`), so a CLI-supplied value
+  wins. Timing corroborates it: two throwaway files with a 2s sleep each
+  completed in ~2.1s under the flag versus ~4.3s without it, run directly
+  against this repo's own `integration` project (not committed — re-run the
+  same shape to reproduce). CI's integration tier has therefore run its
+  files in parallel, against the pre-built standalone server, since #325.
+  What keeps the parallel `unit` pool honest is that each file mutates only
+  rows it owns —
   `class-generator.test.ts` was fixed by scoping its calls instead of being
   quarantined, and an unscoped `deleteMany`/`updateMany` surfacing in that
   pool is a bug. Scoping is only available when there is something to scope:

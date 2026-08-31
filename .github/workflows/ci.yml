@@ -256,6 +256,10 @@ jobs:
           exit 1
 
       - name: Integration tests
+        # `--file-parallelism` deliberately overrides this project's own
+        # `fileParallelism: false` (#325) — a CLI flag wins over a project's
+        # setting. `vitest.config.ts` and `docs/test-database.md` §2 both
+        # describe this; update them if this line changes.
         run: npx vitest run --project integration --file-parallelism
 
       # THE APP'S LOG IS THE ONLY PLACE A 503's CAUSE IS NAMED. `api-utils.ts`
