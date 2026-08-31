@@ -32,6 +32,10 @@ let student2Id: string;
 let student2AccountId: string;
 let student2Token: string;
 let student2Email: string;
+let capStudentId: string;
+let capAccountId: string;
+let capToken: string;
+let capEmail: string;
 
 interface OpenStream {
   status: number;
@@ -138,6 +142,29 @@ function firstDataFrame(stream: OpenStream): string | undefined {
   return completeLines.find((line) => line.startsWith('data: '));
 }
 
+/**
+ * Reopens `token`'s stream until its status matches `want` or `timeoutMs`
+ * passes, returning whichever attempt it stopped on — not `waitFor`, which
+ * throws on timeout and would report only "condition not met" instead of the
+ * status actually observed. Every non-matching attempt is closed before the
+ * next retry, so a slow release cannot pile up extra open streams against
+ * the cap while this polls.
+ */
+async function pollForStatus(
+  token: string,
+  want: number,
+  timeoutMs = 2_000,
+): Promise<OpenStream> {
+  const deadline = Date.now() + timeoutMs;
+  let attempt = await openStream(token);
+  while (attempt.status !== want && Date.now() < deadline) {
+    attempt.close();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    attempt = await openStream(token);
+  }
+  return attempt;
+}
+
 describe('GET /api/notifications/stream', () => {
   beforeAll(async () => {
     await prisma.$connect();
@@ -190,6 +217,17 @@ describe('GET /api/notifications/stream', () => {
     student2Id = student2.id;
     student2AccountId = student2.accountId!;
     student2Token = await seedSession(prisma, student2AccountId);
+
+    // A THIRD student, dedicated to the slot-release test below. That test
+    // parks five streams on one account key — reusing `studentAccountId`
+    // would let a mid-test failure there leave slots occupied and redden
+    // this file's other tests, since `sseCounts` keys on `accountId` and
+    // every account here shares one process.
+    capEmail = `sse-stream-cap-${suffix}@test.local`;
+    const capStudent = await makeStudent(capEmail);
+    capStudentId = capStudent.id;
+    capAccountId = capStudent.accountId!;
+    capToken = await seedSession(prisma, capAccountId);
   });
 
   // Every delete below is guarded on its id actually being defined, per the
@@ -214,7 +252,7 @@ describe('GET /api/notifications/stream', () => {
   // for the rest of the run. It rethrows — a failed cleanup must stay loud.
   afterAll(async () => {
     try {
-      const studentIds = [studentId, student2Id].filter(Boolean);
+      const studentIds = [studentId, student2Id, capStudentId].filter(Boolean);
       if (studentIds.length) {
         await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
       }
@@ -222,7 +260,12 @@ describe('GET /api/notifications/stream', () => {
         await prisma.invitation.deleteMany({ where: { teacherId } });
         await prisma.teacherStudent.deleteMany({ where: { teacherId } });
       }
-      const accountIds = [teacherAccountId, studentAccountId, student2AccountId].filter(Boolean);
+      const accountIds = [
+        teacherAccountId,
+        studentAccountId,
+        student2AccountId,
+        capAccountId,
+      ].filter(Boolean);
       if (accountIds.length) {
         await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
       }
@@ -446,4 +489,59 @@ describe('GET /api/notifications/stream', () => {
       stream.close();
     }
   });
+
+  it(
+    'frees exactly one slot when exactly one of its five open streams closes',
+    async () => {
+      // Everything opened during this test, closed unconditionally in
+      // `finally` — including the final streams held past each assertion,
+      // so a soft-failed assertion above still leaves nothing leaked into
+      // this account's slot count for a later run.
+      const toClose: OpenStream[] = [];
+      const openOn = async () => {
+        const s = await openStream(capToken);
+        toClose.push(s);
+        return s;
+      };
+
+      try {
+        const streams: OpenStream[] = [];
+        for (let i = 0; i < 5; i++) streams.push(await openOn());
+        for (const s of streams) {
+          expect.soft(s.status).toBe(200);
+        }
+
+        const sixth = await openOn();
+        expect.soft(sixth.status).toBe(429);
+
+        // Close exactly ONE of the five — deliberately not "close all five,
+        // then reopen". That shape can't distinguish a correct per-stream
+        // decrement from `sseCounts.delete(userKey)` (frees the whole
+        // account unconditionally): draining the counter to zero, both
+        // implementations agree. The information is at the boundary —
+        // closing one of five and checking that exactly one slot opens.
+        streams[0]!.close();
+
+        // CONTROL: proves the decrement ran at all. `pollForStatus` covers
+        // the case where the runtime doesn't fire `request.signal`'s abort
+        // synchronously with our own `close()` — measured at under 25ms on
+        // this route locally, but not a guarantee this asserts on directly.
+        const reopened = await pollForStatus(capToken, 200);
+        toClose.push(reopened);
+        expect.soft(reopened.status).toBe(200);
+
+        // EXACTNESS: `reopened` now occupies the freed slot, so the account
+        // is back at the cap. A decrement that frees UNCONDITIONALLY rather
+        // than by one would still pass the control above but leave room for
+        // this extra stream too — this is what that mutation cannot pass.
+        const extra = await openOn();
+        expect.soft(extra.status).toBe(429);
+      } finally {
+        toClose.forEach((s) => s.close());
+      }
+    },
+    // Generous margin over `pollForStatus`'s own 2_000ms ceiling plus six
+    // initial round trips and the exactness probe.
+    10_000,
+  );
 });

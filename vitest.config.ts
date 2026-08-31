@@ -189,9 +189,18 @@ export default defineConfig(({ mode }) => {
           test: {
             name: 'integration',
             include: ['tests/integration/**/*.test.ts'],
-            // Serial, and load-bearing: this tier drives the one app on :3000
-            // over HTTP. #290 measured four parallel runs producing four
-            // different victims. Do not flip this to match its siblings.
+            // Serial locally, and load-bearing here: this tier drives the
+            // one dev server on :3000 over HTTP, and #290 measured four
+            // parallel runs against it producing four different victims,
+            // each green alone. Do not flip this project's own setting to
+            // match its parallel siblings.
+            //
+            // This is only the LOCAL default, though: CI's own invocation
+            // overrides it with the `--file-parallelism` CLI flag (#325),
+            // which wins over a project's setting — see
+            // docs/test-database.md §2 for the mechanism and the
+            // measurement. CI runs this tier against the pre-built
+            // standalone server, not the dev server #290 measured against.
             fileParallelism: false,
             env: { DATABASE_URL: devUrl },
           },

@@ -1,0 +1,226 @@
+# SSE stream slot-release — mutation log (#189)
+
+Durable record that the guard added to `tests/integration/notifications-stream.test.ts`
+(`frees exactly one slot when exactly one of its five open streams closes`) was
+watched failing three ways before it was trusted to pass. Command run before
+and after every mutation: `npx vitest run --project integration
+tests/integration/notifications-stream.test.ts`. `route.ts`'s handler runs
+inside `next dev`'s lazily-recompiling dev server, so a bare `curl` against the
+route was sent first after every edit to warm it — an unwarmed first request
+can blow the test's own timeout and read as a false RED (`solve-issue`'s
+mutation-testing hazard note).
+
+**Premise check, before any mutation.** The issue's own proposed shape —
+open 5, close ALL 5, reopen once — was measured against a mutation it does not
+name: an unconditional `sseCounts.delete(userKey)` in `cleanup` instead of a
+per-stream decrement. Draining the counter to zero either way, a correct
+decrement and an unconditional one agree, so that shape cannot tell them
+apart. The test built here instead closes exactly ONE of five and checks that
+exactly one slot re-opens — the boundary, not the drain. Mutation (c) below is
+what a "close all five" design would have missed.
+
+## Mutation (a) — raise the cap so it can't bind
+
+`src/app/api/notifications/stream/route.ts:9`:
+
+```diff
+- const MAX_STREAMS_PER_USER = 5;
++ const MAX_STREAMS_PER_USER = 500;
+```
+
+**Predicted:** the cap assertion (6th stream) fails, since 500 streams never
+hits it. The exactness assertion also fails — with no cap, "no room for one
+more" is unobservable, so removing the instrument the test reads exactness
+through fails that assertion too, by construction rather than as a
+coincidence. The control assertion (reopen after closing one) passes: the
+decrement itself is untouched.
+
+**Recorded:**
+
+```
+ ❯ |integration| tests/integration/notifications-stream.test.ts (6 tests | 1 failed) 1612ms
+     × frees exactly one slot when exactly one of its five open streams closes 134ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| tests/integration/notifications-stream.test.ts > GET /api/notifications/stream > frees exactly one slot when exactly one of its five open streams closes
+AssertionError: expected 200 to be 429 // Object.is equality
+
+- Expected
++ Received
+
+- 429
++ 200
+
+ ❯ tests/integration/notifications-stream.test.ts:515:35
+    513|
+    514|         const sixth = await openOn();
+    515|         expect.soft(sixth.status).toBe(429);
+       |                                   ^
+    516|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  |integration| tests/integration/notifications-stream.test.ts > GET /api/notifications/stream > frees exactly one slot when exactly one of its five open streams closes
+AssertionError: expected 200 to be 429 // Object.is equality
+
+- Expected
++ Received
+
+- 429
++ 200
+
+ ❯ tests/integration/notifications-stream.test.ts:538:35
+    536|         // this extra stream too — this is what that mutation cannot p…
+    537|         const extra = await openOn();
+    538|         expect.soft(extra.status).toBe(429);
+       |                                   ^
+    539|       } finally {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 5 passed (6)
+```
+
+Matches the prediction exactly: lines 515 and 538 fail (soft, both surfaced in
+one run); the control at line 527 (`reopened.status`) is absent from the
+failure list — it passed.
+
+Restored via `git checkout src/app/api/notifications/stream/route.ts`;
+`diff` against the pre-mutation copy showed no residual change. Re-verified
+green: `Test Files 1 passed (1)`, `Tests 6 passed (6)`.
+
+## Mutation (b) — delete the decrement outright
+
+`src/app/api/notifications/stream/route.ts`, replacing:
+
+```ts
+const count = (sseCounts.get(userKey) ?? 1) - 1;
+if (count <= 0) sseCounts.delete(userKey);
+else sseCounts.set(userKey, count);
+```
+
+with:
+
+```ts
+// MUTATION (b), issue #189: decrement deleted entirely.
+```
+
+**Predicted:** the cap assertion still passes (the cap is untouched). The
+control assertion — reopen after closing one stream — fails: the counter
+never drops below 5, so every reopen attempt inside `pollForStatus`'s 2-second
+ceiling keeps getting 429, and the poll returns its last (429) attempt. The
+final "extra" assertion passes, but vacuously — the account is still at cap
+for a reason that has nothing to do with the property it exists to check.
+
+**Recorded:**
+
+```
+ ❯ |integration| tests/integration/notifications-stream.test.ts (6 tests | 1 failed) 3638ms
+     × frees exactly one slot when exactly one of its five open streams closes 2139ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| tests/integration/notifications-stream.test.ts > GET /api/notifications/stream > frees exactly one slot when exactly one of its five open streams closes
+AssertionError: expected 429 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 429
+
+ ❯ tests/integration/notifications-stream.test.ts:531:38
+    529|         const reopened = await pollForStatus(capToken, 200);
+    530|         toClose.push(reopened);
+    531|         expect.soft(reopened.status).toBe(200);
+       |                                      ^
+    532|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 5 passed (6)
+```
+
+The test's own duration (2139ms) confirms `pollForStatus` actually spent its
+full ~2000ms ceiling retrying before giving up — this is the poll doing its
+job, not a hang. Only line 531 fails; the cap assertion and the final "extra"
+assertion are both absent from the failure list, exactly as predicted.
+
+Restored via `git checkout src/app/api/notifications/stream/route.ts`;
+`diff` against the pre-mutation copy showed no residual change. Re-verified
+green: `Test Files 1 passed (1)`, `Tests 6 passed (6)`.
+
+## Mutation (c) — free the whole account instead of one slot
+
+The mutation the issue's own proposed test shape (close all five, then
+reopen) could not have caught, because draining the counter to zero makes
+this bug indistinguishable from a correct decrement.
+
+`src/app/api/notifications/stream/route.ts`, replacing the same three lines
+with:
+
+```ts
+// MUTATION (c), issue #189: frees the WHOLE account, not one slot.
+sseCounts.delete(userKey);
+```
+
+**Predicted:** the cap assertion passes (untouched). The control assertion
+passes — the account genuinely does free up, just too much of it — so
+`pollForStatus`'s first attempt already returns 200. The final "extra"
+assertion fails: with the whole account reset to zero by closing one of five,
+four slots that should still read as occupied instead read as free, and the
+next open succeeds instead of hitting 429.
+
+**Recorded:**
+
+```
+ ❯ |integration| tests/integration/notifications-stream.test.ts (6 tests | 1 failed) 1578ms
+     × frees exactly one slot when exactly one of its five open streams closes 121ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| tests/integration/notifications-stream.test.ts > GET /api/notifications/stream > frees exactly one slot when exactly one of its five open streams closes
+AssertionError: expected 200 to be 429 // Object.is equality
+
+- Expected
++ Received
+
+- 429
++ 200
+
+ ❯ tests/integration/notifications-stream.test.ts:538:35
+    536|         // this extra stream too — this is what that mutation cannot p…
+    537|         const extra = await openOn();
+    538|         expect.soft(extra.status).toBe(429);
+       |                                   ^
+    539|       } finally {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 5 passed (6)
+```
+
+Only line 538 fails — the signature distinct from both (a) and (b), as
+required for three mutations to certify three separate things rather than one
+property wearing three assertions.
+
+Restored via `git checkout src/app/api/notifications/stream/route.ts`;
+`diff` against the pre-mutation copy showed no residual change. Re-verified
+green: `Test Files 1 passed (1)`, `Tests 6 passed (6)`.
+
+## Signature table
+
+| Mutation | cap (6th → 429) | control (reopen → 200) | exactness (next → 429) |
+|---|---|---|---|
+| (a) cap → 500 | fails | passes | fails |
+| (b) no decrement | passes | fails | passes (vacuous) |
+| (c) unconditional delete | passes | passes | fails |
+
+Three mutations, three distinct failure signatures. No production code was
+changed by this issue — `route.ts` carries the same behaviour it did before,
+confirmed identical after every restore via `diff` against a pre-mutation
+copy.
