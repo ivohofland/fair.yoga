@@ -21,17 +21,24 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // forwarded a real address — without one, all callers would share a
   // single bucket and lock each other out.
   const ip = clientIp(request);
-  const ipCheck =
-    ip === 'unknown'
-      ? { allowed: true, retryAfterSeconds: 0 }
-      : checkRateLimit(`magic-link:ip:${ip}`, PER_IP_LIMIT, WINDOW_MS);
+  if (ip !== 'unknown') {
+    const ipCheck = checkRateLimit(`magic-link:ip:${ip}`, PER_IP_LIMIT, WINDOW_MS);
+    if (!ipCheck.allowed) {
+      const retry = ipCheck.retryAfterSeconds;
+      return respondError(
+        `Too many sign-in requests. Try again in ${Math.ceil(retry / 60)} minute${retry > 60 ? 's' : ''}.`,
+        429,
+      );
+    }
+  }
+
   const emailCheck = checkRateLimit(
     `magic-link:email:${email}`,
     PER_EMAIL_LIMIT,
     WINDOW_MS,
   );
-  if (!ipCheck.allowed || !emailCheck.allowed) {
-    const retry = Math.max(ipCheck.retryAfterSeconds, emailCheck.retryAfterSeconds);
+  if (!emailCheck.allowed) {
+    const retry = emailCheck.retryAfterSeconds;
     return respondError(
       `Too many sign-in requests. Try again in ${Math.ceil(retry / 60)} minute${retry > 60 ? 's' : ''}.`,
       429,

@@ -1,5 +1,7 @@
+import { log } from '@/lib/log';
+
 /**
- * In-memory fixed-window rate limiter.
+ * In-memory sliding-log rate limiter.
  *
  * Suitable for the single-process VPS deployment this project targets —
  * state does not survive restarts and is not shared across instances,
@@ -8,6 +10,7 @@
 
 interface Window {
   timestamps: number[];
+  expiresAt: number;
 }
 
 const buckets = new Map<string, Window>();
@@ -19,6 +22,11 @@ export interface RateLimitResult {
   allowed: boolean;
   /** Seconds until the oldest counted hit leaves the window. */
   retryAfterSeconds: number;
+}
+
+function sanitizeRateLimitKey(key: string): string {
+  // Redact email addresses in keys like magic-link:email:alice@example.com
+  return key.replace(/:[^:@]+@[^:]+$/, ':***');
 }
 
 /**
@@ -34,13 +42,36 @@ export function checkRateLimit(
   const cutoff = now - windowMs;
 
   let bucket = buckets.get(key);
-  if (!bucket) {
+  if (bucket) {
+    // Re-insert to keep Map in LRU order (most recently accessed key moves to tail)
+    buckets.delete(key);
+    buckets.set(key, bucket);
+  } else {
     if (buckets.size >= MAX_KEYS) {
-      // Drop the oldest-inserted bucket — coarse, but bounds memory.
-      const oldest = buckets.keys().next().value;
-      if (oldest !== undefined) buckets.delete(oldest);
+      // Bounded scan from head for expired buckets to reclaim dead slots
+      let scanned = 0;
+      for (const [k, v] of buckets) {
+        scanned++;
+        if (v.expiresAt <= now) {
+          buckets.delete(k);
+        }
+        if (buckets.size < MAX_KEYS || scanned >= 50) break;
+      }
+
+      // If still at capacity, evict the true LRU entry at the head of the Map
+      if (buckets.size >= MAX_KEYS) {
+        const oldestKey = buckets.keys().next().value;
+        if (oldestKey !== undefined) {
+          buckets.delete(oldestKey);
+          const sanitizedKey = sanitizeRateLimitKey(oldestKey);
+          log.warn(
+            { key: sanitizedKey, mapSize: buckets.size },
+            'Rate limit bucket evicted under memory pressure',
+          );
+        }
+      }
     }
-    bucket = { timestamps: [] };
+    bucket = { timestamps: [], expiresAt: now + windowMs };
     buckets.set(key, bucket);
   }
 
@@ -55,6 +86,7 @@ export function checkRateLimit(
   }
 
   bucket.timestamps.push(now);
+  bucket.expiresAt = now + windowMs;
   return { allowed: true, retryAfterSeconds: 0 };
 }
 
@@ -85,6 +117,9 @@ export function resetRateLimits(): void {
 /** Best-effort client IP for rate-limit keying (nginx sets x-forwarded-for). */
 export function clientIp(request: { headers: { get(name: string): string | null } }): string {
   const forwarded = request.headers.get('x-forwarded-for');
-  if (forwarded) return forwarded.split(',')[0]!.trim();
+  if (forwarded) {
+    const parts = forwarded.split(',');
+    return parts[parts.length - 1]!.trim();
+  }
   return request.headers.get('x-real-ip') ?? 'unknown';
 }
