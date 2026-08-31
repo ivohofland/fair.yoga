@@ -846,8 +846,8 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
 
   it('pausing deletes nothing and reports the furthest-out scheduled class', async () => {
     const t = await makeTemplate('Pause Active');
-    const soon = await makeClass(t.scheduleRuleId, futureOn(3), '08:00');
-    const later = await makeClass(t.scheduleRuleId, futureOn(10), '19:00');
+    const soon = await makeClass(t.scheduleRuleId, futureOn(3), '08:02');
+    const later = await makeClass(t.scheduleRuleId, futureOn(10), '19:02');
 
     const result = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
 
@@ -860,7 +860,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(result.lastScheduled.date.toISOString().slice(0, 10)).toBe(
       later.calendarEntry.date.toISOString().slice(0, 10),
     );
-    expect(result.lastScheduled.startTime).toBe('19:00');
+    expect(result.lastScheduled.startTime).toBe('19:02');
     // Deletes nothing: pausing withdraws no already-generated class — that is
     // archiving's job, not pausing's.
     expect(await prisma.studioClass.count({ where: { id: soon.id } })).toBe(1);
@@ -882,14 +882,14 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
    */
   it('resuming toggles isActive back on and does not delete an already-scheduled class', async () => {
     const t = await makeTemplate('Resume Simple');
-    // '08:01', not '08:00': the earlier "pausing deletes nothing..." test
-    // above leaves its own `soon` class at futureOn(3)/'08:00' standing
+    // '08:03', not '08:00': the earlier "pausing deletes nothing..." test
+    // above leaves its own `soon` class at futureOn(3)/'08:02' standing
     // (pausing never deletes), which would otherwise collide under
     // `CalendarEntry_teacher_slot_excl`. The exact minute is arbitrary here —
     // see the comment above, and the one-minute durations that make a minute
-    // of separation disjoint under a range overlap — so this is a same-family
-    // repair, not a change to what the test proves.
-    const c = await makeClass(t.scheduleRuleId, futureOn(3), '08:01');
+    // of separation disjoint under a range overlap — and neither lands on ':00',
+    // preventing any exclusion conflict with makeTemplate's hourly slots.
+    const c = await makeClass(t.scheduleRuleId, futureOn(3), '08:03');
 
     const paused = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
     expect(paused.ok).toBe(true);
