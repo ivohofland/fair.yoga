@@ -13,7 +13,9 @@ import { teacherProfileSchema } from '@/lib/schemas';
 import {
   SIGNUP_TICKET_COOKIE,
   consumeSignupTicket,
+  mintSignupTicket,
   clearSignupTicketCookie,
+  setSignupTicketCookie,
   createSession,
   setSessionCookie,
 } from '@/lib/auth';
@@ -27,6 +29,14 @@ import { log } from '@/lib/log';
  * as a student").
  */
 export const POST = withErrorHandler(async (request: NextRequest) => {
+  // Body validation runs before the ticket is ever consumed: a malformed
+  // request must not burn a real, single-use ticket for nothing — losing it
+  // to a typo is exactly the bad-first-interaction `signup-ticket.ts`'s own
+  // TTL rationale exists to avoid.
+  const parsed = await parseBody(request, teacherProfileSchema);
+  if ('error' in parsed) return parsed.error;
+  const { firstName, lastName, bio, pageSlug, defaultTimezone } = parsed.data;
+
   const ticketToken = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
   const ticketEmail = ticketToken ? await consumeSignupTicket(prisma, ticketToken) : null;
 
@@ -49,16 +59,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     email = account.email;
   }
 
-  const parsed = await parseBody(request, teacherProfileSchema);
-  if ('error' in parsed) return parsed.error;
-  const { firstName, lastName, bio, pageSlug } = parsed.data;
-
   try {
     const teacher = await prisma.teacher.create({
       data: {
         firstName, lastName, email, bio, pageSlug,
         defaultCurrency: 'EUR',
-        defaultTimezone: 'Europe/Amsterdam',
+        // Falls back to Amsterdam only when the browser couldn't report one
+        // (#258) — never an unconditional overwrite of what Task 1's schema
+        // carries through from detection.
+        defaultTimezone: defaultTimezone ?? 'Europe/Amsterdam',
         // A ticket has no account yet; a session has one already.
         ...(accountId ? { accountId } : { account: { create: { email } } }),
       },
@@ -73,7 +82,19 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return response;
   } catch (err) {
     if (isUniqueConflictOn(err, ['pageSlug'])) {
-      return respondError('Page address already in use', 409, 'SLUG_TAKEN');
+      const conflict = respondError('Page address already in use', 409, 'SLUG_TAKEN');
+      // The ticket that got us here is already spent (single-use, consumed
+      // above) — without a fresh one the client's cookie now names a dead
+      // token, and a retry (even with a different slug) falls through to
+      // `requireSession` and 401s. Safe to re-mint: `ticketEmail` only
+      // exists because THIS request already consumed a ticket proving
+      // ownership of it, so minting another proves nothing new. Session-authed
+      // callers have no ticket to replace, so this is skipped for them.
+      if (ticketEmail) {
+        const freshTicket = await mintSignupTicket(prisma, ticketEmail);
+        setSignupTicketCookie(conflict.headers, freshTicket);
+      }
+      return conflict;
     }
     if (isUniqueConflictOn(err, ['email']) || isUniqueConflictOn(err, ['accountId'])) {
       return respondError('Account already has a teacher profile', 409, 'ALREADY_TEACHER');

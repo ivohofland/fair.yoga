@@ -55,11 +55,16 @@ export const PREFIX_CAPACITIES = {
   'slug-available': 1_000,
 } as const satisfies Record<RateLimitPrefix, number>;
 
-// Longest first: today's registered prefixes are mutually exclusive
-// siblings (':ip' can never prefix-match ':email' or vice versa), so this
-// order is inert for them — it only matters if a future prefix is itself a
-// colon-prefix of another (e.g. registering both 'magic-link' and
-// 'magic-link:ip'), in which case it resolves to the more specific one.
+// Longest first: this is now load-bearing, not inert. `'teacher-signup'` and
+// `'teacher-signup:email'` are both registered, and a key built from the
+// latter (`teacher-signup:email:<address>`) also starts with
+// `'teacher-signup:'` — so an unsorted or shortest-first scan would let
+// `partitionOf` match the shorter `'teacher-signup'` prefix first and file
+// every `:email` key into the IP-keyed partition's bucket map instead of its
+// own. That breaks the isolation this module's own header docblock promises
+// ("a flood on one prefix can never evict...another prefix's state"): the two
+// would now share one eviction budget. Sorting longest-first makes
+// `'teacher-signup:email'` win the match before `'teacher-signup'` is tried.
 const REGISTERED_PREFIXES = Object.keys(PREFIX_CAPACITIES).sort((a, b) => b.length - a.length);
 
 /**

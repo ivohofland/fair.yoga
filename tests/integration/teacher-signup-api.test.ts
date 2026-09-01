@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession } from '../helpers';
-import { mintSignupTicket } from '@/lib/auth';
+import { mintSignupTicket, generateMagicLinkToken } from '@/lib/auth';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -10,6 +10,10 @@ const ticketEmail = `teacher-signup-ticket-${suffix}@test.local`;
 const ticketSlug = `ticket-teacher-${suffix}`;
 const spentEmail = `teacher-signup-spent-${suffix}@test.local`;
 const clashEmail = `teacher-signup-clash-${suffix}@test.local`;
+const recoveryEmail = `teacher-signup-recovery-${suffix}@test.local`;
+const recoverySlug = `recovery-${suffix}`;
+const verifyTeacherSignupEmail = `teacher-signup-verify-ticket-${suffix}@test.local`;
+const verifySignInNoAccountEmail = `teacher-signup-verify-signin-${suffix}@test.local`;
 const onboardingEmail = `teacher-signup-onboarding-${suffix}@test.local`;
 const onboardingSlug = `onboarding-teacher-${suffix}`;
 
@@ -37,18 +41,28 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  const ticketBackedEmails = [ticketEmail, spentEmail, clashEmail, recoveryEmail];
   await prisma.magicLinkToken.deleteMany({
-    where: { email: { in: [freshEmail, ticketEmail, spentEmail, clashEmail] } },
+    where: {
+      email: {
+        in: [
+          freshEmail,
+          ...ticketBackedEmails,
+          verifyTeacherSignupEmail,
+          verifySignInNoAccountEmail,
+        ],
+      },
+    },
   });
 
   const accounts = await prisma.account.findMany({
-    where: { email: { in: [ticketEmail, spentEmail, clashEmail] } },
+    where: { email: { in: ticketBackedEmails } },
     select: { id: true },
   });
   const accountIds = accounts.map((a) => a.id);
   await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
   await prisma.teacher.deleteMany({
-    where: { email: { in: [ticketEmail, spentEmail, clashEmail] } },
+    where: { email: { in: ticketBackedEmails } },
   });
   await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
 
@@ -94,6 +108,44 @@ describe('POST /api/auth/teacher-signup', () => {
       body: JSON.stringify({ email: freshEmail, pageSlug: 'sneaky' }),
     });
     expect(res.status).toBe(400);
+  });
+});
+
+// Fix round 1, Finding 4: the verify route's new ticket-authorization branch
+// (`!resolved && purpose === 'teacher_signup'`) had no test coverage —
+// deleting the condition would leave the suite green. These two cases prove
+// it actually gates on `purpose`, not merely on "no account".
+describe('POST /api/auth/magic-link/verify — teacher-signup ticket branch', () => {
+  it('mints a signup ticket for a teacher_signup token with no existing account', async () => {
+    const token = await generateMagicLinkToken(prisma, verifyTeacherSignupEmail, {
+      purpose: 'teacher_signup',
+    });
+    const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ token }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { redirectTo: string } };
+    expect(body.data.redirectTo).toBe('/signup/profile');
+    expect(res.headers.get('set-cookie')).toContain('fair_yoga_signup=');
+
+    // The ticket defers account/teacher creation to
+    // POST /api/account/teacher-profile — neither exists yet.
+    expect(
+      await prisma.account.findUnique({ where: { email: verifyTeacherSignupEmail } }),
+    ).toBeNull();
+  });
+
+  it('still 400s a sign_in token for an address with no account, and sets no ticket', async () => {
+    const token = await generateMagicLinkToken(prisma, verifySignInNoAccountEmail);
+    const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ token }),
+    });
+    expect(res.status).toBe(400);
+    expect(res.headers.get('set-cookie')).not.toContain('fair_yoga_signup=');
   });
 });
 
@@ -167,6 +219,51 @@ describe('POST /api/account/teacher-profile', () => {
     });
     expect(res.status).toBe(409);
     expect((await res.json()).error.code).toBe('SLUG_TAKEN');
+  });
+
+  // Fix round 1, Finding 2: SLUG_TAKEN used to be a dead end — the ticket
+  // was already spent by the time the conflict was known, and the client's
+  // cookie kept naming a deleted token. The 409 now sets a fresh ticket;
+  // this proves a retry using THAT cookie value (the realistic simulation of
+  // what a browser does automatically on a Set-Cookie) actually succeeds.
+  it('recovers from SLUG_TAKEN: the 409 sets a fresh ticket a retry can use', async () => {
+    const ticket = await mintSignupTicket(prisma, recoveryEmail);
+    const first = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_signup=${ticket}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({
+        // ticketSlug is already taken — the earlier test in this block
+        // created a teacher with it.
+        firstName: 'A', lastName: 'B', bio: '', pageSlug: ticketSlug,
+      }),
+    });
+    expect(first.status).toBe(409);
+    expect((await first.json()).error.code).toBe('SLUG_TAKEN');
+
+    const setCookieHeader = first.headers.get('set-cookie');
+    const freshToken = /fair_yoga_signup=([^;]+)/.exec(setCookieHeader ?? '')?.[1];
+    expect(freshToken).toBeTruthy();
+    expect(freshToken).not.toBe(ticket);
+
+    const second = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_signup=${freshToken}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({
+        firstName: 'A', lastName: 'B', bio: '', pageSlug: recoverySlug,
+      }),
+    });
+    expect(second.status).toBe(201);
+
+    const teacher = await prisma.teacher.findUnique({ where: { pageSlug: recoverySlug } });
+    expect(teacher?.email).toBe(recoveryEmail);
   });
 });
 
