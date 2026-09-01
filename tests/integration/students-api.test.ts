@@ -1430,6 +1430,9 @@ describe('POST /api/students answers a raced invite with ALREADY_INVITED (#161)'
     let settled = false;
     void pending.then(() => { settled = true; });
     await new Promise((r) => setTimeout(r, 1000));
+    // Without this, a fast answer means the request 409'd off its own
+    // pre-check and raced nothing — see teacher-rooms-api.test.ts for the
+    // full argument.
     expect(settled).toBe(false);
 
     release();

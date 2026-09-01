@@ -97,8 +97,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
     // Not rethrown as a P2002: `classifyApiError` answers any P2002 with the
     // code-less 409 this catch exists to remove, so rethrowing would deliver
-    // the same defect through the other door. Same reasoning, same shape as
-    // `auth/student-signup`'s catch.
+    // the same defect through the other door.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       log.error(
         { err, rawTarget: err.meta?.target },

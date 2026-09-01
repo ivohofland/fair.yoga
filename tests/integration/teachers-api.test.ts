@@ -163,7 +163,7 @@ describe('POST /api/teachers keeps its conflict codes apart under a race (#161)'
 
   afterAll(async () => {
     await prisma.teacher.deleteMany({
-      where: { email: { in: [raceEmail, holderSlugEmail] } },
+      where: { email: { in: [raceEmail, holderSlugEmail, `race-slug-req-${suffix}@test.local`] } },
     });
     await prisma.account.deleteMany({
       where: { email: { in: [raceEmail, holderSlugEmail, `race-slug-req-${suffix}@test.local`] } },
@@ -202,6 +202,9 @@ describe('POST /api/teachers keeps its conflict codes apart under a race (#161)'
     let settled = false;
     void pending.then(() => { settled = true; });
     await new Promise((r) => setTimeout(r, 1000));
+    // Without this, a fast answer means the request 409'd off its own
+    // pre-check and raced nothing — see teacher-rooms-api.test.ts for the
+    // full argument.
     expect(settled).toBe(false);
 
     release();
@@ -254,6 +257,9 @@ describe('POST /api/teachers keeps its conflict codes apart under a race (#161)'
     let settled = false;
     void pending.then(() => { settled = true; });
     await new Promise((r) => setTimeout(r, 1000));
+    // Without this, a fast answer means the request 409'd off its own
+    // pre-check and raced nothing — see teacher-rooms-api.test.ts for the
+    // full argument.
     expect(settled).toBe(false);
 
     release();

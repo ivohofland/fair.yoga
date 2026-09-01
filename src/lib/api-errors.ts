@@ -496,8 +496,8 @@ export function classifyApiError(error: unknown): ApiFailure {
   }
 
   // Reaching this branch means a `create` raised a P2002 that its own caller
-  // did not recognise: a route that never pre-checked, or a catch whose
-  // column set has fallen behind its constraint. Both are worth knowing
+  // did not recognise: a route that never pre-checked, or a catch that
+  // rethrows a P2002 its column set did not match. Both are worth knowing
   // about; neither is an outage, which is why this is `warn` and not `error`.
   // `meta.target` names the constraint — without it the log says something
   // already existed but not what, which is the same gap one level in.
