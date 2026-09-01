@@ -147,12 +147,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // No email address on purpose: this pair finds the row, and the address
       // is the one field on it worth keeping out of the logs.
       //
-      // There is no resend. The teacher's recovery is to remove the contact
-      // and invite again — `DELETE /api/invitations/[id]` refuses only
-      // `declined` rows, so a pending one can go — which is what
-      // `REFUSAL_MESSAGES.ALREADY_INVITED` now names, since the refusal is the
-      // only place they meet the dead end. A real resend affordance is filed
-      // separately; do not grow one out of this catch.
+      // This log line is the operator's only signal that a specific send
+      // failed — the teacher's own recovery is now
+      // `POST /api/invitations/[id]/resend` (#173), not delete-and-recreate.
       log.error(
         { err, teacherId: session.teacherId, invitationId: result.value.id },
         'failed to notify invitee',

@@ -191,17 +191,20 @@ export function checkRateLimit(
 }
 
 /**
- * Hourly budget for `POST /api/students`, keyed on the inviting teacher.
- * #166 closed the enumeration oracle this used to guard against by
- * construction — the route no longer branches on whether the address
- * already exists — so what remains is a spam brake: a teacher can still
- * cause an email to be sent to an arbitrary address, once per request.
+ * Hourly budget for `POST /api/students` and `POST
+ * /api/invitations/[id]/resend`, keyed on the inviting teacher. #166 closed
+ * the enumeration oracle this used to guard against by construction — the
+ * create route no longer branches on whether the address already exists —
+ * so what remains is a spam brake: a teacher can still cause an email to be
+ * sent to an arbitrary address, once per request.
  *
  * There used to be a second caller, the teacher branch of
  * `PUT /api/students/[id]`, which wrote a client-supplied `email` to the
  * same `@unique` column with no pre-check and so needed the same budget.
- * Task 10 of #166 deleted that branch outright rather than leaving it
- * metered, so this is a single-caller budget again.
+ * Task 10 of #166 deleted that branch outright. #173's resend route is the
+ * new second caller, sharing this same bucket by design — both routes cause
+ * an email to go to an arbitrary address, so one ceiling covers both rather
+ * than each needing its own.
  *
  * 50/hour fits a workshop roster plus corrections in one sitting.
  */

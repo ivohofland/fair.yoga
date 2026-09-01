@@ -44,12 +44,11 @@ export interface InviteResult {
 /**
  * `ALREADY_INVITED` names the way out, the other two do not, and that
  * asymmetry is the point (F4, #166 review). A teacher whose invitation email
- * silently failed to send meets this refusal when they try again, and on its
- * own it reads as a closed door — while the door is in fact open: `DELETE
- * /api/invitations/[id]` refuses only `declined` rows, so a pending
- * invitation can be removed and re-sent. The recovery existed and was simply
- * undiscoverable. There is no resend button yet; when one lands, this
- * sentence is the thing to repoint at it.
+ * silently failed to send meets this refusal when they try again, and on
+ * its own it reads as a closed door — while the door is in fact open:
+ * `POST /api/invitations/[id]/resend` (#173) resends to the address already
+ * on the row, and `PUT` on the same route can correct that address first if
+ * it was the problem.
  *
  * One sentence, and it stays one: the first draft of it ran to two and
  * became the longest error string in the app — roughly three wrapped lines
@@ -71,7 +70,7 @@ export interface InviteResult {
  */
 export const REFUSAL_MESSAGES: Record<InviteRefusal, string> = {
   ALREADY_INVITED:
-    'You have already invited this person — remove the contact to invite them again.',
+    'You have already invited this person — open their contact to resend or update their details.',
   ALREADY_LINKED: 'This person is already one of your students.',
   DECLINED: 'This person declined your invitation.',
   CONTACT_CHANGED: 'This contact changed while you were sending — reload and try again.',
@@ -342,7 +341,10 @@ async function revivePendingInvitation(
  * recomputing `delivered`, which looks like a second door and is not: PUT
  * does not notify, so a value gone stale there reaches nobody. Named only so
  * the next reader does not go checking it, find it harmless, and conclude
- * the re-check below is redundant.
+ * the re-check below is redundant. `POST /api/invitations/[id]/resend`
+ * (#173) is the actual second caller of this function — it reads `email`
+ * fresh from the row in the same request it dispatches, so there is no
+ * equivalent staleness window for it to worry about.
  *
  * `POST /api/students` (route.ts) does not await this function — it is
  * called fire-and-forget, after the response's status and body are already

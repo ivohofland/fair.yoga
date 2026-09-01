@@ -198,11 +198,11 @@ describe('POST /api/students', () => {
     expect(json.error.code).toBe('ALREADY_INVITED');
     // F4, #166 review: the message must name the way out, not just the wall.
     // The invitation email is sent fire-and-forget, so a teacher whose send
-    // failed meets this refusal when they retry — and removing the contact is
-    // the recovery `DELETE /api/invitations/[id]` actually allows for a
-    // pending row. Substring, not the whole sentence: what is pinned is that
-    // the refusal points somewhere, not this month's wording.
-    expect(json.error.message).toContain('remove the contact');
+    // failed meets this refusal when they retry — and the recovery it now
+    // names is `POST /api/invitations/[id]/resend` (#173), not
+    // delete-and-recreate. Substring, not the whole sentence: what is pinned
+    // is that the refusal points somewhere, not this month's wording.
+    expect(json.error.message).toContain('resend');
   });
 
   // The defect #166 exists to fix, inverted into a test. This used to be
@@ -1444,7 +1444,7 @@ describe('POST /api/students answers a raced invite with ALREADY_INVITED (#161)'
     const body = (await res.json()) as { error: { code?: string; message: string } };
     expect(body.error.code).toBe('ALREADY_INVITED');
     expect(body.error.message).toBe(
-      'You have already invited this person — remove the contact to invite them again.',
+      'You have already invited this person — open their contact to resend or update their details.',
     );
 
     // One invitation, and it is the holder's.

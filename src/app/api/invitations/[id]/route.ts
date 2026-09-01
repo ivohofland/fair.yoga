@@ -11,44 +11,7 @@ import {
 } from '@/lib/api-utils';
 import { updateInvitationSchema, archiveStateQuerySchema } from '@/lib/schemas';
 import { log } from '@/lib/log';
-
-/**
- * The ownership preamble shared by PUT/DELETE/PATCH below.
- *
- * `findFirst` with `teacherId` in the `where`, not `findUnique` by id
- * followed by a separate ownership check — the ownership condition belongs
- * in the query itself, which is the shape this project's gate model calls
- * for (#162 was a PUT that skipped exactly this).
- */
-async function ownedInvitation(teacherId: string, id: string) {
-  return prisma.invitation.findFirst({
-    where: { id, teacherId },
-    select: { id: true, status: true, isArchived: true },
-  });
-}
-
-/**
- * 404, not 403, when the row isn't this teacher's. The students routes
- * answer 403 for the equivalent case because a caller may legitimately know
- * a student id (they share a class roster, a booking link, etc). An
- * invitation id is never shared with anyone but the teacher who created it,
- * so its absence is the honest answer — a 403 would confirm the id exists
- * and belongs to someone else, which is a disclosure this route has no
- * reason to make.
- */
-const NOT_FOUND = () => respondError('Contact not found', 404);
-
-/**
- * The refusal a declined row earns, in one place — PUT's pre-check, DELETE's
- * pre-check and both of their post-CAS answers say exactly this, and three
- * copies of one sentence is three chances for them to stop agreeing.
- */
-const DECLINED = () =>
-  respondError(
-    'This person declined. You can archive this contact, but it cannot be removed.',
-    409,
-    'DECLINED_IS_PERMANENT',
-  );
+import { ownedInvitation, NOT_FOUND, DECLINED } from './shared';
 
 /**
  * What a CAS that matched nothing actually means — asked, not assumed.

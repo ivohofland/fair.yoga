@@ -528,6 +528,224 @@ describe('PATCH /api/invitations/[id]', () => {
   });
 });
 
+describe('POST /api/invitations/[id]/resend (#173)', () => {
+  it('refuses another teacher\'s invitation', async () => {
+    let other: { id: string } | undefined;
+    try {
+      other = await createOtherTeacherInvitation('resend-target');
+      const res = await fetch(`${BASE_URL}/api/invitations/${other.id}/resend`, {
+        method: 'POST', headers: cookie(teacherToken),
+      });
+      expect(res.status).toBe(404);
+    } finally {
+      if (other) await prisma.invitation.deleteMany({ where: { id: other.id } });
+    }
+  });
+
+  it('refuses a declined row', async () => {
+    const declined = await prisma.invitation.create({
+      data: {
+        teacherId, email: `resend-declined-${suffix}@test.local`,
+        status: 'declined', respondedAt: new Date(),
+      },
+      select: { id: true },
+    });
+    const res = await fetch(`${BASE_URL}/api/invitations/${declined.id}/resend`, {
+      method: 'POST', headers: cookie(teacherToken),
+    });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
+  });
+
+  it('refuses a non-pending row that is not declined', async () => {
+    const accepted = await prisma.invitation.create({
+      data: {
+        teacherId, email: `resend-accepted-${suffix}@test.local`,
+        status: 'accepted', respondedAt: new Date(),
+      },
+      select: { id: true },
+    });
+    const res = await fetch(`${BASE_URL}/api/invitations/${accepted.id}/resend`, {
+      method: 'POST', headers: cookie(teacherToken),
+    });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('NOT_PENDING');
+  });
+
+  it('resends to the current address, writing the marker and notifying a registered invitee', async () => {
+    const email = `resend-registered-${suffix}@test.local`;
+    let studentId: string | undefined;
+    let invitationId: string | undefined;
+    try {
+      const student = await prisma.student.create({
+        data: { firstName: 'Resend', lastName: 'Registered', email },
+        select: { id: true },
+      });
+      studentId = student.id;
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email, firstName: 'Resend', lastName: 'Target' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
+
+      const res = await fetch(`${BASE_URL}/api/invitations/${invitation.id}/resend`, {
+        method: 'POST', headers: cookie(teacherToken),
+      });
+      expect(res.status).toBe(200);
+
+      const after = await prisma.invitation.findUniqueOrThrow({ where: { id: invitation.id } });
+      expect(after.lastNotifiedAt).not.toBeNull();
+      expect(after.lastNotifiedEmail).toBe(email);
+
+      await waitFor(
+        () =>
+          prisma.notification.findFirst({
+            where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
+          }),
+        { description: 'resend teacher_invitation notification (#173)' },
+      );
+    } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
+      if (studentId) {
+        await prisma.notification.deleteMany({ where: { recipientId: studentId } });
+        await prisma.student.delete({ where: { id: studentId } });
+      }
+    }
+  });
+
+  it('still writes the marker for a blocked address, and sends nothing', async () => {
+    const blockedEmail = `resend-blocked-${suffix}@test.local`;
+    const controlEmail = `resend-blocked-control-${suffix}@test.local`;
+    let blockedStudentId: string | undefined;
+    let controlStudentId: string | undefined;
+    let blockedInvitationId: string | undefined;
+    let controlInvitationId: string | undefined;
+    let blockId: string | undefined;
+    try {
+      const blockedStudent = await prisma.student.create({
+        data: { firstName: 'Resend', lastName: 'Blocked', email: blockedEmail },
+        select: { id: true },
+      });
+      blockedStudentId = blockedStudent.id;
+      const block = await prisma.teacherBlock.create({
+        data: { teacherId, email: blockedEmail },
+        select: { id: true },
+      });
+      blockId = block.id;
+      const blockedInvitation = await prisma.invitation.create({
+        data: { teacherId, email: blockedEmail, firstName: 'Resend', lastName: 'Blocked' },
+        select: { id: true },
+      });
+      blockedInvitationId = blockedInvitation.id;
+
+      const blockedRes = await fetch(`${BASE_URL}/api/invitations/${blockedInvitation.id}/resend`, {
+        method: 'POST', headers: cookie(teacherToken),
+      });
+      expect(blockedRes.status).toBe(200);
+
+      const after = await prisma.invitation.findUniqueOrThrow({ where: { id: blockedInvitation.id } });
+      expect(after.lastNotifiedAt).not.toBeNull();
+      expect(after.lastNotifiedEmail).toBe(blockedEmail);
+
+      // Bracketing control, same technique as "creates no notification for
+      // an address with no Student row" above: a second, unblocked resend
+      // issued strictly after the blocked one, whose own notification is
+      // awaited before the final count — proving the blocked send, if it
+      // existed, would have landed too.
+      const controlStudent = await prisma.student.create({
+        data: { firstName: 'Resend', lastName: 'BlockedControl', email: controlEmail },
+        select: { id: true },
+      });
+      controlStudentId = controlStudent.id;
+      const controlInvitation = await prisma.invitation.create({
+        data: { teacherId, email: controlEmail, firstName: 'Resend', lastName: 'Control' },
+        select: { id: true },
+      });
+      controlInvitationId = controlInvitation.id;
+      const controlRes = await fetch(`${BASE_URL}/api/invitations/${controlInvitation.id}/resend`, {
+        method: 'POST', headers: cookie(teacherToken),
+      });
+      expect(controlRes.status).toBe(200);
+      await waitFor(
+        () =>
+          prisma.notification.findFirst({
+            where: { recipientType: 'student', recipientId: controlStudent.id, type: 'teacher_invitation' },
+          }),
+        { description: 'control teacher_invitation notification (#173)' },
+      );
+
+      const blockedNotifications = await prisma.notification.findMany({
+        where: { recipientType: 'student', recipientId: blockedStudent.id, type: 'teacher_invitation' },
+      });
+      expect(blockedNotifications).toHaveLength(0);
+    } finally {
+      if (blockedInvitationId) await prisma.invitation.deleteMany({ where: { id: blockedInvitationId } });
+      if (controlInvitationId) await prisma.invitation.deleteMany({ where: { id: controlInvitationId } });
+      if (blockId) await prisma.teacherBlock.deleteMany({ where: { id: blockId } });
+      if (blockedStudentId) {
+        await prisma.notification.deleteMany({ where: { recipientId: blockedStudentId } });
+        await prisma.student.delete({ where: { id: blockedStudentId } });
+      }
+      if (controlStudentId) {
+        await prisma.notification.deleteMany({ where: { recipientId: controlStudentId } });
+        await prisma.student.delete({ where: { id: controlStudentId } });
+      }
+    }
+  });
+
+  it('shares its rate-limit bucket with POST /api/students', async () => {
+    const shared = await prisma.teacher.create({
+      data: {
+        firstName: 'ResendBucket', lastName: 'Teacher',
+        email: `resend-bucket-${suffix}@test.local`,
+        account: { create: { email: `resend-bucket-${suffix}@test.local` } },
+        bio: 'Fresh limiter bucket for the resend route',
+        pageSlug: `resend-bucket-${suffix}`,
+      },
+    });
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...cookie(await seedSession(prisma, shared.accountId)),
+      };
+      const invitation = await prisma.invitation.create({
+        data: { teacherId: shared.id, email: `resend-bucket-target-${suffix}@test.local`, firstName: 'A', lastName: 'B' },
+        select: { id: true },
+      });
+
+      // 50 resends of the same row spend the same bucket a create-burst
+      // spends on 50 distinct addresses — resend doesn't need a fresh
+      // target each time, since it never collides on ALREADY_INVITED.
+      for (let i = 0; i < 50; i++) {
+        const res = await fetch(`${BASE_URL}/api/invitations/${invitation.id}/resend`, {
+          method: 'POST', headers,
+        });
+        expect(res.status).toBe(200);
+      }
+
+      const fiftyFirstResend = await fetch(`${BASE_URL}/api/invitations/${invitation.id}/resend`, {
+        method: 'POST', headers,
+      });
+      expect(fiftyFirstResend.status).toBe(429);
+
+      // The bucket is shared, not merely identically-sized: a fresh POST
+      // /api/students call for the SAME teacher is also refused.
+      const postAfter = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          firstName: 'A', lastName: 'B', email: `resend-bucket-fresh-${suffix}@test.local`,
+        }),
+      });
+      expect(postAfter.status).toBe(429);
+    } finally {
+      await prisma.invitation.deleteMany({ where: { teacherId: shared.id } });
+      await prisma.session.deleteMany({ where: { accountId: shared.accountId } });
+      await prisma.teacher.delete({ where: { id: shared.id } });
+      await prisma.account.deleteMany({ where: { id: shared.accountId } });
+    }
+  }, 30_000);
+});
+
 describe('POST /api/invitations/[id]/respond', () => {
   // Mixed case here used to be deliberate — it proved
   // `acceptInvitation`/`declineInvitation` lowercased `accountEmail` before
