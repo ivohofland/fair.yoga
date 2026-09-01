@@ -3,36 +3,9 @@ import { prisma } from '@/lib/db';
 import { respondOk, respondError, requireTeacher, isErrorResponse, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { createInvitationSchema, studentListQuerySchema } from '@/lib/schemas';
 import { checkStudentWriteLimit } from '@/lib/rate-limit';
-import { inviteContact, notifyInvitee, REFUSAL_MESSAGES } from '@/services/invitations';
+import { inviteContact, deliverInvitation, REFUSAL_MESSAGES } from '@/services/invitations';
 import { log } from '@/lib/log';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
-
-/**
- * Loads the inviting teacher's display name and notifies the invitee — the
- * whole "decide + deliver" tail of a successful, unblocked invite.
- *
- * Deliberately never awaited by `POST` below (F1, #166 review): this SELECT
- * plus whatever `notifyInvitee` does — a plain INSERT for a registered
- * invitee, an HTTPS call to Resend for anyone else — must not sit on the
- * request's critical path. Awaited, it turns a Resend outage into a 500 for
- * an unregistered address while a registered one still answers 201, and even
- * with Resend healthy it is a timing channel (blocked: nothing, registered:
- * one query, stranger: one network round trip) — both carry the exact bit
- * `POST /api/students` exists to withhold. Fire-and-forget is safe here: this
- * is a long-lived Node process on a single VPS, not a serverless function
- * that could be frozen mid-request.
- */
-async function deliverInvitation(teacherId: string, email: string): Promise<void> {
-  const teacher = await prisma.teacher.findUniqueOrThrow({
-    where: { id: teacherId },
-    select: { firstName: true, lastName: true },
-  });
-  await notifyInvitee(prisma, {
-    teacherId,
-    email,
-    teacherName: `${teacher.firstName} ${teacher.lastName}`,
-  });
-}
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -146,6 +119,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError(REFUSAL_MESSAGES[result.reason], 409, result.reason);
   }
 
+  // Unconditional — written regardless of `result.value.delivered`, covering
+  // both the create and revive paths inside `inviteContact` (#173). A
+  // teacher must never be able to infer TeacherBlock status from whether
+  // this timestamp advances, so this cannot be moved inside the `if` below.
+  await prisma.invitation.update({
+    where: { id: result.value.id },
+    data: { lastNotifiedAt: new Date(), lastNotifiedEmail: parsed.data.email },
+  });
+
   // `result.value.delivered` is false when a `TeacherBlock` exists for this
   // address (services/invitations.ts) — the invitation row is still real,
   // only delivery is withheld. Gating on it here is one of two things that
@@ -154,15 +136,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // #166 review), belt and braces, so this gate only saves a query on the
   // common (unblocked) path rather than being the sole guard.
   //
-  // Fire-and-forget, on purpose — see `deliverInvitation`'s docblock above.
-  // The explicit `.catch` is required, not optional: without it, a rejection
-  // here becomes an unhandled promise rejection instead of a log line.
+  // Fire-and-forget, on purpose — see `deliverInvitation`'s docblock
+  // (services/invitations.ts). The explicit `.catch` is required, not
+  // optional: without it, a rejection here becomes an unhandled promise
+  // rejection instead of a log line.
   if (result.value.delivered) {
-    // Recomputed here rather than read back off `result` — the service
-    // returns only `{ id, delivered }` on the wire-shaped success path, so
-    // this is the same already-normalised `parsed.data.email` `inviteContact`
-    // itself was called with above, not a second normalisation.
-    void deliverInvitation(session.teacherId, parsed.data.email).catch((err) => {
+    void deliverInvitation(prisma, session.teacherId, parsed.data.email).catch((err) => {
       // `invitationId`, not just `teacherId` (F4, #166 review). A send that
       // fails leaves a row indistinguishable from one that went out — still
       // `pending`, still listed under Contacts — so without the id an operator

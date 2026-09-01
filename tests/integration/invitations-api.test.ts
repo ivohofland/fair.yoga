@@ -1126,6 +1126,21 @@ describe('POST /api/students — the block oracle (#166 task 6b, mechanism moved
       const freshJson = (await freshRes.json()) as { data: { id: string } };
       expect(Object.keys(blockedJson.data)).toEqual(Object.keys(freshJson.data));
 
+      // #173: the delivery-attempt marker must be written for BOTH — a
+      // teacher must never be able to tell a blocked address from a fresh
+      // one by whether "last invited" advances, the same property the rest
+      // of this test proves for the response body.
+      const blockedInvitation = await prisma.invitation.findUniqueOrThrow({
+        where: { id: blockedJson.data.id },
+      });
+      const freshInvitation = await prisma.invitation.findUniqueOrThrow({
+        where: { id: freshJson.data.id },
+      });
+      expect(blockedInvitation.lastNotifiedAt).not.toBeNull();
+      expect(freshInvitation.lastNotifiedAt).not.toBeNull();
+      expect(blockedInvitation.lastNotifiedEmail).toBe(blockedEmail);
+      expect(freshInvitation.lastNotifiedEmail).toBe(freshEmail);
+
       // Unlike the design this replaces, the first POST to a blocked address
       // really does create a row — so a second POST to either address now
       // refuses the same way, for the same reason: both are already invited.

@@ -439,6 +439,39 @@ export async function notifyInvitee(
 }
 
 /**
+ * Loads the inviting teacher's display name and notifies the invitee — the
+ * whole "decide + deliver" tail of a successful, unblocked invite.
+ *
+ * Deliberately never awaited by either of its two callers, `POST
+ * /api/students` and `POST /api/invitations/[id]/resend` (#173, moved here
+ * from the first route so both could share it): this SELECT plus whatever
+ * `notifyInvitee` does — a plain INSERT for a registered invitee, an HTTPS
+ * call to Resend for anyone else — must not sit on the request's critical
+ * path. Awaited, it turns a Resend outage into a 500 for an unregistered
+ * address while a registered one still answers normally, and even with
+ * Resend healthy it is a timing channel (blocked: nothing, registered: one
+ * query, stranger: one network round trip) — both carry the exact bit these
+ * routes exist to withhold. Fire-and-forget is safe here: this is a
+ * long-lived Node process on a single VPS, not a serverless function that
+ * could be frozen mid-request.
+ */
+export async function deliverInvitation(
+  db: PrismaClient,
+  teacherId: string,
+  email: string,
+): Promise<void> {
+  const teacher = await db.teacher.findUniqueOrThrow({
+    where: { id: teacherId },
+    select: { firstName: true, lastName: true },
+  });
+  await notifyInvitee(db, {
+    teacherId,
+    email,
+    teacherName: `${teacher.firstName} ${teacher.lastName}`,
+  });
+}
+
+/**
  * A student's own invitations still awaiting a response — the read
  * `(student)/account/privacy/page.tsx` (#166 task 11) renders above the
  * teacher list.
