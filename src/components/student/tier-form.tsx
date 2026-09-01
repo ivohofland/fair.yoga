@@ -9,7 +9,13 @@ import { TIER_INFO, TIER_QUOTE, type IncomeTier } from '@/lib/tiers';
 
 interface TierFormProps {
   studentId: string;
-  currentTier: IncomeTier;
+  /**
+   * The stored tier, or null when it could not be read as one. Null shows
+   * the picker with nothing selected: a tier we had to substitute is not
+   * this student's choice, and must not be presented back as if it were.
+   * Save stays disabled until they make one.
+   */
+  currentTier: IncomeTier | null;
 }
 
 type UpdateStudentWire = z.infer<typeof updateStudentSchema>;
@@ -29,12 +35,13 @@ void _formHasNoExtras;
 // Tier selection. Your tier applies to every class you book; changing it
 // is normal, not an event.
 export function TierForm({ studentId, currentTier }: TierFormProps) {
-  const [tier, setTier] = useState(currentTier);
+  const [tier, setTier] = useState<IncomeTier | null>(currentTier);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
   async function handleSave() {
+    if (tier === null) return;
     setSaving(true);
     setSaved(false);
     setError('');
@@ -93,7 +100,7 @@ export function TierForm({ studentId, currentTier }: TierFormProps) {
       </section>
 
       <div className="flex items-center gap-3">
-        <Button variant="primary" onClick={handleSave} disabled={saving}>
+        <Button variant="primary" onClick={handleSave} disabled={saving || tier === null}>
           {saving ? 'Saving...' : 'Save tier'}
         </Button>
         {saved && <span className="type-caption text-teal">Saved</span>}

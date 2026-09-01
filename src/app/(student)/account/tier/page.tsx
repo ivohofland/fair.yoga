@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import { TierForm } from '@/components/student/tier-form';
-import { toIncomeTier } from '@/lib/tiers.server';
+import { readIncomeTier } from '@/lib/tiers.server';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +30,9 @@ export default async function TierSettingsPage() {
       <h1 className="type-title mb-6">Your tier</h1>
       <TierForm
         studentId={student.id}
-        currentTier={toIncomeTier(student.incomeTier, { studentId: student.id })}
+        // readIncomeTier, not toIncomeTier: this form presents the value back
+        // as the student's own choice, so a substituted one must not seed it.
+        currentTier={readIncomeTier(student.incomeTier, { studentId: student.id })}
       />
     </div>
   );

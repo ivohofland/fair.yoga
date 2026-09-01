@@ -53,4 +53,25 @@ describe('TierForm', () => {
     const { body } = await save();
     expect(body).toEqual({ incomeTier: 1 });
   });
+
+  it('selects nothing and refuses to save when the stored tier is unreadable', () => {
+    stubFetch();
+    render(<TierForm studentId="student-1" currentTier={null} />);
+    for (const radio of screen.getAllByRole('radio')) {
+      expect(radio).toHaveAttribute('aria-checked', 'false');
+    }
+    const button = screen.getByRole('button', { name: /save tier/i });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('saves the tier the student picks in place of an unreadable one', async () => {
+    stubFetch();
+    render(<TierForm studentId="student-1" currentTier={null} />);
+    fireEvent.click(screen.getByRole('radio', { name: /Tier 4 · Doing well/i }));
+    expect(screen.getByRole('button', { name: /save tier/i })).toBeEnabled();
+    const { body } = await save();
+    expect(body).toEqual({ incomeTier: 4 });
+  });
 });
