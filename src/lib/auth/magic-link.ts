@@ -81,8 +81,8 @@ export async function verifyMagicLinkToken(
   // Every other live token for this address is now surplus: its owner is
   // signed in, so the only thing a link still sitting in their inbox can do
   // is be used by someone else — a forwarded mail, a shared mailbox, a
-  // link-prefetching scanner. How many that can be is bounded per this
-  // function's own docblock above, not restated here.
+  // link-prefetching scanner. How many that can be is bounded per
+  // `generateMagicLinkToken`'s docblock, not restated here.
   //
   // Placement is load-bearing: this runs only AFTER the expiry check above.
   // Invalidating on every consumption would let anyone holding an old expired

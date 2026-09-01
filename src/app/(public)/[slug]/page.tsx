@@ -16,8 +16,8 @@ import { toIncomeTier } from '@/lib/tiers.server';
 export const dynamic = 'force-dynamic';
 
 // The teacher's public booking page: profile + upcoming open classes with
-// honest per-tier price estimates. This is the front door of the whole
-// product — calm, transparent, no marketing.
+// honest per-tier price estimates. This is the teacher's own front door —
+// calm, transparent, no marketing. The product's front door is `/`.
 export default async function TeacherBookingPage({
   params,
 }: {

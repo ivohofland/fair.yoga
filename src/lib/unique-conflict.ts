@@ -22,8 +22,8 @@ import { Prisma } from '@prisma/client';
  * raise P2002 from two models that share a column-name set — if one ever did,
  * this matcher could not tell which model's row collided. That is correct
  * wherever the caller has no use for the distinction. For example, `POST
- * /api/account/teacher-profile` (#161) creates `Teacher` and `Account`
- * together, and both report `['email']` on conflict; the caller does not
+ * /api/account/teacher-profile` (#161) creates `Teacher` and, for a new
+ * signup, `Account` together, and both report `['email']` on conflict; the caller does not
  * need to know which one collided — either way it means "email already in
  * use," and the Account profile column is a denormalized copy set at link
  * time with no email-change flow (see the model header comment). This is

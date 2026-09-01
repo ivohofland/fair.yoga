@@ -85,10 +85,10 @@ previous day west of UTC. See `src/lib/timezone.ts` for the rule in full.
 
 ## 3. Navigation
 
-**Bottom tab bar** (`src/components/layout/tab-bar.tsx`): 64px, exactly 4 tabs — Schedule (`/`), Students, Inbox, Settings. Active = teal icon + label in a teal-tint pill; inactive brown; gold 8px dot on Inbox when unread. iOS safe-area padded.
+**Bottom tab bar** (`src/components/layout/tab-bar.tsx`): 64px, exactly 4 tabs — Schedule (`/schedule`), Students, Inbox, Settings. Active = teal icon + label in a teal-tint pill; inactive brown; gold 8px dot on Inbox when unread. iOS safe-area padded.
 
 - The bar renders **only on the four tab roots**. Detail views are separate pages with `PageHeader` back links (arrow-left icon + `type-label` teal).
-- The Schedule tab **is** the home base ("dashboard IS the schedule"); `/schedule` redirects to `/`.
+- The Schedule tab **is** the home base ("dashboard IS the schedule") and lives at `/schedule`; `/` is the public landing page.
 - `/settings` is a real index page (Recurring classes / Studio classes / Rooms / Profile rows).
 - Desktop: same centered 640px column with the bottom bar. A slim left rail ≥768px is a deferred enhancement.
 

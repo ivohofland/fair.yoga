@@ -114,14 +114,28 @@ function detectTimeZone(): string | undefined {
  * `expired` and `expired-stuck` are the same event told honestly two ways: the
  * ticket aged out mid-typing, and the replacement link either went out or did
  * not. Saying "we've emailed you a fresh link" when that request failed is
- * worse than saying nothing.
+ * worse than saying nothing. Both are TICKET-mode only — see `mode`.
  */
 type Status = 'idle' | 'submitting' | 'expired' | 'expired-stuck' | 'already-teacher';
 
+/**
+ * Which of the profile route's two authorizations is behind this form.
+ *
+ * It changes what a 401 at submit MEANS, which is why the component has to
+ * know. Under `ticket` the ticket aged out and a fresh link fixes it. Under
+ * `session` there is no ticket to expire, so a 401 is the session itself
+ * dying — and mailing a signup link to someone who already has an account
+ * fixes nothing.
+ */
+export type ProfileSetupMode = 'ticket' | 'session';
+
 interface ProfileSetupFormProps {
-  /** The address behind the live signup ticket. Display and re-send only —
-   *  the route takes the email from the ticket it consumes, never from us. */
+  /** The address this profile will be created for — from the live signup
+   *  ticket, or from the signed-in account. Display and re-send only: the
+   *  route takes the email from the ticket or session it verifies, never
+   *  from us. */
   email: string;
+  mode: ProfileSetupMode;
 }
 
 /**
@@ -132,7 +146,7 @@ interface ProfileSetupFormProps {
  * and not an error — every value stays exactly where it was, and a fresh link
  * goes out on its own.
  */
-export function ProfileSetupForm({ email }: ProfileSetupFormProps) {
+export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
   const [form, setForm] = useState<Draft>(EMPTY_DRAFT);
   const [status, setStatus] = useState<Status>('idle');
   const [slugRejection, setSlugRejection] = useState<SlugRejection | null>(null);
@@ -250,9 +264,19 @@ export function ProfileSetupForm({ email }: ProfileSetupFormProps) {
       .json()
       .catch(() => ({}));
 
-    // The ticket aged out while they were typing. Not an error — a re-send,
-    // with every field left exactly where it is.
     if (res.status === 401) {
+      // Session mode: nothing expired here except the session itself, and a
+      // signup email would be addressed to someone who already has an
+      // account. Signing back in is the only thing that helps, and the draft
+      // survives in the store for when they return. `status` stays
+      // 'submitting' under the navigation, as on the success path.
+      if (mode === 'session') {
+        window.location.assign('/login');
+        return;
+      }
+
+      // Ticket mode: the ticket aged out while they were typing. Not an
+      // error — a re-send, with every field left exactly where it is.
       const resent = await fetch('/api/auth/teacher-signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -292,10 +316,18 @@ export function ProfileSetupForm({ email }: ProfileSetupFormProps) {
         <p className="type-subtitle">You already teach here</p>
         <p className="type-body mt-2 max-w-[420px]">
           There is already a teacher page for {email}.{' '}
-          <Link href="/login" className="text-teal">
-            Sign in
-          </Link>{' '}
-          and you are back where you left off.
+          {mode === 'session' ? (
+            <Link href="/schedule" className="text-teal">
+              Go to your schedule
+            </Link>
+          ) : (
+            <>
+              <Link href="/login" className="text-teal">
+                Sign in
+              </Link>{' '}
+              and you are back where you left off.
+            </>
+          )}
         </p>
       </div>
     );
@@ -305,8 +337,9 @@ export function ProfileSetupForm({ email }: ProfileSetupFormProps) {
     <div>
       <h1 className="type-display mb-5">Set up your teacher page</h1>
       <p className="type-body max-w-[420px] mb-8">
-        You&apos;re signing up as <span className="text-ink">{email}</span>. Your
-        name and a page address are all we need &mdash; the bio can wait.
+        {mode === 'session' ? 'Adding a teacher page to ' : "You're signing up as "}
+        <span className="text-ink">{email}</span>. Your name and a page address
+        are all we need &mdash; the bio can wait.
       </p>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">

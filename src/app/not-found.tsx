@@ -9,7 +9,7 @@ export default function NotFound() {
         href="/"
         className="mt-5 inline-flex items-center justify-center rounded-pill px-6 min-h-12 text-base font-semibold text-teal no-underline hover:bg-teal-tint"
       >
-        Go to your schedule
+        Go to fair.yoga
       </Link>
     </div>
   );

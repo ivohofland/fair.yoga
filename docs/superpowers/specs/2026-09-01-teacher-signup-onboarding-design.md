@@ -669,9 +669,12 @@ convenience.
 3. A `teacher_signup` token that is never clicked leaves nothing behind but the
    token, which `cleanupExpiredAuth` sweeps.
 4. A teacher who loses the signup email can re-run `/signup` and get another.
-5. A signed-in account with no profile lands on `/signup/profile` from every
-   door: magic-link verify, passkey verify, both layouts, and
-   `requireTeacherSession`.
+5. Verification of a `teacher_signup` token for an address with no account
+   issues a ticket and lands on `/signup/profile`; no session exists until a
+   profile does. An account that already exists and has no teacher profile
+   reaches the same form on its session instead — the door the
+   unclaimed-CRM-contact case arrives through, since verification claims that
+   student and issues a session rather than a ticket.
 6. The page address field reports availability live, rejects reserved names
    without a request, and leaves itself empty rather than blocking when a name
    derives to nothing.

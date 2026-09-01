@@ -27,12 +27,30 @@ const noIpEmails = Array.from(
 const raceEmailA = `teacher-signup-race-a-${suffix}@test.local`;
 const raceEmailB = `teacher-signup-race-b-${suffix}@test.local`;
 const raceSlug = `race-teacher-profile-${suffix}`;
+// #258's wiring: one address that sends a zone, one that sends none.
+const tzDetectedEmail = `teacher-signup-tz-detected-${suffix}@test.local`;
+const tzDetectedSlug = `tz-detected-${suffix}`;
+const tzFallbackEmail = `teacher-signup-tz-fallback-${suffix}@test.local`;
+const tzFallbackSlug = `tz-fallback-${suffix}`;
+// Session mode: an account that already exists, has a student profile and no
+// teacher, adding the second hat with no ticket anywhere.
+const sessionModeEmail = `teacher-signup-session-mode-${suffix}@test.local`;
+const sessionModeSlug = `session-mode-${suffix}`;
+const alreadyTeacherSlug = `already-teacher-${suffix}`;
 
 // A live teacher+session fixture, needed by the slug-available "already
 // taken" test and by every POST /api/account/onboarding test.
 let onboardingTeacherId: string;
 let onboardingAccountId: string;
 let onboardingToken: string;
+
+// The session-mode fixture. It carries a STUDENT deliberately: `validateSession`
+// deletes any session whose account has no live profile, so an account with
+// neither hat cannot hold one at all — a profile-less session is unrepresentable
+// at runtime as well as in `SessionUser`, and a student is therefore the only
+// caller session mode can ever have.
+let sessionModeAccountId: string;
+let sessionModeToken: string;
 
 beforeAll(async () => {
   await prisma.$connect();
@@ -49,11 +67,28 @@ beforeAll(async () => {
   onboardingTeacherId = teacher.id;
   onboardingAccountId = teacher.accountId;
   onboardingToken = await seedSession(prisma, onboardingAccountId);
+
+  const sessionModeAccount = await prisma.account.create({
+    data: { email: sessionModeEmail },
+    select: { id: true },
+  });
+  sessionModeAccountId = sessionModeAccount.id;
+  await prisma.student.create({
+    data: {
+      firstName: 'Student',
+      lastName: 'Turned Teacher',
+      email: sessionModeEmail,
+      claimedAt: new Date(),
+      accountId: sessionModeAccountId,
+    },
+  });
+  sessionModeToken = await seedSession(prisma, sessionModeAccountId);
 });
 
 afterAll(async () => {
   const ticketBackedEmails = [
     ticketEmail, spentEmail, clashEmail, recoveryEmail, raceEmailA, raceEmailB,
+    tzDetectedEmail, tzFallbackEmail,
   ];
   await prisma.magicLinkToken.deleteMany({
     where: {
@@ -79,6 +114,12 @@ afterAll(async () => {
     where: { email: { in: ticketBackedEmails } },
   });
   await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+
+  // Both children before the account they hang off.
+  await prisma.session.deleteMany({ where: { accountId: sessionModeAccountId } });
+  await prisma.teacher.deleteMany({ where: { accountId: sessionModeAccountId } });
+  await prisma.student.deleteMany({ where: { accountId: sessionModeAccountId } });
+  await prisma.account.deleteMany({ where: { id: sessionModeAccountId } });
 
   await prisma.session.deleteMany({ where: { accountId: onboardingAccountId } });
   await prisma.teacher.deleteMany({ where: { id: onboardingTeacherId } });
@@ -222,6 +263,58 @@ describe('POST /api/account/teacher-profile', () => {
     expect(teacher?.email).toBe(ticketEmail);
     // The address comes from the ticket, never the body.
     expect(teacher?.bio).toBe('');
+  });
+
+  /**
+   * #258's whole point, and untested until now: reverting the route's
+   * `defaultTimezone ?? 'Europe/Amsterdam'` to the unconditional literal it
+   * replaced left every tier green. `America/Los_Angeles` is chosen because
+   * it is nowhere near the fallback — an assertion against a CET zone would
+   * pass under both versions.
+   */
+  it('stores the timezone the browser detected', async () => {
+    const ticket = await mintSignupTicket(prisma, tzDetectedEmail);
+    const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_signup=${ticket}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({
+        firstName: 'Zone', lastName: 'Detected', bio: '', pageSlug: tzDetectedSlug,
+        defaultTimezone: 'America/Los_Angeles',
+      }),
+    });
+    expect(res.status).toBe(201);
+
+    const teacher = await prisma.teacher.findUnique({
+      where: { pageSlug: tzDetectedSlug },
+      select: { defaultTimezone: true },
+    });
+    expect(teacher?.defaultTimezone).toBe('America/Los_Angeles');
+  });
+
+  it('falls back to Europe/Amsterdam when the browser reported no timezone', async () => {
+    const ticket = await mintSignupTicket(prisma, tzFallbackEmail);
+    const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_signup=${ticket}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({
+        firstName: 'Zone', lastName: 'Absent', bio: '', pageSlug: tzFallbackSlug,
+      }),
+    });
+    expect(res.status).toBe(201);
+
+    const teacher = await prisma.teacher.findUnique({
+      where: { pageSlug: tzFallbackSlug },
+      select: { defaultTimezone: true },
+    });
+    expect(teacher?.defaultTimezone).toBe('Europe/Amsterdam');
   });
 
   it('refuses a spent ticket', async () => {
@@ -417,5 +510,77 @@ describe('POST /api/account/onboarding', () => {
       body: JSON.stringify({ step: 'bank' }),
     });
     expect(res.status).toBe(401);
+  });
+
+  /**
+   * `onboardingSkipSchema` hand-writes the three members of `OnboardingStep`
+   * with nothing tying the two together, and `skippedOnboarding` is a Postgres
+   * enum array — so if the schema ever stopped rejecting, an unknown step would
+   * reach Prisma and surface as a 500, not a 400. Asserting the STATUS is what
+   * pins the zod enum as the thing that refuses it.
+   */
+  it('rejects a step the skip schema does not name', async () => {
+    const res = await fetch(`${BASE_URL}/api/account/onboarding`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(onboardingToken), ...freshIp() },
+      body: JSON.stringify({ step: 'room' }),
+    });
+    expect(res.status).toBe(400);
+
+    const teacher = await prisma.teacher.findUnique({
+      where: { id: onboardingTeacherId },
+      select: { skippedOnboarding: true },
+    });
+    expect(teacher?.skippedOnboarding).not.toContain('room');
+  });
+});
+
+/**
+ * The second authorization the route accepts, and the one that had no UI door
+ * until the final review found it: an account that already exists adds the
+ * teacher hat on its SESSION, with no ticket anywhere. This is what the
+ * unclaimed-CRM-contact case resolves to — verification claims that student
+ * and issues an ordinary session, so the ticket branch never fires.
+ */
+describe('POST /api/account/teacher-profile — session mode', () => {
+  it('creates the teacher on the signed-in account, with no ticket', async () => {
+    const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionModeToken), ...freshIp() },
+      body: JSON.stringify({
+        firstName: 'Student', lastName: 'Turned Teacher', bio: '', pageSlug: sessionModeSlug,
+      }),
+    });
+    expect(res.status).toBe(201);
+
+    const teacher = await prisma.teacher.findUnique({
+      where: { pageSlug: sessionModeSlug },
+      select: { accountId: true, email: true },
+    });
+    // One account, both hats — not a second account for the same person.
+    expect(teacher?.accountId).toBe(sessionModeAccountId);
+    // The address comes from the account, never the body.
+    expect(teacher?.email).toBe(sessionModeEmail);
+
+    // No new session: this caller already had one. Only the ticket branch
+    // mints one, and it is the ticket test above that asserts the positive.
+    expect(res.headers.get('set-cookie') ?? '').not.toContain('fair_yoga_session=');
+  });
+
+  it('answers ALREADY_TEACHER for a session that already has one', async () => {
+    const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(onboardingToken), ...freshIp() },
+      body: JSON.stringify({
+        firstName: 'Second', lastName: 'Profile', bio: '', pageSlug: alreadyTeacherSlug,
+      }),
+    });
+    expect(res.status).toBe(409);
+
+    const body: { error?: { code?: string } } = await res.json();
+    expect(body.error?.code).toBe('ALREADY_TEACHER');
+    expect(
+      await prisma.teacher.findUnique({ where: { pageSlug: alreadyTeacherSlug } }),
+    ).toBeNull();
   });
 });
