@@ -125,7 +125,7 @@ async function forceIndexOrderedPlan(tx: Prisma.TransactionClient): Promise<void
  * 4 predicted `40P01` under DESC, which did not hold either; the failure is an
  * assertion, not a deadlock. Step 4 is an observation, not a gate.
  *
- * The per-pairing reproduction in `gdpr.test.ts` ("does not deadlock when a
+ * The per-pairing reproduction in `gdpr-lock-order.test.ts` ("does not deadlock when a
  * teacher erasure and a student erasure overlap on two classes") guards the
  * erasure pairing whichever clause the helper uses.
  */
@@ -153,7 +153,7 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     highEntryId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
 
     // `bio` and `pageSlug` are both required and unique-constrained — copied
-    // from the working fixture at `gdpr.test.ts:1251`, not invented.
+    // from the working fixture at `gdpr.test.ts:64`, not invented.
     const teacher = await prisma.teacher.create({
       data: {
         firstName: 'Order',

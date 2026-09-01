@@ -306,7 +306,7 @@ describe('lockClassRowsOrdered', () => {
     highClassId = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
 
     // `bio` and `pageSlug` are both required and unique-constrained — copied
-    // from the working fixture at `gdpr.test.ts:1251`, not invented.
+    // from the working fixture at `gdpr.test.ts:64`, not invented.
     const teacher = await prisma.teacher.create({
       data: {
         firstName: 'Lock',

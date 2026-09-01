@@ -1462,7 +1462,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       data: { classId: c.id, studentId: waiterId, position: 1, status: 'waiting' },
     });
 
-    // `finally`, not a trailing statement — the convention `gdpr.test.ts:108`
+    // `finally`, not a trailing statement — the convention `gdpr.test.ts:132`
     // records after round 1's M5. Every test below asserting a zero count for
     // `waiterId` depends on this running, and cleaning up only on the happy
     // path would turn one real failure here into several, most of them in the

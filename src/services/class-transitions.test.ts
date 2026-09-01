@@ -377,7 +377,7 @@ describe('class transitions (DB, timezone-aware)', () => {
     const cls = await makeClass({ autoCancelCheck: 'HOURS_2' });
 
     // `finally`, the convention this file records at its own `#174` fixture
-    // and cites from `gdpr.test.ts:108`. #200 added four assertions ahead of
+    // and cites from `gdpr.test.ts:132`. #200 added four assertions ahead of
     // the cleanup, so there are now five ways to skip it — and this project's
     // protocol guarantees repeated deliberately-failing runs of exactly this
     // test. The leak is inert (the class is already `cancelled`, so no sweep
@@ -460,7 +460,7 @@ describe('class transitions (DB, timezone-aware)', () => {
       autoCancelCheck: 'HOURS_2',
       cancelDeadline: 'HOURS_24',
     });
-    // `finally`, not a trailing statement — the convention `gdpr.test.ts:108`
+    // `finally`, not a trailing statement — the convention `gdpr.test.ts:132`
     // records after round 1's M5. An assertion failing below must still reap
     // the class, or the next run of this file starts with a stray cancelled
     // class on the shared fixture teacher.

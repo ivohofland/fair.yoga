@@ -151,7 +151,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
     // happened to produce. Inserted HIGH-then-LOW below, which is what makes
     // the table's heap order the REVERSE of the sorted order — the whole
     // premise of the race, asserted directly by each `it` rather than
-    // assumed. Same technique `gdpr.test.ts`'s "the two erasures take
+    // assumed. Same technique `gdpr-lock-order.test.ts`'s "the two erasures take
     // multiple Class rows in one order" describe uses for the sibling
     // pairing that IS fixed.
     const lowClassId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
@@ -451,7 +451,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // in a single ordered statement, the AB-BA cycle cannot form — but
             // it also cannot be CONSTRUCTED, so this test no longer detects a
             // missing `ORDER BY` on the erasure side. That reduction is not
-            // real: deleting the clause FAILS `gdpr.test.ts`'s deadlock test
+            // real: deleting the clause FAILS `gdpr-lock-order.test.ts`'s deadlock test
             // ("does not deadlock when a teacher erasure and a student erasure
             // overlap on two classes"), measured 5/5 with `40P01` on
             // 2026-08-16 — the erasure's ordering is guarded by a
@@ -652,7 +652,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // in a single ordered statement, the AB-BA cycle cannot form — but
             // it also cannot be CONSTRUCTED, so this test no longer detects a
             // missing `ORDER BY` on the erasure side. That reduction is not
-            // real: deleting the clause FAILS `gdpr.test.ts`'s deadlock test
+            // real: deleting the clause FAILS `gdpr-lock-order.test.ts`'s deadlock test
             // ("does not deadlock when a teacher erasure and a student erasure
             // overlap on two classes"), measured 5/5 with `40P01` on
             // 2026-08-16 — the erasure's ordering is guarded by a
