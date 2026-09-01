@@ -181,7 +181,7 @@ test.describe('Accessibility sweep', () => {
 
   test('teacher schedule', async ({ page, context }) => {
     await signIn(context, teacherToken);
-    await page.goto('/');
+    await page.goto('/schedule');
     await expect(page.getByRole('heading', { name: 'Schedule' })).toBeVisible();
     await expectNoSeriousViolations(page);
   });

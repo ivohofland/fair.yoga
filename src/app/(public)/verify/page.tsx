@@ -112,7 +112,7 @@ function VerifyingState() {
 function destinationCopy(dest: string): string {
   if (dest.includes('/book/')) return 'Taking you back to your class now.';
   if (dest.startsWith('/bookings')) return 'Taking you to your bookings now.';
-  if (dest === '/') return 'Taking you to your schedule now.';
+  if (dest === '/schedule') return 'Taking you to your schedule now.';
   return 'Taking you back to where you left off.';
 }
 
@@ -124,7 +124,7 @@ function destinationCopy(dest: string): string {
  * wrong-account) lives on the states people actually dwell on.
  */
 function SuccessState({ redirectTo }: { redirectTo: string }) {
-  const dest = redirectTo || '/';
+  const dest = redirectTo || '/schedule';
   return (
     <div className="flex-1 flex flex-col justify-center py-4">
       <p className="type-label text-teal mb-[10px]">Welcome back</p>
@@ -229,7 +229,7 @@ function VerifyContent() {
   const token = searchParams.get('token');
   const [status, setStatus] = useState<Status>(token ? 'verifying' : 'error');
   const [redirectTo, setRedirectTo] = useState<string>('');
-  const [home, setHome] = useState<string>('/');
+  const [home, setHome] = useState<string>('/schedule');
 
   useEffect(() => {
     if (!token) return;
@@ -259,7 +259,7 @@ function VerifyContent() {
             const json = (await res.json()) as {
               data: { teacherId: string | null; studentId: string | null };
             };
-            setHome(json.data.teacherId ? '/' : '/bookings');
+            setHome(json.data.teacherId ? '/schedule' : '/bookings');
             setStatus('already-signed-in');
             return;
           }

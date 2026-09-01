@@ -83,7 +83,7 @@ describe('DeleteStudioClassButton', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/studio-classes/sc-1');
     expect(init.method).toBe('DELETE');
-    await waitFor(() => expect(assign).toHaveBeenCalledWith('/'));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/schedule'));
   });
 
   it('shows the server message when the removal is refused, and stays put', async () => {

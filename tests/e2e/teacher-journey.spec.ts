@@ -297,7 +297,7 @@ test.describe('Teacher journey', () => {
 
   test('the booking lands in the inbox and can be marked read', async ({ page, context }) => {
     await signInTeacher(context);
-    await page.goto('/');
+    await page.goto('/schedule');
 
     // Gold dot: the tab announces unread messages.
     await page.getByRole('link', { name: 'Inbox, unread messages' }).click();

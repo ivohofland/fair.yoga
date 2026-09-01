@@ -70,7 +70,7 @@ export default async function ClassDetailPage({
   });
 
   if (!cls || cls.calendarEntry.teacherId !== session.teacherId) {
-    redirect('/');
+    redirect('/schedule');
   }
 
   // Read once, beside the status, because since #327 the two together are what

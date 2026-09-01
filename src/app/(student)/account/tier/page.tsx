@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
+import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
 import { TierForm } from '@/components/student/tier-form';
 import { readIncomeTier } from '@/lib/tiers.server';
@@ -10,7 +11,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function TierSettingsPage() {
   const session = await getSession();
-  if (!session?.studentId) redirect(session?.teacherId ? '/' : '/login');
+  if (!session?.studentId) redirectNonStudent(session);
 
   const student = await prisma.student.findUnique({
     where: { id: session.studentId },

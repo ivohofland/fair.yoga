@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import { redirect } from 'next/navigation';
+import { redirectNonStudent } from '@/lib/student-guard';
 import { StatusBadge, deriveBadgeVariant } from '@/components/ui/status-badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { CancelBookingButton } from '@/components/student/cancel-booking-button';
@@ -20,7 +20,7 @@ export const dynamic = 'force-dynamic';
 // what to pay and where. No engagement tricks — a quiet ledger.
 export default async function StudentBookingsPage() {
   const session = await getSession();
-  if (!session?.studentId) redirect(session?.teacherId ? '/' : '/login');
+  if (!session?.studentId) redirectNonStudent(session);
 
   const [registrations, waitlistEntries, unreadNotifications, notificationCount] = await Promise.all([
     prisma.registration.findMany({

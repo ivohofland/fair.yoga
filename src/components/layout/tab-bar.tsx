@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { Icon, type IconName } from '@/components/ui/icon';
 
 const TABS: { href: string; label: string; icon: IconName }[] = [
-  { href: '/', label: 'Schedule', icon: 'calendar' },
+  { href: '/schedule', label: 'Schedule', icon: 'calendar' },
   { href: '/students', label: 'Students', icon: 'users' },
   { href: '/inbox', label: 'Inbox', icon: 'inbox' },
   { href: '/settings', label: 'Settings', icon: 'settings' },
@@ -13,7 +13,7 @@ const TABS: { href: string; label: string; icon: IconName }[] = [
 
 // The bar shows only on the four tab roots — detail views are separate
 // pages with their own back links (the accordion-era IA carried over).
-const TAB_ROOTS = ['/', '/students', '/inbox', '/settings'];
+const TAB_ROOTS = ['/schedule', '/students', '/inbox', '/settings'];
 
 interface TabBarProps {
   unreadCount: number;

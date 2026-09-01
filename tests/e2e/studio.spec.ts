@@ -195,7 +195,7 @@ test.describe('Studio class templates', () => {
 
   test('the four generated classes are on the schedule, and refuse removal', async ({ page }) => {
     requireTemplateId();
-    await page.goto('/');
+    await page.goto('/schedule');
 
     // `StudioClassCard` (`schedule/class-list.tsx`) renders
     // "<classType> · <location> · Studio class". All four dates
@@ -494,7 +494,7 @@ test.describe('One-off studio classes', () => {
     // push within the same layout, so `/studio-class/new` arrives already
     // hydrated and its submit handler is attached before the click below.
     const hydrated = hydrationSignal(page);
-    await page.goto('/');
+    await page.goto('/schedule');
     await hydrated;
     await page.getByRole('link', { name: 'Log a studio class' }).click();
     await page.waitForURL('**/studio-class/new');

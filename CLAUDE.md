@@ -206,7 +206,7 @@ Key design decisions:
 - The tab bar renders only on the four tab roots; active tab = teal icon + label in a teal-tint pill, gold dot on Inbox when unread.
 - **Detail views are separate pages** — tapping a class, student, or notification opens a full page with a back link; the tab bar hides there.
 - Class detail is one adaptive page that transforms based on lifecycle stage (draft → open → full → in_progress → completed, plus cancelled) — `full` here is the derived at-capacity view of `open`, and cancelled is the entry's `cancelledAt`; neither is a stored status
-- Dashboard IS the schedule — the Schedule tab at `/` is the home base (`/schedule` redirects there)
+- Dashboard IS the schedule — the Schedule tab lives at `/schedule`, the teacher's home base once signed in. `/` is the public landing page
 - Rooms are in Settings (set-up-once infrastructure)
 - Studio classes are a quick entry in the schedule list (visually lighter dashed cards)
 

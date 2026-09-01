@@ -14,7 +14,7 @@ interface PageHeaderProps {
 
 export function PageHeader({
   title,
-  backHref = '/',
+  backHref = '/schedule',
   backLabel = 'Schedule',
   variant = 'title',
   action,

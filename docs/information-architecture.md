@@ -44,7 +44,7 @@ The bar is 64px with Lucide-style line icons (calendar, users, inbox, settings);
 ```
 
 ### Tab 1: Schedule (home)
-The teacher's world. This is the default tab, the landing page, the thing they see first.
+The teacher's world. This is the default tab, the first thing a signed-in teacher sees — at `/schedule`, not the app root. `/` is the public landing page a visitor reaches before signing in.
 
 ### Tab 2: Students
 Their community. The people who come to their classes.

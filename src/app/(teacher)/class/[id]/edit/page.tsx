@@ -20,7 +20,7 @@ export default async function ClassEditPage({
     where: { id },
     include: { calendarEntry: true },
   });
-  if (!cls || cls.calendarEntry.teacherId !== session.teacherId) redirect('/');
+  if (!cls || cls.calendarEntry.teacherId !== session.teacherId) redirect('/schedule');
   // Only mutable stages get an editor; everything else reads. Since #327 that
   // is TWO reads, not one: a cancelled class keeps its `draft`/`open` status,
   // and `updateClass` refuses every field on it — an editor that still

@@ -1,6 +1,6 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/session';
+import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
 import { AddPasskey } from '@/components/account/add-passkey';
 import { SignOutButton } from '@/components/account/sign-out-button';
@@ -17,7 +17,7 @@ const SETTINGS_ITEMS = [
 // The student settings index: one row per area, teacher-settings pattern.
 export default async function StudentSettingsPage() {
   const session = await getSession();
-  if (!session?.studentId) redirect(session?.teacherId ? '/' : '/login');
+  if (!session?.studentId) redirectNonStudent(session);
 
   return (
     <div>
@@ -46,7 +46,7 @@ export default async function StudentSettingsPage() {
       {session.teacherId && (
         <section className="mt-10 pt-6 border-t border-border">
           <Link
-            href="/"
+            href="/schedule"
             className="flex items-center gap-3 min-h-14 py-2 no-underline"
           >
             <span className="flex-1 text-base text-ink">Your teaching side</span>

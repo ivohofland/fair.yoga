@@ -1,7 +1,7 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
+import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
 import { NotificationList } from '@/components/layout/notification-list';
 import { studentNotificationHref } from '@/lib/notification-links';
@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 // unread; this page keeps everything (communication layer 2).
 export default async function StudentUpdatesPage() {
   const session = await getSession();
-  if (!session?.studentId) redirect(session?.teacherId ? '/' : '/login');
+  if (!session?.studentId) redirectNonStudent(session);
 
   const notifications = await prisma.notification.findMany({
     where: { recipientType: 'student', recipientId: session.studentId },

@@ -379,7 +379,7 @@ export default function CreateClassPage() {
       <div className="mb-6">
         <button
           type="button"
-          onClick={() => router.push('/')}
+          onClick={() => router.push('/schedule')}
           className="inline-flex items-center gap-1.5 type-label text-teal no-underline mb-2"
         >
           <Icon name="arrow-left" size={18} />

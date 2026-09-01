@@ -53,7 +53,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     where: { id: credential.accountId },
     select: { teacher: { select: { deletedAt: true } } },
   });
-  const fallback = account?.teacher && !account.teacher.deletedAt ? '/' : '/bookings';
+  const fallback = account?.teacher && !account.teacher.deletedAt ? '/schedule' : '/bookings';
   const redirectTo = body.redirect ?? fallback;
 
   const apiResponse = respondOk({

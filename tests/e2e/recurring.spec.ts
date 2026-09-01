@@ -154,7 +154,7 @@ test.describe('Recurring classes', () => {
     // No cron has fired: creation itself filled the four-week window,
     // and the schedule shows it immediately.
     expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(4);
-    await page.goto('/');
+    await page.goto('/schedule');
     await expect(page.getByText('Recurring Flow').first()).toBeVisible();
   });
 
@@ -186,7 +186,7 @@ test.describe('Recurring classes', () => {
   });
 
   test('the first instance appears on the schedule as a bookable class', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/schedule');
     await expect(page.getByText('Recurring Flow').first()).toBeVisible();
 
     const first = await prisma.class.findFirstOrThrow({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });

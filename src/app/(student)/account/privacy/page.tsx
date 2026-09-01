@@ -1,7 +1,7 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
+import { redirectNonStudent } from '@/lib/student-guard';
 import { listPendingInvitations } from '@/services/invitations';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -24,7 +24,7 @@ const MAX_PRIVACY: TeacherPrivacyValues = {
 
 export default async function PrivacySettingsPage() {
   const session = await getSession();
-  if (!session?.studentId) redirect(session?.teacherId ? '/' : '/login');
+  if (!session?.studentId) redirectNonStudent(session);
 
   // Invitations match the authenticated account's own email, not
   // Student.email — they agree by construction for a live linked profile,

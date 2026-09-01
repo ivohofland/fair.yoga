@@ -32,7 +32,7 @@ interface DeleteStudioClassButtonProps {
  * count exists for exactly one confirmation message and is deliberately never
  * persisted (`prisma/schema.prisma`, `withdrawnCount`).
  *
- * Leaves for the schedule with a hard navigation, not `router.push('/')`: the
+ * Leaves for the schedule with a hard navigation, not `router.push('/schedule')`: the
  * detail page no longer exists after a success, and a soft push serves the back
  * link's stale prefetch of the schedule (verified in the running app — see the
  * inline comment on `window.location.assign` below). The same move
@@ -74,20 +74,20 @@ export function DeleteStudioClassButton({
     }
 
     if (removed) {
-      // A hard exit, deliberately. The page's back link usually has '/' already
-      // prefetched by the time the removal lands, and a soft `router.push('/')`
-      // serves that pre-removal prefetch entry — the removed row kept rendering
-      // in the running app past a 4s settle window, with `router.refresh()`
-      // before or after the push (refresh revalidates the route being left, not
-      // the destination's cache entry). A full navigation cannot serve the old
-      // schedule.
+      // A hard exit, deliberately. The page's back link usually has
+      // '/schedule' already prefetched by the time the removal lands, and a
+      // soft `router.push('/schedule')` serves that pre-removal prefetch
+      // entry — the removed row kept rendering in the running app past a 4s
+      // settle window, with `router.refresh()` before or after the push
+      // (refresh revalidates the route being left, not the destination's
+      // cache entry). A full navigation cannot serve the old schedule.
       //
       // Outside the `try` on purpose: inside it, a throw here would report a
       // removal the server COMMITTED as "Network error. Please try again.", and
       // the retry would then answer 404. `removing` is left set — the page is
       // going away, and an enabled "Remove" under an in-flight navigation is
       // the silence half of confirm-then-silence.
-      window.location.assign('/');
+      window.location.assign('/schedule');
       return;
     }
 

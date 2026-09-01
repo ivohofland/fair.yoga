@@ -1,6 +1,6 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/session';
+import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
 import { DataAndDeletion } from '@/components/account/data-and-deletion';
 
@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function DataSettingsPage() {
   const session = await getSession();
-  if (!session?.studentId) redirect(session?.teacherId ? '/' : '/login');
+  if (!session?.studentId) redirectNonStudent(session);
 
   return (
     <div>

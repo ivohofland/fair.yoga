@@ -34,7 +34,7 @@ export default async function StudioClassDetailPage({
   });
 
   if (!studioClass || studioClass.calendarEntry.teacherId !== session.teacherId) {
-    redirect('/');
+    redirect('/schedule');
   }
 
   const entry = studioClass.calendarEntry;

@@ -364,7 +364,7 @@ test.describe('Visual regression', () => {
   test('teacher schedule', async ({ page, context }) => {
     await signIn(context);
     const hydrated = hydrationSignal(page);
-    await page.goto('/');
+    await page.goto('/schedule');
     await expect(page.getByText('Visual Vinyasa')).toBeVisible();
     await hydrated;
     await freezeDates(page);

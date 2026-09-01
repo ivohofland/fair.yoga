@@ -21,7 +21,7 @@ export default async function StudioClassEditPage({
     where: { id },
     include: { calendarEntry: true },
   });
-  if (!studioClass || studioClass.calendarEntry.teacherId !== session.teacherId) redirect('/');
+  if (!studioClass || studioClass.calendarEntry.teacherId !== session.teacherId) redirect('/schedule');
   const entry = studioClass.calendarEntry;
 
   // Full-scope rows only. A fresh two-field literal, not `studioClass` — the
