@@ -59,10 +59,12 @@ const noServerSnapshot = () => undefined;
  * `Teacher.defaultTimezone` was the other candidate and is deliberately not
  * used. The guards read it because they run on the server and have no device to
  * ask; this control is looking at a calendar widget on a phone, where "today"
- * means the phone's today. It is also, today, hardcoded to `Europe/Amsterdam`
- * at signup with no inference — so sourcing the picker from it would put a
- * visibly wrong bound in front of every teacher outside CET rather than a right
- * one.
+ * means the phone's today. Signup detects that zone in the browser and stores
+ * it (#258), falling back to a hardcoded `Europe/Amsterdam` only when none was
+ * detected — so the column is usually right and occasionally Amsterdam, while
+ * the device is right by construction. Sourcing the picker from the column
+ * would also miss a teacher who is travelling, whose stored zone is still their
+ * home one while the phone in their hand has already moved.
  *
  * A HINT, NEVER A GUARD, and one that is absent for the first paint.
  * `updateClass` and `transitionClass` refuse a past start on their own and

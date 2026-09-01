@@ -19,8 +19,12 @@ const BIO_MAX = 250;
  * server-side.
  *
  * Cleared as soon as this page can no longer submit it — created, or refused
- * for good — so a shared browser does not keep someone's name and bio after
- * they are done here.
+ * for good. That is not enough on its own: the commonest way a draft is left
+ * behind is ABANDONMENT, where neither outcome ever happens, and on a studio's
+ * shared laptop the next person to open this page would be handed the last
+ * one's name and bio already filled in. So the stored draft is stamped with
+ * the address it belongs to and restored only for that address; one belonging
+ * to anyone else is deleted on sight rather than shown.
  */
 const DRAFT_KEY = 'fair_yoga_profile_draft';
 
@@ -53,17 +57,38 @@ const EMPTY_DRAFT: Draft = {
   slugEdited: false,
 };
 
-/** Nothing read back out of a browser store is trusted to still be a `Draft`. */
-function isDraft(value: unknown): value is Draft {
+/** A draft plus the address it was typed for. Only this shape is ever stored. */
+interface StoredDraft extends Draft {
+  email: string;
+}
+
+/** Nothing read back out of a browser store is trusted to still be a `StoredDraft`. */
+function isStoredDraft(value: unknown): value is StoredDraft {
   if (typeof value !== 'object' || value === null) return false;
   const d = value as Record<string, unknown>;
   return (
+    typeof d.email === 'string' &&
     typeof d.firstName === 'string' &&
     typeof d.lastName === 'string' &&
     typeof d.bio === 'string' &&
     typeof d.pageSlug === 'string' &&
     typeof d.slugEdited === 'boolean'
   );
+}
+
+/**
+ * A rejection the SERVER issued, carrying the address it was about.
+ *
+ * Keyed for the same reason `PageAddressField`'s `Answer` is: the address can
+ * move out from under a verdict. A name edit re-derives `pageSlug` while
+ * `slugEdited` is still false, so an unkeyed "that address is taken" would
+ * survive onto an address nobody has ever checked — and, because the field
+ * suppresses its own live check whenever an error is showing, it would sit
+ * there unchallenged.
+ */
+interface SlugRejection {
+  slug: string;
+  message: string;
 }
 
 /**
@@ -110,8 +135,16 @@ interface ProfileSetupFormProps {
 export function ProfileSetupForm({ email }: ProfileSetupFormProps) {
   const [form, setForm] = useState<Draft>(EMPTY_DRAFT);
   const [status, setStatus] = useState<Status>('idle');
-  const [slugError, setSlugError] = useState('');
+  const [slugRejection, setSlugRejection] = useState<SlugRejection | null>(null);
   const [formError, setFormError] = useState('');
+
+  // Derived, never stored: a rejection outlives the address it was about only
+  // if something has to remember to clear it, and every handler that can change
+  // `pageSlug` is a place that could forget.
+  const slugError =
+    slugRejection !== null && slugRejection.slug === form.pageSlug.trim()
+      ? slugRejection.message
+      : undefined;
 
   /**
    * The draft is restored once, on mount, and only here.
@@ -124,14 +157,23 @@ export function ProfileSetupForm({ email }: ProfileSetupFormProps) {
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(DRAFT_KEY);
-      const draft: unknown = raw === null ? null : JSON.parse(raw);
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount read of a browser store, for the reason in the docblock above; it cannot cascade, the effect has no dependencies.
-      if (isDraft(draft)) setForm(draft);
+      const stored: unknown = raw === null ? null : JSON.parse(raw);
+      if (!isStoredDraft(stored)) return;
+      const { email: draftEmail, ...draft } = stored;
+      // Someone else's abandoned signup on a shared browser. Deleted rather
+      // than merely ignored — leaving it would keep their name and bio on this
+      // machine indefinitely, and nothing else ever comes back for it.
+      if (draftEmail !== email) {
+        forgetDraft();
+        return;
+      }
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount read of a browser store, for the reason in the docblock above; it cannot cascade, the effect runs once per `email`.
+      setForm(draft);
     } catch {
       // A corrupt entry, or a browser that refuses the store outright. Both
       // mean the same thing here: no draft, start clean.
     }
-  }, []);
+  }, [email]);
 
   /**
    * Every change goes through here, so persisting is part of changing rather
@@ -142,7 +184,8 @@ export function ProfileSetupForm({ email }: ProfileSetupFormProps) {
   function apply(next: Draft) {
     setForm(next);
     try {
-      window.localStorage.setItem(DRAFT_KEY, JSON.stringify(next));
+      const stored: StoredDraft = { ...next, email };
+      window.localStorage.setItem(DRAFT_KEY, JSON.stringify(stored));
     } catch {
       // Persisting is a courtesy, never a precondition for submitting.
     }
@@ -160,14 +203,12 @@ export function ProfileSetupForm({ email }: ProfileSetupFormProps) {
   // Clearing the field hands it back to the names, so a derived address is
   // never something the teacher is stuck with in either direction.
   function updateSlug(pageSlug: string) {
-    setSlugError('');
     apply({ ...form, pageSlug, slugEdited: pageSlug !== '' });
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setStatus('submitting');
-    setSlugError('');
     setFormError('');
 
     const timeZone = detectTimeZone();
@@ -234,8 +275,12 @@ export function ProfileSetupForm({ email }: ProfileSetupFormProps) {
     setStatus('idle');
     if (body.error?.code === 'SLUG_TAKEN') {
       // The route already replaced the ticket it spent on this request, so the
-      // retry this message asks for is a plain resubmit.
-      setSlugError('That address is taken — please pick another.');
+      // retry this message asks for is a plain resubmit. Stamped with the
+      // address it is about, so editing a name out from under it retires it.
+      setSlugRejection({
+        slug: form.pageSlug.trim(),
+        message: 'That address is taken — please pick another.',
+      });
     } else {
       setFormError(body.error?.message ?? 'Something went wrong. Please try again.');
     }
@@ -281,7 +326,7 @@ export function ProfileSetupForm({ email }: ProfileSetupFormProps) {
         <PageAddressField
           value={form.pageSlug}
           onChange={updateSlug}
-          error={slugError || undefined}
+          error={slugError}
         />
 
         <div className="flex flex-col gap-2">

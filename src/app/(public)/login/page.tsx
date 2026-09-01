@@ -75,8 +75,7 @@ export default function LoginPage() {
             <PasskeySignIn email={email || undefined} />
           </div>
 
-          {/* The only door to teacher signup that isn't the landing page —
-              anyone who bookmarked /login before they had an account. */}
+          {/* For anyone who bookmarked /login before they had an account. */}
           <p className="mt-6 type-caption">
             New here?{' '}
             <Link href="/signup" className="text-teal">
