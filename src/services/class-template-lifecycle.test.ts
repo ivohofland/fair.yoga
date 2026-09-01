@@ -1654,9 +1654,8 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
    * `attended` in the gap, so the delete's live re-evaluation excludes it
    * and the class survives.
    *
-   * Exactly one — no more, no fewer, the same pin `gdpr.test.ts`'s own
-   * candidate-read interposition and the
-   * sibling interposition at `class-transitions.test.ts` carry, and the same
+   * Exactly one — no more, no fewer, the same pin the sibling
+   * interposition at `class-transitions.test.ts` carries, and the same
    * reasoning the #112 mutation ledger's own note on this guard gives: a bare
    * "it fired at all" flag lets the race land on the wrong read and every
    * assertion below pass regardless, so `calls`/`candidateRows` pin that it

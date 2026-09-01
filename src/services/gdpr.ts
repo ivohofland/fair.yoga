@@ -510,8 +510,8 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // audit is closed: two callers that share the helper cannot take a pair in
     // opposite sequences, whatever their reads return. That it stays true is
     // pinned by `db-locks-lock-order.test.ts` (the helper's own order) and by
-    // the deadlock test this file's sibling suite runs, which races the two
-    // erasures' pre-locks directly (`gdpr-lock-order.test.ts`, "does not deadlock when a
+    // the deadlock test `gdpr-lock-order.test.ts` runs, which races the two
+    // erasures' pre-locks directly ("does not deadlock when a
     // teacher erasure and a student erasure overlap on two classes") and fails
     // with `40P01` if the clause is removed.
     // Cancel upcoming registrations so open classes free the spots.
