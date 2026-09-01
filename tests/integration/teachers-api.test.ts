@@ -196,6 +196,7 @@ describe('POST /api/teachers keeps its conflict codes apart under a race (#161)'
       lastName: 'Email',
       email: raceEmail,
       pageSlug: `race-email-slug-${suffix}`,
+      bio: 'Race bio',
     });
 
     let settled = false;
@@ -247,6 +248,7 @@ describe('POST /api/teachers keeps its conflict codes apart under a race (#161)'
       lastName: 'Slug',
       email: `race-slug-req-${suffix}@test.local`,
       pageSlug: raceSlug,
+      bio: 'Race bio',
     });
 
     let settled = false;
