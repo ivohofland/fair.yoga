@@ -47,8 +47,8 @@ export interface InviteResult {
  * silently failed to send meets this refusal when they try again, and on
  * its own it reads as a closed door — while the door is in fact open:
  * `POST /api/invitations/[id]/resend` (#173) resends to the address already
- * on the row, and `PUT` on the same route can correct that address first if
- * it was the problem.
+ * on the row, and `PUT /api/invitations/[id]` can correct that address
+ * first if it was the problem.
  *
  * One sentence, and it stays one: the first draft of it ran to two and
  * became the longest error string in the app — roughly three wrapped lines
@@ -325,6 +325,15 @@ async function revivePendingInvitation(
  * that skips the gate turns this into exactly the harassment channel the
  * block exists to close.
  *
+ * That MUST is `POST /api/students`'s contract — it has a fresh
+ * `InviteResult.delivered` to gate on. `POST /api/invitations/[id]/resend`
+ * (#173) has no such result to gate on and calls this unconditionally for
+ * every `pending` row; for that caller the `TeacherBlock` re-check below is
+ * not defence-in-depth, it is the ONLY guard. The "belt and braces" framing
+ * two paragraphs down describes `POST /api/students`'s own gate pairing
+ * with the re-check, not a redundancy — do not read it as license for a
+ * future caller shaped like resend to skip the re-check.
+ *
  * `delivered` (the caller's gate, above) is computed once, at
  * `inviteContact`'s create time, and can go stale before this function runs.
  * The live door is a `TeacherBlock` committed in between: `unlinkTeacher`
@@ -346,9 +355,10 @@ async function revivePendingInvitation(
  * fresh from the row in the same request it dispatches, so there is no
  * equivalent staleness window for it to worry about.
  *
- * `POST /api/students` (route.ts) does not await this function — it is
- * called fire-and-forget, after the response's status and body are already
- * fully decided, with its own `.catch` for the rejection path. That is
+ * Neither `POST /api/students` (route.ts) nor `POST
+ * /api/invitations/[id]/resend` (#173) awaits this function — both call it
+ * fire-and-forget, after the response's status and body are already fully
+ * decided, each with its own `.catch` for the rejection path. That is
  * deliberate: whatever this function reads, or how long it takes, must
  * never become the response's status code or its latency. An earlier
  * version of this function was awaited by its caller, and that reopened the

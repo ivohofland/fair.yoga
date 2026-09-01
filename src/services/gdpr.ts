@@ -551,8 +551,13 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // this address, so deleting it would hand back the re-invite the refusal
     // exists to deny — an erasure request would double as a way to clear
     // every refusal anyone ever made. `status` and `respondedAt` therefore
-    // stay exactly as they are; only the three columns holding the person's
-    // identity change.
+    // stay exactly as they are; the identity columns change, plus
+    // `lastNotifiedEmail` when it was ever set — a resent invitation's
+    // "last invited" marker otherwise keeps the erased person's real
+    // address forever, on a row they can no longer reach. Split into two
+    // statements rather than one: setting `lastNotifiedEmail` on a row
+    // where `lastNotifiedAt` is still null would violate
+    // `Invitation_last_notified_pair_check`.
     //
     // The replacement satisfies both constraints the branch added:
     // `Invitation_email_lowercase_check` (uuid + `@deleted.invalid` is
@@ -564,11 +569,20 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // several teachers anonymises to one value without colliding on
     // `@@unique([teacherId, email])`.
     await tx.invitation.updateMany({
-      where: { email: student.email },
+      where: { email: student.email, lastNotifiedAt: null },
       data: {
         email: `deleted-${studentId}@deleted.invalid`,
         firstName: 'Deleted',
         lastName: 'Student',
+      },
+    });
+    await tx.invitation.updateMany({
+      where: { email: student.email, lastNotifiedAt: { not: null } },
+      data: {
+        email: `deleted-${studentId}@deleted.invalid`,
+        firstName: 'Deleted',
+        lastName: 'Student',
+        lastNotifiedEmail: `deleted-${studentId}@deleted.invalid`,
       },
     });
 

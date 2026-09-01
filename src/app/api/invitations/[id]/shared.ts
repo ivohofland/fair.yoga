@@ -4,8 +4,9 @@ import { respondError } from '@/lib/api-utils';
 /**
  * The ownership preamble shared by PUT/DELETE/PATCH
  * (`src/app/api/invitations/[id]/route.ts`) and
- * `POST /api/invitations/[id]/resend` (#173) — four routes reading the same
- * row before deciding what they're allowed to do to it. Pulled into its own
+ * `POST /api/invitations/[id]/resend` (#173) — every route under this
+ * resource reads the same row before deciding what it's allowed to do to
+ * it. Pulled into its own
  * file rather than exported from `route.ts` directly: Next's Route Handler
  * convention restricts what a `route.ts` file may export to HTTP verbs plus
  * a small fixed config allow-list.
@@ -39,8 +40,8 @@ export const NOT_FOUND = () => respondError('Contact not found', 404);
 /**
  * The refusal a declined row earns, in one place — PUT's pre-check, DELETE's
  * pre-check, both of their post-CAS answers (via `casMatchedNothing`,
- * `route.ts`), and resend's pre-check all say exactly this, and four copies
- * of one sentence is four chances for them to stop agreeing.
+ * `route.ts`), and resend's pre-check all say exactly this, and each copy
+ * of one sentence is another chance for them to stop agreeing.
  */
 export const DECLINED = () =>
   respondError(

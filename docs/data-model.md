@@ -103,12 +103,16 @@ teacher-facing surface: `src/lib/student-visibility.ts`.
 | status | enum: pending, accepted, declined | |
 | is_archived | boolean, default false | Teacher's own filing action; never hides the row from the invitee |
 | responded_at | datetime, nullable | Set when status leaves pending, cleared when an accepted row is returned to pending (see re-inviting, below) |
+| last_notified_at | datetime, nullable | When a notify was last attempted — written unconditionally by both `POST /api/students` and `POST /api/invitations/[id]/resend`, before either checks `TeacherBlock`, so a teacher can never tell "blocked" from "not yet (re)sent" by watching this column (#173) |
+| last_notified_email | string, nullable | The address a notify was last attempted against — compared to `email` to tell the teacher whether an edit since then has gone unsent |
 | **Timestamps** | | |
 | created_at | datetime | |
 | **Constraints** | | |
 | unique | (teacher_id, email) | One contact per address per teacher |
 | check | `email = lower(email)` | The lowercasing is relied on by every reader that matches an account or student address against this column |
 | check | `(responded_at IS NULL) = (status = 'pending')` | A pending invitation has no response time; an answered one has one |
+| check | `last_notified_email IS NULL OR last_notified_email = lower(last_notified_email)` | Same lowercase reasoning as `email` |
+| check | `(last_notified_at IS NULL) = (last_notified_email IS NULL)` | Both written together, in one statement, or neither |
 
 A teacher may not link themselves to a student unilaterally. `POST /api/students` creates an `Invitation`, never a `Student` row — the `TeacherStudent` link (above) forms only once the invitee accepts it, or books one of the teacher's classes. A declined row is not deleted: it is the tombstone that stops the same address being re-invited, so `PUT`/`DELETE` on a declined invitation both refuse. This is a separate table from `TeacherStudent` on purpose — `POST /api/students` must behave identically whether or not the address is already on the platform, which it cannot if it writes to a table with a unique `email` column.
 
@@ -134,7 +138,7 @@ Written only when a student unlinks a teacher they were already connected to (`u
 - **Retain (current behaviour).** The block keeps working, and it is not inert after erasure: the person's real mailbox still exists in the world, so if the teacher re-types that address `inviteContact` computes `delivered: false` and no invitation email is sent. Retention is the only thing standing between an erased person and mail from the one teacher they explicitly refused. The cost is a retained plaintext address for someone who asked to be forgotten — on a row they can no longer reach to clear, since erasure rewrites their account email and deletes their sessions.
 - **Scrub or hash the address.** Honours the erasure literally. The cost is that lookups are `teacher_id` + exact `email` (`unique (teacher_id, email)`), so a scrubbed row stops matching and the block silently stops blocking; keeping it functional would need a hashed-address column and every reader taught to hash before querying — a schema change and a change at roughly four call sites.
 
-Invitations are handled differently, and that asymmetry is intentional: `deleteStudentAccount` anonymises `Invitation.email` / `first_name` / `last_name` in place (to `deleted-<student_id>@deleted.invalid`, which satisfies the lowercase CHECK) while leaving `status` and `responded_at` alone, so a teacher's `declined` tombstone survives an erasure it would otherwise clear. `deleteTeacherAccount` deletes that teacher's `Invitation` rows outright — they hold other people's addresses and, with the teacher erased, guard a door nobody can open.
+Invitations are handled differently, and that asymmetry is intentional: `deleteStudentAccount` anonymises `Invitation.email` / `first_name` / `last_name` / `last_notified_email` (when it was set) in place (to `deleted-<student_id>@deleted.invalid`, which satisfies the lowercase CHECK) while leaving `status` and `responded_at` alone, so a teacher's `declined` tombstone survives an erasure it would otherwise clear. `deleteTeacherAccount` deletes that teacher's `Invitation` rows outright — they hold other people's addresses and, with the teacher erased, guard a door nobody can open.
 
 ---
 

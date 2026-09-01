@@ -119,7 +119,21 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // both the create and revive paths inside `inviteContact` (#173). A
   // teacher must never be able to infer TeacherBlock status from whether
   // this timestamp advances, so this cannot be moved inside the `if` below.
-  await prisma.invitation.update({
+  //
+  // `updateMany`, not `update`: a concurrent delete of this just-created row
+  // (DELETE /api/invitations/[id] from another tab) between `inviteContact`
+  // above and here would make a plain `update` throw P2025, which
+  // `classifyApiError` has no branch for and falls through to a bare 500
+  // (src/lib/api-errors.ts). Nothing downstream reads this write's count —
+  // the response below still echoes `result.value.id`, valid at the moment
+  // it was created — so a zero-count match needs no branch, only a
+  // statement shape that can't throw on one.
+  //
+  // `parsed.data.email` is already lowercase — normalised by
+  // `createInvitationSchema`'s `emailField` at HTTP ingress — so this is not
+  // a second normalisation, the same value `inviteContact` was already
+  // called with above.
+  await prisma.invitation.updateMany({
     where: { id: result.value.id },
     data: { lastNotifiedAt: new Date(), lastNotifiedEmail: parsed.data.email },
   });

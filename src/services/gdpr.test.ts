@@ -1102,6 +1102,7 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
       data: {
         teacherId: inviterId, email, firstName: 'Sam', lastName: 'Typo',
         status: 'accepted', respondedAt: new Date('2026-02-03T04:05:06.000Z'),
+        lastNotifiedAt: new Date('2026-02-03T04:05:06.000Z'), lastNotifiedEmail: email,
       },
     });
     await prisma.invitation.create({
@@ -1163,6 +1164,9 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
       expect(row.email).toBe(`deleted-${studentId}@deleted.invalid`);
       expect(row.firstName).toBe('Deleted');
       expect(row.lastName).toBe('Student');
+      expect(
+        row.lastNotifiedEmail === null || row.lastNotifiedEmail === `deleted-${studentId}@deleted.invalid`,
+      ).toBe(true);
     }
     // The teacher's own filing state is theirs, not the subject's: the
     // decline still stands as a tombstone and the acceptance still records
@@ -1170,6 +1174,7 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     // and the CHECK constraint binding `respondedAt` to `status` would
     // reject a half-done job anyway.
     expect(rows.map((r) => r.status).sort()).toEqual(['accepted', 'declined']);
+    expect(rows.some((r) => r.lastNotifiedEmail === `deleted-${studentId}@deleted.invalid`)).toBe(true);
     expect(rows.every((r) => r.respondedAt !== null)).toBe(true);
 
     // Deliberately untouched — see the comment at the erasure site and

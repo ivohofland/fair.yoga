@@ -70,10 +70,20 @@ export const POST = withErrorHandler(async (
 
   // Unconditional — see this route's own docblock above for why this must
   // never depend on whether `TeacherBlock` withholds the send below.
-  await prisma.invitation.update({
+  //
+  // `updateMany`, not `update`: the ownership read above and this write are
+  // two separate statements, so a concurrent delete of this row in that gap
+  // (DELETE /api/invitations/[id] from another tab) would make a plain
+  // `update` throw P2025 — which `classifyApiError` has no branch for and
+  // falls through to a bare 500 (src/lib/api-errors.ts) instead of the 404
+  // this route already answers for the same row being gone. A zero-count
+  // match means exactly that: the row is gone, and 404 is the honest
+  // answer.
+  const updated = await prisma.invitation.updateMany({
     where: { id },
     data: { lastNotifiedAt: new Date(), lastNotifiedEmail: invitation.email },
   });
+  if (updated.count === 0) return NOT_FOUND();
 
   // Fire-and-forget, same shape as `POST /api/students` — this route's
   // response must not vary in status or latency with whether the address is

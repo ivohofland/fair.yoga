@@ -246,10 +246,66 @@ test.describe('Invitations — add, accept, decline', () => {
     await expect(page.getByText('Declined')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Remove contact' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Archive contact' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Resend invitation' })).toHaveCount(0);
 
     const link = await prisma.teacherStudent.findFirst({
       where: { teacherId, studentId: decliningStudentId },
     });
     expect(link).toBeNull();
+  });
+});
+
+test.describe('Invitation resend (#173)', () => {
+  const resendSuffix = uniqueSuffix();
+  const resendTeacherEmail = `e2e-resend-teacher-${resendSuffix}@test.local`;
+  const resendContactEmail = `e2e-resend-contact-${resendSuffix}@test.local`;
+
+  let resendTeacherId: string;
+  let resendTeacherAccountId: string;
+  let resendTeacherToken: string;
+  let resendInvitationId: string;
+
+  test.beforeAll(async () => {
+    await prisma.$connect();
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Resend',
+        lastName: 'Teacher',
+        email: resendTeacherEmail,
+        account: { create: { email: resendTeacherEmail } },
+        bio: 'Fixture for the #173 e2e resend flow',
+        pageSlug: `e2e-resend-${resendSuffix}`,
+      },
+    });
+    resendTeacherId = teacher.id;
+    resendTeacherAccountId = await accountIdOfTeacher(prisma, resendTeacherId);
+    resendTeacherToken = await seedSession(prisma, resendTeacherAccountId);
+
+    const invitation = await prisma.invitation.create({
+      data: {
+        teacherId: resendTeacherId,
+        email: resendContactEmail,
+        firstName: 'Resend',
+        lastName: 'Contact',
+      },
+      select: { id: true },
+    });
+    resendInvitationId = invitation.id;
+  });
+
+  test.afterAll(async () => {
+    await prisma.session.deleteMany({ where: { accountId: resendTeacherAccountId } });
+    await prisma.teacher.delete({ where: { id: resendTeacherId } });
+    await prisma.account.deleteMany({ where: { email: resendTeacherEmail } });
+    await prisma.$disconnect();
+  });
+
+  test('shows not-yet-sent, then last-invited after clicking Resend', async ({ page, context }) => {
+    await signInAs(context, resendTeacherToken);
+    await page.goto(`/students/contacts/${resendInvitationId}`);
+    await expect(page.getByText('Not yet sent to this address')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Resend invitation' }).click();
+    await expect(page.getByText('Last invited')).toBeVisible();
   });
 });
