@@ -65,10 +65,14 @@ const LOCK_CONTENTION_TESTS = [
   // Found by looking, not by failing.
   'src/lib/db-locks-lock-order.test.ts',
   'src/services/invitations-lock-order.test.ts',
-  // Split out of `gdpr.test.ts` rather than moving it: that file is 26 tests
-  // and ~26s and exactly one reads lock timing, so moving all of it cost the
-  // serial tier +92% (37.8s -> 72.6s) against +2.5s extracted. Same move
-  // `class-lifecycle-tier-guard.test.ts` made, for the same kind of reason.
+  // Split out of `gdpr.test.ts` rather than moving it: that file runs in
+  // ~26s and exactly one of its tests reads lock timing, so moving all of it
+  // cost the serial tier +92% (37.8s -> 72.6s) against +2.5s extracted. Same
+  // move `class-lifecycle-tier-guard.test.ts` made, for the same kind of
+  // reason. No test count here — the argument is about time, and a count
+  // moves every time someone adds a case to that file. The sibling copy of
+  // this note in `gdpr-lock-order.test.ts` was de-numbered for the same
+  // reason; this one was missed and went stale.
   'src/services/gdpr-lock-order.test.ts',
 ] as const;
 

@@ -888,13 +888,15 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
  * The statuses a teacher erasure cancels — and the ONE list they are read
  * from.
  *
- * This was hand-typed twice in `deleteTeacherAccount` (the `upcoming` read's
- * filter and the per-class CAS `where` it must agree with), and the ordered
- * pre-lock would have made three. `class-template-lifecycle.ts:641-651`
- * records what that costs, measured rather than argued: dropping a status
- * from one of two hand-written lists "left every test covering this function
- * green, silently re-opening the deadlock the pre-lock exists to close".
- * There is one list to edit now, not three to keep in sync.
+ * Two readers in `deleteTeacherAccount`, and they have to agree: the ordered
+ * pre-lock's `WHERE`, through `CANCELLABLE_STATUSES_SQL` below, and the
+ * per-class cancel CAS's own `where` in the loop. Both derive from this
+ * array rather than restating the statuses, so neither can drift from it.
+ * What restating costs was measured rather than argued —
+ * `SCHEDULED_STATUSES_SQL`'s docblock (`class-template-lifecycle.ts:480-482`)
+ * records dropping a status from one of two hand-written lists as having
+ * "left every test covering this function green, silently re-opening the
+ * deadlock the pre-lock exists to close".
  */
 const CANCELLABLE_STATUSES: readonly ClassStatus[] = Object.freeze([
   'draft',
@@ -1055,10 +1057,13 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         ORDER BY sct."id"
         FOR UPDATE OF sct`;
 
-      // Class + its CalendarEntry, locked ascending, in ONE statement,
-      // BEFORE any read of this teacher's classes. Pinned by the
-      // regression test "cancels a class that becomes cancellable
-      // immediately before the class lock runs" (#367).
+      // Class + its CalendarEntry, locked ascending, in one ordered
+      // pre-lock, BEFORE any read of this teacher's classes WITHIN THIS
+      // TRANSACTION. (The completion sweep above this `$transaction` reads
+      // them too — `db.class.findMany` over `in_progress` — but it runs
+      // before this transaction opens, so it is ordered against nothing
+      // here.) Pinned by the regression test "cancels a class that becomes
+      // cancellable immediately before the class lock runs" (#367).
       //
       // Lock set and read set are identical by construction now: the read
       // below asks for exactly `lockedIds`, not a separately re-evaluated
@@ -1067,9 +1072,13 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // read-then-transact system, not a gap this design leaves open by
       // choice.
       //
-      // This is the transaction's SECOND lock acquisition overall (the
-      // template locks above are first, #229) and its first read of any
-      // `Class` data at all.
+      // First among the `Class`/`CalendarEntry` locks, though not the
+      // transaction's first lock acquisition overall — the template locks
+      // above are (#229). It is the transaction's first read of any `Class`
+      // data at all. Same wording `docs/lock-order.md` uses for this site,
+      // and deliberately no ordinal: `lockClassRowsOrdered` issues a
+      // statement per table when `entries` is set, so an absolute count is
+      // a fact about a helper in another file.
       //
       // VERDICT (#327): this transaction WRITES entry-level state — the
       // cancel below is `CalendarEntry.cancelledAt`, and its CAS

@@ -1641,8 +1641,12 @@ classification beneath it have drifted apart.
   cancellation notice — under the same lock, not a separate eager-load (#174
   whole-branch review: a student registering after an eager-loaded read had
   their class cancelled and was never told; #367 additionally closed the
-  window such a registration could land in at all, via the automatic `FOR
-  KEY SHARE` lock the "fourth path" above already documents). After the
+  unlocked interval such a registration could land in freely, by putting the
+  pre-lock ahead of the read rather than after it — the blocking itself is
+  the automatic `FOR KEY SHARE` lock the "fourth path" above documents,
+  which is the pre-lock's own property and not something #367 introduced, so
+  a test that observes the blocking cannot tell the two orders apart; only
+  the statement order says which one this site is in). After the
   loop: `StudentPrivacy`, `TeacherStudent`, `Invitation`
   (deleted, not anonymized — the teacher is soft-deleted, not scrubbed like
   a student's identity is). Was already `StudentPrivacy` before

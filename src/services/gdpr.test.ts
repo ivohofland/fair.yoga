@@ -1374,14 +1374,19 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     onTestFinished(() => warn.mockRestore());
 
-    // lockClassRowsOrdered's real predicate never returns a completed
-    // class's id -- this simulates a lock/CAS disagreement directly.
-    // A concurrent COMPLETION can no longer produce one for real since
-    // #367: `completeClass` takes the same `Class` row lock, so it queues
-    // behind this transaction's hold. A concurrent CANCELLATION still can,
-    // for the reason the CAS's own comment in `gdpr.ts` gives -- the
-    // pre-lock's `cancelledAt` conjunct reads the joined, unlocked entry.
-    // So the branch stays live; this is just the deterministic way in.
+    // The COMPLETED shape of the disagreement, and only that shape: the
+    // fixture is `completed`, so it is the CAS's status conjunct that
+    // fails while its `cancelledAt: null` one still holds.
+    //
+    // Staged, not raced, and it could not be raced -- since #367 a
+    // concurrent completion cannot produce this for real either, because
+    // `completeClass` takes the same `Class` row lock and so queues behind
+    // this transaction's hold. Mocking `lockClassRowsOrdered` to hand back
+    // an id its real predicate would never match is the only way in.
+    //
+    // The CANCELLED shape -- a cancellable status with `cancelledAt`
+    // already set -- fails the OTHER conjunct, is still reachable for real,
+    // and has its own test in the describe below.
     const original = dbLocks.lockClassRowsOrdered;
     const spy = vi
       .spyOn(dbLocks, 'lockClassRowsOrdered')
@@ -1425,6 +1430,165 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       expect.objectContaining({ waitingEntriesLeft: 1 }),
       expect.anything(),
     );
+  });
+});
+
+/**
+ * The CAS's OTHER conjunct, which the describe above does not reach: a
+ * cancellable status with `cancelledAt` already set, so it is
+ * `cancelledAt: null` that refuses and the status check that passes.
+ *
+ * This is the one cause of a lock/CAS disagreement that is still reachable
+ * for real. The pre-lock is `FOR UPDATE OF c` — the `Class` row only — while
+ * its `e."cancelledAt" IS NULL` conjunct reads the JOINED, unlocked
+ * `CalendarEntry`, and `EvalPlanQual` re-fetches locked rows only. A
+ * canceller that takes `Class` first and then writes the entry (`POST
+ * /api/classes/[id]/cancel`, the canonical order) can therefore commit while
+ * the pre-lock is still WAITING on the class row, leaving the entry half of
+ * the predicate evaluated against a pre-wait snapshot. `gdpr.ts` argues that
+ * at the CAS itself; `docs/lock-order.md` records the same mechanism for
+ * `transitionClass`.
+ *
+ * Staged rather than raced all the same: winning that wait on purpose means
+ * stalling a statement mid-flight inside Postgres, which a test cannot do.
+ * So the entry is cancelled up front and its id injected into the lock set,
+ * the same mock the describe above uses. What that leaves worth asserting is
+ * the CAS's handling — a warn that names `cancelledAt` as the cause, a skip,
+ * and an entry still carrying the canceller's own timestamp.
+ *
+ * Its own fixtures, not the describe above's: `deleteTeacherAccount`
+ * soft-deletes the teacher it erases, so a second erasure of the same one
+ * throws `AlreadyErasedError`.
+ */
+describe('deleteTeacherAccount cancel CAS loses to a concurrent cancellation (#367)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-cas-cancelled-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'CasCancel',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'CAS cancellation fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'CAS Cancel Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234CE',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    teacherRoomId = teacherRoom.id;
+  });
+
+  afterAll(async () => {
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  it('warns and skips when the entry was cancelled by a concurrent writer', async () => {
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'CAS cancelled class',
+      date: new Date('2099-06-01'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'open',
+    });
+    const classId = cls.id;
+
+    // What the concurrent canceller committed while the pre-lock waited.
+    // A fixed instant, so the assertion below can tell "left alone" from
+    // "re-cancelled with a fresh timestamp".
+    const cancelledAt = new Date('2026-01-02T03:04:05.000Z');
+    await prisma.calendarEntry.update({
+      where: { id: cls.calendarEntry.id },
+      data: { cancelledAt },
+    });
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+
+    // The real predicate excludes this id now (`e."cancelledAt" IS NULL`),
+    // which is exactly the disagreement being staged: under the mechanism in
+    // this describe's docblock the pre-lock would have returned it anyway,
+    // off a snapshot taken before the canceller committed.
+    const original = dbLocks.lockClassRowsOrdered;
+    const spy = vi
+      .spyOn(dbLocks, 'lockClassRowsOrdered')
+      .mockImplementation(async (tx, source) => {
+        const ids = await original(tx, source);
+        return source.entries === true ? [...ids, classId] : ids;
+      });
+    onTestFinished(() => spy.mockRestore());
+
+    await deleteTeacherAccount(prisma, teacherId);
+
+    const after = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      include: { calendarEntry: true },
+    });
+    // `open` is in `CANCELLABLE_STATUSES`, so the status conjunct passed and
+    // only `cancelledAt: null` can have refused the CAS, which is what makes
+    // this test the one that covers that conjunct.
+    //
+    // Measured, by deleting `cancelledAt: null` from the CAS's `where` and
+    // re-running this: the write is not silently accepted and does not
+    // become a duplicate notification, it becomes `23514` from
+    // `entry_terminal_liveness_guard` — a cancelled REGULAR entry's
+    // `cancelledAt` is frozen in the database — which aborts the whole
+    // erasure transaction. So the conjunct is what turns a lost race into a
+    // skip instead of a failed Article 17 request.
+    expect(after.status).toBe('open');
+    expect(after.calendarEntry.cancelledAt).toEqual(cancelledAt);
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        classId,
+        observedStatus: 'open',
+        observedCancelledAt: cancelledAt,
+      }),
+      expect.stringContaining('cancel CAS matched nothing'),
+    );
+
+    // The erasure itself still finished — a CAS that declines one class does
+    // not abandon the Article 17 work around it.
+    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+    expect(teacher.email).toMatch(/@deleted\.invalid$/);
   });
 });
 
@@ -1550,11 +1714,26 @@ describe('deleteTeacherAccount locks and reads the same snapshot (#367)', () => 
  * open one more sweep").
  *
  * #367 closes the registration half of the same gap structurally: the
- * class lock now runs before the read of the classes it cancels, so a
- * registration can no longer land between that read and the lock at all
- * — it blocks behind the held row (Postgres's automatic `FOR KEY SHARE`
- * on the referencing `INSERT`) until the erasure transaction ends. The
- * test below proves that directly.
+ * class lock now runs before the read of the classes it cancels, so the
+ * unlocked interval a registration used to be able to land in freely is
+ * gone — there is no moment inside this transaction where a cancellable
+ * class of this teacher's has been looked at but not held.
+ *
+ * THE TEST BELOW DOES NOT PROVE THAT REORDER, and saying so was this
+ * describe's own overclaim. What it proves is the property the reorder
+ * leans on, and only that: once `lockClassRowsOrdered` has taken its lock,
+ * a concurrent registration on a locked class blocks until the transaction
+ * ends (Postgres's automatic `FOR KEY SHARE` on the referencing `INSERT`
+ * conflicting with the held `FOR UPDATE`). That property belongs to
+ * `lockClassRowsOrdered`, not to #367 — the same call was made before the
+ * reorder, from a later point in the same function — and this test cannot
+ * see the difference, because it synchronises on the helper's
+ * `entries === true` branch, which fires identically either way. Measured:
+ * this test passes unedited with `gdpr.ts` reverted to its pre-#367
+ * revision. Kept as a regression guard that the reorder did not break a
+ * safety property that already held. What pins the reorder itself is
+ * "cancels a class that becomes cancellable immediately before the class
+ * lock runs", in the describe above.
  */
 describe('deleteTeacherAccount blocks concurrent registrations on classes it locks (#367)', () => {
   const prisma = new PrismaClient();
@@ -1683,9 +1862,9 @@ describe('deleteTeacherAccount blocks concurrent registrations on classes it loc
       await new Promise((r) => setTimeout(r, 400));
       // Still blocked: the erasure holds the Class row's FOR UPDATE lock,
       // and the registration INSERT's automatic FOR KEY SHARE lock on that
-      // same row conflicts with it. This is what makes the old #174 race --
-      // registering in the gap between an unlocked read and the class lock
-      // -- structurally impossible now, not merely unlikely.
+      // same row conflicts with it. That conflict is `lockClassRowsOrdered`'s
+      // own and predates #367; this asserts the reorder did not break it,
+      // not that the reorder created it -- see the describe docblock.
       expect(registrationLanded).toBe(false);
     } finally {
       releaseLock();
@@ -1695,8 +1874,8 @@ describe('deleteTeacherAccount blocks concurrent registrations on classes it loc
     expect(registrationLanded).toBe(true);
 
     // The registration that finally landed, after the class was already
-    // cancelled, is still there -- this design does not lose it, it just
-    // cannot land DURING the erasure any more.
+    // cancelled, is still there -- the block above defers it, it does not
+    // lose it.
     const reg = await prisma.registration.findUniqueOrThrow({
       where: { classId_studentId: { classId, studentId: lateStudentId } },
     });
