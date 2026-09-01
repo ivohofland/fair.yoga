@@ -17,7 +17,7 @@
  *
  * "Value-imports", not "imports", and the correction is itself worth a line.
  * The first version of this check said "imports nothing itself" and was
- * falsified by the first example under it — `tiers.ts:1` is
+ * falsified by the first example under it — `tiers.ts`'s first import is
  * `import type { NoneOf } from '@/lib/type-pins'`. A type-only import is
  * erased at build, so the bundle conclusion held and only the predicate was
  * wrong. That is the third consecutive form this one sentence has failed in:

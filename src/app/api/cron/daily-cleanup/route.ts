@@ -19,7 +19,8 @@ import { auditTeacherTimezones } from '@/services/timezone-audit';
  * integration and e2e tiers do not touch this route, for the reason two
  * paragraphs down. One of the five `/api/cron/*` routes does have coverage
  * there, though:
- * `tests/e2e/recurring.spec.ts:126` drives `/api/cron/generate-classes` from
+ * `tests/e2e/recurring.spec.ts`'s `'the generation cron is idempotent over
+ * the already-filled window'` test drives `/api/cron/generate-classes` from
  * a Playwright spec, so a precedent for testing a cron route exists. The
  * services below are each covered (`auth-cleanup.test.ts`,
  * `waitlist-retention.test.ts`) and `requireCronAuth` is covered

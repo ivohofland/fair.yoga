@@ -377,7 +377,8 @@ describe('class transitions (DB, timezone-aware)', () => {
     const cls = await makeClass({ autoCancelCheck: 'HOURS_2' });
 
     // `finally`, the convention this file records at its own `#174` fixture
-    // and cites from `gdpr.test.ts:132`. #200 added four assertions ahead of
+    // and cites from `gdpr.test.ts`'s `cleanupStudentWaitingInClass` docblock.
+    // #200 added four assertions ahead of
     // the cleanup, so there are now five ways to skip it — and this project's
     // protocol guarantees repeated deliberately-failing runs of exactly this
     // test. The leak is inert (the class is already `cancelled`, so no sweep
@@ -438,8 +439,8 @@ describe('class transitions (DB, timezone-aware)', () => {
    * PINNED at max, and the queue drains to empty before the count can fall far
    * enough to auto-cancel. The one thing that suspends that drain is the
    * freeze, and auto-cancel can only ever run inside it: `DEADLINE_HOURS`
-   * bottoms out at 6 (`waitlist.ts:96`) and `CANCEL_CHECK_HOURS` tops out at 4
-   * (`class-transitions.ts:21`), so across all 12 configurations the sweep runs
+   * (`waitlist.ts`) bottoms out at 6 and `CANCEL_CHECK_HOURS`
+   * (`class-transitions.ts`) tops out at 4, so across all 12 configurations the sweep runs
    * strictly after the freeze, with two hours to spare.
    *
    * Constructing a below-minimum class with a waiting entry at some arbitrary
@@ -460,8 +461,9 @@ describe('class transitions (DB, timezone-aware)', () => {
       autoCancelCheck: 'HOURS_2',
       cancelDeadline: 'HOURS_24',
     });
-    // `finally`, not a trailing statement — the convention `gdpr.test.ts:132`
-    // records after round 1's M5. An assertion failing below must still reap
+    // `finally`, not a trailing statement — the convention
+    // `gdpr.test.ts`'s `cleanupStudentWaitingInClass` docblock records after
+    // round 1's M5. An assertion failing below must still reap
     // the class, or the next run of this file starts with a stray cancelled
     // class on the shared fixture teacher.
     try {

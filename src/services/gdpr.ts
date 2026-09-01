@@ -911,7 +911,7 @@ const CANCELLABLE_STATUSES: readonly ClassStatus[] = Object.freeze([
  * no query-builder equivalent.
  *
  * `Prisma.raw`, not `Prisma.join`, following `SCHEDULED_STATUSES_SQL`
- * (`class-template-lifecycle.ts:497`) and for the reason measured there:
+ * (`class-template-lifecycle.ts`) and for the reason measured there:
  * `Prisma.join` binds each status as a separate parameter, and a bound text
  * parameter compared against the `status` column's enum type needs an explicit
  * `::text` cast to resolve, which costs the index. Safe here for the same one

@@ -172,9 +172,11 @@ void _projectionCarriesNoRawIdentity;
 /**
  * #166 retired the unclaimed student, and the bypass is unreachable because of
  * what creates a `Student`, not because of what links one. Exactly two sites
- * create the row — `api/auth/student-signup/route.ts:41` and
- * `api/account/student-profile/route.ts:54` — and both set `claimedAt` in the
- * creating statement. There is therefore no unclaimed `Student` for any
+ * create the row — the `prisma.student.create` call in
+ * `api/auth/student-signup/route.ts`'s `POST` handler and the one in
+ * `api/account/student-profile/route.ts`'s `POST` handler — and both set
+ * `claimedAt` in the creating statement. There is therefore no unclaimed
+ * `Student` for any
  * `TeacherStudent` writer to link, however that writer gets its `studentId`.
  * There is no production deployment either, so no legacy unclaimed rows exist
  * anywhere for this branch to expose.

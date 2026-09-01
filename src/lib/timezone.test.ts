@@ -449,7 +449,7 @@ describe('mondayOf', () => {
   it('reads the date with UTC accessors, not local ones', () => {
     // `mondayOf` takes no timezone argument, so it cannot "ignore" one — what
     // this actually pins is that its internals use `getUTCDate`/`getUTCDay`
-    // rather than their local-time twins. `vitest.config.ts:60` pins
+    // rather than their local-time twins. `vitest.config.ts:147` pins
     // `TZ: 'America/New_York'` process-wide for exactly this reason: under
     // that pin, midnight-UTC Monday 2026-09-21 reads as roughly 20:00 EDT the
     // PREVIOUS evening, Sunday the 20th. A `mondayOf` written with

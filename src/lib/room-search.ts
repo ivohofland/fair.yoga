@@ -54,10 +54,10 @@ export type RoomSearchOutcome =
  * `rooms: undefined` typed as `RoomResult[]`, and the throw reappears in the
  * *render* path of both callers, where nothing catches it.
  *
- * The precedent this module cites for returning rather than throwing
- * (`src/lib/use-payment-actions.ts:51`) also validates rather than asserts —
- * see `readUndoStatus` in `src/lib/payment-status.ts`. This is the other half
- * of it.
+ * The precedent this module cites for returning rather than throwing (the
+ * `undo` function's `readUndoStatus` call in `src/lib/use-payment-actions.ts`)
+ * also validates rather than asserts — see `readUndoStatus` in
+ * `src/lib/payment-status.ts`. This is the other half of it.
  *
  * Deliberately shallow: it checks the shape the callers actually consume —
  * an array whose entries carry the identity fields — not every field. A

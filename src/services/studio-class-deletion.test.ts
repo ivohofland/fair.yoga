@@ -51,7 +51,8 @@ describe('studioClassDeletability', () => {
    *
    * The predicate cannot ask "has this class started", because the class's
    * `startTime` is a STAMP and the generator filters on the TEMPLATE's current
-   * one (`studio-class-generator.ts:141`, `:177`). Editing a template moves the
+   * one (`generateEntriesForRule`'s `start > startDate` filter,
+   * `entry-generation.ts:551`). Editing a template moves the
    * template's and leaves the class's untouched — "a template is a stamp, not a
    * live link" — so the two disagree by design, and the start-instant reading
    * answered from the wrong one.
