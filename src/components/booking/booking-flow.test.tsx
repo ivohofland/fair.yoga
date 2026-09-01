@@ -3,11 +3,11 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { BookingFlow } from './booking-flow';
 
 /**
- * #158. An unreadable stored tier must not be named back to the student as
- * theirs, and must not reach the booking write: the registration route stamps
- * `tierAtBooking` from the profile column, which the CHECK constraint would
- * reject. Picking a tier PUTs it before the booking POST, which is what
- * repairs the row — hence the call-order assertion below.
+ * #158. BookingFlow asks for a tier instead of naming one when the stored
+ * value is unreadable. Picking a tier PUTs it before the registration POST,
+ * repairing the row in flight — the call-order assertion below pins this
+ * sequence. See docs/superpowers/specs/2026-09-01-degraded-tier-downstream-design.md
+ * § 3 for why the booking route needs a valid profile tier.
  */
 describe('BookingFlow', () => {
   const fetchMock = vi.fn();
