@@ -11,7 +11,13 @@ interface BookingFlowProps {
   slug: string;
   isFull: boolean;
   alreadyBooked: boolean;
-  currentTier: IncomeTier;
+  /**
+   * The student's stored tier, or null when it could not be read as one.
+   * Null shows the picker with nothing selected — a tier we had to substitute
+   * is not this student's, so this form asks rather than names it, and
+   * booking waits for the answer.
+   */
+  currentTier: IncomeTier | null;
   studentId: string;
   /** Estimated price per tier 1..5 if the class ran with today's sign-ups plus you. */
   tierPrices: number[];
@@ -37,12 +43,13 @@ export function BookingFlow({
   tierPrices,
   isFirstBooking,
 }: BookingFlowProps) {
-  const [tier, setTier] = useState(currentTier);
+  const [tier, setTier] = useState<IncomeTier | null>(currentTier);
   const [phase, setPhase] = useState<Phase>('choose');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   async function handleBook() {
+    if (tier === null) return;
     setSubmitting(true);
     setError('');
     try {
@@ -134,10 +141,17 @@ export function BookingFlow({
     );
   }
 
+  // The tier the summary would name, or null when there is none to name —
+  // a first booking, or a stored value we could not read. One derived value
+  // rather than two conditions, so the picker and the sentence explaining it
+  // cannot come apart. Narrowing to IncomeTier in the summary branch is why
+  // this is a null check on a const rather than a boolean flag.
+  const summaryTier = isFirstBooking ? null : currentTier;
+
   return (
     <div>
       <h2 className="type-subtitle mb-1">Your tier</h2>
-      {isFirstBooking ? (
+      {summaryTier === null ? (
         <>
           <p className="type-body max-w-[420px]">
             Your price is based on what you can comfortably contribute. Tiers are
@@ -182,8 +196,8 @@ export function BookingFlow({
         // the tier-1/2 honesty nudge the product concept asks for.
         <div className="mb-1">
           <p className="type-body max-w-[420px]">
-            You&apos;re in Tier {tier} · {TIER_INFO[tier - 1]!.label}
-            {tier <= 2 ? ' — does this still reflect your situation?' : '.'}
+            You&apos;re in Tier {summaryTier} · {TIER_INFO[summaryTier - 1]!.label}
+            {summaryTier <= 2 ? ' — does this still reflect your situation?' : '.'}
           </p>
           <Link
             href="/account/tier"
@@ -196,19 +210,21 @@ export function BookingFlow({
 
       <p className="type-caption mt-4 max-w-[420px]">
         Estimates assume the class at least reaches its minimum; the final price settles after
-        class.{isFirstBooking && ' The highest tier pays about twice the lowest.'}{' '}
+        class.{summaryTier === null && ' The highest tier pays about twice the lowest.'}{' '}
         <Link href={`/${slug}`} className="text-teal">
           Learn more
         </Link>
       </p>
 
       <div className="mt-5">
-        <Button variant="primary" onClick={handleBook} disabled={submitting} className="w-full">
+        <Button variant="primary" onClick={handleBook} disabled={submitting || tier === null} className="w-full">
           {submitting
             ? 'One moment...'
             : isFull
               ? 'Join the waitlist'
-              : `Book — around €${tierPrices[tier - 1]!.toFixed(2)}`}
+              : tier === null
+                ? 'Book'
+                : `Book — around €${tierPrices[tier - 1]!.toFixed(2)}`}
         </Button>
       </div>
       {error && <p role="alert" className="text-sm text-danger mt-3">{error}</p>}
