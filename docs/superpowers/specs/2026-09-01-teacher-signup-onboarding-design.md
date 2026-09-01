@@ -304,6 +304,31 @@ The field is then left empty for the teacher to fill. It must never block
 submission or emit a placeholder slug — CLAUDE.md's *Key Constraints* commit to
 international from day one.
 
+## Decision 7: the signup form detects the timezone (#258, detection half)
+
+`POST /api/teachers` hardcoded `defaultTimezone: 'Europe/Amsterdam'` for every
+teacher and never asked. #258 measures the cost — this is a **correctness
+input, not a display preference**, deciding the schedule window, both #249
+past-start guards, auto-cancel, the completion sweep and the reporting cutoff —
+and names the fix site: *"`Intl.DateTimeFormat().resolvedOptions().timeZone` is
+one call away in the signup form."* No signup form existed when that was
+written. This PR builds one, so the detection lands here.
+
+`teacherProfileSchema` takes an optional `defaultTimezone` behind the
+`isValidTimeZone` refinement `schemas.ts` already carries, and the route falls
+back to `'Europe/Amsterdam'` when it is absent or invalid.
+
+**It must be read in an effect or the submit handler, never during render.** A
+`'use client'` component still server-renders, and React keeps the server value
+through hydration — an `Intl` call during render returns `UTC` on the server and
+that value sticks. Every teacher would then be filed as UTC, which is a worse
+failure than the hardcode, because it looks like it worked.
+
+**#258 stays open** for its other half: the picker covers 26 zones and includes
+none in Asia, Africa, South America or New Zealand. Detection does not fix that,
+and a teacher whose zone is detected correctly but who wants to change it still
+meets the short list.
+
 ## Decision 6: `POST /api/teachers` is deleted, and that closes #382
 
 The route is removed, not left dead. Leaving a live, unauthenticated,

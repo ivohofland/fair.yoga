@@ -125,6 +125,13 @@ export const pageSlugField = z
 
 export const teacherSignupSchema = z.object({ email: emailField }).strict();
 
+// #258: every teacher was hardcoded to Europe/Amsterdam and never asked.
+// This is a correctness input, not a display preference — it decides the
+// schedule window, both #249 past-start guards, auto-cancel, the completion
+// sweep and the reporting cutoff. Optional here so a browser that cannot
+// report one still signs up.
+const detectedTimezoneField = z.string().refine(isValidTimeZone, 'Unknown timezone');
+
 /**
  * Creates the teacher profile. No `email` field: it comes from the consumed
  * signup ticket or the live session, never from the body — the address must
@@ -135,6 +142,7 @@ export const teacherProfileSchema = z.object({
   lastName: z.string().min(1),
   bio: z.string().max(250),
   pageSlug: pageSlugField,
+  defaultTimezone: detectedTimezoneField.optional(),
 }).strict();
 ```
 
@@ -1053,6 +1061,27 @@ export default async function LandingPage() {
 
 `/signup` posts `{ email }` to `/api/auth/teacher-signup` and swaps to a "check your inbox" state — modelled on `booking-sign-in.tsx:46-56`, which is the established shape for this.
 
+**The timezone, read in the browser and only in the browser (#258).** The form
+sends `defaultTimezone` from `Intl.DateTimeFormat().resolvedOptions().timeZone`,
+and the route falls back to `'Europe/Amsterdam'` when it is absent or fails
+`isValidTimeZone`.
+
+It must be read in an **effect or the submit handler**, never during render:
+
+```tsx
+const [timeZone, setTimeZone] = useState<string | undefined>();
+// A 'use client' component still server-renders, and React keeps that
+// server value through hydration — reading Intl during render would file
+// every teacher as UTC, which is worse than the Amsterdam hardcode because
+// it looks like it worked.
+useEffect(() => {
+  setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+}, []);
+```
+
+This is the detection half of #258 only. Its other half — the picker covering 26
+zones with none in Asia, Africa, South America or NZ — stays on that issue.
+
 `/signup/profile` is a server component. It reads the ticket cookie and calls
 `peekSignupTicket`:
 
@@ -1171,6 +1200,7 @@ Per `solve-issue` §3, after Task 6 and before the PR. Break it, record the **ex
 |---|---|---|
 | The signup marker | Mint the token as `sign_in` in `teacher-signup/route.ts` | Verify answers 400 "Account not found"; no `Account` row |
 | Ticket single-use | Make `consumeSignupTicket` read without deleting | The spent-ticket test's second call returns 201 instead of 401 |
+| Timezone detection is browser-only | Move the `Intl` read out of the effect and into render | The created teacher must NOT be `UTC`; assert it against a zone the test browser reports |
 | Ticket TTL | Set `TICKET_TTL_MS` to 15 minutes and back-date a ticket to 20 minutes old | Submit 401s, and the form is asserted to still hold every typed field |
 | `peekSignupTicket` does not consume | Call it, then `consumeSignupTicket` with the same token | The consume must still succeed — a peek that deleted would 401 every real signup |
 | Ticket purpose | Mint the ticket as `sign_in` | `consumeSignupTicket` returns null; route answers 401 |
