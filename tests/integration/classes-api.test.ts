@@ -583,8 +583,8 @@ describe('POST /api/classes/[id]/transition', () => {
     //     await prisma.class.update({ ..., data: { classType: 'Vinyasa' } });
     // fully awaited BEFORE the request. That cannot exercise anything: the
     // handler's own top-of-handler read (`src/app/api/classes/[id]/transition/route.ts`'s
-    // `prisma.class.findUnique` call) then sees 'Vinyasa'
-    // too, so `cls` and the in-transaction re-read are identical and switching
+    // `prisma.class.findUnique` call) then sees 'Vinyasa' too, so `cls` and
+    // the in-transaction re-read are identical and switching
     // the interpolation between them is unobservable. The mutation in Step 5
     // stayed green, and the implementer correctly refused to commit.
     //
