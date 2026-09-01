@@ -195,14 +195,6 @@ export const teacherProfileSchema = z.object({
   defaultTimezone: detectedTimezoneField.optional(),
 }).strict();
 
-export const createTeacherSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  email: emailField,
-  bio: z.string().max(250),
-  pageSlug: pageSlugField,
-});
-
 export const updateTeacherSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),

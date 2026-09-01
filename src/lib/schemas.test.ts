@@ -640,7 +640,6 @@ describe('email fields normalise', () => {
   it('covers exactly the schemas that carry an address', () => {
     expect([...emailBearing].sort()).toEqual([
       'createInvitationSchema',
-      'createTeacherSchema',
       'magicLinkSendSchema',
       'passkeyAuthOptionsSchema',
       'studentSignupSchema',

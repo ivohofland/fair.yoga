@@ -198,8 +198,9 @@ export function formatClassContext(classType: string, date: Date, startTime: Dat
  * of the rule those guards apply: they read `Teacher.defaultTimezone`, this
  * reads the device's zone. Those agree unless the teacher is travelling — or
  * unless `defaultTimezone` was never inferred at all, which today it is not
- * (`POST /api/teachers` hardcodes `Europe/Amsterdam`), making the device the
- * better of the two guesses for a picker.
+ * (`POST /api/account/teacher-profile` falls back to a hardcoded
+ * `Europe/Amsterdam` when none is detected), making the device the better of
+ * the two guesses for a picker.
  *
  * CALL IT FROM `useTodayLocal`, NOT FROM A RENDER. "The device's zone" is only
  * true where a device exists, and a `'use client'` component is server-rendered

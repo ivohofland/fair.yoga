@@ -16,6 +16,17 @@ const verifyTeacherSignupEmail = `teacher-signup-verify-ticket-${suffix}@test.lo
 const verifySignInNoAccountEmail = `teacher-signup-verify-signin-${suffix}@test.local`;
 const onboardingEmail = `teacher-signup-onboarding-${suffix}@test.local`;
 const onboardingSlug = `onboarding-teacher-${suffix}`;
+// #168 follow-up test's fixtures — an address per attempt, none of which
+// ever gets an account (the route only ever mints a token).
+const noIpEmails = Array.from(
+  { length: 7 },
+  (_, i) => `teacher-signup-no-ip-${i}-${suffix}@test.local`,
+);
+// #161 race test's fixtures — two distinct tickets so email can never be the
+// colliding key, leaving pageSlug as the only one the race can land on.
+const raceEmailA = `teacher-signup-race-a-${suffix}@test.local`;
+const raceEmailB = `teacher-signup-race-b-${suffix}@test.local`;
+const raceSlug = `race-teacher-profile-${suffix}`;
 
 // A live teacher+session fixture, needed by the slug-available "already
 // taken" test and by every POST /api/account/onboarding test.
@@ -41,13 +52,16 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  const ticketBackedEmails = [ticketEmail, spentEmail, clashEmail, recoveryEmail];
+  const ticketBackedEmails = [
+    ticketEmail, spentEmail, clashEmail, recoveryEmail, raceEmailA, raceEmailB,
+  ];
   await prisma.magicLinkToken.deleteMany({
     where: {
       email: {
         in: [
           freshEmail,
           ...ticketBackedEmails,
+          ...noIpEmails,
           verifyTeacherSignupEmail,
           verifySignInNoAccountEmail,
         ],
@@ -108,6 +122,32 @@ describe('POST /api/auth/teacher-signup', () => {
       body: JSON.stringify({ email: freshEmail, pageSlug: 'sneaky' }),
     });
     expect(res.status).toBe(400);
+  });
+
+  /**
+   * #168 follow-up: this route has no per-email backstop (an unclaimed email
+   * is exactly what a legitimate signup submits), so its IP check used to
+   * fail OPEN when `clientIp()` couldn't resolve an address — a broken
+   * nginx config would silently remove all throttling. `checkIpRateLimit`
+   * now routes every such caller into one shared bucket instead.
+   *
+   * That bucket (capacity 5/hour) is shared process-wide, not per-test, so a
+   * prior run may have already spent part of it — hammering it 7 times
+   * (more than its capacity) and asserting at least one 429 shows up holds
+   * regardless of how much budget was already gone going in.
+   */
+  it('does not bypass the IP limit when neither x-forwarded-for nor x-real-ip is present', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < noIpEmails.length; i++) {
+      const res = await fetch(`${BASE_URL}/api/auth/teacher-signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, // deliberately no IP header
+        body: JSON.stringify({ email: noIpEmails[i] }),
+      });
+      statuses.push(res.status);
+    }
+    statuses.forEach((status) => expect([200, 429]).toContain(status));
+    expect(statuses).toContain(429);
   });
 });
 
@@ -264,6 +304,51 @@ describe('POST /api/account/teacher-profile', () => {
 
     const teacher = await prisma.teacher.findUnique({ where: { pageSlug: recoverySlug } });
     expect(teacher?.email).toBe(recoveryEmail);
+  });
+
+  /**
+   * #161: unhandled, a lost create answers with a code-less 409, collapsing
+   * every conflict into one indistinguishable response — the profile form
+   * can't render an inline error against a field it can't identify. This
+   * route has no pre-check (unlike the old `POST /api/teachers`, which read
+   * then wrote): every conflict, raced or not, resolves in the same catch
+   * block, so a genuine race between two ticket-authorized calls is the
+   * realistic case to prove.
+   *
+   * Two distinct tickets keep email out of play — `Teacher.email` and
+   * `Teacher.accountId` cannot collide here — so pageSlug is the only key
+   * the two calls can lose on, and this asserts the loser carries
+   * `SLUG_TAKEN`, not a bare 409.
+   */
+  it('keeps its conflict codes apart under a race (#161): one 201, one SLUG_TAKEN', async () => {
+    const [ticketA, ticketB] = await Promise.all([
+      mintSignupTicket(prisma, raceEmailA),
+      mintSignupTicket(prisma, raceEmailB),
+    ]);
+
+    const post = (ticket: string) =>
+      fetch(`${BASE_URL}/api/account/teacher-profile`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: `fair_yoga_signup=${ticket}`,
+          ...freshIp(),
+        },
+        body: JSON.stringify({
+          firstName: 'Race', lastName: 'Teacher', bio: '', pageSlug: raceSlug,
+        }),
+      });
+
+    const [resA, resB] = await Promise.all([post(ticketA), post(ticketB)]);
+
+    expect([resA.status, resB.status].sort()).toEqual([201, 409]);
+
+    const loser = resA.status === 409 ? resA : resB;
+    const body = (await loser.json()) as { error: { code?: string } };
+    expect(body.error.code).toBe('SLUG_TAKEN');
+
+    // One teacher, proof the loser lost the insert rather than double-writing.
+    expect(await prisma.teacher.count({ where: { pageSlug: raceSlug } })).toBe(1);
   });
 });
 
