@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { respondOk, respondError, requireTeacher, isErrorResponse, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { createInvitationSchema, studentListQuerySchema } from '@/lib/schemas';
-import { checkStudentWriteLimit } from '@/lib/rate-limit';
+import { checkStudentWriteLimit, respondRateLimited } from '@/lib/rate-limit';
 import { inviteContact, deliverInvitation, REFUSAL_MESSAGES } from '@/services/invitations';
 import { log } from '@/lib/log';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
@@ -101,11 +101,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const limit = checkStudentWriteLimit(session.teacherId);
   if (!limit.allowed) {
     log.warn({ teacherId: session.teacherId }, 'invitation refused: rate limit exceeded');
-    const minutes = Math.ceil(limit.retryAfterSeconds / 60);
-    return respondError(
-      `Too many invitations. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
-      429,
-    );
+    return respondRateLimited(limit);
   }
 
   const parsed = await parseBody(request, createInvitationSchema);
