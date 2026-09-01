@@ -1637,8 +1637,8 @@ classification beneath it have drifted apart.
   whole-branch review: a student registering after an eager-loaded read had
   their class cancelled and was never told; #367 additionally closed the
   window such a registration could land in at all, via the automatic `FOR
-  KEY SHARE` lock the "fourth path" above already documents for a different
-  insert). After the loop: `StudentPrivacy`, `TeacherStudent`, `Invitation`
+  KEY SHARE` lock the "fourth path" above already documents). After the
+  loop: `StudentPrivacy`, `TeacherStudent`, `Invitation`
   (deleted, not anonymized — the teacher is soft-deleted, not scrubbed like
   a student's identity is). Was already `StudentPrivacy` before
   `TeacherStudent`; not the outlier.
