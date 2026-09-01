@@ -495,12 +495,15 @@ export function classifyApiError(error: unknown): ApiFailure {
     };
   }
 
-  // Reaching this branch means a route's own check-then-create lost its race
-  // — at least four routes have that window today — or a route never
-  // pre-checked at all. Both are worth knowing about; neither is an outage,
-  // which is why this is `warn` and not `error`. `meta.target` names the
-  // constraint — without it the log says something already existed but not
-  // what, which is the same gap one level in.
+  // Reaching this branch means a `create` raised a P2002 that its own caller
+  // did not recognise: a route that never pre-checked, or a catch whose
+  // column set has fallen behind its constraint. Both are worth knowing
+  // about; neither is an outage, which is why this is `warn` and not `error`.
+  // `meta.target` names the constraint — without it the log says something
+  // already existed but not what, which is the same gap one level in.
+  //
+  // No count of such routes here: a number about other files has no owner,
+  // and the edit that falsifies it happens where nobody is reading this.
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
     return {
       status: 409,
