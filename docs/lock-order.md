@@ -574,15 +574,21 @@ freshly inserted rows, physical (insertion) order, which is uncorrelated with
 id. Against `deleteStudentAccount`, which sorted, that is a live cycle and it
 was reproduced — Postgres `40P01 deadlock detected`, either side the victim.
 
-Since #237 an ordered `lockClassRowsOrdered` pre-lock runs ahead of that loop,
-so the rule no longer describes this site: the pre-lock is the transaction's
-first lock acquisition, and the read's `orderBy: { id: 'asc' }` is now
-presentation only (it fixes the notification order). The rule still applies to
-any future loop that CASes without pre-locking, which is why it is kept.
-Pinned by `gdpr.test.ts`, "does not deadlock when a teacher erasure and a
-student erasure overlap on two classes"; that test fails with `40P01` if the
-pre-lock is removed. The same fix closes the inherited disagreement with
-`withdrawWaitingEntriesForTeacher`, which has sorted since #166.
+Since #237 an ordered `lockClassRowsOrdered` pre-lock runs ahead of that
+loop, so the rule no longer describes this site: the pre-lock is first
+among `Class`/`CalendarEntry` locks (not first in the transaction — #229's
+`ClassTemplate`/`StudioClassTemplate` locks run before it), and since #367
+it is also first among ANY read of this teacher's classes — the read the
+loop walks is scoped to the pre-lock's own returned ids, not an
+independently-timed `findMany`, so `orderBy: { id: 'asc' }` on that read is
+presentation only (it fixes the notification order) for a stronger reason
+than before: there is no longer a separate snapshot for it to agree or
+disagree with. The rule still applies to any future loop that CASes
+without pre-locking, which is why it is kept. Pinned by
+`gdpr-lock-order.test.ts`, "does not deadlock when a teacher erasure and a
+student erasure overlap on two classes"; that test fails with `40P01` if
+the pre-lock is removed. The same fix closes the inherited disagreement
+with `withdrawWaitingEntriesForTeacher`, which has sorted since #166.
 
 **JS and SQL had to agree while one site sorted in JavaScript, and that was
 checked, not assumed.** Since #237 every ordered site takes its order from
@@ -1615,20 +1621,27 @@ classification beneath it have drifted apart.
   waitlist-resolution step actively prevents in the normal booking flow — but
   "no counterparty found" is not the same claim as "safe," and none is made
   here. All three left open, not resolved: no code changed for any of them.
-- **`deleteTeacherAccount`** (`src/services/gdpr.ts`) — `Class`, via an ordered
-  `lockClassRowsOrdered` pre-lock over every class in `CANCELLABLE_STATUSES`,
-  taken before the cancel loop and first in the transaction (#237). The loop's
-  per-class compare-and-swap `class.updateMany` re-takes rows that pre-lock
-  already holds, so the read's `orderBy: { id: 'asc' }` is presentation only
-  now (notification order) — see "Ordering WITHIN `Class`" for what it used to
-  be and why it stopped. Then, per class, `WaitlistEntry` and the `Registration` read that
-  chooses who gets the cancellation notice — that read moved inside the lock
-  in the whole-branch review of #174, having been an eager-load on the
-  pre-lock `findMany` until then, which meant a student registering in the gap
-  had their class cancelled and was never told. After the loop:
-  `StudentPrivacy`, `TeacherStudent`, `Invitation` (deleted, not anonymized —
-  the teacher is soft-deleted, not scrubbed like a student's identity is). Was
-  already `StudentPrivacy` before `TeacherStudent`; not the outlier.
+- **`deleteTeacherAccount`** (`src/services/gdpr.ts`) — `Class`, via an
+  ordered `lockClassRowsOrdered` pre-lock over every class in
+  `CANCELLABLE_STATUSES`. Not first in the transaction — the two template
+  locks (#229, `ClassTemplate`/`StudioClassTemplate`) run before it — but
+  first among `Class`/`CalendarEntry` locks, and first read of any `Class`
+  data at all (#367): the read that feeds the cancel loop is scoped to
+  `where: { id: { in: lockedIds } }`, the ids this same pre-lock statement
+  returned, not an independently-timed read. `orderBy: { id: 'asc' }` on that
+  read is presentation only (notification order) — `lockedIds` is already
+  ascending, so nothing about lock ORDER depends on it; see "Ordering WITHIN
+  `Class`" for what it used to order and why it stopped. Then, per class,
+  `WaitlistEntry` and the `Registration` read that chooses who gets the
+  cancellation notice — under the same lock, not a separate eager-load (#174
+  whole-branch review: a student registering after an eager-loaded read had
+  their class cancelled and was never told; #367 additionally closed the
+  window such a registration could land in at all, via the automatic `FOR
+  KEY SHARE` lock the "fourth path" above already documents for a different
+  insert). After the loop: `StudentPrivacy`, `TeacherStudent`, `Invitation`
+  (deleted, not anonymized — the teacher is soft-deleted, not scrubbed like
+  a student's identity is). Was already `StudentPrivacy` before
+  `TeacherStudent`; not the outlier.
 - **`transitionClass`** (`src/services/class-lifecycle.ts`) — `Class` via
   `lockClassRow`, then its CAS `class.updateMany` on the same row. It took the
   lock through the CAS alone until #327, which is the one thing about this site
