@@ -42,7 +42,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const user = teacher ?? (await prisma.student.findUnique({ where: { email } }));
 
   if (user) {
-    const token = await generateMagicLinkToken(prisma, email, redirect);
+    const token = await generateMagicLinkToken(prisma, email, { redirectTo: redirect });
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     const magicLinkUrl = `${baseUrl}/verify?token=${token}`;
     await sendMagicLinkEmail(email, magicLinkUrl);

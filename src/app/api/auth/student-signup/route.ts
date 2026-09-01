@@ -104,7 +104,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       );
     }
   }
-  const token = await generateMagicLinkToken(prisma, email, redirect);
+  const token = await generateMagicLinkToken(prisma, email, { redirectTo: redirect });
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
   await sendMagicLinkEmail(email, `${baseUrl}/verify?token=${token}`);
 

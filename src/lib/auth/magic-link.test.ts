@@ -100,7 +100,7 @@ describe('verifyMagicLinkToken', () => {
     const first = await generateMagicLinkToken(db, email);
     const second = await generateMagicLinkToken(db, email);
 
-    expect(await verifyMagicLinkToken(db, second)).toEqual({ email, redirectTo: null });
+    expect(await verifyMagicLinkToken(db, second)).toEqual({ email, redirectTo: null, purpose: 'sign_in' });
 
     // The older link is dead: it has no purpose once its owner is signed in,
     // and a live one sitting in an inbox is exposure with no upside.
@@ -109,11 +109,11 @@ describe('verifyMagicLinkToken', () => {
   });
 
   /**
-   * The placement guard for the sibling invalidation above. The plan's version
-   * of this test reached for a `hashOf(stale)` helper that does not exist —
-   * `hashToken` is module-private here and exporting it would widen the API
-   * for a test's convenience. The stale row is captured by `id` before the
-   * live one is minted instead, which needs nothing new.
+   * The placement guard for the sibling invalidation above. Captures the
+   * stale row by `id` before minting the live one, rather than hashing
+   * `stale` to look it up directly — `hashToken` is exported from this
+   * module now (`signup-ticket.ts`'s `peekSignupTicket` needs it), but this
+   * test has no need to use it: capturing by `id` already reaches the row.
    */
   it('does not let an expired token kill a live one', async () => {
     const email = 'expired-cannot-kill@example.com';
@@ -131,7 +131,22 @@ describe('verifyMagicLinkToken', () => {
     expect(await verifyMagicLinkToken(db, stale)).toBeNull(); // expired, rejected
     // If invalidation ran before the expiry check, this would be dead too —
     // which would let anyone holding an old link deny the real user theirs.
-    expect(await verifyMagicLinkToken(db, live)).toEqual({ email, redirectTo: null });
+    expect(await verifyMagicLinkToken(db, live)).toEqual({ email, redirectTo: null, purpose: 'sign_in' });
+  });
+});
+
+describe('purpose (#385)', () => {
+  it('round-trips the purpose it was minted with', async () => {
+    const token = await generateMagicLinkToken(db, 'purpose-teacher-signup@example.com', {
+      purpose: 'teacher_signup',
+    });
+    const result = await verifyMagicLinkToken(db, token);
+    expect(result?.purpose).toBe('teacher_signup');
+  });
+
+  it('defaults to sign_in when no purpose is given', async () => {
+    const token = await generateMagicLinkToken(db, 'purpose-default@example.com');
+    expect((await verifyMagicLinkToken(db, token))?.purpose).toBe('sign_in');
   });
 });
 

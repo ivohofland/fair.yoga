@@ -216,6 +216,9 @@ export const updateTeacherSchema = z.object({
   bankAccountName: z.string().nullable().optional(),
 }).strict();
 
+/** `POST /api/account/onboarding`'s wire shape. */
+export const onboardingSkipSchema = z.object({ step: z.enum(['profile', 'bank', 'share']) }).strict();
+
 // ============================================================================
 // STUDENTS
 // ============================================================================

@@ -16,9 +16,8 @@
  */
 
 import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
 import type { PrismaClient } from '@prisma/client';
+import { hashToken } from '@/lib/auth/magic-link';
 
 /**
  * The app under test — the dev server locally, the built app in CI.
@@ -69,15 +68,13 @@ const SESSION_COOKIE_NAME = 'fair_yoga_session';
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Session rows are keyed by the sha256 hex of the raw token — mirrors
- * `hashToken` in `src/lib/auth/session.ts`, which is module-private (never
- * exported) and so cannot be imported here; this copy must be hand-kept in
- * sync with it. Tests store the hash and send the raw token as the cookie.
+ * Session rows are keyed by the sha256 hex of the raw token. This is the
+ * shared export from `src/lib/auth/magic-link.ts`, re-exported here for
+ * session-token hashing too — the algorithm carries no per-purpose salt, so
+ * reusing it across purposes is safe. Tests store the hash and send the raw
+ * token as the cookie.
  */
-export function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
+export { hashToken };
 
 /** Header object authenticating a request as the owner of `token` — for the
  *  integration suite's `fetch` calls. */

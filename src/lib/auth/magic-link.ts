@@ -1,11 +1,11 @@
 import crypto from 'crypto';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, MagicLinkPurpose } from '@prisma/client';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
 
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 
-function hashToken(token: string): string {
+export function hashToken(token: string): string {
   const bytes = sha256(new TextEncoder().encode(token));
   return encodeHexLowerCase(bytes);
 }
@@ -18,13 +18,12 @@ function hashToken(token: string): string {
  * rather than reusing or invalidating the first: a resend must work, and the
  * first link must keep working, because the user clicks whichever mail they
  * see first. That duplication is legitimate (#196) and bounded — though less
- * tightly than a per-route reading suggests. Both minting routes rate-limit
- * three per address per 15 minutes, but they use SEPARATE buckets
- * (`magic-link:email:` and `student-signup:email:`), and `student-signup`
- * mints for any address with no account required. So one address can hold six
- * live tokens in a window, not three. The TTL is 15 minutes,
- * `cleanupExpiredAuth` sweeps the remains daily, and `verifyMagicLinkToken`
- * deletes every sibling the moment one of them is used.
+ * tightly than a per-route reading suggests. Each minting route rate-limits
+ * per address in its OWN bucket, so the live token count for one address is
+ * bounded by the sum of the routes that mint for it — not by any single
+ * route's limit. The TTL is 15 minutes, `cleanupExpiredAuth` sweeps the
+ * remains daily, and `verifyMagicLinkToken` deletes every sibling the moment
+ * one of them is used.
  *
  * Reusing a live token instead is NOT possible and must not be attempted: the
  * raw value is returned here and persisted nowhere, so recovering it from a
@@ -35,17 +34,18 @@ function hashToken(token: string): string {
 export async function generateMagicLinkToken(
   db: PrismaClient,
   email: string,
-  redirectTo?: string,
+  opts?: { redirectTo?: string; purpose?: MagicLinkPurpose; ttlMs?: number },
 ): Promise<string> {
   const rawToken = crypto.randomBytes(32).toString('hex');
   const tokenHash = hashToken(rawToken);
-  const expiresAt = new Date(Date.now() + FIFTEEN_MINUTES_MS);
+  const expiresAt = new Date(Date.now() + (opts?.ttlMs ?? FIFTEEN_MINUTES_MS));
 
   await db.magicLinkToken.create({
     data: {
       tokenHash,
       email,
-      redirectTo: redirectTo ?? null,
+      redirectTo: opts?.redirectTo ?? null,
+      purpose: opts?.purpose ?? 'sign_in',
       expiresAt,
     },
   });
@@ -56,7 +56,7 @@ export async function generateMagicLinkToken(
 export async function verifyMagicLinkToken(
   db: PrismaClient,
   token: string
-): Promise<{ email: string; redirectTo: string | null } | null> {
+): Promise<{ email: string; redirectTo: string | null; purpose: MagicLinkPurpose } | null> {
   const tokenHash = hashToken(token);
 
   const record = await db.magicLinkToken.findUnique({
@@ -81,9 +81,8 @@ export async function verifyMagicLinkToken(
   // Every other live token for this address is now surplus: its owner is
   // signed in, so the only thing a link still sitting in their inbox can do
   // is be used by someone else — a forwarded mail, a shared mailbox, a
-  // link-prefetching scanner. The two minting routes rate-limit three per
-  // address per 15 minutes each, from separate buckets, and the TTL is 15
-  // minutes — so there can be up to five.
+  // link-prefetching scanner. How many that can be is bounded per this
+  // function's own docblock above, not restated here.
   //
   // Placement is load-bearing: this runs only AFTER the expiry check above.
   // Invalidating on every consumption would let anyone holding an old expired
@@ -97,7 +96,7 @@ export async function verifyMagicLinkToken(
   // and says nothing about how many addresses there are.
   await db.magicLinkToken.deleteMany({ where: { email: record.email } });
 
-  return { email: record.email, redirectTo: record.redirectTo };
+  return { email: record.email, redirectTo: record.redirectTo, purpose: record.purpose };
 }
 
 /**
