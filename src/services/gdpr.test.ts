@@ -1579,17 +1579,17 @@ describe('deleteTeacherAccount locks and reads the same snapshot (#367)', () => 
  * from that pre-lock snapshot. A student who registered in between had
  * their class cancelled and was never told. #174's whole-branch review
  * fixed the notification half by re-reading recipients under the lock
- * (`class-lifecycle.ts`'s `autoCancelClasses` got the identical fix at the
- * same time, for the same reason its own comment states — "a cancelled
- * class nobody was told about is worse than one that stays open one more
- * sweep").
+ * (`class-transitions.ts`'s `autoCancelClasses` got the identical fix at
+ * the same time, for the same reason its own comment states — "a
+ * cancelled class nobody was told about is worse than one that stays
+ * open one more sweep").
  *
  * #367 closes the registration half of the same gap structurally: the
- * class lock now runs before any read, so a registration can no longer
- * land between an unlocked read and the lock at all — it blocks behind the
- * held row (Postgres's automatic `FOR KEY SHARE` on the referencing
- * `INSERT`) until the erasure transaction ends. The test below proves that
- * directly.
+ * class lock now runs before the read of the classes it cancels, so a
+ * registration can no longer land between that read and the lock at all
+ * — it blocks behind the held row (Postgres's automatic `FOR KEY SHARE`
+ * on the referencing `INSERT`) until the erasure transaction ends. The
+ * test below proves that directly.
  */
 describe('deleteTeacherAccount blocks concurrent registrations on classes it locks (#367)', () => {
   const prisma = new PrismaClient();
