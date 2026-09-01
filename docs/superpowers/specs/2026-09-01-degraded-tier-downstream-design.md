@@ -156,16 +156,37 @@ tether rather than a comment promising a check.
 `currentTier` becomes `IncomeTier | null` and `tier` becomes
 `useState<IncomeTier | null>(currentTier)`.
 
-The picker branch is chosen by `isFirstBooking || currentTier === null`, written
-inline as the ternary condition rather than lifted into a `const`, so TypeScript
-narrows `currentTier` to `IncomeTier` in the summary branch. The summary reads
-`currentTier` rather than `tier`; the two are identical there because the picker
-is the only thing that calls `setTier`, and only `currentTier` narrows.
+The branch is chosen by one derived value rather than a condition:
+`const summaryTier = isFirstBooking ? null : currentTier` — the tier the
+summary would name, or `null` when there is none to name. `summaryTier ===
+null` selects the picker, and the summary branch gets `summaryTier` narrowed to
+`IncomeTier` for free. It reads `summaryTier` rather than `tier`; the two are
+identical there, because the picker is the only thing that calls `setTier` and
+it does not render in that branch, but only `summaryTier` narrows.
+
+A `const showPicker = …` boolean would read more directly and is deliberately
+not used: narrowing through an aliased boolean depends on TypeScript's
+aliased-condition analysis holding for a destructured parameter, and a null
+check on a const does not depend on anything.
 
 Book and Join-the-waitlist are disabled while `tier === null`, and the button's
 price suffix is dropped in that state (`Book`, not `Book — around €…`).
 Disabling the waitlist button matters as much as the booking one: promotion
 writes `tierAtBooking: student.incomeTier` raw too.
+
+The trailing caption *"The highest tier pays about twice the lowest."* moves
+from `isFirstBooking` to the picker's own condition. It explains the choice
+being asked for, and under this change the picker can appear to someone who is
+not a first-time booker. One condition, used twice, so the copy and the control
+it explains cannot come apart.
+
+**What the student sees is the first-booking screen, not a new step.** A
+degraded row is presented as a tier question that has not been answered —
+which, as far as the code can tell, it has not. The one asymmetry is
+deliberate: a first-time booker may book without touching the picker (tier 3 is
+a real stored value, and the booking and waitlist routes stamp `tierSelectedAt`
+server-side), while a degraded one may not, because there is no value to
+accept.
 
 This is what removes C. The existing `if (tier !== currentTier)` guard fires for
 any selection once `currentTier` is `null`, so the PUT lands before the
@@ -240,8 +261,10 @@ failure text recorded, and the mutation reverted:
    (`estimateAttendanceSpread` demands `IncomeTier`); the error text is the
    record.
 3. `disabled={… || tier === null}` removed from `TierForm` — component red.
-4. `|| currentTier === null` removed from `BookingFlow`'s picker condition —
-   component red.
+4. `summaryTier` given a substituting fallback (`isFirstBooking ? null :
+   (currentTier ?? 3)`) so the picker condition stops seeing an unreadable
+   tier — component red, and separately for the caption tied to the same
+   value.
 5. The PUT-before-POST order in `BookingFlow` swapped — component red.
 
 Corruption values in tests use `0` and `9`, outside anything the code can
