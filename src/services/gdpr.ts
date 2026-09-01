@@ -1137,8 +1137,11 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         // Which is why `cancelledAt: null` below sits BESIDE the status check
         // rather than being redundant with it: since #327 a cancelled class
         // keeps its `draft`/`open`/`in_progress` status, so
-        // `CANCELLABLE_STATUSES` no longer excludes one, and re-cancelling
-        // would re-notify every student the cancelling route already told.
+        // `CANCELLABLE_STATUSES` no longer excludes one, and without this
+        // conjunct the write below would try to re-set `cancelledAt` on an
+        // already-terminal entry — measured: `entry_terminal_liveness_guard`
+        // rejects that with `23514`, aborting the whole erasure rather than
+        // merely re-notifying a student.
         // Either cause fails loud — a warn and a skip — rather than silently
         // cancelling a class this loop should not have: cancelling a
         // completed one would strip a class that already has Payment rows and
