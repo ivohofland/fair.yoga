@@ -853,6 +853,7 @@ describe('POST /api/account/student-profile answers a raced join with ALREADY_ST
   afterAll(async () => {
     await prisma.student.deleteMany({ where: { email: raceEmail } });
     await prisma.teacher.deleteMany({ where: { email: raceEmail } });
+    await prisma.session.deleteMany({ where: { accountId: raceAccountId } });
     await prisma.account.deleteMany({ where: { email: raceEmail } });
   });
 

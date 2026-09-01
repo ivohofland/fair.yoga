@@ -235,6 +235,10 @@ export async function inviteContact(
       // Not rethrown as a P2002: `classifyApiError` answers any P2002 with a
       // code-less 409, which is the defect this catch exists to remove.
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        // `error`, not `warn` as in api-errors.ts's generic P2002 fallback:
+        // this function's census of reachable unique keys is exhaustive, so
+        // an unrecognised P2002 here means schema drift or a bug, not an
+        // ordinary lost race.
         log.error(
           { err, rawTarget: err.meta?.target },
           'invitation create hit a unique constraint that is not the (teacher, email) key',

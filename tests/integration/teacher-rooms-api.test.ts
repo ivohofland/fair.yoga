@@ -670,7 +670,7 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
 });
 
 /**
- * The pre-check at `:56` is a plain `findUnique`, so under READ COMMITTED a
+ * The pre-check at `:59` is a plain `findUnique`, so under READ COMMITTED a
  * concurrent attach to the same (teacher, room) passes it and loses on
  * `TeacherRoom_teacherId_roomId_key`. Unhandled, that `P2002` reaches
  * `withErrorHandler` and answers 409 with NO `code` — the same status the

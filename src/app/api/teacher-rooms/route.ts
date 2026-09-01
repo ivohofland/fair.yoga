@@ -99,6 +99,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // code-less 409 this catch exists to remove, so rethrowing would deliver
     // the same defect through the other door.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      // `error`, not `warn` as in api-errors.ts's generic P2002 fallback:
+      // this route's census of reachable unique keys is exhaustive, so an
+      // unrecognised P2002 here means schema drift or a bug, not an
+      // ordinary lost race.
       log.error(
         { err, rawTarget: err.meta?.target },
         'teacher-room create hit a unique constraint that is not the link key',

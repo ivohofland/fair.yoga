@@ -144,7 +144,7 @@ describe('PUT /api/teachers/[id]', () => {
 });
 
 /**
- * Both pre-checks at `:31` and `:36` are plain reads, so a concurrent signup
+ * Both pre-checks at `:34` and `:39` are plain reads, so a concurrent signup
  * passes them and loses on the create. Unhandled, either collision answers
  * 409 with NO `code`, collapsing `EMAIL_TAKEN` and `SLUG_TAKEN` into one
  * indistinguishable response — and the settings form points at a field it
@@ -162,12 +162,15 @@ describe('POST /api/teachers keeps its conflict codes apart under a race (#161)'
   const holderSlugEmail = `race-holder-${suffix}@test.local`;
 
   afterAll(async () => {
-    await prisma.teacher.deleteMany({
-      where: { email: { in: [raceEmail, holderSlugEmail, `race-slug-req-${suffix}@test.local`] } },
-    });
-    await prisma.account.deleteMany({
-      where: { email: { in: [raceEmail, holderSlugEmail, `race-slug-req-${suffix}@test.local`] } },
-    });
+    const emails = [
+      raceEmail,
+      holderSlugEmail,
+      `race-slug-req-${suffix}@test.local`,
+      `sequential-teacher-1-${suffix}@test.local`,
+      `sequential-teacher-2-${suffix}@test.local`,
+    ];
+    await prisma.teacher.deleteMany({ where: { email: { in: emails } } });
+    await prisma.account.deleteMany({ where: { email: { in: emails } } });
   });
 
   const signup = (body: Record<string, unknown>) =>
@@ -216,6 +219,10 @@ describe('POST /api/teachers keeps its conflict codes apart under a race (#161)'
     const body = (await res.json()) as { error: { code?: string; message: string } };
     expect(body.error.code).toBe('EMAIL_TAKEN');
     expect(body.error.message).toBe('Email already in use');
+
+    // One account, and it is the holder's — proof the request lost the
+    // insert rather than serialising past it.
+    expect(await prisma.account.count({ where: { email: raceEmail } })).toBe(1);
   });
 
   it('returns 409 SLUG_TAKEN when the create loses on the page slug key', async () => {
@@ -266,6 +273,43 @@ describe('POST /api/teachers keeps its conflict codes apart under a race (#161)'
     await holding;
     const res = await pending;
     await holder.$disconnect();
+
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code?: string; message: string } };
+    expect(body.error.code).toBe('SLUG_TAKEN');
+    expect(body.error.message).toBe('Page slug already in use');
+
+    // One teacher, and it is the holder's — proof the request lost the
+    // insert rather than serialising past it.
+    expect(await prisma.teacher.count({ where: { pageSlug: raceSlug } })).toBe(1);
+  });
+
+  it('returns 409 SLUG_TAKEN for an ordinary sequential duplicate, not just the raced one', async () => {
+    // The race test above exercises `existingSlug`'s 409 only through its
+    // catch-block twin (`isUniqueConflictOn` after a lost create). This test
+    // exercises the pre-check itself — no race, just a second signup against
+    // an already-taken slug — so a drift between the two independently
+    // declared 409s (status/code/message) fails here even when nothing races.
+    const sequentialSlug = `sequential-slug-${suffix}`;
+    const firstEmail = `sequential-teacher-1-${suffix}@test.local`;
+    const secondEmail = `sequential-teacher-2-${suffix}@test.local`;
+
+    const first = await signup({
+      firstName: 'Sequential',
+      lastName: 'First',
+      email: firstEmail,
+      pageSlug: sequentialSlug,
+      bio: 'Sequential bio',
+    });
+    expect(first.status).toBe(201);
+
+    const res = await signup({
+      firstName: 'Sequential',
+      lastName: 'Second',
+      email: secondEmail,
+      pageSlug: sequentialSlug,
+      bio: 'Sequential bio',
+    });
 
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: { code?: string; message: string } };
