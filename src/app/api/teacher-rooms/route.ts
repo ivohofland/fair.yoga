@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
@@ -8,6 +9,8 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { log } from '@/lib/log';
 import { createTeacherRoomSchema } from '@/lib/schemas';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
@@ -66,15 +69,43 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError('Teacher-room link already exists', 409, 'DUPLICATE');
   }
 
-  const teacherRoom = await prisma.teacherRoom.create({
-    data: {
-      teacherId: session.teacherId,
-      roomId,
-      capacityOverride,
-      rentalRate,
-      equipmentNotes: equipmentNotes ?? undefined,
-    },
-  });
-
-  return respondOk(teacherRoom, 201);
+  // The pre-check above is a plain read, so a concurrent attach to the same
+  // (teacher, room) passes it and one of the two loses here. Answering with
+  // the pre-check's own code keeps the two paths indistinguishable to a
+  // client, which is the whole point: without it a race reaches
+  // `withErrorHandler` and returns 409 with no `code` at all (#161).
+  //
+  // Matched on the column set rather than on `P2002` alone. `TeacherRoom`
+  // also declares `@@unique([id, isArchived])`, which this create cannot
+  // collide on — `id` is a fresh uuid — but a bare code check would swallow
+  // that key and any key added later under reasoning established only for
+  // this one.
+  try {
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: {
+        teacherId: session.teacherId,
+        roomId,
+        capacityOverride,
+        rentalRate,
+        equipmentNotes: equipmentNotes ?? undefined,
+      },
+    });
+    return respondOk(teacherRoom, 201);
+  } catch (err) {
+    if (isUniqueConflictOn(err, ['teacherId', 'roomId'])) {
+      return respondError('Teacher-room link already exists', 409, 'DUPLICATE');
+    }
+    // Not rethrown as a P2002: `classifyApiError` answers any P2002 with the
+    // code-less 409 this catch exists to remove, so rethrowing would deliver
+    // the same defect through the other door. Same reasoning, same shape as
+    // `auth/student-signup`'s catch.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      log.error(
+        { err, rawTarget: err.meta?.target },
+        'teacher-room create hit a unique constraint that is not the link key',
+      );
+      throw new Error('teacher-room create: unrecognised unique constraint');
+    }
+    throw err;
+  }
 });

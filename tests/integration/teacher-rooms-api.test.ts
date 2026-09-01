@@ -668,3 +668,89 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
     expect(await prisma.teacherRoom.count({ where: { id: linkWithLiveTemplateId } })).toBe(1);
   });
 });
+
+/**
+ * The pre-check at `:56` is a plain `findUnique`, so under READ COMMITTED a
+ * concurrent attach to the same (teacher, room) passes it and loses on
+ * `TeacherRoom_teacherId_roomId_key`. Unhandled, that `P2002` reaches
+ * `withErrorHandler` and answers 409 with NO `code` — the same status the
+ * pre-check gives, without the field a client can branch on (#161).
+ *
+ * The lever is an UNCOMMITTED HOLDER, the one worked out in
+ * `signup-api.test.ts` for the same shape: a second client inserts the
+ * conflicting row inside an open transaction, the request sails past its
+ * pre-check (uncommitted rows are invisible), parks on the pending unique
+ * index entry, and the holder commits so the request loses. Deterministic —
+ * the interleaving is forced, not raced for.
+ */
+describe('POST /api/teacher-rooms answers a raced duplicate with DUPLICATE (#161)', () => {
+  let raceRoomId: string;
+
+  beforeAll(async () => {
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Race Venue',
+        address: `${suffix} Race Street 1`,
+        city: 'Amsterdam',
+        postcode: '1011AB',
+        floor: '1',
+        roomName: 'Race Room',
+        maxCapacity: 10,
+        equipment: [],
+        isPublic: true,
+        createdById: ownerId,
+      },
+    });
+    raceRoomId = room.id;
+  });
+
+  afterAll(async () => {
+    await prisma.teacherRoom.deleteMany({ where: { roomId: raceRoomId } });
+    await prisma.room.deleteMany({ where: { id: raceRoomId } });
+  });
+
+  it('returns 409 DUPLICATE when the create loses to a concurrent link', async () => {
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let holding!: Promise<unknown>;
+    const released = new Promise<void>((r) => { release = r; });
+
+    await new Promise<void>((parked, failed) => {
+      holding = holder.$transaction(async (tx) => {
+        await tx.teacherRoom.create({
+          data: { teacherId: ownerId, roomId: raceRoomId, rentalRate: 25, capacityOverride: 10 },
+        });
+        parked();
+        await released;
+      }, { timeout: 20_000 }).catch((err: unknown) => { failed(err); throw err; });
+    });
+
+    const pending = fetch(`${BASE_URL}/api/teacher-rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+      body: JSON.stringify({ roomId: raceRoomId, capacityOverride: 10, rentalRate: 30 }),
+    });
+
+    // Asserted, not assumed: the holder's insert proves the index entry
+    // exists, not that the request reached it. A request that answered inside
+    // this second skipped the create on a committed row and raced nothing.
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 1500));
+
+    release();
+    await holding;
+    const res = await pending;
+    await holder.$disconnect();
+
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code?: string; message: string } };
+    expect(body.error.code).toBe('DUPLICATE');
+    expect(body.error.message).toBe('Teacher-room link already exists');
+
+    // One link, and it is the holder's — proof the request lost the insert
+    // rather than serialising past it.
+    const links = await prisma.teacherRoom.findMany({ where: { roomId: raceRoomId } });
+    expect(links.map((l) => Number(l.rentalRate))).toEqual([25]);
+  });
+});
