@@ -566,7 +566,7 @@ test.describe('One-off studio classes', () => {
     // A hard navigation, not a soft push — see the comment at
     // the `window.location.assign` comment in
     // `delete-studio-class-button.tsx`.
-    await page.waitForURL('http://localhost:3000/', { timeout: 10_000 });
+    await page.waitForURL('http://localhost:3000/schedule', { timeout: 10_000 });
     expect(await prisma.studioClass.count({ where: { id: created.id } })).toBe(0);
   });
 });

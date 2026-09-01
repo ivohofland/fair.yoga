@@ -89,7 +89,7 @@ test.describe('Magic link authentication', () => {
     await page.goto(`/verify?token=${rawToken}`);
 
     // Teacher home page should load (requireTeacherSession passes)
-    await page.waitForURL('/', { timeout: 10_000 });
+    await page.waitForURL('/schedule', { timeout: 10_000 });
     await expect(page.getByRole('heading', { name: 'Schedule' })).toBeVisible();
   });
 
@@ -117,7 +117,7 @@ test.describe('Magic link authentication', () => {
 
     // First use succeeds
     await page.goto(`/verify?token=${rawToken}`);
-    await page.waitForURL('/', { timeout: 10_000 });
+    await page.waitForURL('/schedule', { timeout: 10_000 });
 
     // Clear cookies so we hit the verify page fresh
     await page.context().clearCookies();
@@ -133,7 +133,7 @@ test.describe('Magic link authentication', () => {
     const rawToken = await createMagicLinkToken(teacherEmail);
 
     await page.goto(`/verify?token=${rawToken}`);
-    await page.waitForURL('/', { timeout: 10_000 });
+    await page.waitForURL('/schedule', { timeout: 10_000 });
 
     // Back to the inbox, click the same link again — session still active.
     await page.goto(`/verify?token=${rawToken}`);
@@ -144,7 +144,7 @@ test.describe('Magic link authentication', () => {
     await expect(page.getByText('Verification failed')).not.toBeVisible();
 
     await page.getByRole('link', { name: 'Continue to your schedule' }).click();
-    await page.waitForURL('/', { timeout: 10_000 });
+    await page.waitForURL('/schedule', { timeout: 10_000 });
     await expect(page.getByRole('heading', { name: 'Schedule' })).toBeVisible();
   });
 
@@ -152,7 +152,7 @@ test.describe('Magic link authentication', () => {
     const rawToken = await createMagicLinkToken(teacherEmail);
 
     await page.goto(`/verify?token=${rawToken}`);
-    await page.waitForURL('/', { timeout: 10_000 });
+    await page.waitForURL('/schedule', { timeout: 10_000 });
 
     // Reload — session cookie should keep us logged in
     await page.reload();
@@ -163,7 +163,7 @@ test.describe('Magic link authentication', () => {
     const rawToken = await createMagicLinkToken(teacherEmail);
 
     await page.goto(`/verify?token=${rawToken}`);
-    await page.waitForURL('/', { timeout: 10_000 });
+    await page.waitForURL('/schedule', { timeout: 10_000 });
 
     // Navigate to a protected route (proxy-protected)
     await page.goto('/settings');

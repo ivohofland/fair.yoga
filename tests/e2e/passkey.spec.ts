@@ -181,6 +181,6 @@ test.describe('Passkey sign-in', () => {
     await context.clearCookies();
     await page.goto('/login');
     await page.getByRole('button', { name: 'Sign in with a passkey' }).click();
-    await page.waitForURL((url) => url.pathname === '/', { timeout: 10_000 });
+    await page.waitForURL((url) => url.pathname === '/schedule', { timeout: 10_000 });
   });
 });

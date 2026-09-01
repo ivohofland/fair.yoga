@@ -33,7 +33,7 @@ let token: string;
 /**
  * Asserts 200 before returning the body. Without it every `not.toContain` in
  * this file passes against a page that did not render at all — a 500, or the
- * `redirect('/')` a non-owner gets, contains none of the strings either.
+ * `redirect('/schedule')` a non-owner gets, contains none of the strings either.
  */
 const page = async (id: string) => {
   const res = await fetch(`${BASE_URL}/studio-class/${id}`, { headers: cookie(token) });

@@ -135,7 +135,7 @@ test.describe('Account hybrid: teacher joins a class', () => {
     // Teacher-only session on a student surface → teacher home.
     await context.addCookies([sessionCookie(guestToken)]);
     await page.goto('/bookings');
-    await page.waitForURL((url) => url.pathname === '/', { timeout: 10_000 });
+    await page.waitForURL((url) => url.pathname === '/schedule', { timeout: 10_000 });
 
     // Student-only session on a teacher surface → their bookings.
     await context.clearCookies();

@@ -172,7 +172,7 @@ test.describe('Class edit screen', () => {
     await context.clearCookies();
     await context.addCookies([sessionCookie(otherTeacherToken)]);
     await page.goto(`/class/${draftClassId}/edit`);
-    await page.waitForURL((url) => url.pathname === '/', { timeout: 10_000 });
+    await page.waitForURL((url) => url.pathname === '/schedule', { timeout: 10_000 });
   });
 
   test('a locked class disables economics but still saves details', async ({ page }) => {
