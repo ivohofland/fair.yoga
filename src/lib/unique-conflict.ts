@@ -22,15 +22,26 @@ import { Prisma } from '@prisma/client';
  * raise P2002 from two models that share a column-name set — if one ever did,
  * this matcher could not tell which model's row collided.
  *
- * NO SUCH PAIR EXISTS TODAY, and #210 — filed for the one that did — is moot
- * rather than fixed. `(teacherId, date, startTime)` used to name both
- * `Class_teacher_slot_unique` and `StudioClass_teacher_slot_unique`; #327
- * replaced both with one `EXCLUDE USING gist` on `CalendarEntry`, which raises
- * `23P01` and carries no `meta.target` at all — see `exclusion-conflict.ts`,
- * which this function cannot substitute for. The rule above still binds the
- * next pair someone introduces.
+ * One such pair EXISTS TODAY by design: `Account.email` and `Teacher.email`
+ * (both report `['email']`) are handled together by `POST /api/teachers`
+ * (#161). This is safe because the caller (`teachers/route.ts:71-72`)
+ * deliberately does NOT need to distinguish which model collided — both mean
+ * "email already in use" to the caller, and the Account profile column is a
+ * denormalized copy set at link time with no email-change flow (see the model
+ * header comment). This is the correct pattern when a matcher's caller has no
+ * use for distinguishing models on the same columns.
  *
- * `(teacherId, dayOfWeek, startTime)` went the same way one layer up, in #298.
+ * Two historical examples were resolved by consolidation, not by this pattern:
+ * `(teacherId, date, startTime)` used to name both `Class_teacher_slot_unique`
+ * and `StudioClass_teacher_slot_unique`; #327 replaced both with one `EXCLUDE
+ * USING gist` on `CalendarEntry`, which raises `23P01` and carries no
+ * `meta.target` at all — see `exclusion-conflict.ts`, which this function
+ * cannot substitute for. `(teacherId, dayOfWeek, startTime)` went the same way
+ * one layer up, in #298. The caution below still binds the next pair someone
+ * introduces: if a future pair's caller DOES need to know which model collided,
+ * consolidation (not this matcher) is the right answer.
+ *
+ * The rule above still binds the next pair someone introduces.
  */
 export function isUniqueConflictOn(err: unknown, columns: readonly string[]): boolean {
   if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') return false;
