@@ -9,6 +9,7 @@ import {
   deleteTeacherAccount,
 } from './gdpr';
 import { lockClassRow } from '@/lib/db-locks';
+import * as dbLocks from '@/lib/db-locks';
 import { log } from '@/lib/log';
 import { claimTemplateForGeneration } from './class-generator';
 import { claimStudioTemplateForGeneration } from './studio-class-generator';
@@ -1543,6 +1544,113 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       expect.objectContaining({ waitingEntriesLeft: 1 }),
       expect.anything(),
     );
+  });
+});
+
+describe('deleteTeacherAccount locks and reads the same snapshot (#367)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-lockread-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'LockRead',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Lock-then-read fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'LockRead Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234LR',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    teacherRoomId = teacherRoom.id;
+  });
+
+  afterAll(async () => {
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  it('cancels a class that becomes cancellable immediately before the class lock runs', async () => {
+    // Fires exactly once, at the moment deleteTeacherAccount's Class+
+    // CalendarEntry pre-lock is about to run (source.entries === true is
+    // unique to that call — the two template locks above it in gdpr.ts are
+    // separate inline $queryRaw statements, not calls to this function).
+    // Creating the class HERE, immediately before letting the real lock
+    // statement run, puts it in the exact position #367 describes: it did
+    // not exist when today's unlocked `upcoming` read ran (that read has
+    // already happened by the time this call fires), but it exists before
+    // the lock statement's own predicate evaluates.
+    const original = dbLocks.lockClassRowsOrdered;
+    let injectedClassId: string | undefined;
+    const spy = vi
+      .spyOn(dbLocks, 'lockClassRowsOrdered')
+      .mockImplementation(async (tx, source) => {
+        if (source.entries === true) {
+          const created = await createClassFixture(prisma, {
+            teacherId,
+            teacherRoomId,
+            classType: 'Injected class',
+            date: new Date('2099-01-01'),
+            startTime: hhmmToTime('09:00'),
+            durationMinutes: 60,
+            roomCost: 20,
+            minRate: 15,
+            targetRate: 25,
+            minStudents: 1,
+            maxStudents: 10,
+            status: 'open',
+          });
+          injectedClassId = created.id;
+        }
+        return original(tx, source);
+      });
+    onTestFinished(() => spy.mockRestore());
+
+    await deleteTeacherAccount(prisma, teacherId);
+
+    expect(injectedClassId).toBeDefined();
+    const after = await prisma.class.findUniqueOrThrow({
+      where: { id: injectedClassId! },
+      include: { calendarEntry: true },
+    });
+    // The defect: today this class is locked (by the fresh predicate
+    // lockClassRowsOrdered evaluates) but never visited by the cancel loop
+    // (which walks the earlier, now-stale `upcoming` read) — so it survives
+    // uncancelled under a teacher whose account no longer exists. Fixed
+    // behaviour: lock set and read set are the same set, so this class is
+    // cancelled like any other.
+    expect(after.calendarEntry.cancelledAt).not.toBeNull();
   });
 });
 

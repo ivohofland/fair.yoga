@@ -1006,53 +1006,6 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
 
   await db.$transaction(
     async (tx) => {
-      // Cancel every upcoming class and tell the people in them.
-      //
-      // `orderBy` is no longer load-bearing — the pre-lock below orders the
-      // locks now; this stays for the determinism of the notification order.
-      // (Until #237 this order WAS this transaction's lock acquisition order:
-      // the loop below takes one `Class` row lock per iteration, the CAS
-      // `UPDATE`, and the read was not itself under any lock.) The two
-      // template sites named in `deleteStudentAccount`'s comment used to take
-      // no order at all, and this function's disagreement with those two was
-      // inherited from the same place `deleteStudentAccount`'s was — closed
-      // the same way, by an ordered pre-lock at both sites (issue 180,
-      // atomic-template-update). See `docs/lock-order.md`'s within-`Class`
-      // table. Without an ordered pre-lock this read fell back to whatever the
-      // heap returned, which for a fresh pair of classes is insertion order —
-      // and when that disagreed with ascending, a teacher erasure and a
-      // student erasure overlapping on two classes formed an AB-BA cycle and
-      // Postgres killed one of them with `40P01`. Reproduced by the test
-      // "does not deadlock when a teacher erasure and a student erasure
-      // overlap on two classes" (`gdpr.test.ts`), which fails with exactly
-      // that error if the pre-lock below is removed. See `docs/lock-order.md`,
-      // "Ordering WITHIN `Class`".
-      //
-      // No `include` of registrations any more: the recipient list is read
-      // inside the loop, under the lock the CAS takes — see there.
-      const upcoming = await tx.class.findMany({
-        where: {
-          // `cancelledAt: null` beside the statuses, not instead of them
-          // (#327). `CANCELLABLE_STATUSES` is `ClassStatus` minus `completed`,
-          // which USED to exclude an already-cancelled class for free; now it
-          // does not, and re-cancelling one would re-notify every student.
-          calendarEntry: { teacherId, cancelledAt: null },
-          status: { in: [...CANCELLABLE_STATUSES] },
-        },
-        orderBy: { id: 'asc' },
-        // `classType`/`date`/`startTime` for the notification bodies below: a
-        // waitlist-only student can place the class by nothing else (the entry
-        // closes to `removed` and the cancelled class links nowhere in the
-        // inbox). All three live on the calendar entry since #327, along with
-        // the entry id the cancel below writes.
-        select: {
-          id: true,
-          calendarEntry: {
-            select: { id: true, classType: true, date: true, startTime: true },
-          },
-        },
-      });
-
       // Template child rows locked first, ordered by id (#229). This is the
       // transaction's FIRST lock acquisition. Five other sites —
       // `claimTemplateForGeneration` (`entry-generation.ts`),
@@ -1102,99 +1055,33 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         ORDER BY sct."id"
         FOR UPDATE OF sct`;
 
-      // Every class this erasure may cancel, locked ascending in ONE statement
-      // before the cancel loop below — #237.
+      // Class + its CalendarEntry, locked ascending, in ONE statement,
+      // BEFORE any read of this teacher's classes — this is what closes
+      // the gap #367 found. Before this fix, an unlocked read ran first
+      // and this same statement ran later, against a fresh predicate: a
+      // class becoming cancellable in the gap between them was included in
+      // this statement's lock set but absent from the earlier read, so the
+      // loop below — which walked that read — never visited it. Locked for
+      // the rest of the transaction, never cancelled.
       //
-      // This is the transaction's first CLASS lock acquisition — the template
-      // locks above are first overall. The read above takes no locks, so the
-      // order of this statement — not the read's `orderBy` — is what orders
-      // the locks the loop's CAS re-takes.
+      // Lock set and read set are identical by construction now: the read
+      // below asks for exactly `lockedIds`, not a separately re-evaluated
+      // predicate. What still escapes: a class created or rescheduled into
+      // a cancellable status AFTER this statement runs — inherent to any
+      // read-then-transact system, not a gap this design leaves open by
+      // choice.
       //
-      // What this replaces: the `orderBy: { id: 'asc' }` on that read, which
-      // WAS this transaction's lock acquisition order, because the loop below
-      // takes one `Class` row lock per iteration (the CAS `UPDATE`) and the
-      // read is not itself under any lock. That worked, and it depended on a
-      // reader noticing that an `orderBy` on an unlocked read was load-bearing.
-      // The `orderBy` stays for determinism of the notification order; it is no
-      // longer what orders the locks.
+      // This is the transaction's SECOND lock acquisition overall (the
+      // template locks above are first, #229) and its first read of any
+      // `Class` data at all.
       //
-      // The lock set is taken from a fresh status snapshot AFTER the read, not
-      // from the read's rows: a class that completed between the two is no
-      // longer in the cancellable statuses, so it is not locked here and the
-      // CAS refuses it — the `completed` skip. A class that completed after
-      // the pre-lock could not have: this statement holds its row, and any
-      // writer queues behind it until commit.
-      //
-      // Additive, not a replacement for the CAS. The read stays WIDE and the
-      // per-class compare-and-swap below stays exactly as it was.
-      //
-      // Because this statement runs AFTER that read, every class in `upcoming`
-      // the CAS will actually update is already held HERE, so the loop takes
-      // no lock this statement did not take, and none out of this order. That
-      // turns on the statuses being one-way: a class in `upcoming` that is not
-      // in this lock set had left `draft|open|in_progress` by the time this
-      // ran, and nothing puts it back. Enforced by the DATABASE rather than by
-      // an enumeration of writers: `class_terminal_status_guard`
-      // (`prisma/migrations/20260805120000_class_terminal_status_trigger`) is a
-      // `BEFORE UPDATE OF status ON "Class"` trigger that raises `23514`
-      // whenever the OLD status is `completed` or `cancelled`. No application
-      // path, test helper, seed or future feature can put a row back into a
-      // cancellable status without hitting it, so there is no un-cancel and no
-      // re-open — and no list here to go stale.
-      //
-      // An earlier version of this passage DID enumerate the writers, and
-      // #239's review found it had missed two of them (`transitionClass` and
-      // `completeClass`, both `class-lifecycle.ts`). The conclusion survived —
-      // both are moves WITHIN the cancellable set — but the evidence offered
-      // for it was wrong, which is the failure mode this file spends
-      // paragraphs on elsewhere. The trigger was always the better citation.
-      // (The plan put this statement BEFORE the read.
-      // That placement could not promise this: a class created in the gap would
-      // be read but not held, and the CAS would take a fresh lock on it out of
-      // order. It was moved because it also self-deadlocked two existing tests
-      // whose hooks interleave in the read->CAS window.)
-      //
-      // What still escapes, stated plainly: a class created AFTER the read is
-      // in neither this lock set nor `upcoming`, so this erasure does not
-      // cancel it. Unchanged from before #237 — the read was equally the last
-      // word on what the loop visits — and not closed by scoping the read to
-      // these ids — the shape `withdrawWaitingEntriesForTeacher` uses — which
-      // would additionally
-      // drop classes created between the read and this statement. A worse
-      // trade on an Article 17 path.
-      //
-      // This also brings the shared 2s `lock_timeout` into a transaction that
-      // had none, so every statement in it is now bounded rather than waiting
-      // out Prisma's `{ timeout: 10_000 }` — which cannot roll back a
-      // statement already blocked inside Postgres, only refuse to start a new
-      // one — the "WHAT THIS DOES NOT BOUND" paragraph in
-      // `deleteStudentAccount`'s `timeout` option above states this at length,
-      // and states the conclusion it reaches: every WAIT is bounded at 2s, the
-      // budget bounds only how long Prisma keeps STARTING statements, and
-      // neither bounds the transaction's total time in the pathological case.
-      // (That paragraph was cited here by line number until #239's review,
-      // which found the number pointing at a dangling continuation word: this
-      // branch's own edits above had shifted it. It was then re-cited as "the
-      // `Math.min` ceiling paragraph", and #240 deleted the `Math.min` out of
-      // the thing it named — so the anchor did survive the line shift and
-      // rotted anyway, on the first rewrite of the text it pointed at, in the
-      // same sentence that claimed it would not. Anchor text greps where a
-      // line number does not; neither survives its target being rewritten, and
-      // only re-reading the target catches that.)
-      // The `upcoming` read above runs before this bound
-      // takes effect, but it takes no row locks, so nothing waits on it.
-      // Deliberate: the same argument `deleteStudentAccount` makes for its own
-      // bound applies here, since Article 17 does not distinguish which
-      // subject is being erased, and `api/account/route.ts` already answers
-      // the resulting `55P03` with a retryable 503.
-      //
-      // VERDICT (#327): this transaction WRITES entry-level state — the cancel
-      // below is `CalendarEntry.cancelledAt`, and its CAS re-evaluates that
-      // column — so the entry rows are locked here too, keeping the lock set a
-      // superset of the write set. The sibling pre-lock in
-      // `deleteStudentAccount` above does NOT take them: it never reads or
-      // writes an entry column.
-      await lockClassRowsOrdered(tx, {
+      // VERDICT (#327): this transaction WRITES entry-level state — the
+      // cancel below is `CalendarEntry.cancelledAt`, and its CAS
+      // re-evaluates that column — so the entry rows are locked here too,
+      // keeping the lock set a superset of the write set. The sibling
+      // pre-lock in `deleteStudentAccount` above does NOT take
+      // them: it never reads or writes an entry column.
+      const lockedIds = await lockClassRowsOrdered(tx, {
         join: Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
         where: Prisma.sql`e."teacherId" = ${teacherId}
           AND e."cancelledAt" IS NULL
@@ -1202,16 +1089,37 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         entries: true,
       });
 
+      // Read AFTER the lock, scoped to exactly the ids it holds — under the
+      // rows this transaction now holds, mirroring `deleteStudentAccount`'s
+      // own lock-then-read shape above in this file. `orderBy` is kept for
+      // the notification loop's determinism only; `lockedIds` is already
+      // ascending (`lockClassRowsOrdered`'s own contract), so this read is
+      // not what orders the locks.
+      const upcoming = await tx.class.findMany({
+        where: { id: { in: lockedIds } },
+        orderBy: { id: 'asc' },
+        select: {
+          id: true,
+          calendarEntry: {
+            select: { id: true, classType: true, date: true, startTime: true },
+          },
+        },
+      });
+
       for (const cls of upcoming) {
-        // Compare-and-swap against the same statuses the read above filtered
-        // on. A class can still reach `completed` between the read and the
-        // pre-lock above — a sweep's `completeClass` doing exactly that is the
-        // window `email-fallback.ts` describes, and the pre-lock's lock set is
-        // a fresh status snapshot taken after the read, so such a class is not
-        // held here. Cancelling it anyway would strip a class that already has
-        // Payment rows and students who have been asked to pay. (Between the
-        // pre-lock and here nothing can reach it: this loop's rows are all
-        // held.)
+        // Compare-and-swap, defensive rather than load-bearing now:
+        // `upcoming` is read scoped to `lockedIds`, so every row reaching
+        // this loop was already held by the pre-lock above before this
+        // transaction's own read ran — nothing else can complete or cancel
+        // it in between (#367). A concurrent completer (`completeClass`,
+        // `class-lifecycle.ts`) takes `lockClassRow` itself, so it queues
+        // behind this hold rather than racing it. Kept anyway: the CAS's
+        // WHERE is what actually enforces "still cancellable", and a
+        // future change landing between the lock and here should fail
+        // loud — a warn and a skip — rather than silently cancel a class
+        // it should not have. Cancelling a completed class anyway would
+        // strip one that already has Payment rows and students who have
+        // been asked to pay.
         //
         // Skipping the CANCEL is the right handling: a completed class is one
         // erasure deliberately leaves standing (see this function's
@@ -1248,9 +1156,9 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
             select: { status: true, calendarEntry: { select: { cancelledAt: true } } },
           });
           // The `continue` below skips the waitlist sweep too, deliberately —
-          // "does not touch the waitlist" is exactly what the test "leaves a
-          // class that completed after the erasure read alone, and still
-          // erases" pins, because a HALF-applied skip (CAS refused, waitlist
+          // "does not touch the waitlist" is exactly what the test "warns and
+          // skips when a locked id turns out not to be cancellable" pins,
+          // because a HALF-applied skip (CAS refused, waitlist
           // and notifications applied anyway) would tell a student their
           // class was cancelled after `completeClass` had already asked them
           // to pay for it. The cost is a residual: any `waiting` entry on
@@ -1303,17 +1211,17 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
           data: { status: 'removed' },
         });
 
-        // Read HERE, under the row lock the CAS above just took — not from
-        // the `findMany` at the top of this transaction, which took no lock
-        // and whose snapshot is already stale by the time the CAS lands. A
-        // student who registered in that gap had their class cancelled by the
-        // statement above and, from the old eager-loaded list, was never told.
-        // The same defect and the same fix as `autoCancelClasses`
-        // (`class-transitions.ts`), for the same reason its comment gives: a
-        // cancelled class nobody was told about is worse than one that stays
-        // open one more sweep. Under the lock, a registration writer either
-        // committed before the CAS — and is in this read — or is blocked
-        // behind it until this transaction ends.
+        // Read HERE, under the row lock the pre-lock above already took —
+        // `upcoming` never selected this data to begin with, so this is
+        // the only place it is fetched, not a second read replacing a
+        // stale eager-load. The same defect and the same fix as
+        // `autoCancelClasses` (`class-transitions.ts`), for the same
+        // reason its comment gives: a cancelled class nobody was told
+        // about is worse than one that stays open one more sweep. Under
+        // the lock, a registration writer either committed before this
+        // transaction's own class-level read — and is in this read — or
+        // is blocked behind the held row until this transaction ends
+        // (#367).
         //
         // `status: 'registered'` only, deliberately narrower than the sibling
         // site's `registered`/`attended`/`no_show`: this predicate is
