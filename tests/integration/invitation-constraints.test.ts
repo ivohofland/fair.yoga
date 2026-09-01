@@ -189,4 +189,69 @@ describe('Invitation and TeacherBlock check constraints', () => {
       }
     });
   });
+
+  describe('lastNotifiedAt/lastNotifiedEmail are written unconditionally, together (#173)', () => {
+    it('rejects a mixed-case lastNotifiedEmail', async () => {
+      await expect(
+        prisma.invitation.create({
+          data: {
+            teacherId,
+            email: `inv-constraint-marker-case-${suffix}@test.local`,
+            firstName: 'Marker', lastName: 'Case',
+            lastNotifiedAt: new Date(),
+            lastNotifiedEmail: `Inv-Constraint-Marker-Case-${suffix}@Test.Local`,
+          },
+        }),
+      ).rejects.toThrow(/Invitation_last_notified_email_lowercase_check/);
+    });
+
+    it('rejects lastNotifiedAt set with lastNotifiedEmail left null', async () => {
+      await expect(
+        prisma.invitation.create({
+          data: {
+            teacherId,
+            email: `inv-constraint-marker-half-a-${suffix}@test.local`,
+            firstName: 'Marker', lastName: 'HalfA',
+            lastNotifiedAt: new Date(),
+          },
+        }),
+      ).rejects.toThrow(/Invitation_last_notified_pair_check/);
+    });
+
+    it('rejects lastNotifiedEmail set with lastNotifiedAt left null', async () => {
+      await expect(
+        prisma.invitation.create({
+          data: {
+            teacherId,
+            email: `inv-constraint-marker-half-b-${suffix}@test.local`,
+            firstName: 'Marker', lastName: 'HalfB',
+            lastNotifiedEmail: `inv-constraint-marker-half-b-${suffix}@test.local`,
+          },
+        }),
+      ).rejects.toThrow(/Invitation_last_notified_pair_check/);
+    });
+
+    it('accepts both set together, and both left null', async () => {
+      const notified = await prisma.invitation.create({
+        data: {
+          teacherId,
+          email: `inv-constraint-marker-both-${suffix}@test.local`,
+          firstName: 'Marker', lastName: 'Both',
+          lastNotifiedAt: new Date(),
+          lastNotifiedEmail: `inv-constraint-marker-both-${suffix}@test.local`,
+        },
+      });
+      expect(notified.lastNotifiedAt).not.toBeNull();
+
+      const unnotified = await prisma.invitation.create({
+        data: {
+          teacherId,
+          email: `inv-constraint-marker-neither-${suffix}@test.local`,
+          firstName: 'Marker', lastName: 'Neither',
+        },
+      });
+      expect(unnotified.lastNotifiedAt).toBeNull();
+      expect(unnotified.lastNotifiedEmail).toBeNull();
+    });
+  });
 });
