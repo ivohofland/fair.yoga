@@ -391,7 +391,7 @@ Testable over HTTP with no UI.
 
 **Interfaces:**
 - Consumes: `pageSlugField`, `teacherSignupSchema`, `teacherProfileSchema` (Task 1).
-- Produces: `mintSignupTicket(db, email): Promise<string>`, `consumeSignupTicket(db, token): Promise<string | null>` (returns the email), `setSignupTicketCookie(headers, token)`, `clearSignupTicketCookie(headers)`, `SIGNUP_TICKET_COOKIE = 'fair_yoga_signup'`.
+- Produces: `mintSignupTicket(db, email): Promise<string>`, `consumeSignupTicket(db, token): Promise<string | null>` (returns the email, deletes the row), `peekSignupTicket(db, token): Promise<string | null>` (returns the email, leaves the row), `setSignupTicketCookie(headers, token)`, `clearSignupTicketCookie(headers)`, `SIGNUP_TICKET_COOKIE = 'fair_yoga_signup'`, and `hashToken` now exported from `magic-link.ts`.
 
 - [ ] **Step 1: Write the failing token-purpose test**
 
@@ -438,15 +438,51 @@ Expected: PASS.
 
 Create `src/lib/auth/signup-ticket.ts`. The ticket is a `MagicLinkToken` with `purpose: 'teacher_profile_pending'` — same SHA-256 storage, same TTL, already swept by `cleanupExpiredAuth`. Only its delivery differs.
 
+`generateMagicLinkToken` now needs both a purpose and a per-call TTL. Four
+positional parameters is where the signature stops reading, so change it to
+`(db, email, opts?: { redirectTo?: string; purpose?: MagicLinkPurpose; ttlMs?: number })`,
+defaulting to `sign_in` and fifteen minutes. Two existing call sites
+(`magic-link/send`, `student-signup`) and their tests move with it.
+
+`hashToken` is module-private in `magic-link.ts:8` and `peekSignupTicket` needs
+it — **export it**. It is a bare SHA-256 of the token; the security comes from
+the token's 32 bytes of entropy, not from the function being unexported, and
+`tests/helpers.ts:77` already carries an identical copy. Exporting it and having
+the test helper import it removes that duplicate too.
+
 ```ts
 import type { PrismaClient } from '@prisma/client';
-import { generateMagicLinkToken, verifyMagicLinkToken } from './magic-link';
+import { generateMagicLinkToken, verifyMagicLinkToken, hashToken } from './magic-link';
 
 export const SIGNUP_TICKET_COOKIE = 'fair_yoga_signup';
-const FIFTEEN_MINUTES_SECONDS = 15 * 60;
+
+/**
+ * An hour, not the fifteen minutes every other token gets. This one sits
+ * behind a FORM: no other flow asks someone to type four fields while a
+ * token ages, and losing a name, an address that waited on an availability
+ * check, and a bio is a bad first interaction with the product.
+ */
+const TICKET_TTL_MS = 60 * 60 * 1000;
 
 export async function mintSignupTicket(db: PrismaClient, email: string): Promise<string> {
-  return generateMagicLinkToken(db, email, undefined, 'teacher_profile_pending');
+  return generateMagicLinkToken(db, email, {
+    purpose: 'teacher_profile_pending',
+    ttlMs: TICKET_TTL_MS,
+  });
+}
+
+/** The address behind a live ticket, WITHOUT consuming it — the profile page
+ *  reads this to prefill the form's re-send address. */
+export async function peekSignupTicket(
+  db: PrismaClient,
+  token: string,
+): Promise<string | null> {
+  const row = await db.magicLinkToken.findUnique({
+    where: { tokenHash: hashToken(token) },
+    select: { email: true, expiresAt: true, purpose: true },
+  });
+  if (!row || row.purpose !== 'teacher_profile_pending') return null;
+  return row.expiresAt > new Date() ? row.email : null;
 }
 
 /**
@@ -464,7 +500,7 @@ export async function consumeSignupTicket(
 }
 
 export function setSignupTicketCookie(headers: Headers, token: string): void {
-  let cookie = `${SIGNUP_TICKET_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${FIFTEEN_MINUTES_SECONDS}`;
+  let cookie = `${SIGNUP_TICKET_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${TICKET_TTL_MS / 1000}`;
   if (process.env.NODE_ENV === 'production') cookie += '; Secure';
   headers.append('Set-Cookie', cookie);
 }
@@ -1017,7 +1053,34 @@ export default async function LandingPage() {
 
 `/signup` posts `{ email }` to `/api/auth/teacher-signup` and swaps to a "check your inbox" state — modelled on `booking-sign-in.tsx:46-56`, which is the established shape for this.
 
-`/signup/profile` mounts `ProfileSetupForm`: first name, last name, the address field (derived live from the two name fields), and a bio with a live `n/250` count that is explicitly skippable. On success it navigates to `/schedule`.
+`/signup/profile` is a server component. It reads the ticket cookie and calls
+`peekSignupTicket`:
+
+- **Live ticket** → mount `ProfileSetupForm` with `email` as a prop: first name,
+  last name, the address field (derived live from the two name fields), and a
+  bio with a live `n/250` count that is explicitly skippable. On success it
+  navigates to `/schedule`.
+- **No ticket, or expired** → render the email-entry prompt inline instead of a
+  dead end. Same component as `/signup`, different copy: "Enter your email and
+  we'll send a fresh link."
+
+The form holds `email` in state so it can recover on its own. On a **401 at
+submit** — the ticket aged out while they were typing — it must NOT clear the
+fields. It POSTs `{ email }` to `/api/auth/teacher-signup`, keeps every value,
+and shows inline:
+
+```tsx
+{status === 'expired' && (
+  <p role="status" className="type-caption">
+    That took a while — we&apos;ve emailed you a fresh link.
+    Your details are still here.
+  </p>
+)}
+```
+
+Clicking the new link on the **same** browser returns to a form still holding
+those values. On a different device the form starts clean, which is the accepted
+cost of not persisting a half-typed profile server-side.
 
 - [ ] **Step 6: Add the signup link to `/login`**
 
@@ -1108,6 +1171,8 @@ Per `solve-issue` §3, after Task 6 and before the PR. Break it, record the **ex
 |---|---|---|
 | The signup marker | Mint the token as `sign_in` in `teacher-signup/route.ts` | Verify answers 400 "Account not found"; no `Account` row |
 | Ticket single-use | Make `consumeSignupTicket` read without deleting | The spent-ticket test's second call returns 201 instead of 401 |
+| Ticket TTL | Set `TICKET_TTL_MS` to 15 minutes and back-date a ticket to 20 minutes old | Submit 401s, and the form is asserted to still hold every typed field |
+| `peekSignupTicket` does not consume | Call it, then `consumeSignupTicket` with the same token | The consume must still succeed — a peek that deleted would 401 every real signup |
 | Ticket purpose | Mint the ticket as `sign_in` | `consumeSignupTicket` returns null; route answers 401 |
 | `SLUG_TAKEN` | Catch `['email']` before `['pageSlug']` | The race test sees `ALREADY_TEACHER` where it expects `SLUG_TAKEN` |
 | Reserved slug | Submit `signup` as a page address | Rejected in the browser by `pageSlugField` **and** by the route, independently — disable the client check to confirm the server one alone bites |

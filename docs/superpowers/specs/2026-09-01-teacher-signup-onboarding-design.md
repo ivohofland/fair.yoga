@@ -110,11 +110,66 @@ does**, which is also the more honest reading — you are not signed in until yo
 have an identity to be signed in as.
 
 The ticket reuses `MagicLinkToken` rather than adding a table: same
-SHA-256-hashed storage, same 15-minute TTL, already swept by
-`cleanupExpiredAuth` (`services/auth-cleanup.ts:16`). Only its delivery differs
-— an httpOnly cookie rather than an email — and the `purpose` enum records
-which. Abandoning at profile setup therefore leaves nothing behind but a token
-that expires and is swept.
+SHA-256-hashed storage, already swept by `cleanupExpiredAuth`
+(`services/auth-cleanup.ts:16`). Only its delivery and its lifetime differ — an
+httpOnly cookie rather than an email, and **60 minutes rather than 15** — and
+the `purpose` enum records which. Abandoning at profile setup therefore leaves
+nothing behind but a token that expires and is swept.
+
+The row stores a hash, an address and an expiry. Nothing about the person and
+nothing they have typed is persisted; a stateless cookie-only ticket was
+rejected because it could not be **atomically consumed**, and atomic single-use
+is what makes a double submit impossible to reason wrong, alongside the unique
+keys.
+
+### The window, and what happens when it closes
+
+Fifteen minutes is right for a link that verifies and lands you somewhere
+immediately. It is wrong for one that puts a **form** behind it: no existing
+flow in this app asks a person to type four fields while a token ages. Someone
+who clicks on their laptop, is interrupted, and returns twenty minutes later
+would lose their name, the address they waited on an availability check for,
+and their bio — on their first interaction with the product.
+
+So the profile ticket gets its own 60-minute TTL, and expiry costs nothing:
+
+- **On a 401, the form keeps every field.** It re-sends by calling
+  `POST /api/auth/teacher-signup` with the address it already holds, and says so
+  inline — "that took a while; we've emailed you a fresh link, your details are
+  still here."
+- **The form knows that address because the page hands it over.**
+  `/signup/profile` is reached *with* a live ticket, so the server component
+  resolves the ticket's email and passes it as a prop. No second cookie, and the
+  person is never asked to retype an address they entered minutes ago.
+- **Arriving with no ticket at all** — a deep link, or a return days later —
+  renders the email-entry prompt inline rather than a dead end.
+
+**A stated limit:** the typed fields live in the browser that typed them, so
+re-opening the fresh link on a *different* device starts the form clean.
+Carrying them across would mean persisting a half-finished profile server-side,
+which is the thing this design exists to avoid. Losing four fields on a device
+switch is a smaller cost than a `PendingTeacher` table.
+
+### Moving between devices
+
+Working across devices needs no mechanism, because **the magic link is the
+transfer**. `(public)/verify/page.tsx:234-246` POSTs to the verify route from
+whichever device opened the link, and that route sets its cookie on that
+response. Enter the address on a phone, open the mail on a laptop, and the
+ticket and the profile form are on the laptop. The phone keeps its "check your
+inbox" screen, holding nothing. This is exactly how sign-in already behaves;
+signup inherits it rather than inventing anything.
+
+Going the other way — clicking on the laptop and then picking the phone back up
+— carries nothing, and re-running `/signup` is the recovery. That is the same
+path as an expired ticket, so it needs no separate handling.
+
+One pre-existing hazard is worth recording as *not* newly introduced: mail
+clients and corporate scanners that prefetch links can burn a single-use token
+before its owner clicks. This app is already largely protected by accident of
+architecture — `/verify?token=` is a page, and consumption happens on a
+JS-issued POST, so a plain GET prefetch does not consume anything. Only a
+JS-executing scanner would.
 
 This is the rule `api/account/student-profile/route.ts:15-18` already states
 and that `POST /api/teachers` is, on current main, the sole violator of — a
