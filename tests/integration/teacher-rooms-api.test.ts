@@ -736,7 +736,8 @@ describe('POST /api/teacher-rooms answers a raced duplicate with DUPLICATE (#161
     // this second skipped the create on a committed row and raced nothing.
     let settled = false;
     void pending.then(() => { settled = true; });
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(settled).toBe(false);
 
     release();
     await holding;
