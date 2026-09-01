@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isIncomeTier } from '@/lib/tiers';
+import { isValidTimeZone } from '@/lib/iana-timezone';
 
 // ---------------------------------------------------------------------------
 // Shared field validators
@@ -151,17 +152,6 @@ export const passkeyAuthVerifySchema = z.object({
 // ============================================================================
 // TEACHERS
 // ============================================================================
-
-// Construct-probe rather than Intl.supportedValuesOf: the probe accepts
-// exactly what classStartInstant can handle, aliases included.
-function isValidTimeZone(tz: string): boolean {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 // App routes the public teacher page must never shadow.
 const RESERVED_SLUGS = new Set([
