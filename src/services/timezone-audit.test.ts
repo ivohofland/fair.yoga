@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, onTestFinished } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
-import { auditTeacherTimezones, InvalidTimezoneError } from './timezone-audit';
+import { auditTeacherTimezones, InvalidTimezoneError, TimezoneAuditSummary } from './timezone-audit';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `tza-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
@@ -120,7 +120,7 @@ describe('auditTeacherTimezones', () => {
     // Changing from exact match to fixture-scoped prevents latent flakes from
     // concurrent tests seeding unrelated bad zones into the shared database.
     expect(error).toHaveBeenCalledTimes(1);
-    const [summary, message] = error.mock.calls[0];
+    const [summary, message] = error.mock.calls[0] as [TimezoneAuditSummary, string];
     expect(summary).toMatchObject({
       invalid: expect.arrayContaining([SENTINEL]),
     });
