@@ -73,10 +73,48 @@ Route groups do not create URL segments, so `(public)/page.tsx` and
 ## Decision 1: nothing exists until the inbox is proven
 
 `/signup` takes an email address and creates **no rows**. It mints a
-`MagicLinkToken` marked `teacher_signup`. Verification reads that marker,
-creates the `Account`, opens a session, and lands the person on
-`/signup/profile`, where the `Teacher` row is created from an **authenticated**
-request.
+`MagicLinkToken` marked `teacher_signup`. Verification reads that marker and
+issues a short-lived single-use **signup ticket** in an httpOnly cookie, then
+lands the person on `/signup/profile`. Submitting that form consumes the ticket
+and creates `Account`, `Teacher` and `Session` **together**, in one
+transaction.
+
+### Why a ticket and not a session (corrected during planning)
+
+An earlier draft of this spec had verification create the `Account` and open a
+session, with `/signup/profile` authenticated by it. **That is not
+implementable.** `lib/auth/session.ts:85-88` deletes any session whose account
+has no live profile and returns `null`:
+
+```ts
+if (!account || (!liveTeacher && !liveStudent)) {
+  await db.session.delete({ where: { id: sessionHash } }).catch(() => {});
+  return null;
+}
+```
+
+and `lib/types.ts:1-4` states the same thing as an invariant of `SessionUser`:
+*"The union makes 'neither profile' unrepresentable: at least one id is always
+a string."*
+
+Widening that union with a `{ teacherId: null; studentId: null }` variant is
+not merely churn across the ~25 files reading `session.teacherId` — it is a
+**GDPR hazard**. That branch is precisely what stops an erased profile
+resurfacing through a surviving session (`session.ts:70-73`). A profile-less
+session state would let an erased account's live session mint a fresh teacher
+profile onto it, and nothing in the account row distinguishes "never had a
+profile" from "profile was erased".
+
+So the invariant stands and the flow bends: **no session exists until a profile
+does**, which is also the more honest reading — you are not signed in until you
+have an identity to be signed in as.
+
+The ticket reuses `MagicLinkToken` rather than adding a table: same
+SHA-256-hashed storage, same 15-minute TTL, already swept by
+`cleanupExpiredAuth` (`services/auth-cleanup.ts:16`). Only its delivery differs
+— an httpOnly cookie rather than an email — and the `purpose` enum records
+which. Abandoning at profile setup therefore leaves nothing behind but a token
+that expires and is swept.
 
 This is the rule `api/account/student-profile/route.ts:15-18` already states
 and that `POST /api/teachers` is, on current main, the sole violator of — a
@@ -280,6 +318,7 @@ enum OnboardingStep {
 enum MagicLinkPurpose {
   sign_in
   teacher_signup
+  teacher_profile_pending
 }
 
 model Teacher {
@@ -327,42 +366,76 @@ Unauthenticated. Body: `{ email }` only.
    account, a teacher, or nothing — same non-enumeration contract as
    `student-signup:111`.
 
-**Re-runnable by design.** A person who signs up and loses the email has no
-other way back: `magic-link/send:41-42` looks up Teacher-then-Student and never
-`Account`, so a half-finished teacher is invisible to `/login`. Re-submitting
-`/signup` mints a fresh token. `magic-link/send` additionally learns about
-profile-less accounts so `/login` stops being a dead end for them.
+**Re-runnable by design.** A person who signs up and loses the email cannot use
+`/login`: `magic-link/send:41-42` looks up Teacher-then-Student, and an
+unfinished signup has neither. Re-submitting `/signup` mints a fresh token,
+which is the whole recovery path and is why the route must accept an address it
+has already seen.
+
+`magic-link/send` needs **no** change. Because Account and Teacher are now
+created together (see *Why a ticket and not a session*), a profile-less
+`Account` cannot exist: `resolveOrClaimAccount` only mints one while claiming a
+student, `student-signup` mints Student and Account together, and the one route
+that created a bare Account — `POST /api/teachers` — is deleted by Decision 6.
+Teacher-then-Student is therefore still an exhaustive lookup.
 
 **An address that already has a complete teacher** gets an ordinary sign-in
 link, not a signup one — the marker is only set when no teacher profile exists
 for that address. This keeps the uniform 200 honest without letting a stranger
 push an existing teacher down the signup path.
 
-## `POST /api/auth/magic-link/verify` — a third branch
+## `POST /api/auth/magic-link/verify` — one new branch, no new session state
 
-Currently `verify/route.ts:33`:
+Currently `verify/route.ts:24-33`:
 
 ```ts
+const resolved = await resolveOrClaimAccount(prisma, email);
+if (!resolved) {
+  return respondError('Account not found', 400);
+}
+const sessionToken = await createSession(prisma, resolved.accountId);
 const fallback = resolved.teacherId ? '/' : '/bookings';
 ```
 
-Two changes. `'/'` becomes `'/schedule'` (Decision 2), and a resolved account
-with **neither** profile falls back to `/signup/profile` rather than
-`/bookings`, where `(student)/layout.tsx:13-15` has nothing for it.
+**When `purpose === 'teacher_signup'` and no account resolves**, the 400 becomes
+the signup path instead: mint a `teacher_profile_pending` token, set it as an
+httpOnly cookie, and answer `redirectTo: '/signup/profile'`. **No session is
+created**, because there is no profile for one to belong to.
 
-When the token carries `teacher_signup` and no account resolves,
-`resolveOrClaimAccount` returning `null` is no longer an error: the account is
-created, the session opened, and the destination is `/signup/profile`.
+**When `purpose === 'teacher_signup'` and an account *does* resolve**, it is an
+ordinary sign-in — someone signed up with an address that already had an
+account. Existing behaviour, unchanged.
 
+The only other edit is Decision 2's: the `'/'` fallback becomes `'/schedule'`.
 `api/auth/passkey/authenticate/verify/route.ts:56` carries the identical
-`teacherId ? '/' : '/bookings'` fallback and takes the same two changes.
+`teacherId ? '/' : '/bookings'` line and takes that same one-word change; it
+needs no signup branch, since a first-time teacher has no passkey.
+
+There is **no profile-less session branch** anywhere — not in the two verify
+routes, not in the layouts, not in `requireTeacherSession`. That state is
+unrepresentable and stays so.
 
 ## `POST /api/account/teacher-profile` (new)
 
-Authenticated, sibling to `api/account/student-profile/route.ts`, and modelled
-on it closely enough that the reasoning in its comments transfers.
+Sibling to `api/account/student-profile/route.ts`, and modelled on it closely
+enough that the reasoning in its comments transfers.
 
 Body: `{ firstName, lastName, bio, pageSlug }`.
+
+**Two authorizations, one route.** Either proves the caller may attach a teacher
+profile, and neither is an unauthenticated body:
+
+1. **A `teacher_profile_pending` ticket cookie** — new signup. Consumes the
+   ticket (single-use, atomic, as `verifyMagicLinkToken` already is) and creates
+   `Account`, `Teacher` and `Session` in one transaction, setting the session
+   cookie on the way out.
+2. **A live session** — an existing account adding the teacher hat, the exact
+   mirror of `student-profile`'s "join as a student". Creates only the `Teacher`,
+   against `session.accountId`.
+
+Mode 2 costs almost nothing and closes a real gap: a signed-in student who wants
+to teach has no other route, since `/signup` would only mail them an ordinary
+sign-in link.
 
 - `409 ALREADY_TEACHER` when the session already has a teacher profile — the
   pre-check is a plain read, so a double-submit loses on `Teacher.accountId` or
@@ -404,9 +477,9 @@ The largest group is eight student-side guards reading exactly
 `account/notifications/page.tsx:12`, `account/tier/page.tsx:13`. Identical text
 in eight files is the shape CLAUDE.md's *Comment Discipline* and
 `solve-issue` §4 both warn about, so this collapses them into one helper while
-every one of them is being touched anyway. The helper also gains the
-profile-less third branch, so all eight get it at once rather than seven of
-them getting it and one being missed.
+every one of them is being touched anyway — one definition of "a signed-in
+non-student belongs on the teacher home", rather than eight copies that must
+each be found again next time the target changes.
 
 Also converted: `(public)/verify/page.tsx:115` and `:262`,
 `api/auth/magic-link/verify/route.ts:33`,
@@ -416,8 +489,8 @@ Also converted: `(public)/verify/page.tsx:115` and `:262`,
 `(teacher)/studio-class/[id]/edit/page.tsx:24`,
 `components/layout/tab-bar.tsx:8` and `:14`,
 `components/layout/page-header.tsx:17`, `(student)/account/page.tsx:49`,
-`app/not-found.tsx:9`, and `lib/session.ts:17` (`requireTeacherSession`, which
-gains the profile-less branch).
+`app/not-found.tsx:9`, and `lib/session.ts:17` (`requireTeacherSession` — its
+`/login` target is unchanged; only the swap touches this file).
 
 E2E: 7 `goto('/')` sites across 5 files — `a11y.spec.ts:184`,
 `studio.spec.ts:198` and `:497`, `recurring.spec.ts:157` and `:189`,
@@ -471,8 +544,9 @@ correct a claim by replacing it).
 1. **Migration and the shared `pageSlugField`** — both enums and the extracted
    validator. Everything downstream types against them.
 2. **The three routes** — `teacher-signup`, `teacher-profile`, `slug-available`,
-   plus the `verify` third branch on both magic-link and passkey. Testable over
-   HTTP with no UI.
+   plus `magic-link/verify`'s signup branch. Testable over HTTP with no UI.
+   `passkey/authenticate/verify` is untouched here; its only edit is the swap's
+   one-word fallback change in step 4.
 3. **Delete `POST /api/teachers`** — after step 2, so the two ported test blocks
    move onto live replacements rather than being deleted and rewritten. Carries
    the `createTeacherSchema` removal and the `schemas.test.ts` roster edit with
