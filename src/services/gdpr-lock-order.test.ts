@@ -15,7 +15,7 @@ import { createClassFixture } from '../../tests/class-fixtures';
  * `gdpr.test.ts` until the preventive sweep that list's own comment asks for.
  *
  * SPLIT RATHER THAN MOVING THE WHOLE FILE, and the measurement is the reason.
- * `gdpr.test.ts` is 26 tests and ~26s; exactly one of them reads lock timing.
+ * `gdpr.test.ts` runs in ~26s; exactly one of its tests reads lock timing.
  * Moving all of it takes the serial tier from 37.8s to 72.6s (+92%) to protect
  * one case; extracted, the same protection costs 2.5s. Same shape as
  * `class-lifecycle-tier-guard.test.ts`, which left `class-lifecycle.test.ts`

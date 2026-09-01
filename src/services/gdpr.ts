@@ -1056,13 +1056,9 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         FOR UPDATE OF sct`;
 
       // Class + its CalendarEntry, locked ascending, in ONE statement,
-      // BEFORE any read of this teacher's classes — this is what closes
-      // the gap #367 found. Before this fix, an unlocked read ran first
-      // and this same statement ran later, against a fresh predicate: a
-      // class becoming cancellable in the gap between them was included in
-      // this statement's lock set but absent from the earlier read, so the
-      // loop below — which walked that read — never visited it. Locked for
-      // the rest of the transaction, never cancelled.
+      // BEFORE any read of this teacher's classes. Pinned by the
+      // regression test "cancels a class that becomes cancellable
+      // immediately before the class lock runs" (#367).
       //
       // Lock set and read set are identical by construction now: the read
       // below asks for exactly `lockedIds`, not a separately re-evaluated
