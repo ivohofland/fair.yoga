@@ -251,9 +251,7 @@ Built by Ivo + Claude Code. Technical foundation first, then layer on UI and fea
   - Waitlist promotion / spot available
   - Class reminder
 
-6.6 — Custom domain support
-  - DNS verification
-  - SSL provisioning
+6.6 — ~~Custom domain support~~ — decided a non-goal 2026-07-23, see `docs/non-goals.md`
 
 6.7 — E2E test suite
   - Teacher onboarding flow

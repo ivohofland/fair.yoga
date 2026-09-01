@@ -71,6 +71,18 @@ test, on a run nobody connected to the mutation. The first explanation offered f
 1-in-256 collision — it pointed the right way and the numbers did not work, since the limit
 needed four coincident hits, not two. Deriving the real cause took measuring 8 runs.
 
+A test can be correct and falsifiable and still structurally unable to see the bug it exists to
+catch. A component test asserting a date-picker's bound rendered once, in one process, in jsdom's
+zone; the actual defect only appeared across the server/client boundary (SSR renders a UTC date,
+React 19 keeps it through hydration), which a single-process test has no way to reach. Ask what
+the test environment cannot express, not just what the test asserts (#249's round, PR #256).
+
+A verification claim can be run somewhere the fault structurally cannot appear, and still read as
+diligence. "Nothing flaky under `failOnFlakyTests: true`" was measured with `retries: 0`, which
+the config's own comment says makes "flaky" an unreachable verdict; a 25x flake-repro loop was
+scoped to a browser project neither observed flake occurred in. Mutation-test the verification
+claim itself, not only the code (#283, PR #303).
+
 ## 4. Correct a claim everywhere
 
 **#41** proved that "grep the phrase everywhere" is not enough on its own without a way to check
@@ -102,6 +114,12 @@ names no object; it only describes one wrongly. The identical shape then turned 
 log string** ("lost a lock race … or the slot index"), a category nobody had swept and the only
 one that reaches an operator's `grep`.
 
+A keyword census cannot find a claim that changed verb or surface form rather than staying put. A
+stale claim drifted "sized" → "sizes" → "a `Math.min` ceiling" → "is exactly this caller" across
+four artifacts; each was found by a different reader checking for meaning, not by grep. The check
+is "does any surviving sentence make a false claim about current state," not "does the keyword
+still appear" (#332's round).
+
 ## 5. Build
 
 Whole-branch review catches what task-level review structurally cannot, because task reviewers
@@ -118,6 +136,13 @@ see only their own diff:
 
 Letting subagents surface plan defects rather than bending code to match a wrong instruction
 caught four wrong predicted outputs this way.
+
+A fix round needs its own review, and self-review of a self-authored fix doesn't supply it. Two
+separate rounds found this the same way: one needed a third review pass specifically of what a
+second, self-reviewed pass had written (a fix that inverted itself, a claim false in four places);
+another found nothing the original five-agent wave had missed, but found several defects in the
+fix that wave's findings produced. Mutation testing doesn't substitute — it proves a test *can*
+fail, never that it asserts the right thing (#216/#182's PR #235; #283's PR #303).
 
 ## 7. Fold, file, or let go
 
@@ -169,6 +194,24 @@ example.
 source edit would have mis-scored three mutations as RED, reading exactly like an assertion
 failure. Warming the routes first — apply mutation → curl the touched route(s) → then judge —
 prevented it, and #290 wrote the habit down.
+
+**A `run:` step's own script text can appear in a run's log even when it never fired.** GitHub
+Actions echoes the command before executing it, so a string like `App did not become healthy
+within 30s` reads as a failure symptom — and appeared verbatim in a run that passed. Grep the
+string against a passing run's log before treating it as evidence (`gh run view <id> --log | grep
+…`), on the CI-flake investigation around PR #341.
+
+**A failure that recurs at a fixed interval across a repeated run is usually self-inflicted, not a
+flake.** `--repeat-each=30` against a suite containing a test that posts to the same rate-limited
+endpoint failed exactly every 71st execution — the per-pass test count — because the harness was
+tripping its own rate limit, not reproducing the bug under test. A real flake scatters; a
+self-inflicted one arrives in a block (same PR #341 investigation).
+
+**When a fix is rejected because it would falsify a comment or docblock, the comment is the
+suspect, not the fix.** A spec justified its own design with "only a browser sees the refresh
+change which control is drawn"; the correct fix (`reload()` after the write) falsified that
+sentence, so the first attempt avoided the reload and kept a wrong test passing instead of
+correcting the sentence (#283, PR #303).
 
 ## The PR body
 
