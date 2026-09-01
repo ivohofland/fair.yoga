@@ -79,14 +79,16 @@ creates the `Account`, opens a session, and lands the person on
 request.
 
 This is the rule `api/account/student-profile/route.ts:15-18` already states
-and that `POST /api/teachers` is the sole violator of:
+and that `POST /api/teachers` is, on current main, the sole violator of — a
+violation Decision 6 resolves by deleting the route:
 
 > Profile attachment happens only here — from an authenticated session, never
 > from an unauthenticated signup route.
 
-It also closes #382's squatting vector in passing: there is no row to squat
-before someone has proved they control the address. #382 stays open as the
-issue governing `POST /api/teachers` itself, which this spec does not touch.
+It also closes #382's squatting vector: there is no row to squat before someone
+has proved they control the address. Combined with Decision 6, which deletes the
+offending route outright, **this PR closes #382** — see that section for why
+that is a resolution and not a presumption.
 
 **Why a stored marker rather than inference.** "A token verifies but no account
 resolves" is unreachable on current main — `magic-link/send` only mints for
@@ -134,10 +136,11 @@ teacher later changes breaks every link they have already shared.
 The bio is optional because that is what makes documented step ① Profile a
 *real* step. Had setup required a bio, the checklist's Profile row would arrive
 permanently checked — a step that can never be actioned. `bio` is
-`String @db.VarChar(250)`, non-nullable, but `createTeacherSchema`'s
-`z.string().max(250)` has no `min`, so `''` already passes: "no bio yet" is a
-state the schema permits today, and `bio !== ''` is a done-condition read
-straight off an existing column with no migration.
+`String @db.VarChar(250)`: non-nullable, so there is no `null` to mean "unset",
+but `''` is a value the column already accepts. `teacherProfileSchema` types it
+`z.string().max(250)` with no `min`, matching what the deleted
+`createTeacherSchema` did — so "no bio yet" needs no migration and no sentinel,
+and `bio !== ''` is a done-condition read straight off an existing column.
 
 Documented step ④ Share becomes the checklist's **completion state** rather than
 a row, because nothing in the schema can record "this teacher shared their
@@ -207,6 +210,61 @@ cannot drift from what the server accepts.
 The field is then left empty for the teacher to fill. It must never block
 submission or emit a placeholder slug — CLAUDE.md's *Key Constraints* commit to
 international from day one.
+
+## Decision 6: `POST /api/teachers` is deleted, and that closes #382
+
+The route is removed, not left dead. Leaving a live, unauthenticated,
+account-creating endpoint in the codebase with a known security gap and nothing
+in the UI pointing at it is worse than either using it or removing it — an
+attacker does not need a link to find a route, and "another issue governs it" is
+not a control.
+
+**This resolves #382 rather than presuming its answer.** #382 declined to pick
+between "confirm the address before creating the row" and "create then gate
+first use", because that was a product call. This spec makes that call: nothing
+is created before confirmation, and the route that created things without it is
+gone. Both consequences #382 names are answered:
+
+- *Squatting/blocking* — there is no unauthenticated write left to squat with.
+- *Unclaimed-student shadowing* — the new path runs through
+  `resolveOrClaimAccount`, so an unclaimed CRM row under that address is
+  **claimed** at verification and the teacher profile is then added to that same
+  account. One account, both hats — which is the behaviour
+  `api/account/student-profile/route.ts` already implements for the mirror case,
+  and strictly better than the shadowing the old route's own comment described.
+
+The PR body says `Closes #382` deliberately.
+
+### What the deletion invalidates
+
+Swept by grepping the names being removed, not the call sites being changed
+(`solve-issue` §4). Every hit gets a verdict; legitimate survivors are expected.
+
+| Site | Verdict |
+|---|---|
+| `src/app/api/teachers/route.ts` | Deleted — the file holds `POST` and nothing else. `api/teachers/[id]/route.ts` keeps `GET` and `PUT`, untouched |
+| `lib/schemas.ts:162-172` `createTeacherSchema` | Deleted; replaced by `teacherProfileSchema`, which carries **no** email — it comes from the session |
+| `src/lib/schemas.test.ts:615-624` | **Roster assertion**, "covers exactly the six schemas that carry an address", listing `createTeacherSchema`. Drops to five. The count moves out of the test *name*: the array below it is the tripwire, and a number in prose beside it is a second claim that rots independently |
+| `lib/rate-limit.ts:43`, `:51`, `:250` `'teacher-signup'` | **Survives.** The new `POST /api/auth/teacher-signup` reuses the prefix, so `IpRateLimitPrefix` and `PREFIX_CAPACITIES` are unchanged and `rate-limit.test.ts`'s five call sites keep working |
+| `lib/unique-conflict.ts:25` | Names `/api/teachers` as creating `Teacher` and `Account` together. Now false — retargeted at `teacher-profile` |
+| `lib/format.ts:201` | Says `POST /api/teachers` hardcodes `Europe/Amsterdam`. Now false — the new route does. Retargeted |
+| `docs/technical-architecture.md:32` | Live reference doc describing the route's rate-limit coverage, including a dedicated test proving its IP check degrades to a shared bucket when both headers are absent. Rewritten against the new route |
+| `docs/implementation-plan.md:97` | **Survives** — `api/teachers/*` still covers profile and settings via the `[id]` route |
+| `docs/superpowers/specs/2026-07-20`, `2026-08-07` ×2, `2026-08-11`, `2026-08-18`, `2026-09-01-raced-create` | **Survive unedited.** Dated design records of work as it was done, not live reference. Rewriting them would falsify the history rather than correct a claim |
+
+### Two test blocks are ported, not deleted
+
+Both encode contracts that outlive the route:
+
+- `tests/integration/signup-api.test.ts:63` — `POST /api/teachers`, including the
+  no-`x-forwarded-for`/no-`x-real-ip` case proving the IP check degrades rather
+  than skips. That is coverage of `checkIpRateLimit`, not of this route.
+- `tests/integration/teachers-api.test.ts:159` — "keeps its conflict codes apart
+  under a race (#161)". The new `teacher-profile` route has the same
+  `SLUG_TAKEN` race and needs the same guarantee.
+
+Deleting either would drop coverage the deletion did not make irrelevant —
+the failure mode where an extraction quietly loses what the tests could not see.
 
 ---
 
@@ -415,23 +473,30 @@ correct a claim by replacing it).
 2. **The three routes** — `teacher-signup`, `teacher-profile`, `slug-available`,
    plus the `verify` third branch on both magic-link and passkey. Testable over
    HTTP with no UI.
-3. **The root swap** — before the landing page, so the landing page is written
+3. **Delete `POST /api/teachers`** — after step 2, so the two ported test blocks
+   move onto live replacements rather than being deleted and rewritten. Carries
+   the `createTeacherSchema` removal and the `schemas.test.ts` roster edit with
+   it, so the suite is never knowingly red between steps.
+4. **The root swap** — before the landing page, so the landing page is written
    into a `/` that is already free rather than moved into it afterwards.
-4. **The pages** — landing, `/signup`, `/signup/profile`, and the `/login` link.
-5. **The checklist rework** — last, because its share state needs a real
+5. **The pages** — landing, `/signup`, `/signup/profile`, and the `/login` link.
+6. **The checklist rework** — last, because its share state needs a real
    `pageSlug` from a teacher created by the flow above.
 
-Step 3 before 4 is the one that actually matters; the rest is convenience.
+Two orderings are load-bearing: **4 before 5**, so the landing page is written
+into a free `/`; and **2 before 3**, so the ported tests land on live
+replacements and the suite is never knowingly red between steps. The rest is
+convenience.
 
 ---
 
 ## Comments to correct (Comment Discipline)
 
 - `(teacher)/page.tsx:63-67` — the retirement rationale, now false. Deleted.
-- `api/teachers/route.ts:11-16` — says email-ownership verification is
-  "tracked as follow-up work"; it is now tracked as **#382** and this route is
-  no longer the signup path. The comment states what is true now; the history
-  goes in the PR body.
+- `api/teachers/route.ts:11-16` and `:27-33` — the two paragraphs deferring
+  email-ownership verification and describing the unclaimed-student shadowing
+  edge. **Deleted with the file**, not corrected: Decision 6 removes the route
+  those comments annotate, and the gap they describe no longer exists.
 - `lib/auth/magic-link.ts:13-33` — its docblock counts live tokens per address
   ("one address can hold six live tokens in a window, not three") from a census
   of minting routes. This PR adds a third minting route and falsifies it. The
@@ -488,10 +553,8 @@ only the skippable steps, so "skip a required step" is not expressible.
 
 ## Not doing
 
-- **`POST /api/teachers` is left in place**, with its tests and its 409-code
-  contract, simply uncalled by the UI. Removing or gating it is **#382**'s call.
-  **#382 is unaffected** by this PR as a filed issue, though this design closes
-  its squatting vector in passing by creating nothing before verification.
+- **Nothing about `POST /api/teachers` is deferred** — it is deleted here, and
+  #382 is closed with it. See Decision 6.
 - **The landing page's copy and design.** `docs/implementation-plan.md:281`
   ("7.10 — Landing page / marketing page") is a Phase 7 launch-prep task whose
   sibling 7.9 is already filed as **#387**. 7.10 has never been filed; it is
