@@ -717,7 +717,7 @@ force some of that order.
 | 5 | Room lifecycle & admin (epic #60) | ~~#73~~ ✓ (PR #261) — rooms born private, sharing behind its own door; ~~#76~~ ✓ (PR #262) — `isArchived` given downstream meaning by five doors; then #52 + **#259** + **#260** | **product decision** (the lock itself stands) |
 | 6 | Feature backlog | ~~#119 + #120~~ ✓; ~~#112~~ ✓; #47, then #46 / #48 / #49 / #51 | product priority |
 | 7 | **The studio class family, end to end** — un-triaged, see the header | #274 (tracking) + #275 ~~#276~~ ✓ (PR #306) #277 #278 ~~#279~~ ✓ (decision, closed) #280 ~~#281~~ ✓ ~~#283~~ ✓ (both PR #303) ~~#282~~ ✓ (PR #308) #284, ~~#304~~ ✓ (PR #305), #309 | **un-triaged**; one decision left on its face (#284) |
-| 3c | **This week's spin-outs** — see below | ~~#146 + #148~~ ✓ done together (PR #163); #145 + #157 + **#258** (together — one column failing at three layers, see #249's round), #164, #162, #154, #142, #143, #147, #158, #161 | three are decisions (#147, #164, #258) |
+| 3c | **This week's spin-outs** — see below | ~~#146 + #148~~ ✓ done together (PR #163); #145 + #157 + **#258** (together — one column failing at three layers, see #249's round), #164, #162, #154, #142, #143, #147, ~~#158~~ ✓, #161 | three are decisions (#147, #164, #258) |
 
 - ~~**#170 — emails normalized only in the two tables #166 added.**~~ **DONE —
   PR #184, rebase-merged 2026-08-07.** 23 commits. What the work taught, beyond
@@ -1142,7 +1142,7 @@ left:
     substituted value, and went unnoticed until this pass.
   - **Not just a misprice.** A corrupted profile tier reaching the booking
     write does not quietly mis-price a class: `Registration.tierAtBooking`
-    carries the same CHECK constraint as `Student.incomeTier`, and the write
+    carries the same 1-5 range check, and the write
     (`tierAtBooking: student.incomeTier` in `api/registrations/route.ts`) is
     sourced straight from the raw column — so the booking fails outright
     rather than pricing wrong.

@@ -222,6 +222,8 @@ repairs it before the write, so the loud failure stops being the path they take.
 
 **No user-visible signal.** Considered and declined at the design gate — see §4.
 
+**No change to teacher-facing surfaces.** The teacher view (`(teacher)/class/[id]/page.tsx`) aggregates registrations by tier for a census or breakdown — grouping `{tier, price}` pairs without rendering any student's name next to a tier. Unlike the three student-facing surfaces this issue fixes, a per-person tier claim never appears in the teacher view, so no specific tier assertion can be falsified there.
+
 ## Testing
 
 Three tiers, no database DDL. The state under test is unreachable through the
