@@ -15,7 +15,7 @@ const MINUTE = 60 * 1000;
 const db = {} as unknown as PrismaClient;
 
 /**
- * The ten sweeps, written once.
+ * The eleven sweeps, written once.
  *
  * Hoisted because both tests below used to carry their own verbatim copy, so
  * the list existed three times (here and in each test) and nothing made the
@@ -32,12 +32,13 @@ const SWEEP_NAMES = [
   'cleanupExpiredAuth',
   'reconcileWaitlists',
   'reapClosedWaitlistEntries',
+  'auditTeacherTimezones',
 ] as const;
 
 type StubbedName = (typeof SWEEP_NAMES)[number];
 
 /**
- * The stub list and `SchedulerSweeps` must name the same ten.
+ * The stub list and `SchedulerSweeps` must name the same eleven.
  *
  * `buildStubs` below ends in `as unknown as SchedulerSweeps`, and that cast is
  * not gratuitous — `Object.fromEntries` yields `{[k: string]: T}`, which a
@@ -153,13 +154,20 @@ describe('buildJobs', () => {
       'email-fallback': ['processEmailFallback'],
       'class-generation': ['generateClassInstances', 'generateStudioClassInstances'],
       'payment-reminders': ['processPaymentReminders'],
-      // Two sweeps, and the ORDER here is pinned without being load-bearing.
+      // Three sweeps, and the ORDER here is pinned without being load-bearing.
       // `isolatedSweeps` order is meaningful for `class-transitions` — a class
       // must transition to in-progress before it can be completed — and this
       // assertion is a whole-map equality, so it pins order everywhere. Nothing
-      // couples auth cleanup to waitlist retention; do not read a dependency
-      // into this line.
-      'daily-cleanup': ['cleanupExpiredAuth', 'reapClosedWaitlistEntries'],
+      // couples auth cleanup, waitlist retention, or the timezone audit to one
+      // another; do not read a dependency into this line.
+      'daily-cleanup': [
+        'cleanupExpiredAuth',
+        'reapClosedWaitlistEntries',
+        // Last, so a real failure in either sweep above still surfaces as the
+        // job's `lastError` rather than being masked by a standing data
+        // problem this one reports every run until someone fixes the row.
+        'auditTeacherTimezones',
+      ],
       'waitlist-reconciliation': ['reconcileWaitlists'],
     });
   });

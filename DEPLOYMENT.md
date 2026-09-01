@@ -74,13 +74,14 @@ curl --fail -X POST -H "Authorization: Bearer $CRON_SECRET" https://yourdomain.e
 ```
 
 `--fail` is not optional here, and `/api/cron/daily-cleanup` is why. That route
-runs two sweeps and its **status is the verdict**: 200 only when both ran, 503
-when every failure was a lost lock race (retry, and back off), 500 otherwise
-(a permanent fault — retrying will not clear it). The body carries both outcomes
-either way, so `data.auth.ok` and `data.waitlistRetention.ok` say which one
-failed. Without `--fail`, `curl` exits 0 on all of those, and a systemd timer
-records success for a night on which waitlist retention did not run — which in
-this mode is the only trigger it has.
+runs three sweeps and its **status is the verdict**: 200 only when every sweep
+ran, 503 when every failure was a lost lock race (retry, and back off), 500
+otherwise (a permanent fault — retrying will not clear it). The body carries
+all three outcomes either way, so `data.auth.ok`, `data.waitlistRetention.ok`,
+and `data.timezoneAudit.ok` say which one failed. Without `--fail`, `curl`
+exits 0 on all of those, and a systemd timer records success for a night on
+which waitlist retention did not run — which in this mode is the only trigger
+it has.
 
 ## 6. Updates
 

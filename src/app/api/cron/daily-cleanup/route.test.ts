@@ -5,9 +5,9 @@ import { NextRequest } from 'next/server';
  * The STATUS CONTRACT for this route, and nothing else.
  *
  * This file exists because review turned the route's answer from an
- * unconditional 200 into a verdict: **a 2xx means both sweeps ran**, and if
- * either failed the answer is non-2xx while the body still carries both
- * outcomes. That is a claim a reader cannot check by reading, and a manual
+ * unconditional 200 into a verdict: **a 2xx means every sweep ran**, and if
+ * any failed the answer is non-2xx while the body still carries every
+ * outcome. That is a claim a reader cannot check by reading, and a manual
  * `curl` cannot check at all — the failure path needs a sweep to throw, which
  * means either editing the service or provoking a real database fault against
  * whatever database the app is pointed at.
@@ -17,7 +17,7 @@ import { NextRequest } from 'next/server';
  * on the grounds that no precedent existed under `src/app/api` and the
  * in-process scheduler — not this route — runs the sweeps in production. That
  * reasoning still stands and this file does not reopen it: nothing here asserts
- * which sweep was called or what it did. It asserts only the mapping from two
+ * which sweep was called or what it did. It asserts only the mapping from three
  * outcomes to one HTTP status.
  *
  * Mocking is also the only SAFE instrument. An e2e or integration test would run
@@ -25,17 +25,21 @@ import { NextRequest } from 'next/server';
  * deliberately unscoped, so a Playwright spec POSTing this route would
  * permanently delete dev rows. The guard that refuses a non-`_test` database
  * lives in `waitlist-retention.test.ts`, not in the service, so it would not fire.
- * With both services mocked this file touches no database at all.
+ * With all three services mocked this file touches no database at all.
  */
 
 const cleanupExpiredAuth = vi.fn();
 const reapClosedWaitlistEntries = vi.fn();
+const auditTeacherTimezones = vi.fn();
 
 vi.mock('@/services/auth-cleanup', () => ({
   cleanupExpiredAuth: (...args: unknown[]) => cleanupExpiredAuth(...args),
 }));
 vi.mock('@/services/waitlist-retention', () => ({
   reapClosedWaitlistEntries: (...args: unknown[]) => reapClosedWaitlistEntries(...args),
+}));
+vi.mock('@/services/timezone-audit', () => ({
+  auditTeacherTimezones: (...args: unknown[]) => auditTeacherTimezones(...args),
 }));
 // The route builds a PrismaClient at module load through this. Stubbed so
 // importing the route opens no connection — the sweeps that would use it are
@@ -54,6 +58,7 @@ interface Body {
   data: {
     auth: { ok: boolean; error?: string };
     waitlistRetention: { ok: boolean; error?: string };
+    timezoneAudit: { ok: boolean; error?: string };
   };
 }
 
@@ -67,10 +72,16 @@ function transientError(): Error {
 beforeEach(() => {
   cleanupExpiredAuth.mockReset();
   reapClosedWaitlistEntries.mockReset();
+  auditTeacherTimezones.mockReset();
+  // A clean audit by default. Without this an unmocked `vi.fn()` returns
+  // `undefined`, which `settle` reports as a SUCCESS — so the audit would
+  // appear to pass in every case here for the wrong reason, and the failure
+  // case below would be the only one actually exercising it.
+  auditTeacherTimezones.mockResolvedValue({ checked: 3, teachers: 0, invalid: [] });
 });
 
 describe('POST /api/cron/daily-cleanup — status contract', () => {
-  it('answers 200 only when both sweeps ran', async () => {
+  it('answers 200 only when every sweep ran', async () => {
     cleanupExpiredAuth.mockResolvedValue({ sessions: 1 });
     reapClosedWaitlistEntries.mockResolvedValue({ deleted: 2, classes: 1 });
 
@@ -80,6 +91,7 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
     expect(res.status).toBe(200);
     expect(body.data.auth.ok).toBe(true);
     expect(body.data.waitlistRetention.ok).toBe(true);
+    expect(body.data.timezoneAudit.ok).toBe(true);
   });
 
   /**
@@ -163,5 +175,29 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
     const res = await POST(post());
 
     expect(res.status).toBe(500);
+  });
+
+  /**
+   * The audit is the third sweep, and a failing one must reach the status.
+   * 500 and not 503: `InvalidTimezoneError` matches no branch in
+   * `classifyApiError`, so it falls to the generic 500 — which is the right
+   * answer, because 503 tells a systemd timer to back off and retry, and a
+   * stored zone that will not resolve does not clear on the next tick.
+   */
+  it('answers 500 when only the timezone audit fails', async () => {
+    cleanupExpiredAuth.mockResolvedValue({ sessions: 0 });
+    reapClosedWaitlistEntries.mockResolvedValue({ deleted: 0, classes: 0 });
+    auditTeacherTimezones.mockRejectedValue(
+      new Error('stored teacher timezones no longer resolve: Invalid/Test_Zone_145'),
+    );
+
+    const res = await POST(post());
+    const body = (await res.json()) as Body;
+
+    expect(res.status).toBe(500);
+    expect(body.data.auth.ok).toBe(true);
+    expect(body.data.waitlistRetention.ok).toBe(true);
+    expect(body.data.timezoneAudit.ok).toBe(false);
+    expect(body.data.timezoneAudit.error).toContain('Invalid/Test_Zone_145');
   });
 });

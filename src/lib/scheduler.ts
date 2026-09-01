@@ -48,6 +48,7 @@ export interface SchedulerSweeps {
   cleanupExpiredAuth: (db: PrismaClient) => Promise<unknown>;
   reconcileWaitlists: (db: PrismaClient) => Promise<unknown>;
   reapClosedWaitlistEntries: (db: PrismaClient) => Promise<unknown>;
+  auditTeacherTimezones: (db: PrismaClient) => Promise<unknown>;
 }
 
 const MINUTE = 60 * 1000;
@@ -114,6 +115,7 @@ export async function startScheduler(): Promise<void> {
   const { cleanupExpiredAuth } = await import('@/services/auth-cleanup');
   const { reconcileWaitlists } = await import('@/services/waitlist-reconciliation');
   const { reapClosedWaitlistEntries } = await import('@/services/waitlist-retention');
+  const { auditTeacherTimezones } = await import('@/services/timezone-audit');
 
   const jobs = buildJobs({
     autoTransitionToInProgress,
@@ -126,6 +128,7 @@ export async function startScheduler(): Promise<void> {
     cleanupExpiredAuth,
     reconcileWaitlists,
     reapClosedWaitlistEntries,
+    auditTeacherTimezones,
   });
 
   const health = (globalThis.__fairYogaJobHealth ??= {});
@@ -196,6 +199,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     cleanupExpiredAuth,
     reconcileWaitlists,
     reapClosedWaitlistEntries,
+    auditTeacherTimezones,
   } = sweeps;
 
   return [
@@ -225,19 +229,28 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     },
     {
       // Renamed from `auth-cleanup` when waitlist retention joined it (#238):
-      // the job is the daily retention slot now, not the auth one. Two sweeps
-      // through `isolatedSweeps` rather than a seventh job, so there is one
-      // daily timer and one obvious slot for the next retention policy (#223
-      // poses the same question for `Notification`).
+      // the job is the daily retention slot now, not the auth one. Three
+      // sweeps through `isolatedSweeps` (the timezone audit joined, #145)
+      // rather than a seventh job, so there is one daily timer and one obvious
+      // slot for the next retention policy (#223 poses the same question for
+      // `Notification`).
       //
       // The cost, recorded rather than glossed: `/api/health` reports one
-      // `lastRunAt` for both sweeps instead of one each. Acceptable here and
-      // not for `waitlist-reconciliation`, which took its own job name
+      // `lastRunAt` for all three sweeps instead of one each. Acceptable here
+      // and not for `waitlist-reconciliation`, which took its own job name
       // deliberately — a 60-second correctness sweep needs its own health
       // signal in a way a daily retention sweep does not.
       name: 'daily-cleanup',
       intervalMs: 24 * 60 * MINUTE,
-      run: isolatedSweeps('daily-cleanup', [cleanupExpiredAuth, reapClosedWaitlistEntries]),
+      run: isolatedSweeps('daily-cleanup', [
+        cleanupExpiredAuth,
+        reapClosedWaitlistEntries,
+        // LAST, and the position is a default rather than a guarantee.
+        // `isolatedSweeps` runs every sweep and rethrows the FIRST error, so a
+        // standing bad timezone — which reports every run until a row is
+        // fixed — would otherwise mask a real failure in either sweep above.
+        auditTeacherTimezones,
+      ]),
     },
     {
       // 1 minute, and the cadence is load-bearing rather than conventional: the

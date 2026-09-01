@@ -6,6 +6,7 @@ import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
 import { cleanupExpiredAuth } from '@/services/auth-cleanup';
 import { reapClosedWaitlistEntries } from '@/services/waitlist-retention';
+import { auditTeacherTimezones } from '@/services/timezone-audit';
 
 /**
  * One route per JOB, not per sweep — the existing shape, since
@@ -23,8 +24,8 @@ import { reapClosedWaitlistEntries } from '@/services/waitlist-retention';
  * services below are each covered (`auth-cleanup.test.ts`,
  * `waitlist-retention.test.ts`) and `requireCronAuth` is covered
  * (`lib/cron-auth.test.ts`); what remains uncovered is the WIRING — that this
- * route calls the sweeps it NAMES. `route.test.ts` mocks both, so it cannot
- * see that. That is the same exposure `scheduler.test.ts`'s job-to-sweep map
+ * route calls the sweeps it NAMES. `route.test.ts` mocks all three, so it
+ * cannot see that. That is the same exposure `scheduler.test.ts`'s job-to-sweep map
  * was built to close on the scheduler side ("a job could carry the right name
  * and interval while running the wrong sweep"), and the route side still has no
  * equivalent — a decision, not an oversight.
@@ -55,11 +56,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (authError) return authError;
 
   // Sequential, not `Promise.all`: these share one connection pool of three
-  // (one vCPU), and neither is urgent.
+  // (one vCPU), and none is urgent.
   //
   // ISOLATED FROM EACH OTHER, matching the scheduler's `daily-cleanup` job,
-  // which runs both through `isolatedSweeps`. An earlier revision awaited both
-  // plainly, so a thrown `cleanupExpiredAuth` skipped retention entirely.
+  // which runs all three through `isolatedSweeps`. An earlier revision awaited
+  // both plainly (before this route ran a third sweep), so a thrown
+  // `cleanupExpiredAuth` skipped retention entirely.
   // `DEPLOYMENT.md` documents `CRON_SCHEDULER=off` + systemd timers as a
   // supported mode, and in that mode this route is the ONLY trigger for
   // retention — an intermittently failing auth cleanup would silently stop
@@ -68,17 +70,19 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // Reported per sweep in the body, so a caller reading the response learns
   // WHICH one ran.
   //
-  // THE STATUS IS THE VERDICT, AND A 2xx FROM THIS ROUTE MEANS BOTH SWEEPS RAN.
-  // If either failed the answer is non-2xx and the body still carries both
-  // outcomes — read `data.auth.ok` and `data.waitlistRetention.ok` to see which
-  // one did not. Partial failure counts: one sweep succeeding does not make the
-  // request as a whole a success, because for an HTTP caller a 2xx means "what
-  // you asked for happened", and if a sweep did not run, it did not.
+  // THE STATUS IS THE VERDICT, AND A 2xx FROM THIS ROUTE MEANS EVERY SWEEP RAN.
+  // If any failed the answer is non-2xx and the body still carries every
+  // outcome — read `data.auth.ok`, `data.waitlistRetention.ok`, and
+  // `data.timezoneAudit.ok` to see which one did not. Partial failure counts:
+  // one sweep succeeding does not make the request as a whole a success,
+  // because for an HTTP caller a 2xx means "what you asked for happened", and
+  // if a sweep did not run, it did not.
   //
   // An earlier revision answered 200 unconditionally, arguing that this is a
   // report of two independent outcomes rather than one half-succeeded
-  // operation. That is a fair description of the BODY and the wrong one for the
-  // STATUS, and it reintroduced on this path exactly the defect
+  // operation (the route ran two sweeps at the time). That is a fair
+  // description of the BODY and the wrong one for the STATUS, and it
+  // reintroduced on this path exactly the defect
   // `RetentionFailedError` had just fixed on the scheduler path: under
   // `CRON_SCHEDULER=off` this route is the ONLY trigger for retention, so
   // retention could throw every night while the systemd timer recorded success
@@ -87,15 +91,23 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // `--fail`.
   const auth = await settle(() => cleanupExpiredAuth(prisma));
   const waitlistRetention = await settle(() => reapClosedWaitlistEntries(prisma));
+  // Third, matching the scheduler job this route mirrors — and reaching this
+  // route at all matters: under the `CRON_SCHEDULER=off` + systemd mode
+  // `DEPLOYMENT.md` documents, this is the ONLY trigger for these sweeps, so a
+  // check wired to the scheduler alone would be dead there.
+  const timezoneAudit = await settle(() => auditTeacherTimezones(prisma));
 
   // The composite body at whichever status the outcomes earn — the shape
   // `/api/health` already uses for an ops endpoint whose body is a report and
   // whose status is the verdict (it answers 503 with a full `degraded` body
   // rather than trading one for the other).
-  return respondOk({ auth, waitlistRetention }, worstStatus([auth, waitlistRetention]));
+  return respondOk(
+    { auth, waitlistRetention, timezoneAudit },
+    worstStatus([auth, waitlistRetention, timezoneAudit]),
+  );
 });
 
-/** One sweep's outcome, so neither can prevent the other from running. */
+/** One sweep's outcome, so no sweep can prevent another from running. */
 type SweepOutcome<T> =
   | { ok: true; result: T }
   | { ok: false; error: string; status: ApiFailure['status'] };
@@ -113,7 +125,7 @@ async function settle<T>(run: () => Promise<T>): Promise<SweepOutcome<T>> {
     // which under a systemd timer is a `curl` whose output may go nowhere.
     log[failure.level](
       { err, status: failure.status },
-      'daily-cleanup: a sweep failed; the other still ran',
+      'daily-cleanup: a sweep failed; the others still ran',
     );
     return {
       ok: false,
@@ -131,7 +143,7 @@ async function settle<T>(run: () => Promise<T>): Promise<SweepOutcome<T>> {
  * contention. One permanent failure alongside it makes 500 the run's honest
  * answer: a schema drift does not clear on the next tick, and reporting "try
  * again" for it would be the misleading half of the same trade. A 409 cannot
- * come from these two sweeps, and would mean nothing to a timer if it did, so
+ * come from these sweeps, and would mean nothing to a timer if it did, so
  * it folds into 500 rather than being forwarded.
  */
 function worstStatus(outcomes: ReadonlyArray<SweepOutcome<unknown>>): 200 | 500 | 503 {
