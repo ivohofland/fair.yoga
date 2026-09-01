@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { toIncomeTier, toIncomeTierOrThrow } from './tiers.server';
+import { toIncomeTier, toIncomeTierOrThrow, readIncomeTier } from './tiers.server';
 import { DEFAULT_INCOME_TIER } from './tiers';
 import { log } from '@/lib/log';
 
@@ -35,6 +35,14 @@ describe('toIncomeTier', () => {
       expect.stringContaining('outside 1-5'),
     );
   });
+
+  it('still warns exactly once, now that it delegates', () => {
+    // The refactor's one real risk: a warning left behind in both functions
+    // would double every line an operator is meant to act on.
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    toIncomeTier(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('toIncomeTierOrThrow', () => {
@@ -53,5 +61,33 @@ describe('toIncomeTierOrThrow', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     expect(() => toIncomeTierOrThrow(0)).toThrow();
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('readIncomeTier', () => {
+  it('passes every in-range tier through unchanged', () => {
+    expect([1, 2, 3, 4, 5].map((n) => readIncomeTier(n))).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('does not warn for a value the database permits', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    readIncomeTier(4);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('answers null rather than substituting, so a caller can decline to speak', () => {
+    vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    expect(readIncomeTier(0)).toBeNull();
+    expect(readIncomeTier(6)).toBeNull();
+  });
+
+  it('warns once, with the offending value and the caller context', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    readIncomeTier(9, { studentId: 'student-1' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ tier: 9, studentId: 'student-1' }),
+      expect.stringContaining('outside 1-5'),
+    );
   });
 });
