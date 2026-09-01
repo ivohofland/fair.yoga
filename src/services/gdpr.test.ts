@@ -1054,9 +1054,13 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
   let inviterAccountId: string;
   let blockerId: string;
   let blockerAccountId: string;
+  let movedId: string;
+  let movedAccountId: string;
   let studentId: string;
   let studentAccountId: string;
   let strangerInvitationId: string;
+  let movedInvitationId: string;
+  const movedAwayEmail = `${suffix}-moved-away@test.local`;
 
   const mkTeacher = async (label: string) => {
     const teacher = await prisma.teacher.create({
@@ -1080,6 +1084,9 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     const blocker = await mkTeacher('blocker');
     blockerId = blocker.id;
     blockerAccountId = blocker.accountId;
+    const moved = await mkTeacher('moved');
+    movedId = moved.id;
+    movedAccountId = moved.accountId;
 
     const student = await prisma.student.create({
       data: {
@@ -1113,6 +1120,31 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     });
     await prisma.teacherBlock.create({ data: { teacherId: blockerId, email } });
 
+    // A third teacher's row, shaped like the `inviterId` row above (accepted,
+    // a marker set to the subject's real address) — then, immediately, the
+    // exact edit `PUT /api/invitations/[id]` performs: the row's CURRENT
+    // `email` moves off the subject's address entirely, while the marker
+    // (`lastNotifiedEmail`) is left holding it. A fresh teacher is needed
+    // for this: `@@unique([teacherId, email])` already has both `inviterId`
+    // and `blockerId` holding a row keyed on (their id, the subject's
+    // email), so a same-teacher second row at that address could not even
+    // be created. This is the row the third, marker-keyed erasure statement
+    // in `gdpr.ts` exists to reach — the first two statements match on the
+    // row's CURRENT `email`, which is no longer the subject's here.
+    const movedInvitation = await prisma.invitation.create({
+      data: {
+        teacherId: movedId, email, firstName: 'Mo', lastName: 'Typo',
+        status: 'accepted', respondedAt: new Date('2026-04-05T06:07:08.000Z'),
+        lastNotifiedAt: new Date('2026-04-05T06:07:08.000Z'), lastNotifiedEmail: email,
+      },
+      select: { id: true },
+    });
+    movedInvitationId = movedInvitation.id;
+    await prisma.invitation.update({
+      where: { id: movedInvitationId },
+      data: { email: movedAwayEmail },
+    });
+
     // Somebody else entirely, on the teacher who gets erased last: the point
     // of clearing a teacher's contacts is that they hold OTHER people's
     // addresses, and an anonymised row alone could not show that.
@@ -1128,10 +1160,10 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
 
   afterAll(async () => {
     // Invitation and TeacherBlock cascade off Teacher.
-    await prisma.teacher.deleteMany({ where: { id: { in: [inviterId, blockerId] } } });
+    await prisma.teacher.deleteMany({ where: { id: { in: [inviterId, blockerId, movedId] } } });
     await prisma.student.deleteMany({ where: { id: studentId } });
     await prisma.account.deleteMany({
-      where: { id: { in: [inviterAccountId, blockerAccountId, studentAccountId] } },
+      where: { id: { in: [inviterAccountId, blockerAccountId, movedAccountId, studentAccountId] } },
     });
     await prisma.$disconnect();
   });
@@ -1155,10 +1187,15 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
   it('erasing a student anonymises the invitations that name them', async () => {
     await deleteStudentAccount(prisma, studentId);
 
-    const rows = await prisma.invitation.findMany({
-      where: { teacherId: { in: [inviterId, blockerId] }, firstName: { not: 'A' } },
+    const allRows = await prisma.invitation.findMany({
+      where: { teacherId: { in: [inviterId, blockerId, movedId] }, firstName: { not: 'A' } },
       orderBy: { teacherId: 'asc' },
     });
+    expect(allRows).toHaveLength(3);
+
+    // The two rows whose CURRENT `email` was still the subject's real
+    // address at erasure time.
+    const rows = allRows.filter((r) => r.id !== movedInvitationId);
     expect(rows).toHaveLength(2);
     for (const row of rows) {
       expect(row.email).toBe(`deleted-${studentId}@deleted.invalid`);
@@ -1176,6 +1213,20 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     expect(rows.map((r) => r.status).sort()).toEqual(['accepted', 'declined']);
     expect(rows.some((r) => r.lastNotifiedEmail === `deleted-${studentId}@deleted.invalid`)).toBe(true);
     expect(rows.every((r) => r.respondedAt !== null)).toBe(true);
+
+    // The `movedId` fixture: its CURRENT `email` had already moved off the
+    // subject's address before erasure ran (the beforeAll `update` above,
+    // simulating a teacher's `PUT /api/invitations/[id]` typo correction),
+    // so it was never the subject's address AT ERASURE TIME — the first two
+    // erasure statements in `gdpr.ts` match on that CURRENT `email` and so
+    // leave this row's identity columns untouched, which the next two
+    // assertions pin. Only `lastNotifiedEmail`, which still held the
+    // subject's real address, is reached — by the third, marker-keyed
+    // statement `gdpr.ts` adds for exactly this gap.
+    const moved = allRows.find((r) => r.id === movedInvitationId);
+    expect(moved?.email).toBe(movedAwayEmail);
+    expect(moved?.firstName).toBe('Mo');
+    expect(moved?.lastNotifiedEmail).toBe(`deleted-${studentId}@deleted.invalid`);
 
     // Deliberately untouched — see the comment at the erasure site and
     // `docs/data-model.md`. Retention vs. scrubbing is a legal call nobody

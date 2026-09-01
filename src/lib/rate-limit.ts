@@ -202,7 +202,7 @@ export function checkRateLimit(
  * `PUT /api/students/[id]`, which wrote a client-supplied `email` to the
  * same `@unique` column with no pre-check and so needed the same budget.
  * Task 10 of #166 deleted that branch outright. #173's resend route is the
- * new second caller, sharing this same bucket by design — both routes cause
+ * new caller, sharing this same bucket by design — both routes cause
  * an email to go to an arbitrary address, so one ceiling covers both rather
  * than each needing its own.
  *

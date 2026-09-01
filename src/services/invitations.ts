@@ -351,9 +351,9 @@ async function revivePendingInvitation(
  * does not notify, so a value gone stale there reaches nobody. Named only so
  * the next reader does not go checking it, find it harmless, and conclude
  * the re-check below is redundant. `POST /api/invitations/[id]/resend`
- * (#173) is the actual second caller of this function — it reads `email`
- * fresh from the row in the same request it dispatches, so there is no
- * equivalent staleness window for it to worry about.
+ * (#173) also calls this function directly — it reads `email` fresh from
+ * the row in the same request it dispatches, so there is no equivalent
+ * staleness window for it to worry about.
  *
  * Neither `POST /api/students` (route.ts) nor `POST
  * /api/invitations/[id]/resend` (#173) awaits this function — both call it
@@ -454,9 +454,12 @@ export async function notifyInvitee(
  * Loads the inviting teacher's display name and notifies the invitee — the
  * whole "decide + deliver" tail of a successful, unblocked invite.
  *
- * Deliberately never awaited by either of its two callers, `POST
- * /api/students` and `POST /api/invitations/[id]/resend` (#173, moved here
- * from the first route so both could share it): this SELECT plus whatever
+ * Deliberately never awaited by any caller: whatever this function reads,
+ * or how long it takes, must never become the caller's response status
+ * code or its latency. `POST /api/students` and `POST
+ * /api/invitations/[id]/resend` (#173, moved here from the first route so
+ * both could share it) both call this today, fire-and-forget: this SELECT
+ * plus whatever
  * `notifyInvitee` does — a plain INSERT for a registered invitee, an HTTPS
  * call to Resend for anyone else — must not sit on the request's critical
  * path. Awaited, it turns a Resend outage into a 500 for an unregistered

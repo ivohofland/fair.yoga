@@ -28,10 +28,11 @@ export function canRemoveContact(status: InvitationStatus): boolean {
  * above was: that page is a server component, so no component test can
  * reach the comparison directly.
  *
- * `lastNotifiedEmail` is written unconditionally on every attempt, by both
- * writers — `POST /api/students` and `POST /api/invitations/[id]/resend`'s
- * own docblock (app/api/invitations/[id]/resend/route.ts) spells out why —
- * so `sent: false` here means only "not sent to the CURRENT address",
+ * `lastNotifiedEmail` is written unconditionally on every attempt by both
+ * writers — `POST /api/students` (route.ts) and `POST
+ * /api/invitations/[id]/resend` (route.ts, #173) — see either route's own
+ * docblock for why — so `sent: false` here means only "not sent to the
+ * CURRENT address",
  * never "blocked". A teacher must not be able to tell those two apart from
  * this result.
  */

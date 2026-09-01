@@ -746,6 +746,131 @@ describe('POST /api/invitations/[id]/resend (#173)', () => {
   }, 30_000);
 });
 
+describe('resend answers 404 for a row deleted while the request was in flight (#173)', () => {
+  it('the marker write does not throw when the row is gone', async () => {
+    const email = `resend-race-delete-${suffix}@test.local`;
+    const inv = await prisma.invitation.create({
+      data: { teacherId, email, firstName: 'Race', lastName: 'Resend' },
+      select: { id: true },
+    });
+
+    // Same lever as the #196 decline-race tests above: a separate
+    // PrismaClient holds a transaction open on this row, uncommitted, so
+    // the real request's OWN read (a plain `findFirst`, unblocked by an
+    // uncommitted writer under READ COMMITTED) still sees the row as
+    // `pending`, but its later write — the marker `updateMany`, keyed only
+    // on `{ id }` — blocks on the row lock until the holder releases.
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let deleted!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const parked = new Promise<void>((r) => { deleted = r; });
+    const holding = holder.$transaction(async (tx) => {
+      await tx.invitation.delete({ where: { id: inv.id } });
+      deleted();
+      await released;
+    }, { timeout: 20_000 });
+
+    await parked;
+    const resending = fetch(`${BASE_URL}/api/invitations/${inv.id}/resend`, {
+      method: 'POST', headers: cookie(teacherToken),
+    });
+
+    // Same assertion shape as the #196 tests: prove the request actually
+    // parked on the lock rather than answering early off a cold path.
+    let settled = false;
+    void resending.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(settled).toBe(false);
+
+    release();
+    await holding;
+    const res = await resending;
+    await holder.$disconnect();
+
+    // The row is genuinely gone, and the route answers the same 404 it
+    // already gives for an id that never existed — not a bare 500 from an
+    // unhandled P2025.
+    expect(res.status).toBe(404);
+    expect(await prisma.invitation.findUnique({ where: { id: inv.id } })).toBeNull();
+  });
+});
+
+describe('PUT then resend delivers to the corrected address (#173)', () => {
+  it('a typo correction followed by resend notifies the corrected address, not the original', async () => {
+    const typoEmail = `resend-typo-${suffix}@test.local`;
+    const correctedEmail = `resend-corrected-${suffix}@test.local`;
+    let studentId: string | undefined;
+    let invitationId: string | undefined;
+    try {
+      // The corrected address belongs to a registered student, so a real
+      // notification is observable — the typo'd address never gets one
+      // (dry-run email only, unobservable), which is exactly the silence
+      // #173 was filed about.
+      const student = await prisma.student.create({
+        data: { firstName: 'Resend', lastName: 'Corrected', email: correctedEmail },
+        select: { id: true },
+      });
+      studentId = student.id;
+
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email: typoEmail, firstName: 'Resend', lastName: 'Typo' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
+
+      // First resend, to the typo'd address — sets the marker, no
+      // observable Notification since no Student row exists for it.
+      const firstResend = await fetch(`${BASE_URL}/api/invitations/${invitation.id}/resend`, {
+        method: 'POST', headers: cookie(teacherToken),
+      });
+      expect(firstResend.status).toBe(200);
+      const afterFirst = await prisma.invitation.findUniqueOrThrow({ where: { id: invitation.id } });
+      expect(afterFirst.lastNotifiedEmail).toBe(typoEmail);
+
+      // The teacher notices and corrects it. PUT does not notify — this is
+      // the exact silence the issue is about, up to this point.
+      const putRes = await fetch(`${BASE_URL}/api/invitations/${invitation.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ email: correctedEmail }),
+      });
+      expect(putRes.status).toBe(200);
+      const afterPut = await prisma.invitation.findUniqueOrThrow({ where: { id: invitation.id } });
+      expect(afterPut.email).toBe(correctedEmail);
+      // The marker is unchanged by PUT — still pointing at the old
+      // address, which is exactly what makes the UI show "not yet sent to
+      // this address" for the corrected row.
+      expect(afterPut.lastNotifiedEmail).toBe(typoEmail);
+
+      // Second resend, now against the corrected address.
+      const secondResend = await fetch(`${BASE_URL}/api/invitations/${invitation.id}/resend`, {
+        method: 'POST', headers: cookie(teacherToken),
+      });
+      expect(secondResend.status).toBe(200);
+      const afterSecond = await prisma.invitation.findUniqueOrThrow({ where: { id: invitation.id } });
+      expect(afterSecond.lastNotifiedEmail).toBe(correctedEmail);
+
+      // The actual proof: a real notification reaches the corrected
+      // address's registered student — this is what "editing its address
+      // notifies nobody" being fixed looks like from the invitee's side.
+      await waitFor(
+        () =>
+          prisma.notification.findFirst({
+            where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
+          }),
+        { description: 'corrected-address teacher_invitation notification (#173)' },
+      );
+    } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
+      if (studentId) {
+        await prisma.notification.deleteMany({ where: { recipientId: studentId } });
+        await prisma.student.delete({ where: { id: studentId } });
+      }
+    }
+  });
+});
+
 describe('POST /api/invitations/[id]/respond', () => {
   // Mixed case here used to be deliberate — it proved
   // `acceptInvitation`/`declineInvitation` lowercased `accountEmail` before

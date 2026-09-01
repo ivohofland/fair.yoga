@@ -4,9 +4,12 @@ import { respondError } from '@/lib/api-utils';
 /**
  * The ownership preamble shared by PUT/DELETE/PATCH
  * (`src/app/api/invitations/[id]/route.ts`) and
- * `POST /api/invitations/[id]/resend` (#173) — every route under this
- * resource reads the same row before deciding what it's allowed to do to
- * it. Pulled into its own
+ * `POST /api/invitations/[id]/resend` (#173) — the teacher-facing routes
+ * under this resource read the same row this way before deciding what
+ * they're allowed to do to it. (`POST /api/invitations/[id]/respond` is
+ * student-facing and authorizes by account email instead — see
+ * `acceptInvitation`'s docblock, services/invitations.ts — so it has no
+ * use for this.) Pulled into its own
  * file rather than exported from `route.ts` directly: Next's Route Handler
  * convention restricts what a `route.ts` file may export to HTTP verbs plus
  * a small fixed config allow-list.

@@ -552,12 +552,16 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // exists to deny — an erasure request would double as a way to clear
     // every refusal anyone ever made. `status` and `respondedAt` therefore
     // stay exactly as they are; the identity columns change, plus
-    // `lastNotifiedEmail` when it was ever set — a resent invitation's
-    // "last invited" marker otherwise keeps the erased person's real
-    // address forever, on a row they can no longer reach. Split into two
-    // statements rather than one: setting `lastNotifiedEmail` on a row
-    // where `lastNotifiedAt` is still null would violate
-    // `Invitation_last_notified_pair_check`.
+    // `lastNotifiedEmail` wherever it still holds the subject's address —
+    // independent of what the row's CURRENT `email` is, since `PUT
+    // /api/invitations/[id]` can move `email` on without touching the
+    // marker — a resent invitation's "last invited" marker otherwise keeps
+    // the erased person's real address forever, on a row they can no longer
+    // reach. Split into three statements rather than one: setting
+    // `lastNotifiedEmail` on a row where `lastNotifiedAt` is still null
+    // would violate `Invitation_last_notified_pair_check`, and the third
+    // statement below matches on the marker itself rather than on the row's
+    // current `email`, so it has to run independently of the first two.
     //
     // The replacement satisfies both constraints the branch added:
     // `Invitation_email_lowercase_check` (uuid + `@deleted.invalid` is
@@ -584,6 +588,25 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
         lastName: 'Student',
         lastNotifiedEmail: `deleted-${studentId}@deleted.invalid`,
       },
+    });
+    // The two statements above only catch rows whose CURRENT `email` is
+    // the subject's — but `PUT /api/invitations/[id]` can move `email` on
+    // without touching the marker, so a row invited under the subject's
+    // address, then corrected to someone else's, still carries the
+    // subject's real address in `lastNotifiedEmail` and is invisible to
+    // either statement above. This third statement is independent of
+    // those two and closes that gap: it matches on the MARKER, not on the
+    // row's current identity. Safe against
+    // `Invitation_last_notified_pair_check`: every row this matches
+    // already has `lastNotifiedEmail` non-null, which the CHECK already
+    // requires to be paired with a non-null `lastNotifiedAt`, and this
+    // statement leaves `lastNotifiedAt` untouched. Deliberately not
+    // touching `email`/`firstName`/`lastName` here — on these rows the
+    // row's current address belongs to a different person the teacher may
+    // still be corresponding with; only the stale marker is the subject's.
+    await tx.invitation.updateMany({
+      where: { lastNotifiedEmail: student.email },
+      data: { lastNotifiedEmail: `deleted-${studentId}@deleted.invalid` },
     });
 
     // `TeacherBlock` is DELIBERATELY not touched here, and the omission is
