@@ -195,14 +195,18 @@ export default defineConfig(({ mode }) => {
             // EACH OTHER even so ("vitest.config.ts sets
             // fileParallelism: false, so integration tests never contend
             // with each other") — its local flakiness came from `next dev`'s
-            // lazy recompilation during mutation testing, not fan-out. See
+            // lazy recompilation during mutation testing, not fan-out, and
+            // the spec's own conclusion for this tier is "there is nothing
+            // to serialize". See
             // docs/superpowers/specs/2026-08-21-local-gate-reliability-design.md.
             // (The "four different victims" finding in that same issue is
             // Playwright's, not this tier's — `playwright.config.ts`.)
             //
-            // CI does not inherit this default, though: its own invocation
-            // overrides it with the `--file-parallelism` CLI flag (#325),
-            // which wins over a project's setting — see
+            // So `false` here is not correctness-load-bearing, just never
+            // flipped — a solo local run has nothing to gain from running
+            // its files in parallel. CI does not share that default: its own
+            // invocation overrides it with the `--file-parallelism` CLI flag
+            // (#325), which wins over a project's setting — see
             // docs/test-database.md §2 for the mechanism.
             fileParallelism: false,
             env: { DATABASE_URL: devUrl },

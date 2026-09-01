@@ -120,10 +120,12 @@ with:
 
 **Predicted:** the cap assertion still passes (the cap is untouched). The
 control assertion — reopen after closing one stream — fails: the counter
-never drops below 5, so every reopen attempt inside `pollForStatus`'s 2-second
-ceiling keeps getting 429, and the poll returns its last (429) attempt. The
-final "extra" assertion passes, but vacuously — the account is still at cap
-for a reason that has nothing to do with the property it exists to check.
+never drops below 5, so every reopen attempt inside `pollForStatus`'s
+then-2-second ceiling (widened to 5s by this PR's own review fix round — see
+the header note above) keeps getting 429, and the poll returns its last
+(429) attempt. The final "extra" assertion passes, but vacuously — the
+account is still at cap for a reason that has nothing to do with the
+property it exists to check.
 
 **Recorded:**
 
@@ -156,9 +158,11 @@ AssertionError: expected 429 to be 200 // Object.is equality
 ```
 
 The test's own duration (2139ms) confirms `pollForStatus` actually spent its
-full ~2000ms ceiling retrying before giving up — this is the poll doing its
-job, not a hang. Only line 531 fails; the cap assertion and the final "extra"
-assertion are both absent from the failure list, exactly as predicted.
+full ~2000ms ceiling — as it stood at the time this mutation ran, before the
+fix round's 5_000ms widening — retrying before giving up. This is the poll
+doing its job, not a hang. Only line 531 fails; the cap assertion and the
+final "extra" assertion are both absent from the failure list, exactly as
+predicted.
 
 Restored via `git checkout src/app/api/notifications/stream/route.ts`;
 `diff` against the pre-mutation copy showed no residual change. Re-verified

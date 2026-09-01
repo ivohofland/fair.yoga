@@ -148,12 +148,13 @@ function firstDataFrame(stream: OpenStream): string | undefined {
  * status actually observed.
  *
  * Safe to retry without inflating the count it polls for: a non-matching
- * attempt here is a 429, and `route.ts`'s cap check runs BEFORE the
- * `sseCounts` increment, so a rejected attempt never occupies a slot. That
- * only holds for polling toward a FREED slot (`want: 200` after a close,
- * this file's only use) — polling toward `want: 429` would have the
- * opposite problem, since a non-matching 200 attempt DOES hold a slot until
- * its own async release.
+ * attempt here is a 429, and `route.ts`'s cap check (`route.ts:29`) runs
+ * BEFORE the `sseCounts` increment (`route.ts:85`), so a rejected attempt
+ * never occupies a slot. That only holds for polling toward a FREED slot
+ * (`want: 200` after a close, this file's only use) — polling toward
+ * `want: 429` would have the opposite problem, since a non-matching 200
+ * attempt DOES hold a slot until its own async release (`route.ts`'s
+ * `cleanup`, `route.ts:69-76`).
  */
 async function pollForStatus(
   token: string,
@@ -225,12 +226,12 @@ describe('GET /api/notifications/stream', () => {
 
     // A THIRD student, dedicated to the slot-release test below. That test
     // parks five streams on one account key, and `sseCounts` keys on
-    // `accountId` (`route.ts`) — reusing `studentAccountId` would mean
-    // starting it with 1-2 slots possibly still held from an EARLIER test's
+    // `accountId` (`route.ts:28`) — reusing `studentAccountId` would mean
+    // starting it with a slot possibly still held from an EARLIER test's
     // `close()`, whose server-side release runs asynchronously off
-    // `request.signal`'s abort. That could turn one of this test's own
-    // first five opens into a spurious 429 unrelated to the property under
-    // test.
+    // `request.signal`'s abort (`route.ts:90`). That could turn one of this
+    // test's own first five opens into a spurious 429 unrelated to the
+    // property under test.
     const capEmail = `sse-stream-cap-${suffix}@test.local`;
     const capStudent = await makeStudent(capEmail);
     capStudentId = capStudent.id;
