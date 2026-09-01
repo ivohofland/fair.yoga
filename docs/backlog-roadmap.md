@@ -1123,12 +1123,29 @@ left:
   image of #191, where `does not close #113` *did* close it. Symptom to watch:
   the open count after a merge is *higher* than `closed − filed` predicts. Both
   were closed by hand with the measurement record attached.
-- **#158 — what a degraded income tier does downstream.** `PersonalPriceRange`
-  says "depending on how many join", asserting the tier is settled exactly where
-  it was substituted; and `TierForm` seeds its picker with the degraded value,
-  so a student clicking Save overwrites the corrupt row and erases the only
-  evidence. Reachable only if a CHECK constraint is bypassed — filed because a
-  fallback whose downstream consequences nobody examined is half a decision.
+- ~~**#158 — what a degraded income tier does downstream.**~~
+  **CLOSED 2026-09-01.** `readIncomeTier` (Task 1) now backs every surface that
+  names this specific student's tier — `TierForm`'s picker, `BookingFlow`'s
+  prop, the booking page's personal price line — and declines the claim
+  instead of substituting when the stored value is corrupt; `toIncomeTier`
+  stays only where a substituted value disappears into an aggregate over other
+  people's tiers. What was learned is not in the issue:
+  - **"Erases the only evidence" was an overstatement.** `readIncomeTier`'s
+    warning logs the raw value together with the studentId, and it fires on
+    the read that renders the settings page — before `TierForm`'s Save button
+    exists to be clicked. That log record is durable and predates any possible
+    overwrite; a no-op save destroys a row, not the only evidence of what was
+    in it.
+  - **A third surface, not two.** The issue named `PersonalPriceRange` and
+    `TierForm`. `BookingFlow`'s "You're in Tier N" summary made the identical
+    claim — a settled tier named back to the student — from the same
+    substituted value, and went unnoticed until this pass.
+  - **Not just a misprice.** A corrupted profile tier reaching the booking
+    write does not quietly mis-price a class: `Registration.tierAtBooking`
+    carries the same CHECK constraint as `Student.incomeTier`, and the write
+    (`tierAtBooking: student.incomeTier` in `api/registrations/route.ts`) is
+    sourced straight from the raw column — so the booking fails outright
+    rather than pricing wrong.
 - **#154 — both payment rows take a pre-formatted `classContext`** where every
   other component takes raw data plus a `timeZone`. Small (4 fixtures, 2 call
   sites) but it rebuilds accessible names #59 fixed for WCAG 2.5.3, so it wants

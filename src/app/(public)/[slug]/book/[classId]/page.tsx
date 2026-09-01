@@ -10,7 +10,7 @@ import { PriceRange, PersonalPriceRange } from '@/components/booking/price-range
 import { BookingFlow } from '@/components/booking/booking-flow';
 import { BookingSignIn } from '@/components/booking/booking-sign-in';
 import { JoinAsStudent } from '@/components/booking/join-as-student';
-import { toIncomeTier } from '@/lib/tiers.server';
+import { readIncomeTier, toIncomeTier } from '@/lib/tiers.server';
 
 export const dynamic = 'force-dynamic';
 
@@ -82,8 +82,12 @@ export default async function BookClassPage({
   // alongside its converted tier (rather than a standalone const) lets
   // narrowing `viewer` for truthiness also narrow `viewer.tier`, which
   // TypeScript could not do across two separate consts.
+  //
+  // readIncomeTier, not toIncomeTier: both consumers speak about this person —
+  // the price quoted to them, the tier named back to them — so a value we had
+  // to substitute must suppress the claim rather than fill it.
   const viewer = student
-    ? { ...student, tier: toIncomeTier(student.incomeTier, { studentId: student.id }) }
+    ? { ...student, tier: readIncomeTier(student.incomeTier, { studentId: student.id }) }
     : null;
   // The viewer's own charged row, if any. They are already in the pool,
   // so the personal spread must quote them from that row — not append a
@@ -94,6 +98,15 @@ export default async function BookClassPage({
     ? (cls.registrations.find((r) => r.studentId === student.id) ?? null)
     : null;
   const alreadyBooked = ownRegistration !== null && ownRegistration.status !== 'late_cancel';
+  // The tier the personal line would quote: a booked viewer is billed at the
+  // tier stamped on their registration, anyone else would join at their
+  // profile one. Null from either read means the line may not claim the tier
+  // is settled, and the anonymous range says so instead.
+  const quotedTier = viewer
+    ? alreadyBooked && ownRegistration
+      ? readIncomeTier(ownRegistration.tierAtBooking, { registrationId: ownRegistration.id })
+      : viewer.tier
+    : null;
   // A signed-in teacher without a student side gets the join panel, not a
   // sign-in form they can't use.
   const guestTeacher =
@@ -120,7 +133,7 @@ export default async function BookClassPage({
       <p className="type-caption mt-0.5">
         {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
       </p>
-      {viewer && viewer.tierSelectedAt ? (
+      {viewer && viewer.tierSelectedAt && quotedTier !== null ? (
         // Their tier is settled — turnout is the remaining uncertainty.
         <PersonalPriceRange
           spread={estimateAttendanceSpread({
@@ -132,11 +145,7 @@ export default async function BookClassPage({
             registeredTiers: cls.registrations
               .filter((r) => r !== ownRegistration)
               .map((r) => toIncomeTier(r.tierAtBooking, { registrationId: r.id })),
-            // A booked viewer is billed at the tier stamped on their
-            // registration; everyone else would join at their current one.
-            viewerTier: alreadyBooked && ownRegistration
-              ? toIncomeTier(ownRegistration.tierAtBooking, { registrationId: ownRegistration.id })
-              : viewer.tier,
+            viewerTier: quotedTier,
           })}
           className="mt-2 mb-6"
         />
