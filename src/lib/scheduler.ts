@@ -249,6 +249,17 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
         // `isolatedSweeps` runs every sweep and rethrows the FIRST error, so a
         // standing bad timezone — which reports every run until a row is
         // fixed — would otherwise mask a real failure in either sweep above.
+        //
+        // That protects `lastError`, which stays in server logs for whoever is
+        // debugging. It does NOT protect `/api/health`'s `healthy` flag
+        // (`healthy: j.lastError === null`, `health/route.ts`): that flag is
+        // shared across all three sweeps, and a standing timezone problem
+        // already holds it at `false`. A real failure in `cleanupExpiredAuth`
+        // or `reapClosedWaitlistEntries` while the timezone row stands produces
+        // no observable change there — the flag was false already. So the
+        // ordering keeps the two siblings' failures legible in logs, but
+        // `/api/health` stays uninformative about them until the bad row is
+        // fixed. Recorded as a tradeoff, not mitigated architecturally.
         auditTeacherTimezones,
       ]),
     },

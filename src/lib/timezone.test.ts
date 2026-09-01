@@ -148,15 +148,6 @@ describe('classStartInstant', () => {
     expect(start.toISOString()).toBe('2026-07-20T18:00:00.000Z');
   });
 
-  it('logs at error level when falling back to UTC so the bad zone is observable', () => {
-    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
-    classStartInstant({ date: day('2026-07-20'), startTime: hhmmToTime('18:00') }, 'Not/AZone');
-    expect(error).toHaveBeenCalledWith(
-      expect.objectContaining({ timeZone: 'Not/AZone' }),
-      expect.stringContaining('falling back to UTC'),
-    );
-  });
-
   it('logs at error level when falling back to UTC interpretation (#145)', () => {
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     classStartInstant({ date: day('2026-07-26'), startTime: hhmmToTime('09:00') }, 'Not/AZone');

@@ -45,7 +45,7 @@ type StubbedName = (typeof SWEEP_NAMES)[number];
  * single `as SchedulerSweeps` rejects (TS2352, no implicit index signature on
  * an interface), so the double cast is what makes the construction compile at
  * all. The cost is that it also defeats the check the type would otherwise
- * provide: add a tenth field to `SchedulerSweeps` and the stub object still
+ * provide: add a field to `SchedulerSweeps` and the stub object still
  * type-checks, passing `undefined` for the sweep nobody stubbed.
  *
  * These two pins restore it, in the repo's own idiom (`lib/type-pins.ts`). A

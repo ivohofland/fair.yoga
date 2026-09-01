@@ -5,11 +5,10 @@ import type { PaymentStatus } from '@prisma/client';
  *
  * A module of its own rather than two functions inside
  * `use-payment-actions.ts`: they were exported there *solely* so their unit
- * test could reach them, which this repo otherwise does not do — `timeZoneOffsetMs`
- * (`timezone.ts`) is module-private and tested through its public entry point.
- * Its test is worth keeping (it catches a mutation no other test does — see
- * `payment-status.test.ts`), so the fix is to give the functions a module whose
- * public surface they legitimately are, not to delete them.
+ * tests could reach them, which this repo otherwise does not do. Those tests
+ * are worth keeping (each one catches a mutation no other test does — see
+ * `payment-status.test.ts`), so the fix is to give the functions a module
+ * whose public surface they legitimately are, not to delete them.
  *
  * Imported by a `'use client'` module, so the `@prisma/client` import here is
  * type-only, like every other one in a client path in this repo.

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeAll, onTestFinished } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
-import { auditTeacherTimezones, InvalidTimezoneError, TimezoneAuditSummary } from './timezone-audit';
+import { auditTeacherTimezones, InvalidTimezoneError } from './timezone-audit';
+import type { TimezoneAuditSummary } from './timezone-audit';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `tza-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
