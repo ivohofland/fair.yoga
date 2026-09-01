@@ -179,15 +179,17 @@ describe('POST /api/teachers keeps its conflict codes apart under a race (#161)'
 
   it('returns 409 EMAIL_TAKEN when the create loses on the email key', async () => {
     const holder = new PrismaClient();
+    let release!: () => void;
+    let holding!: Promise<unknown>;
+    const released = new Promise<void>((r) => { release = r; });
 
-    const holding = holder.$transaction(async (tx) => {
-      await tx.account.create({ data: { email: raceEmail } });
-      // Hold this transaction open for 2+ seconds so the request can race it
-      await new Promise((r) => setTimeout(r, 2500));
-    }, { timeout: 20_000 });
-
-    // Give the holder's transaction time to reach the database and acquire locks
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise<void>((parked, failed) => {
+      holding = holder.$transaction(async (tx) => {
+        await tx.account.create({ data: { email: raceEmail } });
+        parked();
+        await released;
+      }, { timeout: 20_000 }).catch((err: unknown) => { failed(err); throw err; });
+    });
 
     const pending = signup({
       firstName: 'Race',
@@ -201,6 +203,7 @@ describe('POST /api/teachers keeps its conflict codes apart under a race (#161)'
     await new Promise((r) => setTimeout(r, 1000));
     expect(settled).toBe(false);
 
+    release();
     await holding;
     const res = await pending;
     await holder.$disconnect();
@@ -213,29 +216,31 @@ describe('POST /api/teachers keeps its conflict codes apart under a race (#161)'
 
   it('returns 409 SLUG_TAKEN when the create loses on the page slug key', async () => {
     const holder = new PrismaClient();
+    let release!: () => void;
+    let holding!: Promise<unknown>;
+    const released = new Promise<void>((r) => { release = r; });
 
     // A whole Teacher, not a bare row: `Teacher.accountId` is non-null, so the
     // holder must mint its own account. Its email differs from the request's,
     // so `pageSlug` is the only key the request can lose on.
-    const holding = holder.$transaction(async (tx) => {
-      await tx.teacher.create({
-        data: {
-          firstName: 'Holder',
-          lastName: 'Slug',
-          email: holderSlugEmail,
-          bio: 'Holder bio',
-          pageSlug: raceSlug,
-          defaultCurrency: 'EUR',
-          defaultTimezone: 'Europe/Amsterdam',
-          account: { create: { email: holderSlugEmail } },
-        },
-      });
-      // Hold this transaction open for 2+ seconds so the request can race it
-      await new Promise((r) => setTimeout(r, 2500));
-    }, { timeout: 20_000 });
-
-    // Give the holder's transaction time to reach the database and acquire locks
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise<void>((parked, failed) => {
+      holding = holder.$transaction(async (tx) => {
+        await tx.teacher.create({
+          data: {
+            firstName: 'Holder',
+            lastName: 'Slug',
+            email: holderSlugEmail,
+            bio: '',
+            pageSlug: raceSlug,
+            defaultCurrency: 'EUR',
+            defaultTimezone: 'Europe/Amsterdam',
+            account: { create: { email: holderSlugEmail } },
+          },
+        });
+        parked();
+        await released;
+      }, { timeout: 20_000 }).catch((err: unknown) => { failed(err); throw err; });
+    });
 
     const pending = signup({
       firstName: 'Race',
@@ -249,6 +254,7 @@ describe('POST /api/teachers keeps its conflict codes apart under a race (#161)'
     await new Promise((r) => setTimeout(r, 1000));
     expect(settled).toBe(false);
 
+    release();
     await holding;
     const res = await pending;
     await holder.$disconnect();
