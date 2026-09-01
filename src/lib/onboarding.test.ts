@@ -28,7 +28,7 @@ describe('resolveSteps', () => {
   // for them — "skip a required step" is not expressible.
   it('reports which steps may be skipped', () => {
     const steps = resolveSteps(nothingDone);
-    expect(steps.filter((s) => s.skippable).map((s) => s.key)).toEqual(['profile', 'bank']);
+    expect(steps.filter((s) => s.skipAs !== null).map((s) => s.key)).toEqual(['profile', 'bank']);
   });
 });
 

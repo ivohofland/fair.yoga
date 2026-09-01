@@ -1,24 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import type { OnboardingStep } from '@prisma/client';
 import { Icon } from '@/components/ui/icon';
 import { ShareBookingLink } from '@/components/class/share-booking-link';
 import { OnboardingSkipButton } from './onboarding-skip-button';
-import { resolveSteps, type StepInput, type ResolvedStep } from '@/lib/onboarding';
+import { resolveSteps, type StepInput } from '@/lib/onboarding';
 
 interface GettingStartedProps extends StepInput {
   pageSlug: string;
-}
-
-/**
- * Narrows a row's key to the `OnboardingStep` it may be skipped as, or
- * `null` for the two required rows. The equality check is what lets
- * TypeScript narrow `step.key` — `ResolvedStep['skippable']` alone is a
- * plain boolean and narrows nothing.
- */
-function skipTargetFor(step: ResolvedStep): OnboardingStep | null {
-  return step.key === 'profile' || step.key === 'bank' ? step.key : null;
 }
 
 /**
@@ -61,7 +50,7 @@ export function GettingStarted({ pageSlug, ...input }: GettingStartedProps) {
       </p>
       <div>
         {steps.map((step) => {
-          const skipTarget = skipTargetFor(step);
+          const skipTarget = step.skipAs;
           return (
             <div
               key={step.key}

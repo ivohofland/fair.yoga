@@ -21,8 +21,8 @@ export interface ResolvedStep {
   detail: string;
   href: string;
   state: StepState;
-  /** Skippable steps are exactly those `OnboardingStep` can name. */
-  skippable: boolean;
+  /** The `OnboardingStep` this row may be skipped as, or `null` if it's required. */
+  skipAs: OnboardingStep | null;
 }
 
 const ORDER: readonly StepKey[] = ['profile', 'bank', 'room', 'class'];
@@ -70,13 +70,13 @@ function skippableKey(key: StepKey): OnboardingStep | null {
 
 export function resolveSteps(input: StepInput): ResolvedStep[] {
   return ORDER.map((key) => {
-    const skippable = skippableKey(key);
+    const skipAs = skippableKey(key);
     const state: StepState = isDone(key, input)
       ? 'done'
-      : skippable && input.skipped.includes(skippable)
+      : skipAs && input.skipped.includes(skipAs)
         ? 'skipped'
         : 'todo';
-    return { key, ...COPY[key], state, skippable: skippable !== null };
+    return { key, ...COPY[key], state, skipAs };
   });
 }
 
