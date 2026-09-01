@@ -21,7 +21,7 @@ The most ethical yoga app. A platform that gives yoga teachers the tools to teac
 ### Teachers
 Yoga teachers who want to teach independently without relying on studios or large platforms. They need simple tools to manage their teaching practice: scheduling classes, tracking attendance, communicating with students, and getting paid fairly. No verification or certification required — the platform is open to anyone who wants to teach. Profile is minimal: name, profile picture, and a short bio (max 250 characters — about two sentences). This is an addition to their existing online presence, not a replacement.
 
-**Onboarding:** A light guided flow walks new teachers through four steps: create profile, add first room, create first class, share your page. The flow disappears once complete — not a tutorial, just a natural path to getting started.
+**Onboarding:** A light checklist on the Schedule tab walks new teachers through four steps — profile (bio), bank details, first room, first class — with Skip on profile and bank, since the bio and payout details are the only genuinely optional parts of setup. Once every step is done or skipped, a one-time completion card offers to share the booking page; nothing in the schema records that a page was shared, so Share is a completion state rather than a fifth step. The checklist disappears once that card is dismissed — not a tutorial, just a natural path to getting started.
 
 ### Students
 People who attend yoga classes. They create one account (during their first booking), register for classes, and are charged a fair price based on their self-reported income tier. They control their own privacy settings. One account works across all teachers on the platform.

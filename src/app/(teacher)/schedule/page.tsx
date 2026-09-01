@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { ClassList } from '@/components/schedule/class-list';
 import { GettingStarted } from '@/components/schedule/getting-started';
+import { isOnboardingComplete } from '@/lib/onboarding';
 import { startOfLocalWeek, startOfLocalDay } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
 
@@ -31,7 +32,7 @@ export default async function SchedulePage() {
   const [teacher, classes, studioClasses, roomCount, classCount] = await Promise.all([
     prisma.teacher.findUniqueOrThrow({
       where: { id: session.teacherId },
-      select: { bankIban: true },
+      select: { bio: true, bankIban: true, skippedOnboarding: true, pageSlug: true },
     }),
     prisma.class.findMany({
       where: {
@@ -60,11 +61,13 @@ export default async function SchedulePage() {
     prisma.class.count({ where: { calendarEntry: { teacherId: session.teacherId } } }),
   ]);
 
-  // The checklist retires itself once the teacher has taught the basics
-  // into place: bank details, a room, a first class.
-  // Bank details are optional (cash-only teachers exist) — the card retires
-  // on the two required steps, or it would pin itself forever.
-  const needsOnboarding = roomCount === 0 || classCount === 0;
+  const onboardingInput = {
+    bio: teacher.bio,
+    bankIban: teacher.bankIban,
+    roomCount,
+    classCount,
+    skipped: teacher.skippedOnboarding,
+  };
 
   return (
     <div>
@@ -78,12 +81,8 @@ export default async function SchedulePage() {
         </Link>
       </div>
 
-      {needsOnboarding && (
-        <GettingStarted
-          hasBankDetails={Boolean(teacher.bankIban)}
-          hasRoom={roomCount > 0}
-          hasClass={classCount > 0}
-        />
+      {!isOnboardingComplete(onboardingInput) && (
+        <GettingStarted {...onboardingInput} pageSlug={teacher.pageSlug} />
       )}
 
       <ClassList

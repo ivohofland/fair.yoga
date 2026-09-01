@@ -30,11 +30,13 @@ The teacher has a persistent bottom tab bar (64px, Lucide-style line icons) with
 - *Leads to:* 1.3 Onboarding — next step prompt
 
 ### 1.3 — Onboarding Progress
-- Shows 4-step guided flow: ① Profile ② Room ③ Class ④ Share
-- Each step shows completed/current/upcoming state
-- Steps can be skipped and returned to later
-- Disappears once all steps are complete
-- *Leads to:* 2.1 Room Creation (step 2), 3.1 Class Creation (step 3), 4.1 Personal Page (step 4)
+- Shows a checklist of four rows, in order: ① Profile ② Bank ③ Room ④ Class
+- Each row shows a done/skipped/todo state
+- Profile and Bank carry a Skip control — the only two rows `OnboardingStep` names; Room and Class are required and carry none, so skipping either is not expressible
+- Profile is the bio specifically: the one genuinely optional part of setup. A skipped row can still be completed later from the same link
+- Once every row is done or skipped, the checklist is replaced by a one-time completion card: share the booking page, then Dismiss
+- Share is a completion card, not a fifth row — nothing in the schema records that a page was shared, so there is no state for a row to show or return to
+- *Leads to:* 2.1 Room Creation (row 3), 3.1 Class Creation (row 4), 4.3 Class Share (the completion card's Share action)
 
 ---
 

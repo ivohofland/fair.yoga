@@ -226,17 +226,20 @@ This means rooms are not a primary navigation item. Teachers don't browse their 
 
 ## Onboarding flow
 
-The onboarding flow is not a separate section — it's a temporary overlay on the existing navigation that guides new teachers through first-time setup.
+The onboarding flow is not a separate section — it's a checklist card on the Schedule tab that guides new teachers through first-time setup and retires itself once they're done.
 
 ```
-Onboarding (temporary, disappears when complete)
-├── Step 1: Profile → Settings > Profile
-├── Step 2: Room → Settings > Rooms > Add room
-├── Step 3: Class → Schedule > Create class
-└── Step 4: Share → Class detail > Share
+Getting started (checklist card, retires once settled)
+├── Row 1: Profile → Settings > Profile   (skippable — the bio is the one optional part)
+├── Row 2: Bank → Settings > Profile      (skippable — cash-only teachers exist)
+├── Row 3: Room → Settings > Rooms > Add room   (required)
+└── Row 4: Class → Schedule > Create class      (required)
+
+Once every row is done or skipped:
+Completion card → Share the booking page → Dismiss
 ```
 
-Each step takes the teacher to the real screen where they'll do this task in the future. The onboarding just provides a "next step" prompt after each completion. This way the teacher learns the actual app, not a tutorial version of it.
+Each row takes the teacher to the real screen where they'll do this task in the future — no overlay, no tour. Share is a one-time completion card rather than a fifth row: nothing in the schema records that a page has been shared, so there is no state for a row to show. The checklist disappears for good only once that card is dismissed.
 
 ---
 
@@ -246,11 +249,12 @@ Each step takes the teacher to the real screen where they'll do this task in the
 
 ```
 Sign up (magic link)
-  → Profile setup (onboarding step 1)
-    → Add room (onboarding step 2)
-      → Create class (onboarding step 3)
-        → Share page (onboarding step 4)
-          → Schedule tab (onboarding complete)
+  → Profile setup (checklist row 1 — bio, skippable)
+    → Bank details (checklist row 2 — skippable)
+      → Add room (checklist row 3 — required)
+        → Create class (checklist row 4 — required)
+          → Completion card: share the booking page → Dismiss
+            → Schedule tab (checklist retired)
 ```
 
 ### Flow 2: Weekly routine (established teacher)
