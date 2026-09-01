@@ -8,7 +8,8 @@
  * teacher already owns.
  */
 
-import type { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import { withdrawWaitingEntriesForTeacher } from './waitlist';
 import { createNotification } from './notifications';
 import { sendInvitationEmail } from '@/lib/email';
