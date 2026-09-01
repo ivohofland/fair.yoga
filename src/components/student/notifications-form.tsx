@@ -22,18 +22,13 @@ interface NotificationsBody {
 }
 
 /**
- * #136. Reverse pin only, deliberately. This form shares
- * `updateStudentSchema` with `tier-form.tsx`. The schema has eight keys:
- * this form sends two, `tier-form.tsx` sends a third, and the other five —
- * `firstName`, `lastName`, `phone`, `birthday` and `address` — have no
- * student-facing input anywhere. A forward pin would name six fields this
- * form has no business rendering.
+ * #136, #400. Reverse pin only, deliberately. This form shares
+ * `updateStudentSchema` with `tier-form.tsx` and `name-form.tsx`.
+ * Each form sends only a subset of the schema fields. A forward pin
+ * would name fields this form has no business rendering.
  *
  * What the reverse pin still buys: `updateStudentSchema` is `.strict()`, so a
  * key it dropped would 400 at runtime. This catches that at compile time.
- *
- * Whether those five fields *should* have inputs is a product question about
- * student self-service, not a pinning one, and is out of #136's scope.
  */
 const _formHasNoExtras: NoneOf<Exclude<keyof NotificationsBody, keyof UpdateStudentWire>> = true;
 void _formHasNoExtras;

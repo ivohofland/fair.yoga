@@ -1,9 +1,12 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
+import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
 import { AddPasskey } from '@/components/account/add-passkey';
 import { SignOutButton } from '@/components/account/sign-out-button';
+import { NameForm } from '@/components/student/name-form';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,10 +17,16 @@ const SETTINGS_ITEMS = [
   { href: '/account/data', label: 'Data & deletion' },
 ];
 
-// The student settings index: one row per area, teacher-settings pattern.
+// The student settings index: personal details + one row per area, teacher-settings pattern.
 export default async function StudentSettingsPage() {
   const session = await getSession();
   if (!session?.studentId) redirectNonStudent(session);
+
+  const student = await prisma.student.findUnique({
+    where: { id: session.studentId },
+    select: { id: true, firstName: true, lastName: true },
+  });
+  if (!student) redirect('/login');
 
   return (
     <div>
@@ -29,6 +38,15 @@ export default async function StudentSettingsPage() {
         Your bookings
       </Link>
       <h1 className="type-display mb-6">Settings</h1>
+
+      <section className="mb-8">
+        <h2 className="type-subtitle mb-4">Personal details</h2>
+        <NameForm
+          studentId={student.id}
+          initialFirstName={student.firstName}
+          initialLastName={student.lastName}
+        />
+      </section>
 
       <div>
         {SETTINGS_ITEMS.map((item) => (
