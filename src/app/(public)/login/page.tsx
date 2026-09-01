@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
@@ -73,6 +74,15 @@ export default function LoginPage() {
           <div className="mt-4">
             <PasskeySignIn email={email || undefined} />
           </div>
+
+          {/* The only door to teacher signup that isn't the landing page —
+              anyone who bookmarked /login before they had an account. */}
+          <p className="mt-6 type-caption">
+            New here?{' '}
+            <Link href="/signup" className="text-teal">
+              Start teaching on fair.yoga
+            </Link>
+          </p>
         </>
       )}
     </div>
