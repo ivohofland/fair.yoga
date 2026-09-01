@@ -20,3 +20,25 @@ import type { InvitationStatus } from '@prisma/client';
 export function canRemoveContact(status: InvitationStatus): boolean {
   return status !== 'declined';
 }
+
+/**
+ * Whether a pending invitation's most recent notify attempt reached the
+ * address the row currently holds (#173). Pulled out of
+ * `/students/contacts/[id]/page.tsx` for the same reason `canRemoveContact`
+ * above was: that page is a server component, so no component test can
+ * reach the comparison directly.
+ *
+ * `lastNotifiedEmail` is written unconditionally on every attempt — see
+ * `POST /api/invitations/[id]/resend`'s docblock
+ * (app/api/invitations/[id]/resend/route.ts) — so `sent: false` here means
+ * only "not sent to the CURRENT address", never "blocked". A teacher must
+ * not be able to tell those two apart from this result.
+ */
+export function invitationDeliveryStatus(
+  invitation: { email: string; lastNotifiedAt: Date | null; lastNotifiedEmail: string | null },
+): { sent: true; at: Date } | { sent: false } {
+  if (invitation.lastNotifiedAt && invitation.lastNotifiedEmail === invitation.email) {
+    return { sent: true, at: invitation.lastNotifiedAt };
+  }
+  return { sent: false };
+}

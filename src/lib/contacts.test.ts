@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { canRemoveContact } from './contacts';
+import { canRemoveContact, invitationDeliveryStatus } from './contacts';
 
 /**
  * #166. The one behaviour the Task 9 brief named explicitly — a declined
@@ -25,5 +25,31 @@ describe('canRemoveContact', () => {
   // drops this case to `false`) would pass every other test in this file.
   it('is true for an accepted contact', () => {
     expect(canRemoveContact('accepted')).toBe(true);
+  });
+});
+
+describe('invitationDeliveryStatus', () => {
+  it('is sent when the last notified address matches the current one', () => {
+    const at = new Date('2026-08-01T00:00:00.000Z');
+    const result = invitationDeliveryStatus({
+      email: 'lena@example.com', lastNotifiedAt: at, lastNotifiedEmail: 'lena@example.com',
+    });
+    expect(result).toEqual({ sent: true, at });
+  });
+
+  it('is not sent when the address was corrected after the last attempt', () => {
+    const result = invitationDeliveryStatus({
+      email: 'lena@example.com',
+      lastNotifiedAt: new Date('2026-08-01T00:00:00.000Z'),
+      lastNotifiedEmail: 'lena-old-typo@example.com',
+    });
+    expect(result).toEqual({ sent: false });
+  });
+
+  it('is not sent when no attempt has ever been made', () => {
+    const result = invitationDeliveryStatus({
+      email: 'lena@example.com', lastNotifiedAt: null, lastNotifiedEmail: null,
+    });
+    expect(result).toEqual({ sent: false });
   });
 });

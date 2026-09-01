@@ -1,10 +1,10 @@
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
-import { formatStudentName } from '@/lib/format';
-import { canRemoveContact } from '@/lib/contacts';
+import { formatStudentName, timeAgo } from '@/lib/format';
+import { canRemoveContact, invitationDeliveryStatus } from '@/lib/contacts';
 import { PageHeader } from '@/components/layout/page-header';
-import { ContactForm, ArchiveContactButton } from '@/components/students/contact-form';
+import { ContactForm, ArchiveContactButton, ResendInvitationButton } from '@/components/students/contact-form';
 import { RemoveStudentButton } from '@/components/students/remove-student-button';
 
 const STATUS_LABEL: Record<'pending' | 'declined', string> = {
@@ -28,6 +28,7 @@ export default async function ContactDetailPage({
     select: {
       id: true, firstName: true, lastName: true, email: true,
       status: true, isArchived: true,
+      lastNotifiedAt: true, lastNotifiedEmail: true,
     },
   });
 
@@ -37,12 +38,20 @@ export default async function ContactDetailPage({
   if (!invitation || invitation.status === 'accepted') redirect('/students');
 
   const displayName = formatStudentName(invitation.firstName, invitation.lastName, true);
+  const delivery = invitation.status === 'pending' ? invitationDeliveryStatus(invitation) : null;
 
   return (
     <>
       <PageHeader title={displayName} backHref="/students" backLabel="Students" />
 
-      <p className="type-caption mb-6">{STATUS_LABEL[invitation.status]}</p>
+      <div className="mb-6">
+        <p className="type-caption">{STATUS_LABEL[invitation.status]}</p>
+        {delivery && (
+          <p className="type-caption">
+            {delivery.sent ? `Last invited ${timeAgo(delivery.at)}` : 'Not yet sent to this address'}
+          </p>
+        )}
+      </div>
 
       <section className="mb-8">
         <ContactForm
@@ -55,6 +64,9 @@ export default async function ContactDetailPage({
 
       <section className="pt-6 border-t border-border flex flex-col items-start gap-4">
         <ArchiveContactButton invitationId={invitation.id} isArchived={invitation.isArchived} />
+        {invitation.status === 'pending' && (
+          <ResendInvitationButton invitationId={invitation.id} />
+        )}
         {/*
           Absent, not present-and-failing: the PUT/DELETE routes both 409
           DECLINED_IS_PERMANENT on a declined row, but this page shouldn't

@@ -179,3 +179,47 @@ export function ArchiveContactButton({ invitationId, isArchived }: ArchiveContac
     </div>
   );
 }
+
+interface ResendInvitationButtonProps {
+  invitationId: string;
+}
+
+/**
+ * #173. Same shape as `ArchiveContactButton` above — plain button, loading
+ * state, inline error via `readErrorMessage` — but no navigation on
+ * success: the page's own "Last invited" line (`invitationDeliveryStatus`,
+ * lib/contacts.ts) is the confirmation once `router.refresh()` re-fetches
+ * the server component's data, so a separate toast would say the same
+ * thing twice.
+ */
+export function ResendInvitationButton({ invitationId }: ResendInvitationButtonProps) {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleResend() {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/invitations/${invitationId}/resend`, { method: 'POST' });
+      if (res.ok) {
+        router.refresh();
+      } else {
+        setError(await readErrorMessage(res, 'Could not resend this invitation. Try again.'));
+      }
+    } catch {
+      setError('Network error. Try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div>
+      <button type="button" onClick={handleResend} disabled={loading} className="type-caption">
+        {loading ? 'Sending...' : 'Resend invitation'}
+      </button>
+      {error && <p className="text-sm text-danger mt-2">{error}</p>}
+    </div>
+  );
+}

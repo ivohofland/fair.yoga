@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
-import { ContactForm, ArchiveContactButton } from './contact-form';
+import { ContactForm, ArchiveContactButton, ResendInvitationButton } from './contact-form';
 
 /**
  * #166. `ContactForm` pins against `updateInvitationSchema` (see the source
@@ -213,6 +213,66 @@ describe('ArchiveContactButton', () => {
     fetchMock.mockRejectedValue(new Error('offline'));
     vi.stubGlobal('fetch', fetchMock);
     render(<ArchiveContactButton invitationId="inv-1" isArchived={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByText('Network error. Try again.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button')).not.toBeDisabled());
+  });
+});
+
+describe('ResendInvitationButton', () => {
+  const fetchMock = vi.fn();
+
+  afterEach(() => {
+    fetchMock.mockReset();
+    vi.unstubAllGlobals();
+  });
+
+  it('POSTs to the resend route and refreshes on success', async () => {
+    fetchMock.mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ResendInvitationButton invitationId="inv-1" />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/invitations/inv-1/resend', { method: 'POST' }),
+    );
+    await waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it('shows the server message when the resend fails', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: { message: 'This invitation is no longer pending.' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ResendInvitationButton invitationId="inv-1" />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByText('This invitation is no longer pending.')).toBeInTheDocument();
+  });
+
+  it('falls back to generic copy when the server sends no message', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ResendInvitationButton invitationId="inv-1" />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(
+      await screen.findByText('Could not resend this invitation. Try again.'),
+    ).toBeInTheDocument();
+  });
+
+  it('reports a thrown fetch instead of swallowing it', async () => {
+    fetchMock.mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ResendInvitationButton invitationId="inv-1" />);
 
     fireEvent.click(screen.getByRole('button'));
 
