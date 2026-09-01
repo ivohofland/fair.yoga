@@ -1250,58 +1250,21 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
   });
 });
 
-// #174 task 3. `deleteTeacherAccount`'s transaction reads classes filtered to
-// `draft`/`open`/`in_progress` and then wrote `cancelled` unconditionally —
-// so a class that reached `completed` in the window between that read and
-// its own write got force-cancelled after its `Payment` rows already existed
-// and its students had already been told to pay.
+// #174. `deleteTeacherAccount` cancels through a compare-and-swap — the
+// `tx.calendarEntry.updateMany` in its loop, guarded by `cancelledAt: null`
+// AND a `status` still in `CANCELLABLE_STATUSES` — and this block pins what
+// happens when that guard does NOT match the class it is handed: a warn and
+// a skip of the whole per-class body, never a silent cancel and never a
+// half-applied one (the waitlist close and the notifications below the CAS
+// must not run either).
 //
-// A test that merely completes the class BEFORE calling `deleteTeacherAccount`
-// proves nothing: the erasure's own `const upcoming = await tx.class.findMany`
-// filters to `draft`/`open`/`in_progress`, so an already-`completed` class is never
-// selected into `upcoming` and the loop never touches it — the assertion
-// passes on the unfixed code for a reason that has nothing to do with the
-// CAS. To pin the actual bug, the interleaving has to be reproduced: the
-// class must still read as `in_progress` when the transaction's `findMany`
-// runs, and only become `completed` afterward, before the loop's write for
-// that specific row.
-//
-// `$extends` makes that deterministic instead of racing for it, following
-// the precedent in `class-lifecycle.test.ts`'s
-// "refuses to write over a status that changed after the caller decided"
-// test; `class-template-lifecycle.test.ts`'s "maps a delete landing between
-// the read and the write to not_found" and "...between the write and the
-// sync to not_found"; `waitlist.test.ts`'s "a failure AFTER the link write
-// rolls the link back too"; and `invitations.revive.test.ts`'s "answers
-// CONTACT_CHANGED and leaves the fresh tombstone standing".
-// `deleteTeacherAccount` calls
-// `class.findMany` twice — once before the transaction (to find classes to
-// `completeClass` directly) and once inside it (to find classes to cancel) —
-// so the hook has to tell those two calls apart. It does that by args
-// shape, not by call order (round 1 review, Important 1: keying on call
-// order went silently vacuous when an unrelated extra `class.findMany`
-// landed before the transaction's own read — the concurrent completion
-// fired on the wrong call, the real read then saw an already-`completed`
-// row and excluded it via its own `WHERE`, and the buggy unconditional
-// update never got a row to clobber): the pre-transaction sweep filters
-// `status: 'in_progress'` — a bare value — so it is filtered to exclude this
-// fixture's class (standing in for a completion sweep that has not reached
-// this row yet, so the class is still genuinely `in_progress` for the
-// transaction's own read); the transaction's read is the one filtering
-// `status: { in: [...] }`, and its real, unmodified rows are what the erasure
-// transaction acts on. (This paragraph used to say the transaction's read
-// "includes `registrations`" and was the discriminator; the whole-branch
-// review of #174 deleted that eager-load — building the cancellation notices
-// from a pre-lock snapshot was itself a defect — and re-keyed the hook onto
-// `status`. The inline comment at the hook was updated in the same change and
-// this one was not, which is the exact species of drift Task 9 exists to
-// remove.) The side effect — a real,
-// separately committed `updateMany` moving the row to `completed` — runs
-// inside that same hook, after the real read resolves and before control
-// returns to `deleteTeacherAccount`, so it is guaranteed to land before the
-// loop's per-row write for this class — exactly the ordering the comment
-// above that loop's `class.updateMany` CAS in `gdpr.ts` describes
-// ("`completed` between it and here").
+// Constructed directly, not raced. Since #367 the pre-lock runs before the
+// read and the read is scoped to the ids that lock returned, so the timing
+// window the earlier version of this test reproduced is gone. The test below
+// manufactures the disagreement instead: `lockClassRowsOrdered` is mocked to
+// hand back the id of a `completed` class, which its real predicate would
+// never have matched. Which disagreements can still arise for real is argued
+// at the CAS itself in `gdpr.ts`, and summarised at the mock below.
 describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
   const prisma = new PrismaClient();
   const suffix = `gdpr-cas-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -1413,11 +1376,12 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
 
     // lockClassRowsOrdered's real predicate never returns a completed
     // class's id -- this simulates a lock/CAS disagreement directly.
-    // After #367 that disagreement can no longer arise from a genuine
-    // timing race (once a row is locked, nothing else can complete or
-    // cancel it before the CAS reaches it), so this proves the defensive
-    // branch still fires correctly without depending on a race that no
-    // longer exists.
+    // A concurrent COMPLETION can no longer produce one for real since
+    // #367: `completeClass` takes the same `Class` row lock, so it queues
+    // behind this transaction's hold. A concurrent CANCELLATION still can,
+    // for the reason the CAS's own comment in `gdpr.ts` gives -- the
+    // pre-lock's `cancelledAt` conjunct reads the joined, unlocked entry.
+    // So the branch stays live; this is just the deterministic way in.
     const original = dbLocks.lockClassRowsOrdered;
     const spy = vi
       .spyOn(dbLocks, 'lockClassRowsOrdered')
@@ -1524,10 +1488,11 @@ describe('deleteTeacherAccount locks and reads the same snapshot (#367)', () => 
     // unique to that call — the two template locks above it in gdpr.ts are
     // separate inline $queryRaw statements, not calls to this function).
     // Creating the class HERE, immediately before letting the real lock
-    // statement run, puts it in the exact position #367 describes: it did
-    // not exist when today's unlocked `upcoming` read ran (that read has
-    // already happened by the time this call fires), but it exists before
-    // the lock statement's own predicate evaluates.
+    // statement run, is the latest a class can appear and still be caught:
+    // after everything the erasure has done so far (the two template locks),
+    // and before the class pre-lock's own predicate evaluates. It therefore
+    // lands in `lockedIds`, and so in the `id: { in: lockedIds }` read the
+    // cancel loop walks.
     const original = dbLocks.lockClassRowsOrdered;
     let injectedClassId: string | undefined;
     const spy = vi
@@ -1561,12 +1526,12 @@ describe('deleteTeacherAccount locks and reads the same snapshot (#367)', () => 
       where: { id: injectedClassId! },
       include: { calendarEntry: true },
     });
-    // The defect: today this class is locked (by the fresh predicate
-    // lockClassRowsOrdered evaluates) but never visited by the cancel loop
-    // (which walks the earlier, now-stale `upcoming` read) — so it survives
-    // uncancelled under a teacher whose account no longer exists. Fixed
-    // behaviour: lock set and read set are the same set, so this class is
-    // cancelled like any other.
+    // Lock set and read set are one set, so a class that appears this late
+    // is cancelled like any other. Give the cancel loop a separately-timed
+    // `findMany` to walk instead of `lockedIds` — the shape #367 replaced —
+    // and this class is locked by the pre-lock's own fresh predicate but
+    // never visited by the loop, surviving uncancelled under a teacher whose
+    // account no longer exists. That is what this assertion catches.
     expect(after.calendarEntry.cancelledAt).not.toBeNull();
   });
 });

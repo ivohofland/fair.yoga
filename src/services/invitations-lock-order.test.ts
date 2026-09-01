@@ -428,8 +428,8 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
       // `$extends` returns a client missing `$on`, so it is not assignable to
       // `acceptInvitation`'s `PrismaClient`-typed `db` parameter even though
       // every method it calls here is the real one, running against the real
-      // database — the same cast the hooks in `gdpr.test.ts` and
-      // `class-transitions.test.ts` take.
+      // database — the same cast the hooks in `class-transitions.test.ts`
+      // take.
     }) as unknown as PrismaClient;
 
     const result = await acceptInvitation(recording, {

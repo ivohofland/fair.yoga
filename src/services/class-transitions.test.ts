@@ -582,14 +582,13 @@ describe('class transitions (DB, timezone-aware)', () => {
   // actual bug, the interleaving has to be reproduced: the second
   // registration has to land strictly between the outer read and the
   // transaction's count, which `$extends` makes deterministic instead of
-  // racing for it — same approach as the CAS interposition test in
-  // `gdpr.test.ts` ("leaves a class that completed after the erasure read
-  // alone, and still erases").
+  // racing for it.
   //
-  // The hook is keyed on `args` shape, not call order — a hook keyed on
-  // order was a review finding on the `gdpr.test.ts` precedent: it silently
-  // stops testing anything once an unrelated `findMany` is added or
-  // reordered. `calls` is asserted so a structural change here fails
+  // The hook is keyed on `args` shape, not call order: a hook keyed on order
+  // silently stops testing anything once an unrelated `findMany` is added or
+  // reordered — it fires on the wrong call, the interleaving it exists to
+  // construct never happens, and the test then passes on fixed and unfixed
+  // code alike. `calls` is asserted so a structural change here fails
   // loudly instead of quietly no-op'ing.
   //
   // The actual shape check, below: `where.status === 'open'` and the
@@ -652,7 +651,8 @@ describe('class transitions (DB, timezone-aware)', () => {
       // `$extends` returns a client missing `$on`, so it is not assignable
       // to `autoCancelClasses`'s `PrismaClient`-typed `db` parameter even
       // though every method it calls here is the real one, running against
-      // the real database — same cast as the `gdpr.test.ts` precedent.
+      // the real database — the same cast every `$extends` hook in this file
+      // takes.
     }) as unknown as PrismaClient;
 
     await autoCancelClasses(racing, new Date('2026-07-20T15:00:00Z'));

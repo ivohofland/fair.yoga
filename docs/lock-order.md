@@ -578,8 +578,11 @@ Since #237 an ordered `lockClassRowsOrdered` pre-lock runs ahead of that
 loop, so the rule no longer describes this site: the pre-lock is first
 among `Class`/`CalendarEntry` locks (not first in the transaction — #229's
 `ClassTemplate`/`StudioClassTemplate` locks run before it), and since #367
-it is also first among ANY read of this teacher's classes — the read the
-loop walks is scoped to the pre-lock's own returned ids, not an
+it is also first among any read of this teacher's classes INSIDE THE
+TRANSACTION — the completion sweep above it (`db.class.findMany` over
+`in_progress`) reads them too, but runs in a transaction of its own before
+this one opens, so it is ordered against nothing here. The read the loop
+walks is scoped to the pre-lock's own returned ids, not an
 independently-timed `findMany`, so `orderBy: { id: 'asc' }` on that read is
 presentation only (it fixes the notification order) for a stronger reason
 than before: there is no longer a separate snapshot for it to agree or
@@ -1625,8 +1628,10 @@ classification beneath it have drifted apart.
   ordered `lockClassRowsOrdered` pre-lock over every class in
   `CANCELLABLE_STATUSES`. Not first in the transaction — the two template
   locks (#229, `ClassTemplate`/`StudioClassTemplate`) run before it — but
-  first among `Class`/`CalendarEntry` locks, and first read of any `Class`
-  data at all (#367): the read that feeds the cancel loop is scoped to
+  first among `Class`/`CalendarEntry` locks, and the transaction's first read
+  of any `Class` data at all (#367; the completion sweep that runs BEFORE the
+  transaction opens is its own transaction, ordered against nothing here): the
+  read that feeds the cancel loop is scoped to
   `where: { id: { in: lockedIds } }`, the ids this same pre-lock statement
   returned, not an independently-timed read. `orderBy: { id: 'asc' }` on that
   read is presentation only (notification order) — `lockedIds` is already

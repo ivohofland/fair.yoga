@@ -1857,7 +1857,7 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
       // `$extends` returns a client missing `$on`, so it is not assignable to
       // `removeFromWaitlist`'s `PrismaClient`-typed parameter even though
       // every method it calls here is the real one — same cast as the hooks
-      // in `gdpr.test.ts` and `class-transitions.test.ts`.
+      // in `class-transitions.test.ts`.
     }) as unknown as PrismaClient;
 
     const result = await removeFromWaitlist(racing, classId, victimId);

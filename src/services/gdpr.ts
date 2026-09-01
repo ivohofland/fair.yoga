@@ -1103,19 +1103,37 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       });
 
       for (const cls of upcoming) {
-        // Compare-and-swap, defensive rather than load-bearing now:
-        // `upcoming` is read scoped to `lockedIds`, so every row reaching
-        // this loop was already held by the pre-lock above before this
-        // transaction's own read ran — nothing else can complete or cancel
-        // it in between (#367). A concurrent completer (`completeClass`,
-        // `class-lifecycle.ts`) takes `lockClassRow` itself, so it queues
-        // behind this hold rather than racing it. Kept anyway: the CAS's
-        // WHERE is what actually enforces "still cancellable", and a
-        // future change landing between the lock and here should fail
-        // loud — a warn and a skip — rather than silently cancel a class
-        // it should not have. Cancelling a completed class anyway would
-        // strip one that already has Payment rows and students who have
-        // been asked to pay.
+        // Compare-and-swap, and still live enforcement rather than a
+        // formality. `upcoming` is read scoped to `lockedIds`, so every row
+        // reaching this loop was already held by the pre-lock above before
+        // this transaction's own read ran (#367) — which closes the
+        // completion race, not the cancellation one.
+        //
+        // COMPLETED concurrently: closed. `completeClass`
+        // (`class-lifecycle.ts`) takes `lockClassRow` before it writes
+        // `Class.status`, so it queues behind this hold rather than racing
+        // it, and the pre-lock's `c.status IN (…)` is a predicate on the row
+        // that statement actually locks.
+        //
+        // CANCELLED concurrently: NOT closed. That statement is `FOR UPDATE
+        // OF c` — the `Class` row only — while its `e."cancelledAt" IS NULL`
+        // conjunct reads the JOINED, unlocked `CalendarEntry`, and
+        // `EvalPlanQual` re-fetches locked rows only. So a canceller that
+        // takes `Class` first and then writes the entry (`POST
+        // /api/classes/[id]/cancel`, the canonical order) can commit while
+        // this statement is still WAITING on the class row, leaving the entry
+        // half of the predicate evaluated against a pre-wait snapshot — the
+        // same mechanism `docs/lock-order.md` records for `transitionClass`.
+        //
+        // Which is why `cancelledAt: null` below sits BESIDE the status check
+        // rather than being redundant with it: since #327 a cancelled class
+        // keeps its `draft`/`open`/`in_progress` status, so
+        // `CANCELLABLE_STATUSES` no longer excludes one, and re-cancelling
+        // would re-notify every student the cancelling route already told.
+        // Either cause fails loud — a warn and a skip — rather than silently
+        // cancelling a class this loop should not have: cancelling a
+        // completed one would strip a class that already has Payment rows and
+        // students who have been asked to pay.
         //
         // Skipping the CANCEL is the right handling: a completed class is one
         // erasure deliberately leaves standing (see this function's
