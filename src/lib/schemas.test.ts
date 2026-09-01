@@ -17,6 +17,7 @@ import {
   isSafeRelativePath,
   MAX_CLASS_SIZE,
   requireNormalised,
+  pageSlugField,
 } from './schemas';
 import type { NoneOf } from './type-pins';
 
@@ -360,6 +361,22 @@ describe('updateTeacherSchema.pageSlug', () => {
   });
 });
 
+describe('pageSlugField', () => {
+  it('accepts lowercase alphanumeric with hyphens', () => {
+    expect(pageSlugField.parse('anna-devries')).toBe('anna-devries');
+  });
+
+  it('rejects uppercase and spaces', () => {
+    expect(() => pageSlugField.parse('Anna DeVries')).toThrow();
+  });
+
+  // 'signup' is new here: a static /signup route shadows any teacher who
+  // claimed it, because a static segment beats the [slug] dynamic one.
+  it.each(['signup', 'login', 'schedule', 'api'])('rejects the reserved slug %s', (slug) => {
+    expect(() => pageSlugField.parse(slug)).toThrow('This slug is reserved');
+  });
+});
+
 /**
  * Field names the server owns. A schema declaring one of these is saying a
  * client may set that column — which is occasionally right and usually a
@@ -508,6 +525,13 @@ const EXPECTED: Record<string, readonly string[]> = {
   updateTeacherSchema: ['photoUrl'],
 };
 
+// Exports that are ZodType but not ZodObject — a single field's validator,
+// shared so the client runs the same rule the server does. No top-level keys
+// to hide a server-owned name behind, so the loop below skips them by name
+// instead of by shape: a schema that starts here and gains an object shape
+// later must be removed from this set for the loop to see it again.
+const FIELD_VALIDATOR_EXPORTS = new Set(['pageSlugField']);
+
 describe('server-owned fields', () => {
   // The register is only as good as the list it walks, and the exact-equality
   // assertion below cannot see a name that is gone: several of these appear in
@@ -563,6 +587,7 @@ describe('server-owned fields', () => {
       // a column anywhere; the measurement is a record of what the blindness
       // cost, not a claim about today's register.)
       if (!(schema instanceof z.ZodType)) continue;
+      if (FIELD_VALIDATOR_EXPORTS.has(name)) continue;
       const shape = (schema as { shape?: Record<string, unknown> }).shape;
       expect(
         shape,
@@ -612,13 +637,14 @@ describe('email fields normalise', () => {
     emailBearing.push(name);
   }
 
-  it('covers exactly the six schemas that carry an address', () => {
+  it('covers exactly the schemas that carry an address', () => {
     expect([...emailBearing].sort()).toEqual([
       'createInvitationSchema',
       'createTeacherSchema',
       'magicLinkSendSchema',
       'passkeyAuthOptionsSchema',
       'studentSignupSchema',
+      'teacherSignupSchema',
       'updateInvitationSchema',
     ]);
   });

@@ -100,6 +100,23 @@ enum InvitationStatus {
   declined
 }
 
+/// Steps a teacher may dismiss. Required steps (room, class) are absent
+/// on purpose: "skip a required step" must not be expressible.
+enum OnboardingStep {
+  profile
+  bank
+  share
+}
+
+/// What a MagicLinkToken authorises. Delivery differs by member —
+/// sign_in and teacher_signup are emailed, teacher_profile_pending is
+/// issued at verification and held in an httpOnly cookie.
+enum MagicLinkPurpose {
+  sign_in
+  teacher_signup
+  teacher_profile_pending
+}
+
 // ============================================================================
 // PEOPLE
 // ============================================================================
@@ -122,26 +139,27 @@ model Account {
 }
 
 model Teacher {
-  id                 String         @id @default(uuid())
-  accountId          String         @unique
+  id                 String           @id @default(uuid())
+  accountId          String           @unique
   firstName          String
   lastName           String
-  email              String         @unique
+  email              String           @unique
   photoUrl           String?
-  bio                String         @db.VarChar(250)
-  pageSlug           String         @unique
+  bio                String           @db.VarChar(250)
+  pageSlug           String           @unique
   customDomain       String?
-  defaultCurrency    String         @default("EUR")
-  defaultTimezone    String         @default("Europe/Amsterdam")
-  defaultReminder    ReminderPref   @default(morning_of)
-  paymentLevel       PaymentLevel   @default(LEVEL_1)
+  defaultCurrency    String           @default("EUR")
+  defaultTimezone    String           @default("Europe/Amsterdam")
+  defaultReminder    ReminderPref     @default(morning_of)
+  skippedOnboarding  OnboardingStep[] @default([])
+  paymentLevel       PaymentLevel     @default(LEVEL_1)
   bankIban           String?
   bankAccountName    String?
   processorType      ProcessorType?
   processorAccountId String?
   deletedAt          DateTime?
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 
   account         Account          @relation(fields: [accountId], references: [id])
   teacherRooms    TeacherRoom[]
@@ -994,12 +1012,13 @@ model Session {
 }
 
 model MagicLinkToken {
-  id         String   @id @default(uuid())
-  tokenHash  String   @unique
+  id         String           @id @default(uuid())
+  tokenHash  String           @unique
   email      String
   redirectTo String?
+  purpose    MagicLinkPurpose @default(sign_in)
   expiresAt  DateTime
-  createdAt  DateTime @default(now())
+  createdAt  DateTime         @default(now())
 }
 
 model PasskeyCredential {

@@ -153,22 +153,54 @@ export const passkeyAuthVerifySchema = z.object({
 // TEACHERS
 // ============================================================================
 
-// App routes the public teacher page must never shadow.
+// App routes the public teacher page must never shadow. A static segment
+// beats the `[slug]` dynamic one, so anything listed here would silently
+// hide a teacher who had claimed it.
 const RESERVED_SLUGS = new Set([
-  'login', 'verify', 'bookings', 'settings', 'schedule', 'students', 'inbox',
-  'class', 'studio-class', 'api', 'health', 'admin', 'account', 'updates',
+  'login', 'verify', 'signup', 'bookings', 'settings', 'schedule', 'students',
+  'inbox', 'class', 'studio-class', 'api', 'health', 'admin', 'account', 'updates',
 ]);
+
+/**
+ * The public page address, `fair.yoga/<pageSlug>`.
+ *
+ * Exported because the signup form runs it in the browser: one definition
+ * means the field cannot accept something the route then rejects.
+ */
+export const pageSlugField = z
+  .string()
+  .min(1)
+  .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens')
+  .refine((s) => !RESERVED_SLUGS.has(s), 'This slug is reserved');
+
+export const teacherSignupSchema = z.object({ email: emailField }).strict();
+
+// #258: every teacher was hardcoded to Europe/Amsterdam and never asked.
+// This is a correctness input, not a display preference — it decides the
+// schedule window, both #249 past-start guards, auto-cancel, the completion
+// sweep and the reporting cutoff. Optional here so a browser that cannot
+// report one still signs up.
+const detectedTimezoneField = z.string().refine(isValidTimeZone, 'Unknown timezone');
+
+/**
+ * Creates the teacher profile. No `email` field: it comes from the consumed
+ * signup ticket or the live session, never from the body — the address must
+ * be one the caller has proved they control.
+ */
+export const teacherProfileSchema = z.object({
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+  bio: z.string().max(250),
+  pageSlug: pageSlugField,
+  defaultTimezone: detectedTimezoneField.optional(),
+}).strict();
 
 export const createTeacherSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   email: emailField,
   bio: z.string().max(250),
-  pageSlug: z
-    .string()
-    .min(1)
-    .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens')
-    .refine((s) => !RESERVED_SLUGS.has(s), 'This slug is reserved'),
+  pageSlug: pageSlugField,
 });
 
 export const updateTeacherSchema = z.object({
@@ -176,12 +208,7 @@ export const updateTeacherSchema = z.object({
   lastName: z.string().min(1).optional(),
   photoUrl: z.string().url().nullable().optional(),
   bio: z.string().max(250).optional(),
-  pageSlug: z
-    .string()
-    .min(1)
-    .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens')
-    .refine((s) => !RESERVED_SLUGS.has(s), 'This slug is reserved')
-    .optional(),
+  pageSlug: pageSlugField.optional(),
   defaultCurrency: z.string().optional(),
   defaultTimezone: z.string().refine(isValidTimeZone, 'Unknown timezone').optional(),
   defaultReminder: z.enum(['morning_of', 'evening_before', 'one_hour_before']).optional(),
