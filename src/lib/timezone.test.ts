@@ -57,13 +57,44 @@ describe('startOfLocalDay', () => {
     );
   });
 
-  it('warns when falling back so the bad zone is observable', () => {
-    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+  /**
+   * `error`, not `warn`. On a pino-to-stdout single-VPS install the severity
+   * is the only signal available, and a stored zone that stopped resolving
+   * silently degrades every teacher-facing calendar boundary to UTC (#145).
+   */
+  it('logs at error level when falling back, so the bad zone is findable', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     startOfLocalDay(new Date('2026-07-26T13:45:00Z'), 'Not/AZone');
-    expect(warn).toHaveBeenCalledWith(
+    expect(error).toHaveBeenCalledWith(
       expect.objectContaining({ timeZone: 'Not/AZone' }),
       expect.stringContaining('falling back to UTC'),
     );
+  });
+
+  /**
+   * `formatToParts` throws `RangeError: Invalid time value` on an Invalid
+   * Date, so before #145 an unreadable INSTANT arrived at the catch and was
+   * logged as "invalid timezone" naming a zone that was perfectly fine. Same
+   * defect `classStartInstant` fixed for itself; this is the assertion that
+   * keeps it fixed here.
+   */
+  it('blames the instant, not the timezone, when the instant is unreadable', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    startOfLocalDay(new Date(NaN), 'Europe/Amsterdam');
+    expect(error).toHaveBeenCalledTimes(1);
+    const [, msg] = error.mock.calls[0] as [unknown, string];
+    expect(msg).toContain('unreadable instant');
+    expect(msg).not.toContain('invalid timezone');
+  });
+
+  /**
+   * Pins today's return value across the attribution fix. The old path reached
+   * the catch and returned `new Date(NaN)` with `setUTCHours` applied — still
+   * NaN. The early return must produce the same thing, so no caller changes.
+   */
+  it('still returns an Invalid Date for an unreadable instant', () => {
+    vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    expect(Number.isNaN(startOfLocalDay(new Date(NaN), 'Europe/Amsterdam').getTime())).toBe(true);
   });
 });
 
@@ -117,12 +148,21 @@ describe('classStartInstant', () => {
     expect(start.toISOString()).toBe('2026-07-20T18:00:00.000Z');
   });
 
-  it('warns when falling back to UTC so the bad zone is observable', () => {
-    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+  it('logs at error level when falling back to UTC so the bad zone is observable', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     classStartInstant({ date: day('2026-07-20'), startTime: hhmmToTime('18:00') }, 'Not/AZone');
-    expect(warn).toHaveBeenCalledWith(
+    expect(error).toHaveBeenCalledWith(
       expect.objectContaining({ timeZone: 'Not/AZone' }),
       expect.stringContaining('falling back to UTC'),
+    );
+  });
+
+  it('logs at error level when falling back to UTC interpretation (#145)', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    classStartInstant({ date: day('2026-07-26'), startTime: hhmmToTime('09:00') }, 'Not/AZone');
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({ timeZone: 'Not/AZone' }),
+      expect.stringContaining('falling back to UTC interpretation'),
     );
   });
 

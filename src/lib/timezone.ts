@@ -76,9 +76,24 @@ function timeZoneOffsetMs(instant: Date, timeZone: string): number {
  * #86's archive boundary, where one spares a class and the other deletes it.
  *
  * Unknown timezones fall back to the UTC calendar date rather than throwing,
- * matching `classStartInstant`.
+ * matching `classStartInstant`, and log at `error` — the fallback is a
+ * wrong-but-bounded answer that nothing else would report (#145). An
+ * unreadable instant is a different fault and says so.
  */
 export function startOfLocalDay(instant: Date, timeZone: string): Date {
+  // CHECKED BEFORE THE `try`, for the reason `classStartInstant` sets out at
+  // length: `formatToParts` throws a RangeError on an Invalid Date, so an
+  // unreadable instant would otherwise arrive at the catch below and be logged
+  // as an invalid timezone, naming a zone that was never the problem.
+  //
+  // Returns the same Invalid Date the catch already produced for this input —
+  // `setUTCHours` on a NaN date leaves it NaN — so no caller's behaviour
+  // changes. What changes is that the cause is greppable.
+  if (Number.isNaN(instant.getTime())) {
+    log.error({ timeZone }, 'unreadable instant, cannot compute a local calendar date');
+    return new Date(NaN);
+  }
+
   try {
     const dtf = new Intl.DateTimeFormat('en-US', {
       timeZone,
@@ -94,7 +109,7 @@ export function startOfLocalDay(instant: Date, timeZone: string): Date {
 
     return new Date(Date.UTC(parts.year!, parts.month! - 1, parts.day!));
   } catch {
-    log.warn({ timeZone }, 'invalid timezone, falling back to UTC calendar date');
+    log.error({ timeZone }, 'invalid timezone, falling back to UTC calendar date');
     const utc = new Date(instant);
     utc.setUTCHours(0, 0, 0, 0);
     return utc;
@@ -182,7 +197,8 @@ export function mondayOf(date: Date): WeekKey {
  * cannot join the swap.
  *
  * Unknown timezones fall back to UTC interpretation rather than throwing —
- * a wrong-but-bounded answer beats a crashed cron run.
+ * a wrong-but-bounded answer beats a crashed cron run — and log at `error`,
+ * because nothing else reports that the answer is the wrong one (#145).
  */
 export function classStartInstant(
   cls: { date: Date; startTime: Date },
@@ -239,7 +255,7 @@ export function classStartInstant(
     ts = wallUtc - timeZoneOffsetMs(new Date(ts), timeZone);
     return new Date(ts);
   } catch {
-    log.warn({ timeZone }, 'invalid timezone, falling back to UTC interpretation');
+    log.error({ timeZone }, 'invalid timezone, falling back to UTC interpretation');
     return new Date(wallUtc);
   }
 }
