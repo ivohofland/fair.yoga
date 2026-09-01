@@ -6,7 +6,7 @@ import { PaymentChecklist, type PaymentItem } from './payment-checklist';
  * #58 review. The row's status used to read
  * `paymentState[item.paymentId] ?? 'pending'`, fabricating a status while the
  * item's own — the server's, right there in the props — was discarded.
- * `outstanding-payment-row.tsx:55` had it right with `?? status`; these two
+ * `outstanding-payment-row.tsx`'s `?? status` fallback had it right; these two
  * surfaces now match it.
  *
  * The fallback is not decorative and not unreachable, which is the whole point

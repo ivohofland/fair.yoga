@@ -52,7 +52,7 @@ describe('studioClassDeletability', () => {
    * The predicate cannot ask "has this class started", because the class's
    * `startTime` is a STAMP and the generator filters on the TEMPLATE's current
    * one (`generateEntriesForRule`'s `start > startDate` filter,
-   * `entry-generation.ts:551`). Editing a template moves the
+   * `entry-generation.ts`). Editing a template moves the
    * template's and leaves the class's untouched — "a template is a stamp, not a
    * live link" — so the two disagree by design, and the start-instant reading
    * answered from the wrong one.
@@ -106,7 +106,7 @@ describe('studioClassDeletability', () => {
    * BOTH DIRECTIONS, DELIBERATELY. A single zone proves nothing: run only the
    * east-of-UTC case and a UTC-naive implementation still fails it, but run
    * only a case where local and UTC agree and every implementation passes.
-   * `prisma/seed.ts:622-625` records that exact failure for the class family.
+   * `prisma/seed.ts`'s `daysFromNow` docblock records that exact failure for the class family.
    *
    * Both instants below are chosen so the teacher's calendar date DISAGREES
    * with UTC's — comparing `sc.date` against `new Date()` gets each one wrong,

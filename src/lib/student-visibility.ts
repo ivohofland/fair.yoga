@@ -175,9 +175,8 @@ void _projectionCarriesNoRawIdentity;
  * create the row — the `prisma.student.create` call in
  * `api/auth/student-signup/route.ts`'s `POST` handler and the one in
  * `api/account/student-profile/route.ts`'s `POST` handler — and both set
- * `claimedAt` in the creating statement. There is therefore no unclaimed
- * `Student` for any
- * `TeacherStudent` writer to link, however that writer gets its `studentId`.
+ * `claimedAt` in the creating statement. There is therefore no unclaimed `Student`
+ * for any `TeacherStudent` writer to link, however that writer gets its `studentId`.
  * There is no production deployment either, so no legacy unclaimed rows exist
  * anywhere for this branch to expose.
  *

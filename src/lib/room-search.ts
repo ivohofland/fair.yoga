@@ -40,8 +40,8 @@ export interface RoomResult extends RoomIdentity {
  * failure. Returning the distinction instead of throwing it means a caller
  * cannot collapse the two by accident — it has to read `reason` to compile.
  *
- * The same principle for a write, with the cost it exacted there, is at
- * src/lib/use-payment-actions.ts:51.
+ * The same principle for a write, with the cost it exacted there, is in the
+ * `undo` function in `src/lib/use-payment-actions.ts`.
  */
 export type RoomSearchOutcome =
   | { ok: true; rooms: RoomResult[] }
@@ -56,7 +56,7 @@ export type RoomSearchOutcome =
  *
  * The precedent this module cites for returning rather than throwing (the
  * `undo` function's `readUndoStatus` call in `src/lib/use-payment-actions.ts`)
- * also validates rather than asserts — see `readUndoStatus` in
+ * also validates rather than asserts — see its definition in
  * `src/lib/payment-status.ts`. This is the other half of it.
  *
  * Deliberately shallow: it checks the shape the callers actually consume —

@@ -378,8 +378,8 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     // `finally`, the convention this file records at its own `#174` fixture
     // and cites from `gdpr.test.ts`'s `cleanupStudentWaitingInClass` docblock.
-    // #200 added four assertions ahead of
-    // the cleanup, so there are now five ways to skip it — and this project's
+    // #200 added four assertions ahead of the cleanup, so there are now five
+    // ways to skip it — and this project's
     // protocol guarantees repeated deliberately-failing runs of exactly this
     // test. The leak is inert (the class is already `cancelled`, so no sweep
     // matches it, and `afterAll` reaps both rows), but inert-by-luck is not

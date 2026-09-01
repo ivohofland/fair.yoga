@@ -1641,8 +1641,8 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
    * commented out every time.
    *
    * The race that DOES still reach this gap: `PUT /api/registrations/[id]`
-   * (`src/app/api/registrations/[id]/route.ts:98`) writes `registration.
-   * update({ data: { status } })` for `status ∈ {attended, no_show,
+   * (`src/app/api/registrations/[id]/route.ts`) writes `registration.
+   * updateMany({ data: { status } })` for `status ∈ {attended, no_show,
    * late_cancel}` — all three in `CHARGED_STATUSES` — touching only the
    * `status` column, never the `classId` foreign key. No FK write means no
    * `FOR KEY SHARE` on the parent `Class` row, so this one still races the

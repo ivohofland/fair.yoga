@@ -31,7 +31,7 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
       <div className="flex flex-col">
         {items.map((item) => {
           // `?? item.status`, not `?? 'pending'` — same reasoning as
-          // `outstanding-payment-row.tsx:55`: the item's own status is right
+          // `outstanding-payment-row.tsx`'s `?? status` fallback: the item's own status is right
           // here, and fabricating 'pending' would render a paid or overdue
           // payment as plain unpaid (#58 review).
           const status = paymentState[item.paymentId] ?? item.status;

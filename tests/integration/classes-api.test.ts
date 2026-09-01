@@ -222,7 +222,7 @@ beforeAll(async () => {
     );
   }
 
-  // `open`, not the file's `draft` default: `registrations/route.ts:126` sets
+  // `open`, not the file's `draft` default: `registrations/route.ts`'s
   // `allowedStatuses = isTeacher ? ['open','in_progress'] : ['open']`, so a
   // student booking a draft class gets a ClassStatusError. Registered over HTTP
   // by the same student the lock fixture uses — `Registration` is unique on
@@ -596,8 +596,8 @@ describe('POST /api/classes/[id]/transition', () => {
     // technique: a second client holds the `Class` row `FOR UPDATE` so the
     // handler's CAS parks, and the rewrite lands while it is parked. Copy
     // `announcements-api.test.ts` (~`:240-290`), which does this on a `Class`
-    // row; see also `payments-api.test.ts:361`, `registrations-api.test.ts:1130`
-    // and `account-api.test.ts:619`. It appears in eight integration files.
+    // row; see also `payments-api.test.ts:361`, `registrations-api.test.ts:700`
+    // and `account-api.test.ts:615`. It appears in eight integration files.
     const holder = new PrismaClient();
     let release!: () => void;
     let locked!: () => void;
