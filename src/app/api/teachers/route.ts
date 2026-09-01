@@ -1,6 +1,9 @@
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { log } from '@/lib/log';
 import { createTeacherSchema } from '@/lib/schemas';
 import { checkIpRateLimit, clientIp } from '@/lib/rate-limit';
 
@@ -38,18 +41,48 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError('Page slug already in use', 409, 'SLUG_TAKEN');
   }
 
-  const teacher = await prisma.teacher.create({
-    data: {
-      firstName,
-      lastName,
-      email,
-      bio,
-      pageSlug,
-      defaultCurrency: 'EUR',
-      defaultTimezone: 'Europe/Amsterdam',
-      account: { create: { email } },
-    },
-  });
-
-  return respondOk(teacher, 201);
+  // Both pre-checks above are plain reads, so a concurrent signup passes them
+  // and loses here. Answering with the pre-check's own code is what keeps the
+  // two paths indistinguishable — and it matters more here than elsewhere:
+  // the settings form renders an inline error against the offending field, so
+  // a code-less 409 says something is taken without saying which (#161).
+  //
+  // Three keys are reachable. `Account.email` and `Teacher.email` both report
+  // `['email']` and are deliberately not told apart: they mean the same thing
+  // to the caller, and the `Account` model's header comment records that they
+  // cannot disagree — the profile email is a denormalized copy set at link
+  // time and there is no email-change flow. `Teacher.accountId` cannot
+  // collide; the nested create mints a fresh account.
+  try {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName,
+        lastName,
+        email,
+        bio,
+        pageSlug,
+        defaultCurrency: 'EUR',
+        defaultTimezone: 'Europe/Amsterdam',
+        account: { create: { email } },
+      },
+    });
+    return respondOk(teacher, 201);
+  } catch (err) {
+    if (isUniqueConflictOn(err, ['email'])) {
+      return respondError('Email already in use', 409, 'EMAIL_TAKEN');
+    }
+    if (isUniqueConflictOn(err, ['pageSlug'])) {
+      return respondError('Page slug already in use', 409, 'SLUG_TAKEN');
+    }
+    // Not rethrown as a P2002: `classifyApiError` answers any P2002 with a
+    // code-less 409, which is the defect this catch exists to remove.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      log.error(
+        { err, rawTarget: err.meta?.target },
+        'teacher signup hit a unique constraint that is neither the email nor the slug key',
+      );
+      throw new Error('teacher signup: unrecognised unique constraint');
+    }
+    throw err;
+  }
 });

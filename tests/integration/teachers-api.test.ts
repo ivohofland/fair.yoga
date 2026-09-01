@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession, freshIp } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -140,5 +140,122 @@ describe('PUT /api/teachers/[id]', () => {
       headers: cookie(teacherToken),
     });
     expect(res.status).toBe(403);
+  });
+});
+
+/**
+ * Both pre-checks at `:31` and `:36` are plain reads, so a concurrent signup
+ * passes them and loses on the create. Unhandled, either collision answers
+ * 409 with NO `code`, collapsing `EMAIL_TAKEN` and `SLUG_TAKEN` into one
+ * indistinguishable response — and the settings form points at a field it
+ * can no longer identify (#161).
+ *
+ * Three unique keys are reachable here, not two: `Account.email` and
+ * `Teacher.email` both report `meta.target` `['email']`, and one predicate
+ * covers both because they mean the same thing to the caller. See the spec.
+ *
+ * A fresh IP per request — this route is rate-limited to 3/hour per IP.
+ */
+describe('POST /api/teachers keeps its conflict codes apart under a race (#161)', () => {
+  const raceEmail = `race-teacher-${suffix}@test.local`;
+  const raceSlug = `race-slug-${suffix}`;
+  const holderSlugEmail = `race-holder-${suffix}@test.local`;
+
+  afterAll(async () => {
+    await prisma.teacher.deleteMany({
+      where: { email: { in: [raceEmail, holderSlugEmail] } },
+    });
+    await prisma.account.deleteMany({
+      where: { email: { in: [raceEmail, holderSlugEmail, `race-slug-req-${suffix}@test.local`] } },
+    });
+  });
+
+  const signup = (body: Record<string, unknown>) =>
+    fetch(`${BASE_URL}/api/teachers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify(body),
+    });
+
+  it('returns 409 EMAIL_TAKEN when the create loses on the email key', async () => {
+    const holder = new PrismaClient();
+
+    const holding = holder.$transaction(async (tx) => {
+      await tx.account.create({ data: { email: raceEmail } });
+      // Hold this transaction open for 2+ seconds so the request can race it
+      await new Promise((r) => setTimeout(r, 2500));
+    }, { timeout: 20_000 });
+
+    // Give the holder's transaction time to reach the database and acquire locks
+    await new Promise((r) => setTimeout(r, 100));
+
+    const pending = signup({
+      firstName: 'Race',
+      lastName: 'Email',
+      email: raceEmail,
+      pageSlug: `race-email-slug-${suffix}`,
+    });
+
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(settled).toBe(false);
+
+    await holding;
+    const res = await pending;
+    await holder.$disconnect();
+
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code?: string; message: string } };
+    expect(body.error.code).toBe('EMAIL_TAKEN');
+    expect(body.error.message).toBe('Email already in use');
+  });
+
+  it('returns 409 SLUG_TAKEN when the create loses on the page slug key', async () => {
+    const holder = new PrismaClient();
+
+    // A whole Teacher, not a bare row: `Teacher.accountId` is non-null, so the
+    // holder must mint its own account. Its email differs from the request's,
+    // so `pageSlug` is the only key the request can lose on.
+    const holding = holder.$transaction(async (tx) => {
+      await tx.teacher.create({
+        data: {
+          firstName: 'Holder',
+          lastName: 'Slug',
+          email: holderSlugEmail,
+          bio: 'Holder bio',
+          pageSlug: raceSlug,
+          defaultCurrency: 'EUR',
+          defaultTimezone: 'Europe/Amsterdam',
+          account: { create: { email: holderSlugEmail } },
+        },
+      });
+      // Hold this transaction open for 2+ seconds so the request can race it
+      await new Promise((r) => setTimeout(r, 2500));
+    }, { timeout: 20_000 });
+
+    // Give the holder's transaction time to reach the database and acquire locks
+    await new Promise((r) => setTimeout(r, 100));
+
+    const pending = signup({
+      firstName: 'Race',
+      lastName: 'Slug',
+      email: `race-slug-req-${suffix}@test.local`,
+      pageSlug: raceSlug,
+    });
+
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(settled).toBe(false);
+
+    await holding;
+    const res = await pending;
+    await holder.$disconnect();
+
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code?: string; message: string } };
+    expect(body.error.code).toBe('SLUG_TAKEN');
+    expect(body.error.message).toBe('Page slug already in use');
   });
 });
