@@ -14,6 +14,8 @@ import { createNotification } from './notifications';
 import { sendInvitationEmail } from '@/lib/email';
 import { isRecordNotFound } from '@/lib/api-errors';
 import { requireNormalised } from '@/lib/schemas';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { log } from '@/lib/log';
 
 export type InviteRefusal =
   | 'ALREADY_INVITED'
@@ -207,11 +209,39 @@ export async function inviteContact(
     if (revived === null) return { ok: false, reason: 'CONTACT_CHANGED' };
     invitationId = revived;
   } else {
-    const created = await db.invitation.create({
-      data: { teacherId, email, firstName, lastName },
-      select: { id: true },
-    });
-    invitationId = created.id;
+    // The `findUnique` at the top of this function is a plain read, so a
+    // concurrent invite of the same address passes it and one of the two
+    // loses here. `ALREADY_INVITED` is exact rather than a best guess: this
+    // is the only `Invitation` INSERT in this module — every other write to
+    // that table is an `updateMany` against a row that already exists — so
+    // the row that won was inserted by another `inviteContact` and carries
+    // the schema default `pending`, which is what this refusal names. Were
+    // any other writer able to INSERT, the winner could be a `declined`
+    // tombstone and this answer would be wrong.
+    //
+    // `PUT /api/invitations/[id]` already answers this same code for this
+    // same constraint.
+    try {
+      const created = await db.invitation.create({
+        data: { teacherId, email, firstName, lastName },
+        select: { id: true },
+      });
+      invitationId = created.id;
+    } catch (err) {
+      if (isUniqueConflictOn(err, ['teacherId', 'email'])) {
+        return { ok: false, reason: 'ALREADY_INVITED' };
+      }
+      // Not rethrown as a P2002: `classifyApiError` answers any P2002 with a
+      // code-less 409, which is the defect this catch exists to remove.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        log.error(
+          { err, rawTarget: err.meta?.target },
+          'invitation create hit a unique constraint that is not the (teacher, email) key',
+        );
+        throw new Error('invitation create: unrecognised unique constraint');
+      }
+      throw err;
+    }
   }
 
   // A block makes this invitation undeliverable, not un-creatable. The row

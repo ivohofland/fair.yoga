@@ -1397,3 +1397,55 @@ describe('POST /api/students — response disclosure (#162)', () => {
     expect(res.status).toBe(429);
   });
 });
+
+describe('POST /api/students answers a raced invite with ALREADY_INVITED (#161)', () => {
+  const raceEmail = `race-invite-${suffix}@test.local`;
+
+  afterAll(async () => {
+    await prisma.invitation.deleteMany({ where: { email: raceEmail } });
+  });
+
+  it('returns 409 ALREADY_INVITED when the create loses to a concurrent invite', async () => {
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let holding!: Promise<unknown>;
+    const released = new Promise<void>((r) => { release = r; });
+
+    await new Promise<void>((parked, failed) => {
+      holding = holder.$transaction(async (tx) => {
+        await tx.invitation.create({
+          data: { teacherId, email: raceEmail, firstName: 'Holder', lastName: 'Invite' },
+        });
+        parked();
+        await released;
+      }, { timeout: 20_000 }).catch((err: unknown) => { failed(err); throw err; });
+    });
+
+    const pending = fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'Race', lastName: 'Invite', email: raceEmail }),
+    });
+
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(settled).toBe(false);
+
+    release();
+    await holding;
+    const res = await pending;
+    await holder.$disconnect();
+
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code?: string; message: string } };
+    expect(body.error.code).toBe('ALREADY_INVITED');
+    expect(body.error.message).toBe(
+      'You have already invited this person — remove the contact to invite them again.',
+    );
+
+    // One invitation, and it is the holder's.
+    const rows = await prisma.invitation.findMany({ where: { email: raceEmail } });
+    expect(rows.map((r) => r.firstName)).toEqual(['Holder']);
+  });
+});
