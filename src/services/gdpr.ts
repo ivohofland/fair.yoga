@@ -1438,6 +1438,9 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
   // #112), and `row-deleted` can only be `archiveOrUnarchiveTemplate` (which
   // tells them too). Add a fourth way for a class to leave
   // `draft|open|in_progress` and that argument is what breaks.
+  //
+  // There is no blanket try/catch around this loop: every statement added to
+  // it must guard itself individually, the same way the two reads below do.
   for (const classId of skippedClassIds) {
     // `'unread'` kept distinct from a missing row and from a null
     // `cancelledAt`: conflating "we could not look" with "it was gone", or
