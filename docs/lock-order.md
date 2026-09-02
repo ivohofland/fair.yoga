@@ -1493,6 +1493,65 @@ which carries `err`) and this one, which carries the observed row instead. A
 steady trickle here with no concurrent writer means the CAS predicate and the
 classification beneath it have drifted apart.
 
+## A diagnostic read inside an interactive transaction cannot be guarded (issue #242)
+
+`.catch()` on a statement inside `db.$transaction(async (tx) => …)` does not
+protect the transaction. Postgres aborts the whole transaction at the first
+statement error, and Prisma issues no per-statement `SAVEPOINT`, so every
+later statement raises `25P02 current transaction is aborted, commands ignored
+until end of transaction block` until rollback. The guard swallows the cause
+and the transaction dies anyway, one statement later, naming a failure nowhere
+near the one that caused it.
+
+Measured 2026-09-02 against `ethical_yoga_test` — a `SELECT 1/0` (`22012`)
+caught with `.catch()`, followed by a valid read in the same transaction:
+
+```
+raw follow-up:   PrismaClientKnownRequestError P2010 — Raw query failed.
+                 Code: `25P02`
+model follow-up: PrismaClientUnknownRequestError — PostgresError
+                 { code: "25P02", … }
+control:         OK
+```
+
+`rule-lifecycle.test.ts`'s "swallows a failure from the shared delete" case
+stages the same behaviour as a test fixture; re-derive it with:
+
+```sh
+git log -S'Every later statement raises' --oneline -- src/services/rule-lifecycle.test.ts
+```
+
+**Why the guard is worse than no guard.** `TRANSIENT_SQLSTATES` and
+`TRANSIENT_PRISMA_CODES` (`src/lib/api-errors.ts`) list neither `25P02` nor
+anything it arrives as, so `isTransientDbError` answers `false` for it while it
+answers `true` for the `55P03` the guarded statement would have thrown.
+`erasureFailure` (`src/app/api/account/route.ts`) reads that boolean: a
+teacher whose erasure lost a lock race is told to wait a moment and press
+Delete again (503 `ERASURE_BUSY`); with the guard in place the same teacher is
+told that pressing Delete again will not help and to contact support (500
+`ERASURE_FAILED`).
+
+**So the fix for a diagnostic that must not fail its operation is placement,
+not `.catch()`.** `deleteTeacherAccount` (`src/services/gdpr.ts`) collects the
+class ids whose cancel CAS matched nothing, returns them from the transaction,
+and reads their cause after the commit — where `db` is not `tx`, a failed read
+costs only the field it fills, and `.catch()` means what it says. Returning the
+list rather than capturing a mutable one is load-bearing: the value exists only
+if the transaction committed. `deleteStudentAccount` in the same file has the
+same shape for `freedClassIds`.
+
+A `.catch()` on the whole `$transaction(…)` promise is a different thing and is
+fine — `acceptInvitation` and `unlinkTeacher` (`src/services/invitations.ts`)
+both do it. The rule is about a statement inside the callback. No site in
+`src/` breaks it today; re-derive with:
+
+```sh
+grep -rn "\.catch(" src --include="*.ts" --include="*.tsx" | grep -v "\.test\."
+```
+
+Every hit must be on `db`/`prisma`, on a `$transaction(…)` promise, or outside
+the database entirely.
+
 ## Known conformance
 
 - **`unlinkTeacher`** (`src/services/invitations.ts`) — `Class`/`WaitlistEntry`
