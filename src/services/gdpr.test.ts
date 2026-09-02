@@ -1438,7 +1438,13 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     // `deletedAt`. A second erasure of an already-erased teacher is refused
     // by design (`AlreadyErasedError`, see this function's tail) — a
     // different, unrelated outcome from the one this test exercises — so
-    // this restores the row to live before erasing it again.
+    // this restores the row to live before erasing it again. Restoring
+    // `email` off its `@deleted.invalid` value is load-bearing too, and for
+    // a different reason: the `teacherEmailWhenDiagnosticRan` assertion
+    // below only proves the read ran post-commit because it starts from a
+    // non-`@deleted.invalid` address — left at the sibling test's stale
+    // `deleted-<id>@deleted.invalid`, that assertion would match trivially
+    // even if the diagnostic read ran pre-commit, inside the transaction.
     await prisma.teacher.update({
       where: { id: teacherId },
       data: {
