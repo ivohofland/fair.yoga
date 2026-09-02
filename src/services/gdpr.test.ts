@@ -2360,6 +2360,54 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       await cleanup(fixture);
     }
   }, 30_000);
+
+  it('a diagnostic-loop failure after a lost handleSpotFreed race does not fail the already-committed erasure', async () => {
+    const fixture = await makeStudentWithFreedSpot();
+    try {
+      // Fails `handleSpotFreed`'s own FIRST statement (`waitlist.ts`:
+      // `db.class.findUnique({ where: { id }, include: { calendarEntry:
+      // { include: { teacher: ... } } } })`) without touching
+      // `deleteStudentAccount`'s own reads of the same class, which use
+      // `select`, never `include`, for `Class`. Matched on both `where.id`
+      // and the presence of `include` so this can't accidentally catch a
+      // read this erasure's own transaction needs to succeed.
+      const failing = prisma.$extends({
+        query: {
+          class: {
+            async findUnique({ args, query }) {
+              const where = args.where as { id?: string } | undefined;
+              if (where?.id !== fixture.classId || !('include' in args)) return query(args);
+              throw new Error('injected: handleSpotFreed read failed (code: "55P03")');
+            },
+          },
+        },
+      }) as unknown as PrismaClient;
+
+      // `log.warn` is the one unguarded statement left in the diagnostic
+      // block after this fix — the waitlist-count read already guards
+      // itself with `.catch()`. Shaping the injected error as transient
+      // (above) routes the middle catch to `log.warn`, not `log.error` —
+      // leaving `log.error` free for the backstop's own call to use for
+      // real, rather than colliding with the injected failure.
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {
+        throw new Error('injected: log.warn failed');
+      });
+      onTestFinished(() => warn.mockRestore());
+      const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+      onTestFinished(() => error.mockRestore());
+
+      await expect(deleteStudentAccount(failing, fixture.studentId)).resolves.toBeUndefined();
+
+      const student = await prisma.student.findUniqueOrThrow({ where: { id: fixture.studentId } });
+      expect(student.deletedAt).not.toBeNull();
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({ classId: fixture.classId }),
+        expect.stringContaining('spot-freed hook diagnostic failed unexpectedly'),
+      );
+    } finally {
+      await cleanup(fixture);
+    }
+  }, 15_000);
 });
 
 /**
