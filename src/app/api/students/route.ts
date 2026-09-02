@@ -44,12 +44,12 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     },
   });
 
-  const pageStudentIds = students.map((s) => s.id);
-  const overdueGroups = pageStudentIds.length
+  const studentIds = students.map((s) => s.id);
+  const overdueGroups = studentIds.length
     ? await prisma.registration.groupBy({
         by: ['studentId'],
         where: {
-          studentId: { in: pageStudentIds },
+          studentId: { in: studentIds },
           class: { calendarEntry: { teacherId: session.teacherId } },
           payment: { status: 'overdue' },
         },

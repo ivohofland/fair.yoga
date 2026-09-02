@@ -89,7 +89,14 @@ every share on the student's behalf because deleting the link alone does not
 stop the teacher reaching them. Until one of those two sites has run there is
 no row, and every read treats absence as maximum privacy
 (`privacy?.shareX ?? false`). One projection reads these flags for every
-teacher-facing surface: `src/lib/student-visibility.ts`.
+teacher-facing surface: `src/lib/student-visibility.ts`. No server-side
+predicate may filter (`where`) on a privacy-gated `Student` column —
+`firstName`, `lastName`, or `email` — because a match against a column the
+projection redacts is an enumeration oracle regardless of what the response
+body shows: a teacher can learn a withheld value from a hit/miss or a count
+even when it is never rendered. Found and fixed in #176, which replaced
+server-side student search with client-side filtering over the already-
+redacted response.
 
 ### Invitation (teacher → student contact, #166)
 

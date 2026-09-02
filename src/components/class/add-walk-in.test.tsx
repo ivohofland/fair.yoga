@@ -84,9 +84,11 @@ describe('AddWalkIn', () => {
    * The one behaviour in this task that is a genuine bug if missed: without
    * clearing `selected`, a teacher could narrow the list until their chosen
    * student was no longer visible and still submit them — adding someone the
-   * UI was no longer showing.
+   * UI was no longer showing. The component clears `selected` on every
+   * filter keystroke, not only when the selection would actually become
+   * hidden — maximally conservative, and trivially safe to verify here.
    */
-  it('clears the selection when a filter change hides the currently selected student', async () => {
+  it('clears the selection on any filter change, so a hidden selection can never be submitted', async () => {
     stubStudents([
       { id: 's1', displayName: 'Anna Bakker' },
       { id: 's2', displayName: 'Bram k.' },
