@@ -343,6 +343,93 @@ return { created: inserted.length, skipped }; // GenerationResult
 5. Redirect to dashboard
 ```
 
+### Unauthenticated API routes
+
+`find src/app/api -name route.ts` finds **62** routes. **8** carry no session
+guard; **5** of those are rate-limited (`magic-link/send`, `student-signup`,
+`teacher-signup`, `slug-available`, `passkey/authenticate/options`), leaving
+**3** with neither:
+
+| route | why that is correct |
+|---|---|
+| `health` | Public health check. |
+| `auth/magic-link/verify` | Token is `crypto.randomBytes(32)` — 256 bits, stored hashed, 15-minute TTL. Brute force is infeasible. |
+| `auth/passkey/authenticate/verify` | Gated on a one-time 5-minute challenge plus WebAuthn signature verification; `redirect` is `relativePath.optional()` in `passkeyAuthVerifySchema`. |
+
+Re-derive with:
+
+```sh
+find src/app/api -name route.ts | wc -l
+for f in $(find src/app/api -name route.ts | sort); do
+  ids=$(grep -ohE "require[A-Za-z]+|getSession[A-Za-z]*|CRON_SECRET|checkIpRateLimit|checkRateLimit|checkStudentWriteLimit" "$f" \
+        | sort -u | tr '\n' ' ')
+  printf "%-60s %s\n" "${f#src/app/api/}" "$ids"
+done
+```
+
+The loop prints one row per route and expects all of them to be read, rather
+than filtering to a count. A filtering grep gets this wrong:
+`notifications/stream` guards with `getSessionToken`, not `requireSession`, so a
+pattern listing only the `require*` helpers files it as unguarded.
+
+### Passkey authentication options
+
+`POST /api/auth/passkey/authenticate/options` never sends `allowCredentials`,
+and reads nothing at all from the request body.
+
+It used to accept an email, look up the account, and return that account's
+credential ids. The key was absent for an unknown address, an empty array for
+an account with no passkey, and a populated array otherwise — so an
+unauthenticated caller could read account existence, passkey count and the
+credential ids themselves off the response shape.
+
+Equalising the response would not have been enough. The lookup is a timing
+signal in its own right: one query for an unknown address, two for a known one.
+Deleting the input removes both channels and leaves an invariant a reviewer can
+check from the signature — no request-controlled value reaches the response.
+`generatePasskeyAuthenticationOptions` therefore takes no parameter rather than
+an unused optional one, so restoring the leak is a signature change.
+
+**The cost.** Without a credential list the authenticator cannot pre-select,
+so the ceremony needs a *discoverable* credential. Registration uses
+`residentKey: 'preferred'`, so platform authenticators (iCloud Keychain,
+Windows Hello, Android) are unaffected, while a hardware key whose resident
+slots are full produces a non-discoverable credential that can no longer sign
+in — that person falls back to the magic link, which is what the sign-in
+button's failure copy points at.
+
+**This population cannot be measured from our data.** Knowing whether a stored
+credential is discoverable needs the `credProps` extension at registration,
+which this codebase neither requests nor stores; `transports` is the only proxy
+(a row without `'internal'`). The decision rests on inference about
+authenticator behaviour, not measurement.
+
+### Passkey challenge store
+
+`src/lib/auth/passkey.ts` keeps WebAuthn challenges in memory, one bounded
+partition per `ChallengePurpose`: `registration` (1,000) and `authentication`
+(10,000).
+
+They are separate because their writers differ in trust. Registration is
+session-gated and keys by `accountId`; authentication is unauthenticated and
+keys by a server-generated random id. One shared map would let a flood on the
+ungated side evict the gated side's entries, and would let
+`authenticate/verify`'s caller-supplied `challengeId` reach a registration
+challenge — consuming a victim's in-flight one if their `accountId` were known.
+
+Sizing: roughly 200 B per entry (32 B key, 43 B base64url challenge, 8 B
+timestamp, ~120 B Map and object overhead), so both partitions full is about
+2.2 MB against the 2 GB VPS. `registration`'s ceiling is a backstop rather than
+a working limit — that partition holds at most one entry per account with a
+registration in flight.
+
+**Ordering invariant:** within a partition, iteration order is non-decreasing
+in `expiresAt`. It holds because the TTL is constant, `expiresAt` is never
+refreshed on read, and `storeChallenge` deletes a key before re-inserting it so
+a re-stored entry moves to the tail. Two things depend on it: cleanup walks
+from the head and stops at the first live entry (complete, not a sample), and
+the head is the correct eviction victim under capacity pressure.
+
 ### Session Management
 
 Sessions are stored in the database (not JWTs) so they can be revoked. Session cookie points to a session record with `expires_at`. Middleware checks session validity on every authenticated request.
