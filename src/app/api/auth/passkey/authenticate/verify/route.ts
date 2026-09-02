@@ -15,7 +15,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if ('error' in parsed) return parsed.error;
   const body = parsed.data;
 
-  const challenge = getAndDeleteChallenge(body.challengeId);
+  const challenge = getAndDeleteChallenge('authentication', body.challengeId);
   if (!challenge) {
     return respondError('Invalid or expired challenge', 400);
   }
