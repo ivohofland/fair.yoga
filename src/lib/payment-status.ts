@@ -75,11 +75,9 @@ export function readUndoStatus(json: unknown): PaymentStatus | null {
  * money still owed?
  *
  * An exhaustive `switch` with a `never` default rather than an inline
- * comparison, because the sites this replaced were `!== 'paid'` and
- * `!isPaid` — predicates that keep compiling when a member is added and
- * silently pick a side. `settings/payments/page.tsx` put an unrecognised
- * member into Outstanding and its € total; `bookings/page.tsx` showed the
- * student how to pay. A `switch` fails the build instead.
+ * comparison (`status !== 'paid'`, `!isPaid`) — those keep compiling when a
+ * new status is added and silently pick a side for it. A `switch` fails the
+ * build instead.
  *
  * Returns `false` on the impossible branch because that is the safe default
  * at every call site: an unknown status is not dunned and is not shown a
