@@ -6,12 +6,13 @@ import { readErrorMessage } from '@/lib/client-errors';
 import { readUndoStatus } from '@/lib/payment-status';
 
 /**
- * Mark-paid with transient undo. "Mark paid" is the app's most repeated
- * action, so it stays one tap — no confirm. The safety net is Undo,
- * offered only for payments marked paid in this session (justMarked):
- * old paid records keep a clean row and can't be unmarked casually.
- * Undo returns the payment to 'pending'; the daily dunning sweep
- * re-derives 'overdue' from the payment's age where applicable.
+ * Mark-paid and mark-not-charged, both with transient undo. "Mark paid" is
+ * the app's most repeated action, so it stays one tap — no confirm; "Not
+ * charged" mirrors that shape for the grace policy. The safety net is Undo,
+ * offered only for payments settled in this session (justMarked): old
+ * records keep a clean row and can't be unmarked casually. Undo returns the
+ * payment to 'pending'; the daily dunning sweep re-derives 'overdue' from
+ * the payment's age where applicable.
  */
 export function usePaymentActions(initial: Record<string, PaymentStatus>) {
   const [paymentState, setPaymentState] = useState<Record<string, PaymentStatus>>(initial);
@@ -45,6 +46,30 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
         setJustMarked((prev) => new Set(prev).add(paymentId));
       } else {
         setError(await readErrorMessage(res, 'Could not mark as paid. Try again.'));
+      }
+    } finally {
+      setUpdating(null);
+    }
+  }
+
+  async function markNotCharged(paymentId: string) {
+    setUpdating(paymentId);
+    setError('');
+    try {
+      let res: Response;
+      try {
+        res = await fetch(`/api/payments/${paymentId}/not-charged`, { method: 'POST' });
+      } catch (err) {
+        console.error('[payment-not-charged] request failed', { paymentId, err });
+        setError('Network error. Try again.');
+        return;
+      }
+
+      if (res.ok) {
+        setPaymentState((prev) => ({ ...prev, [paymentId]: 'not_charged' }));
+        setJustMarked((prev) => new Set(prev).add(paymentId));
+      } else {
+        setError(await readErrorMessage(res, 'Could not mark as not charged. Try again.'));
       }
     } finally {
       setUpdating(null);
@@ -117,5 +142,5 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
     }
   }
 
-  return { paymentState, justMarked, updating, error, markPaid, undo };
+  return { paymentState, justMarked, updating, error, markPaid, markNotCharged, undo };
 }

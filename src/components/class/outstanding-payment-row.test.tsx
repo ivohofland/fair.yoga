@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { routerRefresh } from '../../../tests/setup/components';
 import { OutstandingPaymentRow } from './outstanding-payment-row';
 
@@ -85,6 +85,50 @@ describe('OutstandingPaymentRow', () => {
           paymentId="pay-evening"
           classId="cls-evening"
           startTime={new Date('1970-01-01T18:00:00.000Z')}
+        />
+      </>,
+    );
+  }
+
+  /**
+   * The not-charged fixtures below are separate from `base`/`renderCollidingPair`
+   * because the not-charged action's aria-label test needs its own distinct
+   * pair — one student and class per row, matching `NotChargedPaymentRow`'s own
+   * fixture dates so the two components' tests read side by side.
+   */
+  const notChargedBase = {
+    studentName: 'Anna Smith',
+    classType: 'Vinyasa',
+    classDate: new Date('2026-09-02T00:00:00.000Z'),
+    startTime: new Date('1970-01-01T18:00:00.000Z'),
+    amount: 15,
+    status: 'pending' as const,
+    reminderSentAt: null,
+  };
+
+  function renderRow(overrides: Partial<Parameters<typeof OutstandingPaymentRow>[0]> = {}) {
+    render(
+      <OutstandingPaymentRow
+        {...notChargedBase}
+        paymentId="pay-anna"
+        classId="cls-anna"
+        {...overrides}
+      />,
+    );
+  }
+
+  function renderTwoRows() {
+    render(
+      <>
+        <OutstandingPaymentRow {...notChargedBase} paymentId="pay-anna" classId="cls-anna" />
+        <OutstandingPaymentRow
+          {...notChargedBase}
+          paymentId="pay-ben"
+          classId="cls-ben"
+          studentName="Ben Jones"
+          classType="Yin"
+          classDate={new Date('2026-09-04T00:00:00.000Z')}
+          startTime={new Date('1970-01-01T19:00:00.000Z')}
         />
       </>,
     );
@@ -407,5 +451,36 @@ describe('OutstandingPaymentRow', () => {
     ).toBeInTheDocument();
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not mark as paid. Try again.');
     expect(screen.queryByText('Network error. Try again.')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The not-charged action sits on its own caption line, beside Send
+   * reminder — a second quiet text action rather than a third pill. Same
+   * collision risk the reminder and mark-paid buttons have, so the same
+   * two-row fixture disambiguates it.
+   */
+  it('gives each not-charged action a distinct accessible name', () => {
+    renderTwoRows();
+
+    expect(
+      screen.getByRole('button', { name: 'Not charged — Anna Smith, Vinyasa · 2 Sep · 18:00' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Not charged — Ben Jones, Yin · 4 Sep · 19:00' }),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * Marking not charged follows the exact shape mark-paid already has:
+   * optimistic state, a transient Undo, no refresh until Undo succeeds.
+   */
+  it('marks not charged and offers a transient undo', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: {} }) }));
+    renderRow({ status: 'pending' });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Not charged —/ }));
+
+    await waitFor(() => expect(screen.getByText('⊘ Not charged')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /Undo marking Anna Smith/ })).toBeInTheDocument();
   });
 });

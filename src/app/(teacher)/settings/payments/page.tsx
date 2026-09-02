@@ -4,7 +4,9 @@ import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { OutstandingPaymentRow } from '@/components/class/outstanding-payment-row';
 import { ReceivedPaymentRow } from '@/components/class/received-payment-row';
+import { NotChargedPaymentRow } from '@/components/class/not-charged-payment-row';
 import { teacherVisibleName, studentNameSelect } from '@/lib/student-visibility';
+import { isOutstanding } from '@/lib/payment-status';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,12 +33,12 @@ export default async function PaymentsOverviewPage() {
     },
   });
 
-  const outstanding = payments.filter((p) => p.status !== 'paid');
-  const received = payments.filter((p) => p.status === 'paid').slice(0, 30);
+  const outstanding = payments.filter((p) => isOutstanding(p.status));
+  const receivedAll = payments.filter((p) => p.status === 'paid');
+  const received = receivedAll.slice(0, 30);
+  const notCharged = payments.filter((p) => p.status === 'not_charged').slice(0, 30);
   const outstandingTotal = outstanding.reduce((sum, p) => sum + Number(p.amount), 0);
-  const receivedTotal = payments
-    .filter((p) => p.status === 'paid')
-    .reduce((sum, p) => sum + Number(p.amount), 0);
+  const receivedTotal = receivedAll.reduce((sum, p) => sum + Number(p.amount), 0);
 
   const studentName = (p: (typeof payments)[number]) =>
     teacherVisibleName(p.registration.student, session.teacherId);
@@ -106,6 +108,25 @@ export default async function PaymentsOverviewPage() {
           ))
         )}
       </section>
+
+      {notCharged.length > 0 && (
+        <section className="mt-8">
+          <h2 className="type-subtitle mb-1">Not charged</h2>
+          {notCharged.map((p) => (
+            <NotChargedPaymentRow
+              key={p.id}
+              paymentId={p.id}
+              studentName={studentName(p)}
+              classType={p.registration.class.calendarEntry.classType}
+              classDate={p.registration.class.calendarEntry.date}
+              startTime={p.registration.class.calendarEntry.startTime}
+              notChargedAt={p.notChargedAt}
+              timeZone={session.defaultTimezone}
+              amount={Number(p.amount)}
+            />
+          ))}
+        </section>
+      )}
     </div>
   );
 }
