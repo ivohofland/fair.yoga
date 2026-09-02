@@ -226,7 +226,7 @@ describe('POST /api/auth/magic-link/verify — teacher-signup ticket branch', ()
       body: JSON.stringify({ token }),
     });
     expect(res.status).toBe(400);
-    expect(res.headers.get('set-cookie')).not.toContain('fair_yoga_signup=');
+    expect(res.headers.get('set-cookie') ?? '').not.toContain('fair_yoga_signup=');
   });
 });
 
