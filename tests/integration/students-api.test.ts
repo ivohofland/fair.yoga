@@ -115,13 +115,13 @@ describe('GET /api/students', () => {
   // `total` alone, is what makes reinstating that `where` fail this test —
   // `total` no longer exists to check instead.
   it('ignores a search parameter entirely — with a matching term, a garbage term, and none', async () => {
-    const [plain, withheld, garbage] = await Promise.all([
+    const [plain, matching, garbage] = await Promise.all([
       fetch(`${BASE_URL}/api/students`, { headers: cookie(teacherToken) }),
       fetch(`${BASE_URL}/api/students?search=Student00`, { headers: cookie(teacherToken) }),
       fetch(`${BASE_URL}/api/students?search=zzzzzzzz`, { headers: cookie(teacherToken) }),
     ]);
-    expect([plain.status, withheld.status, garbage.status]).toEqual([200, 200, 200]);
-    const [a, b, c] = await Promise.all([plain.json(), withheld.json(), garbage.json()]);
+    expect([plain.status, matching.status, garbage.status]).toEqual([200, 200, 200]);
+    const [a, b, c] = await Promise.all([plain.json(), matching.json(), garbage.json()]);
     expect(b).toEqual(a);
     expect(c).toEqual(a);
     expect(a.data.students).toHaveLength(25);
@@ -135,6 +135,58 @@ describe('GET /api/students', () => {
     expect(json.data).not.toHaveProperty('total');
     expect(json.data).not.toHaveProperty('page');
     expect(json.data).not.toHaveProperty('pageSize');
+  });
+
+  // The `archived` branch (`where: { teacherStudents: { some: { isArchived
+  // } } }`) had no end-to-end coverage — only the PATCH toggle that flips the
+  // flag was tested, never that GET actually reads it. A dedicated student +
+  // link, not one of the shared 25, so archiving it cannot shrink the
+  // full-list length asserted elsewhere in this describe block.
+  it('returns an archived student under archived=true, and excludes it from the default (unarchived) list', async () => {
+    const archivedStudent = await prisma.student.create({
+      data: {
+        firstName: 'Archived',
+        lastName: 'Fixture',
+        email: `crm-archived-${suffix}@test.local`,
+      },
+    });
+    const link = await prisma.teacherStudent.create({
+      data: { teacherId, studentId: archivedStudent.id },
+    });
+
+    try {
+      const archive = await fetch(`${BASE_URL}/api/students/${archivedStudent.id}?state=archived`, {
+        method: 'PATCH',
+        headers: cookie(teacherToken),
+      });
+      expect(archive.status).toBe(200);
+
+      const [defaultRes, archivedRes] = await Promise.all([
+        fetch(`${BASE_URL}/api/students`, { headers: cookie(teacherToken) }),
+        fetch(`${BASE_URL}/api/students?archived=true`, { headers: cookie(teacherToken) }),
+      ]);
+      expect(defaultRes.status).toBe(200);
+      expect(archivedRes.status).toBe(200);
+      const [defaultJson, archivedJson] = await Promise.all([defaultRes.json(), archivedRes.json()]);
+
+      // Unpaginated response shape either way — no `total` envelope to page
+      // through instead of filtering correctly.
+      expect(archivedJson.data).not.toHaveProperty('total');
+
+      expect(
+        defaultJson.data.students.find(
+          (s: { displayName: string }) => s.displayName === 'Archived Fixture',
+        ),
+      ).toBeUndefined();
+      expect(
+        archivedJson.data.students.find(
+          (s: { displayName: string }) => s.displayName === 'Archived Fixture',
+        ),
+      ).toBeDefined();
+    } finally {
+      await prisma.teacherStudent.deleteMany({ where: { id: link.id } });
+      await prisma.student.delete({ where: { id: archivedStudent.id } });
+    }
   });
 });
 

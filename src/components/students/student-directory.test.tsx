@@ -258,4 +258,64 @@ describe('StudentDirectory', () => {
     expect(screen.getByText('Student 01')).toBeInTheDocument();
     expect(screen.queryByRole('navigation', { name: 'Pagination' })).not.toBeInTheDocument();
   });
+
+  /**
+   * A typed-but-whitespace-only search narrows nothing — the filter uses
+   * `query = search.trim().toLowerCase()`, which is empty here. The
+   * empty-state condition must branch on that trimmed value, not on the raw
+   * `search` state, or an empty roster reads "No students matching '   '."
+   * instead of the plain "No students yet."
+   */
+  it('treats a whitespace-only search as no search for the empty-state message', async () => {
+    stubStudents([]);
+    render(<StudentDirectory />);
+    await waitFor(() => expect(screen.getByText('No students yet.')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Search students'), { target: { value: '   ' } });
+
+    expect(screen.getByText('No students yet.')).toBeInTheDocument();
+    expect(screen.queryByText(/No students matching/)).not.toBeInTheDocument();
+  });
+
+  it('shows "No students yet." for an empty, unarchived roster', async () => {
+    stubStudents([]);
+    render(<StudentDirectory />);
+    await waitFor(() => expect(screen.getByText('No students yet.')).toBeInTheDocument());
+    expect(screen.queryByText('No archived students.')).not.toBeInTheDocument();
+  });
+
+  it('shows "No archived students." for an empty archived roster', async () => {
+    stubStudents([]);
+    render(<StudentDirectory archived />);
+    await waitFor(() => expect(screen.getByText('No archived students.')).toBeInTheDocument());
+    expect(screen.queryByText('No students yet.')).not.toBeInTheDocument();
+  });
+
+  /**
+   * `setPage(1)` on every search-term change (student-directory.tsx) is only
+   * exercised here starting from page 1 elsewhere in this file, so a removed
+   * reset would go uncaught. Advance to page 2 first, then type a search
+   * that narrows the 25-row fixture to one row — well short of a full page —
+   * and check that row actually renders, not a blank page 2 that no longer
+   * has anything at that offset.
+   */
+  it('resets to page 1 when a search narrows the results while on a later page', async () => {
+    const students = Array.from({ length: 25 }, (_, i) =>
+      student({
+        id: `student-${i + 1}`,
+        displayName: `Student ${String(i + 1).padStart(2, '0')}`,
+      }),
+    );
+    stubStudents(students);
+    render(<StudentDirectory />);
+    await waitFor(() => expect(screen.getByText('Student 01')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(screen.getByText('Student 21')).toBeInTheDocument());
+    expect(screen.queryByText('Student 01')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'Student 01' } });
+
+    expect(screen.getByText('Student 01')).toBeInTheDocument();
+  });
 });

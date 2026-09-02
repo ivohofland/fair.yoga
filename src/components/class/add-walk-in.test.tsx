@@ -124,4 +124,54 @@ describe('AddWalkIn', () => {
       screen.getByText('Not in your students yet? Add them under Students first.'),
     ).toBeInTheDocument();
   });
+
+  /**
+   * `visible.length === 0` is also true the instant the picker opens, before
+   * the fetch resolves — every single time, not just on a genuine empty
+   * filter match. Without a `loaded` gate, this state briefly (or, with a
+   * slow/never-resolving fetch, indefinitely) shows "No student matches."
+   * before there is any roster to judge.
+   */
+  it('does not show "No student matches" before the roster fetch resolves', async () => {
+    let resolveFetch!: (value: unknown) => void;
+    fetchMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+
+    expect(screen.queryByText('No student matches.')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
+
+    resolveFetch({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }),
+    });
+
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+  });
+
+  /**
+   * A genuinely empty roster (no filter typed) is not a filter mismatch —
+   * "No student matches." would misstate why the select is missing. Only the
+   * "Add them under Students first" caption, already correct for this case,
+   * should show.
+   */
+  it('shows "Add them under Students first" instead of "No student matches" for an empty roster', async () => {
+    stubStudents([]);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Not in your students yet? Add them under Students first.'),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('No student matches.')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
+  });
 });

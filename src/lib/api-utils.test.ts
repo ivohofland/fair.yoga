@@ -460,7 +460,7 @@ describe('withErrorHandler', () => {
   });
 
   /**
-   * Nine routes under src/app/api read searchParams. Logging nextUrl.href or
+   * Routes under src/app/api read searchParams. Logging nextUrl.href or
    * .search instead of .pathname would put every one of their query values in
    * the log; this pins the narrow choice so a future edit cannot widen it
    * quietly.
