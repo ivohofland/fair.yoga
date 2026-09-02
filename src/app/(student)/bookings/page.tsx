@@ -13,6 +13,7 @@ import { timeToHHmm } from '@/lib/time-of-day';
 import { getWaitlistWindow } from '@/services/waitlist';
 import { studentNotificationHref } from '@/lib/notification-links';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
+import { isOutstanding } from '@/lib/payment-status';
 
 export const dynamic = 'force-dynamic';
 
@@ -263,7 +264,7 @@ export default async function StudentBookingsPage() {
           {past.map((reg) => {
             const cls = reg.class;
             const payment = reg.payment;
-            const isPaid = payment?.status === 'paid';
+            const outstanding = payment ? isOutstanding(payment.status) : false;
             return (
               <div key={reg.id} className="min-h-14 py-3 border-b border-border last:border-b-0">
                 <div className="flex items-center justify-between gap-3">
@@ -275,7 +276,7 @@ export default async function StudentBookingsPage() {
                   </div>
                   {payment && (
                     <div className="text-right shrink-0">
-                      <p className={`type-number ${isPaid ? '' : 'text-brown'}`}>
+                      <p className={`type-number ${outstanding ? 'text-brown' : ''}`}>
                         €{Number(payment.amount).toFixed(2)}
                       </p>
                       {/* Payment state is text, never a badge */}
@@ -285,9 +286,12 @@ export default async function StudentBookingsPage() {
                     </div>
                   )}
                 </div>
-                {payment && !isPaid && (
+                {payment && outstanding && (
                   <details className="mt-2">
-                    <summary className="type-label text-teal cursor-pointer">
+                    <summary
+                      className="type-label text-teal cursor-pointer"
+                      aria-label={`How to pay — ${cls.calendarEntry.classType}, ${formatDayHeader(cls.calendarEntry.date)}`}
+                    >
                       How to pay
                     </summary>
                     <div className="mt-2 bg-sand-soft border border-border rounded-field p-4">
