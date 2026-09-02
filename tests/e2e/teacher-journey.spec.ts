@@ -466,4 +466,19 @@ test.describe('Teacher journey', () => {
     await expect(page.getByText('Nothing received yet')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole('button', { name: 'Mark unpaid' })).not.toBeVisible();
   });
+
+  test('a payment can be marked not charged and put back', async ({ page, context }) => {
+    await signInTeacher(context);
+    await page.goto('/settings/payments');
+    await page.getByRole('button', { name: /^Not charged — Walkin g\./ }).click();
+    await expect(page.getByText('⊘ Not charged')).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Not charged' })).toBeVisible();
+
+    await page.getByRole('button', { name: /Mark unpaid — Walkin g\./ }).click();
+    await page.getByRole('button', { name: /Confirm unpaid — Walkin g\./ }).click();
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Not charged' })).toBeHidden();
+  });
 });
