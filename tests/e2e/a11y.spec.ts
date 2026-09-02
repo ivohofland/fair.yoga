@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures';
 import type { BrowserContext } from '@playwright/test';
+import type { PaymentStatus } from '@prisma/client';
 import AxeBuilder from '@axe-core/playwright';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
@@ -25,6 +26,8 @@ let classId: string;
 let studentId: string;
 let teacherToken: string;
 let studentToken: string;
+let paymentClassId: string;
+const paymentStudentIds: string[] = [];
 
 async function signIn(context: BrowserContext, token: string): Promise<void> {
   await context.addCookies([sessionCookie(token)]);
@@ -109,6 +112,61 @@ test.describe('Accessibility sweep', () => {
       data: { classId, studentId, status: 'registered', tierAtBooking: 3 },
     });
 
+    // Create a completed class with payments in different statuses for the a11y sweep
+    const paymentClass = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId: teacherRoom.id,
+      classType: 'A11y Payments',
+      date: new Date('2026-06-01T00:00:00.000Z'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'completed',
+    });
+    paymentClassId = paymentClass.id;
+
+    // Seed payments in each status (pending, paid, not_charged)
+    async function seedPayment(tag: string, status: PaymentStatus, amount: number) {
+      const email = `e2e-a11y-payment-${tag}-${suffix}@test.local`;
+      const paymentStudent = await prisma.student.create({
+        data: {
+          firstName: 'A11y',
+          lastName: tag,
+          email,
+          claimedAt: new Date(),
+          account: { create: { email } },
+        },
+      });
+      paymentStudentIds.push(paymentStudent.id);
+
+      const registration = await prisma.registration.create({
+        data: {
+          classId: paymentClass.id,
+          studentId: paymentStudent.id,
+          status: 'attended',
+          tierAtBooking: 2,
+        },
+      });
+
+      await prisma.payment.create({
+        data: {
+          registrationId: registration.id,
+          amount,
+          status,
+          ...(status === 'paid' ? { paidAt: new Date() } : {}),
+          ...(status === 'not_charged' ? { notChargedAt: new Date() } : {}),
+        },
+      });
+    }
+
+    await seedPayment('pending', 'pending', 12);
+    await seedPayment('paid', 'paid', 20);
+    await seedPayment('notcharged', 'not_charged', 15);
+
     await prisma.notification.create({
       data: {
         recipientType: 'teacher',
@@ -125,6 +183,12 @@ test.describe('Accessibility sweep', () => {
     if (classId) {
       await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
       await prisma.registration.deleteMany({ where: { classId } });
+    }
+    if (paymentClassId) {
+      await prisma.payment.deleteMany({
+        where: { registration: { classId: paymentClassId } },
+      });
+      await prisma.registration.deleteMany({ where: { classId: paymentClassId } });
     }
     if (teacherId) {
       await prisma.teacherStudent.deleteMany({ where: { teacherId } });
@@ -144,6 +208,27 @@ test.describe('Accessibility sweep', () => {
         await prisma.session.deleteMany({ where: { accountId: sAcct } });
       }
       await prisma.student.deleteMany({ where: { id: studentId } });
+    }
+    if (paymentStudentIds.length > 0) {
+      const paymentStudentAccountIds: string[] = [];
+      const students = await prisma.student.findMany({
+        where: { id: { in: paymentStudentIds } },
+        select: { accountId: true },
+      });
+      for (const s of students) {
+        if (s.accountId) {
+          paymentStudentAccountIds.push(s.accountId);
+        }
+      }
+      await prisma.session.deleteMany({
+        where: { accountId: { in: paymentStudentAccountIds } },
+      });
+      await prisma.student.deleteMany({ where: { id: { in: paymentStudentIds } } });
+      if (paymentStudentAccountIds.length > 0) {
+        await prisma.account.deleteMany({
+          where: { id: { in: paymentStudentAccountIds } },
+        });
+      }
     }
     if (teacherId) {
       await prisma.teacher.deleteMany({ where: { id: teacherId } });
@@ -211,6 +296,10 @@ test.describe('Accessibility sweep', () => {
     await signIn(context, teacherToken);
     await page.goto('/settings/payments');
     await expect(page.getByRole('heading', { name: 'Payments' })).toBeVisible();
+    // Verify payments are rendered: one in each section (outstanding, received, not charged)
+    await expect(page.getByRole('heading', { name: 'Outstanding' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Received' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Not charged' })).toBeVisible();
     await expectNoSeriousViolations(page);
   });
 });
