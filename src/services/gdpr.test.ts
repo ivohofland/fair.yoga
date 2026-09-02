@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, onTestFinished, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { formatDayHeader } from '@/lib/format';
 import crypto from 'crypto';
@@ -1347,6 +1347,35 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     await prisma.$disconnect();
   });
 
+  beforeEach(async () => {
+    // The first test in this block already runs `deleteTeacherAccount` to
+    // completion on this same shared `teacherId` (`beforeAll`), which sets
+    // `deletedAt`. A second erasure of an already-erased teacher is refused
+    // by design (`AlreadyErasedError`, see this function's tail) — a
+    // different, unrelated outcome from the one a later test in this block
+    // exercises — so this restores the row to live before erasing it again.
+    // Restoring `email` off its `@deleted.invalid` value is load-bearing
+    // too, and for a different reason: the `teacherEmailWhenDiagnosticRan`
+    // assertion in the CAS-skip test below only proves the read ran
+    // post-commit because it starts from a non-`@deleted.invalid` address —
+    // left at the first test's stale `deleted-<id>@deleted.invalid`, that
+    // assertion would match trivially even if the diagnostic read ran
+    // pre-commit, inside the transaction. Harmless before the first test
+    // too: the teacher already starts live from `beforeAll`, so this resets
+    // it to the same live state.
+    await prisma.teacher.update({
+      where: { id: teacherId },
+      data: {
+        email: `${suffix}@test.local`,
+        firstName: 'Cas',
+        lastName: 'Teacher',
+        bio: 'CAS erasure fixture',
+        pageSlug: suffix,
+        deletedAt: null,
+      },
+    });
+  });
+
   it('warns and skips when a locked id turns out not to be cancellable', async () => {
     const cls = await createClassFixture(prisma, {
       teacherId,
@@ -1433,30 +1462,6 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
   });
 
   it('reports a CAS skip after commit, so a failing diagnostic cannot roll the erasure back', async () => {
-    // The sibling test above already ran `deleteTeacherAccount` to
-    // completion on this same shared `teacherId` (`beforeAll`), which set
-    // `deletedAt`. A second erasure of an already-erased teacher is refused
-    // by design (`AlreadyErasedError`, see this function's tail) — a
-    // different, unrelated outcome from the one this test exercises — so
-    // this restores the row to live before erasing it again. Restoring
-    // `email` off its `@deleted.invalid` value is load-bearing too, and for
-    // a different reason: the `teacherEmailWhenDiagnosticRan` assertion
-    // below only proves the read ran post-commit because it starts from a
-    // non-`@deleted.invalid` address — left at the sibling test's stale
-    // `deleted-<id>@deleted.invalid`, that assertion would match trivially
-    // even if the diagnostic read ran pre-commit, inside the transaction.
-    await prisma.teacher.update({
-      where: { id: teacherId },
-      data: {
-        email: `${suffix}@test.local`,
-        firstName: 'Cas',
-        lastName: 'Teacher',
-        bio: 'CAS erasure fixture',
-        pageSlug: suffix,
-        deletedAt: null,
-      },
-    });
-
     // `completed` directly, not raced there: since #367 the pre-lock takes
     // the `Class` row before this transaction reads it at all, so a
     // concurrent `completeClass` can no longer land between an unlocked read

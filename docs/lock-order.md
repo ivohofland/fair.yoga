@@ -1535,10 +1535,13 @@ told that pressing Delete again will not help and to contact support (500
 not `.catch()`.** `deleteTeacherAccount` (`src/services/gdpr.ts`) collects the
 class ids whose cancel CAS matched nothing, returns them from the transaction,
 and reads their cause after the commit — where `db` is not `tx`, a failed read
-costs only the field it fills, and `.catch()` means what it says. Returning the
-list rather than capturing a mutable one is load-bearing: the value exists only
-if the transaction committed. `deleteStudentAccount` in the same file has the
-same shape for `freedClassIds`.
+costs only the field it fills, and `.catch()` means what it says. Declaring the
+list inside the transaction callback and returning it rather than capturing it
+in a variable declared outside the transaction callback is load-bearing: the
+value then exists only if the transaction committed, so "logged a skip for an
+erasure that rolled back" is not a state the function can reach.
+`deleteStudentAccount` in the same file has the same shape for
+`freedClassIds`.
 
 A `.catch()` on the whole `$transaction(…)` promise is a different thing and is
 fine — `acceptInvitation` and `unlinkTeacher` (`src/services/invitations.ts`)
@@ -1549,9 +1552,10 @@ both do it. The rule is about a statement inside the callback. No site in
 grep -rn "\.catch(" src --include="*.ts" --include="*.tsx" | grep -v "\.test\."
 ```
 
-Every hit is either a real `.catch()` call site meeting those three categories, or
-a comment merely mentioning `.catch()` with no call site — `gdpr.ts:1490` narrates
-why a guarded statement cannot protect an operation, and is the current instance.
+Every hit is either a real `.catch()` call site — on `db`/`prisma`, on a
+`$transaction(…)` promise, or outside the database entirely — or a comment
+merely mentioning `.catch()` with no call site, which the post-commit
+diagnostic in `deleteTeacherAccount`'s comment is the current instance of.
 
 ## Known conformance
 
