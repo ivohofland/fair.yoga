@@ -123,7 +123,7 @@ export default async function ReportingPage() {
       ) : (
         <>
           <div className="bg-teal-tint rounded-card p-5 text-center">
-            <p className="type-label">Total earned teaching</p>
+            <p className="type-label">Total charged for teaching</p>
             <p className="type-number text-[28px] leading-[1.25] mt-1">
               €{(totalClassEarnings + totalStudioEarnings).toFixed(2)}
             </p>

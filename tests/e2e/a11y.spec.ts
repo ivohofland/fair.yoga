@@ -206,4 +206,11 @@ test.describe('Accessibility sweep', () => {
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
     await expectNoSeriousViolations(page);
   });
+
+  test('settings payments', async ({ page, context }) => {
+    await signIn(context, teacherToken);
+    await page.goto('/settings/payments');
+    await expect(page.getByRole('heading', { name: 'Payments' })).toBeVisible();
+    await expectNoSeriousViolations(page);
+  });
 });

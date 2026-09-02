@@ -162,7 +162,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       expect(html).toContain('Reporting');
       expect(html).toContain('Nothing to report yet');
       expect(html).toContain('Completed classes and their earnings appear here.');
-      expect(html).not.toContain('Total earned teaching');
+      expect(html).not.toContain('Total charged for teaching');
       expect(html).not.toContain('>By month</h2>');
     });
   });
@@ -269,7 +269,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       const html = await res.text();
 
       // Top banner
-      expect(html).toContain('Total earned teaching');
+      expect(html).toContain('Total charged for teaching');
       expect(html).toContain('157.00');
       expect(html).toMatch(/3.*classes.*·.*2.*students.*reached/);
 
@@ -444,7 +444,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       const html = await res.text();
 
       // Total must include ONLY the 50.00 from Today's uncancelled studio class
-      expect(html).toContain('Total earned teaching');
+      expect(html).toContain('Total charged for teaching');
       expect(html).toContain('50.00');
       expect(html).toMatch(/1.*classes.*·.*0.*students.*reached/);
 
@@ -477,7 +477,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       const html = await res.text();
 
       // Total must still be 50.00 from Class A (not 110.00), class count still 1 (not 2)
-      expect(html).toContain('Total earned teaching');
+      expect(html).toContain('Total charged for teaching');
       expect(html).toContain('50.00');
       expect(html).not.toContain('60.00');
       expect(html).not.toContain('110.00');
