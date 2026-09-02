@@ -19,7 +19,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, passkeyRegisterVerifySchema);
   if ('error' in parsed) return parsed.error;
 
-  const challenge = getAndDeleteChallenge(session.accountId);
+  const challenge = getAndDeleteChallenge('registration', session.accountId);
   if (!challenge) {
     return respondError('No pending registration challenge', 400);
   }

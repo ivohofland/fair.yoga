@@ -30,7 +30,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Store challenge with a random key so the verify endpoint can retrieve it
   const challengeId = crypto.randomBytes(16).toString('hex');
-  storeChallenge(challengeId, options.challenge);
+  storeChallenge('authentication', challengeId, options.challenge);
 
   return respondOk({ options, challengeId });
 });
