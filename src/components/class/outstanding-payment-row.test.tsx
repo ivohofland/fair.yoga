@@ -93,8 +93,7 @@ describe('OutstandingPaymentRow', () => {
   /**
    * The not-charged fixtures below are separate from `base`/`renderCollidingPair`
    * because the not-charged action's aria-label test needs its own distinct
-   * pair — one student and class per row, matching `NotChargedPaymentRow`'s own
-   * fixture dates so the two components' tests read side by side.
+   * pair — one student and class per row.
    */
   const notChargedBase = {
     studentName: 'Anna Smith',
