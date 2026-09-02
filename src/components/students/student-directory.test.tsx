@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { StudentDirectory } from './student-directory';
 
 /**
@@ -31,11 +31,26 @@ describe('StudentDirectory', () => {
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({
-        data: { students, total: students.length, page: 1, pageSize: 20 },
-      }),
+      json: async () => ({ data: { students } }),
     });
     vi.stubGlobal('fetch', fetchMock);
+  }
+
+  // Fixture builder for the search/pagination tests below: only `id`,
+  // `displayName` and `email` vary per case, the rest is filler the
+  // component renders but these tests don't assert on.
+  function student(overrides: { id: string; displayName: string; email?: string | null }) {
+    return {
+      email: null,
+      phone: null,
+      birthday: null,
+      address: null,
+      claimedAt: '2026-01-01T00:00:00.000Z',
+      lastClassDate: null,
+      classCount: 1,
+      overduePayments: 0,
+      ...overrides,
+    };
   }
 
   it('renders the name the API composed, without recomposing it', async () => {
@@ -126,5 +141,117 @@ describe('StudentDirectory', () => {
       ['Bob c.', 'bob@example.com'],
       ['Carla d.'],
     ]);
+  });
+
+  /**
+   * Search and pagination now happen entirely client-side, over the list
+   * the server already sent — see `student-directory.tsx`. The fetch mock
+   * above returns everything in one response; these tests type into the
+   * search box and check what's on screen, with no further fetch calls to
+   * stub. `fireEvent.change` mirrors the pattern already used for `Input`
+   * elsewhere in this codebase.
+   */
+  it('narrows the list on a first-name fragment', async () => {
+    stubStudents([
+      student({ id: 'student-1', displayName: 'Anna Bakker' }),
+      student({ id: 'student-2', displayName: 'Bram k.' }),
+    ]);
+    render(<StudentDirectory />);
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'ann' } });
+
+    expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
+    expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+  });
+
+  it('finds a student on a shared surname fragment', async () => {
+    stubStudents([
+      student({ id: 'student-1', displayName: 'Anna Bakker' }),
+      student({ id: 'student-2', displayName: 'Bram k.' }),
+    ]);
+    render(<StudentDirectory />);
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'bakker' } });
+
+    expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
+    expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The privacy property: 'Bram k.' is what the server sent for a student
+   * who withheld his surname — 'kramer' is nowhere in the response for this
+   * test to match. This isn't extra filtering logic holding the line; it's
+   * that the data literally isn't there.
+   */
+  it('finds nothing when searching a withheld surname', async () => {
+    stubStudents([
+      student({ id: 'student-1', displayName: 'Anna Bakker' }),
+      student({ id: 'student-2', displayName: 'Bram k.' }),
+    ]);
+    render(<StudentDirectory />);
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'kramer' } });
+
+    expect(screen.queryByText('Anna Bakker')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+    expect(screen.getByText(`No students matching 'kramer'.`)).toBeInTheDocument();
+  });
+
+  /**
+   * The composed-name case: a query spanning first and last name segments
+   * ("anna b") matches 'Anna Bakker' because the whole composed string is
+   * searched as one, not first/last name fields independently. No
+   * server-side search over raw `firstName`/`lastName` columns could offer
+   * this without also being able to answer with a withheld surname, which
+   * is exactly the oracle #176 removed.
+   */
+  it('matches a composed name spanning first and last name', async () => {
+    stubStudents([
+      student({ id: 'student-1', displayName: 'Anna Bakker' }),
+      student({ id: 'student-2', displayName: 'Bram k.' }),
+    ]);
+    render(<StudentDirectory />);
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'anna b' } });
+
+    expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
+    expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+  });
+
+  it('matches an email fragment, and never matches a withheld (null) email', async () => {
+    stubStudents([
+      student({ id: 'student-1', displayName: 'Anna Bakker', email: 'anna@example.com' }),
+      student({ id: 'student-2', displayName: 'Carla d.', email: null }),
+    ]);
+    render(<StudentDirectory />);
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'example.com' } });
+
+    expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
+    expect(screen.queryByText('Carla d.')).not.toBeInTheDocument();
+  });
+
+  it('paginates more than PAGE_SIZE rows, and hides the pager once a search narrows below it', async () => {
+    const students = Array.from({ length: 25 }, (_, i) =>
+      student({
+        id: `student-${i + 1}`,
+        displayName: `Student ${String(i + 1).padStart(2, '0')}`,
+      }),
+    );
+    stubStudents(students);
+    render(<StudentDirectory />);
+    await waitFor(() => expect(screen.getByText('Student 01')).toBeInTheDocument());
+
+    expect(screen.getByRole('navigation', { name: 'Pagination' })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'Student 01' } });
+
+    expect(screen.getByText('Student 01')).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Pagination' })).not.toBeInTheDocument();
   });
 });

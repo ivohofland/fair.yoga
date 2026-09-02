@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { Input } from '@/components/ui/input';
 import { Icon } from '@/components/ui/icon';
@@ -20,9 +20,6 @@ interface StudentRow {
 interface StudentListResponse {
   data: {
     students: StudentRow[];
-    total: number;
-    page: number;
-    pageSize: number;
   };
 }
 
@@ -37,19 +34,12 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [students, setStudents] = useState<StudentRow[]>([]);
-  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const fetchStudents = useCallback(async (searchTerm: string, pageNum: number) => {
+  const fetchStudents = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        search: searchTerm,
-        page: String(pageNum),
-        pageSize: String(PAGE_SIZE),
-        ...(archived ? { archived: 'true' } : {}),
-      });
+      const params = new URLSearchParams(archived ? { archived: 'true' } : {});
       const res = await fetch(`/api/students?${params}`);
       if (res.status === 401) {
         window.location.href = '/login';
@@ -58,39 +48,46 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
       if (!res.ok) return;
       const json: StudentListResponse = await res.json();
       setStudents(json.data.students);
-      setTotal(json.data.total);
     } finally {
       setLoading(false);
     }
   }, [archived]);
 
   useEffect(() => {
-    void fetchStudents(search, page);
-  }, [fetchStudents, search, page]);
+    void fetchStudents();
+  }, [fetchStudents]);
 
-  function handleSearchChange(value: string) {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      setSearch(value);
-      setPage(1);
-    }, 300);
-  }
-
-  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const query = search.trim().toLowerCase();
+  // `s.email` is null exactly when the student withheld it — that is
+  // `projectStudentForTeacher`'s contract — so a withheld email is simply
+  // absent from what this line searches, which is what makes the filter
+  // privacy-safe without any separate check.
+  const filtered = query
+    ? students.filter(
+        (s) =>
+          s.displayName.toLowerCase().includes(query) ||
+          (s.email?.toLowerCase().includes(query) ?? false),
+      )
+    : students;
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const visible = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
     <div>
       <div className="mb-4">
         <Input
           placeholder="Search by name or email"
-          defaultValue={search}
-          onChange={(e) => handleSearchChange(e.target.value)}
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
           aria-label="Search students"
         />
       </div>
 
       <div className={loading ? 'opacity-50' : ''}>
-        {students.length === 0 && !loading ? (
+        {filtered.length === 0 && !loading ? (
           search ? (
             <EmptyState title={`No students matching '${search}'.`} />
           ) : archived ? (
@@ -100,7 +97,7 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
           )
         ) : (
           <div>
-            {students.map((student) => (
+            {visible.map((student) => (
               <Link
                 key={student.id}
                 href={`/students/${student.id}`}
