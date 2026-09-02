@@ -72,6 +72,7 @@ describe('POST /api/auth/passkey/authenticate/options', () => {
   afterAll(async () => {
     await prisma.passkeyCredential.deleteMany({ where: { accountId: { in: accountIds } } });
     await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+    await prisma.$disconnect();
   });
 
   async function optionsFor(email?: string): Promise<Record<string, unknown>> {
