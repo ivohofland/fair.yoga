@@ -133,13 +133,14 @@ function renderClassList(classes: ClassRow[]) {
   render(<ClassList classes={classes} timeZone="America/Los_Angeles" />);
 }
 
-/** The three rollup markers, so a "renders nothing" test cannot pass vacuously. */
+/** The four rollup markers, so a "renders nothing" test cannot pass vacuously. */
 function expectNoRollup() {
-  // The card itself is on screen — otherwise the three negatives below would
+  // The card itself is on screen — otherwise the four negatives below would
   // hold for an empty render just as well.
   expect(screen.getByText('Big Room at Studio Zen')).toBeInTheDocument();
   expect(screen.queryByText(/overdue/)).not.toBeInTheDocument();
   expect(screen.queryByText(/unpaid/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/not charged/)).not.toBeInTheDocument();
   expect(screen.queryByText(/all paid/)).not.toBeInTheDocument();
 }
 
