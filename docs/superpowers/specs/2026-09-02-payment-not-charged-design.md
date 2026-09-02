@@ -3,7 +3,7 @@
 **Date:** 2026-09-02
 **Status:** Approved (issue #47; design agreed with Ivo in discussion — a fourth
 `PaymentStatus` member, teacher control on the payments overview only, a
-disclosure grouping the two deliberate actions, and reporting left as a billed
+second action line grouping the two deliberate actions, and reporting left as a billed
 view)
 
 ## Problem
@@ -233,30 +233,44 @@ cost to be optimised away.
 fires a notification and possibly an email at a real person; "Not charged"
 forgives money. Both are deliberate decisions *about a debt*. "Mark paid" is the
 routine bookkeeping tap a teacher does repeatedly after a class. So the row
-keeps `Mark paid` as its one inline pill, and both deliberate actions move
-behind a disclosure:
+keeps `Mark paid` as its one inline pill, and both deliberate actions move to a
+line of their own:
 
-```tsx
-<details>
-  <summary aria-label={`More — ${studentName}, ${classContext}`}>More</summary>
-  <SendReminderButton … />
-  <NotChargedButton … />
-</details>
+```
+Anna Smith                                    €12.00  [Mark paid]
+Vinyasa · Tue 2 Sep · ! overdue
+Send reminder · Not charged
 ```
 
-**`<details>`, not a sheet.** The design system reserves its only shadow for
-"sheets/modals" (CLAUDE.md), so a sheet would not go against the grain — but
+Both render as **quiet text actions, not pills** — the shape `Undo` already uses
+(`outstanding-payment-row.tsx:104`: `type-caption text-teal min-h-[44px] px-1`,
+which keeps the 44px touch target while reading as text). That is what answers
+the only real objection to keeping them always visible: a rare action should not
+carry permanent visual weight, and as a third and fourth pill on every row it
+would. In the caption register it reads as what it is — available, not urgent —
+and it leaves `Mark paid` as the row's single visual primary.
+
+**Deliberately not a disclosure, and not a sheet.** An earlier draft of this
+spec put both actions behind `<details>`/`<summary>`, collapsed by default. That
+was solving the wrong problem: the constraint is that three pills do not fit on
+a 640px line, and a second line resolves it completely at no interaction cost.
+Hiding them bought nothing and charged a tap for the *commoner* of the two
+actions — reminding is routine, waiving is rare. The tell was defending an
+interaction change on layout grounds; when the justification for making
+something slower is "it does not fit", the fix is layout.
+
+A sheet is rejected more firmly. The design system reserves its only shadow for
+"sheets/modals" (CLAUDE.md), so one would not go against the grain — but
 building the app's first sheet primitive inside this issue means shipping a
 design-system component: focus trap, escape handling, scroll lock, `aria-modal`,
 return-focus, a portal. None of that is about payments, and all of it is the
-category that generates review rounds. `<details>`/`<summary>` gets keyboard
-operation, screen-reader semantics and open/close state from the platform, is
-already the pattern at `bookings/page.tsx:288-292`, and on a phone pushes content
-down rather than overlaying a scrolling list. A real sheet component gets built
-the day something needs to overlay.
+category that generates review rounds. A real sheet gets built the day something
+needs to overlay.
 
-The `aria-label` on each `<summary>` is not optional: every row renders
-identical visible text, which is exactly the defect #128 and #129 were filed for.
+Because both actions stay directly visible and directly reachable, **no existing
+assertion changes.** `outstanding-payment-row.test.tsx:93` (distinct reminder
+accessible names) and `tests/e2e/teacher-journey.spec.ts:384` (a paid row offers
+no reminder, an unpaid one does) both remain valid as written.
 
 **Interaction.** Tapping "Not charged" is a single optimistic tap with a
 transient Undo, mirroring `markPaid` — `usePaymentActions` gains
@@ -382,10 +396,12 @@ error text, restore, re-verify.
   renders `⊘ Not charged`, and the response contains **neither** the teacher's
   IBAN **nor** the QR image. Asserting the absence of the IBAN string is the
   point; asserting only the label would pass against the unfixed gate.
-- **The disclosure — component** (`outstanding-payment-row.test.tsx`). Distinct
-  accessible names per row on the `<summary>`; both actions reachable inside it;
-  the visible text contained in the accessible name (WCAG 2.5.3), matching the
-  standard the file already holds at `:93`, `:112`, `:138`, `:165`.
+- **The new action line — component** (`outstanding-payment-row.test.tsx`). The
+  "Not charged" action carries a per-row accessible name disambiguated by
+  student and class context, and its visible text is contained in that name
+  (WCAG 2.5.3) — the standard the file already holds at `:93`, `:112`, `:138`,
+  `:165`, and which the new control must join rather than reintroduce #128's
+  defect on a fourth surface.
 - **`PaymentRollup` — component** (`class-list.test.tsx`). A completed class
   whose payments are all `not_charged` reports not-charged, **not** `✓ all paid`.
   Mutation: revert the new branch and confirm the false all-clear returns.
@@ -398,19 +414,19 @@ error text, restore, re-verify.
   from the coverage-only additions above. One test per file: reverting either
   gate alone must leave the other's test green.
 - **e2e** (`tests/e2e/teacher-journey.spec.ts`). Extend the existing payments
-  block: open the disclosure, mark not charged, confirm the row leaves
+  block: mark not charged from the row's action line, confirm the row leaves
   Outstanding and the totals move, then reverse it with Mark unpaid.
 - **a11y sweep.** `/settings/payments` is **not** currently in
-  `tests/e2e/a11y.spec.ts:157-205`, verified. This branch adds a disclosure
-  there, so the route joins the sweep — cheap, and it covers precisely what is
-  being added.
+  `tests/e2e/a11y.spec.ts:157-205`, verified — the eight routes swept are
+  `/login`, `/{slug}`, `/{slug}/book/{classId}`, `/bookings`, `/schedule`,
+  `/class/{classId}`, `/inbox`, `/settings`. This branch adds a control and a
+  new row type there, so the route joins the sweep — cheap, and it covers
+  precisely what is being added.
 
-Existing assertions that must be **rewritten rather than deleted**, because
-moving "Send reminder" behind the disclosure changes how it is reached:
-`outstanding-payment-row.test.tsx:93` (distinct reminder accessible names) and
-`tests/e2e/teacher-journey.spec.ts:384` (a paid row offers no reminder, an
-unpaid one does). The behaviour they assert is unchanged; only the path to the
-control moves.
+**No existing assertion is rewritten or deleted.** Every test named above is an
+addition. This is a property of the §4 layout choice, not a coincidence: because
+both actions stay directly visible, nothing about how an existing control is
+reached has changed.
 
 ## Folded in
 
@@ -422,9 +438,8 @@ that is free here.
 
 - **`bookings/page.tsx:290`'s `<summary>` has no `aria-label`**, so a student
   with three unpaid past classes gets three identical "How to pay" disclosures.
-  We are already in that file to gate the block, and §4 proposes the identical
-  `<details>` pattern elsewhere — shipping the pattern while leaving its
-  existing instance unnamed would be incoherent.
+  §6 opens that file to gate the block on `isOutstanding`, which means editing
+  the exact expression that controls when this unnamed control renders.
 - **`student-payment-list.tsx:52-71` has no accessible names** on either its
   "Mark paid" or its "Undo" button, so a student with several unpaid classes
   gives a screen-reader user a column of identical controls. **This was going to
@@ -464,7 +479,9 @@ that is free here.
   Outstanding section — but it is briefly wrong between an optimistic
   `markNotCharged` and the refresh. Acceptable; noted so a reviewer does not
   read it as an oversight.
-- **Moving "Send reminder" costs a tap.** Reminding is more common than waiving,
-  so the disclosure makes the commoner action slower. Judged acceptable because
-  the action already carries a two-minute cooldown (`payments.ts:184`) and is
-  not a repeated-tap flow — but it is a real trade, not a free win.
+- **The outstanding row gains a line.** Every row grows by one caption line, so
+  a teacher with thirty outstanding payments scrolls further. Judged the right
+  trade against the alternatives — a third pill does not fit a 640px line, and
+  hiding the actions charges a tap on the commoner one (§4) — but it is a real
+  cost to a list that can get long, and the quiet-text treatment is what keeps
+  it from also being noisy.
