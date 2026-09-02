@@ -37,6 +37,7 @@ export const DEFAULT_PREFIX_CAPACITY = 2_000;
 export type RateLimitPrefix =
   | 'magic-link:ip'
   | 'magic-link:email'
+  | 'passkey-auth-options'
   | 'student-signup:ip'
   | 'student-signup:email'
   | 'students'
@@ -47,6 +48,7 @@ export type RateLimitPrefix =
 export const PREFIX_CAPACITIES = {
   'magic-link:email': 5_000,
   'magic-link:ip': 2_000,
+  'passkey-auth-options': 2_000,
   'student-signup:email': 2_000,
   'student-signup:ip': 1_000,
   students: 2_000,
@@ -250,7 +252,7 @@ function warnUnresolvedClientIp(route: string, now: number): void {
   log.warn({ route }, 'Rate limit IP check degraded to a shared bucket: client IP could not be resolved');
 }
 
-export type IpRateLimitPrefix = Extract<RateLimitPrefix, 'magic-link:ip' | 'student-signup:ip' | 'teacher-signup' | 'slug-available'>;
+export type IpRateLimitPrefix = Extract<RateLimitPrefix, 'magic-link:ip' | 'passkey-auth-options' | 'student-signup:ip' | 'teacher-signup' | 'slug-available'>;
 
 /**
  * IP-keyed rate limit for an unauthenticated route. An unresolved IP is
