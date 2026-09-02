@@ -285,12 +285,6 @@ export const updatePrivacySchema = z.object({
   receiveComms: z.boolean().optional(),
 }).strict();
 
-export const studentListQuerySchema = z.object({
-  search: z.string().optional().default(''),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(50).optional().default(20),
-});
-
 // ============================================================================
 // ROOMS
 // ============================================================================

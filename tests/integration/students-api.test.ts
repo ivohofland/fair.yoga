@@ -83,61 +83,58 @@ afterAll(async () => {
 });
 
 describe('GET /api/students', () => {
-  it('returns paginated students for the teacher', async () => {
-    const res = await fetch(`${BASE_URL}/api/students?page=1&pageSize=10`, {
+  it('returns every student linked to the teacher', async () => {
+    const res = await fetch(`${BASE_URL}/api/students`, {
       headers: cookie(teacherToken),
     });
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.data.students).toHaveLength(10);
-    expect(json.data.total).toBe(25);
-    expect(json.data.page).toBe(1);
-    expect(json.data.pageSize).toBe(10);
-  });
-
-  it('returns page 3 with remaining students', async () => {
-    const res = await fetch(`${BASE_URL}/api/students?page=3&pageSize=10`, {
-      headers: cookie(teacherToken),
-    });
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.data.students).toHaveLength(5);
-    expect(json.data.total).toBe(25);
-    expect(json.data.page).toBe(3);
-  });
-
-  it('filters by search term (name)', async () => {
-    const res = await fetch(`${BASE_URL}/api/students?search=Student00`, {
-      headers: cookie(teacherToken),
-    });
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.data.students).toHaveLength(1);
-    expect(json.data.students[0].displayName).toBe('Student00 Test');
-  });
-
-  it('filters by search term (email)', async () => {
-    const res = await fetch(
-      `${BASE_URL}/api/students?search=crm-student-${suffix}-1@`,
-      { headers: cookie(teacherToken) },
-    );
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.data.students.length).toBeGreaterThanOrEqual(1);
+    expect(json.data.students).toHaveLength(25);
   });
 
   it('does not return students not linked to the teacher', async () => {
-    const res = await fetch(`${BASE_URL}/api/students?search=Unlinked`, {
+    const res = await fetch(`${BASE_URL}/api/students`, {
       headers: cookie(teacherToken),
     });
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.data.students).toHaveLength(0);
+    expect(
+      json.data.students.find((s: { displayName: string }) => s.displayName.startsWith('Unlinked')),
+    ).toBeUndefined();
   });
 
   it('returns 401 without session', async () => {
     const res = await fetch(`${BASE_URL}/api/students`);
     expect(res.status).toBe(401);
+  });
+
+  // The issue's second acceptance criterion (#176): a `where` that filtered
+  // on `firstName`/`lastName`/`email` answered questions about columns
+  // `projectStudentForTeacher` redacts, so a teacher denied a surname could
+  // binary-search it from hit/miss. Asserting on the whole body, not on
+  // `total` alone, is what makes reinstating that `where` fail this test —
+  // `total` no longer exists to check instead.
+  it('ignores a search parameter entirely — the same body with, without, and for a withheld surname', async () => {
+    const [plain, withheld, garbage] = await Promise.all([
+      fetch(`${BASE_URL}/api/students`, { headers: cookie(teacherToken) }),
+      fetch(`${BASE_URL}/api/students?search=Student00`, { headers: cookie(teacherToken) }),
+      fetch(`${BASE_URL}/api/students?search=zzzzzzzz`, { headers: cookie(teacherToken) }),
+    ]);
+    expect([plain.status, withheld.status, garbage.status]).toEqual([200, 200, 200]);
+    const [a, b, c] = await Promise.all([plain.json(), withheld.json(), garbage.json()]);
+    expect(b).toEqual(a);
+    expect(c).toEqual(a);
+    expect(a.data.students).toHaveLength(25);
+  });
+
+  // The issue's third acceptance criterion (#176): the pagination envelope
+  // (`total`/`page`/`pageSize`) is gone from the body, not merely unused.
+  it('carries no pagination envelope', async () => {
+    const res = await fetch(`${BASE_URL}/api/students`, { headers: cookie(teacherToken) });
+    const json = await res.json();
+    expect(json.data).not.toHaveProperty('total');
+    expect(json.data).not.toHaveProperty('page');
+    expect(json.data).not.toHaveProperty('pageSize');
   });
 });
 
@@ -717,15 +714,15 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
     expect(res.status).toBe(403);
   });
 
-  // #167 mutation check: the two pre-existing list assertions (`filters by
-  // search term (name)`, `maps counts to the right rows across a full page`)
-  // fail if the route stops projecting at all — but only because `displayName`
-  // goes missing, not because a privacy-restricted student's data leaked, since
-  // those fixtures (`Student00`..`Student24`) are unclaimed and legitimately
-  // show a full name either way. This is the assertion that actually exercises
-  // gating on the LIST route, mirroring the detail-route test just above.
+  // #167 mutation check: other list assertions elsewhere in this file read a
+  // returned `displayName` and fail if the route stops projecting at all —
+  // but only because `displayName` goes missing, not because a
+  // privacy-restricted student's data leaked, since those fixtures
+  // (`Student00`..`Student24`) are unclaimed and legitimately show a full
+  // name either way. This is the assertion that actually exercises gating on
+  // the LIST route, mirroring the detail-route test just above.
   it('the list withholds a surname and an email the student did not share', async () => {
-    const res = await as(dualToken, '/api/students?page=1&pageSize=20');
+    const res = await as(dualToken, '/api/students');
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       data: { students: { displayName: string; email: string | null }[] };
@@ -854,13 +851,16 @@ describe('GET /api/students — overduePayments', () => {
   });
 
   async function fetchSingleStudent(search: string) {
-    const res = await fetch(`${BASE_URL}/api/students?search=${search}`, {
+    const res = await fetch(`${BASE_URL}/api/students`, {
       headers: cookie(teacherToken),
     });
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.data.students).toHaveLength(1);
-    return json.data.students[0];
+    const student = json.data.students.find((s: { displayName: string }) =>
+      s.displayName.startsWith(search),
+    );
+    expect(student).toBeDefined();
+    return student;
   }
 
   it('counts overdue payments for the requesting teacher', async () => {
@@ -878,8 +878,8 @@ describe('GET /api/students — overduePayments', () => {
     expect(student.overduePayments).toBe(0);
   });
 
-  it('maps counts to the right rows across a full page', async () => {
-    const res = await fetch(`${BASE_URL}/api/students?page=1&pageSize=10`, {
+  it('maps counts to the right rows across the full list', async () => {
+    const res = await fetch(`${BASE_URL}/api/students`, {
       headers: cookie(teacherToken),
     });
     expect(res.status).toBe(200);
