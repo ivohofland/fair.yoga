@@ -52,7 +52,7 @@ export function DataAndDeletion({ role }: DataAndDeletionProps) {
     try {
       const res = await fetch('/api/account', { method: 'DELETE' });
       if (res.ok) {
-        router.push('/');
+        router.push('/login');
         router.refresh();
       } else {
         setError(await readErrorMessage(res, 'Could not delete the account. Try again.'));
