@@ -112,4 +112,25 @@ describe('POST /api/auth/passkey/authenticate/options', () => {
     expect(Object.keys(unknown).sort()).toEqual(keys);
     expect(Object.keys(omitted).sort()).toEqual(keys);
   });
+
+  /**
+   * One address for all 101 requests, deliberately — that is the bucket under
+   * test. The route has no second budget, so nothing else can produce the 429.
+   */
+  it('refuses the 101st request from one address within the hour', async () => {
+    const ip = freshIp();
+    const statuses: number[] = [];
+
+    for (let i = 0; i < 101; i++) {
+      const res = await fetch(`${BASE_URL}/api/auth/passkey/authenticate/options`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...ip },
+        body: JSON.stringify({}),
+      });
+      statuses.push(res.status);
+    }
+
+    expect(statuses.slice(0, 100)).toEqual(Array(100).fill(200));
+    expect(statuses[100]).toBe(429);
+  });
 });
