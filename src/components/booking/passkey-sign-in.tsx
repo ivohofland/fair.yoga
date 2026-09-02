@@ -12,7 +12,7 @@ interface PasskeySignInProps {
 
 export function PasskeySignIn({ redirect }: PasskeySignInProps) {
   const router = useRouter();
-  const [state, setState] = useState<'idle' | 'working' | 'error'>('idle');
+  const [state, setState] = useState<'idle' | 'working' | 'incomplete' | 'error'>('idle');
 
   async function handleSignIn() {
     setState('working');
@@ -49,8 +49,15 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
       // beats freezing the gate to the whole app when the push never commits.
       setState('idle');
     } catch (err) {
+      // The browser reports a deliberate cancel and a ceremony that matched no
+      // credential as the same `NotAllowedError`, and does not say which —
+      // WebAuthn conflates them so the client cannot become an enumeration
+      // oracle. Do not try to tell them apart by probing the device for
+      // credentials: that reopens on the client the disclosure #187 closed on
+      // the server. Naming both possibilities lets each reader take the step
+      // that works — a retry for one, the email link for the other.
       if (err instanceof Error && err.name === 'NotAllowedError') {
-        setState('idle');
+        setState('incomplete');
         return;
       }
       setState('error');
@@ -62,6 +69,11 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
       <Button variant="secondary" onClick={handleSignIn} disabled={state === 'working'} className="w-full">
         {state === 'working' ? 'Follow your device…' : 'Sign in with a passkey'}
       </Button>
+      {state === 'incomplete' && (
+        <p role="status" className="type-caption">
+          Cancelled, or no passkey on this device. Try again, or use the email link.
+        </p>
+      )}
       {state === 'error' && (
         <p role="alert" className="text-[13px] leading-[1.4] text-danger">
           Passkey sign-in didn&apos;t work here — use the email link instead.

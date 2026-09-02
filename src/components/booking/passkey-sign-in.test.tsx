@@ -82,7 +82,33 @@ describe('PasskeySignIn', () => {
     expect(routerPush).not.toHaveBeenCalled();
   });
 
-  it('returns silently to idle when the user dismisses the OS prompt', async () => {
+  /**
+   * The browser reports a deliberate cancel and a no-credential-matched
+   * ceremony as the same `NotAllowedError`, so this one message has to serve
+   * both readers.
+   */
+  it('names both causes when the ceremony does not complete', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: { options: { challenge: 'c' }, challengeId: 'ch-1' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const dismissed = new Error('dismissed');
+    dismissed.name = 'NotAllowedError';
+    startAuthentication.mockRejectedValue(dismissed);
+    render(<PasskeySignIn />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Cancelled, or no passkey on this device. Try again, or use the email link.',
+    );
+    // Not the hard-failure copy, and not an alert — a cancel is not an error.
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it('re-enables the button after an incomplete ceremony', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       json: async () => ({ data: { options: { challenge: 'c' }, challengeId: 'ch-1' } }),
@@ -98,6 +124,5 @@ describe('PasskeySignIn', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /sign in with a passkey/i })).toBeEnabled(),
     );
-    expect(screen.queryByText(/use the email link instead/i)).toBeNull();
   });
 });
