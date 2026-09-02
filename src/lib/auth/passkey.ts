@@ -30,8 +30,8 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
  * unauthenticated and keys by a server-generated random id. They get separate
  * maps for two reasons: a flood on the ungated side cannot evict the gated
  * side's entries, and a caller-supplied authentication key cannot reach a
- * registration challenge — `authenticate/verify` passes the client's
- * `challengeId` straight through to `getAndDeleteChallenge`.
+ * registration challenge. See docs/technical-architecture.md ("Passkey
+ * challenge store") for the cross-purpose reachability this closes.
  */
 export type ChallengePurpose = 'registration' | 'authentication';
 
@@ -107,9 +107,7 @@ export function storeChallenge(purpose: ChallengePurpose, key: string, challenge
   // refreshed (live) expiry sitting at the head — the walk would stop there and
   // never reach the expired entries behind it. Removing it first restores the
   // invariant that iteration order is non-decreasing in `expiresAt`, which both
-  // the walk above and the eviction below depend on. Reachable today:
-  // registration keys by `accountId`, so reopening the add-passkey screen
-  // re-stores the same key.
+  // the walk above and the eviction below depend on.
   store.delete(key);
   cleanupExpired(store, now);
 
