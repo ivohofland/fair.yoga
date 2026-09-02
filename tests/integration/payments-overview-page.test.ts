@@ -21,13 +21,9 @@ function normalise(html: string): string {
 /**
  * `/settings/payments` — the payments overview's three filters.
  *
- * Before this task the outstanding total and its caption read
- * `p.status !== 'paid'`, which counts a `not_charged` payment as still owed,
- * and the received total re-filtered `=== 'paid'` from the full list rather
- * than reusing the tile's own `outstanding`/`received` split. Both totals now
- * read positively — `isOutstanding` for the owed side, `=== 'paid'` for the
- * received side — and a third section renders `not_charged` payments on
- * their own, out of both totals.
+ * The outstanding total and its caption read positively via `isOutstanding`,
+ * the received total reads `=== 'paid'`, and a third section renders
+ * `not_charged` payments on their own, out of both totals.
  */
 describe('GET /settings/payments — positive filters and the not-charged section', () => {
   let teacherId = '';

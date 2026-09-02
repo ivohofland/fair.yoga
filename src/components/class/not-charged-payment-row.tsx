@@ -10,8 +10,7 @@ interface NotChargedPaymentRowProps {
   startTime: Date;
   /**
    * The raw instant, deliberately not pre-formatted — `startOfLocalDay` runs
-   * here so the conversion sits inside the tested unit. Same reasoning as
-   * `ReceivedPaymentRow`'s `paidAt`; see #140, #154.
+   * here so the conversion sits inside the tested unit.
    */
   notChargedAt: Date | null;
   timeZone: string;
@@ -21,8 +20,8 @@ interface NotChargedPaymentRowProps {
 /**
  * One Not charged row on the payments overview.
  *
- * `MarkUnpaidButton` is the reversal here exactly as it is on a Received row:
- * both states mean "no longer owed", and undoing either means "owed again".
+ * `MarkUnpaidButton` is the reversal: not charged means no longer owed, and
+ * undoing it means owed again.
  */
 export function NotChargedPaymentRow({
   paymentId,

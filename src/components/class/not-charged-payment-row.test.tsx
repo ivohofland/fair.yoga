@@ -3,9 +3,8 @@ import { render, screen } from '@testing-library/react';
 import { NotChargedPaymentRow } from './not-charged-payment-row';
 
 /**
- * Mirrors `received-payment-row.test.tsx`'s fixture shape — same prop names,
- * same kind of dates — since the two rows take an identical shape and read
- * side by side.
+ * `baseProps` fixes one student, one class, one amount, so each test below
+ * varies only the prop it is testing.
  */
 describe('NotChargedPaymentRow', () => {
   const baseProps = {
