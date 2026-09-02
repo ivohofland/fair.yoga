@@ -50,9 +50,9 @@ describe('passkey challenge store', () => {
   it('a registration challenge is not reachable under the authentication purpose', () => {
     storeChallenge('registration', 'acct-1', 'reg-challenge');
 
-    // `authenticate/verify` passes a caller-supplied challengeId straight into
-    // getAndDeleteChallenge. Before partitioning, passing a known accountId
-    // consumed that account's in-flight registration challenge.
+    // Cross-purpose reachability: see docs/technical-architecture.md
+    // ("Passkey challenge store"). Before partitioning, a key from one flow
+    // could consume the other flow's in-flight challenge.
     expect(getAndDeleteChallenge('authentication', 'acct-1')).toBeNull();
     expect(getAndDeleteChallenge('registration', 'acct-1')).toBe('reg-challenge');
   });

@@ -40,7 +40,7 @@ export type ChallengePurpose = 'registration' | 'authentication';
  * rather than a partition that silently grows without one.
  *
  * See docs/technical-architecture.md ("Passkey challenge store") for the
- * per-entry memory arithmetic behind these two numbers.
+ * per-entry memory arithmetic behind these capacities.
  */
 export const CHALLENGE_CAPACITIES = {
   registration: 1_000,
