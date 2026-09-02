@@ -1545,17 +1545,31 @@ erasure that rolled back" is not a state the function can reach.
 
 A `.catch()` on the whole `$transaction(…)` promise is a different thing and is
 fine — `acceptInvitation` and `unlinkTeacher` (`src/services/invitations.ts`)
-both do it. The rule is about a statement inside the callback. No site in
-`src/` breaks it today; re-derive with:
+both do it. So is one on a promise from a helper that queries the database
+itself, outside any transaction it did not open — `deliverInvitation`
+(`src/app/api/students/route.ts`, `src/app/api/invitations/[id]/resend/route.ts`)
+and `ownedInvitation` (`src/app/api/invitations/[id]/route.ts`) are this
+shape. The rule is about a statement inside an interactive-transaction
+callback.
+
+This grep is a spot-check, not a proof: it matches `.catch(` syntax, not
+every suppression shape a statement inside a transaction could take — a
+`try`/`catch` wrapped around a `tx.` call, a two-argument `.then(v, err)`,
+or `Promise.allSettled([tx.x()])` are the same poisoning risk and none of
+them match. `grep -v "\.test\."` also filters lines, not paths, so a real
+offender whose trailing comment happened to name a test file would drop out
+silently. No `.catch()`-syntax site in `src/` breaks the rule today;
+re-derive with:
 
 ```sh
 grep -rn "\.catch(" src --include="*.ts" --include="*.tsx" | grep -v "\.test\."
 ```
 
 Every hit is either a real `.catch()` call site — on `db`/`prisma`, on a
-`$transaction(…)` promise, or outside the database entirely — or a comment
-merely mentioning `.catch()` with no call site, which the post-commit
-diagnostic in `deleteTeacherAccount`'s comment is the current instance of.
+`$transaction(…)` promise, on a promise from a helper querying outside any
+transaction, or outside the database entirely — or a comment merely
+mentioning `.catch()` with no call site, which the post-commit diagnostic in
+`deleteTeacherAccount`'s comment is the current instance of.
 
 ## Known conformance
 
