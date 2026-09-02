@@ -24,7 +24,7 @@ interface NotificationsBody {
 /**
  * #136, #400. Reverse pin only, deliberately. This form shares
  * `updateStudentSchema` with `tier-form.tsx` and `name-form.tsx`.
- * Each form sends only a subset of the schema fields. A forward pin
+ * This form sends only a subset of the schema fields. A forward pin
  * would name fields this form has no business rendering.
  *
  * What the reverse pin still buys: `updateStudentSchema` is `.strict()`, so a

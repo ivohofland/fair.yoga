@@ -36,6 +36,10 @@ describe('StudentSettingsPage', () => {
     const page = await StudentSettingsPage();
     render(page);
 
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: STUDENT_ID } }),
+    );
+
     expect(screen.getByRole('heading', { name: 'Settings', level: 1 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Personal details', level: 2 })).toBeInTheDocument();
     expect(screen.getByLabelText('First name')).toHaveValue('Anna');
@@ -46,5 +50,17 @@ describe('StudentSettingsPage', () => {
     expect(screen.getByRole('link', { name: /notifications/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /privacy/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /data & deletion/i })).toBeInTheDocument();
+  });
+
+  it('redirects to /login when the student row is missing', async () => {
+    getSession.mockResolvedValue({ studentId: STUDENT_ID, teacherId: null });
+    findUnique.mockResolvedValue(null);
+    redirect.mockImplementationOnce(() => {
+      throw new Error('REDIRECT');
+    });
+
+    await expect(StudentSettingsPage()).rejects.toThrow('REDIRECT');
+
+    expect(redirect).toHaveBeenCalledWith('/login');
   });
 });

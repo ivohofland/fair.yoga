@@ -7,6 +7,7 @@ import type { updateStudentSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { readErrorMessage } from '@/lib/client-errors';
 
 interface NameFormProps {
   studentId: string;
@@ -22,8 +23,8 @@ interface NameBody {
 }
 
 /**
- * #400. Reverse pin only — two keys, and this form shares
- * `updateStudentSchema` with `tier-form.tsx` and `notifications-form.tsx`.
+ * #400. Reverse pin only — this form shares `updateStudentSchema`
+ * with `tier-form.tsx` and `notifications-form.tsx`.
  */
 const _formHasNoExtras: NoneOf<Exclude<keyof NameBody, keyof UpdateStudentWire>> = true;
 void _formHasNoExtras;
@@ -45,15 +46,6 @@ export function NameForm({
     const trimmedFirst = firstName.trim();
     const trimmedLast = lastName.trim();
 
-    if (!trimmedFirst) {
-      setError('First name is required');
-      return;
-    }
-    if (!trimmedLast) {
-      setError('Last name is required');
-      return;
-    }
-
     setSaving(true);
     setSaved(false);
     setError('');
@@ -70,11 +62,12 @@ export function NameForm({
       });
 
       if (res.ok) {
+        setFirstName(trimmedFirst);
+        setLastName(trimmedLast);
         setSaved(true);
         router.refresh();
       } else {
-        const json: { error?: { message?: string } } = await res.json().catch(() => ({}));
-        setError(json.error?.message ?? 'Could not save. Try again.');
+        setError(await readErrorMessage(res, 'Could not save. Try again.'));
       }
     } catch {
       setError('Network error. Try again.');

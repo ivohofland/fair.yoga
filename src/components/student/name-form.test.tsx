@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { routerRefresh } from '../../../tests/setup/components';
 import { NameForm } from './name-form';
 
 /**
@@ -76,6 +77,23 @@ describe('NameForm', () => {
     expect(body).toEqual({ firstName: 'Annabel', lastName: 'Jones' });
   });
 
+  it('trims leading and trailing whitespace before sending', async () => {
+    stubFetch();
+    render(
+      <NameForm
+        studentId="student-1"
+        initialFirstName="Anna"
+        initialLastName="Smith"
+      />,
+    );
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: '  Annabel  ' } });
+    fireEvent.change(screen.getByLabelText('Last name'), { target: { value: '  Jones ' } });
+    const { body } = await save();
+    expect(body).toEqual({ firstName: 'Annabel', lastName: 'Jones' });
+    expect(screen.getByLabelText('First name')).toHaveValue('Annabel');
+    expect(screen.getByLabelText('Last name')).toHaveValue('Jones');
+  });
+
   it('disables save button when first name or last name is empty or whitespace', () => {
     render(
       <NameForm
@@ -120,7 +138,7 @@ describe('NameForm', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('displays Saved indicator on success', async () => {
+  it('displays Saved indicator and refreshes on success', async () => {
     stubFetch(true);
     render(
       <NameForm
@@ -134,6 +152,7 @@ describe('NameForm', () => {
     await waitFor(() => {
       expect(screen.getByText('Saved')).toBeInTheDocument();
     });
+    expect(routerRefresh).toHaveBeenCalledTimes(1);
 
     // Clear saved indicator on change
     fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Annamarie' } });
