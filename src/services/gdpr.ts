@@ -1151,7 +1151,9 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         // already-terminal entry — measured: `entry_terminal_liveness_guard`
         // rejects that with `23514`, aborting the whole erasure rather than
         // merely re-notifying a student.
-        // Either cause fails loud — a warn and a skip — rather than silently
+        //
+        // Either cause fails loud IF THE ERASURE COMMITS — a warn and a
+        // skip — rather than silently
         // cancelling a class this loop should not have: cancelling a
         // completed one would strip a class that already has Payment rows and
         // students who have been asked to pay.
@@ -1333,9 +1335,12 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       await tx.magicLinkToken.deleteMany({ where: { email: teacher.email } });
 
       // Scoped and aborting, for the same reason the student erasure above
-      // is — see that write for the argument. It matters less here (this
-      // function has no post-commit work of its own) and is done anyway so
-      // the two halves answer a repeated request the same way: the route
+      // is — see that write for the argument. It matters MORE here now:
+      // the post-commit diagnostic loop below only runs once this
+      // transaction has committed, so this abort is what keeps a losing
+      // duplicate from logging a residual warn for a skip it never
+      // actually made. Done anyway so the two halves answer a repeated
+      // request the same way: the route
       // catches this sentinel per half, and a teacher half that silently
       // re-erased while the student half refused would make that catch look
       // arbitrary to the next reader.
@@ -1418,17 +1423,23 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
   // an interactive transaction cannot be guarded (issue #242)". Out here the
   // erasure is committed and a failed read costs only the field it fills.
   //
-  // What the reader gives up by reading late: another writer may move the
-  // row between the CAS and this read. That was already true of the
-  // in-transaction version — a class reaching this branch is one the
-  // pre-lock did NOT hold, which is why the CAS missed it — so the reads
-  // were never a locked observation to begin with.
+  // What the reader gives up by reading late: the pre-lock above DOES hold
+  // this row and its entry under `FOR UPDATE` for the rest of the
+  // transaction — a class reaching this branch was held, not merely read
+  // (see the pre-lock's own comment). Reading post-commit releases that
+  // hold before the read runs, so `observedStatus`/`observedCancelledAt`
+  // are a best-effort snapshot, not the locked one the CAS itself saw.
+  // Accepted anyway: a diagnostic that could fail a committed erasure is
+  // the defect this PR exists to remove, and the CAS's own outcome — which
+  // class got skipped, and why the CAS missed — is unaffected either way.
   //
   // `waitingEntriesLeft` is the residual this skip leaves behind: any
   // `waiting` entry on a class that can never promote anyone, belonging to a
-  // teacher who no longer exists. An operator seeing a non-zero count knows
-  // there is a row to clean up, which is the whole difference between a
-  // known residual and a silent one. Since #112 it carries a second meaning
+  // teacher who no longer exists. An operator seeing a count GREATER THAN
+  // ZERO knows there is a row to clean up — `-1` is the read-failure
+  // sentinel below and says nothing about the residual — which is the
+  // whole difference between a known residual and a silent one. Since #112
+  // it carries a second meaning
   // — the happy path above NOTIFIES the queue as well as closing it, so a
   // non-zero count here is also "this many students heard nothing from this
   // path". That is tolerable only because every route that can produce the
@@ -1439,38 +1450,55 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
   // tells them too). Add a fourth way for a class to leave
   // `draft|open|in_progress` and that argument is what breaks.
   //
-  // There is no blanket try/catch around this loop: every statement added to
-  // it must guard itself individually, the same way the two reads below do.
+  // Wrapped in a blanket try/catch below — not in place of guarding each
+  // statement individually (the two reads still do, and should stay that
+  // way), but as the backstop for whatever a future addition to this loop
+  // forgets to guard.
   for (const classId of skippedClassIds) {
-    // `'unread'` kept distinct from a missing row and from a null
-    // `cancelledAt`: conflating "we could not look" with "it was gone", or
-    // with "it was not cancelled", is how a read failure gets filed as a
-    // finding. `-1` is the same sentinel `deleteStudentAccount`'s
-    // post-commit loop and `promoteAfterCancel`
-    // (`api/registrations/[id]/route.ts`) use, and carries the same blind
-    // spot: the error itself is discarded.
-    const observed = await db.class
-      .findUnique({
-        where: { id: classId },
-        select: { status: true, calendarEntry: { select: { cancelledAt: true } } },
-      })
-      .catch(() => 'unread' as const);
-    const waitingEntriesLeft = await db.waitlistEntry
-      .count({ where: { classId, status: 'waiting' } })
-      .catch(() => -1);
-    log.warn(
-      {
-        teacherId,
-        classId,
-        // Both halves, because neither answers alone any more: a concurrent
-        // cancellation leaves `status` untouched and only `cancelledAt`
-        // shows it.
-        observedStatus: observed === 'unread' ? 'unknown' : (observed?.status ?? 'row-deleted'),
-        observedCancelledAt:
-          observed === 'unread' ? 'unknown' : (observed?.calendarEntry.cancelledAt ?? null),
-        waitingEntriesLeft,
-      },
-      'teacher erasure: class cancel CAS matched nothing',
-    );
+    try {
+      // `'unread'` kept distinct from a missing row and from a null
+      // `cancelledAt`: conflating "we could not look" with "it was gone", or
+      // with "it was not cancelled", is how a read failure gets filed as a
+      // finding. `-1` is the same sentinel `deleteStudentAccount`'s
+      // post-commit loop and `promoteAfterCancel`
+      // (`api/registrations/[id]/route.ts`) use, and carries the same blind
+      // spot: the error itself is discarded.
+      const observed = await db.class
+        .findUnique({
+          where: { id: classId },
+          select: { status: true, calendarEntry: { select: { cancelledAt: true } } },
+        })
+        .catch(() => 'unread' as const);
+      const waitingEntriesLeft = await db.waitlistEntry
+        .count({ where: { classId, status: 'waiting' } })
+        .catch(() => -1);
+      log.warn(
+        {
+          teacherId,
+          classId,
+          // Both halves, because neither answers alone any more: a concurrent
+          // cancellation leaves `status` untouched and only `cancelledAt`
+          // shows it.
+          observedStatus: observed === 'unread' ? 'unknown' : (observed?.status ?? 'row-deleted'),
+          observedCancelledAt:
+            observed === 'unread' ? 'unknown' : (observed?.calendarEntry.cancelledAt ?? null),
+          waitingEntriesLeft,
+        },
+        'teacher erasure: class cancel CAS matched nothing',
+      );
+    } catch (err) {
+      // The erasure has ALREADY COMMITTED by the time this loop runs — an
+      // uncaught throw here would reject `deleteTeacherAccount` for an
+      // erasure that fully succeeded, and `erasureFailure`
+      // (`api/account/route.ts`) would tell the teacher the rest of their
+      // data is unchanged, over a session it has already destroyed. Both
+      // reads above guard themselves individually; this is the backstop for
+      // whatever neither of them catches — `log.warn` itself, or a future
+      // statement someone adds to this loop without its own guard.
+      log.error(
+        { err, teacherId, classId },
+        'teacher erasure: post-commit skip diagnostic failed unexpectedly',
+      );
+    }
   }
 }

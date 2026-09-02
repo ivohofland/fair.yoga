@@ -1505,10 +1505,11 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       });
     onTestFinished(() => lockSpy.mockRestore());
 
-    // What the diagnostic read saw of the teacher row when it ran. Read on a
-    // SEPARATE connection (the base `prisma`, not the extended client the
-    // erasure is using), and a plain SELECT under READ COMMITTED never blocks
-    // on the erasure's row lock — it returns the last COMMITTED version. So
+    // What the diagnostic read saw of the teacher row when it ran. Read via
+    // `prisma`, never `tx` — the erasure's own transaction handle — so a
+    // plain SELECT under READ COMMITTED never blocks on the erasure's row
+    // lock and never sees its uncommitted write. It returns the last
+    // COMMITTED version. So
     // an anonymized email here means the diagnostic ran AFTER the commit,
     // which is the whole of what #242 changes. Inside the transaction it
     // would read the original address: the erasure's own
@@ -1539,6 +1540,17 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
         },
       },
     }) as unknown as PrismaClient;
+
+    // Precondition for the assertion below: if `beforeEach`'s `email`
+    // restore is ever trimmed as apparently-redundant cleanup, this is what
+    // catches it — without it, `teacherEmailWhenDiagnosticRan` would match
+    // `/@deleted\.invalid$/` vacuously against the SIBLING test's stale
+    // address, even if this diagnostic read ran pre-commit.
+    const before = await prisma.teacher.findUniqueOrThrow({
+      where: { id: teacherId },
+      select: { email: true },
+    });
+    expect(before.email).not.toMatch(/@deleted\.invalid$/);
 
     // Resolves. A diagnostic that can reject the erasure is the defect.
     await expect(deleteTeacherAccount(failing, teacherId)).resolves.toBeUndefined();
@@ -1572,6 +1584,116 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       where: { classId_studentId: { classId, studentId: waitingStudentId } },
     });
     expect(entry.status).toBe('waiting');
+  });
+
+  it('keeps a real waitlist count even when the status read fails on its own', async () => {
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'mixed diagnostic class',
+      date: new Date('2026-06-04'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'completed',
+    });
+    const classId = cls.id;
+
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId: waitingStudentId, position: 1, status: 'waiting' },
+    });
+
+    const originalLock = dbLocks.lockClassRowsOrdered;
+    const lockSpy = vi
+      .spyOn(dbLocks, 'lockClassRowsOrdered')
+      .mockImplementation(async (tx, source) => {
+        const ids = await originalLock(tx, source);
+        return source.entries === true ? [...ids, classId] : ids;
+      });
+    onTestFinished(() => lockSpy.mockRestore());
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+
+    // Only the STATUS read is injected to fail — the count read is real.
+    // Proves the two reads' guards are independent: a
+    // `Promise.all([...]).catch(...)` refactor of the post-commit loop
+    // would blank BOTH values out whenever EITHER read fails, discarding a
+    // genuine residual count exactly when an operator needs it most.
+    const halfFailing = prisma.$extends({
+      query: {
+        class: {
+          async findUnique({ args, query }) {
+            if ((args.where as { id?: string }).id !== classId) return query(args);
+            throw new Error('injected: status read failed');
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    await expect(deleteTeacherAccount(halfFailing, teacherId)).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        classId,
+        observedStatus: 'unknown',
+        observedCancelledAt: 'unknown',
+        waitingEntriesLeft: 1,
+      }),
+      expect.stringContaining('cancel CAS matched nothing'),
+    );
+  });
+
+  it('a diagnostic loop failure does not fail the already-committed erasure', async () => {
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'diagnostic loop class',
+      date: new Date('2026-06-05'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'completed',
+    });
+    const classId = cls.id;
+
+    const originalLock = dbLocks.lockClassRowsOrdered;
+    const lockSpy = vi
+      .spyOn(dbLocks, 'lockClassRowsOrdered')
+      .mockImplementation(async (tx, source) => {
+        const ids = await originalLock(tx, source);
+        return source.entries === true ? [...ids, classId] : ids;
+      });
+    onTestFinished(() => lockSpy.mockRestore());
+
+    // `log.warn` is the one unguarded statement left in the post-commit
+    // loop after item 4's fix — both reads guard themselves with their own
+    // `.catch()`. This proves the loop's OWN try/catch is the backstop, not
+    // the individual reads' guards, which never fire in this test.
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {
+      throw new Error('injected: log.warn failed');
+    });
+    onTestFinished(() => warn.mockRestore());
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+
+    await expect(deleteTeacherAccount(prisma, teacherId)).resolves.toBeUndefined();
+
+    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+    expect(teacher.email).toMatch(/@deleted\.invalid$/);
+
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({ teacherId, classId }),
+      expect.stringContaining('post-commit skip diagnostic failed'),
+    );
   });
 });
 
