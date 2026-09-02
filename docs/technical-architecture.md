@@ -361,8 +361,8 @@ Re-derive with:
 ```sh
 find src/app/api -name route.ts | wc -l
 for f in $(find src/app/api -name route.ts | sort); do
-  ids=$(grep -ohE "require[A-Za-z]+|getSession[A-Za-z]*|CRON_SECRET|checkIpRateLimit|checkRateLimit|checkStudentWriteLimit" "$f" \
-        | sort -u | tr '\n' ' ')
+  ids=$(grep -ohE "require[A-Za-z]+\(|getSession[A-Za-z]*\(|CRON_SECRET|checkIpRateLimit\(|checkRateLimit\(|checkStudentWriteLimit\(" "$f" \
+        | tr -d '(' | sort -u | tr '\n' ' ')
   printf "%-60s %s\n" "${f#src/app/api/}" "$ids"
 done
 ```
@@ -371,6 +371,15 @@ The loop prints one row per route and expects all of them to be read, rather
 than filtering to a count. A filtering grep gets this wrong:
 `notifications/stream` guards with `getSessionToken`, not `requireSession`, so a
 pattern listing only the `require*` helpers files it as unguarded.
+
+Two further limits worth knowing: `sort -u` collapses a file to one row per
+unique identifier, so a file with one guarded method and one unguarded method
+beside it (a guarded `GET` next to a wide-open `POST`, say) reads as a single
+guarded row — the command finds unguarded *files*, not unguarded *methods*.
+And it only recognizes the guard helpers named in the pattern:
+`account/teacher-profile/route.ts` also authorizes via `consumeSignupTicket`
+on one branch, invisible to this grep, though the file still reads correctly
+here because `requireSession` is also present on its other branch.
 
 ### Passkey authentication options
 

@@ -26,12 +26,11 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 /**
  * Which flow minted a challenge.
  *
- * Registration is session-gated and keys by `accountId`; authentication is
- * unauthenticated and keys by a server-generated random id. They get separate
- * maps for two reasons: a flood on the ungated side cannot evict the gated
- * side's entries, and a caller-supplied authentication key cannot reach a
- * registration challenge. See docs/technical-architecture.md ("Passkey
- * challenge store") for the cross-purpose reachability this closes.
+ * They get separate maps for two reasons: a flood on the ungated side cannot
+ * evict the gated side's entries, and a caller-supplied authentication key
+ * cannot reach a registration challenge. See docs/technical-architecture.md
+ * ("Passkey challenge store") for the cross-purpose reachability this closes
+ * and for which flow is gated by what.
  */
 export type ChallengePurpose = 'registration' | 'authentication';
 
@@ -61,10 +60,12 @@ const evictionLogState: Record<ChallengePurpose, { lastLogTime: number; suppress
 };
 
 /**
- * Emits a partition's pending eviction count, throttled. Called both right
- * after an eviction and on every subsequent store into the same partition —
- * the latter is what stops a burst that tapers off inside the throttle window
- * from being lost, so a ceiling being reached never passes silently.
+ * Emits a partition's pending eviction count, throttled. Called at the top
+ * of `storeChallenge` (flushing any count carried over from a prior call),
+ * once after that call's own eviction loop (summarizing the whole burst),
+ * and periodically by the backstop timer below — so a partition that goes
+ * quiet after a burst still flushes on its own, and a ceiling being reached
+ * never passes silently.
  */
 function flushPendingEvictionLog(purpose: ChallengePurpose, now: number): void {
   const state = evictionLogState[purpose];
@@ -116,8 +117,8 @@ export function storeChallenge(purpose: ChallengePurpose, key: string, challenge
     if (oldest === undefined) break;
     store.delete(oldest);
     evictionLogState[purpose].suppressed++;
-    flushPendingEvictionLog(purpose, now);
   }
+  flushPendingEvictionLog(purpose, now);
 
   store.set(key, { challenge, expiresAt: now + CHALLENGE_TTL_MS });
 }
@@ -151,6 +152,21 @@ export function _resetChallengeStores(): void {
     evictionLogState[purpose] = { lastLogTime: 0, suppressed: 0 };
   }
 }
+
+/**
+ * Backstop for the throttled eviction log: flushes any partition whose
+ * suppressed count would otherwise sit unflushed forever once that
+ * partition goes quiet. `storeChallenge` only flushes on its own next call
+ * into the same partition — a burst that stops cold has no such call.
+ * Safe for this deployment: a single always-on Node process (see
+ * docs/technical-architecture.md), not serverless/edge.
+ */
+setInterval(() => {
+  const now = Date.now();
+  for (const purpose of Object.keys(challengeStores) as ChallengePurpose[]) {
+    flushPendingEvictionLog(purpose, now);
+  }
+}, EVICTION_LOG_THROTTLE_MS).unref();
 
 // ---------------------------------------------------------------------------
 // Environment helpers

@@ -1241,12 +1241,10 @@ describe('POST /api/students — response disclosure (#162)', () => {
 
     expect(statuses.slice(0, 50)).toEqual(Array(50).fill(201));
     expect(statuses[50]).toBe(429);
-    // The longest fetch loop in the integration suite by an order of magnitude
-    // — 51 sequential round trips where the next-largest is 2 — so this is the
-    // most contention-sensitive test here, and it gets headroom the others do
-    // not need. Steady state is ~0.8s (measured 2026-08-21 against a warm dev
-    // server; the two sibling tests below make the same 51 round trips and
-    // pass on the untouched 5s default). The budget is for a loaded or
+    // 51 sequential round trips need headroom beyond the 5s default. Steady
+    // state is ~0.8s (measured 2026-08-21 against a warm dev server; the two
+    // sibling tests below make the same 51 round trips and pass on the
+    // untouched 5s default). The budget is for a loaded or
     // cold-compiling server, not for solo latency — and a cold route is what
     // the warm-up protocol in AGENTS.md exists to remove, so this is the belt
     // to that braces (#290).
