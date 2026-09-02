@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Payment, type PaymentStatus } from '@prisma/client';
 import {
   markPaymentPaid,
   markPaymentOverdue,
-  unmarkPaymentPaid,
+  reopenPayment,
+  markPaymentNotCharged,
   sendPaymentReminder,
   getOutstandingPayments,
   getPaymentsForClass,
@@ -221,9 +222,9 @@ describe('Payment Service (DB)', () => {
     }
   });
 
-  it('unmarkPaymentPaid undoes a mistaken mark: paid → pending, fields cleared', async () => {
+  it('reopenPayment undoes a mistaken mark: paid → pending, fields cleared', async () => {
     // paymentId is 'paid' from the previous test
-    const result = await unmarkPaymentPaid(prisma, paymentId);
+    const result = await reopenPayment(prisma, paymentId);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -233,9 +234,9 @@ describe('Payment Service (DB)', () => {
     }
   });
 
-  it('unmarkPaymentPaid rejects when the payment is not paid', async () => {
+  it('reopenPayment rejects when the payment is already outstanding', async () => {
     // now 'pending' after the undo above
-    const result = await unmarkPaymentPaid(prisma, paymentId);
+    const result = await reopenPayment(prisma, paymentId);
     expect(result.ok).toBe(false);
   });
 
@@ -459,6 +460,108 @@ describe('Payment Service (DB)', () => {
       const refused = await sendPaymentReminder(prisma, id);
       if (refused.ok) throw new Error('expected the reminder to be refused');
       expect(refused.error).toContain('"paid"');
+    });
+  });
+
+  /**
+   * `markPaymentNotCharged` and `reopenPayment`, both against payments of their
+   * own — the sequential fixture above leaves `paymentId` in whatever state its
+   * last test left it, which these don't depend on.
+   */
+  describe('markPaymentNotCharged / reopenPayment', () => {
+    const fixtureStudentIds: string[] = [];
+    let fixtureTag = 0;
+
+    async function makePayment(status: PaymentStatus): Promise<Payment> {
+      const tag = fixtureTag++;
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'NotCharged',
+          lastName: `Fixture${tag}`,
+          email: `payment-notcharged-${tag}-${uniqueSuffix}@test.local`,
+          incomeTier: 3,
+        },
+        select: { id: true },
+      });
+      fixtureStudentIds.push(student.id);
+      const registration = await prisma.registration.create({
+        data: { classId, studentId: student.id, status: 'attended', tierAtBooking: 3, price: 12.5 },
+      });
+      return prisma.payment.create({
+        data: {
+          registrationId: registration.id,
+          amount: 12.5,
+          status,
+          ...(status === 'paid' ? { method: 'cash', paidAt: new Date() } : {}),
+          ...(status === 'not_charged' ? { notChargedAt: new Date() } : {}),
+        },
+      });
+    }
+
+    afterAll(async () => {
+      // Nested `afterAll`s run before their parent's, and Registration and
+      // Payment both cascade off Student, so this is the whole cleanup.
+      await prisma.student.deleteMany({ where: { id: { in: fixtureStudentIds } } });
+    });
+
+    describe('markPaymentNotCharged', () => {
+      it('settles a pending payment and stamps notChargedAt', async () => {
+        const payment = await makePayment('pending');
+        const result = await markPaymentNotCharged(prisma, payment.id);
+        expect(result.ok).toBe(true);
+        const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        expect(row.status).toBe('not_charged');
+        expect(row.notChargedAt).not.toBeNull();
+        expect(row.paidAt).toBeNull();
+      });
+
+      it('settles an overdue payment', async () => {
+        const payment = await makePayment('overdue');
+        expect((await markPaymentNotCharged(prisma, payment.id)).ok).toBe(true);
+      });
+
+      it('refuses a paid payment — that would be a refund', async () => {
+        const payment = await makePayment('paid');
+        const result = await markPaymentNotCharged(prisma, payment.id);
+        expect(result).toEqual({
+          ok: false,
+          error: 'Cannot mark as not charged: current status is "paid". Must be "pending" or "overdue".',
+        });
+      });
+
+      it('refuses a payment that is already not charged', async () => {
+        const payment = await makePayment('not_charged');
+        const result = await markPaymentNotCharged(prisma, payment.id);
+        expect(result.ok).toBe(false);
+      });
+    });
+
+    describe('reopenPayment', () => {
+      it('returns a paid payment to pending, clearing method and paidAt', async () => {
+        const payment = await makePayment('paid');
+        expect((await reopenPayment(prisma, payment.id)).ok).toBe(true);
+        const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        expect(row.status).toBe('pending');
+        expect(row.paidAt).toBeNull();
+        expect(row.method).toBeNull();
+      });
+
+      it('returns a not-charged payment to pending, clearing notChargedAt', async () => {
+        const payment = await makePayment('not_charged');
+        expect((await reopenPayment(prisma, payment.id)).ok).toBe(true);
+        const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        expect(row.status).toBe('pending');
+        expect(row.notChargedAt).toBeNull();
+      });
+
+      it('refuses a payment that is already outstanding', async () => {
+        const payment = await makePayment('pending');
+        const result = await reopenPayment(prisma, payment.id);
+        expect(result).toEqual({
+          ok: false,
+          error: 'Cannot undo: current status is "pending". Must be "paid" or "not charged".',
+        });
+      });
     });
   });
 });

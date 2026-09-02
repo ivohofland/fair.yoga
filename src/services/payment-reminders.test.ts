@@ -21,7 +21,11 @@ describe('payment reminders (DB)', () => {
   const paymentIds: string[] = [];
   const registrationIds: string[] = [];
 
-  async function makePayment(createdAt: Date, status: 'pending' | 'overdue' = 'pending', reminderSentAt: Date | null = null) {
+  async function makePayment(
+    createdAt: Date,
+    status: 'pending' | 'overdue' | 'not_charged' = 'pending',
+    reminderSentAt: Date | null = null,
+  ) {
     const student = await prisma.student.create({
       data: {
         firstName: 'Pay',
@@ -115,6 +119,13 @@ describe('payment reminders (DB)', () => {
   const DAY = 24 * 60 * 60 * 1000;
   const now = new Date('2026-07-01T12:00:00Z');
 
+  async function makeAgedPayment(
+    status: 'pending' | 'overdue' | 'not_charged',
+    ageDays: number,
+  ) {
+    return makePayment(new Date(now.getTime() - ageDays * DAY), status);
+  }
+
   it('marks pending payments overdue after 7 days, leaves younger ones', async () => {
     const old = await makePayment(new Date(now.getTime() - 8 * DAY));
     const fresh = await makePayment(new Date(now.getTime() - 2 * DAY));
@@ -190,5 +201,20 @@ describe('payment reminders (DB)', () => {
     const after = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(after.status).toBe('overdue');
     expect(after.reminderSentAt).not.toBeNull();
+  });
+
+  it('never sweeps a not-charged payment to overdue, however old', async () => {
+    const payment = await makeAgedPayment('not_charged', 30); // 30 days old
+    await markOverduePayments(prisma, now);
+    const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    expect(row.status).toBe('not_charged');
+  });
+
+  it('never reminds on a not-charged payment', async () => {
+    const payment = await makeAgedPayment('not_charged', 30);
+    const reminded = await sendPaymentReminders(prisma, now);
+    void reminded; // other tests' overdue payments may legitimately be reminded here
+    const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    expect(row.reminderSentAt).toBeNull();
   });
 });

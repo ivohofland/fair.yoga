@@ -418,6 +418,11 @@ const unpaid = (token: string | null, id: string) =>
     method: 'POST',
     headers: { ...(token ? cookie(token) : {}) },
   });
+const notCharged = (token: string | null, id: string) =>
+  fetch(`${BASE_URL}/api/payments/${id}/not-charged`, {
+    method: 'POST',
+    headers: { ...(token ? cookie(token) : {}) },
+  });
 
 describe('POST /api/payments/[id]/paid', () => {
   it('rejects a signed-out caller', async () => {
@@ -511,5 +516,83 @@ describe('POST /api/payments/[id]/unpaid', () => {
     expect(unchanged.status).toBe('pending');
     expect(unchanged.method).toBeNull();
     expect(unchanged.paidAt).toBeNull();
+  });
+});
+
+describe('POST /api/payments/[id]/not-charged', () => {
+  // Self-seeding: this block mutates the shared fixture payment, so don't
+  // depend on the /paid or /unpaid blocks having run.
+  beforeAll(async () => {
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { status: 'pending', method: null, paidAt: null, notChargedAt: null },
+    });
+  });
+
+  it('rejects a signed-out caller', async () => {
+    const res = await notCharged(null, paymentId);
+    expect(res.status).toBe(401);
+  });
+
+  it('404s an unknown payment', async () => {
+    const res = await notCharged(teacherToken, UNKNOWN_PAYMENT_ID);
+    expect(res.status).toBe(404);
+  });
+
+  it("403s another teacher's payment", async () => {
+    const res = await notCharged(otherTeacherToken, paymentId);
+    expect(res.status).toBe(403);
+
+    const unchanged = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(unchanged.status).toBe('pending');
+  });
+
+  it('marks a payment not charged', async () => {
+    const res = await notCharged(teacherToken, paymentId);
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as {
+      data: { status: string; notChargedAt: string | null };
+    };
+    expect(data.status).toBe('not_charged');
+    // The key-allowlist assertion mirrors the existing ones at `:127`, `:155`,
+    // `:187` — it is how this repo catches a widened `select`, and
+    // `notChargedAt` joining the row is exactly the kind of change it exists
+    // to notice.
+    expect(Object.keys(data).sort()).toEqual([
+      'amount',
+      'createdAt',
+      'id',
+      'method',
+      'notChargedAt',
+      'paidAt',
+      'processorRef',
+      'registrationId',
+      'reminderSentAt',
+      'status',
+      'updatedAt',
+    ]);
+
+    const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(stamped.status).toBe('not_charged');
+    expect(stamped.notChargedAt).not.toBeNull();
+  });
+
+  it('409s a payment that is already not charged', async () => {
+    const res = await notCharged(teacherToken, paymentId);
+    expect(res.status).toBe(409);
+
+    const unchanged = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(unchanged.status).toBe('not_charged');
+  });
+
+  it('reverses a not-charged payment through /unpaid', async () => {
+    const res = await unpaid(teacherToken, paymentId);
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as { data: { status: string } };
+    expect(data.status).toBe('pending');
+
+    const reverted = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(reverted.status).toBe('pending');
+    expect(reverted.notChargedAt).toBeNull();
   });
 });

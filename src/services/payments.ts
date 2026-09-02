@@ -134,20 +134,25 @@ export async function markPaymentOverdue(
 }
 
 /**
- * Undo a mistaken "mark paid": paid → pending, clearing method/paidAt.
+ * Return a settled payment to outstanding: paid or not_charged → pending,
+ * clearing whichever settlement fields were set.
+ *
  * Returns to 'pending' (not 'overdue') deliberately — the dunning sweep
  * (`markOverduePayments`) re-derives overdue from the payment's age, so an old
  * payment self-heals back to overdue on the sweep's next tick. `lib/scheduler.ts`
  * registers that job (`payment-reminders`) at `60 * MINUTE`, so the window is an
- * hour, not the day this comment claimed.
+ * hour.
+ *
+ * One function for both settled states because they reverse identically: both
+ * mean "this is no longer owed", and undoing either means "it is owed again".
  */
-export async function unmarkPaymentPaid(
+export async function reopenPayment(
   db: PrismaClient,
   paymentId: string,
 ): Promise<PaymentResult> {
   const result = await db.payment.updateMany({
-    where: { id: paymentId, status: 'paid' },
-    data: { status: 'pending', method: null, paidAt: null },
+    where: { id: paymentId, status: { in: ['paid', 'not_charged'] } },
+    data: { status: 'pending', method: null, paidAt: null, notChargedAt: null },
   });
 
   if (result.count === 0) {
@@ -155,7 +160,42 @@ export async function unmarkPaymentPaid(
     if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
     return {
       ok: false,
-      error: `Cannot undo: current status is "${payment.status}". Must be "paid".`,
+      error: `Cannot undo: current status is "${payment.status}". Must be "paid" or "not charged".`,
+    };
+  }
+
+  const updated = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
+  return { ok: true, payment: updated };
+}
+
+/**
+ * The grace policy of `docs/product-concept.md:142`: the teacher chooses not to
+ * collect. A settled state like `paid` — no longer outstanding, never dunned —
+ * that differs from it in the one respect that matters to the money: nothing
+ * arrived. `reopenPayment` is the reversal.
+ *
+ * `reminderSentAt` is deliberately left alone. A reminder that was sent was
+ * sent, and the row's history stays true.
+ *
+ * Conditional update for the same reason `markPaymentPaid` uses one: the status
+ * guard lives in the WHERE clause so a double submission cannot both pass a
+ * pre-check and clobber `notChargedAt`.
+ */
+export async function markPaymentNotCharged(
+  db: PrismaClient,
+  paymentId: string,
+): Promise<PaymentResult> {
+  const result = await db.payment.updateMany({
+    where: { id: paymentId, status: { in: ['pending', 'overdue'] } },
+    data: { status: 'not_charged', notChargedAt: new Date() },
+  });
+
+  if (result.count === 0) {
+    const payment = await db.payment.findUnique({ where: { id: paymentId } });
+    if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
+    return {
+      ok: false,
+      error: `Cannot mark as not charged: current status is "${payment.status}". Must be "pending" or "overdue".`,
     };
   }
 

@@ -7,9 +7,13 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
-import { reopenPayment } from '@/services/payments';
+import { markPaymentNotCharged } from '@/services/payments';
 
-/** Undo for a mistaken "mark paid" or "not charged" — same ownership chain as /paid. */
+/**
+ * The teacher chooses not to collect — same ownership chain as /paid and
+ * /unpaid. No request body: unlike /paid there is no `method` to record,
+ * because no money moved.
+ */
 export const POST = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -33,7 +37,7 @@ export const POST = withErrorHandler(async (
     return respondError('Access denied', 403);
   }
 
-  const result = await reopenPayment(prisma, id);
+  const result = await markPaymentNotCharged(prisma, id);
   if (!result.ok) return respondError(result.error, 409);
   return respondOk(result.payment);
 });
