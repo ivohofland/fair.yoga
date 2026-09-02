@@ -12,9 +12,7 @@ const suffix = uniqueSuffix();
  */
 describe('sign-in and signup are case-insensitive on email', () => {
   const studentEmail = `case-student-${suffix}@test.local`;
-  const teacherEmail = `case-teacher-${suffix}@test.local`;
   let studentAccountId = '';
-  let teacherAccountId = '';
 
   beforeAll(async () => {
     const student = await prisma.student.create({
@@ -26,26 +24,15 @@ describe('sign-in and signup are case-insensitive on email', () => {
       select: { accountId: true },
     });
     studentAccountId = student.accountId ?? '';
-
-    const teacher = await prisma.teacher.create({
-      data: {
-        firstName: 'Case', lastName: 'Teacher', email: teacherEmail,
-        bio: 'Fixture for #170', pageSlug: `case-teacher-${suffix}`,
-        account: { create: { email: teacherEmail } },
-      },
-      select: { accountId: true },
-    });
-    teacherAccountId = teacher.accountId;
   });
 
   afterAll(async () => {
     await prisma.magicLinkToken.deleteMany({
-      where: { email: { in: [studentEmail, teacherEmail] } },
+      where: { email: studentEmail },
     });
     await prisma.student.deleteMany({ where: { email: studentEmail } });
-    await prisma.teacher.deleteMany({ where: { email: teacherEmail } });
     await prisma.account.deleteMany({
-      where: { id: { in: [studentAccountId, teacherAccountId].filter(Boolean) } },
+      where: { id: { in: [studentAccountId].filter(Boolean) } },
     });
     await prisma.$disconnect();
   });
@@ -82,23 +69,6 @@ describe('sign-in and signup are case-insensitive on email', () => {
 
     expect(await prisma.account.count({ where: { email: { contains: suffix } } })).toBe(before);
     expect(await prisma.account.count({ where: { email: studentEmail } })).toBe(1);
-  });
-
-  it('finds a passkey account when the address is typed in mixed case', async () => {
-    const res = await fetch(`${BASE_URL}/api/auth/passkey/authenticate/options`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: teacherEmail.toUpperCase() }),
-    });
-    expect(res.status).toBe(200);
-
-    // No credential is registered for this fixture, so the assertion is that
-    // the route resolved the account at all rather than that ids came back.
-    // A 200 with the account unresolved is indistinguishable here, so this
-    // test is the weakest of the three — it is the mutation check in Step 7
-    // that gives it teeth.
-    const body = await res.json();
-    expect(body).toHaveProperty('data.options');
   });
 });
 

@@ -6,13 +6,11 @@ import { startAuthentication } from '@simplewebauthn/browser';
 import { Button } from '@/components/ui/button';
 
 interface PasskeySignInProps {
-  /** Narrow the credential list when the visitor already typed an email. */
-  email?: string;
   /** Where to land after sign-in (relative path) — defaults to the role home. */
   redirect?: string;
 }
 
-export function PasskeySignIn({ email, redirect }: PasskeySignInProps) {
+export function PasskeySignIn({ redirect }: PasskeySignInProps) {
   const router = useRouter();
   const [state, setState] = useState<'idle' | 'working' | 'error'>('idle');
 
@@ -21,8 +19,6 @@ export function PasskeySignIn({ email, redirect }: PasskeySignInProps) {
     try {
       const optionsRes = await fetch('/api/auth/passkey/authenticate/options', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(email ? { email } : {}),
       });
       if (!optionsRes.ok) throw new Error('options');
       const json = (await optionsRes.json()) as {

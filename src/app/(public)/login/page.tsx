@@ -72,7 +72,7 @@ export default function LoginPage() {
           </form>
 
           <div className="mt-4">
-            <PasskeySignIn email={email || undefined} />
+            <PasskeySignIn />
           </div>
 
           {/* For anyone who bookmarked /login before they had an account. */}

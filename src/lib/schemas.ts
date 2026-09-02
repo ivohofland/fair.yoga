@@ -140,10 +140,6 @@ export const passkeyRegisterVerifySchema = z.object({
   response: z.record(z.string(), z.unknown()), // WebAuthn response is complex, validate shape loosely
 });
 
-export const passkeyAuthOptionsSchema = z.object({
-  email: emailField.optional(),
-});
-
 export const passkeyAuthVerifySchema = z.object({
   response: z.record(z.string(), z.unknown()),
   challengeId: z.string().min(1),
