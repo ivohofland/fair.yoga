@@ -10,14 +10,12 @@ const suffix = uniqueSuffix();
 /**
  * `/bookings` — the "How to pay" disclosure's payment-status gate.
  *
- * The disclosure (teacher IBAN, account name, remittance reference, and a
- * scannable EPC QR pre-filled with the amount) used to be gated on `!isPaid`,
- * so a `not_charged` payment — neither paid nor outstanding — fell into the
- * same branch as a genuinely unpaid one and solicited money the teacher had
- * explicitly forgiven. The load-bearing assertion here is the IBAN's absence,
- * not just the state label's presence: the label and the disclosure render
- * from independent conditions, so a test that only checked the label would
- * pass against the unfixed gate too.
+ * A `not_charged` payment must not solicit payment: no "How to pay"
+ * disclosure, no teacher IBAN, no QR code. An actually-unpaid payment still
+ * gets all three. The load-bearing assertion is the IBAN's absence, not just
+ * the state label's presence: the label and the disclosure render from
+ * independent conditions, so a test that only checked the label would not
+ * exercise the disclosure gate at all.
  */
 describe('GET /bookings (page) — payment status gate', () => {
   const TEACHER_IBAN = 'NL91ABNA0417164300';
