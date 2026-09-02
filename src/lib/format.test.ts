@@ -246,6 +246,13 @@ describe('paymentStateText', () => {
     // No colour class: unpaid is the resting state, not an alarm.
     expect(paymentStateText('pending')).toEqual({ label: '○ Unpaid', className: '' });
   });
+
+  it('renders not_charged as muted "⊘ Not charged"', () => {
+    expect(paymentStateText('not_charged')).toEqual({
+      label: '⊘ Not charged',
+      className: 'text-brown-light',
+    });
+  });
 });
 
 /**
@@ -272,6 +279,13 @@ describe('paymentStateInlineText', () => {
     expect(paymentStateInlineText('pending')).toEqual({
       label: ' · ○ unpaid',
       className: '',
+    });
+  });
+
+  it('renders the not_charged caption suffix', () => {
+    expect(paymentStateInlineText('not_charged')).toEqual({
+      label: ' · ⊘ not charged',
+      className: 'text-brown-light',
     });
   });
 });
