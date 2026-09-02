@@ -3,12 +3,8 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { AddWalkIn } from './add-walk-in';
 
 /**
- * #176 deleted `GET /api/students`'s pagination, and with it the picker's
- * 50-student cap — a real reachability bug, not just cleanup: this picker and
- * the public booking flow are the only two components that create a
- * registration, and `/students/[id]` offers no "add to class" control, so a
- * teacher with 51+ students had no way at all to add their 51st. The picker
- * now fetches the full roster and filters it locally.
+ * The picker fetches the full roster and filters it locally — no pagination,
+ * no truncation notice, no server round-trip on each keystroke.
  *
  * Same mocking idiom as `student-directory.test.tsx`: a shared `fetchMock`,
  * stubbed per test, reset in `afterEach`.

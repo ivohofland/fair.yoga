@@ -23,11 +23,8 @@ interface AddWalkInProps {
 // target and extra students lower everyone's price. Roster-only picker;
 // creating a brand-new student mid-class goes through Students → New.
 //
-// Fetches the whole roster and filters it locally by `displayName` rather
-// than paginating: this picker and the public booking flow are the only two
-// components that create a registration, so a truncated roster here was a
-// student a teacher could not add to a class at all, not just an
-// inconvenience.
+// Fetches the whole roster and filters it locally by `displayName` — no
+// pagination, no truncation.
 export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
