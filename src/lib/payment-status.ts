@@ -30,6 +30,7 @@ const PAYMENT_STATUSES: Record<PaymentStatus, true> = {
   pending: true,
   paid: true,
   overdue: true,
+  not_charged: true,
 };
 
 /**
@@ -67,4 +68,38 @@ export function readUndoStatus(json: unknown): PaymentStatus | null {
     }
   }
   return null;
+}
+
+/**
+ * The one question the rest of the app asks about a payment status: is this
+ * money still owed?
+ *
+ * An exhaustive `switch` with a `never` default rather than an inline
+ * comparison, because the sites this replaced were `!== 'paid'` and
+ * `!isPaid` — predicates that keep compiling when a member is added and
+ * silently pick a side. `settings/payments/page.tsx` put an unrecognised
+ * member into Outstanding and its € total; `bookings/page.tsx` showed the
+ * student how to pay. A `switch` fails the build instead.
+ *
+ * Returns `false` on the impossible branch because that is the safe default
+ * at every call site: an unknown status is not dunned and is not shown a
+ * payment instruction. `console.error`, not `lib/log.ts` — that module is
+ * pino and server-only, and this one is reached from `'use client'` code.
+ */
+export function isOutstanding(status: PaymentStatus): boolean {
+  switch (status) {
+    case 'pending':
+    case 'overdue':
+      return true;
+    case 'paid':
+    case 'not_charged':
+      return false;
+    default: {
+      const unhandled: never = status;
+      console.error('[payment-status] unhandled payment status', {
+        status: String(unhandled),
+      });
+      return false;
+    }
+  }
 }

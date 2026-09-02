@@ -25,7 +25,8 @@ export function timeAgo(date: Date): string {
 
 /**
  * Payment state as text, never a badge: "\u2713 Paid" teal, "\u25cb Unpaid"
- * brown, "! Overdue" danger. Returns label + the text-color class.
+ * brown, "! Overdue" danger, "\u2298 Not charged" muted brown. Returns label
+ * + the text-color class.
  *
  * Three surfaces render these, one of them student-facing, so the last branch
  * is deliberately quiet at runtime and loud at compile time \u2014 see below.
@@ -34,6 +35,7 @@ export function paymentStateText(status: PaymentStatus): { label: string; classN
   if (status === 'paid') return { label: '✓ Paid', className: 'text-teal' };
   if (status === 'overdue') return { label: '! Overdue', className: 'text-danger font-medium' };
   if (status === 'pending') return { label: '○ Unpaid', className: '' };
+  if (status === 'not_charged') return { label: '⊘ Not charged', className: 'text-brown-light' };
   // Unreachable for any status the schema can produce, and the `never` is what
   // keeps it that way: adding a member to the enum fails the *build* here
   // instead of the member rendering silently as "Unpaid". That guard is the
@@ -46,7 +48,7 @@ export function paymentStateText(status: PaymentStatus): { label: string; classN
   // `global-error.tsx`) logs nothing — so on enum/deploy drift a throw takes
   // down an entire student-facing page on every request, with no diagnostic
   // trail. Log it and mislabel one row instead; '○ Unpaid' is the calmest
-  // of the three states this design system has and never overclaims payment.
+  // of the four states this design system has and never overclaims payment.
   //
   // `console.error`, not `lib/log.ts`: that module is pino and server-only, and
   // this file is imported by `'use client'` components.
@@ -63,6 +65,7 @@ export function paymentStateInlineText(status: PaymentStatus): { label: string; 
   if (status === 'overdue') return { label: ' · ! overdue', className: 'text-danger' };
   if (status === 'paid') return { label: ' · ✓ paid', className: 'text-teal' };
   if (status === 'pending') return { label: ' · ○ unpaid', className: '' };
+  if (status === 'not_charged') return { label: ' · ⊘ not charged', className: 'text-brown-light' };
 
   const unhandled: never = status;
   console.error('[payment-state-inline-text] unhandled payment status', { status: String(unhandled) });

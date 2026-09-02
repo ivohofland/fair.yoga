@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isPaymentStatus, readUndoStatus } from './payment-status';
+import { isPaymentStatus, readUndoStatus, isOutstanding } from './payment-status';
 
 /**
  * #58. `usePaymentActions` used to read the undo response through
@@ -64,5 +64,17 @@ describe('readUndoStatus', () => {
     expect(readUndoStatus({})).toBeNull();
     expect(readUndoStatus(null)).toBeNull();
     expect(readUndoStatus('not json')).toBeNull();
+  });
+});
+
+describe('isOutstanding', () => {
+  it('is true for a payment that is still owed', () => {
+    expect(isOutstanding('pending')).toBe(true);
+    expect(isOutstanding('overdue')).toBe(true);
+  });
+
+  it('is false for a payment that is settled', () => {
+    expect(isOutstanding('paid')).toBe(false);
+    expect(isOutstanding('not_charged')).toBe(false);
   });
 });
