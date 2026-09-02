@@ -33,10 +33,16 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
   const [selected, setSelected] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  // Distinguishes "still fetching" from "fetched, and the roster (or the
+  // filtered view of it) is genuinely empty" — both look like `visible.length
+  // === 0` otherwise, and only the latter should ever read "No student
+  // matches."
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    setLoaded(false);
     fetch('/api/students')
       .then((res) => {
         if (!res.ok) throw new Error(`students ${res.status}`);
@@ -46,9 +52,14 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
         if (cancelled) return;
         const registered = new Set(registeredStudentIds);
         setStudents(json.data.students.filter((s) => !registered.has(s.id)));
+        setLoaded(true);
       })
       .catch(() => {
-        if (!cancelled) setError('Could not load your students.');
+        if (cancelled) return;
+        setError('Could not load your students.');
+        // A failed load is still a load that finished — it must not keep
+        // showing the loading (no-message) state forever.
+        setLoaded(true);
       });
     return () => {
       cancelled = true;
@@ -104,9 +115,7 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
           setSelected('');
         }}
       />
-      {visible.length === 0 ? (
-        <p className="type-caption">No student matches.</p>
-      ) : (
+      {loaded && !error && visible.length > 0 && (
         <Select
           label="Walk-in student"
           value={selected}
@@ -119,6 +128,14 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
             </option>
           ))}
         </Select>
+      )}
+      {/*
+        Only when a typed filter is what emptied the list — a bare empty
+        roster falls through to the "Not in your students yet?" caption
+        below instead, and loading/error states show neither.
+      */}
+      {loaded && !error && visible.length === 0 && query && (
+        <p className="type-caption">No student matches.</p>
       )}
       <p className="type-caption">
         Not in your students yet? Add them under Students first.

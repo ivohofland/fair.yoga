@@ -90,13 +90,17 @@ stop the teacher reaching them. Until one of those two sites has run there is
 no row, and every read treats absence as maximum privacy
 (`privacy?.shareX ?? false`). One projection reads these flags for every
 teacher-facing surface: `src/lib/student-visibility.ts`. No server-side
-predicate may filter (`where`) on a privacy-gated `Student` column —
-`firstName`, `lastName`, or `email` — because a match against a column the
-projection redacts is an enumeration oracle regardless of what the response
-body shows: a teacher can learn a withheld value from a hit/miss or a count
-even when it is never rendered. Found and fixed in #176, which replaced
-server-side student search with client-side filtering over the already-
-redacted response.
+predicate may filter (`where`) or order (`orderBy`) on a privacy-gated
+`Student` column — `lastName` or `email` — because a match, or a sort
+position, against a column the projection redacts is an enumeration oracle
+regardless of what the response body shows: a teacher can learn a withheld
+value from a hit/miss, a count, or its rank among other rows even when it is
+never rendered. `firstName` is exempt: `formatStudentName`
+(`src/lib/format.ts`) always discloses it in full via `displayName`
+regardless of privacy settings, which is also why the list route's own
+`orderBy: { firstName: 'asc' }` is safe. Found and fixed in #176, which
+replaced server-side student search with client-side filtering over the
+already-redacted response.
 
 ### Invitation (teacher → student contact, #166)
 

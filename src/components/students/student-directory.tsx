@@ -87,7 +87,7 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
 
       <div className={loading ? 'opacity-50' : ''}>
         {filtered.length === 0 && !loading ? (
-          search ? (
+          query ? (
             <EmptyState title={`No students matching '${search}'.`} />
           ) : archived ? (
             <EmptyState title="No archived students." />
