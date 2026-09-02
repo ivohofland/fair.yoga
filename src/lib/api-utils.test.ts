@@ -471,7 +471,7 @@ describe('withErrorHandler', () => {
     });
 
     await handler(
-      makeRequest('http://localhost/api/students?search=alice&token=sensitive', {
+      makeRequest('http://localhost/api/students?archived=true&token=sensitive', {
         method: 'GET',
       }),
     );
