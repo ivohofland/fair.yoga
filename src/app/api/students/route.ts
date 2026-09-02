@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { respondOk, respondError, requireTeacher, isErrorResponse, parseBody, withErrorHandler } from '@/lib/api-utils';
-import { createInvitationSchema, studentListQuerySchema } from '@/lib/schemas';
+import { createInvitationSchema } from '@/lib/schemas';
 import { checkStudentWriteLimit, respondRateLimited } from '@/lib/rate-limit';
 import { inviteContact, deliverInvitation, REFUSAL_MESSAGES } from '@/services/invitations';
 import { log } from '@/lib/log';
@@ -11,53 +11,39 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const params = Object.fromEntries(request.nextUrl.searchParams);
-  const parsed = studentListQuerySchema.safeParse(params);
-  if (!parsed.success) {
-    return respondError('Invalid query parameters', 400);
-  }
-
-  const { search, page, pageSize } = parsed.data;
-  const archived = params.archived === 'true';
+  // Unpaginated and unsearchable, both deliberately (#176). A `where` that
+  // filtered on `firstName`/`lastName`/`email` answered questions about columns
+  // `projectStudentForTeacher` redacts: a teacher denied a surname could
+  // binary-search it from hit/miss and `total`. Searching and paging happen in
+  // `student-directory.tsx`, over this response's own `displayName` and
+  // `email` — so the searchable bytes are exactly the rendered ones, with no
+  // server-side predicate that has to keep mirroring the projection.
+  const archived = request.nextUrl.searchParams.get('archived') === 'true';
 
   const where = {
     teacherStudents: { some: { teacherId: session.teacherId, isArchived: archived } },
-    ...(search
-      ? {
-          OR: [
-            { firstName: { contains: search, mode: 'insensitive' as const } },
-            { lastName: { contains: search, mode: 'insensitive' as const } },
-            { email: { contains: search, mode: 'insensitive' as const } },
-          ],
-        }
-      : {}),
   };
 
-  const [students, total] = await Promise.all([
-    prisma.student.findMany({
-      where,
-      orderBy: { firstName: 'asc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      select: {
-        ...studentVisibilitySelect(session.teacherId),
-        registrations: {
-          where: { class: { calendarEntry: { teacherId: session.teacherId } } },
-          orderBy: { registeredAt: 'desc' },
-          take: 1,
-          select: { class: { select: { calendarEntry: { select: { date: true } } } } },
-        },
-        _count: {
-          select: {
-            registrations: {
-              where: { class: { calendarEntry: { teacherId: session.teacherId } } },
-            },
+  const students = await prisma.student.findMany({
+    where,
+    orderBy: { firstName: 'asc' },
+    select: {
+      ...studentVisibilitySelect(session.teacherId),
+      registrations: {
+        where: { class: { calendarEntry: { teacherId: session.teacherId } } },
+        orderBy: { registeredAt: 'desc' },
+        take: 1,
+        select: { class: { select: { calendarEntry: { select: { date: true } } } } },
+      },
+      _count: {
+        select: {
+          registrations: {
+            where: { class: { calendarEntry: { teacherId: session.teacherId } } },
           },
         },
       },
-    }),
-    prisma.student.count({ where }),
-  ]);
+    },
+  });
 
   const pageStudentIds = students.map((s) => s.id);
   const overdueGroups = pageStudentIds.length
@@ -82,7 +68,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     overduePayments: overdueByStudent.get(s.id) ?? 0,
   }));
 
-  return respondOk({ students: result, total, page, pageSize });
+  return respondOk({ students: result });
 });
 
 export const POST = withErrorHandler(async (request: NextRequest) => {

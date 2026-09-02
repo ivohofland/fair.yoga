@@ -17,9 +17,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
   });
 
-  // No pagination, unlike GET /api/students: a teacher's pending contacts
-  // are a working set they clear out, not a directory they page through.
-  // If that assumption stops holding, `studentListQuerySchema` (schemas.ts)
-  // is the idiom to copy — don't add paging here piecemeal.
+  // No pagination: a teacher's pending contacts are a working set they clear
+  // out, not a directory they page through. If that assumption stops
+  // holding, add paging here deliberately rather than piecemeal.
   return respondOk({ invitations, total: invitations.length });
 });
