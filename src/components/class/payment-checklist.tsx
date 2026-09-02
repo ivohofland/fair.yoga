@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import type { PaymentStatus } from '@prisma/client';
 import { paymentStateText, timeAgo } from '@/lib/format';
+import { isOutstanding } from '@/lib/payment-status';
 import { usePaymentActions } from '@/lib/use-payment-actions';
 import { SendReminderButton } from '@/components/class/send-reminder-button';
 
@@ -62,7 +63,7 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
           // payment as plain unpaid (#58 review).
           const status = paymentState[item.paymentId] ?? item.status;
           const isPaid = status === 'paid';
-          const isOutstanding = status === 'pending' || status === 'overdue';
+          const outstanding = isOutstanding(status);
           const isUpdating = updating === item.paymentId;
           const reminded = remindedAt[item.paymentId];
           const stateText = paymentStateText(status);
@@ -85,7 +86,7 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
                 <span className={`type-number ${isPaid ? '' : 'text-brown'}`}>
                   &euro;{item.amount.toFixed(2)}
                 </span>
-                {isOutstanding && (
+                {outstanding && (
                   <SendReminderButton
                     paymentId={item.paymentId}
                     studentName={item.studentName}
@@ -96,29 +97,23 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
                     onError={setReminderError}
                   />
                 )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!isPaid) markPaid(item.paymentId);
-                  }}
-                  disabled={isPaid || isUpdating}
-                  className={`
-                    h-9 px-4 rounded-pill text-[13px] font-medium
-                    ${isPaid
-                      ? 'border-[1.5px] border-transparent bg-teal text-cream'
-                      : 'border-[1.5px] border-teal text-teal hover:bg-teal-tint'}
-                    ${isUpdating ? 'opacity-50' : ''}
-                  `}
-                  // Unpaid branch leads with visible label for WCAG 2.5.3 (Label in Name)
-                  // and speech-input matching; paid branch contains "paid" contiguously.
-                  aria-label={
-                    isPaid
-                      ? `${item.studentName} payment is paid`
-                      : `Mark paid — ${item.studentName}`
-                  }
-                >
-                  {isPaid ? 'Paid' : 'Mark paid'}
-                </button>
+                {outstanding && (
+                  <button
+                    type="button"
+                    onClick={() => markPaid(item.paymentId)}
+                    disabled={isUpdating}
+                    className={`
+                      h-9 px-4 rounded-pill text-[13px] font-medium
+                      border-[1.5px] border-teal text-teal hover:bg-teal-tint
+                      ${isUpdating ? 'opacity-50' : ''}
+                    `}
+                    // Leads with the visible label for WCAG 2.5.3 (Label in Name)
+                    // and speech-input matching.
+                    aria-label={`Mark paid — ${item.studentName}`}
+                  >
+                    Mark paid
+                  </button>
+                )}
                 {isPaid && justMarked.has(item.paymentId) && (
                   <button
                     type="button"

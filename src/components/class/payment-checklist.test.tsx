@@ -41,6 +41,21 @@ describe('PaymentChecklist', () => {
 
   const fetchMock = vi.fn();
 
+  /** Fills in the fields these tests don't care about (`studentId`, `reminderSentAt`). */
+  function renderChecklist(
+    items: Array<Pick<PaymentItem, 'paymentId' | 'studentName' | 'status' | 'amount'> & Partial<PaymentItem>>,
+  ) {
+    render(
+      <PaymentChecklist
+        items={items.map((item, i) => ({
+          studentId: `stu-${i}`,
+          reminderSentAt: null,
+          ...item,
+        }))}
+      />,
+    );
+  }
+
   afterEach(() => {
     fetchMock.mockReset();
     vi.unstubAllGlobals();
@@ -109,8 +124,9 @@ describe('PaymentChecklist', () => {
     expect(reminder).toHaveLength(1);
     reminder.forEach((button) => expect(button).toHaveTextContent('Send reminder'));
 
-    const paidButton = screen.getByRole('button', { name: /payment is paid/ });
-    expect(paidButton).toHaveTextContent('Paid');
+    // The paid row renders no mark-paid control at all — its state is
+    // already the "✓ Paid" text next to the euro amount.
+    expect(screen.queryByRole('button', { name: /payment is paid/ })).not.toBeInTheDocument();
   });
 
   it('gives the undo button a conforming accessible name and visible text', async () => {
@@ -134,5 +150,11 @@ describe('PaymentChecklist', () => {
     });
     expect(undoButton).toBeInTheDocument();
     expect(undoButton).toHaveTextContent('Undo');
+  });
+
+  it('offers no mark-paid control on a not-charged payment', () => {
+    renderChecklist([{ paymentId: 'p1', studentName: 'Anna Smith', status: 'not_charged', amount: 12 }]);
+    expect(screen.queryByRole('button', { name: /Mark paid/i })).not.toBeInTheDocument();
+    expect(screen.getByText('⊘ Not charged')).toBeInTheDocument();
   });
 });

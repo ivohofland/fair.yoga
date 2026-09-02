@@ -124,6 +124,15 @@ function renderOne(status: ClassRow['status'], payments: (PaymentStatus | null)[
   render(<ClassList classes={[classRow('cls-1', status, payments)]} timeZone="America/Los_Angeles" />);
 }
 
+/** A completed class whose registrations carry exactly these payment states. */
+function completedClassWith(payments: { status: PaymentStatus }[]): ClassRow {
+  return classRow('cls-1', 'completed', payments.map((p) => p.status));
+}
+
+function renderClassList(classes: ClassRow[]) {
+  render(<ClassList classes={classes} timeZone="America/Los_Angeles" />);
+}
+
 /** The three rollup markers, so a "renders nothing" test cannot pass vacuously. */
 function expectNoRollup() {
   // The card itself is on screen — otherwise the three negatives below would
@@ -191,6 +200,22 @@ describe('ClassList payment rollup', () => {
     renderOne('completed', undefined);
 
     expectNoRollup();
+  });
+
+  it('reports not charged rather than a false "all paid"', () => {
+    renderClassList([completedClassWith([{ status: 'not_charged' }, { status: 'not_charged' }])]);
+    expect(screen.getByText(/⊘ 2 not charged/)).toBeInTheDocument();
+    expect(screen.queryByText(/✓ all paid/)).not.toBeInTheDocument();
+  });
+
+  it('still reports all paid when every payment really is paid', () => {
+    renderClassList([completedClassWith([{ status: 'paid' }, { status: 'paid' }])]);
+    expect(screen.getByText(/✓ all paid/)).toBeInTheDocument();
+  });
+
+  it('ranks outstanding above not charged', () => {
+    renderClassList([completedClassWith([{ status: 'pending' }, { status: 'not_charged' }])]);
+    expect(screen.getByText(/○ 1 unpaid/)).toBeInTheDocument();
   });
 });
 
