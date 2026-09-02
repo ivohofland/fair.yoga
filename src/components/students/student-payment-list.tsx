@@ -2,6 +2,7 @@
 
 import type { PaymentStatus } from '@prisma/client';
 import { paymentStateText } from '@/lib/format';
+import { isOutstanding } from '@/lib/payment-status';
 import { usePaymentActions } from '@/lib/use-payment-actions';
 
 interface StudentPaymentItem {
@@ -36,6 +37,7 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
           // payment as plain unpaid (#58 review).
           const status = paymentState[item.paymentId] ?? item.status;
           const isPaid = status === 'paid';
+          const outstanding = isOutstanding(status);
           const isUpdating = updating === item.paymentId;
 
           return (
@@ -49,12 +51,15 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <p className={`type-number ${isPaid ? '' : 'text-brown'}`}>&euro;{item.amount.toFixed(2)}</p>
-                {!isPaid && (
+                {outstanding && (
                   <button
                     type="button"
                     onClick={() => markPaid(item.paymentId)}
                     disabled={isUpdating}
                     className={`h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] border-teal text-teal hover:bg-teal-tint ${isUpdating ? 'opacity-50' : ''}`}
+                    // Leads with the visible label for WCAG 2.5.3 (Label in Name) and
+                    // disambiguates rows sharing the same class type or date.
+                    aria-label={`Mark paid — ${item.classType}, ${item.classDate}`}
                   >
                     Mark paid
                   </button>
@@ -65,6 +70,7 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
                     onClick={() => undo(item.paymentId)}
                     disabled={isUpdating}
                     className="type-caption text-teal min-h-[44px] px-1"
+                    aria-label={`Undo marking ${item.classType}, ${item.classDate} as paid`}
                   >
                     Undo
                   </button>

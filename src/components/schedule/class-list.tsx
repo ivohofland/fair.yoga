@@ -62,7 +62,8 @@ function deriveClassRowState(cls: ClassWithDetails, isPast: boolean): RowState {
 
 // Completed classes roll payment state up inline — text, never a badge
 // (see the status explorations, turn 2): ✓ all paid · ○ N unpaid ·
-// ! N overdue. Silent until the class completes and payments exist.
+// ! N overdue · ⊘ N not charged. Silent until the class completes and
+// payments exist.
 function PaymentRollup({ cls }: { cls: ClassWithDetails }) {
   if (cls.status !== 'completed' || !cls.registrations) return null;
   const payments = cls.registrations
@@ -72,11 +73,15 @@ function PaymentRollup({ cls }: { cls: ClassWithDetails }) {
 
   const overdue = payments.filter((p) => p.status === 'overdue').length;
   const unpaid = payments.filter((p) => p.status === 'pending').length;
+  const notCharged = payments.filter((p) => p.status === 'not_charged').length;
   if (overdue > 0) {
     return <span className="text-danger font-medium"> · ! {overdue} overdue</span>;
   }
   if (unpaid > 0) {
     return <span className="text-brown"> · ○ {unpaid} unpaid</span>;
+  }
+  if (notCharged > 0) {
+    return <span className="text-brown-light"> · ⊘ {notCharged} not charged</span>;
   }
   return <span className="text-teal font-medium"> · ✓ all paid</span>;
 }
