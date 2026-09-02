@@ -83,9 +83,8 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
       // `send-reminder-button.tsx`, which commits before it responds too. An
       // unreadable body must not be dressed up as a failure or leave the UI in
       // its pre-action state; it is logged and the local state resolves to
-      // 'pending', which is what `unmarkPaymentPaid` writes
-      // (services/payments.ts:97). Returning true lets the caller's
-      // `router.refresh()` reconcile against the server's real value.
+      // 'pending', which is the reversal's own write. Returning true lets the
+      // caller's `router.refresh()` reconcile against the server's real value.
       //
       // Deliberately not surfaced in `error`: the undo succeeded, and alarming
       // the teacher about a body they cannot act on would be wrong.
