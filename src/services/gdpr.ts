@@ -1006,8 +1006,17 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     }
   }
 
-  await db.$transaction(
+  const skippedClassIds = await db.$transaction(
     async (tx) => {
+      // Collected, not logged, inside this transaction — see the loop below
+      // this call for why the diagnostic that explains each id cannot run
+      // here. RETURNED rather than pushed into a variable this closure
+      // captures: the value then exists only if the transaction committed,
+      // so "logged a skip for an erasure that rolled back" is not a state
+      // this function can reach. Same shape as `deleteStudentAccount`'s
+      // `freedClassIds` above.
+      const skipped: string[] = [];
+
       // Template child rows locked first, ordered by id (#229). This is the
       // transaction's FIRST lock acquisition. Five other sites —
       // `claimTemplateForGeneration` (`entry-generation.ts`),
@@ -1177,50 +1186,18 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         });
 
         if (cancelled.count === 0) {
-          const observed = await tx.class.findUnique({
-            where: { id: cls.id },
-            select: { status: true, calendarEntry: { select: { cancelledAt: true } } },
-          });
-          // The `continue` below skips the waitlist sweep too, deliberately —
+          // The id is collected here and the cause is read after this
+          // transaction commits; the loop below the transaction says why the
+          // read cannot happen here.
+          //
+          // This `continue` skips the waitlist sweep too, deliberately —
           // "does not touch the waitlist" is exactly what the test "warns and
           // skips when a locked id turns out not to be cancellable" pins,
           // because a HALF-applied skip (CAS refused, waitlist
           // and notifications applied anyway) would tell a student their
           // class was cancelled after `completeClass` had already asked them
-          // to pay for it. The cost is a residual: any `waiting` entry on
-          // that class survives, on a class that can never promote anyone,
-          // belonging to a teacher who no longer exists. Counted into this
-          // line rather than left invisible — an operator seeing a non-zero
-          // `waitingEntriesLeft` knows there is a row to clean up, which is
-          // the whole difference between a known residual and a silent one.
-          //
-          // Since #112 this line carries a second meaning: the happy path
-          // below now NOTIFIES the queue as well as closing it, so a non-zero
-          // count here is also "this many students heard nothing from this
-          // path". That is tolerable only because every route that can produce
-          // the three statuses `observedStatus` reports notifies the queue
-          // itself — `completed` owes no cancellation notice, a concurrent
-          // `cancelled` came from the manual route or `autoCancelClasses`
-          // (which tells them, since #112), and `row-deleted` can only be
-          // `archiveOrUnarchiveTemplate` (which tells them too). Add a fourth
-          // way for a class to leave `draft|open|in_progress` and that
-          // argument is what breaks.
-          const waitingEntriesLeft = await tx.waitlistEntry.count({
-            where: { classId: cls.id, status: 'waiting' },
-          });
-          log.warn(
-            {
-              teacherId,
-              classId: cls.id,
-              // Both halves, because neither answers alone any more: a
-              // concurrent cancellation leaves `status` untouched and only
-              // `cancelledAt` shows it.
-              observedStatus: observed?.status ?? 'row-deleted',
-              observedCancelledAt: observed?.calendarEntry.cancelledAt ?? null,
-              waitingEntriesLeft,
-            },
-            'teacher erasure: class cancel CAS matched nothing',
-          );
+          // to pay for it.
+          skipped.push(cls.id);
           continue;
         }
 
@@ -1398,6 +1375,8 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         },
       });
       if (erased.count === 0) throw new AlreadyErasedError('teacher');
+
+      return skipped;
     },
     // `isActive`/`isArchived` live on `ScheduleRule` now (issue 298); the
     // ordered `FOR UPDATE OF ct`/`FOR UPDATE OF sct` pre-locks above the two
@@ -1424,4 +1403,71 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     // archive/pause sites did even before a lock wait enters the picture.
     { timeout: 10_000 },
   );
+
+  // The cause of each skipped cancel, read AFTER the commit.
+  //
+  // These two reads exist only to enrich the line below, and a diagnostic
+  // must never be able to fail the operation it describes — the same rule
+  // the `completeClass` loop above states. Inside the transaction that rule
+  // is unreachable by any `.catch()`: Postgres aborts the whole transaction
+  // at the first statement error and Prisma issues no per-statement
+  // savepoint, so a guard there would swallow a retryable `55P03` and let
+  // the next statement raise `25P02` instead — which `isTransientDbError`
+  // does not classify, turning a 503 "try again" into a 500 "contact
+  // support". Measured; see `docs/lock-order.md`, "A diagnostic read inside
+  // an interactive transaction cannot be guarded (issue #242)". Out here the
+  // erasure is committed and a failed read costs only the field it fills.
+  //
+  // What the reader gives up by reading late: another writer may move the
+  // row between the CAS and this read. That was already true of the
+  // in-transaction version — a class reaching this branch is one the
+  // pre-lock did NOT hold, which is why the CAS missed it — so the reads
+  // were never a locked observation to begin with.
+  //
+  // `waitingEntriesLeft` is the residual this skip leaves behind: any
+  // `waiting` entry on a class that can never promote anyone, belonging to a
+  // teacher who no longer exists. An operator seeing a non-zero count knows
+  // there is a row to clean up, which is the whole difference between a
+  // known residual and a silent one. Since #112 it carries a second meaning
+  // — the happy path above NOTIFIES the queue as well as closing it, so a
+  // non-zero count here is also "this many students heard nothing from this
+  // path". That is tolerable only because every route that can produce the
+  // three statuses `observedStatus` reports notifies the queue itself:
+  // `completed` owes no cancellation notice, a concurrent `cancelled` came
+  // from the manual route or `autoCancelClasses` (which tells them, since
+  // #112), and `row-deleted` can only be `archiveOrUnarchiveTemplate` (which
+  // tells them too). Add a fourth way for a class to leave
+  // `draft|open|in_progress` and that argument is what breaks.
+  for (const classId of skippedClassIds) {
+    // `'unread'` kept distinct from a missing row and from a null
+    // `cancelledAt`: conflating "we could not look" with "it was gone", or
+    // with "it was not cancelled", is how a read failure gets filed as a
+    // finding. `-1` is the same sentinel `deleteStudentAccount`'s
+    // post-commit loop and `promoteAfterCancel`
+    // (`api/registrations/[id]/route.ts`) use, and carries the same blind
+    // spot: the error itself is discarded.
+    const observed = await db.class
+      .findUnique({
+        where: { id: classId },
+        select: { status: true, calendarEntry: { select: { cancelledAt: true } } },
+      })
+      .catch(() => 'unread' as const);
+    const waitingEntriesLeft = await db.waitlistEntry
+      .count({ where: { classId, status: 'waiting' } })
+      .catch(() => -1);
+    log.warn(
+      {
+        teacherId,
+        classId,
+        // Both halves, because neither answers alone any more: a concurrent
+        // cancellation leaves `status` untouched and only `cancelledAt`
+        // shows it.
+        observedStatus: observed === 'unread' ? 'unknown' : (observed?.status ?? 'row-deleted'),
+        observedCancelledAt:
+          observed === 'unread' ? 'unknown' : (observed?.calendarEntry.cancelledAt ?? null),
+        waitingEntriesLeft,
+      },
+      'teacher erasure: class cancel CAS matched nothing',
+    );
+  }
 }

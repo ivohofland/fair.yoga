@@ -1431,6 +1431,137 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       expect.anything(),
     );
   });
+
+  it('reports a CAS skip after commit, so a failing diagnostic cannot roll the erasure back', async () => {
+    // The sibling test above already ran `deleteTeacherAccount` to
+    // completion on this same shared `teacherId` (`beforeAll`), which set
+    // `deletedAt`. A second erasure of an already-erased teacher is refused
+    // by design (`AlreadyErasedError`, see this function's tail) — a
+    // different, unrelated outcome from the one this test exercises — so
+    // this restores the row to live before erasing it again.
+    await prisma.teacher.update({
+      where: { id: teacherId },
+      data: {
+        email: `${suffix}@test.local`,
+        firstName: 'Cas',
+        lastName: 'Teacher',
+        bio: 'CAS erasure fixture',
+        pageSlug: suffix,
+        deletedAt: null,
+      },
+    });
+
+    // `completed` directly, not raced there: since #367 the pre-lock takes
+    // the `Class` row before this transaction reads it at all, so a
+    // concurrent `completeClass` can no longer land between an unlocked read
+    // and the CAS — it queues behind the hold instead (see the sibling
+    // test's own comment above). Getting a CAS miss into this test therefore
+    // needs the same injection the sibling uses: create the row already
+    // ineligible and hand its id back from `lockClassRowsOrdered` anyway.
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'diagnostic class',
+      date: new Date('2026-06-02'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'completed',
+    });
+    const classId = cls.id;
+
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId: waitingStudentId, position: 1, status: 'waiting' },
+    });
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+
+    // Same mock the sibling test above uses, for the same reason: the real
+    // predicate would never match an already-`completed` row, so the only
+    // way to land it in `upcoming` is to hand its id back alongside the
+    // genuinely-locked ones.
+    const originalLock = dbLocks.lockClassRowsOrdered;
+    const lockSpy = vi
+      .spyOn(dbLocks, 'lockClassRowsOrdered')
+      .mockImplementation(async (tx, source) => {
+        const ids = await originalLock(tx, source);
+        return source.entries === true ? [...ids, classId] : ids;
+      });
+    onTestFinished(() => lockSpy.mockRestore());
+
+    // What the diagnostic read saw of the teacher row when it ran. Read on a
+    // SEPARATE connection (the base `prisma`, not the extended client the
+    // erasure is using), and a plain SELECT under READ COMMITTED never blocks
+    // on the erasure's row lock — it returns the last COMMITTED version. So
+    // an anonymized email here means the diagnostic ran AFTER the commit,
+    // which is the whole of what #242 changes. Inside the transaction it
+    // would read the original address: the erasure's own
+    // `teacher.updateMany` is the last statement in that transaction, well
+    // after this loop.
+    let teacherEmailWhenDiagnosticRan: string | null = null;
+
+    const failing = prisma.$extends({
+      query: {
+        class: {
+          async findUnique({ args, query }) {
+            if ((args.where as { id?: string }).id !== classId) return query(args);
+            const teacher = await prisma.teacher.findUniqueOrThrow({
+              where: { id: teacherId },
+              select: { email: true },
+            });
+            teacherEmailWhenDiagnosticRan = teacher.email;
+            throw new Error('injected: diagnostic status read failed');
+          },
+        },
+        waitlistEntry: {
+          async count({ args, query }) {
+            if ((args.where as { classId?: string } | undefined)?.classId !== classId) {
+              return query(args);
+            }
+            throw new Error('injected: diagnostic waitlist count failed');
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    // Resolves. A diagnostic that can reject the erasure is the defect.
+    await expect(deleteTeacherAccount(failing, teacherId)).resolves.toBeUndefined();
+
+    // The erasure committed.
+    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+    expect(teacher.email).toMatch(/@deleted\.invalid$/);
+
+    // And it had ALREADY committed when the diagnostic ran — the property
+    // `.catch()` alone cannot deliver, because a caught statement error still
+    // leaves a Postgres transaction poisoned (docs/lock-order.md).
+    expect(teacherEmailWhenDiagnosticRan).toMatch(/@deleted\.invalid$/);
+
+    // Both sentinels fired, and "could not look" stays distinct from "it was
+    // gone" (`row-deleted`) and from "not cancelled" (`null`).
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        classId,
+        observedStatus: 'unknown',
+        observedCancelledAt: 'unknown',
+        waitingEntriesLeft: -1,
+      }),
+      expect.stringContaining('cancel CAS matched nothing'),
+    );
+
+    // The skip was real: the class kept the status it was created with, and
+    // its queue was not closed.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    expect(after.status).toBe('completed');
+    const entry = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId: waitingStudentId } },
+    });
+    expect(entry.status).toBe('waiting');
+  });
 });
 
 /**
