@@ -12,12 +12,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (isErrorResponse(session)) return session;
 
   // Unpaginated and unsearchable, both deliberately (#176). A `where` that
-  // filtered on `firstName`/`lastName`/`email` answered questions about columns
-  // `projectStudentForTeacher` redacts: a teacher denied a surname could
-  // binary-search it from hit/miss and `total`. Searching and paging happen in
-  // `student-directory.tsx`, over this response's own `displayName` and
-  // `email` — so the searchable bytes are exactly the rendered ones, with no
-  // server-side predicate that has to keep mirroring the projection.
+  // filtered on `firstName`/`lastName`/`email` answered questions about
+  // columns `projectStudentForTeacher` redacts: a teacher denied a surname
+  // could binary-search it from hit/miss and `total`. Deleting the
+  // parameter removes the question rather than gating it — there is no
+  // predicate here left that has to stay mirrored with the projection.
   const archived = request.nextUrl.searchParams.get('archived') === 'true';
 
   const where = {
