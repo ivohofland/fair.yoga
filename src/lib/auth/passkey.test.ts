@@ -94,6 +94,73 @@ describe('passkey challenge store', () => {
     expect(totalEvicted).toBe(50);
   });
 
+  it('flushes a burst that goes idle, via the periodic backstop', async () => {
+    // Not exported from passkey.ts — must match EVICTION_LOG_THROTTLE_MS
+    // there (currently 60_000ms).
+    const EVICTION_LOG_THROTTLE_MS = 60_000;
+
+    vi.useFakeTimers();
+    vi.resetModules();
+
+    // A module instance separate from the one this file statically imports
+    // at its top: its own `challengeStores`/`evictionLogState` closures, and
+    // its own module-level `setInterval` call — captured by the fake clock
+    // because it runs during this dynamic import, which happens after
+    // `vi.useFakeTimers()`.
+    const passkeyModule = await import('./passkey');
+    // Resolves to the very instance passkeyModule's internal `log.warn`
+    // calls use: passkeyModule's own `import { log } from '@/lib/log'`
+    // already populated the (just-cleared) module cache for this specifier,
+    // so this import hits that cache rather than creating another instance.
+    const { log: freshLog } = await import('@/lib/log');
+    const warnSpy = vi.spyOn(freshLog, 'warn');
+
+    try {
+      const store = passkeyModule._getChallengeStore('authentication');
+      const capacity = passkeyModule.CHALLENGE_CAPACITIES.authentication;
+
+      // Burst 1: pre-load 49 entries past capacity directly (mirrors "logs
+      // the true evicted count for a burst" above), then one storeChallenge
+      // call evicts 50 and flushes immediately — the per-call flush path,
+      // not the backstop this test is about. Confirm it fired, then reset
+      // the spy so what follows isolates the backstop.
+      for (let i = 0; i < capacity + 49; i++) {
+        store.set(`k-${i}`, { challenge: `c-${i}`, expiresAt: Date.now() + 60_000 });
+      }
+      passkeyModule.storeChallenge('authentication', 'trigger-1', 'trigger-challenge-1');
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0]?.[0]).toMatchObject({ evictedCount: 50 });
+      warnSpy.mockClear();
+
+      // Burst 2: add 4 more entries directly, then one more storeChallenge
+      // call evicts 5 (same arithmetic as burst 1: entries pushed past
+      // capacity, plus one for reaching capacity again). No fake-clock time
+      // passes between burst 1's flush and this call, so this call's own
+      // after-loop flush lands inside the throttle window burst 1 just
+      // opened and is suppressed rather than logged. No further
+      // storeChallenge call follows to flush it on its own next call — the
+      // idle-partition scenario the backstop exists for.
+      for (let i = 0; i < 4; i++) {
+        store.set(`k2-${i}`, { challenge: `c2-${i}`, expiresAt: Date.now() + 60_000 });
+      }
+      passkeyModule.storeChallenge('authentication', 'trigger-2', 'trigger-challenge-2');
+
+      expect(warnSpy).not.toHaveBeenCalled();
+
+      // Advance the fake clock past the throttle window with no further
+      // storeChallenge call in between. The module-level setInterval
+      // registered at import time fires and flushes burst 2's suppressed
+      // count on its own.
+      await vi.advanceTimersByTimeAsync(EVICTION_LOG_THROTTLE_MS);
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0]?.[0]).toMatchObject({ evictedCount: 5 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('an authentication flood does not evict a registration challenge', () => {
     storeChallenge('registration', 'acct-keep', 'reg-challenge');
 
