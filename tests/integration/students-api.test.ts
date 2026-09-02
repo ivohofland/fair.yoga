@@ -114,7 +114,7 @@ describe('GET /api/students', () => {
   // binary-search it from hit/miss. Asserting on the whole body, not on
   // `total` alone, is what makes reinstating that `where` fail this test —
   // `total` no longer exists to check instead.
-  it('ignores a search parameter entirely — the same body with, without, and for a withheld surname', async () => {
+  it('ignores a search parameter entirely — with a matching term, a garbage term, and none', async () => {
     const [plain, withheld, garbage] = await Promise.all([
       fetch(`${BASE_URL}/api/students`, { headers: cookie(teacherToken) }),
       fetch(`${BASE_URL}/api/students?search=Student00`, { headers: cookie(teacherToken) }),
@@ -901,7 +901,7 @@ describe('PATCH /api/students/[id]', () => {
   // A dedicated student + link rather than reusing the shared 25: GET
   // /api/students filters to isArchived: false by default, so archiving one
   // of the shared fixtures would silently drop it out of the earlier
-  // pagination and overdue-payments assertions above.
+  // full-list length and overdue-payments assertions above.
   let patchStudentId: string;
   let linkId: string;
   let otherTeacherId: string;

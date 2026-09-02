@@ -58,10 +58,9 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
   }, [fetchStudents]);
 
   const query = search.trim().toLowerCase();
-  // `s.email` is null exactly when the student withheld it — that is
-  // `projectStudentForTeacher`'s contract — so a withheld email is simply
-  // absent from what this line searches, which is what makes the filter
-  // privacy-safe without any separate check.
+  // A withheld email arrives as `null` (see `lib/student-visibility.ts`,
+  // `TeacherVisibleStudent`), so it is simply absent from what this line
+  // searches — no separate privacy check needed here.
   const filtered = query
     ? students.filter(
         (s) =>

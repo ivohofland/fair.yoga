@@ -148,8 +148,7 @@ describe('StudentDirectory', () => {
    * the server already sent — see `student-directory.tsx`. The fetch mock
    * above returns everything in one response; these tests type into the
    * search box and check what's on screen, with no further fetch calls to
-   * stub. `fireEvent.change` mirrors the pattern already used for `Input`
-   * elsewhere in this codebase.
+   * stub.
    */
   it('narrows the list on a first-name fragment', async () => {
     stubStudents([
@@ -217,6 +216,11 @@ describe('StudentDirectory', () => {
     await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
 
     fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'anna b' } });
+
+    expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
+    expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Search students'), { target: { value: 'anna bakker' } });
 
     expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
     expect(screen.queryByText('Bram k.')).not.toBeInTheDocument();

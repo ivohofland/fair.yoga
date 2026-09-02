@@ -194,7 +194,7 @@ public page at their `pageSlug`. See [Non-Goals](non-goals.md).
 - *Leads to:* 6.2 Add Walk-In, 7.1 Post-Class Summary
 
 ### 6.2 — Add Walk-In
-- Search for existing student by name or email
+- Search for existing student by name
 - Student must have an account with tier set
 - Add to class — count updates, price estimate recalculates
 - Note: walk-in can exceed max capacity
