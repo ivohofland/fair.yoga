@@ -82,12 +82,31 @@ describe('PasskeySignIn', () => {
     expect(routerPush).not.toHaveBeenCalled();
   });
 
+  it('shows the server rate-limit message when options is rate limited', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: { message: 'Too many sign-in attempts. Try again in 42 minutes.' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<PasskeySignIn />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Too many sign-in attempts. Try again in 42 minutes.',
+    );
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
   /**
-   * The browser reports a deliberate cancel and a no-credential-matched
-   * ceremony as the same `NotAllowedError`, so this one message has to serve
-   * both readers.
+   * The browser reports many different causes — a deliberate cancel, a
+   * timeout, no matching credential, a cross-device flow still pending
+   * elsewhere, and more — as the same `NotAllowedError`, so the status
+   * message states the observable fact rather than committing to a roster
+   * of causes that will be wrong again the next time WebAuthn adds one.
    */
-  it('names both causes when the ceremony does not complete', async () => {
+  it('shows a status message when the ceremony does not complete', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       json: async () => ({ data: { options: { challenge: 'c' }, challengeId: 'ch-1' } }),
@@ -101,7 +120,7 @@ describe('PasskeySignIn', () => {
     fireEvent.click(screen.getByRole('button'));
 
     expect(await screen.findByRole('status')).toHaveTextContent(
-      'Cancelled, or no passkey on this device. Try again, or use the email link.',
+      'Nothing came back from your device. Try again, or use the email link.',
     );
     // Not the hard-failure copy, and not an alert — a cancel is not an error.
     expect(screen.queryByRole('alert')).toBeNull();

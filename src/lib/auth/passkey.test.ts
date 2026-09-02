@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { log } from '@/lib/log';
 import {
   storeChallenge,
   getAndDeleteChallenge,
@@ -65,6 +66,32 @@ describe('passkey challenge store', () => {
     }
 
     expect(store.size).toBe(CHALLENGE_CAPACITIES.authentication);
+  });
+
+  it('logs the true evicted count for a burst, not just the first eviction', () => {
+    const store = _getChallengeStore('authentication');
+
+    // Push the partition 50 entries past capacity directly (bypassing
+    // storeChallenge's own one-eviction-per-call growth path), so the
+    // single storeChallenge call below must walk off all 50 in one pass of
+    // its own while loop. That's the scenario the old per-eviction flush
+    // call inside the loop got wrong: every iteration shares one `now`, so
+    // once the first eviction's flush opens the throttle window, every
+    // later iteration in the same call is throttled and its count is lost.
+    for (let i = 0; i < CHALLENGE_CAPACITIES.authentication + 49; i++) {
+      store.set(`k-${i}`, { challenge: `c-${i}`, expiresAt: Date.now() + 60_000 });
+    }
+
+    const warnSpy = vi.spyOn(log, 'warn');
+
+    storeChallenge('authentication', 'trigger', 'trigger-challenge');
+
+    const totalEvicted = warnSpy.mock.calls.reduce(
+      (sum, call) => sum + (call[0] as { evictedCount: number }).evictedCount,
+      0,
+    );
+
+    expect(totalEvicted).toBe(50);
   });
 
   it('an authentication flood does not evict a registration challenge', () => {

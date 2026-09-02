@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { startAuthentication } from '@simplewebauthn/browser';
 import { Button } from '@/components/ui/button';
 
+const DEFAULT_ERROR_MESSAGE = "Passkey sign-in didn't work here — use the email link instead.";
+
 interface PasskeySignInProps {
   /** Where to land after sign-in (relative path) — defaults to the role home. */
   redirect?: string;
@@ -13,6 +15,7 @@ interface PasskeySignInProps {
 export function PasskeySignIn({ redirect }: PasskeySignInProps) {
   const router = useRouter();
   const [state, setState] = useState<'idle' | 'working' | 'incomplete' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState(DEFAULT_ERROR_MESSAGE);
 
   async function handleSignIn() {
     setState('working');
@@ -20,6 +23,14 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
       const optionsRes = await fetch('/api/auth/passkey/authenticate/options', {
         method: 'POST',
       });
+      if (optionsRes.status === 429) {
+        const body = (await optionsRes.json().catch(() => null)) as
+          | { error?: { message?: string } }
+          | null;
+        setErrorMessage(body?.error?.message ?? DEFAULT_ERROR_MESSAGE);
+        setState('error');
+        return;
+      }
       if (!optionsRes.ok) throw new Error('options');
       const json = (await optionsRes.json()) as {
         data: { options: Parameters<typeof startAuthentication>[0]['optionsJSON']; challengeId: string };
@@ -49,17 +60,20 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
       // beats freezing the gate to the whole app when the push never commits.
       setState('idle');
     } catch (err) {
-      // The browser reports a deliberate cancel and a ceremony that matched no
-      // credential as the same `NotAllowedError`, and does not say which —
-      // WebAuthn conflates them so the client cannot become an enumeration
-      // oracle. Do not try to tell them apart by probing the device for
-      // credentials: that reopens on the client the disclosure #187 closed on
-      // the server. Naming both possibilities lets each reader take the step
-      // that works — a retry for one, the email link for the other.
+      // The browser folds every "the ceremony didn't produce a credential"
+      // case — cancel, timeout, no matching credential, a cross-device flow
+      // still pending elsewhere, and whatever WebAuthn adds next — into the
+      // same `NotAllowedError`, and does not say which. That's deliberate:
+      // telling them apart would mean probing the device for credentials,
+      // which reopens on the client the disclosure #187 closed on the
+      // server. The status copy below states only the observable fact
+      // (nothing came back) and gives guidance that works no matter which
+      // cause fired: a retry, or the email link.
       if (err instanceof Error && err.name === 'NotAllowedError') {
         setState('incomplete');
         return;
       }
+      setErrorMessage(DEFAULT_ERROR_MESSAGE);
       setState('error');
     }
   }
@@ -71,12 +85,12 @@ export function PasskeySignIn({ redirect }: PasskeySignInProps) {
       </Button>
       {state === 'incomplete' && (
         <p role="status" className="type-caption">
-          Cancelled, or no passkey on this device. Try again, or use the email link.
+          Nothing came back from your device. Try again, or use the email link.
         </p>
       )}
       {state === 'error' && (
         <p role="alert" className="text-[13px] leading-[1.4] text-danger">
-          Passkey sign-in didn&apos;t work here — use the email link instead.
+          {errorMessage}
         </p>
       )}
     </div>
