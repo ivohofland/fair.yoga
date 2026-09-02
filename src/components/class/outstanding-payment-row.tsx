@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import type { PaymentStatus } from '@prisma/client';
 import { formatClassContext, paymentStateInlineText, paymentStateText, timeAgo } from '@/lib/format';
 import { usePaymentActions } from '@/lib/use-payment-actions';
+import { isOutstanding } from '@/lib/payment-status';
 import { SendReminderButton } from '@/components/class/send-reminder-button';
 
 interface OutstandingPaymentRowProps {
@@ -42,9 +43,8 @@ export function OutstandingPaymentRow({
   reminderSentAt,
 }: OutstandingPaymentRowProps) {
   const router = useRouter();
-  const { paymentState, justMarked, updating, error, markPaid, undo } = usePaymentActions({
-    [paymentId]: status,
-  });
+  const { paymentState, justMarked, updating, error, markPaid, markNotCharged, undo } =
+    usePaymentActions({ [paymentId]: status });
   const [remindedAt, setRemindedAt] = useState<Date | null>(reminderSentAt);
   const [reminderError, setReminderError] = useState('');
 
@@ -55,7 +55,8 @@ export function OutstandingPaymentRow({
 
   const current = paymentState[paymentId] ?? status;
   const isPaid = current === 'paid';
-  const isOutstanding = current === 'pending' || current === 'overdue';
+  const isNotCharged = current === 'not_charged';
+  const outstanding = isOutstanding(current);
   const busy = updating === paymentId;
 
   return (
@@ -74,18 +75,32 @@ export function OutstandingPaymentRow({
             )}
           </p>
           {remindedAt && <p className="type-caption">Reminded {timeAgo(remindedAt)}</p>}
+          {outstanding && (
+            <p className="type-caption mt-1 flex items-center gap-2">
+              <SendReminderButton
+                paymentId={paymentId}
+                studentName={studentName}
+                context={classContext}
+                onSent={setRemindedAt}
+                onError={setReminderError}
+              />
+              <span aria-hidden="true">·</span>
+              <button
+                type="button"
+                onClick={() => markNotCharged(paymentId)}
+                disabled={busy}
+                className="type-caption text-teal min-h-[44px] px-1"
+                // Visible text leads the accessible name for WCAG 2.5.3, matching
+                // the shape Mark paid's aria-label uses below.
+                aria-label={`Not charged — ${studentName}, ${classContext}`}
+              >
+                Not charged
+              </button>
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <span className="type-number text-brown">€{amount.toFixed(2)}</span>
-          {isOutstanding && (
-            <SendReminderButton
-              paymentId={paymentId}
-              studentName={studentName}
-              context={classContext}
-              onSent={setRemindedAt}
-              onError={setReminderError}
-            />
-          )}
           {isPaid ? (
             <span className="inline-flex items-center gap-2">
               <span className={`type-caption ${paymentStateText('paid').className}`}>
@@ -102,6 +117,27 @@ export function OutstandingPaymentRow({
                   disabled={busy}
                   className="type-caption text-teal min-h-[44px] px-1"
                   aria-label={`Undo marking ${studentName} as paid for ${classContext}`}
+                >
+                  Undo
+                </button>
+              )}
+            </span>
+          ) : isNotCharged ? (
+            <span className="inline-flex items-center gap-2">
+              <span className={`type-caption ${paymentStateText('not_charged').className}`}>
+                {paymentStateText('not_charged').label}
+              </span>
+              {justMarked.has(paymentId) && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    // Refresh only on success, so a failed undo keeps its error
+                    // on screen instead of refreshing the row (and error) away.
+                    if (await undo(paymentId)) router.refresh();
+                  }}
+                  disabled={busy}
+                  className="type-caption text-teal min-h-[44px] px-1"
+                  aria-label={`Undo marking ${studentName} as not charged for ${classContext}`}
                 >
                   Undo
                 </button>
