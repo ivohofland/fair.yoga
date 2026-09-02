@@ -1549,8 +1549,9 @@ both do it. The rule is about a statement inside the callback. No site in
 grep -rn "\.catch(" src --include="*.ts" --include="*.tsx" | grep -v "\.test\."
 ```
 
-Every hit must be on `db`/`prisma`, on a `$transaction(…)` promise, or outside
-the database entirely.
+Every hit is either a real `.catch()` call site meeting those three categories, or
+a comment merely mentioning `.catch()` with no call site — `gdpr.ts:1490` narrates
+why a guarded statement cannot protect an operation, and is the current instance.
 
 ## Known conformance
 
