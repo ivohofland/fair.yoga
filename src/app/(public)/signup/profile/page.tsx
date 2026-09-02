@@ -19,10 +19,12 @@ import { getSession } from '@/lib/session';
  *     adding the second hat. `SessionUser` makes that precisely a
  *     student-only session: a profile-less session is unrepresentable, so
  *     reaching here with a session at all means a student is becoming a
- *     teacher too. Its commonest source is the unclaimed-CRM-contact case —
- *     `/verify` CLAIMS such a student and issues an ordinary session rather
- *     than a ticket, so the ticket branch never fires and this one is the
- *     only door that leads anywhere.
+ *     teacher too. `/signup`'s own `if (session) redirect('/signup/profile')`
+ *     is the direct route — any signed-in, teacherless visitor to `/signup`
+ *     lands here immediately. The unclaimed-CRM-contact case reaches the same
+ *     state a second way: `/verify` CLAIMS such a student and issues an
+ *     ordinary session rather than a ticket, so the ticket branch never fires
+ *     for them either.
  *   - NEITHER. A dead or missing ticket and no session. Not a dead end: it
  *     renders the same email form `/signup` does, so the way out is one
  *     field rather than a back button and a guess about which page to start

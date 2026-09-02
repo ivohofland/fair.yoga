@@ -101,7 +101,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const limit = checkStudentWriteLimit(session.teacherId);
   if (!limit.allowed) {
     log.warn({ teacherId: session.teacherId }, 'invitation refused: rate limit exceeded');
-    return respondRateLimited(limit);
+    return respondRateLimited(limit, 'Too many invitations.');
   }
 
   const parsed = await parseBody(request, createInvitationSchema);

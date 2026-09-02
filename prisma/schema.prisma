@@ -100,8 +100,9 @@ enum InvitationStatus {
   declined
 }
 
-/// Steps a teacher may dismiss. Required steps (room, class) are absent
-/// on purpose: "skip a required step" must not be expressible.
+/// Steps a teacher may dismiss. The required steps are absent on purpose:
+/// "skip a required step" must not be expressible. See `RequiredStepKey`
+/// in src/lib/onboarding.ts for which steps those are.
 enum OnboardingStep {
   profile
   bank

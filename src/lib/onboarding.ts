@@ -80,8 +80,13 @@ export function resolveSteps(input: StepInput): ResolvedStep[] {
   });
 }
 
+/** Every row done or skipped — required steps have no `skipAs`, so this
+ *  genuinely requires `room`/`class` to exist, not merely be dismissed. */
+export function isSettled(input: StepInput): boolean {
+  return resolveSteps(input).every((s) => s.state !== 'todo');
+}
+
 /** Retired: every step settled, and the share card dismissed. */
 export function isOnboardingComplete(input: StepInput): boolean {
-  const settled = resolveSteps(input).every((s) => s.state !== 'todo');
-  return settled && input.skipped.includes('share');
+  return isSettled(input) && input.skipped.includes('share');
 }

@@ -9,23 +9,23 @@ import { checkRateLimit, checkIpRateLimit, clientIp, rateLimitKey, respondRateLi
 /**
  * Email-only teacher signup (#385). Mints and emails a magic link, marked
  * `teacher_signup` for an address with no account yet, or an ordinary
- * `sign_in` link for one that already has one — no rows are ever written
- * here. Uniform 200 either way, same non-enumeration contract as
- * `student-signup`.
+ * `sign_in` link for one that already has one — no `Teacher` or `Account`
+ * row is ever written here. Uniform 200 either way, same non-enumeration
+ * contract as `student-signup`.
  */
 export const POST = withErrorHandler(async (request: NextRequest) => {
   // Throttled before parsing: each accepted request can send a real email,
   // so an unthrottled endpoint is an email-bombing vector.
   const ip = clientIp(request);
   const ipCheck = checkIpRateLimit('teacher-signup', ip, 5, 60 * 60 * 1000, 'teacher-signup');
-  if (!ipCheck.allowed) return respondRateLimited(ipCheck);
+  if (!ipCheck.allowed) return respondRateLimited(ipCheck, 'Too many signup attempts.');
 
   const parsed = await parseBody(request, teacherSignupSchema);
   if ('error' in parsed) return parsed.error;
   const { email } = parsed.data;
 
   const emailCheck = checkRateLimit(rateLimitKey('teacher-signup:email', email), 3, 15 * 60 * 1000);
-  if (!emailCheck.allowed) return respondRateLimited(emailCheck);
+  if (!emailCheck.allowed) return respondRateLimited(emailCheck, 'Too many signup attempts.');
 
   // An address that already has an account gets an ORDINARY sign-in link.
   // The signup marker is what lets verification create an account, so

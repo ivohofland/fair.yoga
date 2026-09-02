@@ -222,20 +222,14 @@ export function checkStudentWriteLimit(teacherId: string): RateLimitResult {
 }
 
 /**
- * The 429 body for a `checkStudentWriteLimit` refusal, shared by
- * `POST /api/students` and `POST /api/invitations/[id]/resend` (#173) — both
- * spend the same bucket and build the identical message from it. Each
- * caller keeps its own `log.warn` immediately before calling this: the
- * `teacherId` field is the same shape either way, but the message text
- * names which action was refused, which matters for grepping operator
- * logs and isn't worth genericizing away.
+ * The 429 body for a rate-limit refusal. `action` names what was refused
+ * ("Too many signup attempts.", "Too many invitations.") — every caller
+ * spends a different bucket for a different reason, so there is no single
+ * word that fits all of them.
  */
-export function respondRateLimited(limit: RateLimitResult): NextResponse {
+export function respondRateLimited(limit: RateLimitResult, action: string): NextResponse {
   const minutes = Math.ceil(limit.retryAfterSeconds / 60);
-  return respondError(
-    `Too many invitations. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
-    429,
-  );
+  return respondError(`${action} Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`, 429);
 }
 
 /** Fallback key segment for callers whose IP could not be resolved — never a valid IP literal, so it can't collide with a real address. */

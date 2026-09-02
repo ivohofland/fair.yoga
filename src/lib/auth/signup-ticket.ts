@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { generateMagicLinkToken, verifyMagicLinkToken, hashToken } from './magic-link';
+import { log } from '@/lib/log';
 
 export const SIGNUP_TICKET_COOKIE = 'fair_yoga_signup';
 
@@ -36,13 +37,27 @@ export async function peekSignupTicket(
  * Single-use: `verifyMagicLinkToken` deletes atomically, so two concurrent
  * submissions cannot both create a teacher for one ticket. Returns the
  * VERIFIED address — the profile route must never take an email from a body.
+ *
+ * The cookie is an ordinary bearer value, not something only ever set by
+ * `setSignupTicketCookie` — a token of another purpose presented here still
+ * gets consumed (deleted) by `verifyMagicLinkToken` before the purpose check
+ * below can run. That's unreachable through the normal signup flow, but a
+ * `log.warn` on the mismatch is the only way this would ever be visible if
+ * something else ever wrote to this cookie.
  */
 export async function consumeSignupTicket(
   db: PrismaClient,
   token: string,
 ): Promise<string | null> {
   const result = await verifyMagicLinkToken(db, token);
-  if (!result || result.purpose !== 'teacher_profile_pending') return null;
+  if (!result) return null;
+  if (result.purpose !== 'teacher_profile_pending') {
+    log.warn(
+      { purpose: result.purpose },
+      'signup ticket cookie carried a non-signup token; it was consumed and discarded',
+    );
+    return null;
+  }
   return result.email;
 }
 
@@ -53,5 +68,7 @@ export function setSignupTicketCookie(headers: Headers, token: string): void {
 }
 
 export function clearSignupTicketCookie(headers: Headers): void {
-  headers.append('Set-Cookie', `${SIGNUP_TICKET_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  let cookie = `${SIGNUP_TICKET_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
+  if (process.env.NODE_ENV === 'production') cookie += '; Secure';
+  headers.append('Set-Cookie', cookie);
 }

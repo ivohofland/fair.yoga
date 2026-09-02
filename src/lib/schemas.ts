@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { OnboardingStep } from '@prisma/client';
 import { isIncomeTier } from '@/lib/tiers';
 import { isValidTimeZone } from '@/lib/iana-timezone';
 
@@ -179,8 +180,13 @@ export const teacherSignupSchema = z.object({ email: emailField }).strict();
 // This is a correctness input, not a display preference — it decides the
 // schedule window, both #249 past-start guards, auto-cancel, the completion
 // sweep and the reporting cutoff. Optional here so a browser that cannot
-// report one still signs up.
-const detectedTimezoneField = z.string().refine(isValidTimeZone, 'Unknown timezone');
+// report one still signs up — and an unrecognised zone the browser DID
+// report (its ICU is newer than the server's) degrades to the same
+// fallback rather than 400ing the whole signup with no retry path: this is
+// passive detection, not a value the teacher typed and can correct.
+const detectedTimezoneField = z
+  .string()
+  .transform((s) => (isValidTimeZone(s) ? s : undefined));
 
 /**
  * Creates the teacher profile. No `email` field: it comes from the consumed
@@ -208,8 +214,13 @@ export const updateTeacherSchema = z.object({
   bankAccountName: z.string().nullable().optional(),
 }).strict();
 
-/** `POST /api/account/onboarding`'s wire shape. */
-export const onboardingSkipSchema = z.object({ step: z.enum(['profile', 'bank', 'share']) }).strict();
+/**
+ * `POST /api/account/onboarding`'s wire shape. `z.enum(OnboardingStep)`
+ * derives the accepted values from the Prisma enum itself — a hand-copied
+ * literal list here would not fail to compile if `OnboardingStep` grew a
+ * member this route never learned to validate.
+ */
+export const onboardingSkipSchema = z.object({ step: z.enum(OnboardingStep) }).strict();
 
 // ============================================================================
 // STUDENTS

@@ -5,6 +5,7 @@ import {
   resetRateLimits,
   clientIp,
   rateLimitKey,
+  respondRateLimited,
   DEFAULT_PREFIX_CAPACITY,
   PREFIX_CAPACITIES,
   UNRESOLVED_IP_ID,
@@ -313,6 +314,27 @@ describe('rateLimitKey', () => {
   it('joins a registered prefix and an id with a colon', () => {
     expect(rateLimitKey('magic-link:ip', '203.0.113.1')).toBe('magic-link:ip:203.0.113.1');
     expect(rateLimitKey('students', 'teacher-42')).toBe('students:teacher-42');
+  });
+});
+
+describe('respondRateLimited', () => {
+  it('builds the message from the caller-supplied action, not a hardcoded one', async () => {
+    const res = respondRateLimited({ allowed: false, retryAfterSeconds: 90 }, 'Too many signup attempts.');
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe('Too many signup attempts. Try again in 2 minutes.');
+  });
+
+  it('pluralizes "minute" correctly at exactly one minute', async () => {
+    const res = respondRateLimited({ allowed: false, retryAfterSeconds: 60 }, 'Too many address checks.');
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe('Too many address checks. Try again in 1 minute.');
+  });
+
+  it('never falls back to the old hardcoded invitation copy for a non-invitation action', async () => {
+    const res = respondRateLimited({ allowed: false, retryAfterSeconds: 30 }, 'Too many signup attempts.');
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).not.toMatch(/invitation/i);
   });
 });
 

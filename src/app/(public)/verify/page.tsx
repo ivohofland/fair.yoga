@@ -113,6 +113,7 @@ function destinationCopy(dest: string): string {
   if (dest.includes('/book/')) return 'Taking you back to your class now.';
   if (dest.startsWith('/bookings')) return 'Taking you to your bookings now.';
   if (dest === '/schedule') return 'Taking you to your schedule now.';
+  if (dest === '/signup/profile') return 'Taking you to set up your page now.';
   return 'Taking you back to where you left off.';
 }
 
@@ -122,15 +123,22 @@ function destinationCopy(dest: string): string {
  * fallback link — the one line that matters exactly when the redirect
  * fails and the reader suddenly has time. Longer education (spent links,
  * wrong-account) lives on the states people actually dwell on.
+ *
+ * `isNewSignup` distinguishes the one destination that never sets a
+ * session: a `teacher_signup` token with no account yet hands back a
+ * signup ticket, not a session (`magic-link/verify/route.ts`) — so "Welcome
+ * back / You're signed in" would be false on both halves for that reader.
  */
-function SuccessState({ redirectTo }: { redirectTo: string }) {
+function SuccessState({ redirectTo, isNewSignup }: { redirectTo: string; isNewSignup: boolean }) {
   const dest = redirectTo || '/schedule';
   return (
     <div className="flex-1 flex flex-col justify-center py-4">
-      <p className="type-label text-teal mb-[10px]">Welcome back</p>
-      <h1 className="type-display mb-4">You&apos;re signed in.</h1>
+      <p className="type-label text-teal mb-[10px]">{isNewSignup ? 'Email confirmed' : 'Welcome back'}</p>
+      <h1 className="type-display mb-4">
+        {isNewSignup ? "Let's set up your page." : "You're signed in."}
+      </h1>
       <p className="type-body max-w-[360px]">
-        The link checked out. {destinationCopy(dest)}
+        {isNewSignup ? 'Almost there.' : 'The link checked out.'} {destinationCopy(dest)}
       </p>
       <StatusLine variant="done">
         Redirecting to{' '}
@@ -229,6 +237,7 @@ function VerifyContent() {
   const token = searchParams.get('token');
   const [status, setStatus] = useState<Status>(token ? 'verifying' : 'error');
   const [redirectTo, setRedirectTo] = useState<string>('');
+  const [isNewSignup, setIsNewSignup] = useState(false);
   const [home, setHome] = useState<string>('/schedule');
 
   useEffect(() => {
@@ -244,6 +253,11 @@ function VerifyContent() {
       })
       .then((json) => {
         const dest: string = json.data.redirectTo;
+        // The signup-ticket branch of POST /api/auth/magic-link/verify never
+        // sets `accountId` — it hands back a ticket cookie instead of a
+        // session (`verify/route.ts:32-37`) — so its absence is the signal
+        // this reader was never signed in at all.
+        setIsNewSignup(!json.data.accountId);
         setRedirectTo(dest);
         setStatus('success');
         setTimeout(() => router.push(dest), 900);
@@ -272,7 +286,7 @@ function VerifyContent() {
 
   if (status === 'error') return <ErrorState />;
   if (status === 'already-signed-in') return <AlreadySignedInState home={home} />;
-  if (status === 'success') return <SuccessState redirectTo={redirectTo} />;
+  if (status === 'success') return <SuccessState redirectTo={redirectTo} isNewSignup={isNewSignup} />;
   return <VerifyingState />;
 }
 

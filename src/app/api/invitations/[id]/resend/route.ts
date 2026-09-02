@@ -52,7 +52,7 @@ export const POST = withErrorHandler(async (
   const limit = checkStudentWriteLimit(session.teacherId);
   if (!limit.allowed) {
     log.warn({ teacherId: session.teacherId }, 'invitation resend refused: rate limit exceeded');
-    return respondRateLimited(limit);
+    return respondRateLimited(limit, 'Too many invitations.');
   }
 
   const invitation = await ownedInvitation(session.teacherId, id);

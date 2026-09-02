@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession } from '../helpers';
+import { createClassFixture } from '../class-fixtures';
 import { mintSignupTicket, generateMagicLinkToken } from '@/lib/auth';
 
 const prisma = new PrismaClient();
@@ -37,6 +38,10 @@ const tzFallbackSlug = `tz-fallback-${suffix}`;
 const sessionModeEmail = `teacher-signup-session-mode-${suffix}@test.local`;
 const sessionModeSlug = `session-mode-${suffix}`;
 const alreadyTeacherSlug = `already-teacher-${suffix}`;
+// A fully-settled teacher, built inline by its own test rather than in
+// beforeAll — nothing else needs a teacher with a room and a class.
+const shareSettledEmail = `teacher-signup-share-settled-${suffix}@test.local`;
+const shareSettledSlug = `share-settled-${suffix}`;
 
 // A live teacher+session fixture, needed by the slug-available "already
 // taken" test and by every POST /api/account/onboarding test.
@@ -179,6 +184,7 @@ describe('POST /api/auth/teacher-signup', () => {
    */
   it('does not bypass the IP limit when neither x-forwarded-for nor x-real-ip is present', async () => {
     const statuses: number[] = [];
+    let refusalMessage: string | undefined;
     for (let i = 0; i < noIpEmails.length; i++) {
       const res = await fetch(`${BASE_URL}/api/auth/teacher-signup`, {
         method: 'POST',
@@ -186,9 +192,18 @@ describe('POST /api/auth/teacher-signup', () => {
         body: JSON.stringify({ email: noIpEmails[i] }),
       });
       statuses.push(res.status);
+      if (res.status === 429 && !refusalMessage) {
+        const body: { error?: { message?: string } } = await res.json();
+        refusalMessage = body.error?.message;
+      }
     }
     statuses.forEach((status) => expect([200, 429]).toContain(status));
     expect(statuses).toContain(429);
+    // `respondRateLimited` used to hardcode invitation copy for every caller
+    // — a signup refusal saying "Too many invitations" is the regression
+    // this pins against.
+    expect(refusalMessage).toMatch(/^Too many signup attempts\./);
+    expect(refusalMessage).not.toMatch(/invitation/i);
   });
 });
 
@@ -513,11 +528,14 @@ describe('POST /api/account/onboarding', () => {
   });
 
   /**
-   * `onboardingSkipSchema` hand-writes the three members of `OnboardingStep`
-   * with nothing tying the two together, and `skippedOnboarding` is a Postgres
-   * enum array — so if the schema ever stopped rejecting, an unknown step would
-   * reach Prisma and surface as a 500, not a 400. Asserting the STATUS is what
-   * pins the zod enum as the thing that refuses it.
+   * `onboardingSkipSchema` is `z.enum(OnboardingStep)`, derived from the
+   * Prisma enum rather than a hand-copied literal list — but `room`/`class`
+   * are still not members of `OnboardingStep` at all (they're the required
+   * steps, which carry no Skip control), and `skippedOnboarding` is a
+   * Postgres enum array — so if this schema ever stopped rejecting them, an
+   * unknown step would reach Prisma and surface as a 500, not a 400.
+   * Asserting the STATUS is what pins the zod enum as the thing that
+   * refuses it.
    */
   it('rejects a step the skip schema does not name', async () => {
     const res = await fetch(`${BASE_URL}/api/account/onboarding`, {
@@ -533,14 +551,110 @@ describe('POST /api/account/onboarding', () => {
     });
     expect(teacher?.skippedOnboarding).not.toContain('room');
   });
+
+  /**
+   * `step: 'share'` (dismissing the completion card) is the one step the
+   * route itself gates, on top of the schema: `onboardingTeacherId`'s fixture
+   * has an empty bio, no bank details, and no rooms or classes, so it is
+   * about as unsettled as a teacher can be. The checklist UI would never
+   * show a Dismiss button in this state, but the route must refuse the
+   * request on its own — a UI conditional is not an authorization check.
+   */
+  it('refuses to dismiss the completion card while the checklist is unsettled', async () => {
+    const res = await fetch(`${BASE_URL}/api/account/onboarding`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(onboardingToken), ...freshIp() },
+      body: JSON.stringify({ step: 'share' }),
+    });
+    expect(res.status).toBe(409);
+
+    const body: { error?: { code?: string } } = await res.json();
+    expect(body.error?.code).toBe('ONBOARDING_NOT_SETTLED');
+
+    const teacher = await prisma.teacher.findUnique({
+      where: { id: onboardingTeacherId },
+      select: { skippedOnboarding: true },
+    });
+    expect(teacher?.skippedOnboarding).not.toContain('share');
+  });
+
+  it('accepts step: share once every other step is settled', async () => {
+    let accountId: string | undefined;
+    let roomId: string | undefined;
+    let teacherRoomId: string | undefined;
+    let calendarEntryId: string | undefined;
+    try {
+      const teacher = await prisma.teacher.create({
+        data: {
+          firstName: 'Settled',
+          lastName: 'Teacher',
+          email: shareSettledEmail,
+          bio: 'Yoga since 2009.',
+          bankIban: 'NL00BANK0123456789',
+          pageSlug: shareSettledSlug,
+          account: { create: { email: shareSettledEmail } },
+        },
+      });
+      accountId = teacher.accountId;
+
+      const room = await prisma.room.create({
+        data: {
+          createdById: teacher.id,
+          venueName: 'Studio', address: '1 Main St', city: 'Amsterdam', postcode: '1000AA',
+          maxCapacity: 20,
+        },
+      });
+      roomId = room.id;
+
+      const teacherRoom = await prisma.teacherRoom.create({
+        data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 20, rentalRate: 10 },
+      });
+      teacherRoomId = teacherRoom.id;
+
+      const { calendarEntry } = await createClassFixture(prisma, {
+        teacherId: teacher.id,
+        classType: 'Vinyasa',
+        date: new Date('2026-10-01'),
+        startTime: new Date('1970-01-01T09:00:00Z'),
+        durationMinutes: 60,
+        teacherRoomId: teacherRoom.id,
+        roomCost: 10, minRate: 0, targetRate: 0, minStudents: 1, maxStudents: 10,
+      });
+      calendarEntryId = calendarEntry.id;
+
+      const token = await seedSession(prisma, teacher.accountId);
+
+      const res = await fetch(`${BASE_URL}/api/account/onboarding`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(token), ...freshIp() },
+        body: JSON.stringify({ step: 'share' }),
+      });
+      expect(res.status).toBe(200);
+
+      const updated = await prisma.teacher.findUnique({
+        where: { id: teacher.id },
+        select: { skippedOnboarding: true },
+      });
+      expect(updated?.skippedOnboarding).toContain('share');
+    } finally {
+      if (accountId) await prisma.session.deleteMany({ where: { accountId } });
+      if (calendarEntryId) await prisma.class.deleteMany({ where: { calendarEntryId } });
+      if (calendarEntryId) await prisma.calendarEntry.deleteMany({ where: { id: calendarEntryId } });
+      if (teacherRoomId) await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
+      if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
+      if (accountId) await prisma.teacher.deleteMany({ where: { accountId } });
+      if (accountId) await prisma.account.deleteMany({ where: { id: accountId } });
+    }
+  });
 });
 
 /**
  * The second authorization the route accepts, and the one that had no UI door
  * until the final review found it: an account that already exists adds the
- * teacher hat on its SESSION, with no ticket anywhere. This is what the
- * unclaimed-CRM-contact case resolves to — verification claims that student
- * and issues an ordinary session, so the ticket branch never fires.
+ * teacher hat on its SESSION, with no ticket anywhere. `/signup` redirects a
+ * signed-in, teacherless visitor straight here; the unclaimed-CRM-contact
+ * case reaches the same state a second way, since verification claims that
+ * student and issues an ordinary session rather than a ticket.
  */
 describe('POST /api/account/teacher-profile — session mode', () => {
   it('creates the teacher on the signed-in account, with no ticket', async () => {

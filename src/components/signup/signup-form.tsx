@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { readErrorMessage } from '@/lib/client-errors';
 
 interface SignupFormProps {
   /** Heading above the field. */
@@ -29,6 +30,7 @@ interface SignupFormProps {
 export function SignupForm({ title, intro, sentMessage, initialEmail = '' }: SignupFormProps) {
   const [email, setEmail] = useState(initialEmail);
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,8 +41,14 @@ export function SignupForm({ title, intro, sentMessage, initialEmail = '' }: Sig
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       });
-      setStatus(res.ok ? 'sent' : 'error');
+      if (res.ok) {
+        setStatus('sent');
+        return;
+      }
+      setErrorMessage(await readErrorMessage(res, 'Something went wrong. Please try again.'));
+      setStatus('error');
     } catch {
+      setErrorMessage('Network error. Please try again.');
       setStatus('error');
     }
   }
@@ -77,7 +85,7 @@ export function SignupForm({ title, intro, sentMessage, initialEmail = '' }: Sig
         </Button>
         {status === 'error' && (
           <p role="alert" className="text-[13px] leading-[1.4] text-danger">
-            Something went wrong. Please try again.
+            {errorMessage}
           </p>
         )}
       </form>

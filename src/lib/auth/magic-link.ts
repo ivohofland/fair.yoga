@@ -17,11 +17,11 @@ export function hashToken(token: string): string {
  * A second call for the same address deliberately mints a second live token
  * rather than reusing or invalidating the first: a resend must work, and the
  * first link must keep working, because the user clicks whichever mail they
- * see first. That duplication is legitimate (#196) and bounded — though less
- * tightly than a per-route reading suggests. Each minting route rate-limits
- * per address in its OWN bucket, so the live token count for one address is
- * bounded by the sum of the routes that mint for it — not by any single
- * route's limit. The TTL is 15 minutes, `cleanupExpiredAuth` sweeps the
+ * see first. That duplication is legitimate (#196) — bounding how many live
+ * tokens accumulate for an address is each caller's own job (typically a
+ * rate limit on the minting route), not something this function enforces.
+ * `opts.ttlMs` defaults to fifteen minutes but is caller-overridable (see
+ * `signup-ticket.ts`'s hour-long ticket). `cleanupExpiredAuth` sweeps expired
  * remains daily, and `verifyMagicLinkToken` deletes every sibling the moment
  * one of them is used.
  *

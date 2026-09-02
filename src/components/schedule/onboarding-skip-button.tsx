@@ -12,17 +12,10 @@ interface OnboardingSkipButtonProps {
 }
 
 /**
- * Records a skip via `POST /api/account/onboarding` and refreshes the page
- * so the checklist re-renders against the teacher's updated
- * `skippedOnboarding`. Shared by a row's Skip control and the completion
- * card's Dismiss action — same endpoint, same idempotent append, different
- * `step`.
- */
-/**
  * `docs/design-brief.md` §2 asks for `shadow-focus` on every interactive
- * element and 50% opacity when disabled; this control had neither. The hover
- * step is a defined colour move (brown-light -> brown) rather than a
- * transition, since this design has essentially no motion.
+ * element and 50% opacity when disabled. The hover step is a defined colour
+ * move (brown-light -> brown) rather than a transition, since this design has
+ * essentially no motion.
  *
  * Before the caller's own classes, so a call site can still override any of
  * it — both of them pass the text colour this hover step darkens.
@@ -30,6 +23,13 @@ interface OnboardingSkipButtonProps {
 const BASE_CLASSES =
   'rounded-field hover:text-brown focus:outline-none focus-visible:shadow-focus disabled:opacity-50';
 
+/**
+ * Records a skip via `POST /api/account/onboarding` and refreshes the page
+ * so the checklist re-renders against the teacher's updated
+ * `skippedOnboarding`. Shared by a row's Skip control and the completion
+ * card's Dismiss action — same endpoint, same idempotent append, different
+ * `step`.
+ */
 export function OnboardingSkipButton({ step, ariaLabel, className = '', children }: OnboardingSkipButtonProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -46,8 +46,9 @@ export function OnboardingSkipButton({ step, ariaLabel, className = '', children
         router.refresh();
         return;
       }
-    } catch {
-      // Fall through to re-enabling the button below.
+      console.error('[onboarding-skip] request failed', { step, status: res.status });
+    } catch (err) {
+      console.error('[onboarding-skip] request failed', { step, err });
     }
     // A failed skip just leaves the row showing — nothing was recorded, so
     // the teacher can tap Skip again. No error UI: skipping is a quiet,

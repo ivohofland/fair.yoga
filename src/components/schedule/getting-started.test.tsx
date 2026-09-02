@@ -102,6 +102,33 @@ describe('GettingStarted', () => {
 
       expect(screen.queryByText(/Share booking link/i)).not.toBeInTheDocument();
     });
+
+    it('renders a skipped row muted, with a dash icon and no detail, chevron, or Skip control, while other rows are still todo', () => {
+      stubFetch();
+      const mixed: Props = { ...nothingDone, skipped: ['bank'] };
+      render(<GettingStarted {...mixed} />);
+
+      // The row list is still showing — this is the mid-checklist state, not
+      // the completion card.
+      expect(screen.getByRole('link', { name: /Complete your profile/ })).toBeInTheDocument();
+
+      const bankRow = screen.getByRole('link', { name: /Add your bank details/ }).closest('div');
+      expect(bankRow).not.toBeNull();
+      // The dash icon (aria-hidden, since the row's accessible name already
+      // says "skipped" via its text) in place of the todo/done indicator.
+      expect(bankRow!.querySelector('[aria-hidden="true"]')?.textContent).toBe('–');
+      // No detail line, no chevron, and no Skip button for a settled row —
+      // those are `step.state === 'todo'`-gated in GettingStarted.
+      expect(screen.queryByText('Students see them when it’s time to pay — skip if you take cash')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /skip add your bank/i })).not.toBeInTheDocument();
+      // Muted text colour (text-brown), not the todo colour (text-ink).
+      const bankLabel = screen.getByText('Add your bank details');
+      expect(bankLabel.className).toContain('text-brown');
+      expect(bankLabel.className).not.toContain('text-ink');
+
+      // The still-todo rows are unaffected: profile keeps its Skip control.
+      expect(screen.getByRole('button', { name: 'Skip complete your profile' })).toBeInTheDocument();
+    });
   });
 
   describe('the completion card', () => {

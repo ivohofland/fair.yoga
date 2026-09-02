@@ -7,7 +7,7 @@ import { checkIpRateLimit, clientIp, respondRateLimited } from '@/lib/rate-limit
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const ip = clientIp(request);
   const check = checkIpRateLimit('slug-available', ip, 60, 60 * 60 * 1000, 'slug-available');
-  if (!check.allowed) return respondRateLimited(check);
+  if (!check.allowed) return respondRateLimited(check, 'Too many address checks.');
 
   const slug = request.nextUrl.searchParams.get('slug') ?? '';
 
@@ -16,11 +16,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const parsed = pageSlugField.safeParse(slug);
   if (!parsed.success) return respondOk({ available: false });
 
-  // Discloses nothing `(public)/[slug]/page.tsx:40` does not already: it
-  // calls notFound() for an unknown slug, so anyone can probe this by
-  // visiting the URL. Rate-limited only so it is not CHEAPER than probing.
-  // Emphatically unlike email, where the uniform 200s exist to prevent
-  // exactly this.
+  // Discloses nothing the public teacher page doesn't already: it calls
+  // notFound() for an unknown slug, so anyone can probe this by visiting the
+  // URL. Rate-limited only so it is not CHEAPER than probing. Emphatically
+  // unlike email, where the uniform 200s exist to prevent exactly this.
   const taken = await prisma.teacher.findUnique({ where: { pageSlug: slug }, select: { id: true } });
   return respondOk({ available: taken === null });
 });

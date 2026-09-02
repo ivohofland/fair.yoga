@@ -40,11 +40,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const ticketToken = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
   const ticketEmail = ticketToken ? await consumeSignupTicket(prisma, ticketToken) : null;
 
-  let accountId: string | null = null;
-  let email: string;
+  // One value, not two independently-mutable locals: `accountId` and `email`
+  // used to be set separately, which let nothing stop a future branch from
+  // setting one without the other. The discriminant is what every later
+  // decision (which `teacher.create` shape, whether to mint a session,
+  // whether SLUG_TAKEN re-mints a ticket) actually switches on.
+  type Authorization = { source: 'ticket'; email: string } | { source: 'session'; accountId: string; email: string };
+  let auth: Authorization;
 
   if (ticketEmail) {
-    email = ticketEmail;
+    auth = { source: 'ticket', email: ticketEmail };
   } else {
     const session = await requireSession(request);
     if (isErrorResponse(session)) return session;
@@ -55,26 +60,26 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       where: { id: session.accountId },
       select: { email: true },
     });
-    accountId = session.accountId;
-    email = account.email;
+    auth = { source: 'session', accountId: session.accountId, email: account.email };
   }
 
   try {
     const teacher = await prisma.teacher.create({
       data: {
-        firstName, lastName, email, bio, pageSlug,
+        firstName, lastName, bio, pageSlug,
+        email: auth.email,
         defaultCurrency: 'EUR',
         // Falls back to Amsterdam only when the browser couldn't report one
         // (#258) — never an unconditional overwrite of what Task 1's schema
         // carries through from detection.
         defaultTimezone: defaultTimezone ?? 'Europe/Amsterdam',
         // A ticket has no account yet; a session has one already.
-        ...(accountId ? { accountId } : { account: { create: { email } } }),
+        ...(auth.source === 'session' ? { accountId: auth.accountId } : { account: { create: { email: auth.email } } }),
       },
     });
 
     const response = respondOk({ teacherId: teacher.id }, 201);
-    if (ticketEmail) {
+    if (auth.source === 'ticket') {
       const sessionToken = await createSession(prisma, teacher.accountId);
       setSessionCookie(response.headers, sessionToken);
       clearSignupTicketCookie(response.headers);
@@ -86,12 +91,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // The ticket that got us here is already spent (single-use, consumed
       // above) — without a fresh one the client's cookie now names a dead
       // token, and a retry (even with a different slug) falls through to
-      // `requireSession` and 401s. Safe to re-mint: `ticketEmail` only
-      // exists because THIS request already consumed a ticket proving
+      // `requireSession` and 401s. Safe to re-mint: `auth.source === 'ticket'`
+      // only holds because THIS request already consumed a ticket proving
       // ownership of it, so minting another proves nothing new. Session-authed
       // callers have no ticket to replace, so this is skipped for them.
-      if (ticketEmail) {
-        const freshTicket = await mintSignupTicket(prisma, ticketEmail);
+      if (auth.source === 'ticket') {
+        const freshTicket = await mintSignupTicket(prisma, auth.email);
         setSignupTicketCookie(conflict.headers, freshTicket);
       }
       return conflict;
