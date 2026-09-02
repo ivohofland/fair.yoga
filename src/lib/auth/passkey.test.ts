@@ -155,7 +155,7 @@ describe('generatePasskeyRegistrationOptions', () => {
 });
 
 describe('generatePasskeyAuthenticationOptions', () => {
-  it('returns options with a challenge field when called with no credentials', async () => {
+  it('returns options with a challenge field', async () => {
     const options = await generatePasskeyAuthenticationOptions();
 
     expect(options).toBeDefined();
@@ -163,13 +163,11 @@ describe('generatePasskeyAuthenticationOptions', () => {
     expect(options.challenge.length).toBeGreaterThan(0);
   });
 
-  it('returns options with allowCredentials when credential IDs provided', async () => {
-    const options = await generatePasskeyAuthenticationOptions(['cred-a', 'cred-b']);
+  it('never carries a credential list', async () => {
+    const options = await generatePasskeyAuthenticationOptions();
 
-    expect(options).toBeDefined();
-    expect(options.allowCredentials).toBeDefined();
-    expect(options.allowCredentials).toHaveLength(2);
-    expect(options.allowCredentials?.[0]?.id).toBe('cred-a');
-    expect(options.allowCredentials?.[1]?.id).toBe('cred-b');
+    // The library builds the key unconditionally and leaves it undefined, which
+    // JSON.stringify then drops — the integration test asserts the wire form.
+    expect(options.allowCredentials).toBeUndefined();
   });
 });

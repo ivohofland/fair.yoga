@@ -641,7 +641,6 @@ describe('email fields normalise', () => {
     expect([...emailBearing].sort()).toEqual([
       'createInvitationSchema',
       'magicLinkSendSchema',
-      'passkeyAuthOptionsSchema',
       'studentSignupSchema',
       'teacherSignupSchema',
       'updateInvitationSchema',

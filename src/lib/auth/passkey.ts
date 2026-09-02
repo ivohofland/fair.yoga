@@ -242,16 +242,25 @@ export async function verifyPasskeyRegistration(params: {
 // Authentication
 // ---------------------------------------------------------------------------
 
-export async function generatePasskeyAuthenticationOptions(
-  allowedCredentialIds?: string[],
-): Promise<PublicKeyCredentialRequestOptionsJSON> {
-  const options = await generateAuthenticationOptions({
+/**
+ * Mints an authentication challenge with no `allowCredentials` list.
+ *
+ * There is deliberately no credential-list parameter. #187: passing one made
+ * the response vary with whether the posted address had an account, whether it
+ * had a passkey, and how many — readable by any unauthenticated caller.
+ * Restoring that is a signature change rather than an added argument, so a
+ * reviewer has to see it.
+ *
+ * The cost is that the ceremony needs a discoverable credential, since the
+ * authenticator gets no list to pre-select from. See
+ * docs/technical-architecture.md ("Passkey authentication options") for the
+ * decision record.
+ */
+export async function generatePasskeyAuthenticationOptions(): Promise<PublicKeyCredentialRequestOptionsJSON> {
+  return generateAuthenticationOptions({
     rpID: getRpId(),
-    allowCredentials: allowedCredentialIds?.map((id) => ({ id })),
     userVerification: 'preferred',
   });
-
-  return options;
 }
 
 export async function verifyPasskeyAuthentication(params: {

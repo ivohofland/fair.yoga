@@ -105,7 +105,7 @@ export function BookingSignIn({ redirect }: BookingSignInProps) {
           the returning path. Signs in and lands back on this class. */}
       {mode === 'returning' && (
         <div className="mt-4 max-w-[420px]">
-          <PasskeySignIn email={email || undefined} redirect={redirect} />
+          <PasskeySignIn redirect={redirect} />
         </div>
       )}
 
