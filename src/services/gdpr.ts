@@ -868,18 +868,33 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     try {
       await handleSpotFreed(db, classId);
     } catch (err) {
-      // `-1` and its blind spot: same shape and same caveat as
-      // `promoteAfterCancel`'s, which carries the reasoning in full.
-      const waiting = await db.waitlistEntry
-        .count({ where: { classId, status: 'waiting' } })
-        .catch(() => -1);
-      const transient = isTransientDbError(err);
-      log[transient ? 'warn' : 'error'](
-        { err, classId, waiting, transient },
-        transient
-          ? 'gdpr: spot-freed hook lost a lock race after erasure — the freed seat was neither promoted nor broadcast'
-          : 'gdpr: spot-freed hook failed after erasure',
-      );
+      try {
+        // `-1` and its blind spot: same shape and same caveat as
+        // `promoteAfterCancel`'s, which carries the reasoning in full.
+        const waiting = await db.waitlistEntry
+          .count({ where: { classId, status: 'waiting' } })
+          .catch(() => -1);
+        const transient = isTransientDbError(err);
+        log[transient ? 'warn' : 'error'](
+          { err, classId, waiting, transient },
+          transient
+            ? 'gdpr: spot-freed hook lost a lock race after erasure — the freed seat was neither promoted nor broadcast'
+            : 'gdpr: spot-freed hook failed after erasure',
+        );
+      } catch (loggingErr) {
+        // The erasure has ALREADY COMMITTED — `handleSpotFreed`'s own
+        // failure above is a real (if now-unlogged) miss, but an UNCAUGHT
+        // throw from the code handling it would reject `deleteStudentAccount`
+        // for an erasure that fully succeeded. The diagnostic read already
+        // guards itself with `.catch()`; this is the backstop for what that
+        // doesn't — `log.warn`/`log.error` itself, or a future addition to
+        // this block. Same shape as `deleteTeacherAccount`'s post-commit
+        // loop, and for the same reason (issue #242).
+        log.error(
+          { err: loggingErr, classId },
+          'gdpr: spot-freed hook diagnostic failed unexpectedly',
+        );
+      }
     }
   }
 }
@@ -1441,14 +1456,20 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
   // whole difference between a known residual and a silent one. Since #112
   // it carries a second meaning
   // — the happy path above NOTIFIES the queue as well as closing it, so a
-  // non-zero count here is also "this many students heard nothing from this
-  // path". That is tolerable only because every route that can produce the
-  // three statuses `observedStatus` reports notifies the queue itself:
-  // `completed` owes no cancellation notice, a concurrent `cancelled` came
-  // from the manual route or `autoCancelClasses` (which tells them, since
-  // #112), and `row-deleted` can only be `archiveOrUnarchiveTemplate` (which
-  // tells them too). Add a fourth way for a class to leave
-  // `draft|open|in_progress` and that argument is what breaks.
+  // count GREATER THAN ZERO here is also "this many students heard nothing
+  // from this path". That is tolerable only because every WAY a class can
+  // leave `draft`/`open`/`in_progress` behind the CAS's back already
+  // notifies the queue itself: completing owes no cancellation notice, a
+  // concurrent cancellation came from the manual route or
+  // `autoCancelClasses` (which tells them, since #112), and a hard delete
+  // can only be `archiveOrUnarchiveRule` or the studio route's own
+  // `calendarEntry.delete` (which tell them too). This is a claim about
+  // WRITE PATHS, not about `observedStatus`'s own value set — that field
+  // also reports `'unknown'` (the read itself failed) and the class's real
+  // status for a concurrent cancellation (`ClassStatus` has had no
+  // `cancelled` member since #327), neither of which is one of these three
+  // causes. Add a fourth way for a class to leave `draft|open|in_progress`
+  // unnoticed and this argument is what breaks.
   //
   // Wrapped in a blanket try/catch below — not in place of guarding each
   // statement individually (the two reads still do, and should stay that
