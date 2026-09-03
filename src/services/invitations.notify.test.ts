@@ -167,4 +167,42 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       }
     }
   });
+
+  it('sends nothing at all to a student already on this teacher\'s roster (#412)', async () => {
+    // The fall-through invitation #412's gate creates is a real, pending row,
+    // so `POST /api/invitations/[id]/resend` can reach it — and that route
+    // gates only on `declined`/`not pending` before calling
+    // `deliverInvitation`. The guard under test is therefore the only thing
+    // standing between a resend and a "would like to connect" notification
+    // sent to someone already connected.
+    const email = `notify-linked-${suffix}@test.local`;
+    let studentId: string | undefined;
+    try {
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Notify', lastName: 'Linked', email,
+          teacherStudents: { create: { teacherId } },
+        },
+        select: { id: true },
+      });
+      studentId = student.id;
+
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
+
+      const notifications = await prisma.notification.findMany({
+        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
+      });
+      expect(notifications).toHaveLength(0);
+      // Not merely "no notification": the unregistered branch below it must
+      // not fire either, or the student gets a stranger's sign-up email for
+      // a teacher they already have.
+      expect(sendMock).not.toHaveBeenCalled();
+    } finally {
+      if (studentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId } });
+        await prisma.notification.deleteMany({ where: { recipientId: studentId } });
+        await prisma.student.delete({ where: { id: studentId } });
+      }
+    }
+  });
 });
