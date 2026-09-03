@@ -350,6 +350,53 @@ describe('StudentDirectory', () => {
   });
 
   /**
+   * The bug from #415: React StrictMode double-invokes this effect in dev,
+   * so a request whose effect run already got cleaned up can still resolve
+   * afterward. Reproduced here without StrictMode by forcing the same
+   * cleanup-then-rerun cycle through an `archived` prop change instead — the
+   * `cancelled` guard this pins defends against any two overlapping runs of
+   * the effect, not specifically a StrictMode double-mount.
+   *
+   * The first fetch is left unresolved across the rerender, so it is still
+   * the *stale* request when it finally settles — after the second has
+   * already resolved successfully. Waiting on the `console.error` spy
+   * proves the first response's failure branch actually ran (rather than
+   * merely "resolved too late for this test to observe"), so the
+   * assertions below pin the guard itself, not test timing luck.
+   */
+  it('does not let a stale, later-resolving failure overwrite a fresher successful load', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let resolveFirst!: (value: unknown) => void;
+    let resolveSecond!: (value: unknown) => void;
+    let call = 0;
+    fetchMock.mockImplementation(() => {
+      call += 1;
+      if (call === 1) return new Promise((resolve) => { resolveFirst = resolve; });
+      return new Promise((resolve) => { resolveSecond = resolve; });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { rerender } = render(<StudentDirectory />);
+    rerender(<StudentDirectory archived />);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    resolveSecond({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: { students: [student({ id: 'student-1', displayName: 'Anna Bakker' })] },
+      }),
+    });
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    resolveFirst({ ok: false, status: 500, json: async () => ({}) });
+    await waitFor(() => expect(consoleError).toHaveBeenCalled());
+
+    expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load your students.')).not.toBeInTheDocument();
+  });
+
+  /**
    * `setPage(1)` on every search-term change (student-directory.tsx) is only
    * exercised here starting from page 1 elsewhere in this file, so a removed
    * reset would go uncaught. Advance to page 2 first, then type a search
