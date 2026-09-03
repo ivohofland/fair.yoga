@@ -50,7 +50,7 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
                 </p>
               </div>
               <div className="flex items-center gap-3 shrink-0">
-                <p className={`type-number ${isPaid ? '' : 'text-brown'}`}>&euro;{item.amount.toFixed(2)}</p>
+                <p className={`type-number ${outstanding ? 'text-brown' : ''}`}>&euro;{item.amount.toFixed(2)}</p>
                 {outstanding && (
                   <button
                     type="button"

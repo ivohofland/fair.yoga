@@ -83,7 +83,7 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
               </div>
 
               <div className="flex items-center gap-3 shrink-0">
-                <span className={`type-number ${isPaid ? '' : 'text-brown'}`}>
+                <span className={`type-number ${outstanding ? 'text-brown' : ''}`}>
                   &euro;{item.amount.toFixed(2)}
                 </span>
                 {outstanding && (

@@ -534,6 +534,15 @@ describe('Payment Service (DB)', () => {
         const result = await markPaymentNotCharged(prisma, payment.id);
         expect(result.ok).toBe(false);
       });
+
+      it('markPaymentPaid refuses a not-charged payment', async () => {
+        const payment = await makePayment('not_charged');
+        const result = await markPaymentPaid(prisma, payment.id, 'cash');
+        expect(result).toEqual({
+          ok: false,
+          error: 'Cannot mark payment as paid: current status is "not_charged". Must be "pending" or "overdue".',
+        });
+      });
     });
 
     describe('reopenPayment', () => {

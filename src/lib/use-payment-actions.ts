@@ -11,7 +11,7 @@ import { readUndoStatus } from '@/lib/payment-status';
  * charged" mirrors that shape for the grace policy. The safety net is Undo,
  * offered only for payments settled in this session (justMarked): old
  * records keep a clean row and can't be unmarked casually. Undo returns the
- * payment to 'pending'; the daily dunning sweep re-derives 'overdue' from
+ * payment to 'pending'; the hourly dunning sweep re-derives 'overdue' from
  * the payment's age where applicable.
  */
 export function usePaymentActions(initial: Record<string, PaymentStatus>) {

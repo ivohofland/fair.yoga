@@ -15,7 +15,7 @@ interface MarkUnpaidButtonProps {
  * The permanent correction path on the payments overview: unlike the
  * transient in-the-moment Undo, this edits a settled record — so it
  * takes a second tap to confirm. The row returns to Outstanding on
- * refresh ('overdue' re-derives from age via the daily sweep).
+ * refresh ('overdue' re-derives from age via the hourly sweep).
  */
 export function MarkUnpaidButton({
   paymentId,
