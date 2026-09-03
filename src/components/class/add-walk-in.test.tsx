@@ -181,11 +181,14 @@ describe('AddWalkIn', () => {
   });
 
   /**
-   * `error` is shared between a failed roster *load* and a failed walk-in
-   * *submit* — `handleAdd`'s catch/else branches both set it. Gating the
-   * Select on `!error` (rather than the load-only `loadFailed`) would hide
-   * the picker the moment a submit failed, taking away the control the
-   * teacher needs to retry. Only a failed roster load should hide it.
+   * A failed submit sets `error` (`handleAdd`'s catch/else); a failed roster
+   * *load* sets the independent `loadFailed`. Gating the Select on `!error`
+   * (rather than the load-only `loadFailed`) would hide the picker the
+   * moment a submit failed, taking away the control the teacher needs to
+   * retry. The trailing filter-to-"zzz" step is what actually pins this: an
+   * untyped-filter "No student matches." assertion passes regardless of
+   * which gate is used (nothing empties `visible` without a filter), so it
+   * would not fail under the bug this test exists to catch.
    */
   it('keeps the picker visible after a failed submit — only a failed roster load hides it', async () => {
     fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
@@ -212,6 +215,104 @@ describe('AddWalkIn', () => {
 
     await waitFor(() => expect(screen.getByText('Class is full.')).toBeInTheDocument());
     expect(screen.getByLabelText('Walk-in student')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Filter students'), { target: { value: 'zzz' } });
+    expect(screen.getByText('No student matches.')).toBeInTheDocument();
+  });
+
+  /**
+   * `loadFailed` is what the whole `error`/`loadFailed` split exists to
+   * preserve: a failed roster load must still hide the picker. `error`
+   * itself is untouched by a load failure now (see the message-lockstep
+   * note on `loadFailed`'s declaration), so the failure message here comes
+   * from the `loadFailed`-gated paragraph, not `error`.
+   */
+  it('shows a load-failure message and hides the picker when the roster fetch fails', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+
+    await waitFor(() =>
+      expect(screen.getByText('Could not load your students.')).toBeInTheDocument(),
+    );
+    expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
     expect(screen.queryByText('No student matches.')).not.toBeInTheDocument();
+  });
+
+  /**
+   * A load failure's `.catch` never clears `students`, so a reopen that
+   * fails after an earlier successful load leaves stale roster data sitting
+   * in state. Only `loadFailed` keeps that stale roster off the screen —
+   * without it, the Select would render the previous (now unverified)
+   * roster underneath a message telling the teacher the load just failed.
+   */
+  it('does not show a stale roster after a reopen whose load fails', async () => {
+    let call = 0;
+    fetchMock.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }),
+        };
+      }
+      return { ok: false, status: 500, json: async () => ({}) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Close'));
+    openPicker();
+
+    await waitFor(() =>
+      expect(screen.getByText('Could not load your students.')).toBeInTheDocument(),
+    );
+    expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
+    expect(screen.queryByText('Anna Bakker')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The mirror case: a load that fails once and then succeeds on a later
+   * refetch — triggered by the effect's `registeredStudentIds` dependency
+   * changing identity, not by the teacher closing and reopening the picker
+   * — must not leave the earlier failure's message stuck next to the
+   * now-current, correctly loaded picker. Deliberately *not* modelled via
+   * Close+reopen: the Close button's own handler calls `setError('')`,
+   * which would clear a stale `error`-based message on its own and mask
+   * exactly the bug this test exists to catch. Re-rendering with a fresh
+   * (but content-equal) array is the realistic trigger — the real caller
+   * (`/app/(teacher)/class/[id]/page.tsx`) hands down a freshly-`.map()`d
+   * array on every render, and `LiveUpdates`' `router.refresh()` on any
+   * inbound notification is what causes that render while the picker is
+   * still open. Tying the message to `loadFailed` (reset every effect run)
+   * rather than `error` (never reset except by Close) is what keeps the two
+   * from drifting apart here.
+   */
+  it('clears the load-failure message once a later refetch succeeds, without closing the picker', async () => {
+    let call = 0;
+    fetchMock.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) return { ok: false, status: 500, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { rerender } = render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await waitFor(() =>
+      expect(screen.getByText('Could not load your students.')).toBeInTheDocument(),
+    );
+
+    rerender(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+    expect(screen.queryByText('Could not load your students.')).not.toBeInTheDocument();
   });
 });
