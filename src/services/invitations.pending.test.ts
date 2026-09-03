@@ -20,13 +20,15 @@ const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
  * standing refusal of a teacher, and `acceptInvitation`'s own re-check of
  * it is defence in depth ONLY because this function is supposed to keep a
  * blocked pair off the list in the first place — see that function's
- * docblock in invitations.ts. Three mutations pass every test that existed
- * before this review pass without this function actually working:
- * `none: { email }` → `none: {}` (hides a teacher's entire pending list
- * the moment they've blocked ANYONE, not just this address),
- * `teacherStudents: { none: { student: { email } } }` → `teacherStudents: { none: {} }` (hides invitations from any teacher with any linked student, not just a link to this specific email), and
- * `status: 'pending'` → `status: { not: 'accepted' }` (resurrects a
- * declined invitation). The tests below are written to fail under each.
+ * docblock in invitations.ts. Each of the mutations below passes every test
+ * that existed before this review pass without this function actually
+ * working: `none: { email }` → `none: {}` (hides a teacher's entire pending
+ * list the moment they've blocked ANYONE, not just this address),
+ * `teacherStudents: { none: { student: { email } } }` → `teacherStudents: {
+ * none: {} }` (hides invitations from any teacher with any linked student,
+ * not just a link to this specific email), and `status: 'pending'` →
+ * `status: { not: 'accepted' }` (resurrects a declined invitation). The
+ * tests below are written to fail under each.
  */
 describe('listPendingInvitations', () => {
   let teacherId: string;

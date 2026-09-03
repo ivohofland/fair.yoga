@@ -1652,10 +1652,10 @@ describe('POST /api/students — re-inviting once the link is gone (#166 review 
     // other student's. A check that stopped at "is there a Student with this
     // address" would refuse here just as the status read did; only one that
     // goes on to `TeacherStudent` lets this through. This used to carry
-    // uppercase, to prove `hasRosterLink`'s (then case-insensitive) match
+    // uppercase, to prove `rosterLinkState`'s (then case-insensitive) match
     // found the row despite the difference. That row is unrepresentable now
     // — `Student_email_lowercase_check` (#170 Task 2) rejects it — and the
-    // case-insensitivity itself is gone (#170 Task 3: `hasRosterLink` is a
+    // case-insensitivity itself is gone (#170 Task 3: `rosterLinkState` is a
     // plain `findUnique`). Every email in this app is lowercase by
     // construction, so the same-case address is not merely sufficient here,
     // it is the only state that can exist — and the roster-link check this
@@ -1695,11 +1695,11 @@ describe('POST /api/students — re-inviting once the link is gone (#166 review 
     const { email, invitationId } = await seedAcceptedWithoutLink('linked');
     let studentId: string | undefined;
     try {
-      // Used to carry uppercase, to prove `hasRosterLink`'s (then
+      // Used to carry uppercase, to prove `rosterLinkState`'s (then
       // case-insensitive) match found this student despite the difference.
       // That gap is closed from the other side now too:
       // `Student_email_lowercase_check` (#170 Task 2) makes a mixed-case row
-      // unrepresentable, so every stored address matches `hasRosterLink`'s
+      // unrepresentable, so every stored address matches `rosterLinkState`'s
       // plain `findUnique` (#170 Task 3) by construction — the same-case
       // address here is the only representable one, and the roster-link
       // check below is still exercised for real.
@@ -2018,7 +2018,7 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
   // I2)'` used to live here. Its whole premise is gone (#170 Task 3b): the
   // row it built is unrepresentable now (`Student_email_lowercase_check`,
   // Task 2), and the case-insensitive `notifyInvitee` Student lookup it
-  // certified was itself deleted (Task 3, `hasRosterLink`-style — this
+  // certified was itself deleted (Task 3, `rosterLinkState`-style — this
   // lookup is a plain `findUnique` now, same as the rest). Its own docblock
   // already recorded this file once losing its "former partner" test to the
   // same kind of change, with the surviving coverage said to live at the

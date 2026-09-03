@@ -34,7 +34,7 @@ export interface InviteResult {
    * (route.ts) gates its `notifyInvitee` call (below) on `delivered ===
    * true`; that gate is one of two things that keep this from becoming a
    * channel back to the exact person who unlinked to get away from this
-   * teacher — `notifyInvitee` re-checks `TeacherBlock` itself too (F3, #166
+   * teacher — `notifyInvitee` re-checks both conditions itself (F3, #166
    * review), since this value is computed once, here, and can go stale by the
    * time a caller reads it. The invitation itself is created either way —
    * only delivery is withheld (#166 task 6c; wired in task 8).
@@ -107,7 +107,10 @@ interface RosterLinkState {
  * ONE query, and `student.findUnique` must stay the first statement in it:
  * `invitations.revive.test.ts` hooks that call through a Prisma extension to
  * close a race window deterministically, and a rewrite that reached
- * `TeacherStudent` first would silently stop that test testing anything.
+ * `TeacherStudent` first would break that test loudly, not silently: the
+ * hook would never fire, the race window would never close at the right
+ * moment, and two tests would fail with a misleading verdict —
+ * `CONTACT_CHANGED` becoming `ALREADY_LINKED`.
  *
  * A plain, case-SENSITIVE `findUnique`, safe because both sides are
  * guaranteed lowercase (#170): this `email` already passed through
@@ -123,7 +126,7 @@ async function rosterLinkState(
     where: { email },
     select: {
       teacherStudents: { where: { teacherId }, select: { id: true } },
-      studentPrivacy: { where: { teacherId }, select: { shareEmail: true } },
+      studentPrivacy: { where: { teacherId }, select: { teacherId: true, shareEmail: true } },
     },
   });
   if (!student) return { linked: false, shareEmail: false };
@@ -133,7 +136,12 @@ async function rosterLinkState(
     // A missing row reads as `false`, matching
     // `projectStudentForTeacher`'s own `flags?.shareEmail ?? false` and the
     // promise on /account/privacy that new teachers start with nothing shared.
-    shareEmail: student.studentPrivacy[0]?.shareEmail ?? false,
+    // `.find` against the scoped `teacherId`, not `[0]` — the house pattern
+    // `studentVisibilitySelect`/`projectStudentForTeacher` use (#167,
+    // src/lib/student-visibility.ts) — so a future `where` change that stops
+    // narrowing this nested select to one row is a compile error here rather
+    // than a silent read of another teacher's privacy row.
+    shareEmail: student.studentPrivacy.find((p) => p.teacherId === teacherId)?.shareEmail ?? false,
   };
 }
 
@@ -155,13 +163,12 @@ async function rosterLinkState(
  *
  * A residual timing channel is knowingly left open. `rosterLinkState` is one
  * Prisma call, but Prisma still issues the relation selects as separate SQL
- * round trips under the hood: no `Student` row costs 1 statement, `Student`
- * row exists costs 3 statements (Student, TeacherStudent, StudentPrivacy).
- * The "Student exists but is not on this teacher's roster" path remains
- * distinguishable by timing, same as before this task — unchanged in kind,
- * not shrunk. Closing it fully would still mean issuing dummy queries to
- * flatten the timing, which is not worth the contortion at this threat
- * level.
+ * round trips under the hood, and a lookup that finds no `Student` row does
+ * fewer of them than one that does. The "Student exists but is not on this
+ * teacher's roster" path remains distinguishable by timing, same as before
+ * this task — unchanged in kind, not shrunk. Closing it fully would still
+ * mean issuing dummy queries to flatten the timing, which is not worth the
+ * contortion at this threat level.
  *
  * The block check below runs unconditionally, after the invitation row is
  * already written — a blocked and a fresh address run the exact same query
@@ -573,7 +580,7 @@ export async function deliverInvitation(
  * This is the primary gate for that, the same way the block exclusion above
  * is the primary gate for a block.
  *
- * The already-linked exclusion is the other half, and it is likewise the
+ * The already-linked exclusion is the sibling gate, and it is likewise the
  * only gate: #412's `inviteContact` creates a real pending invitation for a
  * pair whose link it may not confirm, and this is what keeps that row off
  * the student's page. Rendered, it would sit above "Your teachers" naming a

@@ -154,18 +154,44 @@ list?" is itself a yes/no channel carrying the exact bit being withheld.** The
 ghost's visibility is therefore load-bearing, not merely tolerated: a gated
 invite has to leave the same artifact a real one does.
 
-The residual channels around it hold. A ghost stays `pending` indefinitely,
-which is indistinguishable from a stranger who ignored the invitation;
-resending it is a no-op the teacher cannot observe, since §3 suppresses the
-send and delivery was never visible to them anyway.
+The residual channels around it mostly hold, with one real gap. A ghost does
+not stay `pending` indefinitely: `resolveInvitationOnLink`
+(`src/services/link-consent.ts:82-89`) flips ANY non-accepted invitation for
+`(teacherId, email)` to `accepted`, unconditionally — not gated on whether
+the pair was already linked — and it runs on any ordinary booking by that
+student (`src/app/api/registrations/route.ts:245`, inside the `!isTeacher`
+branch — the `teacherStudent.upsert` just above it is an upsert, so an
+already-linked student's ordinary booking reaches this line same as anyone's)
+and on any waitlist join (`src/services/waitlist.ts:287`). So the ghost
+resolves the next time the gated student does anything ordinary on the
+platform, not indefinitely — the confirmation is delayed, not closed, and a
+patient prober can still complete it in two steps. Resending it in the
+meantime is a no-op the teacher cannot observe, since §3 suppresses the send
+and delivery was never visible to them anyway.
 
-Two follow-on behaviours, both benign. Typing the same address again meets
-`ALREADY_INVITED` at `:177`, which returns *above* the gate — an answer about
-the teacher's own row, so no leak and no duplicate row. And if the student
-later unlinks, `unlinkTeacher` flips the ghost to `declined`, showing the
-teacher a decline for an invitation the invitee never saw: identical to how
-every other invitation behaves on unlink, and indistinguishable from a real
-one.
+That resolution is not itself benign, and creates two channels of its own.
+`GET /api/invitations` returns raw `status` to the teacher, and
+`contact-list.tsx`'s `isContact` check drops an `accepted` row from Contacts
+— for a stranger's invitation, acceptance is always paired with a NEW row
+appearing in the teacher's student directory, but for the gated case it is
+not, because the student was already there. "My pending contact resolved but
+the directory didn't gain anyone" is itself a signal. And a second probe of
+the same address, made after that resolution, now meets `409 ALREADY_LINKED`
+via the gate's `existing !== null` disjunct (`invitations.ts:226`) — because
+`existing` is now an `accepted` row, not a `pending` one. Probe, wait for the
+student's next ordinary booking or waitlist join, re-probe is a working,
+slower confirmation oracle. Closing it fully would need a new column, which
+this plan forbids, and no cheaper alternative exists (see "Filed, not
+folded").
+
+Two follow-on behaviours remain genuinely benign. Typing the same address
+again meets `ALREADY_INVITED` at `:177`, which returns *above* the gate — an
+answer about the teacher's own row, so no leak and no duplicate row. And
+whenever the student unlinks — whether the ghost is still `pending` or has
+already resolved to `accepted` by then — `unlinkTeacher` flips it to
+`declined`, showing the teacher a decline for an invitation the invitee never
+saw: identical to how every other invitation behaves on unlink, and
+indistinguishable from a real one.
 
 ## Design
 
@@ -375,9 +401,18 @@ and the PR body cites the CI run for that tier rather than a local pass.
 
 ## Filed, not folded
 
-Nothing. The one candidate — the ghost "Invited" contact that never resolves —
-is not a defect awaiting a fix: its visibility is what keeps the gated path
-indistinguishable from a real invitation (see §"The decision"), and the
-teacher can archive or delete it. Filing it would describe the design back to
-itself, and any issue proposing to hide it would be proposing to reopen the
-oracle this branch closes.
+Two candidates, neither of them a defect awaiting a fix.
+
+The ghost "Invited" contact that never resolves by itself is not one: its
+visibility is what keeps the gated path indistinguishable from a real
+invitation (see §"The decision"), and the teacher can archive or delete it.
+Filing it would describe the design back to itself, and any issue proposing
+to hide it would be proposing to reopen the oracle this branch closes.
+
+The delayed confirmation oracle via `resolveInvitationOnLink` (see §"The
+decision") is a second, distinct residual — a patient prober can still
+confirm a guessed address in two steps once the gated student does anything
+ordinary on the platform. It stays open rather than closed here for the same
+reason: closing it needs a new column recording that a link's acceptance was
+gate-suppressed, which this plan explicitly forbids, and no cheaper
+alternative exists. Filed as a known, accepted residual rather than fixed.
