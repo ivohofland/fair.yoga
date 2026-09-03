@@ -60,3 +60,49 @@ export async function verifyWithHandoff(
   });
   return { kind: 'handoff', code };
 }
+
+/** A 6-digit code is 10⁶, brute-forceable inside the token's fifteen minutes.
+ *  This budget is the guard that does not depend on the nonce staying secret. */
+export const HANDOFF_MAX_ATTEMPTS = 5;
+
+/**
+ * Trades a code for the token it was stamped on, for the browser that
+ * requested the link.
+ *
+ * Looks up by nonce rather than by code, so a wrong guess still finds the row
+ * whose budget it must spend. Looking up by both would leave the attempt
+ * counter unreachable and the budget unenforceable.
+ */
+export async function claimWithCode(
+  db: PrismaClient,
+  nonce: string | null,
+  code: string,
+): Promise<HandoffOutcome> {
+  if (nonce === null) return { kind: 'invalid' };
+
+  const row = await db.magicLinkToken.findFirst({
+    where: { originBrowserHash: hashNonce(nonce), handoffCode: { not: null } },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (!row) return { kind: 'invalid' };
+
+  if (row.handoffAttempts >= HANDOFF_MAX_ATTEMPTS) {
+    await db.magicLinkToken.deleteMany({ where: { id: row.id } });
+    return { kind: 'invalid' };
+  }
+
+  if (row.handoffCode !== code) {
+    const spent = row.handoffAttempts + 1;
+    await db.magicLinkToken.update({
+      where: { id: row.id },
+      data: { handoffAttempts: spent },
+    });
+    if (spent >= HANDOFF_MAX_ATTEMPTS) {
+      await db.magicLinkToken.deleteMany({ where: { id: row.id } });
+    }
+    return { kind: 'invalid' };
+  }
+
+  if (!(await consumeTokenRow(db, row))) return { kind: 'invalid' };
+  return { kind: 'verified', email: row.email, redirectTo: row.redirectTo, purpose: row.purpose };
+}
