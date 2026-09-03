@@ -292,6 +292,41 @@ describe('StudentDirectory', () => {
   });
 
   /**
+   * A transient server error (e.g. a 500) must not read as "No students
+   * yet." — that message tells a teacher with an established roster their
+   * students are gone. `stubStudents` always returns `ok: true`; this stubs
+   * a failure directly, mirroring `add-walk-in.test.tsx`'s equivalent case.
+   */
+  it('shows a load-failure message instead of "No students yet." when the fetch returns a non-2xx status', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<StudentDirectory />);
+
+    await waitFor(() =>
+      expect(screen.getByText('Could not load your students.')).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('No students yet.')).not.toBeInTheDocument();
+  });
+
+  /**
+   * `fetchStudents` is invoked as `void fetchStudents()` inside a
+   * `useEffect` — today, an exception thrown inside it (a dropped
+   * connection, or `res.json()` failing on a malformed 200 body) propagates
+   * as an unhandled promise rejection, visible only in the console, never
+   * to the teacher. A rejecting `fetch` reproduces that path.
+   */
+  it('shows a load-failure message when the fetch throws, instead of an unhandled rejection', async () => {
+    fetchMock.mockRejectedValue(new Error('network down'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<StudentDirectory />);
+
+    await waitFor(() =>
+      expect(screen.getByText('Could not load your students.')).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('No students yet.')).not.toBeInTheDocument();
+  });
+
+  /**
    * `setPage(1)` on every search-term change (student-directory.tsx) is only
    * exercised here starting from page 1 elsewhere in this file, so a removed
    * reset would go uncaught. Advance to page 2 first, then type a search
