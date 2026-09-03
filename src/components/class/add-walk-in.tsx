@@ -38,11 +38,17 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
   // === 0` otherwise, and only the latter should ever read "No student
   // matches."
   const [loaded, setLoaded] = useState(false);
+  // Gates the Select/"No student matches" visibility independently of
+  // `error`: `error` also carries `handleAdd`'s submit failures, and a
+  // failed submit must not hide the picker the teacher is still using to
+  // retry — only a failed *roster load* should.
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setLoaded(false);
+    setLoadFailed(false);
     fetch('/api/students')
       .then((res) => {
         if (!res.ok) throw new Error(`students ${res.status}`);
@@ -57,6 +63,7 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
       .catch(() => {
         if (cancelled) return;
         setError('Could not load your students.');
+        setLoadFailed(true);
         // A failed load is still a load that finished — it must not keep
         // showing the loading (no-message) state forever.
         setLoaded(true);
@@ -115,7 +122,7 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
           setSelected('');
         }}
       />
-      {loaded && !error && visible.length > 0 && (
+      {loaded && !loadFailed && visible.length > 0 && (
         <Select
           label="Walk-in student"
           value={selected}
@@ -132,9 +139,9 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
       {/*
         Only when a typed filter is what emptied the list — a bare empty
         roster falls through to the "Not in your students yet?" caption
-        below instead, and loading/error states show neither.
+        below instead, and loading/load-failure states show neither.
       */}
-      {loaded && !error && visible.length === 0 && query && (
+      {loaded && !loadFailed && visible.length === 0 && query && (
         <p className="type-caption">No student matches.</p>
       )}
       <p className="type-caption">
