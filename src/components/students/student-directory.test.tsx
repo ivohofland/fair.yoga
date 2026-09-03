@@ -309,11 +309,10 @@ describe('StudentDirectory', () => {
   });
 
   /**
-   * `fetchStudents` is invoked as `void fetchStudents()` inside a
-   * `useEffect` — today, an exception thrown inside it (a dropped
-   * connection, or `res.json()` failing on a malformed 200 body) propagates
-   * as an unhandled promise rejection, visible only in the console, never
-   * to the teacher. A rejecting `fetch` reproduces that path.
+   * `fetchStudents`'s `catch` is what keeps a thrown exception (a dropped
+   * connection, or `res.json()` failing on a malformed 200 body) from
+   * propagating out of `void fetchStudents()` in the `useEffect` as an
+   * unhandled promise rejection. A rejecting `fetch` exercises that branch.
    */
   it('shows a load-failure message when the fetch throws, instead of an unhandled rejection', async () => {
     fetchMock.mockRejectedValue(new Error('network down'));
@@ -324,6 +323,30 @@ describe('StudentDirectory', () => {
       expect(screen.getByText('Could not load your students.')).toBeInTheDocument(),
     );
     expect(screen.queryByText('No students yet.')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Same reasoning as `contact-list.test.tsx`'s equivalent branch: an
+   * expired session answers 401 to every teacher-scoped GET, and this list
+   * has to leave the page rather than render as though it were merely
+   * empty during the moment before the redirect actually navigates away.
+   */
+  it('redirects to /login on a 401, without showing "No students yet." first', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 401 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const original = window.location;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...original, href: '' },
+    });
+
+    render(<StudentDirectory />);
+
+    await waitFor(() => expect(window.location.href).toBe('/login'));
+    expect(screen.queryByText('No students yet.')).not.toBeInTheDocument();
+
+    Object.defineProperty(window, 'location', { configurable: true, value: original });
   });
 
   /**

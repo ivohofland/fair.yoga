@@ -44,16 +44,19 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
       const params = new URLSearchParams(archived ? { archived: 'true' } : {});
       const res = await fetch(`/api/students?${params}`);
       if (res.status === 401) {
+        setLoadFailed(true);
         window.location.href = '/login';
         return;
       }
       if (!res.ok) {
+        console.error('[student-directory] fetch failed', { status: res.status });
         setLoadFailed(true);
         return;
       }
       const json: StudentListResponse = await res.json();
       setStudents(json.data.students);
-    } catch {
+    } catch (err) {
+      console.error('[student-directory] fetch failed', { err });
       setLoadFailed(true);
     } finally {
       setLoading(false);
