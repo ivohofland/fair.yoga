@@ -379,10 +379,22 @@ annotation; the before-and-after belongs in the PR body.
 | `gdpr.ts`, the post-commit loop comment | Same claim, cross-referenced to the above |
 | `waitlist.ts`, `handleSpotFreed`'s docblock | Describes the throw contract the three callers see |
 | `DEPLOYMENT.md` §7 | `jobs.<name>.healthy` "flips false when a job errors" stays true, but the operator now needs to know this one job tolerates contention for a bounded interval, and that a stuck class appears as an `error` log line without flipping it |
+| `waitlist.test.ts:868`, the `gives up on the 2s bound…` docblock | States `report` throws `ReconciliationFailedError` "when every class it invoked failed" as the current, unconditional contract, and calls changing that error semantics work "filed separately… not this test's business" — this branch is exactly that work, and it had already landed on this branch when the claim was found still standing |
 
 The threshold `5` is stated in `DEPLOYMENT.md` beside the constant's name, never
 in a docblock: it is operator-facing, it is a number, and CLAUDE.md's *Comment
 Discipline* puts numbers where they have an owner.
+
+**Why Task 7's claim sweep missed the `waitlist.test.ts:868` row.** Its recipe
+was `grep -rn "every one failed\|foldOutcomes\|cannot see that\|which branch"` —
+a single-line pattern. The claim's actual wording, "every class it invoked
+failed", wraps across a docblock line break (`* ... every class it invoked` /
+`* failed (...)`), so no single line contains the phrase the pattern was built
+to catch. A prose claim split by a line wrap is invisible to line-oriented
+grep even when its wording is a near-miss for the pattern, not just when the
+pattern is wrong — worth remembering for the next claim sweep in this
+codebase: re-run suspect greps with `-Pzo` (or an equivalent multi-line mode)
+over the doc-comment blocks a normal line-anchored search would fragment.
 
 ## 7. Testing, and the mutation for each guard
 
