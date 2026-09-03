@@ -48,6 +48,10 @@ export async function verifyWithHandoff(
     };
   }
 
+  // A token minted before this feature has no origin to hand off to — its
+  // code could never be claimed, so don't stamp one.
+  if (row.originBrowserHash === null) return { kind: 'invalid' };
+
   // Stamped once and reused. Regenerating per open would let anyone holding
   // the link invalidate a code the owner is mid-way through typing — which is
   // also why this column is readable rather than hashed.
@@ -86,11 +90,15 @@ export async function claimWithCode(
   db: PrismaClient,
   nonce: string | null,
   code: string,
-): Promise<HandoffOutcome> {
+): Promise<Exclude<HandoffOutcome, { kind: 'handoff' }>> {
   if (nonce === null) return { kind: 'invalid' };
 
   const candidates = await db.magicLinkToken.findMany({
-    where: { originBrowserHash: hashNonce(nonce), handoffCode: { not: null } },
+    where: {
+      originBrowserHash: hashNonce(nonce),
+      handoffCode: { not: null },
+      expiresAt: { gt: new Date() },
+    },
     orderBy: { createdAt: 'desc' },
   });
   if (candidates.length === 0) return { kind: 'invalid' };

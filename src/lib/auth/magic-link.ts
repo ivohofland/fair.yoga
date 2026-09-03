@@ -22,8 +22,8 @@ export function hashToken(token: string): string {
  * rate limit on the minting route), not something this function enforces.
  * `opts.ttlMs` defaults to fifteen minutes but is caller-overridable (see
  * `signup-ticket.ts`'s hour-long ticket). `cleanupExpiredAuth` sweeps expired
- * remains daily, and `verifyMagicLinkToken` deletes every sibling the moment
- * one of them is used.
+ * remains daily, and `consumeTokenRow` deletes every sibling the moment a
+ * token is consumed.
  *
  * Reusing a live token instead is NOT possible and must not be attempted: the
  * raw value is returned here and persisted nowhere, so recovering it from a
