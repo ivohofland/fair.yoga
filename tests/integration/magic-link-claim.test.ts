@@ -84,6 +84,10 @@ describe('POST /api/auth/magic-link/claim — device handoff over HTTP', () => {
     });
     expect(claimRes.status).toBe(200);
     expect(claimRes.headers.get('set-cookie')).toContain('fair_yoga_session=');
+    // Rotation (§5): a successful claim also clears the origin-nonce cookie
+    // alongside the session cookie, so this browser's stable, year-long nonce
+    // does not survive indefinitely across sign-ins.
+    expect(claimRes.headers.get('set-cookie')).toContain('fair_yoga_origin=;');
     const claimBody = (await claimRes.json()) as { data: { redirectTo: string } };
     expect(claimBody.data.redirectTo).toBe(redirect);
 
