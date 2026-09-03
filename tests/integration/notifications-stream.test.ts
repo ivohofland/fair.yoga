@@ -195,8 +195,8 @@ describe('GET /api/notifications/stream', () => {
 
     // `claimedAt` set: the invitation path only creates an in-app
     // notification when a Student row already exists for the email
-    // (the `if (student)` gate at services/invitations.ts:376, whose
-    // `createNotification` call is :381) — an unclaimed stranger gets an
+    // (the `if (student)` gate at services/invitations.ts:491, whose
+    // `createNotification` call is :510) — an unclaimed stranger gets an
     // email instead, and this test would have nothing to receive.
     const makeStudent = (email: string) =>
       prisma.student.create({

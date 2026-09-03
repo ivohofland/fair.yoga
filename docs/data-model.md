@@ -88,15 +88,19 @@ teacher link. The second write is not an opt-in; it is the system silencing
 every share on the student's behalf because deleting the link alone does not
 stop the teacher reaching them. Until one of those two sites has run there is
 no row, and every read treats absence as maximum privacy
-(`privacy?.shareX ?? false`). One projection reads these flags for every
-teacher-facing surface: `src/lib/student-visibility.ts`. No server-side
-predicate may filter (`where`) or order (`orderBy`) on a privacy-gated
-`Student` column — `lastName`, `email`, `phone`, `birthday`, or `address`,
-one per `VisibilityFlags` member in that file — because a match, or a sort
-position, against a column the projection redacts is an enumeration oracle
-regardless of what the response body shows: a teacher can learn a withheld
-value from a hit/miss, a count, or its rank among other rows even when it is
-never rendered. Re-derive this column list from `VisibilityFlags` if it ever
+(`privacy?.shareX ?? false`). One projection reads these flags for nearly
+every teacher-facing surface: `src/lib/student-visibility.ts`. The one
+exception is `rosterLinkState` (`src/services/invitations.ts`), which reads
+`StudentPrivacy.shareEmail` directly, outside that projection, to decide
+what `POST /api/students` may tell a teacher about a guessed address (#412) —
+see the Invitation section below. No server-side predicate may filter
+(`where`) or order (`orderBy`) on a privacy-gated `Student` column —
+`lastName`, `email`, `phone`, `birthday`, or `address`, one per
+`VisibilityFlags` member in that file — because a match, or a sort position,
+against a column the projection redacts is an enumeration oracle regardless
+of what the response body shows: a teacher can learn a withheld value from a
+hit/miss, a count, or its rank among other rows even when it is never
+rendered. Re-derive this column list from `VisibilityFlags` if it ever
 changes: `_visibilityFlagsAreExhaustive` (same file) only pins that every
 `StudentPrivacy` column is classified as a flag or excluded, not that this
 sentence's five-item list stays in sync with it. `firstName` is exempt: `formatStudentName`
@@ -105,6 +109,14 @@ regardless of privacy settings, which is also why the list route's own
 `orderBy: { firstName: 'asc' }` is safe. Found and fixed in #176, which
 replaced server-side student search with client-side filtering over the
 already-redacted response.
+
+One carve-out to the `where`/`orderBy` rule above: `listPendingInvitations`
+(`src/services/invitations.ts`) filters on `teacherStudents: { none: {
+student: { email } } }` — a match against `email`, a privacy-gated column.
+It is safe because the query runs for the signed-in student against their
+OWN address only; no teacher's request can reach this predicate, so there is
+no party for it to disclose the match to. The general rule still holds for
+every teacher-facing route.
 
 ### Invitation (teacher → student contact, #166)
 
@@ -132,6 +144,8 @@ already-redacted response.
 A teacher may not link themselves to a student unilaterally. `POST /api/students` creates an `Invitation`, never a `Student` row — the `TeacherStudent` link (above) forms only once the invitee accepts it, or books one of the teacher's classes. A declined row is not deleted: it is the tombstone that stops the same address being re-invited, so `PUT`/`DELETE` on a declined invitation both refuse. This is a separate table from `TeacherStudent` on purpose — `POST /api/students` must behave identically whether or not the address is already on the platform, which it cannot if it writes to a table with a unique `email` column.
 
 `accepted` is not a second tombstone. Whether the teacher may invite that address again turns on whether a `TeacherStudent` link actually exists, never on the status alone — erasing a student deletes their links and leaves this row `accepted`, and reading the status there would tell the teacher "already one of your students" forever about someone off their roster, with `unique (teacher_id, email)` blocking any second row. `inviteContact` therefore returns such a row to `pending` (clearing `responded_at`) rather than creating one, and a `TeacherBlock` on the address still withholds delivery exactly as it does for a first invitation.
+
+Since #412, a live link is no longer sufficient on its own to refuse the invite: `inviteContact` refuses (`ALREADY_LINKED`) only when the link exists AND (the student's `StudentPrivacy.shareEmail` for this teacher is true, or this same `accepted` status holds) — see `rosterLinkState`, `src/services/invitations.ts`. A linked student who has not shared their email gets a real, silent pending invitation instead of a refusal that would confirm the address belongs to one of this teacher's own students.
 
 ### TeacherBlock (a student's standing refusal of one teacher, #166)
 

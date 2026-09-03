@@ -26,6 +26,10 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
   // below writes a `TeacherBlock` row as its fixture, and that write DOES
   // enforce the FK.
   let teacherId: string;
+  // A second teacher, used below to prove the roster-link guard
+  // (`student.teacherStudents.length > 0`) is scoped to the CALLER's
+  // `teacherId`, not "does this student have any teacher at all".
+  let otherTeacherId: string;
 
   beforeAll(async () => {
     // Force the real-send path: a key is configured and dry-run is off —
@@ -45,6 +49,17 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       },
     });
     teacherId = teacher.id;
+
+    const other = await prisma.teacher.create({
+      data: {
+        firstName: 'Notify', lastName: 'OtherTeacher',
+        email: `notify-guard-other-teacher-${suffix}@test.local`,
+        account: { create: { email: `notify-guard-other-teacher-${suffix}@test.local` } },
+        bio: 'F3/F4 send-channel guard tests — cross-teacher scoping',
+        pageSlug: `notify-guard-other-teacher-${suffix}`,
+      },
+    });
+    otherTeacherId = other.id;
   });
 
   afterAll(async () => {
@@ -56,6 +71,15 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       }))?.accountId;
       await prisma.teacher.delete({ where: { id: teacherId } });
       if (accountId) await prisma.account.delete({ where: { id: accountId } });
+    }
+    if (otherTeacherId) {
+      await prisma.teacherBlock.deleteMany({ where: { teacherId: otherTeacherId } });
+      const otherAccountId = (await prisma.teacher.findUnique({
+        where: { id: otherTeacherId },
+        select: { accountId: true },
+      }))?.accountId;
+      await prisma.teacher.delete({ where: { id: otherTeacherId } });
+      if (otherAccountId) await prisma.account.delete({ where: { id: otherAccountId } });
     }
 
     if (savedApiKey === undefined) delete process.env.RESEND_API_KEY;
@@ -196,6 +220,43 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       // Not merely "no notification": the unregistered branch below it must
       // not fire either, or the student gets a stranger's sign-up email for
       // a teacher they already have.
+      expect(sendMock).not.toHaveBeenCalled();
+    } finally {
+      if (studentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId } });
+        await prisma.notification.deleteMany({ where: { recipientId: studentId } });
+        await prisma.student.delete({ where: { id: studentId } });
+      }
+    }
+  });
+
+  it('still notifies when the student is linked to a DIFFERENT teacher, not the caller', async () => {
+    // Two independent reviewers each manually deleted `where: { teacherId }`
+    // from this guard's `teacherStudents` select and found the entire unit
+    // suite still green — this teacher-scoping was completely untested. The
+    // guard above ("already on this teacher's roster") must read "linked to
+    // THIS caller", not "linked to some teacher" — conflating them would
+    // silently suppress delivery to a student who has never met the caller,
+    // just because the student has some other teacher: non-delivery, no
+    // error, no log.
+    const email = `notify-other-teacher-linked-${suffix}@test.local`;
+    let studentId: string | undefined;
+    try {
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Notify', lastName: 'OtherTeacherLinked', email,
+          teacherStudents: { create: { teacherId: otherTeacherId } },
+        },
+        select: { id: true },
+      });
+      studentId = student.id;
+
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
+
+      const notifications = await prisma.notification.findMany({
+        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
+      });
+      expect(notifications).toHaveLength(1);
       expect(sendMock).not.toHaveBeenCalled();
     } finally {
       if (studentId) {

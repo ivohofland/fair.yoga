@@ -129,9 +129,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // invitation row is still real, only delivery is withheld. Gating on it here
   // is one of two things that stop this from emailing the exact person who
   // unlinked to get away from this teacher — `notifyInvitee` re-checks both
-  // conditions itself (F3, #166 review), belt and braces, so this gate only
-  // saves a query on the common (unblocked, unlinked) path rather than being the
-  // sole guard.
+  // conditions itself (F3, #166 review), belt and braces: this gate does
+  // nothing extra on the ordinary (unblocked, unlinked) path — `deliverInvitation`
+  // still runs — and it is what saves `notifyInvitee`'s own re-checks
+  // entirely on the withheld (blocked-or-linked) path, by skipping the call.
   //
   // Fire-and-forget, on purpose — see `deliverInvitation`'s docblock
   // (services/invitations.ts). The explicit `.catch` is required, not
