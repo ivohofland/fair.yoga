@@ -6,12 +6,11 @@ import { sendMagicLinkEmail } from '@/lib/email';
 declare const boundLinkBrand: unique symbol;
 
 /**
- * A `/verify` URL whose token is bound to the browser that requested it.
+ * A `/verify` URL bound to the browser that requested it.
  *
- * `sendMagicLinkEmail` accepts only this type, and only `deliverSignInLink`
- * below constructs one. That is what makes binding unforgettable: a new route
- * cannot email a sign-in link by assembling the URL itself, because a plain
- * `string` will not typecheck at the send call.
+ * A branded string: only `deliverSignInLink` below performs the cast that
+ * produces one. See the design spec §2 ("The tether: one function") for why
+ * every door is required to go through that one function.
  */
 export type BoundSignInLink = string & { readonly [boundLinkBrand]: true };
 
