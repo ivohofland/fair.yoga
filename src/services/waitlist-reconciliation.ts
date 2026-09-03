@@ -37,6 +37,14 @@
  * half covered without a line addressing it, and it is why re-running the hook
  * is the whole action.
  *
+ * What it detects is no longer bounded by one tick. A lock race the next tick
+ * wins and a wedged row lock no tick will ever win are the SAME observation
+ * inside a single pass — only repetition separates them — so the escalation
+ * here reads a count that outlives the call. The sweep itself stays stateless:
+ * the count lives in a `ReconciliationStreaks` the caller owns and threads
+ * through `ReconcileOptions`, which in production is
+ * `runWaitlistReconciliationTick`'s and in a test is the test's own.
+ *
  * Line numbers are deliberately absent throughout this file. Every reference
  * names a symbol instead: an earlier revision cited sixteen of them and eight
  * were already wrong three commits into the branch that wrote them.
@@ -162,8 +170,74 @@ interface CandidateClass {
 }
 
 /**
- * Thrown when a tick invoked the hook for at least one class and every single
- * one failed.
+ * Ticks of unbroken contention before the sweep reports itself degraded.
+ *
+ * One meaning, and any second use of this constant has to keep it: THIS HAS
+ * STOOD FOR FIVE MINUTES. The job's interval is 60 seconds (`scheduler.ts`),
+ * so the number is a duration wearing a count's clothing — read as "five
+ * attempts" it would want a different value the moment that interval moved.
+ *
+ * The operator-facing statement of what the tolerance buys belongs in
+ * `DEPLOYMENT.md`, not here.
+ */
+const MAX_CONSECUTIVE_CONTENDED_TICKS = 5;
+
+/**
+ * What one caller remembers between ticks.
+ *
+ * The sweep cannot tell a lock race that the next tick repairs from a wedged
+ * row lock that no tick will ever repair, because both look identical inside
+ * one tick. Only repetition separates them, and only a caller that persists
+ * across ticks can see repetition.
+ */
+export interface ReconciliationStreaks {
+  /** Consecutive ticks in which every invoked class failed, all transiently. */
+  allTransientTicks: number;
+  /**
+   * Consecutive failures per class. Nothing reads it yet — the per-class
+   * escalation is what will, and it is carried here so both escalations share
+   * one tracker rather than each growing its own.
+   *
+   * Its invariant, for whoever writes it: rebuild the map each tick from that
+   * tick's failures, so a class that did not fail leaves it and its size stays
+   * bounded by the candidate set rather than by uptime.
+   */
+  failuresByClass: Map<string, number>;
+}
+
+export function createReconciliationStreaks(): ReconciliationStreaks {
+  return { allTransientTicks: 0, failuresByClass: new Map() };
+}
+
+export interface ReconcileOptions {
+  now?: Date;
+  /**
+   * REQUIRED, and that is the wiring tether rather than pedantry.
+   * `SchedulerSweeps` types every sweep as `(db) => Promise<unknown>`, so a
+   * one-parameter `reconcileWaitlists` would fit that slot and run without
+   * memory, silently. TypeScript refuses to assign a two-parameter function to
+   * a one-parameter signature, so only `runWaitlistReconciliationTick` fits.
+   */
+  streaks: ReconciliationStreaks;
+}
+
+/**
+ * The scheduler's entry point: the one caller with memory across ticks.
+ *
+ * Its tracker is module-level because a tick has no other place to keep state
+ * and `scheduler.ts` must not statically import a service module — the dynamic
+ * imports in `startScheduler` are what keep `instrumentation.ts` loadable in
+ * the edge runtime.
+ */
+const productionStreaks = createReconciliationStreaks();
+
+export function runWaitlistReconciliationTick(db: PrismaClient): Promise<ReconcileSummary> {
+  return reconcileWaitlists(db, { streaks: productionStreaks });
+}
+
+/**
+ * Thrown when a tick failed every class it invoked AND that is worth reporting
+ * the job degraded for. `reason` says which of the two ways it got there.
  *
  * The sweep swallows per-class failures by design, which is what stops one
  * contended class from abandoning the queue behind it. The cost of swallowing
@@ -172,21 +246,55 @@ interface CandidateClass {
  * fresh timestamp while it repairs nothing — an affirmative false statement,
  * not merely a missing signal. Rethrowing here is what `isolatedSweeps` does
  * for the same reason ("the first is rethrown so job health still surfaces the
- * failure"), and it costs nothing in the routine case: one contended class
- * among several still returns normally.
+ * failure").
+ *
+ * This used to throw on EVERY all-failed tick, on the argument that doing so
+ * costs nothing in the routine case because one contended class among several
+ * still returns normally. That argument has a named exception, and on the
+ * single-teacher deployment this project is pinned to it is the ordinary case
+ * rather than the edge: with one candidate class, "a class lost a lock race"
+ * and "every class failed" are the same tick, so one benign race reported a
+ * degraded job. Hence `reason` — `non_transient` still throws on the first
+ * such tick, while `contended` waits for `MAX_CONSECUTIVE_CONTENDED_TICKS` of
+ * them unbroken. `decideEscalation` is where that split is made.
  */
 export class ReconciliationFailedError extends Error {
-  constructor(public readonly failedClassIds: readonly string[]) {
+  constructor(
+    public readonly failedClassIds: readonly string[],
+    public readonly reason: 'non_transient' | 'contended',
+  ) {
     super(
-      `waitlist reconciliation invoked ${failedClassIds.length} class(es) and every one failed`,
+      reason === 'non_transient'
+        ? `waitlist reconciliation invoked ${failedClassIds.length} class(es) and every one failed`
+        : `waitlist reconciliation lost every class to contention for ${MAX_CONSECUTIVE_CONTENDED_TICKS} consecutive ticks`,
     );
     this.name = 'ReconciliationFailedError';
   }
 }
 
+type Escalation = 'none' | 'non_transient' | 'contended';
+
+/** True when the tick invoked classes, failed every one, and every failure was transient. */
+function isContendedTick(summary: ReconcileSummary): boolean {
+  return (
+    summary.failedClassIds.length > 0 &&
+    summary.reconciledClassIds.length === 0 &&
+    summary.transientFailedClassIds.length === summary.failedClassIds.length
+  );
+}
+
+/** Pure. The streak has already been updated, so `allTransientTicks` is this tick's. */
+function decideEscalation(summary: ReconcileSummary, allTransientTicks: number): Escalation {
+  const allFailed =
+    summary.failedClassIds.length > 0 && summary.reconciledClassIds.length === 0;
+  if (!allFailed) return 'none';
+  if (!isContendedTick(summary)) return 'non_transient';
+  return allTransientTicks >= MAX_CONSECUTIVE_CONTENDED_TICKS ? 'contended' : 'none';
+}
+
 export async function reconcileWaitlists(
   db: PrismaClient,
-  opts: { now?: Date } = {},
+  opts: ReconcileOptions,
 ): Promise<ReconcileSummary> {
   // Start from the waiting entries, not from the classes: most classes have no
   // queue, and this is the narrowest set that can possibly need reconciling.
@@ -322,7 +430,17 @@ export async function reconcileWaitlists(
   }
 
   const summary = foldOutcomes(classes.length, outcomes);
-  report(summary);
+  // Updated BEFORE the decision, so `decideEscalation` reads a count that
+  // includes this tick — a streak that reaches the threshold escalates on the
+  // tick that reached it, not on the one after.
+  opts.streaks.allTransientTicks = isContendedTick(summary)
+    ? opts.streaks.allTransientTicks + 1
+    : 0;
+  report(
+    summary,
+    opts.streaks.allTransientTicks,
+    decideEscalation(summary, opts.streaks.allTransientTicks),
+  );
   return summary;
 }
 
@@ -438,6 +556,14 @@ async function reconcileOne(
     // level is the correct classification for when that is fixed; the thing
     // that actually surfaces a broken sweep NOW is `ReconciliationFailedError`,
     // which reaches `/api/health` through the scheduler.
+    //
+    // Which is why `transient` is RETURNED and not merely logged. It reaches
+    // that error through `transientFailedClassIds`, and `decideEscalation`
+    // spends it on WHEN: a tick that lost every class non-transiently reports
+    // the job degraded at once, while an all-transient one is tolerated for
+    // `MAX_CONSECUTIVE_CONTENDED_TICKS`. Misclassifying one failure therefore
+    // moves an escalation by five minutes in one direction or hides it in the
+    // other — a larger consequence than the log level this line picks.
     const transient = isTransientDbError(err);
     const window = err instanceof SpotFreedError ? err.window : null;
     log[transient ? 'warn' : 'error'](
@@ -538,32 +664,54 @@ function foldOutcomes(
 }
 
 /**
- * The one log line per tick, and the rethrow when the tick accomplished
- * nothing.
+ * The one log line per tick, and the rethrow when `decideEscalation` says the
+ * tick is worth reporting the job degraded for.
  *
  * Why a tick did nothing is what the counts alone cannot say. A tick reporting
  * 40 candidates and no work is otherwise indistinguishable between "40 classes
  * were legitimately full" and "a gate is broken and rejected all 40" — the
  * exact ambiguity `handleSpotFreed` added its own `debug` line to remove, for a
  * guard whose firing was likewise invisible.
+ *
+ * The decision arrives as a parameter rather than being re-derived here,
+ * because deriving it needs the streak and the streak belongs to the caller.
+ * Two places computing the same rule from different inputs is how the log line
+ * and the throw would come to disagree.
  */
-function report(summary: ReconcileSummary): void {
+function report(
+  summary: ReconcileSummary,
+  contendedTicks: number,
+  escalation: Escalation,
+): void {
   const skipCounts = countSkipReasons(summary.skipped);
   const payload = {
     candidates: summary.candidates,
     reconciled: summary.reconciledClassIds.length,
     repaired: summary.repairedClassIds.length,
     failed: summary.failedClassIds.length,
+    transientFailed: summary.transientFailedClassIds.length,
+    contendedTicks,
     skipped: skipCounts,
   };
 
+  if (escalation !== 'none') {
+    // `error`, whatever each individual failure was classified as. A tick that
+    // invoked N classes and failed all N is a different statement at any N.
+    log.error(
+      payload,
+      escalation === 'non_transient'
+        ? 'waitlist reconciliation repaired nothing — every class it tried failed'
+        : 'waitlist reconciliation has lost every class to contention for too many consecutive ticks',
+    );
+    throw new ReconciliationFailedError(summary.failedClassIds, escalation);
+  }
+
   if (summary.failedClassIds.length > 0 && summary.reconciledClassIds.length === 0) {
-    // `error`, not `warn`, whatever each individual failure was classified as.
-    // Individually each may be a routine lock race; a tick that invoked N
-    // classes and failed all N is a different statement at any N, and the one
-    // that must not be swallowed.
-    log.error(payload, 'waitlist reconciliation repaired nothing — every class it tried failed');
-    throw new ReconciliationFailedError(summary.failedClassIds);
+    // Every class lost a lock race and the streak is still short. The next
+    // tick retries; the job stays healthy. This is the false alarm #269 was
+    // filed about, and the line that keeps it visible without paging anyone.
+    log.warn(payload, 'waitlist reconciliation lost every class to contention — retrying next tick');
+    return;
   }
 
   if (summary.reconciledClassIds.length > 0 || summary.failedClassIds.length > 0) {

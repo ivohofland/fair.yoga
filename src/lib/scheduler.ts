@@ -46,7 +46,14 @@ export interface SchedulerSweeps {
   processEmailFallback: (db: PrismaClient) => Promise<unknown>;
   processPaymentReminders: (db: PrismaClient) => Promise<unknown>;
   cleanupExpiredAuth: (db: PrismaClient) => Promise<unknown>;
-  reconcileWaitlists: (db: PrismaClient) => Promise<unknown>;
+  /**
+   * The WRAPPER, never `reconcileWaitlists` itself — and the name is the
+   * smaller half of why. `reconcileWaitlists` takes a required second argument
+   * carrying the cross-tick streak state, and TypeScript refuses to assign a
+   * two-parameter function to this one-parameter slot, so miswiring it is a
+   * compile error rather than a sweep that silently forgets between ticks.
+   */
+  runWaitlistReconciliationTick: (db: PrismaClient) => Promise<unknown>;
   reapClosedWaitlistEntries: (db: PrismaClient) => Promise<unknown>;
   auditTeacherTimezones: (db: PrismaClient) => Promise<unknown>;
 }
@@ -113,7 +120,7 @@ export async function startScheduler(): Promise<void> {
   const { processEmailFallback } = await import('@/services/email-fallback');
   const { processPaymentReminders } = await import('@/services/payment-reminders');
   const { cleanupExpiredAuth } = await import('@/services/auth-cleanup');
-  const { reconcileWaitlists } = await import('@/services/waitlist-reconciliation');
+  const { runWaitlistReconciliationTick } = await import('@/services/waitlist-reconciliation');
   const { reapClosedWaitlistEntries } = await import('@/services/waitlist-retention');
   const { auditTeacherTimezones } = await import('@/services/timezone-audit');
 
@@ -126,7 +133,7 @@ export async function startScheduler(): Promise<void> {
     processEmailFallback,
     processPaymentReminders,
     cleanupExpiredAuth,
-    reconcileWaitlists,
+    runWaitlistReconciliationTick,
     reapClosedWaitlistEntries,
     auditTeacherTimezones,
   });
@@ -197,7 +204,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     processEmailFallback,
     processPaymentReminders,
     cleanupExpiredAuth,
-    reconcileWaitlists,
+    runWaitlistReconciliationTick,
     reapClosedWaitlistEntries,
     auditTeacherTimezones,
   } = sweeps;
@@ -281,18 +288,28 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       // its own, and several in one pass add up past the interval. The
       // `job.running` guard then drops the ticks it overruns.
       //
+      // This interval is also what a tick COUNTS AS. The reconciliation
+      // module tolerates a bounded number of consecutive all-contended TICKS
+      // before reporting the job degraded, which is a wall-clock tolerance
+      // only because of the number on the line below — halve it and the same
+      // constant buys half the patience. `MAX_CONSECUTIVE_CONTENDED_TICKS`
+      // carries that reasoning at its own definition; this is the end of it
+      // that lives here.
+      //
       // Its own job name rather than a fourth sweep inside `class-transitions`,
       // so its `lastRunAt` / `lastSuccessAt` describe this sweep alone — and
-      // so `/api/health` can report it degraded. `reconcileWaitlists` swallows
-      // per-class failures (one contended class must not abandon the rest) but
-      // throws `ReconciliationFailedError` when it invoked classes and every
-      // one failed. Without that throw the tick below would record
-      // `lastSuccessAt` and null `lastError` on every pass, so a sweep
-      // repairing nothing at all would report `healthy: true` with a fresh
-      // timestamp — an affirmative false statement rather than a missing one.
+      // so `/api/health` can report it degraded. The sweep swallows per-class
+      // failures (one contended class must not abandon the rest) but throws
+      // `ReconciliationFailedError` when a tick failed every class it invoked
+      // AND that is worth waking someone for — immediately when the failures
+      // will not clear by retrying, after a streak when they are all lock
+      // races. Without that throw the tick below would record `lastSuccessAt`
+      // and null `lastError` on every pass, so a sweep repairing nothing at
+      // all would report `healthy: true` with a fresh timestamp — an
+      // affirmative false statement rather than a missing one.
       name: 'waitlist-reconciliation',
       intervalMs: 1 * MINUTE,
-      run: (db) => reconcileWaitlists(db),
+      run: (db) => runWaitlistReconciliationTick(db),
     },
   ];
 }
