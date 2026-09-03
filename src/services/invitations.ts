@@ -539,6 +539,12 @@ export async function deliverInvitation(
  * account that no longer exists, naming a person called "Deleted Teacher".
  * This is the primary gate for that, the same way the block exclusion above
  * is the primary gate for a block.
+ *
+ * The already-linked exclusion is the other half, and it is likewise the
+ * only gate: #412's `inviteContact` creates a real pending invitation for a
+ * pair whose link it may not confirm, and this is what keeps that row off
+ * the student's page. Rendered, it would sit above "Your teachers" naming a
+ * teacher already listed there, and offer a decline that does not unlink.
  */
 export async function listPendingInvitations(
   db: PrismaClient,
@@ -549,7 +555,11 @@ export async function listPendingInvitations(
     where: {
       email,
       status: 'pending',
-      teacher: { deletedAt: null, teacherBlocks: { none: { email } } },
+      teacher: {
+        deletedAt: null,
+        teacherBlocks: { none: { email } },
+        teacherStudents: { none: { student: { email } } },
+      },
     },
     select: { id: true, teacher: { select: { firstName: true, lastName: true } } },
     orderBy: { createdAt: 'desc' },
