@@ -726,8 +726,8 @@ export type SpotFreedBranch = Exclude<WaitlistWindow, 'frozen'>;
  * What was actually lost, by branch.
  *
  * A `Record` keyed on the branch union rather than a `switch` or an `if`
- * chain: adding a window member becomes a compile error here, and the three
- * call sites share one roster instead of keeping three copies of it in prose.
+ * chain: adding a window member becomes a compile error here, and every call
+ * site shares this one roster instead of keeping its own copy of it in prose.
  */
 const SPOT_FREED_LOSS: Record<SpotFreedBranch, string> = {
   auto_promote: 'the queue head was not promoted into the freed seat',
@@ -737,7 +737,7 @@ const SPOT_FREED_LOSS: Record<SpotFreedBranch, string> = {
 /** The deliberately general wording, for a failure that predates the window. */
 const SPOT_FREED_LOSS_UNKNOWN = 'the freed seat was neither promoted nor broadcast';
 
-/** The one phrase every `handleSpotFreed` caller logs, so the three cannot drift. */
+/** The one phrase every `handleSpotFreed` caller logs, so callers cannot drift. */
 export function spotFreedLoss(window: SpotFreedBranch | null): string {
   return window === null ? SPOT_FREED_LOSS_UNKNOWN : SPOT_FREED_LOSS[window];
 }
@@ -783,7 +783,7 @@ export class SpotFreedError extends Error {
  * inside that branch's own `catch` before it ever reaches the wrapper.
  *
  * The third is `reconcileWaitlists` (`services/waitlist-reconciliation.ts`,
- * #220), the sweep that re-invokes this every minute for any open class holding
+ * #220), the sweep that re-invokes this on every tick for any open class holding
  * a free seat and a waiting queue. It is the one caller that READS the returned
  * `SpotFreedResult`, using it to tell an invocation that repaired something
  * from one that did not. Nothing about this function's signature or behaviour

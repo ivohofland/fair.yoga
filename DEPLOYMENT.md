@@ -105,7 +105,17 @@ Migrations run automatically via the `migrate` service on every deploy.
   five consecutive ticks lost **every** class to contention
   (`MAX_CONSECUTIVE_CONTENDED_TICKS` in
   `src/services/waitlist-reconciliation.ts`) — roughly five minutes of an
-  unbroken hold. A single class stuck while others succeed does **not** flip
-  the flag; it logs at `error` with a `classStreak` field naming the class.
+  unbroken hold. "Every class" means every class the tick actually **invoked**:
+  candidates it skipped (already full, a broadcast already standing, past the
+  cancel deadline) count neither way. So a class stuck behind siblings that are
+  genuinely being reconciled in the same tick does **not** flip the flag on its
+  own — while a tick in which the stuck class was the only one invoked, because
+  everything else was skipped for an unrelated reason, contributes to the
+  tick-level streak like any other all-invoked-and-failed tick. Either way the
+  stuck class logs at `error` with a `classStreak` field naming it, and nothing
+  delivers that line anywhere today: logs go to stdout with no transport
+  configured, so watching for it means reading the server logs directly (the
+  `docker compose … logs` command below) — no automated alerting on log level
+  exists yet (issue #157).
 - `docker compose -f docker-compose.prod.yml logs -f app` — scheduler and
   request logs.

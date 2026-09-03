@@ -299,8 +299,10 @@ export interface ReapOptions {
  * `/api/health` report the job `healthy: true` — an affirmative false statement
  * rather than a missing signal. The reason to rethrow diverges from there:
  * `ReconciliationFailedError` tolerates a bounded run of all-transient ticks,
- * because on a single-teacher deployment one candidate class losing a benign
- * lock race is the ordinary tick, not the edge case. This sweep does not — it
+ * because that sweep only INVOKES a class in the rare state it exists for — a
+ * free seat and a live queue at the same moment — and skips every other
+ * candidate, so one invoked class losing a benign lock race is the ordinary
+ * all-failed tick there, not the edge case. This sweep does not — it
  * throws unconditionally, transience-blind, the moment every class it
  * attempted fails. It runs once daily over a batch of up to
  * `MAX_CLASSES_PER_RUN` terminal classes that essentially nothing else is

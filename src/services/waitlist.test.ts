@@ -866,17 +866,23 @@ describe('promoteNext (DB)', () => {
    * no longer does on the live path.
    *
    * That band is not invisible. `reconcileWaitlists` catches per class and
-   * logs the loss at `warn` (`waitlist-reconciliation.ts`) — visible to log
-   * alerting on every tick, and it escalates to `error` if the same class
-   * stays stuck for `MAX_CONSECUTIVE_CONTENDED_TICKS` in a row. `report`
-   * throws `ReconciliationFailedError`, which `scheduler.ts` stores as the
+   * logs the loss at `warn` (`waitlist-reconciliation.ts`) on every tick, and
+   * escalates to `error` if the same class stays stuck for
+   * `MAX_CONSECUTIVE_CONTENDED_TICKS` in a row. Neither level delivers
+   * anywhere on its own today — `lib/log.ts` is pino to stdout with no
+   * transport, so nothing pages anyone off either one (#157); the lines sit in
+   * the server log for whoever reads it. What surfaces is `report`'s
+   * `ReconciliationFailedError`, which `scheduler.ts` stores as the
    * job's `lastError` and `/api/health` surfaces as `degraded`, only under
    * `decideEscalation`'s two conditions: immediately for a tick with any
    * non-transient failure, or after `MAX_CONSECUTIVE_CONTENDED_TICKS`
-   * consecutive all-transient ticks. On a single-teacher VPS one candidate
-   * class per tick is the ordinary case, so a single benign lock race on an
-   * otherwise-idle sweep no longer reddens the job by itself — that false
-   * alarm is exactly what issue #269 (and this branch) fixed.
+   * consecutive all-transient ticks. The sweep INVOKES a class only in the
+   * rare state it exists for — a free seat and a live queue at the same
+   * moment — and skips every other candidate, so one invoked class per tick is
+   * the ordinary case however many teachers share the deployment. A single
+   * benign lock race on an otherwise-idle sweep therefore no longer reddens
+   * the job by itself — that false alarm is exactly what issue #269 (and this
+   * branch) fixed.
    *
    * The 3.5s hold sits above the 2s bound and below the 5s budget, so without
    * the bound this call acquires at 3.5s and succeeds. `outcome.ok === false`

@@ -2,10 +2,14 @@
 
 Issue 269. The waitlist reconciliation sweep swallows per-class failures by
 design and rethrows when it invoked classes and every one failed. That rethrow
-reaches `/api/health` as **degraded**, and on a single-teacher VPS — where one
-candidate class per tick is the ordinary case, not an edge case — a single
-benign lock race is enough to trigger it. The tick that follows repairs
-everything.
+reaches `/api/health` as **degraded**. Only a class the sweep actually invoked
+counts there, and it invokes one only in the rare state it exists for — a free
+seat and a live queue at the same moment — skipping every other candidate as
+`full`, `already_broadcast` or `frozen`. The deployment is multi-tenant and
+every teacher on it adds candidates, but nothing makes two of them hit that
+anomaly on the same tick, so one invoked class per tick is the ordinary case,
+not an edge case. A single benign lock race is therefore enough to trigger the
+rethrow. The tick that follows repairs everything.
 
 `reconcileOne` already computes the fact that would separate a lost race from a
 broken promotion path, uses it to pick a log level, and throws it away.
