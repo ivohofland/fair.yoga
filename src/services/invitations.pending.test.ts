@@ -20,10 +20,11 @@ const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
  * standing refusal of a teacher, and `acceptInvitation`'s own re-check of
  * it is defence in depth ONLY because this function is supposed to keep a
  * blocked pair off the list in the first place — see that function's
- * docblock in invitations.ts. Two mutations pass every test that existed
+ * docblock in invitations.ts. Three mutations pass every test that existed
  * before this review pass without this function actually working:
  * `none: { email }` → `none: {}` (hides a teacher's entire pending list
- * the moment they've blocked ANYONE, not just this address) and
+ * the moment they've blocked ANYONE, not just this address),
+ * `teacherStudents: { none: { student: { email } } }` → `teacherStudents: { none: {} }` (hides invitations from any teacher with any linked student, not just a link to this specific email), and
  * `status: 'pending'` → `status: { not: 'accepted' }` (resurrects a
  * declined invitation). The tests below are written to fail under each.
  */
@@ -275,6 +276,70 @@ describe('listPendingInvitations', () => {
         (id): id is string => id !== undefined,
       );
       if (ids.length) await prisma.invitation.deleteMany({ where: { id: { in: ids } } });
+    }
+  });
+
+  it('excludes a pending invitation to someone already on that teacher\'s roster (#412)', async () => {
+    // The state #412's gate creates: a real pending invitation for a pair
+    // that is already linked. Rendered, it puts the same teacher in "Pending
+    // invitations" and "Your teachers" on one page, and offers a decline
+    // that does not unlink.
+    const email = `pending-list-linked-${suffix}@test.local`;
+    let studentId: string | undefined;
+    let invitationId: string | undefined;
+    try {
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Already', lastName: 'Linked', email,
+          teacherStudents: { create: { teacherId } },
+        },
+        select: { id: true },
+      });
+      studentId = student.id;
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email, firstName: 'Already', lastName: 'Linked' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
+
+      expect(await listPendingInvitations(prisma, { accountEmail: email })).toEqual([]);
+
+      // The control: the exclusion must be about THIS pair's link, not about
+      // the teacher having any linked student at all. To prove this,
+      // `otherTeacherId` must have a linked student, just not THIS one.
+      // Without that, a weakened filter `teacherStudents: { none: {} }`
+      // (has no students at all) would pass both the correct filter and the
+      // mutation undetected. Give `otherTeacherId` an unrelated link so the
+      // mutation fails while the correct filter still returns this invitation.
+      const otherEmail = `pending-list-linked-other-${suffix}@test.local`;
+      const otherStudent = await prisma.student.create({
+        data: {
+          firstName: 'Other', lastName: 'Linked', email: otherEmail,
+          teacherStudents: { create: { teacherId: otherTeacherId } },
+        },
+        select: { id: true },
+      });
+      try {
+        const otherInvitation = await prisma.invitation.create({
+          data: { teacherId: otherTeacherId, email, firstName: 'Already', lastName: 'Linked' },
+          select: { id: true },
+        });
+        try {
+          const result = await listPendingInvitations(prisma, { accountEmail: email });
+          expect(result.map((r) => r.id)).toEqual([otherInvitation.id]);
+        } finally {
+          await prisma.invitation.deleteMany({ where: { id: otherInvitation.id } });
+        }
+      } finally {
+        await prisma.teacherStudent.deleteMany({ where: { studentId: otherStudent.id } });
+        await prisma.student.delete({ where: { id: otherStudent.id } });
+      }
+    } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
+      if (studentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId } });
+        await prisma.student.delete({ where: { id: studentId } });
+      }
     }
   });
 });
