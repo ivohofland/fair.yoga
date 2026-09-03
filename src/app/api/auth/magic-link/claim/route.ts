@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import {
   claimWithCode,
   readOriginNonce,
+  clearOriginNonceCookie,
   createSession,
   setSessionCookie,
   resolveOrClaimAccount,
@@ -47,6 +48,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     const ticket = await mintSignupTicket(prisma, email);
     const response = respondOk({ redirectTo: '/signup/profile' });
     setSignupTicketCookie(response.headers, ticket);
+    clearOriginNonceCookie(response.headers);
     return response;
   }
 
@@ -59,5 +61,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const response = respondOk({ accountId: resolved.accountId, redirectTo });
   setSessionCookie(response.headers, sessionToken);
+  clearOriginNonceCookie(response.headers);
   return response;
 });
