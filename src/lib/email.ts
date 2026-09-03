@@ -1,5 +1,6 @@
 import { Resend } from 'resend';
 import { renderMagicLinkEmail, renderInvitationEmail } from '@/lib/email-templates';
+import type { BoundSignInLink } from '@/lib/auth/link-delivery';
 
 // Lazy: constructing Resend without a key throws, which would crash any
 // import of this module in keyless environments (Docker image build,
@@ -26,7 +27,7 @@ export function emailDryRun(): boolean {
 
 export async function sendMagicLinkEmail(
   to: string,
-  magicLink: string
+  magicLink: BoundSignInLink
 ): Promise<void> {
   if (emailDryRun()) {
     // In production an *unintentional* missing key must fail loudly:

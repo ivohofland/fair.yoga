@@ -3,8 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { studentSignupSchema } from '@/lib/schemas';
-import { generateMagicLinkToken } from '@/lib/auth';
-import { sendMagicLinkEmail } from '@/lib/email';
+import { ensureOriginNonce, deliverSignInLink } from '@/lib/auth';
 import { checkRateLimit, checkIpRateLimit, clientIp, rateLimitKey } from '@/lib/rate-limit';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { log } from '@/lib/log';
@@ -104,9 +103,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       );
     }
   }
-  const token = await generateMagicLinkToken(prisma, email, { redirectTo: redirect });
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  await sendMagicLinkEmail(email, `${baseUrl}/verify?token=${token}`);
-
-  return respondOk({ message: 'Check your inbox for a sign-in link.' });
+  const response = respondOk({ message: 'Check your inbox for a sign-in link.' });
+  const nonce = ensureOriginNonce(request, response.headers);
+  await deliverSignInLink(prisma, email, nonce, { redirectTo: redirect });
+  return response;
 });

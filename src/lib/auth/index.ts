@@ -4,3 +4,4 @@ export * from './origin-nonce';
 export * from './passkey';
 export * from './account';
 export * from './signup-ticket';
+export * from './link-delivery';
