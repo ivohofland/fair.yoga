@@ -13,9 +13,9 @@ const REDIRECT = '/some-teacher/book/some-class-id';
 let crmStudentId: string;
 
 /** A `student_signup` token bound to `nonce`, minted the way
- *  `POST /api/auth/student-signup` will mint one in Task 5. Seeded here
- *  because the route hashes the raw token and persists nothing else, so a
- *  token minted through the UI cannot be recovered. */
+ *  `POST /api/auth/student-signup` mints one. Seeded here because the route
+ *  hashes the raw token and persists nothing else, so a token minted
+ *  through the UI cannot be recovered. */
 async function seedSignupToken(email: string, nonce: string, redirectTo: string | null) {
   const raw = crypto.randomBytes(32).toString('hex');
   await prisma.magicLinkToken.create({

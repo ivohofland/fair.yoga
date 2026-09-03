@@ -167,10 +167,9 @@ test.describe('Public booking flow', () => {
   });
 
   test('a live signup ticket shows the name step, and submitting it reaches the tier picker', async ({ page, context }) => {
-    // Task 4's own coverage: nothing routes a student through /verify into
-    // this branch yet (Task 5), so the ticket is seeded directly the way
-    // POST /api/account/student-profile would find it — a live
-    // student_signup ticket cookie and no session.
+    // Task 4's own coverage: the ticket is seeded directly the way
+    // POST /api/account/student-profile finds it — a live student_signup
+    // ticket cookie and no session — rather than driven through /verify.
     const email = `e2e-booking-ticket-${suffix}@test.local`;
     const rawToken = await mintSignupTicket(prisma, email, 'student');
     await context.addCookies([
