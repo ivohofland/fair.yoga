@@ -157,4 +157,15 @@ describe('PaymentChecklist', () => {
     expect(screen.queryByRole('button', { name: /Mark paid/i })).not.toBeInTheDocument();
     expect(screen.getByText('⊘ Not charged')).toBeInTheDocument();
   });
+
+  it('colors the amount brown only when still owed', () => {
+    renderChecklist([
+      { paymentId: 'p1', studentName: 'Anna Smith', status: 'not_charged', amount: 12 },
+      { paymentId: 'p2', studentName: 'Bo Jansen', status: 'pending', amount: 15 },
+      { paymentId: 'p3', studentName: 'Clara Meijer', status: 'paid', amount: 18 },
+    ]);
+    expect(screen.getByText('€12.00')).not.toHaveClass('text-brown');
+    expect(screen.getByText('€15.00')).toHaveClass('text-brown');
+    expect(screen.getByText('€18.00')).not.toHaveClass('text-brown');
+  });
 });
