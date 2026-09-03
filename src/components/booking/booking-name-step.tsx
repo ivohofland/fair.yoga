@@ -36,11 +36,17 @@ export function BookingNameStep({ email, redirect }: BookingNameStepProps) {
   const [lastName, setLastName] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState('');
+  // The reason a resend landed on `expired-stuck`, when the server gave one
+  // — a 429's retry time, a 400, or `student-signup`'s own `delivered:
+  // false` message. Empty when the resend rejected outright (network error)
+  // or returned nothing readable; the fixed copy covers that case.
+  const [resendMessage, setResendMessage] = useState('');
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setStatus('submitting');
     setError('');
+    setResendMessage('');
 
     let res: Response;
     try {
@@ -71,14 +77,42 @@ export function BookingNameStep({ email, redirect }: BookingNameStepProps) {
     if (res.status === 401) {
       // The ticket aged out while they were typing. Not an error — a
       // re-send, with both names left exactly where they are.
-      const resent = await fetch('/api/auth/student-signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, redirect }),
-      })
-        .then((r) => r.ok)
-        .catch(() => false);
-      setStatus(resent ? 'expired' : 'expired-stuck');
+      let resendRes: Response;
+      try {
+        resendRes = await fetch('/api/auth/student-signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, redirect }),
+        });
+      } catch {
+        setResendMessage('');
+        setStatus('expired-stuck');
+        return;
+      }
+
+      if (!resendRes.ok) {
+        // A rate limit or validation error on the resend itself — the
+        // server's own message names the real reason (e.g. a retry time),
+        // which the fixed copy below cannot.
+        setResendMessage(await readErrorMessage(resendRes, ''));
+        setStatus('expired-stuck');
+        return;
+      }
+
+      // 200 either way now (student-signup never answers non-2xx for a mail
+      // failure) — `delivered` in the body is the true outcome, not `res.ok`.
+      let body: { data?: { delivered?: boolean; message?: string } } | null;
+      try {
+        body = await resendRes.json();
+      } catch {
+        body = null;
+      }
+      if (body?.data?.delivered === true) {
+        setStatus('expired');
+        return;
+      }
+      setResendMessage(body?.data?.message ?? '');
+      setStatus('expired-stuck');
       return;
     }
 
@@ -121,8 +155,8 @@ export function BookingNameStep({ email, redirect }: BookingNameStepProps) {
         {status === 'expired-stuck' && (
           <p role="status" className="type-caption">
             That took a while and the link expired &mdash; and we couldn&apos;t
-            send a fresh one just now. Your details are still here; try again in
-            a moment.
+            send a fresh one just now. Your details are still here.{' '}
+            {resendMessage || 'Try again in a moment.'}
           </p>
         )}
         {error && (
