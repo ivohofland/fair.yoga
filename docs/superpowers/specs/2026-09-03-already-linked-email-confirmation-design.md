@@ -127,6 +127,24 @@ exits work on it: `PATCH ?state=archived` hides it, and `DELETE` removes it
 outright, refusing only `declined` rows
 (`src/app/api/invitations/[id]/route.ts:176`).
 
+**Both exits act on the invitation line alone; neither can reach the
+student.** That holds at three levels, and the first is structural:
+`Invitation` has exactly one relation, `teacher` (`prisma/schema.prisma:254`)
+— no `studentId`, no relation to `Student`, matching people by a plain `email`
+string — so a cascade from an invitation to a student is impossible by
+construction. The route only runs `invitation.deleteMany`. And there is no
+teacher-facing student delete to confuse it with: `api/students/[id]/route.ts`
+exports `GET`, `PUT` and `PATCH` only, because since #166 severing a link is
+the student's own act (`DELETE /api/teacher-links/[teacherId]` →
+`unlinkTeacher`). The two archive flags are likewise different columns —
+`Invitation.isArchived` via `PATCH /api/invitations/[id]?state=archived`,
+`TeacherStudent.isArchived` via `PATCH /api/students/[id]`.
+
+Worth knowing when reading that UI: `remove-student-button.tsx` calls
+`DELETE /api/invitations/${invitationId}`. The name says student; the action
+is an invitation. Pre-existing, unchanged here, and it is the component the
+ghost renders beside.
+
 That cost is accepted rather than engineered away, because the obvious way to
 avoid it reopens the oracle. Creating the row already `accepted` would hide it
 from Contacts (`isContact`, `contact-list.tsx:47`) and from the student's
@@ -291,6 +309,22 @@ CLAUDE.md — a claim is corrected by replacement, not annotation):
   already declines at this threat level.
 - **A teacher who invited an address and saw it accepted still gets
   `ALREADY_LINKED`**, by design (§1).
+- **A ghost invitation does not resolve when the student later shares their
+  email.** Nothing re-evaluates an `Invitation` on a `StudentPrivacy` change —
+  the privacy routes write only that table, and no sweep reads invitations.
+  The knock-on is that the ghost then *masks* the answer the teacher has
+  become entitled to: a second attempt at the same address meets
+  `ALREADY_INVITED` at `:177`, which returns above the gate, so they are told
+  to "open their contact to resend or update their details" about a contact
+  whose resend is a no-op (§3). Recovery is manual and does work — delete the
+  ghost, retype the address, and with no invitation row and `shareEmail` now
+  true the answer is `ALREADY_LINKED`.
+
+  Auto-resolving it was considered and declined. It would mean writing to
+  `Invitation` from the privacy-toggle path — a second table, and therefore a
+  lock-order question (`docs/lock-order.md`) — on a route that otherwise has
+  no business touching invitations, to tidy a rare artifact that already has
+  an exit.
 - **`PUT /api/invitations/[id]` keeps its missing link check.** It discloses
   nothing — it answers `{ id }` or `ALREADY_INVITED` on the teacher's own row,
   never a link fact — and the card it could produce is now filtered by §4.
