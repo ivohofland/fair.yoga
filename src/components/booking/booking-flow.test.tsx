@@ -36,6 +36,7 @@ describe('BookingFlow', () => {
         studentId="student-1"
         tierPrices={tierPrices}
         isFirstBooking={false}
+        openPaymentsCount={0}
         {...overrides}
       />,
     );
@@ -96,5 +97,41 @@ describe('BookingFlow', () => {
     fireEvent.click(screen.getByRole('button', { name: /Book — around/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect((fetchMock.mock.calls[0] ?? [])[0]).toBe('/api/registrations');
+  });
+
+  // #389. product-concept.md's booking-flow nudge — friendly, never blocking.
+  describe('open payments nudge', () => {
+    it('shows no reminder when there are no open payments', () => {
+      stubFetch();
+      renderFlow({ openPaymentsCount: 0 });
+      expect(screen.queryByText(/open payment/)).not.toBeInTheDocument();
+    });
+
+    it('names one open payment in the singular', () => {
+      stubFetch();
+      renderFlow({ openPaymentsCount: 1 });
+      expect(screen.getByText('You have 1 open payment with this teacher.')).toBeInTheDocument();
+    });
+
+    it('names multiple open payments in the plural', () => {
+      stubFetch();
+      renderFlow({ openPaymentsCount: 3 });
+      expect(screen.getByText('You have 3 open payments with this teacher.')).toBeInTheDocument();
+    });
+
+    it('links the reminder to the student bookings page', () => {
+      stubFetch();
+      renderFlow({ openPaymentsCount: 2 });
+      expect(screen.getByRole('link', { name: /view your bookings/i })).toHaveAttribute(
+        'href',
+        '/bookings',
+      );
+    });
+
+    it('does not show the reminder on the already-booked screen', () => {
+      stubFetch();
+      renderFlow({ alreadyBooked: true, openPaymentsCount: 2 });
+      expect(screen.queryByText(/open payment/)).not.toBeInTheDocument();
+    });
   });
 });
