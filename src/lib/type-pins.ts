@@ -70,9 +70,13 @@ export type NoneOf<T extends PropertyKey> = [T] extends [never] ? true : T;
  * the threat is a contributor hollowing the alias out while refactoring, and
  * these catch every such rewrite we could construct.
  */
-type Equals<A, B> =
+// Exported because `fire-and-forget.ts` asserts its own alias with these too.
+// Shared rather than copied: two fixtures that each defined "the same type"
+// for themselves could drift into disagreeing about it, which is the class of
+// problem pins exist to catch.
+export type Equals<A, B> =
   (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
-type Assert<T extends true> = T;
+export type Assert<T extends true> = T;
 
 // Invariant holds -> `true`, so the assertion const in each pin compiles.
 type _noneOfHoldsIsTrue = Assert<Equals<NoneOf<never>, true>>;
