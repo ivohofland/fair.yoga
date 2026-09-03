@@ -369,11 +369,19 @@ describe('POST /api/students', () => {
     // The disclosure this closes: `ALREADY_LINKED` told a teacher that an
     // address they typed belongs to one of their own students, even one who
     // withheld it — a fact projectStudentForTeacher returns as null on every
-    // other surface. A hit was free and silent, which is what made the
-    // targeted guess worth closing.
+    // other surface (unless the student is unclaimed). A hit was free and
+    // silent, which is what made the targeted guess worth closing.
     const linked = await prisma.student.findUniqueOrThrow({
       where: { id: studentIds[1]! },
       select: { email: true },
+    });
+    const account = await prisma.account.create({
+      data: { email: linked.email },
+      select: { id: true },
+    });
+    await prisma.student.update({
+      where: { id: studentIds[1]! },
+      data: { accountId: account.id, claimedAt: new Date() },
     });
 
     const controlEmail = `crm-already-linked-control-${suffix}@test.local`;
@@ -385,8 +393,9 @@ describe('POST /api/students', () => {
         body: JSON.stringify({ firstName: 'Already', lastName: 'Mine', email: linked.email }),
       });
 
-      expect(res.status).toBe(201);
       const json = await res.json();
+      if (res.status !== 201) console.log('DEBUG RESPONSE:', json);
+      expect(res.status).toBe(201);
       expect(Object.keys(json.data)).toEqual(['id']);
 
       // The row must genuinely exist: "did a new contact appear in my list?"
@@ -445,6 +454,17 @@ describe('POST /api/students', () => {
         await prisma.invitation.deleteMany({ where: { teacherId, email: controlEmail } });
         await prisma.notification.deleteMany({ where: { recipientId: controlStudentId } });
         await prisma.student.delete({ where: { id: controlStudentId } });
+      }
+      const student = await prisma.student.findUnique({
+        where: { id: studentIds[1]! },
+        select: { accountId: true },
+      });
+      if (student?.accountId) {
+        await prisma.student.update({
+          where: { id: studentIds[1]! },
+          data: { accountId: null, claimedAt: null },
+        });
+        await prisma.account.delete({ where: { id: student.accountId } });
       }
     }
   });

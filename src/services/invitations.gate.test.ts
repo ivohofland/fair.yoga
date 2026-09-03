@@ -11,7 +11,7 @@ const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
  * it on the strength of the link alone confirmed that a typed address belongs
  * to one of this teacher's students — a fact `projectStudentForTeacher`
  * (lib/student-visibility.ts) returns as `null` everywhere else once the
- * student has withheld it.
+ * student has withheld it (unless the student is unclaimed).
  *
  * A hit costs nothing and leaves nothing: `inviteContact` returns before any
  * write, and the route answers 409 before both the `lastNotifiedAt` write and
@@ -86,6 +86,8 @@ describe('inviteContact — the shareEmail gate on ALREADY_LINKED (#412)', () =>
     const student = await prisma.student.create({
       data: {
         firstName: 'Gate', lastName: label, email,
+        claimedAt: new Date(),
+        account: { create: { email } },
         ...(opts.linked === false ? {} : { teacherStudents: { create: { teacherId } } }),
         ...(privacy ? { studentPrivacy: { create: { teacherId, ...privacy } } } : {}),
       },
@@ -133,6 +135,29 @@ describe('inviteContact — the shareEmail gate on ALREADY_LINKED (#412)', () =>
 
     expect(result).toEqual({ ok: false, reason: 'ALREADY_LINKED' });
     // A refusal, not a refusal-shaped success.
+    expect(
+      await prisma.invitation.findUnique({ where: { teacherId_email: { teacherId, email } } }),
+    ).toBeNull();
+  });
+
+  it('answers ALREADY_LINKED when the student is unclaimed, bypassing shareEmail', async () => {
+    const email = `gate-unclaimed-${suffix}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Gate', lastName: 'Unclaimed', email,
+        // no Account means claimedAt is null
+        teacherStudents: { create: { teacherId } },
+        studentPrivacy: { create: { teacherId, shareEmail: false } },
+      },
+      select: { id: true },
+    });
+    studentIds.push(student.id);
+
+    const result = await inviteContact(prisma, {
+      teacherId, email, firstName: 'Already', lastName: 'Mine',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'ALREADY_LINKED' });
     expect(
       await prisma.invitation.findUnique({ where: { teacherId_email: { teacherId, email } } }),
     ).toBeNull();
