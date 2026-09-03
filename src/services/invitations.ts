@@ -14,6 +14,7 @@ import { withdrawWaitingEntriesForTeacher } from './waitlist';
 import { createNotification } from './notifications';
 import { sendInvitationEmail } from '@/lib/email';
 import { isRecordNotFound } from '@/lib/api-errors';
+import { privacyIsBypassed } from '@/lib/student-visibility';
 import { requireNormalised } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { log } from '@/lib/log';
@@ -152,7 +153,7 @@ async function rosterLinkState(
   if (!student) return { linked: false, mayBeTold: false };
 
   const linked = student.teacherStudents.length > 0;
-  const unclaimed = student.claimedAt === null;
+  const unclaimed = privacyIsBypassed(student);
 
   // The second tripwire on the unclaimed-Student branch, and the reason this
   // one exists rather than deferring to `bypassesPrivacy`'s: that warn fires
@@ -162,10 +163,10 @@ async function rosterLinkState(
   // archived unclaimed contact is bypassed here and nowhere else. Gated on
   // `linked` because that is when the bypass changes an answer.
   //
-  // `=== null` rather than `bypassesPrivacy`'s `if (student.claimedAt)`: this
-  // spelling fails CLOSED on a field that went missing, and `claimedAt: true`
-  // above is a compile tether besides — dropping it is a `tsc` error here,
-  // the same way dropping `teacherId: true` is one below.
+  // `privacyIsBypassed` rather than an inline `claimedAt === null`: #419 was
+  // the two surfaces disagreeing about this exact rule, so the predicate is
+  // shared and a narrowing of it reaches both. The tripwire is NOT shared —
+  // `bypassesPrivacy`'s fires on a projection, and this gate is not one.
   if (unclaimed && linked) {
     log.warn(
       { studentId: student.id, teacherId },

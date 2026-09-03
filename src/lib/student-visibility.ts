@@ -257,11 +257,28 @@ void _projectionCarriesNoRawIdentity;
  * one. Until #167's round-two review nothing asserted it at all, so the one
  * runtime tripwire on this branch could have been deleted silently.
  */
+/**
+ * The rule itself, without the tripwire: an unclaimed `Student` withholds
+ * nothing from anyone.
+ *
+ * Split out and exported because `rosterLinkState` (`services/invitations.ts`)
+ * has to answer the same question and cannot call `bypassesPrivacy` — that
+ * one logs on a `PROJECTION`, fires for a student nobody was told about, and
+ * takes an `id` this caller's query has no other reason to select. #419 was
+ * filed because the two surfaces disagreed; sharing the predicate is what
+ * keeps a narrowing of this rule from reaching only one of them. Each caller
+ * keeps its own logging policy — see `docs/data-model.md` (StudentPrivacy)
+ * for the rule the two of them implement.
+ */
+export function privacyIsBypassed(student: { claimedAt: Date | null }): boolean {
+  return student.claimedAt === null;
+}
+
 function bypassesPrivacy(
   student: { id: string; claimedAt: Date | null },
   teacherId: string,
 ): boolean {
-  if (student.claimedAt) return false;
+  if (!privacyIsBypassed(student)) return false;
   log.warn(
     { studentId: student.id, teacherId },
     'unclaimed Student reached the teacher projection — every privacy flag is being bypassed',
