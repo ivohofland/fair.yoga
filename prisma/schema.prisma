@@ -74,6 +74,7 @@ enum PaymentStatus {
   pending
   paid
   overdue
+  not_charged
 }
 
 enum RecipientType {
@@ -949,6 +950,7 @@ model Payment {
   processorRef   String?
   reminderSentAt DateTime?
   paidAt         DateTime?
+  notChargedAt   DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
