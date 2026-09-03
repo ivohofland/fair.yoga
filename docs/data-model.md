@@ -424,7 +424,7 @@ Swept daily by `reapClosedWaitlistEntries` (`services/waitlist-retention.ts`).
 
 Level 1: teacher marks payment as received manually (cash, bank transfer). Level 2: automated via Mollie/Stripe payment links. Failed payment retry policy is an open question for Level 2.
 
-`not_charged` is the grace-policy waiver (`docs/product-concept.md` §3): the teacher marks a post-completion payment as not collected, for the same class of case a passwordless system has no other lever for (a genuine emergency, lenience). It is post-completion only — early cancellation already produces no `Payment` row at all, since `completeClass` is the only place one is created.
+`not_charged` is the grace-policy waiver (`docs/product-concept.md` §3): the teacher marks a post-completion payment as not collected, for the same class of case this app has no other exception mechanism for (a genuine emergency, lenience). It is post-completion only — early cancellation already produces no `Payment` row at all, since `completeClass` is the only place one is created.
 
 ---
 
