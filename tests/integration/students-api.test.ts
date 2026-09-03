@@ -319,33 +319,87 @@ describe('POST /api/students', () => {
   // reintroduce a Student-existence branch, and the docblock's "do not add a
   // branch on `student === null`" is prose, which no test can enforce. Delete
   // the student/link block outright and this is the test that goes red.
+  //
+  // The refusal is gated on two facts, not one: the roster link AND this
+  // teacher's `StudentPrivacy.shareEmail` for that student (#412) — a linked
+  // student who has not shared their email is one this teacher may not see,
+  // so the invite falls through rather than confirming the link.
   it('returns 409 ALREADY_LINKED for a student already on the roster', async () => {
     // One of the 25 seeded in the file's beforeAll: linked to this teacher
-    // and carrying no invitation row, which is precisely the "booked a class
-    // instead of being invited" case the branch exists for. Refusing tells
-    // the teacher only about their own roster.
+    // and carrying no invitation row, which is the "booked a class instead
+    // of being invited" case. The privacy row is what entitles this teacher
+    // to the refusal at all (#412) — without it the address is one they may
+    // not see, and the invite falls through instead.
     const linked = await prisma.student.findUniqueOrThrow({
       where: { id: studentIds[0]! },
       select: { email: true },
     });
-
-    const res = await fetch(`${BASE_URL}/api/students`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
-      body: JSON.stringify({ firstName: 'Already', lastName: 'Mine', email: linked.email }),
+    // Removed in the finally: the GET tests in this file project this same
+    // student, and a leaked share would change what they assert on.
+    await prisma.studentPrivacy.create({
+      data: { studentId: studentIds[0]!, teacherId, shareEmail: true },
     });
 
-    expect(res.status).toBe(409);
-    const json = await res.json();
-    expect(json.error.code).toBe('ALREADY_LINKED');
+    try {
+      const res = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ firstName: 'Already', lastName: 'Mine', email: linked.email }),
+      });
 
-    // A refusal, not a refusal-shaped success: no invitation was written
-    // beside it.
-    expect(
-      await prisma.invitation.findUnique({
+      expect(res.status).toBe(409);
+      const json = await res.json();
+      expect(json.error.code).toBe('ALREADY_LINKED');
+
+      // A refusal, not a refusal-shaped success: no invitation was written
+      // beside it.
+      expect(
+        await prisma.invitation.findUnique({
+          where: { teacherId_email: { teacherId, email: linked.email } },
+        }),
+      ).toBeNull();
+    } finally {
+      await prisma.studentPrivacy.deleteMany({
+        where: { studentId: studentIds[0]!, teacherId },
+      });
+    }
+  });
+
+  it('invites, rather than confirming, when the linked student has not shared their email (#412)', async () => {
+    // The disclosure this closes: `ALREADY_LINKED` told a teacher that an
+    // address they typed belongs to one of their own students, even one who
+    // withheld it — a fact projectStudentForTeacher returns as null on every
+    // other surface. A hit was free and silent, which is what made the
+    // targeted guess worth closing.
+    const linked = await prisma.student.findUniqueOrThrow({
+      where: { id: studentIds[1]! },
+      select: { email: true },
+    });
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ firstName: 'Already', lastName: 'Mine', email: linked.email }),
+      });
+
+      expect(res.status).toBe(201);
+      const json = await res.json();
+      expect(Object.keys(json.data)).toEqual(['id']);
+
+      // The row must genuinely exist: "did a new contact appear in my list?"
+      // is itself a channel carrying the bit the refusal withheld, so the
+      // gated path has to leave the artifact a real invitation leaves.
+      const row = await prisma.invitation.findUniqueOrThrow({
         where: { teacherId_email: { teacherId, email: linked.email } },
-      }),
-    ).toBeNull();
+        select: { status: true },
+      });
+      expect(row.status).toBe('pending');
+    } finally {
+      await prisma.invitation.deleteMany({
+        where: { teacherId, email: linked.email },
+      });
+    }
   });
 
   // `'returns 409 ALREADY_LINKED even when the stored address carries

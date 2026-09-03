@@ -2443,12 +2443,11 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
         where: { teacherId_email: { teacherId: resolveTeacherId, email: unlinkEmail } },
       })).toBeNull();
 
-      // The booking above also recreated the TeacherStudent link, and
-      // inviteContact refuses ALREADY_LINKED before it ever reaches the block
-      // check — so calling it on the still-linked pair would prove nothing
-      // about the block. Removing the link here isolates the one thing this
-      // test is about: whether `inviteContact` would still find the block if
-      // asked, independent of roster state.
+      // The booking above also recreated the TeacherStudent link, and a linked
+      // pair is undeliverable on its own account since #412 — `delivered` is
+      // `blocked === null && !linked`. Left in place, the link would make the
+      // assertion below fail for a reason that has nothing to do with the
+      // TeacherBlock this test is about.
       await prisma.teacherStudent.deleteMany({
         where: { teacherId: resolveTeacherId, studentId: unlinkStudentId },
       });
