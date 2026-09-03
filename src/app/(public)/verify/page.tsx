@@ -5,7 +5,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Icon } from '@/components/ui/icon';
 
-type Status = 'verifying' | 'success' | 'error' | 'already-signed-in';
+type Status = 'verifying' | 'success' | 'error' | 'already-signed-in' | 'handoff';
 type StepState = 'done' | 'now' | 'pending';
 type RailStep = { num: string; text: string; when: string; state: StepState };
 
@@ -82,8 +82,8 @@ function VerifyingState() {
       <p className="type-label text-teal mb-[10px]">One moment</p>
       <h1 className="type-display mb-4">Checking your link</h1>
       <p className="type-body max-w-[360px]">
-        You tapped a one-time link. We&apos;re confirming it&apos;s still valid and
-        that it was meant for this device.
+        You tapped a one-time link. We&apos;re confirming it&apos;s still valid,
+        and that this is the browser you requested it from.
       </p>
       <Rail
         steps={[
@@ -177,7 +177,6 @@ function ErrorState() {
       <ul className="list-none pl-[18px] mt-3 mb-6">
         <ErrorReason>The link is older than fifteen minutes</ErrorReason>
         <ErrorReason>It&apos;s already been used to sign in once</ErrorReason>
-        <ErrorReason>It was opened on a device that wasn&apos;t expecting it</ErrorReason>
       </ul>
       <div className="flex flex-col gap-3 mt-2">
         <Link
@@ -231,6 +230,39 @@ function AlreadySignedInState({ home }: { home: string }) {
   );
 }
 
+/**
+ * This browser didn't hold the cookie tying it to the request, so nothing
+ * was consumed here — no session, no error. The code is only good on the
+ * browser that asked for the link; the link below is the escape hatch for
+ * whoever lost track of that original tab.
+ */
+function HandoffState({ code }: { code: string }) {
+  return (
+    <div className="flex-1 flex flex-col justify-center py-4">
+      <p className="type-label text-teal mb-[10px]">One more step</p>
+      <h1 className="type-display mb-4">Enter this where you started</h1>
+      <p className="type-body max-w-[360px] mb-6">
+        We couldn&apos;t confirm this is the browser that asked for the
+        link, so here&apos;s a code instead of a sign-in. Go back to where
+        you requested it and type this in.
+      </p>
+      <p
+        className="type-number text-[40px] text-center tracking-[0.3em] mb-6"
+        aria-label={`Your code is ${code}`}
+      >
+        {code}
+      </p>
+      <Fineprint>
+        Lost that tab?{' '}
+        <Link href="/login" className="text-teal">
+          Sign in here instead
+        </Link>
+        .
+      </Fineprint>
+    </div>
+  );
+}
+
 function VerifyContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -239,6 +271,7 @@ function VerifyContent() {
   const [redirectTo, setRedirectTo] = useState<string>('');
   const [isNewSignup, setIsNewSignup] = useState(false);
   const [home, setHome] = useState<string>('/schedule');
+  const [handoffCode, setHandoffCode] = useState<string>('');
 
   useEffect(() => {
     if (!token) return;
@@ -252,6 +285,13 @@ function VerifyContent() {
         return res.json();
       })
       .then((json) => {
+        // Nothing was consumed: the code names a pending claim, still
+        // waiting on the browser that requested the link.
+        if (json.data.handoffCode) {
+          setHandoffCode(json.data.handoffCode);
+          setStatus('handoff');
+          return;
+        }
         const dest: string = json.data.redirectTo;
         // The signup-ticket branch of POST /api/auth/magic-link/verify never
         // sets `accountId` — it hands back a ticket cookie instead of a
@@ -287,6 +327,7 @@ function VerifyContent() {
   if (status === 'error') return <ErrorState />;
   if (status === 'already-signed-in') return <AlreadySignedInState home={home} />;
   if (status === 'success') return <SuccessState redirectTo={redirectTo} isNewSignup={isNewSignup} />;
+  if (status === 'handoff') return <HandoffState code={handoffCode} />;
   return <VerifyingState />;
 }
 

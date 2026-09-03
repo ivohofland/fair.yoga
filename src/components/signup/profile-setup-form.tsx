@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { PageAddressField, slugFromName } from './page-address-field';
+import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 
 const BIO_MAX = 250;
 
@@ -382,12 +383,6 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
           {status === 'submitting' ? 'Setting up...' : 'Create my page'}
         </Button>
 
-        {status === 'expired' && (
-          <p role="status" className="type-caption">
-            That took a while &mdash; we&apos;ve emailed you a fresh link.
-            Your details are still here.
-          </p>
-        )}
         {status === 'expired-stuck' && (
           <p role="status" className="type-caption">
             That took a while and the link expired &mdash; and we couldn&apos;t
@@ -401,6 +396,21 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
           </p>
         )}
       </form>
+
+      {/* Deliberately outside the form above, not inside it: this renders
+          its own <form>, and a nested <form>'s submit would bubble into
+          the outer one's handler as well as its own. */}
+      {status === 'expired' && (
+        <div className="mt-4">
+          <p role="status" className="type-caption">
+            That took a while &mdash; we&apos;ve emailed you a fresh link.
+            Your details are still here. If that link shows a code instead
+            of signing you straight in, enter it below &mdash; you&apos;ll
+            stay on this page with everything you&apos;ve typed intact.
+          </p>
+          <HandoffCodeEntry />
+        </div>
+      )}
     </div>
   );
 }
