@@ -35,9 +35,11 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
   const [page, setPage] = useState(1);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const fetchStudents = useCallback(async () => {
     setLoading(true);
+    setLoadFailed(false);
     try {
       const params = new URLSearchParams(archived ? { archived: 'true' } : {});
       const res = await fetch(`/api/students?${params}`);
@@ -45,9 +47,14 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
         window.location.href = '/login';
         return;
       }
-      if (!res.ok) return;
+      if (!res.ok) {
+        setLoadFailed(true);
+        return;
+      }
       const json: StudentListResponse = await res.json();
       setStudents(json.data.students);
+    } catch {
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -86,7 +93,11 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
       </div>
 
       <div className={loading ? 'opacity-50' : ''}>
-        {filtered.length === 0 && !loading ? (
+        {loadFailed && !loading ? (
+          <p role="alert" className="text-danger text-sm">
+            Could not load your students.
+          </p>
+        ) : filtered.length === 0 && !loading ? (
           query ? (
             <EmptyState title={`No students matching '${search}'.`} />
           ) : archived ? (
