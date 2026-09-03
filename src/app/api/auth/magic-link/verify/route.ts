@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import {
-  verifyMagicLinkToken,
+  verifyWithHandoff,
+  readOriginNonce,
   createSession,
   setSessionCookie,
   resolveOrClaimAccount,
@@ -16,12 +17,19 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if ('error' in parsed) return parsed.error;
   const { token } = parsed.data;
 
-  const result = await verifyMagicLinkToken(prisma, token);
-  if (!result) {
+  const outcome = await verifyWithHandoff(prisma, token, readOriginNonce(request));
+
+  if (outcome.kind === 'invalid') {
     return respondError('Invalid or expired magic link', 400);
   }
 
-  const { email, redirectTo: tokenRedirect, purpose } = result;
+  if (outcome.kind === 'handoff') {
+    // Nothing was consumed. The client shows the code; the browser that
+    // requested the link trades it for a session at /claim.
+    return respondOk({ handoffCode: outcome.code });
+  }
+
+  const { email, redirectTo: tokenRedirect, purpose } = outcome;
 
   const resolved = await resolveOrClaimAccount(prisma, email);
 

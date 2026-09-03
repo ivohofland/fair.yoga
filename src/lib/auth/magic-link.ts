@@ -59,30 +59,21 @@ export async function generateMagicLinkToken(
   return rawToken;
 }
 
-export async function verifyMagicLinkToken(
+/**
+ * The atomic single-use delete plus the sibling purge that consuming a token
+ * requires. Exported so more than one caller can perform that consumption
+ * without duplicating it.
+ *
+ * Returns false when another concurrent caller won the delete.
+ */
+export async function consumeTokenRow(
   db: PrismaClient,
-  token: string
-): Promise<{ email: string; redirectTo: string | null; purpose: MagicLinkPurpose } | null> {
-  const tokenHash = hashToken(token);
+  row: { id: string; email: string; expiresAt: Date },
+): Promise<boolean> {
+  const deleted = await db.magicLinkToken.deleteMany({ where: { id: row.id } });
+  if (deleted.count === 0) return false;
 
-  const record = await db.magicLinkToken.findUnique({
-    where: { tokenHash },
-  });
-
-  if (!record) {
-    return null;
-  }
-
-  // Atomic single-use: exactly one concurrent verification wins the delete;
-  // any other sees count 0 and fails. (find-then-delete was a race.)
-  const deleted = await db.magicLinkToken.deleteMany({ where: { id: record.id } });
-  if (deleted.count === 0) {
-    return null;
-  }
-
-  if (record.expiresAt <= new Date()) {
-    return null;
-  }
+  if (row.expiresAt <= new Date()) return false;
 
   // Every other live token for this address is now surplus: its owner is
   // signed in, so the only thing a link still sitting in their inbox can do
@@ -100,8 +91,18 @@ export async function verifyMagicLinkToken(
   // table is `cleanupExpiredAuth`'s daily sweep of `expiresAt < now` — roughly
   // a day's accumulation — NOT the rate limiter, which caps rows per address
   // and says nothing about how many addresses there are.
-  await db.magicLinkToken.deleteMany({ where: { email: record.email } });
+  await db.magicLinkToken.deleteMany({ where: { email: row.email } });
+  return true;
+}
 
+export async function verifyMagicLinkToken(
+  db: PrismaClient,
+  token: string
+): Promise<{ email: string; redirectTo: string | null; purpose: MagicLinkPurpose } | null> {
+  const tokenHash = hashToken(token);
+  const record = await db.magicLinkToken.findUnique({ where: { tokenHash } });
+  if (!record) return null;
+  if (!(await consumeTokenRow(db, record))) return null;
   return { email: record.email, redirectTo: record.redirectTo, purpose: record.purpose };
 }
 
