@@ -86,14 +86,15 @@ export const POST = withErrorHandler(async (
   });
   if (updated.count === 0) return NOT_FOUND();
 
-  // Fire-and-forget, same shape as `POST /api/students` — this route's
+  // Fire-and-forget by signature, same as `POST /api/students` — this route's
   // response must not vary in status or latency with whether the address is
-  // registered, blocked, or unknown.
-  void deliverInvitation(prisma, session.teacherId, invitation.email).catch((err) => {
-    log.error(
-      { err, teacherId: session.teacherId, invitationId: id },
-      'failed to resend invitation',
-    );
+  // registered, blocked, or unknown, and `FireAndForget` is what stops a
+  // future edit here from coupling them (#391).
+  deliverInvitation(prisma, {
+    teacherId: session.teacherId,
+    email: invitation.email,
+    invitationId: id,
+    source: 'resend',
   });
 
   return respondOk({ id });

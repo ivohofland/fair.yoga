@@ -134,28 +134,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // still runs — and it is what saves `notifyInvitee`'s own re-checks
   // entirely on the withheld (blocked-or-linked) path, by skipping the call.
   //
-  // Fire-and-forget, on purpose — see `deliverInvitation`'s docblock
-  // (services/invitations.ts). The explicit `.catch` is required, not
-  // optional: without it, a rejection here becomes an unhandled promise
-  // rejection instead of a log line.
+  // Fire-and-forget by signature, not by discipline: `deliverInvitation`
+  // returns `FireAndForget` (`= void`), so this response's status and latency
+  // cannot be coupled to a delivery that may take an HTTPS round trip — the
+  // #166 oracle, shut by the type (#391). The failure path and its log line
+  // live inside that function, since there is no promise here to catch on.
   if (result.value.delivered) {
-    void deliverInvitation(prisma, session.teacherId, parsed.data.email).catch((err) => {
-      // `invitationId`, not just `teacherId` (F4, #166 review). A send that
-      // fails leaves a row indistinguishable from one that went out — still
-      // `pending`, still listed under Contacts — so without the id an operator
-      // reading this line knows a delivery failed but not WHICH one, and a
-      // busy teacher's invitations are the haystack.
-      //
-      // No email address on purpose: this pair finds the row, and the address
-      // is the one field on it worth keeping out of the logs.
-      //
-      // This log line is the operator's only signal that a specific send
-      // failed — the teacher's own recovery is now
-      // `POST /api/invitations/[id]/resend` (#173), not delete-and-recreate.
-      log.error(
-        { err, teacherId: session.teacherId, invitationId: result.value.id },
-        'failed to notify invitee',
-      );
+    deliverInvitation(prisma, {
+      teacherId: session.teacherId,
+      email: parsed.data.email,
+      invitationId: result.value.id,
+      source: 'create',
     });
   }
 
