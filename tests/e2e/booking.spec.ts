@@ -22,6 +22,7 @@ const slug = `e2e-booking-${suffix}`;
 
 let teacherId: string;
 let roomId: string;
+let teacherRoomId: string;
 let classId: string;
 let secondClassId: string;
 let studentId: string;
@@ -59,6 +60,7 @@ test.describe('Public booking flow', () => {
     const teacherRoom = await prisma.teacherRoom.create({
       data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
     });
+    teacherRoomId = teacherRoom.id;
 
     const cls = await createClassFixture(prisma, {
         teacherId,
@@ -334,5 +336,71 @@ test.describe('Public booking flow', () => {
     await expect(page.getByRole('heading', { name: 'Your bookings' })).toBeVisible();
     // .first(): the class name also appears in the unread-updates strip.
     await expect(page.getByText('E2E Vinyasa').first()).toBeVisible();
+  });
+
+  // #389. Its own student/class/payment, created and torn down inline, so it
+  // never touches the serial fixtures the tests above depend on.
+  test('a student owing this teacher sees the open-payments nudge while booking again', async ({
+    page,
+    context,
+  }) => {
+    const email = `e2e-booking-owes-${suffix}@test.local`;
+    const owingStudent = await prisma.student.create({
+      data: {
+        firstName: 'Owing',
+        lastName: 'Student',
+        email,
+        account: { create: { email } },
+        incomeTier: 3,
+        claimedAt: new Date(),
+      },
+    });
+
+    const pastCls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'E2E Past Class',
+      date: new Date('2020-01-01'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 2,
+      maxStudents: 10,
+      status: 'completed',
+      settingsLocked: true,
+    });
+    const registration = await prisma.registration.create({
+      data: {
+        classId: pastCls.id,
+        studentId: owingStudent.id,
+        status: 'attended',
+        tierAtBooking: 3,
+        price: 20,
+        tierRatio: 1.0,
+      },
+    });
+    await prisma.payment.create({
+      data: { registrationId: registration.id, amount: 20, status: 'pending' },
+    });
+
+    const sessionToken = await seedSession(prisma, await accountIdOfStudent(prisma, owingStudent.id));
+    await context.addCookies([sessionCookie(sessionToken)]);
+
+    await page.goto(`/${slug}/book/${classId}`);
+    await expect(page.getByText('You have 1 open payment with this teacher.')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'View your bookings' })).toHaveAttribute(
+      'href',
+      '/bookings',
+    );
+
+    await prisma.payment.deleteMany({ where: { registrationId: registration.id } });
+    await prisma.registration.delete({ where: { id: registration.id } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: pastCls.id } } } });
+    await prisma.session.deleteMany({ where: { id: hashToken(sessionToken) } });
+    await prisma.teacherStudent.deleteMany({ where: { studentId: owingStudent.id } });
+    await prisma.student.delete({ where: { id: owingStudent.id } });
+    await prisma.account.deleteMany({ where: { email } });
   });
 });

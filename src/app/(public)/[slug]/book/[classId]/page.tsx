@@ -11,6 +11,7 @@ import { BookingFlow } from '@/components/booking/booking-flow';
 import { BookingSignIn } from '@/components/booking/booking-sign-in';
 import { JoinAsStudent } from '@/components/booking/join-as-student';
 import { readIncomeTier, toIncomeTier } from '@/lib/tiers.server';
+import { countOutstandingPaymentsForStudent } from '@/services/payments';
 
 export const dynamic = 'force-dynamic';
 
@@ -89,6 +90,11 @@ export default async function BookClassPage({
   const viewer = student
     ? { ...student, tier: readIncomeTier(student.incomeTier, { studentId: student.id }) }
     : null;
+  // Scoped to this class's teacher (#389): a debt to a different teacher
+  // isn't actionable from this screen.
+  const openPaymentsCount = viewer
+    ? await countOutstandingPaymentsForStudent(prisma, viewer.id, entry.teacher.id)
+    : 0;
   // The viewer's own charged row, if any. They are already in the pool,
   // so the personal spread must quote them from that row — not append a
   // second copy of them ("+1 joining"). A late_cancel row also stays
@@ -166,6 +172,7 @@ export default async function BookClassPage({
           // shows until they have chosen a tier themselves, no matter what
           // registrations teachers created on their behalf.
           isFirstBooking={viewer.tierSelectedAt === null}
+          openPaymentsCount={openPaymentsCount}
         />
       ) : guestTeacher ? (
         <JoinAsStudent firstName={guestTeacher.firstName} />

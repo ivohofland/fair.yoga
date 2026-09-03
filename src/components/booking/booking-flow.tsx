@@ -27,6 +27,8 @@ interface BookingFlowProps {
    * registrations don't count as choosing.
    */
   isFirstBooking: boolean;
+  /** Pending/overdue payments this student owes this same teacher. */
+  openPaymentsCount: number;
 }
 
 type Phase = 'choose' | 'booked' | 'waitlisted';
@@ -42,6 +44,7 @@ export function BookingFlow({
   studentId,
   tierPrices,
   isFirstBooking,
+  openPaymentsCount,
 }: BookingFlowProps) {
   const [tier, setTier] = useState<IncomeTier | null>(currentTier);
   const [phase, setPhase] = useState<Phase>('choose');
@@ -150,6 +153,17 @@ export function BookingFlow({
 
   return (
     <div>
+      {openPaymentsCount > 0 && (
+        // Friendly, never blocking (product-concept.md §7) — plain text like
+        // the app's other payment states, no badge.
+        <p className="type-body text-brown mb-4">
+          You have {openPaymentsCount} open payment{openPaymentsCount === 1 ? '' : 's'} with this
+          teacher.{' '}
+          <Link href="/bookings" className="text-teal no-underline">
+            View your bookings
+          </Link>
+        </p>
+      )}
       <h2 className="type-subtitle mb-1">Your tier</h2>
       {summaryTier === null ? (
         <>

@@ -312,6 +312,25 @@ export async function sendPaymentReminder(
 // ---------------------------------------------------------------------------
 
 /**
+ * Count a student's outstanding (pending or overdue) payments owed to one
+ * specific teacher — the booking flow's "you have N open payments" nudge.
+ * Scoped to that teacher, not global: the nudge is only actionable if it
+ * names a debt to the person the student is about to book with again.
+ */
+export async function countOutstandingPaymentsForStudent(
+  db: PrismaClient,
+  studentId: string,
+  teacherId: string,
+): Promise<number> {
+  return db.payment.count({
+    where: {
+      status: { in: ['pending', 'overdue'] },
+      registration: { studentId, class: { calendarEntry: { teacherId } } },
+    },
+  });
+}
+
+/**
  * Get all outstanding (pending or overdue) payments for a teacher.
  *
  * Follows the relation chain: Payment → Registration → Class → Teacher.

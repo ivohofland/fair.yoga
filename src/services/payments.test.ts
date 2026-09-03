@@ -8,6 +8,7 @@ import {
   sendPaymentReminder,
   getOutstandingPayments,
   getPaymentsForClass,
+  countOutstandingPaymentsForStudent,
   MANUAL_REMIND_COOLDOWN_MS,
 } from './payments';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -572,5 +573,145 @@ describe('Payment Service (DB)', () => {
         });
       });
     });
+  });
+});
+
+describe('countOutstandingPaymentsForStudent (DB)', () => {
+  const suffix = `${Date.now()}-scope`;
+  let teacherAId: string;
+  let teacherBId: string;
+  let studentAId: string;
+  let studentAAccountId: string;
+  let studentBId: string;
+  let studentBAccountId: string;
+  const classIds: string[] = [];
+  const registrationIds: string[] = [];
+
+  async function makeTeacher(label: string) {
+    const email = `payment-scope-teacher-${label.toLowerCase()}-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: label,
+        lastName: 'Teacher',
+        email,
+        account: { create: { email } },
+        bio: 'Test teacher for payment scoping tests',
+        pageSlug: `payment-scope-${label}-${suffix}`,
+      },
+    });
+    const room = await prisma.room.create({
+      data: {
+        venueName: `${label} Studio`,
+        address: `${suffix} ${label} St`,
+        city: 'Amsterdam',
+        postcode: '1234PM',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacher.id,
+      },
+    });
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 15, rentalRate: 35 },
+    });
+    return { teacherId: teacher.id, teacherRoomId: teacherRoom.id };
+  }
+
+  async function makeStudent(label: string) {
+    const email = `payment-scope-student-${label.toLowerCase()}-${suffix}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: label,
+        lastName: 'Student',
+        email,
+        incomeTier: 3,
+        claimedAt: new Date(),
+        account: { create: { email } },
+      },
+    });
+    return { studentId: student.id, accountId: student.accountId! };
+  }
+
+  // One registration + payment, on its own class so the teacher-slot
+  // exclusion constraint never collides between fixture rows.
+  async function makeOutstandingRow(
+    teacherRoomId: string,
+    teacherId: string,
+    studentId: string,
+    day: string,
+    status: PaymentStatus,
+  ) {
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'Hatha',
+      date: new Date(day),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 35,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 4,
+      maxStudents: 12,
+      status: 'completed',
+      settingsLocked: true,
+    });
+    classIds.push(cls.id);
+    const registration = await prisma.registration.create({
+      data: { classId: cls.id, studentId, status: 'attended', tierAtBooking: 3, price: 20, tierRatio: 1.0 },
+    });
+    registrationIds.push(registration.id);
+    await prisma.payment.create({ data: { registrationId: registration.id, amount: 20, status } });
+  }
+
+  beforeAll(async () => {
+    const teacherA = await makeTeacher('A');
+    const teacherB = await makeTeacher('B');
+    teacherAId = teacherA.teacherId;
+    teacherBId = teacherB.teacherId;
+    const studentA = await makeStudent('A');
+    const studentB = await makeStudent('B');
+    studentAId = studentA.studentId;
+    studentAAccountId = studentA.accountId;
+    studentBId = studentB.studentId;
+    studentBAccountId = studentB.accountId;
+
+    // Student A, teacher A: two outstanding (pending + overdue), one settled
+    // (paid) and one waived (not_charged) — the pair the count must exclude.
+    await makeOutstandingRow(teacherA.teacherRoomId, teacherAId, studentAId, '2026-06-01', 'pending');
+    await makeOutstandingRow(teacherA.teacherRoomId, teacherAId, studentAId, '2026-06-02', 'overdue');
+    await makeOutstandingRow(teacherA.teacherRoomId, teacherAId, studentAId, '2026-06-03', 'paid');
+    await makeOutstandingRow(teacherA.teacherRoomId, teacherAId, studentAId, '2026-06-04', 'not_charged');
+    // Student B, teacher A: one outstanding — must not leak into student A's count.
+    await makeOutstandingRow(teacherA.teacherRoomId, teacherAId, studentBId, '2026-06-05', 'pending');
+    // Student A, teacher B: one outstanding — must not leak into teacher A's count.
+    await makeOutstandingRow(teacherB.teacherRoomId, teacherBId, studentAId, '2026-06-06', 'pending');
+  });
+
+  afterAll(async () => {
+    await prisma.payment.deleteMany({ where: { registrationId: { in: registrationIds } } });
+    await prisma.registration.deleteMany({ where: { id: { in: registrationIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });
+    await prisma.student.deleteMany({ where: { id: { in: [studentAId, studentBId] } } });
+    await prisma.account.deleteMany({ where: { id: { in: [studentAAccountId, studentBAccountId] } } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: [teacherAId, teacherBId] } } });
+    await prisma.room.deleteMany({ where: { createdById: { in: [teacherAId, teacherBId] } } });
+    await prisma.teacher.deleteMany({ where: { id: { in: [teacherAId, teacherBId] } } });
+  });
+
+  it('counts only pending and overdue payments, excluding paid and not_charged', async () => {
+    expect(await countOutstandingPaymentsForStudent(prisma, studentAId, teacherAId)).toBe(2);
+  });
+
+  it('excludes outstanding payments owed by a different student', async () => {
+    expect(await countOutstandingPaymentsForStudent(prisma, studentBId, teacherAId)).toBe(1);
+  });
+
+  it('excludes outstanding payments owed to a different teacher', async () => {
+    expect(await countOutstandingPaymentsForStudent(prisma, studentAId, teacherBId)).toBe(1);
+  });
+
+  it('returns 0 for a student/teacher pair with no registrations at all', async () => {
+    expect(await countOutstandingPaymentsForStudent(prisma, studentBId, teacherBId)).toBe(0);
   });
 });
