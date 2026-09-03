@@ -714,6 +714,54 @@ export type SpotFreedResult =
   | { action: 'none' };
 
 /**
+ * The window a throw came from.
+ *
+ * `'frozen'` is excluded because that window RETURNS `{ action: 'frozen' }`
+ * before doing any work, so no throw can carry it. The `Exclude` is what makes
+ * that a compiler fact rather than a sentence someone has to keep true.
+ */
+export type SpotFreedBranch = Exclude<WaitlistWindow, 'frozen'>;
+
+/**
+ * What was actually lost, by branch.
+ *
+ * A `Record` keyed on the branch union rather than a `switch` or an `if`
+ * chain: adding a window member becomes a compile error here, and the three
+ * call sites share one roster instead of keeping three copies of it in prose.
+ */
+const SPOT_FREED_LOSS: Record<SpotFreedBranch, string> = {
+  auto_promote: 'the queue head was not promoted into the freed seat',
+  first_come_first_claimed: 'the waiting students were not told the seat is free',
+};
+
+/** The deliberately general wording, for a failure that predates the window. */
+const SPOT_FREED_LOSS_UNKNOWN = 'the freed seat was neither promoted nor broadcast';
+
+/** The one phrase every `handleSpotFreed` caller logs, so the three cannot drift. */
+export function spotFreedLoss(window: SpotFreedBranch | null): string {
+  return window === null ? SPOT_FREED_LOSS_UNKNOWN : SPOT_FREED_LOSS[window];
+}
+
+/**
+ * A `handleSpotFreed` failure, carrying the branch it happened on.
+ *
+ * The real failure is `cause`, which is why `isTransientDbError`
+ * (`lib/api-errors.ts`) walks the cause chain: the classification that decides
+ * a caller's log level — and, in the reconciliation sweep, whether the job
+ * reports degraded — has to survive this wrapper.
+ */
+export class SpotFreedError extends Error {
+  constructor(
+    readonly classId: string,
+    readonly window: SpotFreedBranch | null,
+    cause: unknown,
+  ) {
+    super(`spot-freed hook failed for class ${classId}: ${spotFreedLoss(window)}`, { cause });
+    this.name = 'SpotFreedError';
+  }
+}
+
+/**
  * Called when a registration cancellation frees a spot in an open class.
  * Implements the documented hybrid promotion:
  * - before the final hour: auto-promote the queue head
@@ -727,7 +775,12 @@ export type SpotFreedResult =
  * Three callers. The two LIVE ones (`DELETE /api/registrations/[id]`,
  * `deleteStudentAccount`) invoke this OUTSIDE any transaction and discard the
  * result, logging and swallowing anything it throws — which is what made a
- * dropped notification unrecoverable and is why the third exists.
+ * dropped notification unrecoverable and is why the third exists. What they
+ * swallow is a `SpotFreedError` (see its own docblock) naming which window
+ * the failure happened in, with the original failure as `cause` — the
+ * `WaitlistPromotionError` a concurrent refill raises in the `auto_promote`
+ * branch below is the one exception, answered with `{ action: 'none' }`
+ * inside that branch's own `catch` before it ever reaches the wrapper.
  *
  * The third is `reconcileWaitlists` (`services/waitlist-reconciliation.ts`,
  * #220), the sweep that re-invokes this every minute for any open class holding
@@ -741,160 +794,166 @@ export async function handleSpotFreed(
   classId: string,
   now?: Date,
 ): Promise<SpotFreedResult> {
-  const cls = await db.class.findUnique({
-    where: { id: classId },
-    include: {
-      calendarEntry: { include: { teacher: { select: { defaultTimezone: true } } } },
-    },
-  });
-  if (!cls || cls.status !== 'open' || cls.calendarEntry.cancelledAt !== null) {
-    return { action: 'none' };
-  }
-
-  const window = getWaitlistWindow(
-    cls.calendarEntry.date,
-    cls.calendarEntry.startTime,
-    cls.cancelDeadline,
-    cls.calendarEntry.teacher.defaultTimezone,
-    now,
-  );
-
-  if (window === 'frozen') return { action: 'frozen' };
-
-  if (window === 'auto_promote') {
-    try {
-      const entry = await promoteNext(db, classId, { now });
-      return entry ? { action: 'promoted', entry } : { action: 'none' };
-    } catch (err) {
-      // A concurrent registration may have refilled the spot — that's fine.
-      if (err instanceof WaitlistPromotionError) return { action: 'none' };
-      throw err;
-    }
-  }
-
-  // first_come_first_claimed: notify everyone waiting; first claim wins.
-  //
-  // Under the class row lock, and counting before it speaks (#212). Both
-  // siblings that hand out a seat check capacity — `promoteNext` and
-  // `claimSpot` above — and this branch did not, so a class refilled between
-  // the cancel and this hook still told every waiting student a spot had
-  // opened. `claimSpot`'s own check then rejected them: the notification was
-  // wrong when it was written, not merely stale by the time it was read.
-  //
-  // The lock is what makes the count mean anything. Read outside it, this
-  // would only move the race from "cancel-commit → findMany" to "count →
-  // createMany" — and a race is the ONLY way to reach this state, since a
-  // cancel frees the seat it announces. Every writer that CREATES a
-  // registration takes this same row lock, so they serialise against this
-  // transaction: one arriving after the count blocks until this commits.
-  //
-  // Three writers sit outside that. `autoCancelClasses`'s own comment in
-  // `class-transitions.ts` names two beside its own count-under-lock —
-  // `PUT /api/registrations/[id]` (attendance) and `DELETE
-  // /api/registrations/[id]` (cancel) — and its enumeration is short by one:
-  // `deleteStudentAccount` (`gdpr.ts`) cancels registrations in every
-  // draft/open class of the erased student while locking only the classes
-  // they were QUEUED in, so a class they were registered in but not queued
-  // in is written unlocked too. QUEUED, not WAITING: that lock set spans
-  // every `WaitlistEntry` status (#216/#182), and the capitalised literal
-  // would name the one enum value it is not scoped to.
-  //
-  // Only attendance could ever move a row INTO the counted set — from
-  // `late_cancel` to either `attended` or `no_show`, both of which are in it.
-  // The other two writers only move rows out, which makes the count too high
-  // and this branch too quiet: the safe direction.
-  //
-  // Those moves are closed STRUCTURALLY, not by timing:
-  // `PUT /api/registrations/[id]` scopes its write so `late_cancel → attended`
-  // is refused while the class is `open`, and this branch only ever runs on an
-  // `open` class. Once a class starts the move is allowed, and by then this
-  // branch cannot run at all.
-  //
-  // Deliberately NOT argued from the clock. An earlier version reasoned that
-  // the two "never met in practice" because this branch runs at least 6 h
-  // before the start (minimum `DEADLINE_HOURS`) while attendance is written at
-  // class time. That spacer is a property of today's window boundaries, not of
-  // this code — #236 proposes broadcasting freed spots right up to class start,
-  // which would erase it. The structural argument above survives that change;
-  // the timing one would not.
-  //
-  // `lockClassRow` here is the same helper `addToWaitlist`, `promoteNext`
-  // and `claimSpot` above now take too — all four share the bounded 2s
-  // wait. The cost is that a class row held longer than that drops the
-  // broadcast entirely — both callers log and swallow. That is the
-  // conservative outcome: a writer holding this row that long is probably
-  // filling the seat.
-  const outcome = await db.$transaction(async (tx) => {
-    await lockClassRow(tx, classId);
-
-    const seats = await readSeatCount(tx, classId);
-    if (seats.isFull) {
-      const waiting = await tx.waitlistEntry.count({ where: { classId, status: 'waiting' } });
-      return { kind: 'suppressed' as const, seats, waiting };
-    }
-
-    const waiting = await tx.waitlistEntry.findMany({
-      where: { classId, status: 'waiting' },
-    });
-    // Not a guard — an equivalent mutant, and worth saying so rather than
-    // letting a later reader mutation-test it and find nothing. `createMany`
-    // on an empty array is a no-op that emits nothing, so removing this line
-    // changes no behaviour and no test. It is a saved round-trip.
-    if (waiting.length === 0) return { kind: 'empty' as const };
-
-    const notified = await createBulkNotifications(
-      tx,
-      waiting.map((w) => ({
-        recipientType: 'student' as const,
-        recipientId: w.studentId,
-        type: 'spot_available' as const,
-        title: 'A spot opened up',
-        body: `A spot opened in ${cls.calendarEntry.classType}. The first to claim it gets it.`,
-        relatedClassId: classId,
-      })),
-    );
-    // The broadcast now stands for the seat that is currently free, and this
-    // is what says so (#220). Written inside the same transaction and under
-    // the same class row lock as the notifications, so the flag and the rows
-    // it describes commit together — a broadcast that rolls back leaves no
-    // flag claiming it happened. `activateRegistration` clears it again the
-    // moment anyone fills a seat.
-    await tx.class.update({
+  let branch: SpotFreedBranch | null = null;
+  try {
+    const cls = await db.class.findUnique({
       where: { id: classId },
-      data: { spotBroadcastAt: now ?? new Date() },
-    });
-    // `notified` is `createMany`'s own count, not `waiting.length`. The two
-    // cannot differ today (no `skipDuplicates`, so the insert is all-or-throw)
-    // — but the return value exists to be checked, and reporting the size of
-    // the input would start lying silently the day anyone adds it.
-    return { kind: 'sent' as const, notified };
-  });
-
-  if (outcome.kind === 'suppressed') {
-    // `debug`, not `warn` and not nothing. A `warn` would ask an operator to
-    // act on an outcome where the cancel and the refill both did the right
-    // thing — the auto-promote branch above swallows the identical event
-    // silently for that reason. But silence has a cost this branch cannot
-    // pay: neither caller reads the return value, so with no line here the
-    // guard FIRING is indistinguishable from its never having been reached,
-    // including for a guard broken to reject every class. `debug` is off by
-    // default (`LOG_LEVEL`, `lib/log.ts`), so it costs nothing in production
-    // and is the difference between answering "did this fire last Tuesday?"
-    // and not being able to.
-    log.debug(
-      {
-        classId,
-        activeCount: outcome.seats.activeCount,
-        maxStudents: outcome.seats.maxStudents,
-        waiting: outcome.waiting,
+      include: {
+        calendarEntry: { include: { teacher: { select: { defaultTimezone: true } } } },
       },
-      'waitlist broadcast suppressed — class refilled before the spot-freed hook ran',
-    );
-  }
+    });
+    if (!cls || cls.status !== 'open' || cls.calendarEntry.cancelledAt !== null) {
+      return { action: 'none' };
+    }
 
-  return outcome.kind === 'sent'
-    ? { action: 'broadcast', notified: outcome.notified }
-    : { action: 'none' };
+    const window = getWaitlistWindow(
+      cls.calendarEntry.date,
+      cls.calendarEntry.startTime,
+      cls.cancelDeadline,
+      cls.calendarEntry.teacher.defaultTimezone,
+      now,
+    );
+
+    if (window === 'frozen') return { action: 'frozen' };
+    branch = window;
+
+    if (window === 'auto_promote') {
+      try {
+        const entry = await promoteNext(db, classId, { now });
+        return entry ? { action: 'promoted', entry } : { action: 'none' };
+      } catch (err) {
+        // A concurrent registration may have refilled the spot — that's fine.
+        if (err instanceof WaitlistPromotionError) return { action: 'none' };
+        throw err;
+      }
+    }
+
+    // first_come_first_claimed: notify everyone waiting; first claim wins.
+    //
+    // Under the class row lock, and counting before it speaks (#212). Both
+    // siblings that hand out a seat check capacity — `promoteNext` and
+    // `claimSpot` above — and this branch did not, so a class refilled between
+    // the cancel and this hook still told every waiting student a spot had
+    // opened. `claimSpot`'s own check then rejected them: the notification was
+    // wrong when it was written, not merely stale by the time it was read.
+    //
+    // The lock is what makes the count mean anything. Read outside it, this
+    // would only move the race from "cancel-commit → findMany" to "count →
+    // createMany" — and a race is the ONLY way to reach this state, since a
+    // cancel frees the seat it announces. Every writer that CREATES a
+    // registration takes this same row lock, so they serialise against this
+    // transaction: one arriving after the count blocks until this commits.
+    //
+    // Three writers sit outside that. `autoCancelClasses`'s own comment in
+    // `class-transitions.ts` names two beside its own count-under-lock —
+    // `PUT /api/registrations/[id]` (attendance) and `DELETE
+    // /api/registrations/[id]` (cancel) — and its enumeration is short by one:
+    // `deleteStudentAccount` (`gdpr.ts`) cancels registrations in every
+    // draft/open class of the erased student while locking only the classes
+    // they were QUEUED in, so a class they were registered in but not queued
+    // in is written unlocked too. QUEUED, not WAITING: that lock set spans
+    // every `WaitlistEntry` status (#216/#182), and the capitalised literal
+    // would name the one enum value it is not scoped to.
+    //
+    // Only attendance could ever move a row INTO the counted set — from
+    // `late_cancel` to either `attended` or `no_show`, both of which are in it.
+    // The other two writers only move rows out, which makes the count too high
+    // and this branch too quiet: the safe direction.
+    //
+    // Those moves are closed STRUCTURALLY, not by timing:
+    // `PUT /api/registrations/[id]` scopes its write so `late_cancel → attended`
+    // is refused while the class is `open`, and this branch only ever runs on an
+    // `open` class. Once a class starts the move is allowed, and by then this
+    // branch cannot run at all.
+    //
+    // Deliberately NOT argued from the clock. An earlier version reasoned that
+    // the two "never met in practice" because this branch runs at least 6 h
+    // before the start (minimum `DEADLINE_HOURS`) while attendance is written at
+    // class time. That spacer is a property of today's window boundaries, not of
+    // this code — #236 proposes broadcasting freed spots right up to class start,
+    // which would erase it. The structural argument above survives that change;
+    // the timing one would not.
+    //
+    // `lockClassRow` here is the same helper `addToWaitlist`, `promoteNext`
+    // and `claimSpot` above now take too — all four share the bounded 2s
+    // wait. The cost is that a class row held longer than that drops the
+    // broadcast entirely — both callers log and swallow. That is the
+    // conservative outcome: a writer holding this row that long is probably
+    // filling the seat.
+    const outcome = await db.$transaction(async (tx) => {
+      await lockClassRow(tx, classId);
+
+      const seats = await readSeatCount(tx, classId);
+      if (seats.isFull) {
+        const waiting = await tx.waitlistEntry.count({ where: { classId, status: 'waiting' } });
+        return { kind: 'suppressed' as const, seats, waiting };
+      }
+
+      const waiting = await tx.waitlistEntry.findMany({
+        where: { classId, status: 'waiting' },
+      });
+      // Not a guard — an equivalent mutant, and worth saying so rather than
+      // letting a later reader mutation-test it and find nothing. `createMany`
+      // on an empty array is a no-op that emits nothing, so removing this line
+      // changes no behaviour and no test. It is a saved round-trip.
+      if (waiting.length === 0) return { kind: 'empty' as const };
+
+      const notified = await createBulkNotifications(
+        tx,
+        waiting.map((w) => ({
+          recipientType: 'student' as const,
+          recipientId: w.studentId,
+          type: 'spot_available' as const,
+          title: 'A spot opened up',
+          body: `A spot opened in ${cls.calendarEntry.classType}. The first to claim it gets it.`,
+          relatedClassId: classId,
+        })),
+      );
+      // The broadcast now stands for the seat that is currently free, and this
+      // is what says so (#220). Written inside the same transaction and under
+      // the same class row lock as the notifications, so the flag and the rows
+      // it describes commit together — a broadcast that rolls back leaves no
+      // flag claiming it happened. `activateRegistration` clears it again the
+      // moment anyone fills a seat.
+      await tx.class.update({
+        where: { id: classId },
+        data: { spotBroadcastAt: now ?? new Date() },
+      });
+      // `notified` is `createMany`'s own count, not `waiting.length`. The two
+      // cannot differ today (no `skipDuplicates`, so the insert is all-or-throw)
+      // — but the return value exists to be checked, and reporting the size of
+      // the input would start lying silently the day anyone adds it.
+      return { kind: 'sent' as const, notified };
+    });
+
+    if (outcome.kind === 'suppressed') {
+      // `debug`, not `warn` and not nothing. A `warn` would ask an operator to
+      // act on an outcome where the cancel and the refill both did the right
+      // thing — the auto-promote branch above swallows the identical event
+      // silently for that reason. But silence has a cost this branch cannot
+      // pay: neither caller reads the return value, so with no line here the
+      // guard FIRING is indistinguishable from its never having been reached,
+      // including for a guard broken to reject every class. `debug` is off by
+      // default (`LOG_LEVEL`, `lib/log.ts`), so it costs nothing in production
+      // and is the difference between answering "did this fire last Tuesday?"
+      // and not being able to.
+      log.debug(
+        {
+          classId,
+          activeCount: outcome.seats.activeCount,
+          maxStudents: outcome.seats.maxStudents,
+          waiting: outcome.waiting,
+        },
+        'waitlist broadcast suppressed — class refilled before the spot-freed hook ran',
+      );
+    }
+
+    return outcome.kind === 'sent'
+      ? { action: 'broadcast', notified: outcome.notified }
+      : { action: 'none' };
+  } catch (err) {
+    throw new SpotFreedError(classId, branch, err);
+  }
 }
 
 // ---------------------------------------------------------------------------

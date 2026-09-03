@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import {
   getWaitlistWindow,
   addToWaitlist,
@@ -10,7 +10,9 @@ import {
   closeQueueOnStart,
   WaitlistJoinError,
   WaitlistPromotionError,
+  SpotFreedError,
 } from './waitlist';
+import { isTransientDbError } from '@/lib/api-errors';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 
@@ -1874,6 +1876,8 @@ describe('handleSpotFreed (DB)', () => {
   //   HOURS_24        →  deadline 2026-06-02 09:00 UTC
   //   cutoff = deadline − 1h        2026-06-02 08:00 UTC
   const IN_CLAIM_WINDOW = new Date('2026-06-02T08:30:00Z');
+  /** Before the cutoff, so `getWaitlistWindow` answers `auto_promote`. */
+  const BEFORE_CLAIM_WINDOW = new Date('2026-06-01T09:00:00Z');
 
   let teacherId: string;
   let accountId: string;
@@ -2002,6 +2006,84 @@ describe('handleSpotFreed (DB)', () => {
   });
 
   /**
+   * Which loss occurred, which no caller could previously tell.
+   *
+   * On the auto-promote branch the loss is one specific student not holding a
+   * seat they should. On the broadcast branch it is N waiting students never
+   * told a seat is free. Before this the three callers logged one message that
+   * was true on either branch and specific to neither.
+   *
+   * Runs here, between the two tests above and below, because it needs what
+   * `stays silent when the class is already full, and broadcasts when it is
+   * not` leaves behind — a free seat and both waiters still `waiting` — and
+   * `takes the class row lock before it counts` re-fills the seat right after
+   * this. Every assertion here rejects, so `handleSpotFreed`'s own
+   * transaction rolls back with no side effect: the re-fill below still finds
+   * exactly what its own comment says it does.
+   */
+  it('wraps an auto-promote failure with its branch', async () => {
+    const boom = new Error('injected: promotion failed');
+    const failing = prisma.$extends({
+      query: { waitlistEntry: { findMany() { throw boom; } } },
+    }) as unknown as PrismaClient;
+
+    const err = await handleSpotFreed(failing, classId, BEFORE_CLAIM_WINDOW).catch((e) => e);
+
+    expect(err).toBeInstanceOf(SpotFreedError);
+    expect(err).toMatchObject({ classId, window: 'auto_promote', cause: boom });
+  });
+
+  it('wraps a broadcast failure with its branch', async () => {
+    const boom = new Error('injected: notification write failed');
+    const failing = prisma.$extends({
+      query: { notification: { createMany() { throw boom; } } },
+    }) as unknown as PrismaClient;
+
+    const err = await handleSpotFreed(failing, classId, IN_CLAIM_WINDOW).catch((e) => e);
+
+    expect(err).toBeInstanceOf(SpotFreedError);
+    expect(err).toMatchObject({ classId, window: 'first_come_first_claimed', cause: boom });
+  });
+
+  /**
+   * The opening `class.findUnique` runs before the window resolves, so a failure
+   * there has no branch to name. `null` is the honest answer and its own
+   * diagnostic, not a missing value.
+   */
+  it('wraps a pre-window failure with a null branch', async () => {
+    const boom = new Error('injected: class read failed');
+    const failing = prisma.$extends({
+      query: { class: { findUnique() { throw boom; } } },
+    }) as unknown as PrismaClient;
+
+    const err = await handleSpotFreed(failing, classId, IN_CLAIM_WINDOW).catch((e) => e);
+
+    expect(err).toBeInstanceOf(SpotFreedError);
+    expect(err).toMatchObject({ classId, window: null, cause: boom });
+  });
+
+  /**
+   * The seam with `isTransientDbError` (`lib/api-errors.ts`), asserted here
+   * because this is where both halves exist. Wrapping moves the real failure out
+   * of `instanceof` range; if the matcher stopped seeing it, every routine pool
+   * timeout on these paths would log at `error` and — in the reconciliation
+   * sweep — redden `/api/health` on the spot.
+   */
+  it('stays classifiable as transient through the wrapper', async () => {
+    const pool = new Prisma.PrismaClientKnownRequestError('pool timeout', {
+      code: 'P2024',
+      clientVersion: Prisma.prismaVersion.client,
+    });
+    const failing = prisma.$extends({
+      query: { class: { findUnique() { throw pool; } } },
+    }) as unknown as PrismaClient;
+
+    const err = await handleSpotFreed(failing, classId, IN_CLAIM_WINDOW).catch((e) => e);
+
+    expect(isTransientDbError(err)).toBe(true);
+  });
+
+  /**
    * #212. The capacity guard above is proved by M4; the lock that makes it
    * MEAN anything was proved by nothing — deleting `lockClassRow` left every
    * test in `waitlist`/`capacity`/`gdpr` green. That is the branch's whole
@@ -2071,7 +2153,13 @@ describe('handleSpotFreed (DB)', () => {
 
     const outcome = await handleSpotFreed(prisma, classId, IN_CLAIM_WINDOW).then(
       (result) => ({ ok: true as const, result }),
-      (err: unknown) => ({ ok: false as const, err: String(err) }),
+      // `handleSpotFreed` now wraps every throw in `SpotFreedError` — the
+      // Postgres error this guard is about (see the docblock above) lives on
+      // `.cause`, not the wrapper's own message.
+      (err: unknown) => ({
+        ok: false as const,
+        err: err instanceof Error ? String(err.cause) : String(err),
+      }),
     );
 
     // Without `lockClassRow` the hook never asks for the row, counts a full
