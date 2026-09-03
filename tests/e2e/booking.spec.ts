@@ -6,6 +6,7 @@ import { accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, hashToken, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
+import { mintSignupTicket } from '@/lib/auth';
 
 const prisma = new PrismaClient();
 
@@ -163,6 +164,43 @@ test.describe('Public booking flow', () => {
     await expect(
       page.getByText(/€13\.79 – €20\.11 depending on your income tier/).first(),
     ).toBeVisible();
+  });
+
+  test('a live signup ticket shows the name step, and submitting it reaches the tier picker', async ({ page, context }) => {
+    // Task 4's own coverage: nothing routes a student through /verify into
+    // this branch yet (Task 5), so the ticket is seeded directly the way
+    // POST /api/account/student-profile would find it — a live
+    // student_signup ticket cookie and no session.
+    const email = `e2e-booking-ticket-${suffix}@test.local`;
+    const rawToken = await mintSignupTicket(prisma, email, 'student');
+    await context.addCookies([
+      { name: 'fair_yoga_signup', value: rawToken, domain: 'localhost', path: '/' },
+    ]);
+
+    await page.goto(`/${slug}/book/${classId}`);
+    await expect(page.getByText('One last thing')).toBeVisible();
+    await expect(page.getByText(email)).toBeVisible();
+
+    await page.getByLabel('First name').fill('Ticket');
+    await page.getByLabel('Last name').fill('Student');
+    await page.getByRole('button', { name: 'Continue' }).click();
+
+    // The response set the session cookie and router.refresh() re-rendered
+    // this same page as the signed-in viewer: the tier picker, not a second
+    // sign-in form.
+    await expect(page.getByText('Your tier')).toBeVisible();
+
+    const created = await prisma.student.findUniqueOrThrow({ where: { email } });
+    // The two census columns from the spec's column-census table: claimed by
+    // the ticket-authorized create, and with no tier chosen — the booking
+    // above never touched the picker.
+    expect(created.claimedAt).not.toBeNull();
+    expect(created.tierSelectedAt).toBeNull();
+
+    // This test's own rows — the shared afterAll only knows about `studentId`.
+    await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, created.id) } });
+    await prisma.student.delete({ where: { id: created.id } });
+    await prisma.account.deleteMany({ where: { email } });
   });
 
   test('magic link returns the student to the booking page and books with a chosen tier', async ({ page }) => {

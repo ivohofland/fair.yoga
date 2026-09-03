@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation';
+import { cookies } from 'next/headers';
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
@@ -9,7 +10,9 @@ import { timeToHHmm } from '@/lib/time-of-day';
 import { PriceRange, PersonalPriceRange } from '@/components/booking/price-range';
 import { BookingFlow } from '@/components/booking/booking-flow';
 import { BookingSignIn } from '@/components/booking/booking-sign-in';
+import { BookingNameStep } from '@/components/booking/booking-name-step';
 import { JoinAsStudent } from '@/components/booking/join-as-student';
+import { SIGNUP_TICKET_COOKIE, peekSignupTicket } from '@/lib/auth';
 import { readIncomeTier, toIncomeTier } from '@/lib/tiers.server';
 import { countOutstandingPaymentsForStudent } from '@/services/payments';
 
@@ -125,6 +128,14 @@ export default async function BookClassPage({
         })
       : null;
 
+  // Only when there is no session at all: a signed-in viewer takes one of
+  // the two branches above, so an ordinary anonymous render must not pay for
+  // a lookup neither of them needs.
+  const ticketToken = session ? undefined : (await cookies()).get(SIGNUP_TICKET_COOKIE)?.value;
+  const ticketEmail = ticketToken
+    ? await peekSignupTicket(prisma, ticketToken, 'student')
+    : null;
+
   return (
     <div>
       <Link
@@ -178,6 +189,8 @@ export default async function BookClassPage({
         />
       ) : guestTeacher ? (
         <JoinAsStudent firstName={guestTeacher.firstName} />
+      ) : ticketEmail ? (
+        <BookingNameStep email={ticketEmail} redirect={`/${slug}/book/${cls.id}`} />
       ) : (
         <BookingSignIn redirect={`/${slug}/book/${cls.id}`} />
       )}
