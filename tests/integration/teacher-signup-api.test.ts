@@ -235,6 +235,9 @@ describe('POST /api/auth/magic-link/verify — teacher-signup ticket branch', ()
     const body = (await res.json()) as { data: { redirectTo: string } };
     expect(body.data.redirectTo).toBe('/signup/profile');
     expect(res.headers.get('set-cookie')).toContain('fair_yoga_signup=');
+    // Rotation (§5): the ticket branch clears the origin-nonce cookie too,
+    // same as the session branch.
+    expect(res.headers.get('set-cookie')).toContain('fair_yoga_origin=;');
 
     // The ticket defers account/teacher creation to
     // POST /api/account/teacher-profile — neither exists yet.

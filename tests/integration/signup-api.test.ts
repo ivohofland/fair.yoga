@@ -216,6 +216,9 @@ describe('POST /api/auth/magic-link/verify — the claim moment over HTTP', () =
 
     expect(res.status).toBe(200);
     expect(res.headers.get('set-cookie')).toContain('fair_yoga_session=');
+    // Rotation (§5): a successful verify also clears the origin-nonce
+    // cookie alongside the session cookie.
+    expect(res.headers.get('set-cookie')).toContain('fair_yoga_origin=;');
     const body = (await res.json()) as { data: { redirectTo: string } };
     expect(body.data.redirectTo).toBe('/bookings');
 

@@ -216,8 +216,9 @@ There is a **fourth** caller of `generateMagicLinkToken` — `signup-ticket.ts:1
 which mints the `teacher_profile_pending` ticket. It **emails nothing**; the
 ticket is handed back in a cookie to a device that is already present. It is not
 a door, takes no nonce, and §3 keeps it out of the handoff path entirely. The
-three doors are exactly the three `sendMagicLinkEmail` call sites, which is the
-seam the tether below uses.
+three doors are exactly the three `deliverSignInLink` call sites, which is the
+seam the tether below uses — `sendMagicLinkEmail` itself now has exactly one
+caller, inside `deliverSignInLink`.
 
 **Four "Check your inbox" panels** must therefore carry the code input:
 
@@ -303,7 +304,8 @@ a handoff result (different browser). `consumeSignupTicket` is untouched.
 
 `MagicLinkToken` (`prisma/schema.prisma:1015-1023`) gains three nullable
 columns; no backfill, since a null nonce simply means "minted before this
-change" and behaves as a mismatch.
+change" — treated as invalid outright rather than triggering a handoff, since
+there is no browser for a code to hand off to.
 
 | Column | Purpose |
 |---|---|
@@ -399,9 +401,10 @@ opened somewhere else. A bare code box would send people hunting through the
 email for a number that is not there, so the copy states the condition:
 
 > **Check your email**
-> We sent a link to `<address>`. Open it on this device and you're straight in.
+> We sent a link to `<address>`. Open it here and you're straight in.
 >
-> *Opened it somewhere else? That device will show you a code — enter it here.*
+> *Opened it somewhere else? Wherever you opened it will show you a code —
+> enter it here.*
 
 Always visible rather than behind a disclosure toggle: one explanatory line is
 calmer than a widget that hides things, and it keeps the page a pure form with
@@ -549,9 +552,9 @@ anything wider goes in `docs/` and the comment links to it.
 |---|---|
 | The census of test call sites (§8) | This spec and the PR body — it is a count, and it ships with the command that re-derives it. Never a docblock |
 | Why the nonce cookie is unconditional (§5) | A comment **on the cookie write**, where the tempting edit ("only set it when we mint a token") would be made. It annotates its own line |
-| "There are three doors" (§2) | This spec and the PR body, with the `sendMagicLinkEmail` grep that re-derives it. **Never a docblock** — a fourth door would be added in another file, so the comment's owner would never see it falsified. The durable form of this claim is the tether, not prose: one function, `sendMagicLinkEmail` unreachable around it |
+| "There are three doors" (§2) | This spec and the PR body, with a `deliverSignInLink(` call-site grep that re-derives it — `sendMagicLinkEmail` itself now greps to exactly one caller, its own tether point. **Never a docblock** — a fourth door would be added in another file, so the comment's owner would never see it falsified. The durable form of this claim is the tether: `sendMagicLinkEmail`'s parameter type, not prose |
 | Why `consumeSignupTicket` is not routed through the handoff (§3) | The test in §9's last row is the durable tether; a one-line comment on the handoff function states the constraint |
-| What the code's hash does and does not buy (§4) | A comment on the column's use, phrased as the pair (nonce ∧ code) being the credential. No confidentiality claim for the code alone |
+| What the plaintext code does and does not buy (§4) | A comment on the column's use, phrased as the pair (nonce ∧ code) being the credential. No confidentiality claim for the code alone, hashed or not |
 | The mailbox-compromise ceiling (§1.5) | This spec and the #214 closing comment. Not a code comment — it is a claim about the whole flow, with no single owning line |
 | `MAGIC_LINK_SECRET` is dead; nothing is signed (§1.6) | Fixed at source: removed from `README.md` and `docs/technical-architecture.md`, and `:326-333` corrected to describe a random token with a stored hash |
 
