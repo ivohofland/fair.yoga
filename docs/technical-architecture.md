@@ -363,10 +363,10 @@ prefetching it — without ever asking the user which one this is:
 
 ### Unauthenticated API routes
 
-`find src/app/api -name route.ts` finds **62** routes. **8** carry no session
-guard; **5** of those are rate-limited (`magic-link/send`, `student-signup`,
-`teacher-signup`, `slug-available`, `passkey/authenticate/options`), leaving
-**3** with neither:
+`find src/app/api -name route.ts` finds **63** routes. **9** carry no session
+guard; **6** of those are rate-limited (`magic-link/claim`, `magic-link/send`,
+`student-signup`, `teacher-signup`, `slug-available`,
+`passkey/authenticate/options`), leaving **3** with neither:
 
 | route | why that is correct |
 |---|---|
