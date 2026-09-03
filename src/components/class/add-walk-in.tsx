@@ -38,10 +38,15 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
   // === 0` otherwise, and only the latter should ever read "No student
   // matches."
   const [loaded, setLoaded] = useState(false);
-  // Gates the Select/"No student matches" visibility independently of
-  // `error`: `error` also carries `handleAdd`'s submit failures, and a
-  // failed submit must not hide the picker the teacher is still using to
-  // retry — only a failed *roster load* should.
+  // Gates the Select/"No student matches" visibility, and carries its own
+  // message, independently of `error`: `error` carries only `handleAdd`'s
+  // submit failures. A failed submit must not hide the picker the teacher
+  // is still using to retry — only a failed *roster load* should — and a
+  // roster load that succeeds after an earlier failure must not leave a
+  // stale "Could not load" message next to the now-current picker; keeping
+  // the message on `loadFailed` (reset every effect run, same as the gate)
+  // rather than on `error` (never reset except by Close) keeps the two in
+  // lockstep.
   const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
@@ -62,7 +67,6 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
       })
       .catch(() => {
         if (cancelled) return;
-        setError('Could not load your students.');
         setLoadFailed(true);
         // A failed load is still a load that finished — it must not keep
         // showing the loading (no-message) state forever.
@@ -155,6 +159,11 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
           Close
         </Button>
       </div>
+      {loadFailed && (
+        <p role="alert" className="text-sm text-danger">
+          Could not load your students.
+        </p>
+      )}
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </div>
   );
