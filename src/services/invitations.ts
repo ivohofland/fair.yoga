@@ -102,7 +102,8 @@ interface RosterLinkState {
  * typed. Answering `ALREADY_LINKED` on the strength of the link alone told
  * them a guessed address belongs to one of their own students — which
  * `projectStudentForTeacher` (lib/student-visibility.ts) returns as `null`
- * on every other surface. A missing `StudentPrivacy` row reads as `false`.
+ * on every other surface (unless the student is unclaimed). A missing
+ * `StudentPrivacy` row reads as `false`.
  *
  * ONE query, and `student.findUnique` must stay the first statement in it:
  * `invitations.revive.test.ts` hooks that call through a Prisma extension to
@@ -125,6 +126,7 @@ async function rosterLinkState(
   const student = await db.student.findUnique({
     where: { email },
     select: {
+      claimedAt: true,
       teacherStudents: { where: { teacherId }, select: { id: true } },
       studentPrivacy: { where: { teacherId }, select: { teacherId: true, shareEmail: true } },
     },
@@ -146,7 +148,9 @@ async function rosterLinkState(
     // error, because the callback below would then reference `.teacherId` on
     // a type that no longer has it. See that file's `studentNameSelect` for
     // the same pattern, stated once and measured.
-    shareEmail: student.studentPrivacy.find((p) => p.teacherId === teacherId)?.shareEmail ?? false,
+    shareEmail:
+      student.claimedAt === null ||
+      (student.studentPrivacy.find((p) => p.teacherId === teacherId)?.shareEmail ?? false),
   };
 }
 
