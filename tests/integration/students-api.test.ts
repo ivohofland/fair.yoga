@@ -407,7 +407,7 @@ describe('POST /api/students', () => {
   // gone (#170 Task 3b): the row it built is unrepresentable now
   // (`Student_email_lowercase_check`, Task 2), and the case-insensitive
   // roster-link lookup it certified was itself deleted (Task 3 —
-  // `hasRosterLink` is a plain, case-SENSITIVE `findUnique` now, and every
+  // `rosterLinkState` is a plain, case-SENSITIVE `findUnique` now, and every
   // stored address is lowercase by construction, so a same-case lookup is
   // not merely sufficient, it is the only state that can exist). Its
   // same-case behaviour was never unique to this test either — `'returns 409
