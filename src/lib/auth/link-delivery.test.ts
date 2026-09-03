@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { deliverSignInLink } from './link-delivery';
-import { hashNonce } from './origin-nonce';
+import { hashNonce, type BrowserNonce } from './origin-nonce';
 
 vi.mock('@/lib/email', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/email')>();
@@ -16,7 +16,7 @@ describe('deliverSignInLink', () => {
 
   it('binds the token to the nonce that asked for it', async () => {
     const email = `delivery-bind-${Date.now()}@example.com`;
-    await deliverSignInLink(db, email, 'nonce-abc');
+    await deliverSignInLink(db, email, 'nonce-abc' as BrowserNonce);
 
     const row = await db.magicLinkToken.findFirst({ where: { email } });
     expect(row?.originBrowserHash).toBe(hashNonce('nonce-abc'));
@@ -26,7 +26,7 @@ describe('deliverSignInLink', () => {
 
   it('emails a /verify URL carrying the raw token, which is never persisted', async () => {
     const email = `delivery-url-${Date.now()}@example.com`;
-    await deliverSignInLink(db, email, 'nonce-def');
+    await deliverSignInLink(db, email, 'nonce-def' as BrowserNonce);
 
     expect(sendMagicLinkEmail).toHaveBeenCalledOnce();
     const [to, link] = vi.mocked(sendMagicLinkEmail).mock.calls[0]!;
@@ -39,7 +39,7 @@ describe('deliverSignInLink', () => {
 
   it('carries redirectTo and purpose onto the row', async () => {
     const email = `delivery-opts-${Date.now()}@example.com`;
-    await deliverSignInLink(db, email, 'nonce-ghi', {
+    await deliverSignInLink(db, email, 'nonce-ghi' as BrowserNonce, {
       redirectTo: '/studio/book/42',
       purpose: 'teacher_signup',
     });

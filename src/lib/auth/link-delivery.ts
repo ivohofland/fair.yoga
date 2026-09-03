@@ -1,6 +1,6 @@
 import type { PrismaClient, MagicLinkPurpose } from '@prisma/client';
 import { generateMagicLinkToken } from './magic-link';
-import { hashNonce } from './origin-nonce';
+import { hashNonce, type BrowserNonce } from './origin-nonce';
 import { sendMagicLinkEmail } from '@/lib/email';
 
 declare const boundLinkBrand: unique symbol;
@@ -24,7 +24,7 @@ export type BoundSignInLink = string & { readonly [boundLinkBrand]: true };
 export async function deliverSignInLink(
   db: PrismaClient,
   email: string,
-  nonce: string,
+  nonce: BrowserNonce,
   opts?: { redirectTo?: string; purpose?: MagicLinkPurpose },
 ): Promise<void> {
   const token = await generateMagicLinkToken(db, email, {
