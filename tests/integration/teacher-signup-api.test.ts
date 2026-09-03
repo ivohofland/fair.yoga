@@ -279,7 +279,7 @@ describe('POST /api/account/teacher-profile', () => {
   });
 
   it('creates account, teacher and session from a ticket', async () => {
-    const ticket = await mintSignupTicket(prisma, ticketEmail);
+    const ticket = await mintSignupTicket(prisma, ticketEmail, 'teacher');
     const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
       method: 'POST',
       headers: {
@@ -308,7 +308,7 @@ describe('POST /api/account/teacher-profile', () => {
    * pass under both versions.
    */
   it('stores the timezone the browser detected', async () => {
-    const ticket = await mintSignupTicket(prisma, tzDetectedEmail);
+    const ticket = await mintSignupTicket(prisma, tzDetectedEmail, 'teacher');
     const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
       method: 'POST',
       headers: {
@@ -331,7 +331,7 @@ describe('POST /api/account/teacher-profile', () => {
   });
 
   it('falls back to Europe/Amsterdam when the browser reported no timezone', async () => {
-    const ticket = await mintSignupTicket(prisma, tzFallbackEmail);
+    const ticket = await mintSignupTicket(prisma, tzFallbackEmail, 'teacher');
     const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
       method: 'POST',
       headers: {
@@ -353,7 +353,7 @@ describe('POST /api/account/teacher-profile', () => {
   });
 
   it('refuses a spent ticket', async () => {
-    const ticket = await mintSignupTicket(prisma, spentEmail);
+    const ticket = await mintSignupTicket(prisma, spentEmail, 'teacher');
     const body = JSON.stringify({
       firstName: 'A', lastName: 'B', bio: '', pageSlug: `spent-${suffix}`,
     });
@@ -373,7 +373,7 @@ describe('POST /api/account/teacher-profile', () => {
   });
 
   it('answers SLUG_TAKEN for an address someone already holds', async () => {
-    const ticket = await mintSignupTicket(prisma, clashEmail);
+    const ticket = await mintSignupTicket(prisma, clashEmail, 'teacher');
     const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
       method: 'POST',
       headers: {
@@ -395,7 +395,7 @@ describe('POST /api/account/teacher-profile', () => {
   // this proves a retry using THAT cookie value (the realistic simulation of
   // what a browser does automatically on a Set-Cookie) actually succeeds.
   it('recovers from SLUG_TAKEN: the 409 sets a fresh ticket a retry can use', async () => {
-    const ticket = await mintSignupTicket(prisma, recoveryEmail);
+    const ticket = await mintSignupTicket(prisma, recoveryEmail, 'teacher');
     const first = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
       method: 'POST',
       headers: {
@@ -450,8 +450,8 @@ describe('POST /api/account/teacher-profile', () => {
    */
   it('keeps its conflict codes apart under a race (#161): one 201, one SLUG_TAKEN', async () => {
     const [ticketA, ticketB] = await Promise.all([
-      mintSignupTicket(prisma, raceEmailA),
-      mintSignupTicket(prisma, raceEmailB),
+      mintSignupTicket(prisma, raceEmailA, 'teacher'),
+      mintSignupTicket(prisma, raceEmailB, 'teacher'),
     ]);
 
     const post = (ticket: string) =>

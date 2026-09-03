@@ -38,7 +38,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const { firstName, lastName, bio, pageSlug, defaultTimezone } = parsed.data;
 
   const ticketToken = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
-  const ticketEmail = ticketToken ? await consumeSignupTicket(prisma, ticketToken) : null;
+  const ticketEmail = ticketToken ? await consumeSignupTicket(prisma, ticketToken, 'teacher') : null;
 
   // One value, not two independently-mutable locals: `accountId` and `email`
   // used to be set separately, which let nothing stop a future branch from
@@ -96,7 +96,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // ownership of it, so minting another proves nothing new. Session-authed
       // callers have no ticket to replace, so this is skipped for them.
       if (auth.source === 'ticket') {
-        const freshTicket = await mintSignupTicket(prisma, auth.email);
+        const freshTicket = await mintSignupTicket(prisma, auth.email, 'teacher');
         setSignupTicketCookie(conflict.headers, freshTicket);
       }
       return conflict;
