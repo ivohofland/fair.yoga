@@ -126,13 +126,17 @@ describe('AddWalkIn', () => {
   });
 
   /**
-   * `visible.length === 0` is also true the instant the picker opens, before
-   * the fetch resolves — every single time, not just on a genuine empty
-   * filter match. Without a `loaded` gate, this state briefly (or, with a
-   * slow/never-resolving fetch, indefinitely) shows "No student matches."
-   * before there is any roster to judge.
+   * `visible.length === 0` is true the instant the picker opens too, before
+   * the fetch resolves — `students` starts `[]`. The "No student matches"
+   * condition also requires `query` to be truthy, so a *bare* open (no
+   * filter typed) never reaches it regardless of the `loaded` gate — that
+   * would pass even with the gate deleted, and would not actually be
+   * pinning it. Typing a filter before the fetch resolves is what makes
+   * `visible.length === 0 && query` true while still loading, which is the
+   * only way to force the code down this branch and prove the `loaded`
+   * gate is what's keeping it from rendering.
    */
-  it('does not show "No student matches" before the roster fetch resolves', async () => {
+  it('does not show "No student matches" before the roster fetch resolves, even with a filter already typed', async () => {
     let resolveFetch!: (value: unknown) => void;
     fetchMock.mockReturnValue(
       new Promise((resolve) => {
@@ -142,6 +146,7 @@ describe('AddWalkIn', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
     openPicker();
+    fireEvent.change(screen.getByLabelText('Filter students'), { target: { value: 'anna' } });
 
     expect(screen.queryByText('No student matches.')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
@@ -173,5 +178,40 @@ describe('AddWalkIn', () => {
     );
     expect(screen.queryByText('No student matches.')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Walk-in student')).not.toBeInTheDocument();
+  });
+
+  /**
+   * `error` is shared between a failed roster *load* and a failed walk-in
+   * *submit* — `handleAdd`'s catch/else branches both set it. Gating the
+   * Select on `!error` (rather than the load-only `loadFailed`) would hide
+   * the picker the moment a submit failed, taking away the control the
+   * teacher needs to retry. Only a failed roster load should hide it.
+   */
+  it('keeps the picker visible after a failed submit — only a failed roster load hides it', async () => {
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/students') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { students: [{ id: 's1', displayName: 'Anna Bakker' }] } }),
+        };
+      }
+      if (url === '/api/registrations' && init?.method === 'POST') {
+        return { ok: false, status: 400, json: async () => ({ error: 'Class is full.' }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Walk-in student'), { target: { value: 's1' } });
+    fireEvent.click(screen.getByText('Add walk-in'));
+
+    await waitFor(() => expect(screen.getByText('Class is full.')).toBeInTheDocument());
+    expect(screen.getByLabelText('Walk-in student')).toBeInTheDocument();
+    expect(screen.queryByText('No student matches.')).not.toBeInTheDocument();
   });
 });

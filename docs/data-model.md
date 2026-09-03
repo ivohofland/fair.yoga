@@ -91,11 +91,14 @@ no row, and every read treats absence as maximum privacy
 (`privacy?.shareX ?? false`). One projection reads these flags for every
 teacher-facing surface: `src/lib/student-visibility.ts`. No server-side
 predicate may filter (`where`) or order (`orderBy`) on a privacy-gated
-`Student` column — `lastName` or `email` — because a match, or a sort
-position, against a column the projection redacts is an enumeration oracle
-regardless of what the response body shows: a teacher can learn a withheld
-value from a hit/miss, a count, or its rank among other rows even when it is
-never rendered. `firstName` is exempt: `formatStudentName`
+`Student` column — `lastName`, `email`, `phone`, `birthday`, or `address`,
+one per `VisibilityFlags` member (`src/lib/student-visibility.ts`), which
+`_visibilityFlagsAreExhaustive` in the same file pins against every other
+`StudentPrivacy` column — because a match, or a sort position, against a
+column the projection redacts is an enumeration oracle regardless of what
+the response body shows: a teacher can learn a withheld value from a
+hit/miss, a count, or its rank among other rows even when it is never
+rendered. `firstName` is exempt: `formatStudentName`
 (`src/lib/format.ts`) always discloses it in full via `displayName`
 regardless of privacy settings, which is also why the list route's own
 `orderBy: { firstName: 'asc' }` is safe. Found and fixed in #176, which
