@@ -484,7 +484,8 @@
         <div class="section-label">Timestamps</div>
         <div class="field"><span class="field-name">created_at</span><span class="field-type">datetime</span></div>
         <div class="field"><span class="field-name">paid_at</span><span class="field-type">datetime, nullable</span></div>
-        <div class="field-note">Status: pending &#8594; paid / overdue</div>
+        <div class="field"><span class="field-name">not_charged_at</span><span class="field-type">datetime, nullable</span></div>
+        <div class="field-note">Status: pending &#8594; paid / overdue / not_charged; paid and not_charged both reopen to pending</div>
         <div class="field-note">Level 1: teacher marks paid manually. Level 2: auto via processor.</div>
       </div>
     </div>
