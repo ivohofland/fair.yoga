@@ -3,58 +3,104 @@ import { Prisma } from '@prisma/client';
 import {
   respondOk,
   respondError,
+  parseBody,
   requireSession,
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
+import { studentProfileSchema } from '@/lib/schemas';
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
+import {
+  SIGNUP_TICKET_COOKIE,
+  consumeSignupTicket,
+  clearSignupTicketCookie,
+  createSession,
+  setSessionCookie,
+} from '@/lib/auth';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { log } from '@/lib/log';
 
 /**
- * Adds the student side to the signed-in account (the "join as a student"
- * flow on a booking page). Profile attachment happens only here — from an
- * authenticated session, never from an unauthenticated signup route.
+ * Creates the student profile (#399). Two authorizations, one route: the
+ * signup ticket (new booking-page signup, no account yet) or a live session
+ * (an existing account adding the student hat — "join as a student", the
+ * mirror of `teacher-profile`'s ticket+session shape).
  */
 export const POST = withErrorHandler(async (request: NextRequest) => {
-  const session = await requireSession(request);
-  if (isErrorResponse(session)) return session;
+  const ticketToken = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
 
-  if (session.studentId) {
-    return respondError('Account already has a student profile', 409, 'ALREADY_STUDENT');
+  // The cookie is READ here, not consumed, so the body is still validated
+  // before a single-use ticket is spent — `teacher-profile`'s ordering, for
+  // its reason: losing a ticket to a typo is a bad first interaction.
+  // Conditional because the session path has no body at all: `JoinAsStudent`
+  // POSTs without one, and `parseBody` opens with `request.json()`, which
+  // throws on an empty body.
+  let names: { firstName: string; lastName: string } | null = null;
+  if (ticketToken) {
+    const parsed = await parseBody(request, studentProfileSchema);
+    if ('error' in parsed) return parsed.error;
+    names = parsed.data;
   }
-  if (!session.teacherId) {
-    return respondError('Account has no profile to copy from', 409, 'NO_PROFILE_SOURCE');
-  }
 
-  const account = await prisma.account.findUniqueOrThrow({
-    where: { id: session.accountId },
-    select: { email: true },
-  });
-  const teacher = await prisma.teacher.findUniqueOrThrow({
-    where: { id: session.teacherId },
-    select: { firstName: true, lastName: true },
-  });
+  const ticketEmail = ticketToken
+    ? await consumeSignupTicket(prisma, ticketToken, 'student')
+    : null;
 
-  // A teacher may already exist in someone's CRM as an unclaimed contact
-  // under this email — claiming that row keeps their history instead of
-  // colliding with its unique email.
-  const unclaimed = await prisma.student.findFirst({
-    where: { email: account.email, claimedAt: null },
-    select: { id: true },
-  });
+  type Authorization =
+    | { source: 'ticket'; email: string; firstName: string; lastName: string }
+    | { source: 'session'; accountId: string; email: string; firstName: string; lastName: string };
+  let auth: Authorization;
 
-  // Scalar accountId, not a relation connect: Prisma splits nested
-  // connects into two statements, and the claim/link CHECK constraint
-  // requires both fields to change in one.
-  if (unclaimed) {
-    const student = await prisma.student.update({
-      where: { id: unclaimed.id },
-      data: { claimedAt: new Date(), accountId: session.accountId },
+  if (ticketEmail && names) {
+    auth = { source: 'ticket', email: ticketEmail, firstName: names.firstName, lastName: names.lastName };
+  } else {
+    const session = await requireSession(request);
+    if (isErrorResponse(session)) return session;
+
+    if (session.studentId) {
+      return respondError('Account already has a student profile', 409, 'ALREADY_STUDENT');
+    }
+    if (!session.teacherId) {
+      return respondError('Account has no profile to copy from', 409, 'NO_PROFILE_SOURCE');
+    }
+
+    const account = await prisma.account.findUniqueOrThrow({
+      where: { id: session.accountId },
+      select: { email: true },
+    });
+    const teacher = await prisma.teacher.findUniqueOrThrow({
+      where: { id: session.teacherId },
+      select: { firstName: true, lastName: true },
+    });
+
+    // A teacher may already exist in someone's CRM as an unclaimed contact
+    // under this email — claiming that row keeps their history instead of
+    // colliding with its unique email.
+    const unclaimed = await prisma.student.findFirst({
+      where: { email: account.email, claimedAt: null },
       select: { id: true },
     });
-    return respondOk({ studentId: student.id }, 201);
+
+    // Scalar accountId, not a relation connect: Prisma splits nested
+    // connects into two statements, and the claim/link CHECK constraint
+    // requires both fields to change in one.
+    if (unclaimed) {
+      const student = await prisma.student.update({
+        where: { id: unclaimed.id },
+        data: { claimedAt: new Date(), accountId: session.accountId },
+        select: { id: true },
+      });
+      return respondOk({ studentId: student.id }, 201);
+    }
+
+    auth = {
+      source: 'session',
+      accountId: session.accountId,
+      email: account.email,
+      firstName: teacher.firstName,
+      lastName: teacher.lastName,
+    };
   }
 
   // `session.studentId` above is the pre-check, and it is a plain read, so a
@@ -76,16 +122,31 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   try {
     const student = await prisma.student.create({
       data: {
-        firstName: teacher.firstName,
-        lastName: teacher.lastName,
-        email: account.email,
+        firstName: auth.firstName,
+        lastName: auth.lastName,
+        email: auth.email,
         incomeTier: DEFAULT_INCOME_TIER,
         claimedAt: new Date(),
-        accountId: session.accountId,
+        // A ticket has no account yet; a session has one already.
+        ...(auth.source === 'session' ? { accountId: auth.accountId } : { account: { create: { email: auth.email } } }),
       },
-      select: { id: true },
+      select: { id: true, accountId: true },
     });
-    return respondOk({ studentId: student.id }, 201);
+
+    const response = respondOk({ studentId: student.id }, 201);
+    if (auth.source === 'ticket') {
+      // `accountId` types as nullable — the column predates #166 and stays
+      // nullable for those rows — but this statement's own nested
+      // `account: { create }` just set it, so a null here means the create
+      // above silently produced a different row than this one.
+      if (!student.accountId) {
+        throw new Error('student profile create: ticket-authorized row has no accountId');
+      }
+      const sessionToken = await createSession(prisma, student.accountId);
+      setSessionCookie(response.headers, sessionToken);
+      clearSignupTicketCookie(response.headers);
+    }
+    return response;
   } catch (err) {
     if (isUniqueConflictOn(err, ['accountId']) || isUniqueConflictOn(err, ['email'])) {
       return respondError('Account already has a student profile', 409, 'ALREADY_STUDENT');

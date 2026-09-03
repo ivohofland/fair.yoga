@@ -201,6 +201,18 @@ export const teacherProfileSchema = z.object({
   defaultTimezone: detectedTimezoneField.optional(),
 }).strict();
 
+/**
+ * Creates the student profile on the ticket path. No `email` field, for the
+ * same reason as `teacherProfileSchema`: the address comes from the
+ * consumed signup ticket, never from the body. Parsed only when a ticket
+ * cookie is present — the session path ("join as a student") posts no body
+ * at all.
+ */
+export const studentProfileSchema = z.object({
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+}).strict();
+
 export const updateTeacherSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
