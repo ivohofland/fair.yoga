@@ -42,10 +42,27 @@ describe('BookingNameStep', () => {
     expect(await screen.findByText(/emailed you a fresh link/i)).toBeInTheDocument();
     const [resendUrl, resendInit] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(resendUrl).toBe('/api/auth/student-signup');
+    expect(resendInit.method).toBe('POST');
     expect(JSON.parse(resendInit.body as string)).toEqual({
       email: 'anna@example.com',
       redirect: '/t/book/c1',
     });
+  });
+
+  it('reports the stuck state, not a false promise of a fresh link, when the resend itself fails', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: false, status: 500 });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<BookingNameStep email="anna@example.com" redirect="/t/book/c1" />);
+
+    fillAndSubmit();
+
+    expect(await screen.findByText(/couldn't send a fresh one/i)).toBeInTheDocument();
+    const [resendUrl, resendInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(resendUrl).toBe('/api/auth/student-signup');
+    expect(resendInit.method).toBe('POST');
   });
 
   it('surfaces a failure without disabling the button forever', async () => {

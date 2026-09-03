@@ -51,4 +51,23 @@ describe('VerifyPage', () => {
     expect(await screen.findByText("Let's finish your booking.")).toBeInTheDocument();
     expect(screen.queryByText("Let's set up your page.")).not.toBeInTheDocument();
   });
+
+  /**
+   * The other half of `newSignupHeadline`'s branch — nothing previously
+   * asserted the teacher copy positively, so a regression here shipped
+   * silently until this test.
+   */
+  it('shows the teacher headline for a teacher signup destination', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { redirectTo: '/signup/profile' } }),
+      }),
+    );
+    render(<VerifyPage />);
+
+    expect(await screen.findByText("Let's set up your page.")).toBeInTheDocument();
+    expect(screen.queryByText("Let's finish your booking.")).not.toBeInTheDocument();
+  });
 });
