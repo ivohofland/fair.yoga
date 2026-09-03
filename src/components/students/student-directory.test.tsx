@@ -350,12 +350,12 @@ describe('StudentDirectory', () => {
   });
 
   /**
-   * The bug from #415: React StrictMode double-invokes this effect in dev,
-   * so a request whose effect run already got cleaned up can still resolve
-   * afterward. Reproduced here without StrictMode by forcing the same
-   * cleanup-then-rerun cycle through an `archived` prop change instead — the
-   * `cancelled` guard this pins defends against any two overlapping runs of
-   * the effect, not specifically a StrictMode double-mount.
+   * The cleanup-then-rerun cycle this whole group of tests forces through an
+   * `archived` prop change (rather than React StrictMode itself, which #415
+   * names as one trigger but which nothing in this codebase's test setup
+   * enables — `grep -rn StrictMode src/` is empty): the `cancelled` guard
+   * this pins defends against any two overlapping runs of the effect, not
+   * one specific trigger.
    *
    * The first fetch is left unresolved across the rerender, so it is still
    * the *stale* request when it finally settles — after the second has
@@ -390,10 +390,111 @@ describe('StudentDirectory', () => {
     await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
 
     resolveFirst({ ok: false, status: 500, json: async () => ({}) });
-    await waitFor(() => expect(consoleError).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(consoleError).toHaveBeenCalledWith('[student-directory] fetch failed', {
+        status: 500,
+      }),
+    );
 
     expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
     expect(screen.queryByText('Could not load your students.')).not.toBeInTheDocument();
+    consoleError.mockRestore();
+  });
+
+  /**
+   * PR #416 review, mutation-tested: the test above only exercises a stale
+   * *failure* racing a fresher success, so it never proves the `setStudents`
+   * guard itself — removing just that guard left all tests green. This is
+   * the guard protecting actual roster data rather than a message, and the
+   * two `/students` routes hand this component different `archived` props,
+   * so a stale and a fresh request can genuinely carry different rosters.
+   *
+   * `staleJson` stands in for the `console.error` spy above: since a stale
+   * *success* has no error-path side effect to observe, waiting on the mock
+   * itself having been called proves the stale response's body was actually
+   * read (and so reached the `cancelled` check) before the assertions run.
+   */
+  it('does not let a stale, later-resolving success overwrite a fresher successful load', async () => {
+    const staleJson = vi.fn().mockResolvedValue({
+      data: { students: [student({ id: 'stale-1', displayName: 'Stale Roster' })] },
+    });
+    let resolveFirst!: (value: unknown) => void;
+    let resolveSecond!: (value: unknown) => void;
+    let call = 0;
+    fetchMock.mockImplementation(() => {
+      call += 1;
+      if (call === 1) return new Promise((resolve) => { resolveFirst = resolve; });
+      return new Promise((resolve) => { resolveSecond = resolve; });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { rerender } = render(<StudentDirectory />);
+    rerender(<StudentDirectory archived />);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    resolveSecond({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: { students: [student({ id: 'fresh-1', displayName: 'Anna Bakker' })] },
+      }),
+    });
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    resolveFirst({ ok: true, status: 200, json: staleJson });
+    await waitFor(() => expect(staleJson).toHaveBeenCalled());
+
+    expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
+    expect(screen.queryByText('Stale Roster')).not.toBeInTheDocument();
+  });
+
+  /**
+   * PR #416 review, mutation-tested: the 401 branch carries its own
+   * `cancelled` guard on `setLoadFailed(true)`, independent of the one the
+   * first test above pins — removing just this one also left all tests
+   * green, since the existing 401 test below never overlaps two runs.
+   * `window.location.href` is deliberately unguarded (matches
+   * `contact-list.tsx`, a redirect is idempotent), and it is set in the same
+   * synchronous step as the guarded write, so waiting on it is the
+   * equivalent non-vacuous signal to the `console.error` spy above.
+   */
+  it('does not let a stale, later-resolving 401 show a failure message over a fresher successful load', async () => {
+    let resolveFirst!: (value: unknown) => void;
+    let resolveSecond!: (value: unknown) => void;
+    let call = 0;
+    fetchMock.mockImplementation(() => {
+      call += 1;
+      if (call === 1) return new Promise((resolve) => { resolveFirst = resolve; });
+      return new Promise((resolve) => { resolveSecond = resolve; });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const original = window.location;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...original, href: '' },
+    });
+
+    const { rerender } = render(<StudentDirectory />);
+    rerender(<StudentDirectory archived />);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    resolveSecond({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: { students: [student({ id: 'student-1', displayName: 'Anna Bakker' })] },
+      }),
+    });
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    resolveFirst({ ok: false, status: 401 });
+    await waitFor(() => expect(window.location.href).toBe('/login'));
+
+    expect(screen.getByText('Anna Bakker')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load your students.')).not.toBeInTheDocument();
+
+    Object.defineProperty(window, 'location', { configurable: true, value: original });
   });
 
   /**
