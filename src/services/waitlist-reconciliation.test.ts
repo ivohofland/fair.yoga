@@ -3,7 +3,13 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
 import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { addToWaitlist, claimSpot, getWaitlistWindow, handleSpotFreed } from './waitlist';
+import {
+  addToWaitlist,
+  claimSpot,
+  getWaitlistWindow,
+  handleSpotFreed,
+  SpotFreedError,
+} from './waitlist';
 import { ReconciliationFailedError, reconcileWaitlists } from './waitlist-reconciliation';
 import { createClassFixture } from '../../tests/class-fixtures';
 
@@ -333,7 +339,13 @@ describe('reconcileWaitlists (DB)', () => {
 
     const dropped = await handleSpotFreed(prisma, cls.id, clocks.autoPromote).then(
       () => ({ ok: true as const }),
-      (err: unknown) => ({ ok: false as const, err: String(err) }),
+      // `handleSpotFreed` wraps every throw in `SpotFreedError` — the Postgres
+      // error this test is about (see the docblock above) lives on `.cause`,
+      // not the wrapper's own message.
+      (err: unknown) => ({
+        ok: false as const,
+        err: err instanceof SpotFreedError ? String(err.cause) : String(err),
+      }),
     );
     // Snapshotted BEFORE `await holder`, because read after it the flag is
     // `true` unconditionally — the holder's body sets it as its last
