@@ -138,9 +138,14 @@ async function rosterLinkState(
     // promise on /account/privacy that new teachers start with nothing shared.
     // `.find` against the scoped `teacherId`, not `[0]` — the house pattern
     // `studentVisibilitySelect`/`projectStudentForTeacher` use (#167,
-    // src/lib/student-visibility.ts) — so a future `where` change that stops
-    // narrowing this nested select to one row is a compile error here rather
-    // than a silent read of another teacher's privacy row.
+    // src/lib/student-visibility.ts): the `where` narrows the nested select
+    // to one row and changes no output if dropped — harmless, but not
+    // compile-checked. `teacherId: true` in the select above, paired with
+    // this `.find`, is what makes the read independent of whether the
+    // `where` still narrows — and dropping `teacherId: true` IS a compile
+    // error, because the callback below would then reference `.teacherId` on
+    // a type that no longer has it. See that file's `studentNameSelect` for
+    // the same pattern, stated once and measured.
     shareEmail: student.studentPrivacy.find((p) => p.teacherId === teacherId)?.shareEmail ?? false,
   };
 }
@@ -218,19 +223,29 @@ export async function inviteContact(
   // The `@@unique([teacherId, email])` key means the way back is this row,
   // returned to `pending`.
   //
-  // Since #412, `existing !== null` reaching this point is also the second
-  // disjunct of the `ALREADY_LINKED` gate below: an accepted row on a linked
-  // pair is refused even when `shareEmail` is false, because falling through
-  // would reach `revivePendingInvitation` further down and flip that row
-  // from `accepted` (invisible in Contacts) to `pending` (rendered
-  // "Invited"), clear `isArchived`, and overwrite the names — resurrecting
-  // an already-accepted, already-in-the-directory student as an outstanding
-  // contact under someone else's typed name.
+  // Since #412, `existing?.status === 'accepted'` reaching this point is
+  // also the second disjunct of the `ALREADY_LINKED` gate below: an accepted
+  // row on a linked pair is refused even when `shareEmail` is false, because
+  // falling through would reach `revivePendingInvitation` further down and
+  // flip that row from `accepted` (invisible in Contacts) to `pending`
+  // (rendered "Invited"), clear `isArchived`, and overwrite the names —
+  // resurrecting an already-accepted, already-in-the-directory student as an
+  // outstanding contact under someone else's typed name.
   //
   // No row at all is the same question with a different history: a link with
   // no invitation is a student who booked a class instead of being invited.
+  //
+  // `existing?.status === 'accepted'` rather than `existing !== null`: by
+  // this point `existing` can only be `null` or an `accepted` row (the two
+  // early returns above already handled `declined` and `pending`), so the
+  // two are equivalent TODAY — but that equivalence is an unenforced fact
+  // about `InvitationStatus` having exactly three members. Naming the status
+  // directly means a future fourth member fails to satisfy this disjunct by
+  // default, rather than silently inheriting `accepted`'s treatment — the
+  // privacy justification above is specifically about `accepted`, not "any
+  // non-null row".
   const link = await rosterLinkState(db, teacherId, email);
-  if (link.linked && (link.shareEmail || existing !== null)) {
+  if (link.linked && (link.shareEmail || existing?.status === 'accepted')) {
     return { ok: false, reason: 'ALREADY_LINKED' };
   }
 
@@ -384,7 +399,9 @@ async function revivePendingInvitation(
  * function re-queries `TeacherBlock` itself, below, rather than leaning on
  * the caller's value: the guard travels with the send rather than living
  * only in whichever caller remembers to check it. Keep the caller's own gate
- * too — belt and braces, and it skips a query on the common (unblocked) path.
+ * too — belt and braces: it does nothing extra on the ordinary (unblocked,
+ * unlinked) path, and saves this function's own re-checks entirely on the
+ * withheld (blocked-or-linked) path, by skipping the call altogether.
  *
  * `PUT /api/invitations/[id]` edits `email` on a pending row without
  * recomputing `delivered`, which looks like a second door and is not: PUT

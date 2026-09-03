@@ -376,6 +376,8 @@ describe('POST /api/students', () => {
       select: { email: true },
     });
 
+    const controlEmail = `crm-already-linked-control-${suffix}@test.local`;
+    let controlStudentId: string | undefined;
     try {
       const res = await fetch(`${BASE_URL}/api/students`, {
         method: 'POST',
@@ -395,10 +397,55 @@ describe('POST /api/students', () => {
         select: { status: true },
       });
       expect(row.status).toBe('pending');
+
+      // The user-facing property the whole PR exists to produce: the
+      // student receives NOTHING, not merely an HTTP response shaped like a
+      // withheld one. `deliverInvitation` runs fire-and-forget
+      // (services/invitations.ts), so reading `Notification` immediately
+      // would prove nothing — a dropped guard's write could still be in
+      // flight. Same idiom as invitations-api.test.ts's "withholds delivery
+      // entirely from a blocked address": invite a second, CONTROL address
+      // issued strictly after the gated one, with its own unlinked Student
+      // row, and `waitFor` ITS notification first — delivery runs
+      // sequentially from this single process, so once the control's write
+      // is confirmed, the gated student's would have landed too, if it were
+      // ever going to.
+      const controlStudent = await prisma.student.create({
+        data: { firstName: 'Already', lastName: 'Control', email: controlEmail },
+        select: { id: true },
+      });
+      controlStudentId = controlStudent.id;
+      const controlRes = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ firstName: 'Already', lastName: 'Control', email: controlEmail }),
+      });
+      expect(controlRes.status).toBe(201);
+      await waitFor(
+        () =>
+          prisma.notification.findFirst({
+            where: {
+              recipientType: 'student',
+              recipientId: controlStudentId!,
+              type: 'teacher_invitation',
+            },
+          }),
+        { description: "already-linked gate test's control teacher_invitation notification (#412)" },
+      );
+
+      const notifications = await prisma.notification.findMany({
+        where: { recipientType: 'student', recipientId: studentIds[1]!, type: 'teacher_invitation' },
+      });
+      expect(notifications).toHaveLength(0);
     } finally {
       await prisma.invitation.deleteMany({
         where: { teacherId, email: linked.email },
       });
+      if (controlStudentId) {
+        await prisma.invitation.deleteMany({ where: { teacherId, email: controlEmail } });
+        await prisma.notification.deleteMany({ where: { recipientId: controlStudentId } });
+        await prisma.student.delete({ where: { id: controlStudentId } });
+      }
     }
   });
 

@@ -32,11 +32,12 @@ import { ownedInvitation, NOT_FOUND, DECLINED } from '../shared';
  *
  * No CAS on the `status === 'pending'` check below: a decline landing in
  * the gap between the read and the write could let a stale send through,
- * but `notifyInvitee` has never checked `Invitation.status`, only
- * `TeacherBlock` — so this exact race already exists on `POST /api/students`
- * today (a decline landing between `inviteContact`'s write and its own
- * already-scheduled fire-and-forget dispatch sends the same way). Not a new
- * gap this route opens.
+ * but `notifyInvitee` does not check `Invitation.status` at all — its own
+ * guards are `TeacherBlock` and the roster link (`student.teacherStudents`,
+ * services/invitations.ts) — so this exact race already exists on
+ * `POST /api/students` today (a decline landing between `inviteContact`'s
+ * write and its own already-scheduled fire-and-forget dispatch sends the
+ * same way). Not a new gap this route opens.
  */
 export const POST = withErrorHandler(async (
   request: NextRequest,

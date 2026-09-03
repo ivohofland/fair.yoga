@@ -22,6 +22,8 @@ const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 describe('inviteContact — the shareEmail gate on ALREADY_LINKED (#412)', () => {
   let teacherId: string;
   let teacherAccountId: string;
+  let otherTeacherId: string;
+  let otherTeacherAccountId: string;
   const studentIds: string[] = [];
 
   beforeAll(async () => {
@@ -36,6 +38,21 @@ describe('inviteContact — the shareEmail gate on ALREADY_LINKED (#412)', () =>
     });
     teacherId = teacher.id;
     teacherAccountId = teacher.accountId;
+
+    // A second teacher, used below to prove `rosterLinkState`'s
+    // `teacherStudents` read is scoped to `teacherId` — "linked to SOME
+    // teacher" must not read as "linked to THIS teacher".
+    const other = await prisma.teacher.create({
+      data: {
+        firstName: 'Gate', lastName: 'OtherTeacher',
+        email: `gate-other-teacher-${suffix}@test.local`,
+        account: { create: { email: `gate-other-teacher-${suffix}@test.local` } },
+        bio: '#412 shareEmail gate fixture — cross-teacher scoping',
+        pageSlug: `gate-other-teacher-${suffix}`,
+      },
+    });
+    otherTeacherId = other.id;
+    otherTeacherAccountId = other.accountId;
   });
 
   afterAll(async () => {
@@ -49,6 +66,12 @@ describe('inviteContact — the shareEmail gate on ALREADY_LINKED (#412)', () =>
       await prisma.teacherBlock.deleteMany({ where: { teacherId } });
       await prisma.teacher.delete({ where: { id: teacherId } });
       await prisma.account.delete({ where: { id: teacherAccountId } });
+    }
+    if (otherTeacherId) {
+      await prisma.invitation.deleteMany({ where: { teacherId: otherTeacherId } });
+      await prisma.teacherBlock.deleteMany({ where: { teacherId: otherTeacherId } });
+      await prisma.teacher.delete({ where: { id: otherTeacherId } });
+      await prisma.account.delete({ where: { id: otherTeacherAccountId } });
     }
     await prisma.$disconnect();
   });
@@ -125,6 +148,36 @@ describe('inviteContact — the shareEmail gate on ALREADY_LINKED (#412)', () =>
     });
 
     expect(result.ok).toBe(true);
+  });
+
+  it('does not treat a student linked to a DIFFERENT teacher as linked to this one', async () => {
+    // Two independent reviewers each manually deleted `where: { teacherId }`
+    // from `rosterLinkState`'s `teacherStudents` select and found the entire
+    // unit suite still green — this teacher-scoping was completely
+    // untested. "Linked to SOME teacher" is not the same fact as "linked to
+    // THIS teacher"; conflating them would make `linked` read true for any
+    // teacher who happens to query an address already on a peer's roster,
+    // reopening the exact account-enumeration oracle #166 closed (and #412
+    // sharpened) via `ALREADY_LINKED`.
+    const email = `gate-other-teacher-student-${suffix}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Gate', lastName: 'OtherTeacherStudent', email,
+        teacherStudents: { create: { teacherId: otherTeacherId } },
+      },
+      select: { id: true },
+    });
+    studentIds.push(student.id);
+
+    const result = await inviteContact(prisma, {
+      teacherId, email, firstName: 'Not', lastName: 'Mine',
+    });
+
+    // Also closes an already-known, separately-flagged gap: no
+    // unit-runnable test previously pinned `delivered === true` on the
+    // ordinary (unblocked, unlinked-to-THIS-teacher) success path.
+    if (!result.ok) throw new Error(`expected an ordinary delivered invite, got ${result.reason}`);
+    expect(result.value.delivered).toBe(true);
   });
 
   it('answers ALREADY_LINKED on an accepted invitation, and leaves that row untouched', async () => {
