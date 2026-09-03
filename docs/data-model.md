@@ -96,8 +96,17 @@ outside that projection — and so has to answer "may this teacher see this
 address" by both of the projection's own routes, not just the flag: this
 teacher's `StudentPrivacy.shareEmail`, **or** `Student.claimedAt IS NULL`,
 which `bypassesPrivacy` treats as fully visible to any teacher (#419). Those
-two modules are the whole census of that rule; a change to either without the
-other is the drift #419 was filed for. See the Invitation section below.
+two are the whole census of that rule, and they share its predicate
+(`privacyIsBypassed`) rather than each spelling it out, because a change
+reaching only one of them is the drift #419 was filed for — they keep their
+own logging, which is not the same question.
+
+No unclaimed `Student` is reachable today: #166 stopped the CRM creating the
+row, both remaining create sites set `claimedAt`, and the seed writes none.
+So this rule governs no live data, and the reason to keep the two surfaces
+agreeing anyway is that the day one of those three facts stops holding, the
+disagreement is what ships — silently, since neither surface would be wrong
+on its own. See the Invitation section below.
 No server-side predicate may filter
 (`where`) or order (`orderBy`) on a privacy-gated `Student` column —
 `lastName`, `email`, `phone`, `birthday`, or `address`, one per
