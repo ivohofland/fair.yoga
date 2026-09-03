@@ -10,7 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { updateRegistrationSchema } from '@/lib/schemas';
 import { isTransientDbError } from '@/lib/api-errors';
-import { DEADLINE_HOURS, handleSpotFreed } from '@/services/waitlist';
+import { DEADLINE_HOURS, handleSpotFreed, SpotFreedError, spotFreedLoss } from '@/services/waitlist';
 import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
@@ -315,18 +315,20 @@ export const DELETE = withErrorHandler(async (
  * `error` gets the line tuned out, and then the genuine defect hides in the
  * noise it created.
  *
- * `waiting` is what makes either line actionable — but WHAT was lost depends
- * on which branch `handleSpotFreed` was in, and this handler cannot see that
- * from the error alone. On the broadcast branch every student queued on this
- * class was silently not told a seat opened. On the auto-promote branch, which
- * covers everything up to (cancel deadline − 1h) and is therefore the commoner
- * of the two by a wide margin, the loss is narrower and sharper: ONE specific
- * student who should now hold that seat does not. Either way `waiting` sizes
- * it — 0 is a non-event, 12 is a seat that now goes unsold and reprices the
- * class for everyone left. Logging the resolved window beside it is what would
- * make the line triageable without guessing; `handleSpotFreed` knows the
- * branch and does not hand it back today, which is a change for its own issue
- * rather than for a documentation pass.
+ * `waiting` is what makes either line actionable, and so now is WHICH branch
+ * `handleSpotFreed` was in — it throws a `SpotFreedError` (`services/waitlist.ts`)
+ * carrying the resolved window as `.window`, and `spotFreedLoss` turns that
+ * into the phrase this catch logs. On the broadcast branch
+ * (`first_come_first_claimed`) every student queued on this class was silently
+ * not told a seat opened. On the auto-promote branch, which covers everything
+ * up to (cancel deadline − 1h) and is therefore the commoner of the two by a
+ * wide margin, the loss is narrower and sharper: ONE specific student who
+ * should now hold that seat does not. Either way `waiting` sizes it — 0 is a
+ * non-event, 12 is a seat that now goes unsold and reprices the class for
+ * everyone left. A failure before the window resolves — `.window` still
+ * `null` — falls back to `spotFreedLoss`'s general phrase, because there is
+ * nothing yet to name; the payload's `branch` field is `'unknown'` for that
+ * same case.
  *
  * It used to say the loss could never be recovered, because nobody would know
  * to look. That is no longer true: the `waitlist-reconciliation` sweep
@@ -365,11 +367,12 @@ async function promoteAfterCancel(classId: string): Promise<void> {
       .count({ where: { classId, status: 'waiting' } })
       .catch(() => -1);
     const transient = isTransientDbError(err);
+    const window = err instanceof SpotFreedError ? err.window : null;
     log[transient ? 'warn' : 'error'](
-      { err, classId, waiting, transient },
+      { err, classId, waiting, transient, branch: window ?? 'unknown' },
       transient
-        ? 'waitlist spot-freed hook lost a lock race after cancel — the freed seat was neither promoted nor broadcast'
-        : 'waitlist spot-freed hook failed after cancel',
+        ? `waitlist spot-freed hook lost a lock race after cancel — ${spotFreedLoss(window)}`
+        : `waitlist spot-freed hook failed after cancel — ${spotFreedLoss(window)}`,
     );
   }
 }

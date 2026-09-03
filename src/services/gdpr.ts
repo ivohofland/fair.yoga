@@ -16,7 +16,7 @@ import { createBulkNotifications, type CreateNotificationInput } from './notific
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { completeClass } from './class-lifecycle';
-import { handleSpotFreed, reorderWaitingEntries } from './waitlist';
+import { handleSpotFreed, reorderWaitingEntries, SpotFreedError, spotFreedLoss } from './waitlist';
 import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
@@ -864,6 +864,11 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
   // to hit it — an erasure holds every class row it locks until its own
   // transaction commits, so a concurrent cancel on a shared class is exactly
   // the contention that times out.
+  //
+  // `branch` in the payload below is that same window, read off
+  // `SpotFreedError.window` — `promoteAfterCancel` carries the full case for
+  // logging it, including why `'unknown'` is the honest answer for a failure
+  // before the window resolves.
   for (const classId of freedClassIds) {
     try {
       await handleSpotFreed(db, classId);
@@ -875,11 +880,12 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
           .count({ where: { classId, status: 'waiting' } })
           .catch(() => -1);
         const transient = isTransientDbError(err);
+        const window = err instanceof SpotFreedError ? err.window : null;
         log[transient ? 'warn' : 'error'](
-          { err, classId, waiting, transient },
+          { err, classId, waiting, transient, branch: window ?? 'unknown' },
           transient
-            ? 'gdpr: spot-freed hook lost a lock race after erasure — the freed seat was neither promoted nor broadcast'
-            : 'gdpr: spot-freed hook failed after erasure',
+            ? `gdpr: spot-freed hook lost a lock race after erasure — ${spotFreedLoss(window)}`
+            : `gdpr: spot-freed hook failed after erasure — ${spotFreedLoss(window)}`,
         );
       } catch (loggingErr) {
         // The erasure has ALREADY COMMITTED — `handleSpotFreed`'s own
