@@ -2408,6 +2408,57 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       await cleanup(fixture);
     }
   }, 15_000);
+
+  /**
+   * The branch reaches the log line.
+   *
+   * Before this the erasure's loop logged one message that was true whichever
+   * branch threw — "the freed seat was neither promoted nor broadcast" — so an
+   * operator reading it could not tell one student's lost seat from N students
+   * never told about one. The window is resolved inside the hook; this asserts
+   * it survives the throw.
+   */
+  it('names the broadcast branch when the spot-freed hook fails after erasure', async () => {
+    const fixture = await makeStudentWithFreedSpot();
+    try {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+      onTestFinished(() => warn.mockRestore());
+
+      // Inject INSIDE the broadcast transaction, past the point where the window
+      // resolves — unlike the sibling test above, which fails the opening
+      // `class.findUnique` and therefore gets the honest `null` branch.
+      // `createBulkNotifications` (`services/notifications.ts`) issues exactly
+      // one `notification.createMany`, and matching on the `spot_available` type
+      // keeps this from touching any other notification write.
+      const failing = prisma.$extends({
+        query: {
+          notification: {
+            async createMany({ args, query }) {
+              const rows = args.data as Array<{ type?: string }> | undefined;
+              if (!Array.isArray(rows) || !rows.some((r) => r.type === 'spot_available')) {
+                return query(args);
+              }
+              throw new Error('injected: broadcast write failed (code: "55P03")');
+            },
+          },
+        },
+      }) as unknown as PrismaClient;
+
+      await expect(deleteStudentAccount(failing, fixture.studentId)).resolves.toBeUndefined();
+
+      const logged = warn.mock.calls.find(
+        (c) => (c[0] as { classId?: string } | undefined)?.classId === fixture.classId,
+      );
+      expect(logged?.[0]).toMatchObject({
+        classId: fixture.classId,
+        transient: true,
+        branch: 'first_come_first_claimed',
+      });
+      expect(logged?.[1]).toContain('the waiting students were not told the seat is free');
+    } finally {
+      await cleanup(fixture);
+    }
+  }, 15_000);
 });
 
 /**
