@@ -234,10 +234,11 @@ default a teacher sees is `formatStudentName(first, last, false)`, first name
 plus a lowercased last initial.
 
 **The one bypass, and why it constrains this change.**
-`lib/student-visibility.ts`'s `bypassesPrivacy` returns true for a `Student`
-whose `claimedAt` is null, disabling every flag and logging a warning. That
-exists for teacher-typed CRM contacts, where there is nothing to protect. It
-makes `claimedAt` a privacy control, not bookkeeping.
+`lib/student-visibility.ts`'s `privacyIsBypassed` is the rule — an unclaimed
+`Student` (`claimedAt IS NULL`) withholds nothing from anyone — and
+`bypassesPrivacy` is the same rule plus a warning on the projection path.
+It exists for teacher-typed CRM contacts, where there is nothing to protect.
+It makes `claimedAt` a privacy control, not bookkeeping.
 
 ### The create's column census
 
@@ -246,12 +247,39 @@ carry a silent failure that no type catches:
 
 | Column | Value | Consequence if wrong |
 |---|---|---|
-| `claimedAt` | `new Date()` | null ⇒ `bypassesPrivacy` hands the teacher the full name, email, phone and address the student never shared |
-| `tierSelectedAt` | left unset | stamped ⇒ the tier picker never shows; billed at tier 3 indefinitely, never having chosen |
+| `tierSelectedAt` | left unset | stamped ⇒ the tier picker never shows; the student is billed at the default indefinitely, never having chosen. **Silent** — nothing catches it |
+| `claimedAt` | `new Date()` | null ⇒ the row is unclaimed and `privacyIsBypassed` hands the teacher every field. **Loud** here: this create sets `accountId` too, so `Student_claim_link_check` — `CHECK (("claimedAt" IS NULL) = ("accountId" IS NULL))` — rejects the insert |
 | `incomeTier` | `DEFAULT_INCOME_TIER` | matches the schema default the old create relied on |
 | everything else | left unset | `reminderPref`, `emailNotifications` take schema defaults; `phone`/`birthday`/`address` stay null |
 
-Both hazard rows get an explicit assertion.
+Both get an explicit assertion. Only `tierSelectedAt` is a silent failure —
+the constraint catches the other, and only because this create writes
+`accountId`. A create that set neither column would satisfy the constraint,
+which is why `student-visibility.ts` is explicit that the constraint is not
+what makes the bypass unreachable.
+
+## Three cross-file claims this branch falsifies
+
+`51ef9c1f` (in `origin/main`, after this branch was cut) gave the
+unclaimed-`Student` rule one owner, and its argument rests on a census of
+`prisma.student.create` sites: exactly two, both setting `claimedAt` in the
+creating statement, therefore no unclaimed row exists for any
+`TeacherStudent` writer to link.
+
+This branch deletes one of the two. The argument survives — one site is
+still two minus one, and it still sets `claimedAt` — but the census does
+not, and it is written in three places:
+
+| Location | Claim to correct |
+|---|---|
+| `src/lib/student-visibility.ts` | the two-site census in the unclaimed-`Student` docblock, naming `api/auth/student-signup/route.ts`'s create |
+| `prisma/schema.prisma` (`Student.accountId`) | "Both remaining create sites set this and `claimedAt` in one statement" |
+| `docs/data-model.md` (StudentPrivacy) | "those two sites"; "both remaining create sites set `claimedAt`" |
+
+Corrected by replacement, not annotation — each states what is true after
+this branch, and the before-and-after goes in the PR body. This is the
+CLAUDE.md hazard exactly: a claim reaching past its own file, invalidated by
+an edit its author will never see.
 
 ## Design
 
