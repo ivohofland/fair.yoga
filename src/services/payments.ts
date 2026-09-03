@@ -12,6 +12,7 @@ import {
   studentVisibilitySelect,
   type TeacherVisibleStudent,
 } from '@/lib/student-visibility';
+import { OUTSTANDING_STATUSES } from '@/lib/payment-status';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -312,10 +313,9 @@ export async function sendPaymentReminder(
 // ---------------------------------------------------------------------------
 
 /**
- * Count a student's outstanding (pending or overdue) payments owed to one
- * specific teacher — the booking flow's "you have N open payments" nudge.
- * Scoped to that teacher, not global: the nudge is only actionable if it
- * names a debt to the person the student is about to book with again.
+ * Count a student's outstanding payments owed to one specific teacher.
+ * Scoped to that teacher, not global: a debt to a different teacher isn't
+ * actionable from a screen about this one.
  */
 export async function countOutstandingPaymentsForStudent(
   db: PrismaClient,
@@ -324,7 +324,7 @@ export async function countOutstandingPaymentsForStudent(
 ): Promise<number> {
   return db.payment.count({
     where: {
-      status: { in: ['pending', 'overdue'] },
+      status: { in: OUTSTANDING_STATUSES },
       registration: { studentId, class: { calendarEntry: { teacherId } } },
     },
   });
@@ -343,7 +343,7 @@ export async function getOutstandingPayments(
 ): Promise<TeacherPaymentRow[]> {
   const rows = await db.payment.findMany({
     where: {
-      status: { in: ['pending', 'overdue'] },
+      status: { in: OUTSTANDING_STATUSES },
       registration: { class: { calendarEntry: { teacherId } } },
     },
     include: {

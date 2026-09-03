@@ -339,68 +339,118 @@ test.describe('Public booking flow', () => {
   });
 
   // #389. Its own student/class/payment, created and torn down inline, so it
-  // never touches the serial fixtures the tests above depend on.
+  // never touches the serial fixtures the tests above depend on. Cleanup
+  // runs in `finally` so a failed assertion above still leaves the e2e DB
+  // clean for later runs.
   test('a student owing this teacher sees the open-payments nudge while booking again', async ({
     page,
     context,
   }) => {
     const email = `e2e-booking-owes-${suffix}@test.local`;
-    const owingStudent = await prisma.student.create({
-      data: {
-        firstName: 'Owing',
-        lastName: 'Student',
-        email,
-        account: { create: { email } },
-        incomeTier: 3,
-        claimedAt: new Date(),
-      },
-    });
+    const otherEmail = `e2e-booking-owes-other-${suffix}@test.local`;
+    let owingStudentId: string | undefined;
+    let otherStudentId: string | undefined;
+    let pastClsId: string | undefined;
+    let sessionToken: string | undefined;
 
-    const pastCls = await createClassFixture(prisma, {
-      teacherId,
-      teacherRoomId,
-      classType: 'E2E Past Class',
-      date: new Date('2020-01-01'),
-      startTime: hhmmToTime('09:00'),
-      durationMinutes: 60,
-      roomCost: 20,
-      minRate: 15,
-      targetRate: 25,
-      minStudents: 2,
-      maxStudents: 10,
-      status: 'completed',
-      settingsLocked: true,
-    });
-    const registration = await prisma.registration.create({
-      data: {
-        classId: pastCls.id,
-        studentId: owingStudent.id,
-        status: 'attended',
-        tierAtBooking: 3,
-        price: 20,
-        tierRatio: 1.0,
-      },
-    });
-    await prisma.payment.create({
-      data: { registrationId: registration.id, amount: 20, status: 'pending' },
-    });
+    try {
+      const owingStudent = await prisma.student.create({
+        data: {
+          firstName: 'Owing',
+          lastName: 'Student',
+          email,
+          account: { create: { email } },
+          incomeTier: 3,
+          claimedAt: new Date(),
+        },
+      });
+      owingStudentId = owingStudent.id;
 
-    const sessionToken = await seedSession(prisma, await accountIdOfStudent(prisma, owingStudent.id));
-    await context.addCookies([sessionCookie(sessionToken)]);
+      const pastCls = await createClassFixture(prisma, {
+        teacherId,
+        teacherRoomId,
+        classType: 'E2E Past Class',
+        date: new Date('2020-01-01'),
+        startTime: hhmmToTime('09:00'),
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 2,
+        maxStudents: 10,
+        status: 'completed',
+        settingsLocked: true,
+      });
+      pastClsId = pastCls.id;
+      const registration = await prisma.registration.create({
+        data: {
+          classId: pastCls.id,
+          studentId: owingStudent.id,
+          status: 'attended',
+          tierAtBooking: 3,
+          price: 20,
+          tierRatio: 1.0,
+        },
+      });
+      await prisma.payment.create({
+        data: { registrationId: registration.id, amount: 20, status: 'pending' },
+      });
 
-    await page.goto(`/${slug}/book/${classId}`);
-    await expect(page.getByText('You have 1 open payment with this teacher.')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'View your bookings' })).toHaveAttribute(
-      'href',
-      '/bookings',
-    );
+      // A second student, also owing this same teacher: proves the count is
+      // scoped to `owingStudent`, not just to the teacher — a dropped
+      // `studentId` filter would read "2" instead of "1" below.
+      const otherStudent = await prisma.student.create({
+        data: {
+          firstName: 'Other',
+          lastName: 'Student',
+          email: otherEmail,
+          account: { create: { email: otherEmail } },
+          incomeTier: 3,
+          claimedAt: new Date(),
+        },
+      });
+      otherStudentId = otherStudent.id;
+      const otherRegistration = await prisma.registration.create({
+        data: {
+          classId: pastCls.id,
+          studentId: otherStudent.id,
+          status: 'attended',
+          tierAtBooking: 3,
+          price: 20,
+          tierRatio: 1.0,
+        },
+      });
+      await prisma.payment.create({
+        data: { registrationId: otherRegistration.id, amount: 20, status: 'pending' },
+      });
 
-    await prisma.payment.deleteMany({ where: { registrationId: registration.id } });
-    await prisma.registration.delete({ where: { id: registration.id } });
-    await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: pastCls.id } } } });
-    await prisma.session.deleteMany({ where: { id: hashToken(sessionToken) } });
-    await prisma.teacherStudent.deleteMany({ where: { studentId: owingStudent.id } });
-    await prisma.student.delete({ where: { id: owingStudent.id } });
-    await prisma.account.deleteMany({ where: { email } });
+      sessionToken = await seedSession(prisma, await accountIdOfStudent(prisma, owingStudent.id));
+      await context.addCookies([sessionCookie(sessionToken)]);
+
+      await page.goto(`/${slug}/book/${classId}`);
+      await expect(page.getByText('You have 1 open payment with this teacher.')).toBeVisible();
+      await expect(page.getByRole('link', { name: 'View your bookings' })).toHaveAttribute(
+        'href',
+        '/bookings',
+      );
+    } finally {
+      if (pastClsId) {
+        await prisma.payment.deleteMany({ where: { registration: { classId: pastClsId } } });
+        await prisma.registration.deleteMany({ where: { classId: pastClsId } });
+        await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: pastClsId } } } });
+      }
+      if (sessionToken) {
+        await prisma.session.deleteMany({ where: { id: hashToken(sessionToken) } });
+      }
+      if (owingStudentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId: owingStudentId } });
+        await prisma.student.delete({ where: { id: owingStudentId } });
+      }
+      if (otherStudentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId: otherStudentId } });
+        await prisma.student.delete({ where: { id: otherStudentId } });
+      }
+      await prisma.account.deleteMany({ where: { email: { in: [email, otherEmail] } } });
+    }
   });
 });

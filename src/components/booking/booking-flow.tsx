@@ -156,7 +156,7 @@ export function BookingFlow({
       {openPaymentsCount > 0 && (
         // Friendly, never blocking (product-concept.md §7) — plain text like
         // the app's other payment states, no badge.
-        <p className="type-body text-brown mb-4">
+        <p className="type-body mb-4">
           You have {openPaymentsCount} open payment{openPaymentsCount === 1 ? '' : 's'} with this
           teacher.{' '}
           <Link href="/bookings" className="text-teal no-underline">
