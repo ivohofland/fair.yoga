@@ -1010,9 +1010,12 @@ describe('reconcileWaitlists (DB)', () => {
    * A tick that lost every class to contention must NOT report the job
    * degraded — and after five of them in a row, it must.
    *
-   * On a single-teacher VPS one candidate class per tick is the ordinary case,
-   * so "every class it tried failed" is reachable from one benign lock race that
-   * the next tick repairs. Throwing on that trains an operator to ignore
+   * The sweep INVOKES a class only in the rare state it exists for — a free
+   * seat and a live queue at the same moment — and skips every other
+   * candidate, so one invoked class per tick is the ordinary case however many
+   * teachers share the deployment. "Every class it tried failed" is therefore
+   * reachable from one benign lock race that the next tick repairs. Throwing
+   * on that trains an operator to ignore
    * `/api/health`. But never throwing reproduces #354 here: a leaked `idle in
    * transaction` session holding a Class row makes every tick fail forever while
    * the job reports success.
@@ -1146,6 +1149,81 @@ describe('reconcileWaitlists (DB)', () => {
   });
 
   /**
+   * The SECOND no-candidate early return, which the test above cannot reach.
+   *
+   * `reconcileWaitlists` asks twice: `waitlistEntry.groupBy` for classes
+   * holding a `waiting` entry, then `class.findMany` to re-read liveness,
+   * because a class can complete or be cancelled between the two. Waiting
+   * entries that resolve to no open, non-cancelled class land in the second
+   * early return, and it resets the streak for the same reason as the first —
+   * a wedged row lock keeps its class a candidate through BOTH queries, so
+   * neither empty set is what a wedged lock looks like.
+   *
+   * Deleting that second `resetStreaks` call left the whole suite green:
+   * everything above reaches the first return or none at all. This overrides
+   * `class.findMany` rather than `waitlistEntry.groupBy`, which is exactly what
+   * separates the two paths — the first tick below proves the candidate query
+   * still answers with this class, so the tick under test can only be arriving
+   * by the second door.
+   */
+  it('resets the streak when no candidate resolves to an open class', async () => {
+    const contended = await makeFreedSeat('StreakNoOpenClass');
+    const clocks = windowClocks(contended.startTime);
+    const streaks = createReconciliationStreaks();
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const debug = vi.spyOn(log, 'debug').mockImplementation(() => undefined);
+    onTestFinished(() => {
+      warn.mockRestore();
+      debug.mockRestore();
+    });
+
+    const faulty = prisma.$extends({
+      query: {
+        class: {
+          findUnique() {
+            throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
+              code: 'P2024',
+              clientVersion: Prisma.prismaVersion.client,
+            });
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const contendedTick = await reconcileWaitlists(faulty, {
+      now: clocks.inClaimWindow,
+      streaks,
+    });
+    // This class WAS a candidate, so the candidate query answers with it — the
+    // premise the tick below depends on for reaching the second early return
+    // rather than the first.
+    expect(contendedTick.failedClassIds).toContain(contended.id);
+    expect(streaks.allTransientTicks).toBeGreaterThan(0);
+    expect(streaks.failuresByClass.size).toBeGreaterThan(0);
+
+    const noOpenClass = prisma.$extends({
+      query: {
+        class: {
+          findMany() {
+            return Promise.resolve([]);
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const summary = await reconcileWaitlists(noOpenClass, { now: clocks.inClaimWindow, streaks });
+    expect(summary.candidates).toBe(0);
+    // The line only this path writes, and the one that tells the two returns
+    // apart: the first reports no waiting entries at all.
+    expect(debug.mock.calls.at(-1)?.[1]).toBe(
+      'waitlist reconciliation found no open candidate class',
+    );
+    expect(streaks.allTransientTicks).toBe(0);
+    expect(streaks.failuresByClass.size).toBe(0);
+  });
+
+  /**
    * A failure that will never clear by retrying escalates on the FIRST tick.
    * Routing it through the streak would hide a permanently broken promotion path
    * for five minutes, which is the defect this module exists to remove.
@@ -1165,6 +1243,78 @@ describe('reconcileWaitlists (DB)', () => {
     await expect(
       reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks }),
     ).rejects.toMatchObject({ name: 'ReconciliationFailedError', reason: 'non_transient' });
+  });
+
+  /**
+   * TWO failing classes in one tick, one transient and one not — the only
+   * shape that can see `isContendedTick`'s third condition.
+   *
+   * That condition asks whether EVERY failure was transient. Weakening it to
+   * "at least one was" left this whole suite green: every other all-failed test
+   * here has a single failing class (where "every failure" and "some failure"
+   * are the same question), or pairs a failing class with a healthy reconciling
+   * one, which `decideEscalation` answers on its `allFailed` clause before
+   * transience is ever consulted. So a tick carrying a genuine defect ALONGSIDE
+   * a lock race would have been swallowed for the whole tolerance, which is the
+   * defect the tolerance was added to avoid causing.
+   *
+   * The streak is fresh, so nothing here is repetition: a mixed tick escalates
+   * on the tick it happens.
+   */
+  it('escalates at once when one class failed transiently and another did not', async () => {
+    const wedged = await makeFreedSeat('MixedWedged');
+    const contended = await makeFreedSeat('MixedContended');
+    const clocks = windowClocks(wedged.startTime);
+    const streaks = createReconciliationStreaks();
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => {
+      warn.mockRestore();
+      error.mockRestore();
+    });
+
+    // Routed by id for the transient half, and the DEFAULT arm fails too — the
+    // sweep is database-wide, so a leftover candidate reconciling would make
+    // this tick not all-failed. Same reasoning as `throws when every class it
+    // invoked failed`, except the default arm here carries the non-transient
+    // half of the mix rather than the whole tick.
+    const faulty = prisma.$extends({
+      query: {
+        class: {
+          findUnique({ args }) {
+            if (args.where?.id === contended.id) {
+              throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
+                code: 'P2024',
+                clientVersion: Prisma.prismaVersion.client,
+              });
+            }
+            throw new Error('schema drift');
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    await expect(
+      reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks }),
+    ).rejects.toMatchObject({
+      name: 'ReconciliationFailedError',
+      reason: 'non_transient',
+      // Both classes really were in this tick. Without this the assertion above
+      // would also pass for a tick that only ever saw one of them, which is the
+      // state every other test in this file is already in.
+      failedClassIds: expect.arrayContaining([wedged.id, contended.id]),
+    });
+
+    // And the mix was genuine rather than assumed: the per-class lines show one
+    // failure classified each way.
+    const byClass = (calls: Array<[unknown, ...unknown[]]>, id: string) =>
+      calls.map((c) => c[0] as { classId?: string; transient?: boolean })
+        .filter((p) => p?.classId === id);
+    expect(byClass(warn.mock.calls, contended.id).at(-1)).toMatchObject({ transient: true });
+    expect(byClass(error.mock.calls, wedged.id).at(-1)).toMatchObject({ transient: false });
+    // Escalated from a streak that never moved, not from repetition.
+    expect(streaks.allTransientTicks).toBe(0);
   });
 
   /**
@@ -1220,8 +1370,11 @@ describe('reconcileWaitlists (DB)', () => {
    * The tick-level escalation cannot see this one: it requires that NO class
    * reconciled, so a single wedged class hides completely as soon as anything
    * else works. That was inherited rather than decided. The decision is an
-   * `error` line naming the class and its streak — visible to log alerting,
-   * without holding an otherwise-working job at `degraded` indefinitely.
+   * `error` line naming the class and its streak, without holding an
+   * otherwise-working job at `degraded` indefinitely. What that line buys
+   * today is a record in the server log and nothing more — `lib/log.ts` is
+   * pino to stdout with no transport, so nothing pages anyone off either level
+   * (#157); the level is the correct classification for when that is fixed.
    */
   it('escalates a class contended for too many consecutive ticks, without reddening the job', async () => {
     const stuck = await makeFreedSeat('PerClassStuck');
