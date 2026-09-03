@@ -122,11 +122,32 @@ redacted name. They cannot reconcile the two — which is the point, and also
 the cost. Since `StudentPrivacy` defaults to every share off, this is the
 **common** path for booking-created links, not a rare one.
 
+That contact will never resolve *by itself* — it is not stuck there. Both
+exits work on it: `PATCH ?state=archived` hides it, and `DELETE` removes it
+outright, refusing only `declined` rows
+(`src/app/api/invitations/[id]/route.ts:176`).
+
 That cost is accepted rather than engineered away, because the obvious way to
-avoid it reopens the oracle: **the invitation row must genuinely be created.**
-"Did a new contact appear in my list?" is itself a yes/no channel carrying the
-exact bit being withheld, so a gated invite has to leave the same artifact a
-real one does.
+avoid it reopens the oracle. Creating the row already `accepted` would hide it
+from Contacts (`isContact`, `contact-list.tsx:47`) and from the student's
+pending list at once — but then inviting a stranger makes a contact appear and
+inviting a gated student does not, and **"did a new contact appear in my
+list?" is itself a yes/no channel carrying the exact bit being withheld.** The
+ghost's visibility is therefore load-bearing, not merely tolerated: a gated
+invite has to leave the same artifact a real one does.
+
+The residual channels around it hold. A ghost stays `pending` indefinitely,
+which is indistinguishable from a stranger who ignored the invitation;
+resending it is a no-op the teacher cannot observe, since §3 suppresses the
+send and delivery was never visible to them anyway.
+
+Two follow-on behaviours, both benign. Typing the same address again meets
+`ALREADY_INVITED` at `:177`, which returns *above* the gate — an answer about
+the teacher's own row, so no leak and no duplicate row. And if the student
+later unlinks, `unlinkTeacher` flips the ghost to `declined`, showing the
+teacher a decline for an invitation the invitee never saw: identical to how
+every other invitation behaves on unlink, and indistinguishable from a real
+one.
 
 ## Design
 
@@ -320,6 +341,8 @@ and the PR body cites the CI run for that tier rather than a local pass.
 ## Filed, not folded
 
 Nothing. The one candidate — the ghost "Invited" contact that never resolves —
-is the accepted cost of the decision above, named in §"The decision", not a
-defect with a fix someone is waiting for. Filing it would describe the design
-back to itself.
+is not a defect awaiting a fix: its visibility is what keeps the gated path
+indistinguishable from a real invitation (see §"The decision"), and the
+teacher can archive or delete it. Filing it would describe the design back to
+itself, and any issue proposing to hide it would be proposing to reopen the
+oracle this branch closes.
