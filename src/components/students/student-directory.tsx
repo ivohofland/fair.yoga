@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Input } from '@/components/ui/input';
 import { Icon } from '@/components/ui/icon';
@@ -37,35 +37,40 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
 
-  const fetchStudents = useCallback(async () => {
-    setLoading(true);
-    setLoadFailed(false);
-    try {
-      const params = new URLSearchParams(archived ? { archived: 'true' } : {});
-      const res = await fetch(`/api/students?${params}`);
-      if (res.status === 401) {
-        setLoadFailed(true);
-        window.location.href = '/login';
-        return;
-      }
-      if (!res.ok) {
-        console.error('[student-directory] fetch failed', { status: res.status });
-        setLoadFailed(true);
-        return;
-      }
-      const json: StudentListResponse = await res.json();
-      setStudents(json.data.students);
-    } catch (err) {
-      console.error('[student-directory] fetch failed', { err });
-      setLoadFailed(true);
-    } finally {
-      setLoading(false);
-    }
-  }, [archived]);
-
   useEffect(() => {
+    let cancelled = false;
+
+    async function fetchStudents() {
+      setLoading(true);
+      setLoadFailed(false);
+      try {
+        const params = new URLSearchParams(archived ? { archived: 'true' } : {});
+        const res = await fetch(`/api/students?${params}`);
+        if (res.status === 401) {
+          if (!cancelled) setLoadFailed(true);
+          window.location.href = '/login';
+          return;
+        }
+        if (!res.ok) {
+          console.error('[student-directory] fetch failed', { status: res.status });
+          if (!cancelled) setLoadFailed(true);
+          return;
+        }
+        const json: StudentListResponse = await res.json();
+        if (!cancelled) setStudents(json.data.students);
+      } catch (err) {
+        console.error('[student-directory] fetch failed', { err });
+        if (!cancelled) setLoadFailed(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
     void fetchStudents();
-  }, [fetchStudents]);
+    return () => {
+      cancelled = true;
+    };
+  }, [archived]);
 
   const query = search.trim().toLowerCase();
   // A withheld email arrives as `null` (see `lib/student-visibility.ts`,
