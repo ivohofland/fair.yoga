@@ -190,6 +190,7 @@ describe('ProfileSetupForm', () => {
     expect(calls).toContain('/api/auth/teacher-signup');
     // Nothing is lost: the fields are still populated for a retry.
     expect(screen.getByLabelText('First name')).toHaveValue('Anna');
+    expect(screen.getByLabelText('Code')).toBeInTheDocument();
   });
 
   it('ticket mode: a 401 whose resend itself fails reports the stuck state, not a false promise of a fresh link', async () => {
