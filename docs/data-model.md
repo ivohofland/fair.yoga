@@ -412,16 +412,19 @@ Swept daily by `reapClosedWaitlistEntries` (`services/waitlist-retention.ts`).
 | **id** (PK) | uuid | |
 | *registration_id* (FK) | → Registration | |
 | amount | decimal | |
-| status | enum | pending → paid / overdue |
+| status | enum | pending → paid / overdue / not_charged; paid and not_charged both reopen to pending |
 | method | string, nullable | e.g. "cash", "bank_transfer", "mollie", "stripe" |
 | processor_ref | string, nullable | External transaction ID (Level 2) |
 | reminder_sent_at | datetime, nullable | |
 | **Timestamps** | | |
 | created_at | datetime | |
 | paid_at | datetime, nullable | |
+| not_charged_at | datetime, nullable | Set when the teacher waives the payment (grace policy) |
 | updated_at | datetime | |
 
 Level 1: teacher marks payment as received manually (cash, bank transfer). Level 2: automated via Mollie/Stripe payment links. Failed payment retry policy is an open question for Level 2.
+
+`not_charged` is the grace-policy waiver (`docs/product-concept.md` §3): the teacher marks a post-completion payment as not collected, for the same class of case a passwordless system has no other lever for (a genuine emergency, lenience). It is post-completion only — early cancellation already produces no `Payment` row at all, since `completeClass` is the only place one is created.
 
 ---
 
