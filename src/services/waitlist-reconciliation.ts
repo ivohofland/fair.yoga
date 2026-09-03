@@ -83,8 +83,9 @@ export interface SkippedClass {
  * it did not create. Anything wanting a number reads `.length`, which cannot
  * drift from the list it counts.
  *
- * Every candidate class lands in exactly one of the four lists — `reconciled`,
- * `failed`, `skipped`, or (as a subset of `reconciled`) `repaired`. That is
+ * Every candidate class lands in exactly one of the three partitions —
+ * `reconciled`, `failed`, `skipped` — with two subsets layered on top: `repaired`
+ * (of `reconciled`) and `transientFailedClassIds` (of `failed`). That is
  * structural rather than documented: the loop computes one `ClassOutcome` per
  * class and this shape is folded from those in a single pass, so disjointness
  * cannot be broken by adding a statement in the wrong place.
