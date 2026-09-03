@@ -330,20 +330,19 @@ export const DELETE = withErrorHandler(async (
  * nothing yet to name; the payload's `branch` field is `'unknown'` for that
  * same case.
  *
- * It used to say the loss could never be recovered, because nobody would know
- * to look. That is no longer true: the `waitlist-reconciliation` sweep
- * (`services/waitlist-reconciliation.ts`, #220) re-runs this same hook every
- * minute on any open class holding a free seat and a waiting queue, so a drop
- * here is repaired within a tick. Two things follow. This line is now a record
- * of the live path failing rather than an obituary — and adding a retry HERE
- * is still the wrong fix, for the reason the sweep exists: a `55P03` means the
- * contending writer is still holding the row, so an immediate retry loses the
- * same race again.
+ * The loss recorded here is RECOVERABLE. The `waitlist-reconciliation` sweep
+ * (`services/waitlist-reconciliation.ts`, #220) re-runs this same hook on
+ * every tick for any open class holding a free seat and a waiting queue — this
+ * class, in exactly this state — so a drop here is repaired within a tick. Two
+ * things follow. This line is a record of the live path failing rather than an
+ * obituary — and adding a retry HERE is still the wrong fix, for the reason
+ * the sweep exists: a `55P03` means the contending writer is still holding the
+ * row, so an immediate retry loses the same race again.
  *
  * One case the sweep still cannot reach, stated because "repaired within a
- * tick" would otherwise read as unconditional: a drop in the final minute
- * before the cancel deadline. The class is `frozen` by the next tick and the
- * sweep will not promote past a deadline, so for that one minute this line is
+ * tick" would otherwise read as unconditional: a drop in the last tick before
+ * the cancel deadline. The class is `frozen` by the next tick and the sweep
+ * will not promote past a deadline, so for that final tick this line is
  * still the only record. It is not the multi-cancel case — a broadcast dropped
  * after an earlier one succeeded IS repaired, because `Class.spotBroadcastAt`
  * is cleared by the claim that consumed the earlier seat.
@@ -352,27 +351,43 @@ async function promoteAfterCancel(classId: string): Promise<void> {
   try {
     await handleSpotFreed(prisma, classId);
   } catch (err) {
-    // `-1`, not `0`, and not a second silent failure: this runs inside a
-    // handler that must not throw, and a count no real queue can take keeps
-    // the line honest about not knowing rather than claiming nobody waited.
-    //
-    // What `-1` no longer distinguishes is WHY the count failed. #104 routes
-    // materially more traffic into this catch — both branches of
-    // `handleSpotFreed` can raise `55P03` now, not just the broadcast one — so
-    // a `-1` here can be pool exhaustion or a second `lock_timeout` on the
-    // count itself, and the error is discarded either way. One
-    // `log.debug({ err }, …)` in this `.catch` restores that; it is left out
-    // of a documentation-only pass on purpose, not by oversight.
-    const waiting = await prisma.waitlistEntry
-      .count({ where: { classId, status: 'waiting' } })
-      .catch(() => -1);
-    const transient = isTransientDbError(err);
-    const window = err instanceof SpotFreedError ? err.window : null;
-    log[transient ? 'warn' : 'error'](
-      { err, classId, waiting, transient, branch: window ?? 'unknown' },
-      transient
-        ? `waitlist spot-freed hook lost a lock race after cancel — ${spotFreedLoss(window)}`
-        : `waitlist spot-freed hook failed after cancel — ${spotFreedLoss(window)}`,
-    );
+    try {
+      // `-1`, not `0`, and not a second silent failure: this runs inside a
+      // handler that must not throw, and a count no real queue can take keeps
+      // the line honest about not knowing rather than claiming nobody waited.
+      //
+      // What `-1` no longer distinguishes is WHY the count failed. #104 routes
+      // materially more traffic into this catch — both branches of
+      // `handleSpotFreed` can raise `55P03` now, not just the broadcast one — so
+      // a `-1` here can be pool exhaustion or a second `lock_timeout` on the
+      // count itself, and the error is discarded either way. One
+      // `log.debug({ err }, …)` in this `.catch` restores that; it is left out
+      // of a documentation-only pass on purpose, not by oversight.
+      const waiting = await prisma.waitlistEntry
+        .count({ where: { classId, status: 'waiting' } })
+        .catch(() => -1);
+      const transient = isTransientDbError(err);
+      const window = err instanceof SpotFreedError ? err.window : null;
+      log[transient ? 'warn' : 'error'](
+        { err, classId, waiting, transient, branch: window ?? 'unknown' },
+        transient
+          ? `waitlist spot-freed hook lost a lock race after cancel — ${spotFreedLoss(window)}`
+          : `waitlist spot-freed hook failed after cancel — ${spotFreedLoss(window)}`,
+      );
+    } catch (loggingErr) {
+      // The cancel has ALREADY COMMITTED — `handleSpotFreed`'s own failure
+      // above is a real (if now-unlogged) miss, but an UNCAUGHT throw from the
+      // code handling it would reach `withErrorHandler` and answer 500 for a
+      // cancellation that fully succeeded, which is the exact outcome this
+      // function's swallow exists to prevent. The diagnostic read already
+      // guards itself with `.catch()`; this is the backstop for what that
+      // doesn't — `log.warn`/`log.error` itself, or a future addition to this
+      // block. Same shape and same reason as `deleteStudentAccount`'s
+      // post-commit loop (`services/gdpr.ts`, issue #242).
+      log.error(
+        { err: loggingErr, classId },
+        'waitlist spot-freed hook diagnostic failed unexpectedly',
+      );
+    }
   }
 }
