@@ -183,6 +183,64 @@ over plain HTTP in local development.
   recovery — and that recovery is *frictionless*, because it is then a
   same-device flow.
 
+### The full surface: two flows × two roles, three doors, four panels
+
+An earlier draft of this spec described the change as if `/send` were the only
+door. It is not, and the gap was found at the spec review gate. Re-derive:
+
+```bash
+grep -rn "sendMagicLinkEmail(" src/ --include="*.ts" | grep -v "export async function"
+grep -rn "generateMagicLinkToken(" src/ --include="*.ts" | grep -v "export async function"
+grep -rn "Check your inbox" src/ --include="*.tsx"
+```
+
+**Three endpoints mint a link and email it**, and all three must bind the nonce:
+
+| Door | Serves | Mint + send |
+|---|---|---|
+| `POST /api/auth/magic-link/send` | **Sign-in, both roles** — it looks up `Teacher` first, then `Student` (`send/route.ts:41-42`) | `:45`, `:48` |
+| `POST /api/auth/teacher-signup` | Teacher signup | `teacher-signup/route.ts:36`, `:42` |
+| `POST /api/auth/student-signup` | Student signup | `student-signup/route.ts:107`, `:109` |
+
+There is a **fourth** caller of `generateMagicLinkToken` — `signup-ticket.ts:16` —
+which mints the `teacher_profile_pending` ticket. It **emails nothing**; the
+ticket is handed back in a cookie to a device that is already present. It is not
+a door, takes no nonce, and §3 keeps it out of the handoff path entirely. The
+three doors are exactly the three `sendMagicLinkEmail` call sites, which is the
+seam the tether below uses.
+
+**Four "Check your inbox" panels** must therefore carry the code input:
+
+| Panel | Reached from |
+|---|---|
+| `src/app/(public)/login/page.tsx:35` | `/login` — both roles |
+| `src/components/booking/booking-sign-in.tsx:49` | The public booking page, serving **both** its modes — returning (`:35` → `/send`) and new (`:30` → `/student-signup`) |
+| `src/components/signup/signup-form.tsx:59` | `/signup` — teacher signup (#385) |
+| `src/components/signup/profile-setup-form.tsx` | The `expired` status: the 1-hour ticket aged out mid-form, so `:280` re-sends a teacher-signup link with every field preserved |
+
+The fourth is the one to design against, not the easiest. The user is on
+`/signup/profile` with a half-typed profile draft; their ticket expired; a fresh
+link goes out. Under this design, opening that link elsewhere yields a code they
+carry back to the page **that still holds their draft** — which is exactly right,
+and is the clearest illustration of why the session belongs on the requesting
+device. Omit the code input there and the draft is stranded.
+
+### The tether: one function, so a door cannot be added without a nonce
+
+Three doors means three chances to forget the cookie, and a fourth whenever
+someone adds an entry point. "Remember to call `ensureOriginNonce` in each
+route" is precisely the untethered membership claim CLAUDE.md forbids.
+
+Instead, **collapse mint → bind → build URL → send into a single exported
+function**, and make `sendMagicLinkEmail` internal to it (not exported from
+`@/lib/email`, or exported only to that function's module). The three doors call
+that one function and pass the request/response so it can read and set the
+nonce. A new door physically cannot email a sign-in link without binding one,
+because there is no longer an API that does the one without the other.
+
+That is a compiler tether in the sense CLAUDE.md means: the invariant is held by
+the shape of the code, not by a comment asking future contributors to remember.
+
 ### Deliberately no polling
 
 The waiting page does **not** poll for "the link was opened elsewhere". The code
@@ -276,6 +334,14 @@ Re-introducing one three files away would be a poor trade.
 so two links requested from the same browser are both same-device there. It is
 rotated on successful sign-in.
 
+**This constraint binds hardest on `/send`, but the rule is uniform across all
+three doors** (§2). The two signup doors have a different enumeration posture by
+design — `/teacher-signup` deliberately answers `ALREADY_TEACHER`, because a
+signup form has to tell you the address is taken — so an unconditional cookie
+there leaks nothing either way. Making the rule uniform anyway is what keeps it
+inside the single function of §2's tether, rather than becoming a per-door
+judgement call that the next contributor has to re-make correctly.
+
 ---
 
 ## 6. Rate limiting and the attempt budget
@@ -313,6 +379,18 @@ email for a number that is not there, so the copy states the condition:
 Always visible rather than behind a disclosure toggle: one explanatory line is
 calmer than a widget that hides things, and it keeps the page a pure form with
 no state.
+
+**This panel is shared, not duplicated four times.** All four waiting panels
+(§2, *The full surface*) render the same code-entry component, so the copy and
+the claim call cannot drift between the sign-in and signup halves — a real risk
+here, since `booking-sign-in.tsx:20-21` records that it and `signup-form.tsx`
+were already written as deliberate copies of one another's shape. Each panel
+keeps its own surrounding sentence (the booking one says the link "brings you
+straight back here", `booking-sign-in.tsx:51`); only the code block is shared.
+
+The `profile-setup-form.tsx` `expired` panel carries one extra line, because its
+stakes are different: the draft is preserved, and the user needs to know that
+before they decide whether to abandon the tab.
 
 **The word "device" is avoided in load-bearing copy.** Gmail and Outlook on iOS
 open links in an in-app webview with its own cookie jar, so a genuinely
@@ -402,9 +480,29 @@ restoring, and re-verifying — an explicit step per guard, per CLAUDE.md and th
 | Code is stable across repeated opens | integration: open twice, assert one code | Regenerate per open → the first code stops working |
 | Handoff does not poison same-device | integration: open cookie-less, then open with the nonce | Treat a stamped code as a terminal state → the legitimate same-device open fails |
 | §3: signup ticket redemption is unaffected | existing `teacher-signup-api.test.ts` passes unedited | Route `consumeSignupTicket` through the handoff function → those tests go red |
+| **All three doors bind a nonce** | Integration, one case per door: POST each of `/send`, `/teacher-signup`, `/student-signup` and assert `Set-Cookie` carries `fair_yoga_origin` | Remove the binding from **any one** door → exactly that door's case goes red |
+| **The tether holds** | A door cannot email a link without binding | Add a fourth call site that calls the old mint-then-send pair directly → it must not typecheck, because `sendMagicLinkEmail` is no longer reachable |
 
-The last row is the cross-task guard: it is the one that catches the §3 trap,
-and it must pass **without editing that test file**.
+The last three rows are the cross-task guards. The `consumeSignupTicket` row
+catches the §3 trap and must pass **without editing that test file**. The
+three-door row must fail *per door* rather than in aggregate — a single test
+asserting "some door binds a nonce" would pass with two doors broken, which is
+the failure this project keeps hitting (`solve-issue` §4: a finding naming N
+locations gets N verdicts, not one).
+
+**Coverage matrix — the four combinations must each have an end-to-end case**,
+since the whole question at the review gate was whether signup and sign-in, for
+both roles, were actually covered:
+
+| | Sign-in | Signup |
+|---|---|---|
+| **Teacher** | `/login` → same-device, and handoff | `/signup` → handoff, landing on the requesting device |
+| **Student** | `/login` and the booking page's returning mode | Booking page's new mode → handoff, preserving the `redirect` to the class |
+
+The student-signup case must assert the class `redirect` survives the handoff —
+that is the one path where the token's `redirectTo` and a second device
+interact, and losing it would drop a student on `/bookings` instead of the class
+they were trying to book.
 
 **Verification note for this branch.** This work happens in a git worktree,
 where integration and e2e cannot run locally — both are hard-wired to the dev
@@ -424,6 +522,7 @@ anything wider goes in `docs/` and the comment links to it.
 |---|---|
 | The census of test call sites (§8) | This spec and the PR body — it is a count, and it ships with the command that re-derives it. Never a docblock |
 | Why the nonce cookie is unconditional (§5) | A comment **on the cookie write**, where the tempting edit ("only set it when we mint a token") would be made. It annotates its own line |
+| "There are three doors" (§2) | This spec and the PR body, with the `sendMagicLinkEmail` grep that re-derives it. **Never a docblock** — a fourth door would be added in another file, so the comment's owner would never see it falsified. The durable form of this claim is the tether, not prose: one function, `sendMagicLinkEmail` unreachable around it |
 | Why `consumeSignupTicket` is not routed through the handoff (§3) | The test in §9's last row is the durable tether; a one-line comment on the handoff function states the constraint |
 | What the code's hash does and does not buy (§4) | A comment on the column's use, phrased as the pair (nonce ∧ code) being the credential. No confidentiality claim for the code alone |
 | The mailbox-compromise ceiling (§1.5) | This spec and the #214 closing comment. Not a code comment — it is a claim about the whole flow, with no single owning line |
