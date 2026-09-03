@@ -658,7 +658,9 @@ describe('reapClosedWaitlistEntries', () => {
   /**
    * The cap, exercised through the injected `maxClasses` rather than by
    * creating 501 classes. The seam exists for this reason and mirrors
-   * `reconcileWaitlists(db, { now })`.
+   * `reconcileWaitlists`'s own options-object seam (`waitlist-reconciliation.ts`) —
+   * an injected clock rather than the wall one, for a test that must not depend
+   * on which day it runs.
    *
    * `cappedOut` AND the log line, because `isolatedSweeps` discards sweep
    * return values — the log is the only channel an operator has, so a flag

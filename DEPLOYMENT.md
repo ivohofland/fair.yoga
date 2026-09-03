@@ -98,5 +98,14 @@ Migrations run automatically via the `migrate` service on every deploy.
 - `GET /api/health` — liveness, DB reachability (503 when the DB is down),
   and per-job scheduler state (`jobs.<name>.healthy` flips false when a
   job errors); point your uptime monitor here.
+- `waitlist-reconciliation` is deliberately slower to flip than the other
+  jobs. It runs every minute and repairs waitlists whose live spot-freed hook
+  was dropped, so a single lost row-lock race is routine and self-healing. It
+  reports the job unhealthy when a failure will not clear by retrying, or when
+  five consecutive ticks lost **every** class to contention
+  (`MAX_CONSECUTIVE_CONTENDED_TICKS` in
+  `src/services/waitlist-reconciliation.ts`) — roughly five minutes of an
+  unbroken hold. A single class stuck while others succeed does **not** flip
+  the flag; it logs at `error` with a `classStreak` field naming the class.
 - `docker compose -f docker-compose.prod.yml logs -f app` — scheduler and
   request logs.
