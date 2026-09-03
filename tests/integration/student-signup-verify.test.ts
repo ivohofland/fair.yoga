@@ -41,11 +41,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.magicLinkToken.deleteMany({ where: { email: { contains: suffix } } });
-  // `Session` carries a bare `accountId`, no `@relation` back to `Account`
-  // (schema.prisma:1014-1021) — a nested `{ account: { email: ... } }` filter
-  // isn't a valid Prisma query on this schema, so the matching accounts are
-  // looked up first, the same shape `invitations-api.test.ts` and
-  // `waitlist-display.test.ts` use.
+  // `Session` carries a bare `accountId`, no `@relation` back to `Account` —
+  // a nested `{ account: { email: ... } }` filter isn't a valid Prisma
+  // query on this schema, so the matching accounts are looked up first, the
+  // same shape `invitations-api.test.ts` and `waitlist-display.test.ts` use.
   const accountIds = (
     await prisma.account.findMany({ where: { email: { contains: suffix } }, select: { id: true } })
   ).map((a) => a.id);
@@ -118,7 +117,10 @@ describe('POST /api/auth/magic-link/verify — student_signup tokens', () => {
     // A session, not a ticket: resolveOrClaimAccount claimed the row.
     expect(body.data.accountId).toBeTruthy();
     expect(body.data.redirectTo).toBe(REDIRECT);
-    expect(res.headers.get('set-cookie') ?? '').not.toContain('fair_yoga_signup=');
+    // PR #427 review, C1: the session-issuing branch now unconditionally
+    // clears any stray ticket cookie, so it's named here too — as a clear
+    // (`Max-Age=0`), not a live value.
+    expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
 
     const claimed = await prisma.student.findUniqueOrThrow({ where: { id: crmStudentId } });
     expect(claimed.firstName).toBe('CRM');
