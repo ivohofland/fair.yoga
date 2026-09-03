@@ -292,14 +292,21 @@ export interface ReapOptions {
 /**
  * Thrown when a run attempted at least one class and every single one failed.
  *
- * Mirrors `ReconciliationFailedError` (`waitlist-reconciliation.ts`) and exists
- * for the same reason. Per-class failures are swallowed by design — that is what
- * stops one contended class abandoning the classes behind it — but swallowing
- * ALL of them means `scheduler.ts` stamps `lastSuccessAt`, leaves `lastError`
- * null, and `/api/health` reports this job `healthy: true`. That is the field
- * `DEPLOYMENT.md` tells operators to monitor, so `{classes: 500, failed: 500,
- * deleted: 0}` returning normally is an affirmative false statement rather than
- * a missing signal.
+ * Shares its shape with `ReconciliationFailedError` (`waitlist-reconciliation.ts`)
+ * — both swallow per-class failures by design, so one contended class cannot
+ * abandon the classes behind it, and both rethrow when swallowing ALL of them
+ * would let `scheduler.ts` stamp `lastSuccessAt`, leave `lastError` null, and
+ * `/api/health` report the job `healthy: true` — an affirmative false statement
+ * rather than a missing signal. The reason to rethrow diverges from there:
+ * `ReconciliationFailedError` tolerates a bounded run of all-transient ticks,
+ * because on a single-teacher deployment one candidate class losing a benign
+ * lock race is the ordinary tick, not the edge case. This sweep does not — it
+ * throws unconditionally, transience-blind, the moment every class it
+ * attempted fails. It runs once daily over a batch of up to
+ * `MAX_CLASSES_PER_RUN` terminal classes that essentially nothing else is
+ * contending for, so an all-failed run here is a real signal rather than a
+ * false alarm; there is no routine contention for a streak to distinguish from
+ * a wedged lock.
  *
  * `classes > 0` is what keeps this cheap: "nothing was eligible" and "found work
  * and accomplished none" are different states the summary can already tell
@@ -495,7 +502,7 @@ export async function reapClosedWaitlistEntries(
  * the same false statement with one fewer decimal place, and it took the
  * `failed > 0` branch: a `warn`, a normal return, `makeTick` stamping
  * `lastSuccessAt` and clearing `lastError`, and `/api/health` — the surface
- * `docs/DEPLOYMENT.md` tells operators to watch — reporting this job
+ * `DEPLOYMENT.md` tells operators to watch — reporting this job
  * `healthy: true`. All-or-nothing was the weakest version of the check this
  * module argues for.
  *
