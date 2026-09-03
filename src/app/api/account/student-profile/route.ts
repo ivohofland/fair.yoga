@@ -13,6 +13,7 @@ import { studentProfileSchema } from '@/lib/schemas';
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
 import {
   SIGNUP_TICKET_COOKIE,
+  peekSignupTicket,
   consumeSignupTicket,
   clearSignupTicketCookie,
   createSession,
@@ -30,30 +31,41 @@ import { log } from '@/lib/log';
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const ticketToken = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
 
-  // The cookie is READ here, not consumed, so the body is still validated
-  // before a single-use ticket is spent — `teacher-profile`'s ordering, for
-  // its reason: losing a ticket to a typo is a bad first interaction.
+  // Peeked (not consumed) first: whether a body is worth parsing depends on
+  // the ticket actually resolving, not merely on the cookie's presence. A
+  // stale or expired ticket cookie must fall through to the session path
+  // below instead of failing the body parse before `requireSession` ever
+  // runs — `magic-link/verify` clears the origin nonce but never this
+  // cookie, so a browser can carry a dead ticket alongside a live session.
   // Conditional because the session path has no body at all: `JoinAsStudent`
   // POSTs without one, and `parseBody` opens with `request.json()`, which
   // throws on an empty body.
+  const ticketAddress = ticketToken
+    ? await peekSignupTicket(prisma, ticketToken, 'student')
+    : null;
+
   let names: { firstName: string; lastName: string } | null = null;
-  if (ticketToken) {
+  if (ticketAddress) {
     const parsed = await parseBody(request, studentProfileSchema);
     if ('error' in parsed) return parsed.error;
     names = parsed.data;
   }
 
-  const ticketEmail = ticketToken
-    ? await consumeSignupTicket(prisma, ticketToken, 'student')
-    : null;
+  // Consumed (single-use) only after a successful parse, so a typo in the
+  // name fields doesn't cost the ticket — `teacher-profile`'s ordering, for
+  // its reason: losing a ticket to a typo is a bad first interaction.
+  const ticketConsumed =
+    ticketAddress && names && ticketToken
+      ? (await consumeSignupTicket(prisma, ticketToken, 'student')) !== null
+      : false;
 
   type Authorization =
     | { source: 'ticket'; email: string; firstName: string; lastName: string }
     | { source: 'session'; accountId: string; email: string; firstName: string; lastName: string };
   let auth: Authorization;
 
-  if (ticketEmail && names) {
-    auth = { source: 'ticket', email: ticketEmail, firstName: names.firstName, lastName: names.lastName };
+  if (ticketConsumed && ticketAddress && names) {
+    auth = { source: 'ticket', email: ticketAddress, firstName: names.firstName, lastName: names.lastName };
   } else {
     const session = await requireSession(request);
     if (isErrorResponse(session)) return session;
