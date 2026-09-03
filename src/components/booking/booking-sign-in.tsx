@@ -17,8 +17,6 @@ type Mode = 'new' | 'returning';
 // passkey on the returning path. Both routes land back on this class.
 export function BookingSignIn({ redirect }: BookingSignInProps) {
   const [mode, setMode] = useState<Mode>('new');
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
 
@@ -31,7 +29,7 @@ export function BookingSignIn({ redirect }: BookingSignInProps) {
           ? await fetch('/api/auth/student-signup', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ firstName, lastName, email, redirect }),
+              body: JSON.stringify({ email, redirect }),
             })
           : await fetch('/api/auth/magic-link/send', {
               method: 'POST',
@@ -64,27 +62,11 @@ export function BookingSignIn({ redirect }: BookingSignInProps) {
       </h2>
       <p className="type-body mb-4 max-w-[420px]">
         {mode === 'new'
-          ? 'Booking takes one email — no passwords. We create your account and send you a sign-in link.'
+          ? 'Booking takes one email — no passwords. We send you a sign-in link.'
           : "We'll email you a sign-in link that brings you back to this class."}
       </p>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4 max-w-[420px]">
-        {mode === 'new' && (
-          <>
-            <Input
-              label="First name"
-              value={firstName}
-              onChange={(e) => { setFirstName(e.target.value); if (status === 'error') setStatus('idle'); }}
-              required
-            />
-            <Input
-              label="Last name"
-              value={lastName}
-              onChange={(e) => { setLastName(e.target.value); if (status === 'error') setStatus('idle'); }}
-              required
-            />
-          </>
-        )}
         <Input
           label="Email"
           type="email"

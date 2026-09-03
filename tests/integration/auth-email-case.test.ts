@@ -60,10 +60,7 @@ describe('sign-in and signup are case-insensitive on email', () => {
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...freshIp() },
-      body: JSON.stringify({
-        firstName: 'Dup', lastName: 'Attempt',
-        email: studentEmail.toUpperCase(),
-      }),
+      body: JSON.stringify({ email: studentEmail.toUpperCase() }),
     });
     expect(res.status).toBe(200);
 

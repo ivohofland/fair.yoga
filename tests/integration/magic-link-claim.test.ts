@@ -95,6 +95,68 @@ describe('POST /api/auth/magic-link/claim — device handoff over HTTP', () => {
     expect(await prisma.magicLinkToken.findFirst({ where: { email } })).toBeNull();
   });
 
+  /**
+   * #399's `student-signup` route mints `student_signup`-purpose tokens; a
+   * fresh address opened on a second device must still hand back a ticket
+   * here, the same way `magic-link/verify` does for the same-browser case —
+   * not the "Account not found" a plain `sign_in`/`teacher_signup`-shaped
+   * claim would produce for an address with no account.
+   */
+  it('hands back a ticket for a student_signup token opened on another device', async () => {
+    const freshEmail = `claim-signup-${suffix}@test.local`;
+    const redirectTo = `/t/book/${suffix}`;
+
+    const sendRes = await fetch(`${BASE_URL}/api/auth/student-signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ email: freshEmail, redirect: redirectTo }),
+    });
+    expect(sendRes.status).toBe(200);
+    const originCookie = /fair_yoga_origin=([^;]+)/.exec(
+      sendRes.headers.get('set-cookie') ?? '',
+    )?.[1];
+    expect(originCookie).toBeTruthy();
+
+    // /student-signup never echoes the raw token either — mint an equivalent
+    // one, bound to this browser's nonce, the way it would have.
+    const token = await generateMagicLinkToken(prisma, freshEmail, {
+      redirectTo,
+      purpose: 'student_signup',
+      originBrowserHash: hashNonce(originCookie!),
+    });
+
+    // Opened on a DIFFERENT browser: no fair_yoga_origin cookie at all.
+    const verifyRes = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ token }),
+    });
+    expect(verifyRes.status).toBe(200);
+    const verifyBody = (await verifyRes.json()) as { data: { handoffCode: string } };
+
+    const claimRes = await fetch(`${BASE_URL}/api/auth/magic-link/claim`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${originCookie}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ code: verifyBody.data.handoffCode }),
+    });
+    expect(claimRes.status).toBe(200);
+    const cookies = claimRes.headers.get('set-cookie') ?? '';
+    expect(cookies).toContain('fair_yoga_signup=');
+    // A ticket, not a session: the address still has no account.
+    expect(cookies).not.toContain('fair_yoga_session=');
+    const claimBody = (await claimRes.json()) as { data: { redirectTo: string } };
+    expect(claimBody.data.redirectTo).toBe(redirectTo);
+
+    expect(await prisma.student.findUnique({ where: { email: freshEmail } })).toBeNull();
+    expect(await prisma.account.findUnique({ where: { email: freshEmail } })).toBeNull();
+
+    await prisma.magicLinkToken.deleteMany({ where: { email: freshEmail } });
+  });
+
   it('refuses a wrong code without a session', async () => {
     const wrongEmail = `claim-http-wrong-${suffix}@test.local`;
     const sendRes = await fetch(`${BASE_URL}/api/auth/magic-link/send`, {

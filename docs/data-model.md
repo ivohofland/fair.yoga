@@ -102,7 +102,8 @@ reaching only one of them is the drift #419 was filed for — they keep their
 own logging, which is not the same question.
 
 No unclaimed `Student` is reachable today: #166 stopped the CRM creating the
-row, both remaining create sites set `claimedAt`, and the seed writes none.
+row, the sole remaining create site (`api/account/student-profile`) sets
+`claimedAt` under both of its authorizations, and the seed writes none.
 So this rule governs no live data, and the reason to keep the two surfaces
 agreeing anyway is that the day one of those three facts stops holding, the
 disagreement is what ships — silently, since neither surface would be wrong

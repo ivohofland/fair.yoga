@@ -126,11 +126,9 @@ export const magicLinkSendSchema = z.object({
 });
 
 export const studentSignupSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
   email: emailField,
   redirect: relativePath.optional(),
-});
+}).strict();
 
 export const magicLinkVerifySchema = z.object({
   token: z.string().min(1),

@@ -182,7 +182,7 @@ model Student {
   id                 String              @id @default(uuid())
   // Nullable for rows predating #166, which stopped the CRM creating a
   // Student at all — it writes an Invitation, and the link forms on accept.
-  // Both remaining create sites set this and `claimedAt` in one statement,
+  // The sole remaining create site sets this and `claimedAt` in one statement,
   // so nothing produces an unclaimed row any more. What still READS for one,
   // and why, is `docs/data-model.md` (StudentPrivacy).
   accountId          String?             @unique

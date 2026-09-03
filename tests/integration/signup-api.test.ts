@@ -61,27 +61,70 @@ afterAll(async () => {
 });
 
 describe('POST /api/auth/student-signup', () => {
-  it('creates account + claimed student for a fresh email', async () => {
-    const email = `signup-fresh-student-${suffix}@test.local`;
+  it('creates nothing for a fresh email — the link is all that is minted', async () => {
+    const email = `signup-fresh-${suffix}@test.local`;
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...freshIp() },
-      body: JSON.stringify({ firstName: 'Fresh', lastName: 'Student', email }),
+      body: JSON.stringify({ email, redirect: '/t/book/c1' }),
     });
-
     expect(res.status).toBe(200);
-    const student = await prisma.student.findUnique({ where: { email } });
-    expect(student).not.toBeNull();
-    expect(student!.claimedAt).not.toBeNull();
-    expect(student!.accountId).not.toBeNull();
-    expect(await prisma.account.count({ where: { email } })).toBe(1);
+
+    expect(await prisma.student.findUnique({ where: { email } })).toBeNull();
+    expect(await prisma.account.findUnique({ where: { email } })).toBeNull();
+
+    const token = await prisma.magicLinkToken.findFirstOrThrow({ where: { email } });
+    expect(token.purpose).toBe('student_signup');
+    expect(token.redirectTo).toBe('/t/book/c1');
+  });
+
+  it('mints an ordinary sign_in link when no redirect was supplied', async () => {
+    const email = `signup-noredir-${suffix}@test.local`;
+    const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ email }),
+    });
+    expect(res.status).toBe(200);
+    // A ticket is never minted without somewhere to spend it, so a request
+    // with no destination gets a link that cannot produce one.
+    const token = await prisma.magicLinkToken.findFirstOrThrow({ where: { email } });
+    expect(token.purpose).toBe('sign_in');
+  });
+
+  it('mints an ordinary sign_in link for an address that already has an account', async () => {
+    const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ email: takenEmail, redirect: '/t/book/c1' }),
+    });
+    expect(res.status).toBe(200);
+    const token = await prisma.magicLinkToken.findFirstOrThrow({
+      where: { email: takenEmail }, orderBy: { createdAt: 'desc' },
+    });
+    // The signup marker is what lets verification create an account; handing
+    // it to an address that already has one would push a real user down the
+    // signup path.
+    expect(token.purpose).toBe('sign_in');
+  });
+
+  it('refuses a body that still carries the old name fields', async () => {
+    const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({
+        firstName: 'Stale', lastName: 'Client',
+        email: `signup-stale-${suffix}@test.local`, redirect: '/t/book/c1',
+      }),
+    });
+    expect(res.status).toBe(400);
   });
 
   it('does not create an account for an unclaimed CRM email — claim happens at verify', async () => {
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...freshIp() },
-      body: JSON.stringify({ firstName: 'C', lastName: 'C', email: unclaimedEmail }),
+      body: JSON.stringify({ email: unclaimedEmail }),
     });
 
     expect(res.status).toBe(200);
@@ -94,7 +137,7 @@ describe('POST /api/auth/student-signup', () => {
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...freshIp() },
-      body: JSON.stringify({ firstName: 'T', lastName: 'T', email: teacherOnlyEmail }),
+      body: JSON.stringify({ email: teacherOnlyEmail }),
     });
 
     expect(res.status).toBe(200);
@@ -105,95 +148,13 @@ describe('POST /api/auth/student-signup', () => {
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...freshIp() },
-      body: JSON.stringify({ firstName: 'T', lastName: 'T', email: takenEmail }),
+      body: JSON.stringify({ email: takenEmail }),
     });
 
     // Same 200 as every other outcome — no account enumeration.
     expect(res.status).toBe(200);
     expect(await prisma.student.count({ where: { email: takenEmail } })).toBe(1);
     expect(await prisma.account.count({ where: { email: takenEmail } })).toBe(1);
-  });
-
-  /**
-   * The route's two pre-checks are plain `findUnique`s, so under READ
-   * COMMITTED two concurrent signups for one fresh address both pass them and
-   * one loses on `Account.email`/`Student.email`. Unhandled, that P2002 comes
-   * back as a 409 "Resource already exists" — a legitimate signup failed, and
-   * an anonymous caller was just told the address is taken, which is exactly
-   * what this route's identical 200 exists to prevent.
-   *
-   * A plain `Promise.all` cannot force that interleaving — it serialised in
-   * Tasks 2-4 of this branch and would pass green against the bug, because the
-   * second request would find the committed account, skip the create, and fall
-   * straight through to the mint-and-send. (There is no `else` in that route —
-   * every state that is not a fresh email simply falls past the guard.)
-   * The row-lock lever those tasks used does not work either: the row does not
-   * exist yet. The lever that does is an UNCOMMITTED HOLDER — a second client
-   * inserts the same address inside an open transaction, both requests sail
-   * past their pre-checks (uncommitted rows are invisible), both park on the
-   * pending unique-index entry, and the holder then commits so both lose.
-   *
-   * That the surviving row is the HOLDER's is the proof the lever bit: if it
-   * had not, one of the two requests would have created a `Race` row.
-   */
-  it('answers both halves of a concurrent signup identically, with no enumeration', async () => {
-    const email = `signup-race-${suffix}@test.local`;
-    const ip = freshIp(); // one bucket, shared: two requests, limit is 5/hr
-
-    const holder = new PrismaClient();
-    let release!: () => void;
-    let holding!: Promise<unknown>;
-    const released = new Promise<void>((r) => { release = r; });
-    await new Promise<void>((parked, failed) => {
-      holding = holder.$transaction(async (tx) => {
-        await tx.student.create({
-          data: {
-            firstName: 'Holder', lastName: 'Signup', email,
-            claimedAt: new Date(), account: { create: { email } },
-          },
-        });
-        parked();
-        await released;
-      }, { timeout: 20_000 }).catch((err: unknown) => { failed(err); throw err; });
-    });
-
-    const post = () => fetch(`${BASE_URL}/api/auth/student-signup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...ip },
-      body: JSON.stringify({ firstName: 'Race', lastName: 'Signup', email }),
-    });
-    const both = Promise.all([post(), post()]);
-
-    // Long enough that both requests have passed their pre-checks and parked
-    // on the holder's pending index entry, short enough not to near a timeout.
-    let settled = false;
-    void both.then(() => { settled = true; });
-    await new Promise((r) => setTimeout(r, 1000));
-
-    // The lever is asserted, not assumed. The `await` on the holder's insert
-    // above proves the index entry exists; it does not prove either request
-    // reached it. A request answered inside this second skipped the create on
-    // a committed row and fell through to the send, and the surviving-row
-    // check below would still read `['Holder']` — green, having raced nothing.
-    //
-    // One flag over a `Promise.all` of two proves at least one is still
-    // parked, not both; the status pair below is what covers the other. The
-    // rate limit cannot be the escape here — two requests against buckets of
-    // 5/hr per IP and 3/15min per address.
-    expect(settled).toBe(false);
-    release();
-    await holding;
-    const [a, b] = await both;
-    await holder.$disconnect();
-
-    // The identical-response contract holds under a race too: a 409 here
-    // would both fail a legitimate signup and reveal the address is taken.
-    expect([a.status, b.status]).toEqual([200, 200]);
-
-    // One row for the address, and it is the holder's — so both requests did
-    // lose the insert race rather than serialising past it.
-    const students = await prisma.student.findMany({ where: { email } });
-    expect(students.map((s) => s.firstName)).toEqual(['Holder']);
   });
 });
 
@@ -285,8 +246,6 @@ describe('POST /api/auth/student-signup — per-IP budget', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...ip },
         body: JSON.stringify({
-          firstName: 'Burst',
-          lastName: 'Signup',
           email: `signup-ip-burst-${i}-${suffix}@test.local`,
         }),
       });

@@ -4,11 +4,7 @@ import { freshIp } from '../helpers';
 const DOORS = [
   { name: 'magic-link/send', path: '/api/auth/magic-link/send', body: (e: string) => ({ email: e }) },
   { name: 'teacher-signup', path: '/api/auth/teacher-signup', body: (e: string) => ({ email: e }) },
-  {
-    name: 'student-signup',
-    path: '/api/auth/student-signup',
-    body: (e: string) => ({ firstName: 'Test', lastName: 'Student', email: e }),
-  },
+  { name: 'student-signup', path: '/api/auth/student-signup', body: (e: string) => ({ email: e }) },
 ] as const;
 
 describe('every door that emails a link binds an origin nonce', () => {
