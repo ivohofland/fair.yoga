@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
+import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -32,7 +33,10 @@ export default function LoginPage() {
   return (
     <div className="flex-1 flex flex-col justify-center py-10">
       {status === 'sent' ? (
-        <p className="type-body">Check your inbox for the link.</p>
+        <div>
+          <p className="type-body">Check your inbox for the link.</p>
+          <HandoffCodeEntry />
+        </div>
       ) : (
         <>
           <h1 className="type-display mb-5">

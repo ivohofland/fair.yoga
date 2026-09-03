@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
+import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 
 interface BookingSignInProps {
   /** Where sign-in — magic link or passkey — lands the student: this booking page. */
@@ -51,6 +52,7 @@ export function BookingSignIn({ redirect }: BookingSignInProps) {
           We sent you a sign-in link. It brings you straight back here to
           finish booking.
         </p>
+        <HandoffCodeEntry />
       </div>
     );
   }

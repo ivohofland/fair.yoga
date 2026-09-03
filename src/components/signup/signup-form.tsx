@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { readErrorMessage } from '@/lib/client-errors';
+import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 
 interface SignupFormProps {
   /** Heading above the field. */
@@ -58,6 +59,7 @@ export function SignupForm({ title, intro, sentMessage, initialEmail = '' }: Sig
       <div className="py-4">
         <p className="type-subtitle">Check your inbox</p>
         <p className="type-body mt-2 max-w-[420px]">{sentMessage}</p>
+        <HandoffCodeEntry />
       </div>
     );
   }
