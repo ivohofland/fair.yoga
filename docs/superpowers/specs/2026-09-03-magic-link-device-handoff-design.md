@@ -124,6 +124,16 @@ compromised mailbox, and this project already has them
 What this design does close: forwarded mail, a link pasted into a chat, a shared
 or snooped mailbox where the *request* came from the victim, and Defect B.
 
+**A second, narrower residual: relaying the code.** An attacker who requests a
+link for the victim's address from their own browser gains nothing directly —
+the victim's click still lands the victim in the handoff branch, not a session
+for the attacker. But it opens a social-engineering angle: a relay pretext
+could get the victim to read the displayed code back to the attacker, handing
+over a real session. The code screen now warns against this (§7); no
+code-level guard closes it, since the mechanism cannot distinguish a
+legitimate self-relay (a user reading their own code aloud to enter it on
+another device) from this attack.
+
 ### 1.6 Two documentation defects found in passing
 
 - `docs/technical-architecture.md:326-333` describes the flow as "a signed token
@@ -232,11 +242,15 @@ someone adds an entry point. "Remember to call `ensureOriginNonce` in each
 route" is precisely the untethered membership claim CLAUDE.md forbids.
 
 Instead, **collapse mint → bind → build URL → send into a single exported
-function**, and make `sendMagicLinkEmail` internal to it (not exported from
-`@/lib/email`, or exported only to that function's module). The three doors call
-that one function and pass the request/response so it can read and set the
-nonce. A new door physically cannot email a sign-in link without binding one,
-because there is no longer an API that does the one without the other.
+function**, `deliverSignInLink`. The three doors call that one function and pass
+the request/response so it can read and set the nonce. `sendMagicLinkEmail`'s
+second parameter is narrowed to `BoundSignInLink`, a branded string only
+`deliverSignInLink` constructs — a plain string will not typecheck at the send
+call, so a new door cannot accidentally assemble an unbound link the way the
+three existing ones used to. This is weaker than export removal: an explicit
+`as BoundSignInLink` cast still typechecks anywhere, so the guarantee is against
+accidental misuse, not deliberate bypass. `sendMagicLinkEmail` stays exported
+from `@/lib/email` because its own test suite mocks it directly.
 
 That is a compiler tether in the sense CLAUDE.md means: the invariant is held by
 the shape of the code, not by a comment asking future contributors to remember.
@@ -294,20 +308,23 @@ change" and behaves as a mismatch.
 | Column | Purpose |
 |---|---|
 | `originBrowserHash String?` | `sha256` of the requesting browser's nonce cookie. Null for tokens minted by paths with no browser (signup tickets). |
-| `handoffCodeHash String?` | `sha256` of the 6-digit code, stamped when the link is opened without a matching nonce. Null until then. |
+| `handoffCode String?` | The 6-digit code, stamped when the link is opened without a matching nonce. Null until then. |
 | `handoffAttempts Int @default(0)` | Attempt budget for the claim endpoint (§6). |
 
 Migration per the project rule — `npx prisma migrate dev`, never `db push`, and
 once applied it is immutable including comments (CLAUDE.md, *Comment
 Discipline*).
 
-**On hashing the code.** The code is stored hashed for consistency with the
-table's existing posture, but the spec is explicit about what that does and does
-not buy: a 6-digit space is 10⁶, so a database reader can invert the hash
-essentially instantly. **The code is not a credential on its own.** The
-credential is the pair (browser nonce ∧ code), and it is the nonce — 32 random
-bytes, hashed — that carries the security. No comment in the code may claim the
-code's hash provides confidentiality.
+**On the code being plaintext, not hashed.** Every other sensitive value in
+this table is hashed; this one deliberately isn't. §6 requires the same code be
+redisplayed verbatim on every repeated open of the link — a fresh HTTP request
+each time, with no server memory of the first response. A one-way hash cannot
+be reversed to redisplay the digits, so hashing this column would make that
+requirement unsatisfiable. No security is lost: a 6-digit space is 10⁶,
+trivially invertible even if hashed, and **the code is not a credential on its
+own** — the credential is the pair (browser nonce ∧ code), and it is the
+nonce, 32 random bytes hashed, that carries the security. No comment in the
+code may claim the code provides confidentiality on its own.
 
 ---
 
@@ -491,7 +508,7 @@ restoring, and re-verifying — an explicit step per guard, per CLAUDE.md and th
 | Handoff does not poison same-device | integration: open cookie-less, then open with the nonce | Treat a stamped code as a terminal state → the legitimate same-device open fails |
 | §3: signup ticket redemption is unaffected | existing `teacher-signup-api.test.ts` passes unedited | Route `consumeSignupTicket` through the handoff function → those tests go red |
 | **All three doors bind a nonce** | Integration, one case per door: POST each of `/send`, `/teacher-signup`, `/student-signup` and assert `Set-Cookie` carries `fair_yoga_origin` | Remove the binding from **any one** door → exactly that door's case goes red |
-| **The tether holds** | A door cannot email a link without binding | Add a fourth call site that calls the old mint-then-send pair directly → it must not typecheck, because `sendMagicLinkEmail` is no longer reachable |
+| **The tether holds** | A door cannot email a link without binding | Add a fourth call site that calls `sendMagicLinkEmail` with a plain string → it must not typecheck, because the parameter type is `BoundSignInLink`, not `string` (an explicit `as BoundSignInLink` cast bypasses this, which is the tether's known limit — see §2) |
 
 The last three rows are the cross-task guards. The `consumeSignupTicket` row
 catches the §3 trap and must pass **without editing that test file**. The
