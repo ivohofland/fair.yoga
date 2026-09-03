@@ -7,9 +7,8 @@ const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
 
 /**
- * Profile-attachment rules: an unauthenticated signup must never attach a
- * profile to an existing account (that requires an authenticated session),
- * and fresh signups create the account atomically with the profile.
+ * Profile-attachment rule: an unauthenticated signup must never attach a
+ * profile to an existing account (that requires an authenticated session).
  */
 
 const takenEmail = `signup-taken-${suffix}@test.local`;
