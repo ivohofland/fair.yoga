@@ -37,7 +37,7 @@
  * half covered without a line addressing it, and it is why re-running the hook
  * is the whole action.
  *
- * What it detects is no longer bounded by one tick. A lock race the next tick
+ * What it detects is not bounded by one tick. A lock race the next tick
  * wins and a wedged row lock no tick will ever win are the SAME observation
  * inside a single pass — only repetition separates them — so the escalation
  * here reads a count that outlives the call. The sweep itself stays stateless:
@@ -248,15 +248,13 @@ export function runWaitlistReconciliationTick(db: PrismaClient): Promise<Reconci
  * for the same reason ("the first is rethrown so job health still surfaces the
  * failure").
  *
- * This used to throw on EVERY all-failed tick, on the argument that doing so
- * costs nothing in the routine case because one contended class among several
- * still returns normally. That argument has a named exception, and on the
- * single-teacher deployment this project is pinned to it is the ordinary case
+ * Not every all-failed tick is worth that, and on the single-teacher
+ * deployment this project is pinned to the exception is the ordinary case
  * rather than the edge: with one candidate class, "a class lost a lock race"
- * and "every class failed" are the same tick, so one benign race reported a
- * degraded job. Hence `reason` — `non_transient` still throws on the first
- * such tick, while `contended` waits for `MAX_CONSECUTIVE_CONTENDED_TICKS` of
- * them unbroken. `decideEscalation` is where that split is made.
+ * and "every class failed" are the same tick, so a benign race would report a
+ * degraded job. Hence `reason` — `non_transient` throws on the first such
+ * tick, while `contended` waits for `MAX_CONSECUTIVE_CONTENDED_TICKS` of them
+ * unbroken. `decideEscalation` is where that split is made.
  */
 export class ReconciliationFailedError extends Error {
   constructor(
