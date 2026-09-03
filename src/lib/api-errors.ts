@@ -207,6 +207,28 @@ const TRANSIENT_SQLSTATES = ['40001', '40P01', '55P03'] as const;
 const TRANSIENT_PRISMA_CODES = new Set(['P2024', 'P2028', 'P2034']);
 
 /**
+ * How far `isTransientDbError` follows `Error.cause`.
+ *
+ * A bound rather than a full traversal: the chain is attacker-independent but
+ * not guaranteed acyclic, and a classifier that can hang is worse than one
+ * that occasionally escalates. Failing to find a transient cause past this
+ * depth reports non-transient, which pages someone rather than quieting them.
+ */
+const MAX_CAUSE_DEPTH = 4;
+
+/** The classification for one error, ignoring any `cause` it carries. */
+function isTransientDbErrorShallow(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (TRANSIENT_PRISMA_CODES.has(error.code)) return true;
+  }
+  if (!(error instanceof Error)) return false;
+  return TRANSIENT_SQLSTATES.some(
+    (state) =>
+      error.message.includes(`code: "${state}"`) || error.message.includes(`Code: \`${state}\``),
+  );
+}
+
+/**
  * True when the failure is a lost contention race that a retry can win.
  *
  * Two different error shapes carry the same SQLSTATE, and both were measured
@@ -232,16 +254,21 @@ const TRANSIENT_PRISMA_CODES = new Set(['P2024', 'P2028', 'P2034']);
  * quote that as a digit string — a postcode, an amount, an id fragment — as
  * "the database is busy, try again", which is exactly the wrong advice and
  * exactly the trap `isTerminalStatusViolation` above documents for `23514`.
+ *
+ * Walks the `Error.cause` chain up to a fixed depth, so a wrapper like
+ * `SpotFreedError` that carries the real failure as `cause` does not silently
+ * reclassify a transient error. The bound prevents the chain from hanging on
+ * cyclic or pathological cases; an error buried past the depth is reported
+ * non-transient, which escalates rather than quieting.
  */
 export function isTransientDbError(error: unknown): boolean {
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    if (TRANSIENT_PRISMA_CODES.has(error.code)) return true;
+  let current = error;
+  for (let depth = 0; depth <= MAX_CAUSE_DEPTH; depth += 1) {
+    if (isTransientDbErrorShallow(current)) return true;
+    if (!(current instanceof Error)) return false;
+    current = current.cause;
   }
-  if (!(error instanceof Error)) return false;
-  return TRANSIENT_SQLSTATES.some(
-    (state) =>
-      error.message.includes(`code: "${state}"`) || error.message.includes(`Code: \`${state}\``),
-  );
+  return false;
 }
 
 /**

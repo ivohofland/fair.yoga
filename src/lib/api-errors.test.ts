@@ -835,6 +835,65 @@ describe('isRestrictViolationOn', () => {
   });
 });
 
+describe('isTransientDbError', () => {
+  /**
+   * The wrapping seam. `SpotFreedError` (`services/waitlist.ts`) carries the
+   * real failure as `cause`, and the first branch of this matcher is an
+   * `instanceof` check a wrapper cannot satisfy — so without the walk, a
+   * connection-pool timeout reaching a `handleSpotFreed` call site would be
+   * classified as a defect that never clears, log at `error`, and (in the
+   * reconciliation sweep) redden `/api/health` immediately.
+   */
+  it('sees a transient Prisma code through one layer of cause wrapping', () => {
+    const pool = new Prisma.PrismaClientKnownRequestError('pool timeout', {
+      code: 'P2024',
+      clientVersion: Prisma.prismaVersion.client,
+    });
+
+    expect(isTransientDbError(new Error('spot-freed hook failed', { cause: pool }))).toBe(true);
+  });
+
+  it('sees a transient SQLSTATE through two layers of cause wrapping', () => {
+    const lockTimeout = new Error(
+      'Raw query failed. Code: `55P03`. Message: `ERROR: canceling statement due to lock timeout`',
+    );
+    const inner = new Error('spot-freed hook failed', { cause: lockTimeout });
+
+    expect(isTransientDbError(new Error('sweep failed', { cause: inner }))).toBe(true);
+  });
+
+  /**
+   * The bound, asserted rather than assumed. A chain is walked to a fixed depth
+   * so a pathological or cyclic one cannot hang the classifier; a transient
+   * error buried past that depth is reported non-transient, which is the safe
+   * direction (it escalates rather than quieting).
+   */
+  it('stops walking past its depth bound', () => {
+    const transient = new Error('ERROR code: "55P03" here');
+    let wrapped: Error = transient;
+    for (let i = 0; i < 8; i += 1) wrapped = new Error(`layer ${i}`, { cause: wrapped });
+
+    expect(isTransientDbError(wrapped)).toBe(false);
+  });
+
+  it('terminates on a cyclic cause chain', () => {
+    const a = new Error('a');
+    const b = new Error('b', { cause: a });
+    (a as { cause?: unknown }).cause = b;
+
+    expect(isTransientDbError(a)).toBe(false);
+  });
+
+  /**
+   * A non-Error cause ends the walk rather than throwing — `cause` is typed
+   * `unknown` and nothing stops a caller putting a string or a plain object
+   * there.
+   */
+  it('ends the walk at a non-Error cause', () => {
+    expect(isTransientDbError(new Error('outer', { cause: 'code: "55P03"' }))).toBe(false);
+  });
+});
+
 describe('isLockTimeout', () => {
   it('matches a model write error with Postgres code 55P03 (PrismaClientUnknownRequestError)', () => {
     const unknownError = new Prisma.PrismaClientUnknownRequestError(
