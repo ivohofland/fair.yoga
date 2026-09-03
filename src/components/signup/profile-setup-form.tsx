@@ -397,9 +397,9 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
         )}
       </form>
 
-      {/* Deliberately outside the form above, not inside it: this renders
-          its own <form>, and a nested <form>'s submit would bubble into
-          the outer one's handler as well as its own. */}
+      {/* Deliberately outside the form above, not inside it — a nested
+          form's submit would bubble into the outer handler as well as
+          its own. */}
       {status === 'expired' && (
         <div className="mt-4">
           <p role="status" className="type-caption">
