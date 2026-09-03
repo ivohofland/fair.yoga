@@ -13,6 +13,7 @@ import { studentProfileSchema } from '@/lib/schemas';
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
 import {
   SIGNUP_TICKET_COOKIE,
+  SESSION_COOKIE_NAME,
   peekSignupTicket,
   consumeSignupTicket,
   clearSignupTicketCookie,
@@ -29,17 +30,27 @@ import { log } from '@/lib/log';
  * mirror of `teacher-profile`'s ticket+session shape).
  */
 export const POST = withErrorHandler(async (request: NextRequest) => {
-  const ticketToken = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
+  // A session cookie's mere presence — not its validity — rules out the
+  // ticket branch entirely. The ticket exists to authorize creating a
+  // brand-new account; a caller already carrying a session has one, so the
+  // ticket is stray no matter how it got there (a signup abandoned earlier
+  // on this browser, or a fresh one minted for an unrelated address after
+  // this session already existed — `magic-link/verify`'s ticket-minting
+  // branch never touches the session cookie either way). An invalid session
+  // cookie still routes here rather than to the ticket path, so it surfaces
+  // as `requireSession`'s own 401 instead of silently spending someone
+  // else's ticket.
+  const ticketToken = request.cookies.get(SESSION_COOKIE_NAME)?.value
+    ? undefined
+    : request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
 
   // Peeked (not consumed) first: whether a body is worth parsing depends on
   // the ticket actually resolving, not merely on the cookie's presence. A
   // stale or expired ticket cookie must fall through to the session path
   // below instead of failing the body parse before `requireSession` ever
-  // runs — `magic-link/verify` clears the origin nonce but never this
-  // cookie, so a browser can carry a dead ticket alongside a live session.
-  // Conditional because the session path has no body at all: `JoinAsStudent`
-  // POSTs without one, and `parseBody` opens with `request.json()`, which
-  // throws on an empty body.
+  // runs. Conditional because the session path has no body at all:
+  // `JoinAsStudent` POSTs without one, and `parseBody` opens with
+  // `request.json()`, which throws on an empty body.
   const ticketAddress = ticketToken
     ? await peekSignupTicket(prisma, ticketToken, 'student')
     : null;
@@ -51,21 +62,38 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     names = parsed.data;
   }
 
-  // Consumed (single-use) only after a successful parse, so a typo in the
-  // name fields doesn't cost the ticket — `teacher-profile`'s ordering, for
-  // its reason: losing a ticket to a typo is a bad first interaction.
-  const ticketConsumed =
-    ticketAddress && names && ticketToken
-      ? (await consumeSignupTicket(prisma, ticketToken, 'student')) !== null
-      : false;
-
   type Authorization =
     | { source: 'ticket'; email: string; firstName: string; lastName: string }
     | { source: 'session'; accountId: string; email: string; firstName: string; lastName: string };
   let auth: Authorization;
 
-  if (ticketConsumed && ticketAddress && names) {
-    auth = { source: 'ticket', email: ticketAddress, firstName: names.firstName, lastName: names.lastName };
+  // Consumed (single-use) only after a successful parse, so a typo in the
+  // name fields doesn't cost the ticket — `teacher-profile`'s ordering, for
+  // its reason: losing a ticket to a typo is a bad first interaction.
+  //
+  // `consumeSignupTicket`'s own return value, not `ticketAddress` (the
+  // earlier, non-consuming peek) — its docblock is explicit that the
+  // profile route must never take the authorized email from any source but
+  // this one. Today the two reads resolve the same row, so using
+  // `ticketAddress` here would be functionally identical, but the
+  // invariant belongs on the consumed value, not on whichever variable
+  // happens to still be in scope.
+  const consumedEmail =
+    ticketAddress && names && ticketToken
+      ? await consumeSignupTicket(prisma, ticketToken, 'student')
+      : null;
+
+  if (ticketAddress && names && !consumedEmail) {
+    // The peek found a live, correct-family ticket moments earlier, but the
+    // consume then lost it — a TTL boundary crossed, or a concurrent
+    // double-submit spent it first. Both benign, but silent: without this,
+    // nothing distinguishes the request from a session-path request that
+    // never had a ticket at all.
+    log.warn({}, 'student profile: ticket peeked live but did not consume; falling through to session');
+  }
+
+  if (consumedEmail && names) {
+    auth = { source: 'ticket', email: consumedEmail, firstName: names.firstName, lastName: names.lastName };
   } else {
     const session = await requireSession(request);
     if (isErrorResponse(session)) return session;
@@ -120,17 +148,20 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // Answering with the pre-check's own code keeps the two paths
   // indistinguishable to the client (#161).
   //
-  // BOTH keys, because a double-tap writes the same `accountId` AND the same
-  // `email`, so both indexes have a pending entry and Postgres reports
-  // whichever it reaches first. Catching one would pass its test and fail
-  // roughly half the time in production.
-  //
-  // Naming the collision is not an enumeration oracle, and the reason is that
-  // this route is authenticated: it writes for the caller's own account, and
+  // On the SESSION path, a double-tap writes the same `accountId` AND the
+  // same `email`, so both indexes have a pending entry and Postgres reports
+  // whichever it reaches first — the catch below checks `accountId` first
+  // but must still recognize an `email` hit as the same benign case.
+  // Naming that collision is not an enumeration oracle: the route is
+  // authenticated, writing for the caller's own account, and
   // `Account.email @unique` means no other account holds this address, so no
-  // foreign row can be the one that collided. `auth/student-signup` answers a
-  // uniform 200 for the opposite reason — it is unauthenticated, so its 409
-  // would tell a stranger an address was free.
+  // foreign row can be the one that collided.
+  //
+  // The TICKET path has no session and no "caller's own account" — its
+  // `email` collision means a DIFFERENT account appeared for this address
+  // during the ticket's one-hour window (a real, if narrow, race — not a
+  // double-tap), so the catch below answers it separately, with its own
+  // message and a log line.
   try {
     const student = await prisma.student.create({
       data: {
@@ -160,7 +191,24 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
     return response;
   } catch (err) {
-    if (isUniqueConflictOn(err, ['accountId']) || isUniqueConflictOn(err, ['email'])) {
+    if (isUniqueConflictOn(err, ['accountId'])) {
+      return respondError('Account already has a student profile', 409, 'ALREADY_STUDENT');
+    }
+    if (isUniqueConflictOn(err, ['email'])) {
+      if (auth.source === 'ticket') {
+        // Not the caller's own account — see the comment above this block.
+        // Worth a log line: unlike the session path's double-tap, this is
+        // not the benign, expected shape of this collision.
+        log.warn(
+          {},
+          'student profile ticket path lost to an email that gained an account during the ticket window',
+        );
+        return respondError(
+          'This email now has an account. Please sign in and add a student profile.',
+          409,
+          'ACCOUNT_EXISTS',
+        );
+      }
       return respondError('Account already has a student profile', 409, 'ALREADY_STUDENT');
     }
     // Not rethrown as a P2002: `classifyApiError` answers any P2002 with a
