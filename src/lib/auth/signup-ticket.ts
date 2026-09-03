@@ -1,5 +1,6 @@
 import type { MagicLinkPurpose, PrismaClient } from '@prisma/client';
 import { generateMagicLinkToken, verifyMagicLinkToken, hashToken } from './magic-link';
+import { isSafeRelativePath } from '@/lib/schemas';
 import { log } from '@/lib/log';
 
 export const SIGNUP_TICKET_COOKIE = 'fair_yoga_signup';
@@ -91,4 +92,26 @@ export function clearSignupTicketCookie(headers: Headers): void {
   let cookie = `${SIGNUP_TICKET_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
   if (process.env.NODE_ENV === 'production') cookie += '; Secure';
   headers.append('Set-Cookie', cookie);
+}
+
+/**
+ * The destination-first ticket decision shared by `magic-link/verify` and
+ * `magic-link/claim` — both routes redeem the same token family/purpose
+ * shape and must agree on what a resulting ticket authorizes. Destination
+ * first, family second: the teacher ticket has a page that always exists;
+ * the student ticket's home is a redirect the caller supplied, so "mint a
+ * ticket" and "have somewhere to spend it" are two facts that can come
+ * apart. Returning `null` when they don't means the caller falls through to
+ * its own 400 rather than producing a credential with no page to spend it
+ * on.
+ */
+export function signupTicketFor(
+  purpose: MagicLinkPurpose,
+  tokenRedirect: string | null,
+): { family: SignupFamily; dest: string } | null {
+  if (purpose === 'teacher_signup') return { family: 'teacher', dest: '/signup/profile' };
+  if (purpose === 'student_signup' && tokenRedirect && isSafeRelativePath(tokenRedirect)) {
+    return { family: 'student', dest: tokenRedirect };
+  }
+  return null;
 }
