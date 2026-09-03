@@ -1,8 +1,7 @@
 import { NextRequest } from 'next/server';
-import { generateMagicLinkToken } from '@/lib/auth';
+import { ensureOriginNonce, deliverSignInLink } from '@/lib/auth';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
-import { sendMagicLinkEmail } from '@/lib/email';
 import { magicLinkSendSchema } from '@/lib/schemas';
 import { checkRateLimit, checkIpRateLimit, clientIp, rateLimitKey, RateLimitResult } from '@/lib/rate-limit';
 
@@ -37,17 +36,19 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const emailCheck = checkRateLimit(rateLimitKey('magic-link:email', email), PER_EMAIL_LIMIT, WINDOW_MS);
   if (!emailCheck.allowed) return tooManyRequests(emailCheck);
 
-  // Look up user in Teacher table first, then Student
+  // The nonce is established for EVERY accepted request, before the user
+  // lookup below. This route answers a uniform 200 either way so an anonymous
+  // caller cannot learn whether an address is registered; setting the cookie
+  // only inside `if (user)` would put that same fact back into `Set-Cookie`.
+  const response = respondOk({ message: 'If an account exists, a magic link has been sent.' });
+  const nonce = ensureOriginNonce(request, response.headers);
+
   const teacher = await prisma.teacher.findUnique({ where: { email } });
   const user = teacher ?? (await prisma.student.findUnique({ where: { email } }));
 
   if (user) {
-    const token = await generateMagicLinkToken(prisma, email, { redirectTo: redirect });
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const magicLinkUrl = `${baseUrl}/verify?token=${token}`;
-    await sendMagicLinkEmail(email, magicLinkUrl);
+    await deliverSignInLink(prisma, email, nonce, { redirectTo: redirect });
   }
 
-  // Always return 200 to prevent email enumeration
-  return respondOk({ message: 'If an account exists, a magic link has been sent.' });
+  return response;
 });

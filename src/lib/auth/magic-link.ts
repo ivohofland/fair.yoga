@@ -34,7 +34,12 @@ export function hashToken(token: string): string {
 export async function generateMagicLinkToken(
   db: PrismaClient,
   email: string,
-  opts?: { redirectTo?: string; purpose?: MagicLinkPurpose; ttlMs?: number },
+  opts?: {
+    redirectTo?: string;
+    purpose?: MagicLinkPurpose;
+    ttlMs?: number;
+    originBrowserHash?: string;
+  },
 ): Promise<string> {
   const rawToken = crypto.randomBytes(32).toString('hex');
   const tokenHash = hashToken(rawToken);
@@ -46,6 +51,7 @@ export async function generateMagicLinkToken(
       email,
       redirectTo: opts?.redirectTo ?? null,
       purpose: opts?.purpose ?? 'sign_in',
+      originBrowserHash: opts?.originBrowserHash ?? null,
       expiresAt,
     },
   });

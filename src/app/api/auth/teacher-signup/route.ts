@@ -2,8 +2,7 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { respondOk, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { teacherSignupSchema } from '@/lib/schemas';
-import { generateMagicLinkToken } from '@/lib/auth';
-import { sendMagicLinkEmail } from '@/lib/email';
+import { ensureOriginNonce, deliverSignInLink } from '@/lib/auth';
 import { checkRateLimit, checkIpRateLimit, clientIp, rateLimitKey, respondRateLimited } from '@/lib/rate-limit';
 
 /**
@@ -33,15 +32,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // the signup path.
   const existing = await prisma.account.findUnique({ where: { email } });
   const purpose = existing ? 'sign_in' : 'teacher_signup';
-  const token = await generateMagicLinkToken(prisma, email, {
+
+  const response = respondOk({ message: 'Check your inbox for a link.' });
+  const nonce = ensureOriginNonce(request, response.headers);
+
+  await deliverSignInLink(prisma, email, nonce, {
     redirectTo: existing ? undefined : '/signup/profile',
     purpose,
   });
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  await sendMagicLinkEmail(email, `${baseUrl}/verify?token=${token}`);
-
-  // Uniform 200 whatever the address turned out to be — same
-  // non-enumeration contract as `student-signup`.
-  return respondOk({ message: 'Check your inbox for a link.' });
+  return response;
 });
