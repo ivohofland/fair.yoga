@@ -14,7 +14,7 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
-  await db.magicLinkToken.deleteMany({ where: { email: { endsWith: '@example.com' } } });
+  await db.magicLinkToken.deleteMany({ where: { email } });
 });
 
 describe('signup ticket families', () => {
