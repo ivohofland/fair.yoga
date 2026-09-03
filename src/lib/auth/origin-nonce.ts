@@ -13,12 +13,13 @@ export type BrowserNonce = string & { readonly [browserNonceBrand]: true };
 export const ORIGIN_NONCE_COOKIE = 'fair_yoga_origin';
 
 /** A year: covers the gap between requesting a link and finally opening it —
- *  a forgotten tab, a slow inbox check, days later. `clearOriginNonceCookie`
- *  rotates it on every successful consume, so this long lifetime does NOT
- *  mean the cookie survives across completed sign-ins — only across
- *  abandoned or not-yet-opened ones. A short life would push returning
- *  users into the handoff branch for no security gain in that gap, since
- *  the nonce is worthless without a live token. */
+ *  a forgotten tab, a slow inbox check, days later. This long lifetime
+ *  assumes successful consumption rotates the cookie (see
+ *  `clearOriginNonceCookie` below) — it does NOT mean the cookie survives
+ *  across completed sign-ins — only across abandoned or not-yet-opened ones.
+ *  A short life would push returning users into the handoff branch for no
+ *  security gain in that gap, since the nonce is worthless without a live
+ *  token. */
 const NONCE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
 
 /** SHA-256 of the nonce. Only the hash is ever persisted, so a database read
@@ -35,8 +36,8 @@ export function readOriginNonce(request: NextRequest): BrowserNonce | null {
  * Returns this browser's nonce, minting one and appending its `Set-Cookie` to
  * `headers` if it has none.
  *
- * Must be called unconditionally for every accepted request, before any
- * lookup that might not find an account — see the design spec §5 for why.
+ * Must be called unconditionally — never gated on whether a matching account
+ * is found — for every accepted request. See the design spec §5 for why.
  */
 export function ensureOriginNonce(request: NextRequest, headers: Headers): BrowserNonce {
   const existing = readOriginNonce(request);

@@ -4,6 +4,7 @@ import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-
 import { prisma } from '@/lib/db';
 import { magicLinkSendSchema } from '@/lib/schemas';
 import { checkRateLimit, checkIpRateLimit, clientIp, rateLimitKey, RateLimitResult } from '@/lib/rate-limit';
+import { log } from '@/lib/log';
 
 const WINDOW_MS = 15 * 60 * 1000;
 const PER_EMAIL_LIMIT = 3;
@@ -47,7 +48,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const user = teacher ?? (await prisma.student.findUnique({ where: { email } }));
 
   if (user) {
-    await deliverSignInLink(prisma, email, nonce, { redirectTo: redirect });
+    try {
+      await deliverSignInLink(prisma, email, nonce, { redirectTo: redirect });
+    } catch (err) {
+      // The nonce cookie is already attached to `response` below — an
+      // exception here must not discard it, or a send failure for one
+      // specific registered address would answer differently (500, no
+      // cookie) than an unregistered address's identical-looking request,
+      // reopening the enumeration channel this route's uniform 200 exists
+      // to close.
+      log.error({ err }, 'magic-link send: deliverSignInLink failed');
+    }
   }
 
   return response;

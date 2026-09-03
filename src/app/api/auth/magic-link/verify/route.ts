@@ -20,14 +20,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const outcome = await verifyWithHandoff(prisma, token, readOriginNonce(request));
 
-  if (outcome.kind === 'invalid') {
+  if (outcome.kind !== 'verified') {
+    if (outcome.kind === 'handoff') {
+      // Nothing was consumed. The client shows the code; the browser that
+      // requested the link trades it for a session at /claim.
+      return respondOk({ handoffCode: outcome.code });
+    }
     return respondError('Invalid or expired magic link', 400);
-  }
-
-  if (outcome.kind === 'handoff') {
-    // Nothing was consumed. The client shows the code; the browser that
-    // requested the link trades it for a session at /claim.
-    return respondOk({ handoffCode: outcome.code });
   }
 
   const { email, redirectTo: tokenRedirect, purpose } = outcome;

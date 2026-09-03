@@ -105,6 +105,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
   const response = respondOk({ message: 'Check your inbox for a sign-in link.' });
   const nonce = ensureOriginNonce(request, response.headers);
-  await deliverSignInLink(prisma, email, nonce, { redirectTo: redirect });
+  try {
+    await deliverSignInLink(prisma, email, nonce, { redirectTo: redirect });
+  } catch (err) {
+    // The nonce cookie is already attached to `response` — an exception here
+    // must not discard it and fall through to `withErrorHandler`'s cookie-less
+    // error response.
+    log.error({ err }, 'student signup: deliverSignInLink failed');
+  }
   return response;
 });

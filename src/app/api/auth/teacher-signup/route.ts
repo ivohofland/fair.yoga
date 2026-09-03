@@ -4,6 +4,7 @@ import { respondOk, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { teacherSignupSchema } from '@/lib/schemas';
 import { ensureOriginNonce, deliverSignInLink } from '@/lib/auth';
 import { checkRateLimit, checkIpRateLimit, clientIp, rateLimitKey, respondRateLimited } from '@/lib/rate-limit';
+import { log } from '@/lib/log';
 
 /**
  * Email-only teacher signup (#385). Mints and emails a magic link, marked
@@ -36,10 +37,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const response = respondOk({ message: 'Check your inbox for a link.' });
   const nonce = ensureOriginNonce(request, response.headers);
 
-  await deliverSignInLink(prisma, email, nonce, {
-    redirectTo: existing ? undefined : '/signup/profile',
-    purpose,
-  });
+  try {
+    await deliverSignInLink(prisma, email, nonce, {
+      redirectTo: existing ? undefined : '/signup/profile',
+      purpose,
+    });
+  } catch (err) {
+    // The nonce cookie is already attached to `response` — an exception here
+    // must not discard it and fall through to `withErrorHandler`'s cookie-less
+    // error response.
+    log.error({ err }, 'teacher signup: deliverSignInLink failed');
+  }
 
   return response;
 });
