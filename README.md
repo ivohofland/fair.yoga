@@ -27,7 +27,7 @@ npm install
 cp .env.example .env
 ```
 
-The defaults work for local development. The `MAGIC_LINK_SECRET` can be any string — set it to something like `dev-secret`. Email sending is disabled in dev mode (magic link URLs are logged to the console instead).
+The defaults work for local development. Email sending is disabled in dev mode (magic link URLs are logged to the console instead).
 
 ### 3. Start the database
 

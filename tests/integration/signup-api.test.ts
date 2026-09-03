@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { generateMagicLinkToken } from '@/lib/auth';
+import { generateMagicLinkToken, hashNonce } from '@/lib/auth';
 import { BASE_URL, uniqueSuffix, freshIp } from '../helpers';
 
 const prisma = new PrismaClient();
@@ -200,11 +200,17 @@ describe('POST /api/auth/student-signup', () => {
 
 describe('POST /api/auth/magic-link/verify — the claim moment over HTTP', () => {
   it('claims an unclaimed CRM student: account, cookie, and /bookings landing', async () => {
-    const token = await generateMagicLinkToken(prisma, unclaimedEmail);
+    // Bound to a nonce this same request presents as its origin cookie, so
+    // it takes the same-browser branch and actually reaches the claim code
+    // this test is about, rather than the handoff branch.
+    const nonce = `signup-unclaimed-nonce-${suffix}`;
+    const token = await generateMagicLinkToken(prisma, unclaimedEmail, {
+      originBrowserHash: hashNonce(nonce),
+    });
 
     const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Cookie: `fair_yoga_origin=${nonce}` },
       body: JSON.stringify({ token }),
     });
 

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
-import { mintSignupTicket, generateMagicLinkToken } from '@/lib/auth';
+import { mintSignupTicket, generateMagicLinkToken, hashNonce } from '@/lib/auth';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -213,12 +213,22 @@ describe('POST /api/auth/teacher-signup', () => {
 // it actually gates on `purpose`, not merely on "no account".
 describe('POST /api/auth/magic-link/verify — teacher-signup ticket branch', () => {
   it('mints a signup ticket for a teacher_signup token with no existing account', async () => {
+    // Bound to a nonce this same request presents as its origin cookie, so
+    // it takes the same-browser branch — an unbound POST here would land in
+    // the handoff branch instead and never reach the ticket-minting code
+    // this test is about.
+    const nonce = `teacher-signup-verify-ticket-nonce-${suffix}`;
     const token = await generateMagicLinkToken(prisma, verifyTeacherSignupEmail, {
       purpose: 'teacher_signup',
+      originBrowserHash: hashNonce(nonce),
     });
     const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${nonce}`,
+        ...freshIp(),
+      },
       body: JSON.stringify({ token }),
     });
     expect(res.status).toBe(200);
@@ -234,10 +244,17 @@ describe('POST /api/auth/magic-link/verify — teacher-signup ticket branch', ()
   });
 
   it('still 400s a sign_in token for an address with no account, and sets no ticket', async () => {
-    const token = await generateMagicLinkToken(prisma, verifySignInNoAccountEmail);
+    const nonce = `teacher-signup-verify-signin-nonce-${suffix}`;
+    const token = await generateMagicLinkToken(prisma, verifySignInNoAccountEmail, {
+      originBrowserHash: hashNonce(nonce),
+    });
     const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${nonce}`,
+        ...freshIp(),
+      },
       body: JSON.stringify({ token }),
     });
     expect(res.status).toBe(400);

@@ -31,6 +31,17 @@ await prisma.session.create({ data: { id: hash, accountId: teacher.accountId, ex
 
 Delete the session row when done. (`tests/helpers.ts`'s `seedSession(db, accountId)` does the same thing for the test suites; `src/lib/auth/session.ts`'s `createSession` is the production path.)
 
+## Exercise the magic-link device handoff
+
+The `[DEV] Magic link for ...` line dry-run mode logs to stdout carries the
+real `/verify?token=...` URL. Opening it in a private/incognito window
+exercises the handoff branch: that window holds no `fair_yoga_origin` cookie,
+so `/verify` shows a 6-digit code instead of signing in — the same thing a
+link opened on a different device would show. Pasting the exact same URL back
+into the ordinary tab that requested it (the one already holding that cookie)
+is still a one-tap same-browser sign-in, so the everyday dev loop is
+unchanged.
+
 ## Drive (Playwright)
 
 - `@playwright/test` is a dev dep; drive with a plain `chromium.launch()` script via `npx tsx`.

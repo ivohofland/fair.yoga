@@ -325,12 +325,30 @@ return { created: inserted.length, skipped }; // GenerationResult
 
 ### Magic Link (primary)
 
+Nothing here is signed. The token is `crypto.randomBytes(32)`, unguessable on
+its own merits; `@oslojs/crypto`'s only job is hashing it (SHA-256) before the
+row is written, so a database read yields no usable token — same shape as a
+password hash, not a signature.
+
+Every mint also binds the token to `fair_yoga_origin`, a long-lived nonce
+cookie identifying the browser that asked for the link (`deliverSignInLink`,
+the one function all three link-emitting routes go through). That is what
+`/verify` uses to tell a click on the requesting browser from a click
+anywhere else — a forwarded link, a second device, a mail scanner
+prefetching it — without ever asking the user which one this is:
+
 ```
-1. User enters email on /login
-2. API generates a signed token (oslo/crypto), stores hash in DB with 15-min expiry
+1. User enters email on /login (or /signup, or a booking page)
+2. API mints a random token, stores its SHA-256 hash in DB with a 15-min
+   expiry, bound to a hash of this browser's fair_yoga_origin nonce
 3. Resend delivers email with link to /verify?token=xxx
-4. /verify validates token, creates session cookie (httpOnly, secure, sameSite)
-5. Redirect to dashboard (teacher) or bookings (student)
+4. /verify checks the opening browser's nonce against the bound hash:
+   - matching nonce: consumes the token, creates a session cookie (httpOnly,
+     secure, sameSite)
+   - no cookie, or another browser's: consumes nothing — stamps a one-time
+     6-digit code on the token instead and shows it, for the browser that
+     actually asked for the link to redeem via POST /api/auth/magic-link/claim
+5. Redirect to dashboard (teacher) or bookings (student), once a session exists
 ```
 
 ### Passkey (returning users)
@@ -571,7 +589,6 @@ services:
     environment:
       - DATABASE_URL=postgresql://yoga:${DB_PASSWORD}@db:5432/ethical_yoga
       - RESEND_API_KEY=${RESEND_API_KEY}
-      - MAGIC_LINK_SECRET=${MAGIC_LINK_SECRET}
     depends_on:
       - db
     restart: unless-stopped
@@ -614,7 +631,6 @@ Main branch deploys automatically to VPS via SSH + Docker pull.
 DATABASE_URL=postgresql://yoga:password@localhost:5432/ethical_yoga
 
 # Auth
-MAGIC_LINK_SECRET=          # For signing magic link tokens
 PASSKEY_RP_ID=              # Relying party ID for WebAuthn (e.g. "ethicalyoga.app")
 PASSKEY_RP_NAME=            # Display name (e.g. "Ethical Yoga")
 
