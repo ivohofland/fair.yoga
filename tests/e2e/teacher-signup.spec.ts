@@ -1,3 +1,4 @@
+import type { BrowserContext } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
@@ -15,14 +16,29 @@ function generateToken(): string {
  * teacher clicks the emailed link", which this suite cannot do for real: the
  * route hashes the raw token immediately and persists nothing else, so
  * there is no way to recover the one it minted for the earlier UI step.
+ * Bound to `nonce`; pair with `asOriginBrowser` for a same-browser open.
  */
-async function createSignupToken(email: string): Promise<string> {
+async function createSignupToken(email: string, nonce: string): Promise<string> {
   const rawToken = generateToken();
   const tokenHash = hashToken(rawToken);
   await prisma.magicLinkToken.create({
-    data: { tokenHash, email, purpose: 'teacher_signup', expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
+    data: {
+      tokenHash,
+      email,
+      purpose: 'teacher_signup',
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      originBrowserHash: hashToken(nonce),
+    },
   });
   return rawToken;
+}
+
+/** Stamps `context` with the origin-nonce cookie a token bound to `nonce`
+ *  needs to take the same-browser branch at `/verify`. */
+async function asOriginBrowser(context: BrowserContext, nonce: string): Promise<void> {
+  await context.addCookies([
+    { name: 'fair_yoga_origin', value: nonce, domain: 'localhost', path: '/' },
+  ]);
 }
 
 const suffix = uniqueSuffix();
@@ -57,7 +73,9 @@ test.describe('Teacher signup', () => {
 
     // Step two: "click the emailed link" (see createSignupToken's docblock
     // for why this mints its own token rather than the one step one made).
-    const token = await createSignupToken(signupEmail);
+    const nonce = crypto.randomBytes(16).toString('hex');
+    const token = await createSignupToken(signupEmail, nonce);
+    await asOriginBrowser(page.context(), nonce);
     await page.goto(`/verify?token=${token}`);
     await page.waitForURL('**/signup/profile', { timeout: 10_000 });
 

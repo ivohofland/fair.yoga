@@ -1,3 +1,4 @@
+import type { BrowserContext } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
@@ -7,6 +8,14 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
+
+/** Stamps `context` with the origin-nonce cookie a token bound to `nonce`
+ *  needs to take the same-browser branch at `/verify`. */
+async function asOriginBrowser(context: BrowserContext, nonce: string): Promise<void> {
+  await context.addCookies([
+    { name: 'fair_yoga_origin', value: nonce, domain: 'localhost', path: '/' },
+  ]);
+}
 
 const suffix = uniqueSuffix();
 const slug = `e2e-booking-${suffix}`;
@@ -155,7 +164,9 @@ test.describe('Public booking flow', () => {
   });
 
   test('magic link returns the student to the booking page and books with a chosen tier', async ({ page }) => {
-    // Simulate the emailed link: token with the booking page as redirect.
+    // Simulate the emailed link: token with the booking page as redirect,
+    // bound to this browser's nonce so it takes the same-browser branch.
+    const nonce = crypto.randomBytes(16).toString('hex');
     const rawToken = crypto.randomBytes(32).toString('hex');
     await prisma.magicLinkToken.create({
       data: {
@@ -163,8 +174,10 @@ test.describe('Public booking flow', () => {
         email: `e2e-booking-student-${suffix}@test.local`,
         redirectTo: `/${slug}/book/${classId}`,
         expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+        originBrowserHash: hashToken(nonce),
       },
     });
+    await asOriginBrowser(page.context(), nonce);
 
     // Freeze page timers so the 900ms redirect can't race the flash
     // assertions — the success state holds until we advance the clock.

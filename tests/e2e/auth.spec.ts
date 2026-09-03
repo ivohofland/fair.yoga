@@ -1,3 +1,4 @@
+import type { BrowserContext } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
@@ -10,17 +11,32 @@ function generateToken(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
-async function createMagicLinkToken(email: string): Promise<string> {
+/**
+ * Mints a token AND the browser that "requested" it, so a test can choose
+ * which branch it is exercising: pass the same nonce to `asOriginBrowser`
+ * for a same-browser open, or open the token from a context that never got
+ * `asOriginBrowser` to land in the handoff branch instead.
+ */
+async function createMagicLinkToken(email: string, nonce: string): Promise<string> {
   const rawToken = generateToken();
-  const tokenHash = hashToken(rawToken);
   await prisma.magicLinkToken.create({
     data: {
-      tokenHash,
+      tokenHash: hashToken(rawToken),
       email,
       expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      originBrowserHash: hashToken(nonce),
     },
   });
   return rawToken;
+}
+
+/** Stamps `context` with the origin-nonce cookie a token minted by
+ *  `createMagicLinkToken(email, nonce)` was bound to, so opening that token
+ *  in this context takes the same-browser branch. */
+async function asOriginBrowser(context: BrowserContext, nonce: string): Promise<void> {
+  await context.addCookies([
+    { name: 'fair_yoga_origin', value: nonce, domain: 'localhost', path: '/' },
+  ]);
 }
 
 const suffix = uniqueSuffix();
@@ -84,7 +100,9 @@ test.describe('Magic link authentication', () => {
   test('valid magic link logs in teacher and redirects to home', async ({
     page,
   }) => {
-    const rawToken = await createMagicLinkToken(teacherEmail);
+    const nonce = crypto.randomBytes(16).toString('hex');
+    const rawToken = await createMagicLinkToken(teacherEmail, nonce);
+    await asOriginBrowser(page.context(), nonce);
 
     await page.goto(`/verify?token=${rawToken}`);
 
@@ -113,7 +131,9 @@ test.describe('Magic link authentication', () => {
   });
 
   test('used token cannot be reused', async ({ page }) => {
-    const rawToken = await createMagicLinkToken(teacherEmail);
+    const nonce = crypto.randomBytes(16).toString('hex');
+    const rawToken = await createMagicLinkToken(teacherEmail, nonce);
+    await asOriginBrowser(page.context(), nonce);
 
     // First use succeeds
     await page.goto(`/verify?token=${rawToken}`);
@@ -130,7 +150,9 @@ test.describe('Magic link authentication', () => {
   test('re-clicking a used link while signed in offers to continue, not a failure', async ({
     page,
   }) => {
-    const rawToken = await createMagicLinkToken(teacherEmail);
+    const nonce = crypto.randomBytes(16).toString('hex');
+    const rawToken = await createMagicLinkToken(teacherEmail, nonce);
+    await asOriginBrowser(page.context(), nonce);
 
     await page.goto(`/verify?token=${rawToken}`);
     await page.waitForURL('/schedule', { timeout: 10_000 });
@@ -149,7 +171,9 @@ test.describe('Magic link authentication', () => {
   });
 
   test('session persists across page reloads', async ({ page }) => {
-    const rawToken = await createMagicLinkToken(teacherEmail);
+    const nonce = crypto.randomBytes(16).toString('hex');
+    const rawToken = await createMagicLinkToken(teacherEmail, nonce);
+    await asOriginBrowser(page.context(), nonce);
 
     await page.goto(`/verify?token=${rawToken}`);
     await page.waitForURL('/schedule', { timeout: 10_000 });
@@ -160,7 +184,9 @@ test.describe('Magic link authentication', () => {
   });
 
   test('authenticated user can access protected routes', async ({ page }) => {
-    const rawToken = await createMagicLinkToken(teacherEmail);
+    const nonce = crypto.randomBytes(16).toString('hex');
+    const rawToken = await createMagicLinkToken(teacherEmail, nonce);
+    await asOriginBrowser(page.context(), nonce);
 
     await page.goto(`/verify?token=${rawToken}`);
     await page.waitForURL('/schedule', { timeout: 10_000 });
