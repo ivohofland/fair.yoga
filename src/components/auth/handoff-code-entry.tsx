@@ -14,8 +14,8 @@ interface HandoffCodeEntryProps {
  * somewhere that doesn't hold the `fair_yoga_origin` cookie shows a 6-digit
  * code instead of consuming the link, and this form trades that code for a
  * session on the browser that requested it, by posting to
- * `POST /api/auth/magic-link/claim`. Mounted beneath every "Check your
- * inbox" panel so the copy and behaviour can't drift between them.
+ * `POST /api/auth/magic-link/claim`. Meant to be shared by any "Check your
+ * inbox" panel, so its own copy and behaviour don't fork across them.
  *
  * No props carry state: the cookie that ties a code to this browser rides
  * along with the request on its own, and this component never reads or
