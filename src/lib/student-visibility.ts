@@ -183,8 +183,8 @@ void _projectionCarriesNoRawIdentity;
  * version of this comment leaned on it as one. It is
  * `CHECK (("claimedAt" IS NULL) = ("accountId" IS NULL))`, which `(null, null)`
  * satisfies: it forbids a row where claim and link disagree, not a row that is
- * unclaimed. A future write that sets neither column passes it. The two
- * creation sites are what make the branch dead; the constraint only keeps
+ * unclaimed. A future write that sets neither column passes it. The sole
+ * creation site is what makes the branch dead; the constraint only keeps
  * `claimedAt` and `accountId` telling the same story.
  *
  * An earlier draft of this comment argued it from the link side instead —
