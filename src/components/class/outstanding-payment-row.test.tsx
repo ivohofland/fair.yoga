@@ -247,7 +247,7 @@ describe('OutstandingPaymentRow', () => {
    * #58. `undo` renders whatever status the server's response carries, guard
    * included, rather than rendering the response verbatim or assuming the
    * result is always 'pending'. Today the reversal always writes 'pending'
-   * unconditionally — the daily dunning sweep re-derives 'overdue' later,
+   * unconditionally — the hourly dunning sweep re-derives 'overdue' later,
    * from the payment's age — so the 'overdue' response mocked below is a
    * hypothetical exercising the read path, not current server behavior. The
    * round trip still earns its keep: it is what keeps this correct the day
@@ -481,5 +481,75 @@ describe('OutstandingPaymentRow', () => {
 
     await waitFor(() => expect(screen.getByText('⊘ Not charged')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /Undo marking Anna Smith/ })).toBeInTheDocument();
+  });
+
+  /**
+   * Mirrors the mark-paid network-failure test above: when the request
+   * throws, the error is logged and surfaced as a network error while the
+   * row stays outstanding.
+   */
+  it('reports network failure on mark-not-charged when the request throws', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+    renderRow({ status: 'pending' });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Not charged —/ }));
+
+    expect(
+      await screen.findByRole('button', { name: /^Not charged —/ }),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Network error. Try again.');
+    expect(consoleError).toHaveBeenCalledWith(
+      '[payment-not-charged] request failed',
+      expect.objectContaining({ paymentId: 'pay-anna' }),
+    );
+  });
+
+  /**
+   * Mirrors the mark-paid JSON-error test above: a structured error body
+   * returned with a non-ok status is extracted and displayed rather than
+   * claiming a network error.
+   */
+  it('shows the server error message when mark-not-charged is refused with a JSON error', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: 'Payment already marked not charged' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderRow({ status: 'pending' });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Not charged —/ }));
+
+    expect(
+      await screen.findByRole('button', { name: /^Not charged —/ }),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Payment already marked not charged');
+  });
+
+  /**
+   * Mirrors the mark-paid unreadable-body test above: a non-ok response whose
+   * body does not parse as JSON falls back to the generic copy without
+   * claiming the network failed.
+   */
+  it('reports a server error fallback rather than a network error when mark-not-charged returns an unreadable body', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON at position 0');
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderRow({ status: 'pending' });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Not charged —/ }));
+
+    expect(
+      await screen.findByRole('button', { name: /^Not charged —/ }),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not mark as not charged. Try again.',
+    );
+    expect(screen.queryByText('Network error. Try again.')).not.toBeInTheDocument();
   });
 });

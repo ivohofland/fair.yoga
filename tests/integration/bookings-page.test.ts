@@ -143,8 +143,8 @@ describe('GET /bookings (page) — payment status gate', () => {
     expect(html).toContain('⊘ Not charged');
     expect(html).not.toContain('How to pay');
     // The load-bearing assertion: a not-charged payment must not solicit
-    // payment, and the disclosure carrying the teacher's IBAN is exactly what
-    // would do that if the gate were still `!isPaid`.
+    // payment, and the IBAN in the disclosure is the specific thing that
+    // would.
     expect(html).not.toContain(TEACHER_IBAN);
   });
 

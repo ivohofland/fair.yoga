@@ -288,13 +288,13 @@ describe('GET /settings/reporting (reporting page)', () => {
       expect(html).toContain('STUDENTS');
       expect(html).toContain('CHARGED');
 
-      // August 2026: 2 classes (1 regular + 1 studio), 10 students (2 + 8), 127.00 earned (59.50 + 67.50)
+      // August 2026: 2 classes (1 regular + 1 studio), 10 students (2 + 8), 127.00 charged (59.50 + 67.50)
       const augLabel = formatMonthLabel(2026, 7); // monthIndex 7 is August
       expect(html).toContain(augLabel);
       expect(html).toContain('August 2026');
       expect(html).toContain('127.00');
 
-      // July 2026: 1 class (1 regular), 1 student, 30.00 earned
+      // July 2026: 1 class (1 regular), 1 student, 30.00 charged
       const julLabel = formatMonthLabel(2026, 6); // monthIndex 6 is July
       expect(html).toContain(julLabel);
       expect(html).toContain('July 2026');

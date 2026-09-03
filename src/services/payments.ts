@@ -139,9 +139,8 @@ export async function markPaymentOverdue(
  *
  * Returns to 'pending' (not 'overdue') deliberately — the dunning sweep
  * (`markOverduePayments`) re-derives overdue from the payment's age, so an old
- * payment self-heals back to overdue on the sweep's next tick. `lib/scheduler.ts`
- * registers that job (`payment-reminders`) at `60 * MINUTE`, so the window is an
- * hour.
+ * payment self-heals back to overdue on the sweep's next tick — see
+ * `lib/scheduler.ts`'s `payment-reminders` registration for the interval.
  *
  * One function for both settled states because they reverse identically: both
  * mean "this is no longer owed", and undoing either means "it is owed again".
