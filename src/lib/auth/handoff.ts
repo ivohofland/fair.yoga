@@ -69,9 +69,18 @@ export const HANDOFF_MAX_ATTEMPTS = 5;
  * Trades a code for the token it was stamped on, for the browser that
  * requested the link.
  *
- * Looks up by nonce rather than by code, so a wrong guess still finds the row
+ * Looks up by nonce rather than by code, so a wrong guess still finds a row
  * whose budget it must spend. Looking up by both would leave the attempt
  * counter unreachable and the budget unenforceable.
+ *
+ * A resend legitimately leaves more than one live token sharing this browser's
+ * nonce (`generateMagicLinkToken`'s docblock, #196), and either can end up
+ * stamped with its own code if both get opened elsewhere. So every live
+ * candidate is fetched and matched by CODE first — the caller is charged
+ * against the token their code actually belongs to, not whichever is newest.
+ * Only when no candidate's code matches does the newest one absorb the wrong
+ * guess, which is the one case the "look up by nonce" reasoning above
+ * actually covers.
  */
 export async function claimWithCode(
   db: PrismaClient,
@@ -80,11 +89,13 @@ export async function claimWithCode(
 ): Promise<HandoffOutcome> {
   if (nonce === null) return { kind: 'invalid' };
 
-  const row = await db.magicLinkToken.findFirst({
+  const candidates = await db.magicLinkToken.findMany({
     where: { originBrowserHash: hashNonce(nonce), handoffCode: { not: null } },
     orderBy: { createdAt: 'desc' },
   });
-  if (!row) return { kind: 'invalid' };
+  if (candidates.length === 0) return { kind: 'invalid' };
+
+  const row = candidates.find((candidate) => candidate.handoffCode === code) ?? candidates[0]!;
 
   if (row.handoffAttempts >= HANDOFF_MAX_ATTEMPTS) {
     await db.magicLinkToken.deleteMany({ where: { id: row.id } });
@@ -92,12 +103,15 @@ export async function claimWithCode(
   }
 
   if (row.handoffCode !== code) {
-    const spent = row.handoffAttempts + 1;
-    await db.magicLinkToken.update({
+    // Atomic increment: two concurrent wrong guesses against the same row
+    // must not both read the same starting count and overwrite each other's
+    // write with the same absolute value, which would let one guess go
+    // uncharged.
+    const updated = await db.magicLinkToken.update({
       where: { id: row.id },
-      data: { handoffAttempts: spent },
+      data: { handoffAttempts: { increment: 1 } },
     });
-    if (spent >= HANDOFF_MAX_ATTEMPTS) {
+    if (updated.handoffAttempts >= HANDOFF_MAX_ATTEMPTS) {
       await db.magicLinkToken.deleteMany({ where: { id: row.id } });
     }
     return { kind: 'invalid' };
