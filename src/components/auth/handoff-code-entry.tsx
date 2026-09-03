@@ -56,8 +56,8 @@ export function HandoffCodeEntry({ className = '' }: HandoffCodeEntryProps) {
   return (
     <div className={`mt-4 ${className}`.trim()}>
       <p className="type-body">
-        Opened it somewhere else? That device will show you a code &mdash;
-        enter it here.
+        Opened it somewhere else? Wherever you opened it will show you a
+        code &mdash; enter it here.
       </p>
       <form onSubmit={handleSubmit} className="flex flex-col gap-3 mt-3 max-w-[200px]">
         <Input

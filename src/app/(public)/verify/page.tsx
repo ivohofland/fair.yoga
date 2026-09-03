@@ -253,6 +253,11 @@ function HandoffState({ code }: { code: string }) {
         {code}
       </p>
       <Fineprint>
+        Only you should ever see this code. If you didn&apos;t try to sign in
+        just now, ignore it &mdash; nobody from fair.yoga will ever ask you to
+        read it to them.
+      </Fineprint>
+      <Fineprint>
         Lost that tab?{' '}
         <Link href="/login" className="text-teal">
           Sign in here instead
@@ -293,10 +298,10 @@ function VerifyContent() {
           return;
         }
         const dest: string = json.data.redirectTo;
-        // The signup-ticket branch of POST /api/auth/magic-link/verify never
-        // sets `accountId` — it hands back a ticket cookie instead of a
-        // session (`verify/route.ts:32-37`) — so its absence is the signal
-        // this reader was never signed in at all.
+        // The signup-ticket branch of `verify/route.ts` never sets
+        // `accountId` — it hands back a ticket cookie instead of a session
+        // — so its absence is the signal this reader was never signed in at
+        // all.
         setIsNewSignup(!json.data.accountId);
         setRedirectTo(dest);
         setStatus('success');

@@ -30,7 +30,9 @@ describe('HandoffCodeEntry', () => {
     render(<HandoffCodeEntry />);
 
     expect(
-      screen.getByText('Opened it somewhere else? That device will show you a code — enter it here.'),
+      screen.getByText(
+        'Opened it somewhere else? Wherever you opened it will show you a code — enter it here.',
+      ),
     ).toBeInTheDocument();
 
     const input = screen.getByLabelText('Code');
