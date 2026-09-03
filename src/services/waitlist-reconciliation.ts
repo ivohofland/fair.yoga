@@ -173,9 +173,9 @@ interface CandidateClass {
  * Ticks of unbroken contention before the sweep reports itself degraded.
  *
  * One meaning, and any second use of this constant has to keep it: THIS HAS
- * STOOD FOR FIVE MINUTES. The job's interval is 60 seconds (`scheduler.ts`),
- * so the number is a duration wearing a count's clothing — read as "five
- * attempts" it would want a different value the moment that interval moved.
+ * STOOD FOR FIVE MINUTES. The job's interval (`scheduler.ts`) is what makes
+ * this a duration rather than a count — read as "five attempts" it would
+ * want a different value the moment that interval moved.
  *
  * The operator-facing statement of what the tolerance buys belongs in
  * `DEPLOYMENT.md`, not here.
@@ -194,20 +194,38 @@ export interface ReconciliationStreaks {
   /** Consecutive ticks in which every invoked class failed, all transiently. */
   allTransientTicks: number;
   /**
-   * Consecutive failures per class, read and written once per tick by
-   * `reconcileWaitlists` through a `TickFailures` built from this map — never
-   * mutated in place, so both escalations share one tracker rather than each
-   * growing its own.
+   * Consecutive failures per class. Built into a per-tick `TickFailures` by
+   * `reconcileWaitlists`, read and written per class by `reconcileOne`, and
+   * swapped back into this field once after the loop — the two escalations
+   * (tick-level and per-class) share this one `ReconciliationStreaks` object
+   * regardless of how the map itself is maintained.
    *
    * Its invariant, for whoever writes it: rebuild the map each tick from that
    * tick's failures, so a class that did not fail leaves it and its size stays
-   * bounded by the candidate set rather than by uptime.
+   * bounded by the candidate set rather than by uptime. Never mutated in
+   * place — that is what keeps a class absent this tick from being found
+   * still failing when the next tick reads it.
    */
   failuresByClass: Map<string, number>;
 }
 
 export function createReconciliationStreaks(): ReconciliationStreaks {
   return { allTransientTicks: 0, failuresByClass: new Map() };
+}
+
+/**
+ * Resets both trackers to their startup values, in place.
+ *
+ * Spec §4.4 rule 1: a tick that finds no candidates at all means nothing is
+ * stuck, from this sweep's vantage point — a wedged row lock keeps its class
+ * a candidate on every tick (the `waiting` entry and the free seat both
+ * persist), so an empty candidate set is never what a wedged lock looks
+ * like. Shared by both no-candidate early returns in `reconcileWaitlists` so
+ * neither can drift from the other.
+ */
+function resetStreaks(streaks: ReconciliationStreaks): void {
+  streaks.allTransientTicks = 0;
+  streaks.failuresByClass = new Map();
 }
 
 /**
@@ -260,7 +278,7 @@ export function runWaitlistReconciliationTick(db: PrismaClient): Promise<Reconci
  * failure").
  *
  * Not every all-failed tick is worth that, and on the single-teacher
- * deployment this project is pinned to the exception is the ordinary case
+ * deployment this project is pinned to, the exception is the ordinary case
  * rather than the edge: with one candidate class, "a class lost a lock race"
  * and "every class failed" are the same tick, so a benign race would report a
  * degraded job. Hence `reason` — `non_transient` throws on the first such
@@ -373,6 +391,7 @@ export async function reconcileWaitlists(
   const candidateIds = queued.map((q) => q.classId);
   if (candidateIds.length === 0) {
     log.debug({ candidates: 0 }, 'waitlist reconciliation found no waiting entries');
+    resetStreaks(opts.streaks);
     return emptySummary(0);
   }
 
@@ -413,6 +432,7 @@ export async function reconcileWaitlists(
       { candidates: 0, queuedClasses: candidateIds.length },
       'waitlist reconciliation found no open candidate class',
     );
+    resetStreaks(opts.streaks);
     return emptySummary(0);
   }
 

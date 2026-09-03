@@ -1091,6 +1091,61 @@ describe('reconcileWaitlists (DB)', () => {
   });
 
   /**
+   * Spec §4.4 rule 1: a tick that finds NO candidates at all — not one that
+   * found candidates and skipped or failed them — must reset the streak too.
+   * A wedged row lock keeps its class a candidate on every tick, so an empty
+   * candidate set can only mean the queue drained or the class completed:
+   * nothing is stuck, so there is nothing to keep the streak frozen for.
+   *
+   * `waitlistEntry.groupBy` is overridden rather than relying on the shared
+   * database genuinely holding no waiting entries anywhere — this suite runs
+   * alongside others against `ethical_yoga_test`, so the only deterministic
+   * way to reach `reconcileWaitlists`'s first early return is to make the
+   * candidate query itself report none, the same `$extends` mechanism the
+   * fault-injection tests above use for the opposite purpose.
+   */
+  it('resets the streak on a tick with no candidates at all', async () => {
+    const contended = await makeFreedSeat('StreakNoCandidates');
+    const clocks = windowClocks(contended.startTime);
+    const streaks = createReconciliationStreaks();
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+
+    const faulty = prisma.$extends({
+      query: {
+        class: {
+          findUnique() {
+            throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
+              code: 'P2024',
+              clientVersion: Prisma.prismaVersion.client,
+            });
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    await reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks });
+    expect(streaks.allTransientTicks).toBeGreaterThan(0);
+    expect(streaks.failuresByClass.size).toBeGreaterThan(0);
+
+    const noCandidates = prisma.$extends({
+      query: {
+        waitlistEntry: {
+          groupBy() {
+            return Promise.resolve([]);
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const summary = await reconcileWaitlists(noCandidates, { now: clocks.inClaimWindow, streaks });
+    expect(summary.candidates).toBe(0);
+    expect(streaks.allTransientTicks).toBe(0);
+    expect(streaks.failuresByClass.size).toBe(0);
+  });
+
+  /**
    * A failure that will never clear by retrying escalates on the FIRST tick.
    * Routing it through the streak would hide a permanently broken promotion path
    * for five minutes, which is the defect this module exists to remove.
@@ -1221,6 +1276,7 @@ describe('reconcileWaitlists (DB)', () => {
     // tick 1's success reset it and only four ticks remain.
     const summary = await reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks });
     expect(summary.skipped).toContainEqual({ classId: healthy.id, reason: 'already_broadcast' });
+    expect(streaks.allTransientTicks).toBeLessThan(5);
     expect(forClass(error.mock.calls).at(-1)).toMatchObject({ classStreak: 5 });
   });
 
