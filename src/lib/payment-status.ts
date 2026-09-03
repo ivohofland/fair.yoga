@@ -71,8 +71,8 @@ export function readUndoStatus(json: unknown): PaymentStatus | null {
 }
 
 /**
- * The one question the rest of the app asks about a payment status: is this
- * money still owed?
+ * Is this payment still owed? The question every reminder/dunning/disclosure
+ * gate needs answered without knowing every status by name.
  *
  * An exhaustive `switch` with a `never` default rather than an inline
  * comparison (`status !== 'paid'`, `!isPaid`) — those keep compiling when a

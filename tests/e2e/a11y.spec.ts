@@ -112,7 +112,6 @@ test.describe('Accessibility sweep', () => {
       data: { classId, studentId, status: 'registered', tierAtBooking: 3 },
     });
 
-    // Create a completed class with payments in different statuses for the a11y sweep
     const paymentClass = await createClassFixture(prisma, {
       teacherId,
       teacherRoomId: teacherRoom.id,
@@ -129,7 +128,6 @@ test.describe('Accessibility sweep', () => {
     });
     paymentClassId = paymentClass.id;
 
-    // Seed payments in each status (pending, paid, not_charged)
     async function seedPayment(tag: string, status: PaymentStatus, amount: number) {
       const email = `e2e-a11y-payment-${tag}-${suffix}@test.local`;
       const paymentStudent = await prisma.student.create({
@@ -296,7 +294,6 @@ test.describe('Accessibility sweep', () => {
     await signIn(context, teacherToken);
     await page.goto('/settings/payments');
     await expect(page.getByRole('heading', { name: 'Payments' })).toBeVisible();
-    // Verify payments are rendered: one in each section (outstanding, received, not charged)
     await expect(page.getByRole('heading', { name: 'Outstanding' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Received' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Not charged' })).toBeVisible();

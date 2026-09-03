@@ -554,8 +554,9 @@ describe('POST /api/payments/[id]/not-charged', () => {
       data: { status: string; notChargedAt: string | null };
     };
     expect(data.status).toBe('not_charged');
-    // The key-allowlist assertion mirrors the existing ones at `:127`, `:155`,
-    // `:187` — it is how this repo catches a widened `select`, and
+    // The key-allowlist assertion mirrors the existing key-allowlist
+    // assertions elsewhere in this file — it is how this repo catches a
+    // widened `select`, and
     // `notChargedAt` joining the row is exactly the kind of change it exists
     // to notice.
     expect(Object.keys(data).sort()).toEqual([
