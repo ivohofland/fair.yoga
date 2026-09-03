@@ -134,7 +134,9 @@ else.
 `void (async () => { … })().catch(…)`, and handle the rejection inside — there
 is no promise left for a caller to attach a handler to, so an unhandled
 rejection is the default if the function does not own its own. Take whatever
-context the log line needs (an id, which caller) as parameters.
+context the log line needs (an id, which caller) as parameters. Nothing may
+precede the IIFE: a statement placed before it throws synchronously into the
+caller, escaping the `.catch` entirely.
 
 `grep -rn '): FireAndForget' src/` lists every function under this rule.
 
