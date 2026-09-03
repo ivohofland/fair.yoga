@@ -18,6 +18,8 @@ import { privacyIsBypassed } from '@/lib/student-visibility';
 import { requireNormalised } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { log } from '@/lib/log';
+import type { FireAndForget } from '@/lib/fire-and-forget';
+import type { Assert, Equals } from '@/lib/type-pins';
 
 export type InviteRefusal =
   | 'ALREADY_INVITED'
@@ -471,19 +473,21 @@ async function revivePendingInvitation(
  * calls this function for any pending row without one.
  *
  * Neither `POST /api/students` (route.ts) nor `POST
- * /api/invitations/[id]/resend` (#173) awaits this function — both call it
- * fire-and-forget, after the response's status and body are already fully
- * decided, each with its own `.catch` for the rejection path. That is
- * deliberate: whatever this function reads, or how long it takes, must
- * never become the response's status code or its latency. An earlier
- * version of this function was awaited by its caller, and that reopened the
- * exact oracle #166 closed: a Resend outage turned an unregistered
- * address's failure into a 500 while a registered address's plain INSERT
- * still answered 201, and even with Resend healthy, "no work" (blocked) vs.
- * "one SELECT + one INSERT" (registered) vs. "one HTTPS round trip"
- * (stranger) is a timing channel carrying the same bit. A future caller
- * that awaits this — even just to inspect success or failure — reopens it
- * again.
+ * /api/invitations/[id]/resend` (#173) awaits this function directly — both
+ * call `deliverInvitation` (below), which awaits this function internally
+ * and owns the rejection path itself. Since #391 that is enforced by
+ * `deliverInvitation`'s own return type (`FireAndForget`; `.then()`/
+ * `.catch()` on its result are compile errors) rather than by each caller
+ * remembering to write its own `.catch`. That is deliberate: whatever this
+ * function reads, or how long it takes, must never become the response's
+ * status code or its latency. An earlier version of this function was
+ * awaited by its caller, and that reopened the exact oracle #166 closed: a
+ * Resend outage turned an unregistered address's failure into a 500 while a
+ * registered address's plain INSERT still answered 201, and even with Resend
+ * healthy, "no work" (blocked) vs. "one SELECT + one INSERT" (registered)
+ * vs. "one HTTPS round trip" (stranger) is a timing channel carrying the
+ * same bit. A future caller that awaits this — even just to inspect success
+ * or failure — reopens it again.
  *
  * `teacher_invitation` is deliberately NOT in `ESSENTIAL_NOTIFICATION_TYPES`
  * (`services/notification-policy.ts`), so `shouldEmailStudent` falls
@@ -582,41 +586,76 @@ export async function notifyInvitee(
   await sendInvitationEmail(email, input.teacherName, `${baseUrl}/login`);
 }
 
+/** Which caller a failed delivery came from — chooses the log line below. */
+export type DeliverySource = 'create' | 'resend';
+
+/**
+ * One message per source, tethered: adding a `DeliverySource` member without
+ * a message here is a compile error rather than a log line reading
+ * `undefined`.
+ */
+const DELIVERY_FAILURE_MESSAGE = {
+  create: 'failed to notify invitee',
+  resend: 'failed to resend invitation',
+} satisfies Record<DeliverySource, string>;
+
 /**
  * Loads the inviting teacher's display name and notifies the invitee — the
  * whole "decide + deliver" tail of a successful, unblocked invite.
  *
- * Deliberately never awaited by any caller: whatever this function reads,
- * or how long it takes, must never become the caller's response status
- * code or its latency. `POST /api/students` and `POST
- * /api/invitations/[id]/resend` (#173, moved here from the first route so
- * both could share it) both call this today, fire-and-forget: this SELECT
- * plus whatever
- * `notifyInvitee` does — a plain INSERT for a registered invitee, an HTTPS
- * call to Resend for anyone else — must not sit on the request's critical
- * path. Awaited, it turns a Resend outage into a 500 for an unregistered
- * address while a registered one still answers normally, and even with
- * Resend healthy it is a timing channel (blocked: nothing, registered: one
- * query, stranger: one network round trip) — both carry the exact bit these
- * routes exist to withhold. Fire-and-forget is safe here: this is a
- * long-lived Node process on a single VPS, not a serverless function that
- * could be frozen mid-request.
+ * Returns `FireAndForget` (`= void`), which is the guard, not a decoration:
+ * whatever this function reads, or how long it takes, must never become the
+ * caller's response status or its latency, and a function that hands back no
+ * promise gives a caller nothing to wait for. Awaited, an earlier version of
+ * this turned a Resend outage into a 500 for an unregistered address while a
+ * registered one still answered 201 — and even with Resend healthy, "no
+ * work" (blocked) vs. "one query" (registered) vs. "one HTTPS round trip"
+ * (stranger) is a timing channel carrying the same bit. That is the oracle
+ * #166 closed, and #391 is why it is now shut by the signature instead of by
+ * a MUST every caller had to read.
+ *
+ * The rejection path lives here for the same reason: there is no promise for
+ * a caller to attach a `.catch` to, so an unhandled rejection would be the
+ * default if this function did not handle its own. `invitationId` and
+ * `source` are parameters rather than anything this function could derive —
+ * they are what makes the log line name WHICH delivery failed, and from
+ * which route (#166 review, F4). The invitee's address is deliberately not
+ * logged.
+ *
+ * Fire-and-forget is safe here specifically: this is a long-lived Node
+ * process on a single VPS, not a serverless function that could be frozen
+ * mid-request.
  */
-export async function deliverInvitation(
+export function deliverInvitation(
   db: PrismaClient,
-  teacherId: string,
-  email: string,
-): Promise<void> {
-  const teacher = await db.teacher.findUniqueOrThrow({
-    where: { id: teacherId },
-    select: { firstName: true, lastName: true },
-  });
-  await notifyInvitee(db, {
-    teacherId,
-    email,
-    teacherName: `${teacher.firstName} ${teacher.lastName}`,
+  input: { teacherId: string; email: string; invitationId: string; source: DeliverySource },
+): FireAndForget {
+  void (async () => {
+    const teacher = await db.teacher.findUniqueOrThrow({
+      where: { id: input.teacherId },
+      select: { firstName: true, lastName: true },
+    });
+    await notifyInvitee(db, {
+      teacherId: input.teacherId,
+      email: input.email,
+      teacherName: `${teacher.firstName} ${teacher.lastName}`,
+    });
+  })().catch((err: unknown) => {
+    log.error(
+      { err, teacherId: input.teacherId, invitationId: input.invitationId },
+      DELIVERY_FAILURE_MESSAGE[input.source],
+    );
   });
 }
+
+/**
+ * This function's own use of the alias, pinned. `fire-and-forget.ts` pins the
+ * alias to `void`; this pins that THIS function still returns it, so a
+ * signature quietly restored to `Promise<void>` — the change that reopens the
+ * #166 oracle — fails the build instead of merely outdating a docblock.
+ */
+type _deliverInvitationReturnsVoid = Assert<Equals<ReturnType<typeof deliverInvitation>, void>>;
+void 0 as unknown as [_deliverInvitationReturnsVoid];
 
 /**
  * A student's own invitations still awaiting a response — the read

@@ -19,6 +19,14 @@ A free, open-source toolkit for independent yoga teachers. Not a marketplace —
 
 **Services are framework-agnostic.** Business logic in `src/services/` takes typed inputs and returns typed outputs. No HTTP concerns, no framework imports. API routes are thin wrappers. This makes services independently testable and extractable if a separate API is ever needed.
 
+**Work that must not be awaited returns `FireAndForget`, not `Promise<void>`.**
+A function whose duration or failure would leak something its caller's
+response withholds hands back no promise, so `.then()`/`.catch()` on it are
+compile errors and the contract survives a caller who never read this file.
+`deliverInvitation` (#166, #391) is the case that named it; the rule and how
+to write a new one are in `docs/technical-architecture.md` (The Services
+Layer → Work that must not be awaited).
+
 **Database changes require migrations.** When modifying `prisma/schema.prisma`, always create a migration with `npx prisma migrate dev --name <description>`. Never apply schema changes with raw SQL or `db push` alone — migrations must be tracked so other environments can reproduce the change. Once applied, a migration file is immutable — comments included; see *Comment Discipline*.
 
 **Working a backlog issue?** Invoke the `solve-issue` skill (`.claude/skills/solve-issue/`) before anything else. It carries the whole arc — verify the issue's premise, brainstorm, spec (for difficult issues), plan, subagent build, multi-agent PR review, rebase-merge — plus the review gates and the failure modes this project keeps hitting. Written to run from an empty context, one issue per session. `.claude/skills/verify/` covers driving the running app.

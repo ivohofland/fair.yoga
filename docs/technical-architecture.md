@@ -114,6 +114,30 @@ The `src/services/` folder is the heart of the application. These are pure TypeS
 
 This separation means services are independently testable (no HTTP mocking needed) and could be extracted to a standalone API later if mobile apps require it.
 
+### Work that must not be awaited
+
+A few service functions must never sit on a request's critical path — their
+duration or failure would leak something the response is meant to withhold.
+`deliverInvitation` (`services/invitations.ts`) is the case that named the
+rule: awaited, it turns an email-provider outage into a 500 for an
+unregistered address while a registered one still answers normally, which is
+the account-enumeration oracle #166 closed.
+
+These functions return `FireAndForget` (`src/lib/fire-and-forget.ts`), an
+alias for `void`. Returning no promise is what enforces the contract —
+`.then()` and `.catch()` on the result are compile errors, so a caller cannot
+couple its response to the work even without knowing why they shouldn't.
+A bare `await` on one is legal and inert: it yields a microtask and nothing
+else.
+
+**Writing a new one:** return `FireAndForget`, start the work in a
+`void (async () => { … })().catch(…)`, and handle the rejection inside — there
+is no promise left for a caller to attach a handler to, so an unhandled
+rejection is the default if the function does not own its own. Take whatever
+context the log line needs (an id, which caller) as parameters.
+
+`grep -rn '): FireAndForget' src/` lists every function under this rule.
+
 ### Pricing Engine (`services/pricing.ts`)
 
 The most critical piece of logic. Takes a class's economic settings and its registrations, returns the price each student pays.

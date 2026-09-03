@@ -1546,8 +1546,9 @@ erasure that rolled back" is not a state the function can reach.
 A `.catch()` on the whole `$transaction(…)` promise is a different thing and is
 fine — `acceptInvitation` and `unlinkTeacher` (`src/services/invitations.ts`)
 both do it. So is one on a promise from a helper that queries the database
-itself, outside any transaction it did not open — `deliverInvitation`
-(`src/app/api/students/route.ts`, `src/app/api/invitations/[id]/resend/route.ts`)
+itself, outside any transaction it did not open — `deliverInvitation`'s own
+`.catch()` on the async IIFE it starts (`src/services/invitations.ts`, since
+#391 owns its rejection path internally rather than leaving it to each caller)
 and `ownedInvitation` (`src/app/api/invitations/[id]/route.ts`) are this
 shape. The rule is about a statement inside an interactive-transaction
 callback.
