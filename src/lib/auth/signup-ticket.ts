@@ -1,6 +1,6 @@
 import type { MagicLinkPurpose, PrismaClient } from '@prisma/client';
 import { generateMagicLinkToken, verifyMagicLinkToken, hashToken } from './magic-link';
-import { isSafeRelativePath } from '@/lib/schemas';
+import { isSafeRelativePath, TEACHER_PROFILE_PATH } from '@/lib/schemas';
 import { log } from '@/lib/log';
 
 export const SIGNUP_TICKET_COOKIE = 'fair_yoga_signup';
@@ -109,9 +109,34 @@ export function signupTicketFor(
   purpose: MagicLinkPurpose,
   tokenRedirect: string | null,
 ): { family: SignupFamily; dest: string } | null {
-  if (purpose === 'teacher_signup') return { family: 'teacher', dest: '/signup/profile' };
-  if (purpose === 'student_signup' && tokenRedirect && isSafeRelativePath(tokenRedirect)) {
-    return { family: 'student', dest: tokenRedirect };
+  switch (purpose) {
+    case 'teacher_signup':
+      return { family: 'teacher', dest: TEACHER_PROFILE_PATH };
+    case 'student_signup':
+      if (tokenRedirect && isSafeRelativePath(tokenRedirect)) {
+        return { family: 'student', dest: tokenRedirect };
+      }
+      // Reachable in principle, not in practice today: `student-signup`
+      // never marks a token `student_signup` without a validated redirect
+      // (see that route's own comment), so a token that got here already
+      // verified — its single use is spent — with nowhere for the ticket it
+      // would authorize to go. Both callers turn `null` into a flat
+      // "Account not found," which is false for this case specifically, so
+      // it needs its own trace rather than vanishing silently the way the
+      // `claim/route.ts` gap once did.
+      log.error(
+        { purpose, hasRedirect: tokenRedirect !== null },
+        'signup token verified but its redirect is missing or unsafe; no ticket minted',
+      );
+      return null;
+    case 'sign_in':
+    case 'teacher_profile_pending':
+    case 'student_profile_pending':
+      return null;
+    default: {
+      const unreachable: never = purpose;
+      log.error({ purpose: unreachable }, 'signupTicketFor reached an unhandled MagicLinkPurpose');
+      return null;
+    }
   }
-  return null;
 }

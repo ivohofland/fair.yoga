@@ -108,15 +108,20 @@ describe('POST /api/auth/student-signup', () => {
   });
 
   it('refuses a body that still carries the old name fields', async () => {
+    const email = `signup-stale-${suffix}@test.local`;
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...freshIp() },
       body: JSON.stringify({
         firstName: 'Stale', lastName: 'Client',
-        email: `signup-stale-${suffix}@test.local`, redirect: '/t/book/c1',
+        email, redirect: '/t/book/c1',
       }),
     });
     expect(res.status).toBe(400);
+    // This route's "creates nothing" invariant, checked for a malformed
+    // body too — not just the well-formed ones the tests above cover.
+    expect(await prisma.student.findUnique({ where: { email } })).toBeNull();
+    expect(await prisma.account.findUnique({ where: { email } })).toBeNull();
   });
 
   it('does not create an account for an unclaimed CRM email — claim happens at verify', async () => {

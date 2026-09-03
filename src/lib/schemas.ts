@@ -120,11 +120,22 @@ export function isSafeRelativePath(path: string): boolean {
 
 const relativePath = z.string().max(200).refine(isSafeRelativePath, 'Must be a relative path');
 
+/** Where a `teacher_signup` ticket always lands (`signupTicketFor`,
+ *  `src/lib/auth/signup-ticket.ts`). Lives here rather than there so a
+ *  client component can import it without pulling in that module's
+ *  server-only dependencies (Prisma, `crypto`) — `verify/page.tsx`'s
+ *  `newSignupHeadline` is exactly that caller, comparing a redirect against
+ *  this constant instead of retyping the literal. */
+export const TEACHER_PROFILE_PATH = '/signup/profile';
+
 export const magicLinkSendSchema = z.object({
   email: emailField,
   redirect: relativePath.optional(),
 });
 
+// `.strict()` rejects the pre-#399 body shape (`firstName`/`lastName`
+// alongside `email`) — this route no longer takes names at all, the ticket
+// path collects them later.
 export const studentSignupSchema = z.object({
   email: emailField,
   redirect: relativePath.optional(),
@@ -202,9 +213,7 @@ export const teacherProfileSchema = z.object({
 /**
  * Creates the student profile on the ticket path. No `email` field, for the
  * same reason as `teacherProfileSchema`: the address comes from the
- * consumed signup ticket, never from the body. Parsed only when a ticket
- * cookie is present — the session path ("join as a student") posts no body
- * at all.
+ * consumed signup ticket, never from the body.
  */
 export const studentProfileSchema = z.object({
   firstName: z.string().min(1),
