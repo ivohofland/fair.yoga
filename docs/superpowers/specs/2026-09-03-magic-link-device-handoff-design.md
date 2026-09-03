@@ -334,13 +334,23 @@ Re-introducing one three files away would be a poor trade.
 so two links requested from the same browser are both same-device there. It is
 rotated on successful sign-in.
 
-**This constraint binds hardest on `/send`, but the rule is uniform across all
-three doors** (§2). The two signup doors have a different enumeration posture by
-design — `/teacher-signup` deliberately answers `ALREADY_TEACHER`, because a
-signup form has to tell you the address is taken — so an unconditional cookie
-there leaks nothing either way. Making the rule uniform anyway is what keeps it
-inside the single function of §2's tether, rather than becoming a per-door
-judgement call that the next contributor has to re-make correctly.
+**The constraint binds equally on all three doors** (§2), and an earlier draft
+of this section got that wrong — it claimed `/teacher-signup` "deliberately
+answers `ALREADY_TEACHER`" and so had nothing to leak. It does not. That error
+code belongs to the *profile submission*, not to this door. Read the route:
+
+- `teacher-signup/route.ts:46-47` returns a uniform 200 with the comment
+  *"Uniform 200 whatever the address turned out to be — same non-enumeration
+  contract as `student-signup`."*
+- It goes further than `/send` does: at `:34-35` it silently downgrades
+  `purpose` from `teacher_signup` to `sign_in` when an account already exists,
+  precisely so the *email* does not reveal the answer either.
+- `student-signup/route.ts:109` ends the same way.
+
+So all three doors are non-enumerating by construction, and a cookie set only on
+the has-an-account branch would puncture all three rather than one. The rule is
+uniform because the posture is uniform — and §2's tether is what keeps it from
+becoming a per-door judgement the next contributor has to re-make correctly.
 
 ---
 
