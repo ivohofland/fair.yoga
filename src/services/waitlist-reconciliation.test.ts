@@ -10,7 +10,12 @@ import {
   handleSpotFreed,
   SpotFreedError,
 } from './waitlist';
-import { ReconciliationFailedError, reconcileWaitlists } from './waitlist-reconciliation';
+import {
+  ReconciliationFailedError,
+  createReconciliationStreaks,
+  reconcileWaitlists,
+  runWaitlistReconciliationTick,
+} from './waitlist-reconciliation';
 import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
@@ -235,6 +240,7 @@ describe('reconcileWaitlists (DB)', () => {
 
     const summary = await reconcileWaitlists(prisma, {
       now: windowClocks(cls.startTime).autoPromote,
+      streaks: createReconciliationStreaks(),
     });
 
     // `reconciledClassIds`, not `reconciled`, throughout this file: the sweep
@@ -277,6 +283,7 @@ describe('reconcileWaitlists (DB)', () => {
 
     const summary = await reconcileWaitlists(prisma, {
       now: windowClocks(cls.startTime).autoPromote,
+      streaks: createReconciliationStreaks(),
     });
 
     expect(summary.reconciledClassIds).toContain(cls.id);
@@ -387,7 +394,10 @@ describe('reconcileWaitlists (DB)', () => {
     ).toBeNull();
 
     // And now the sweep repairs it.
-    const summary = await reconcileWaitlists(prisma, { now: clocks.autoPromote });
+    const summary = await reconcileWaitlists(prisma, {
+      now: clocks.autoPromote,
+      streaks: createReconciliationStreaks(),
+    });
     expect(summary.reconciledClassIds).toContain(cls.id);
     const promoted = await prisma.registration.findUnique({
       where: { classId_studentId: { classId: cls.id, studentId: waiter } },
@@ -412,7 +422,10 @@ describe('reconcileWaitlists (DB)', () => {
       data: { spotBroadcastAt: clocks.inClaimWindow },
     });
 
-    const summary = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
+    const summary = await reconcileWaitlists(prisma, {
+      now: clocks.inClaimWindow,
+      streaks: createReconciliationStreaks(),
+    });
 
     expect(summary.reconciledClassIds).not.toContain(cls.id);
     // The REASON, not merely the absence. `not.toContain` alone passes when the
@@ -436,7 +449,10 @@ describe('reconcileWaitlists (DB)', () => {
 
     expect(await broadcastFlag(cls.id)).toBeNull();
 
-    const summary = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
+    const summary = await reconcileWaitlists(prisma, {
+      now: clocks.inClaimWindow,
+      streaks: createReconciliationStreaks(),
+    });
 
     expect(summary.reconciledClassIds).toContain(cls.id);
     expect(summary.repairedClassIds).toContain(cls.id);
@@ -474,7 +490,10 @@ describe('reconcileWaitlists (DB)', () => {
     const [first, second] = cls.waiters as [string, string];
 
     // Round one: the live broadcast goes out and the flag stands.
-    const opened = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
+    const opened = await reconcileWaitlists(prisma, {
+      now: clocks.inClaimWindow,
+      streaks: createReconciliationStreaks(),
+    });
     expect(opened.repairedClassIds).toContain(cls.id);
     expect(await broadcastFlag(cls.id)).not.toBeNull();
 
@@ -494,7 +513,10 @@ describe('reconcileWaitlists (DB)', () => {
       data: { status: 'waiting' },
     });
 
-    const repaired = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
+    const repaired = await reconcileWaitlists(prisma, {
+      now: clocks.inClaimWindow,
+      streaks: createReconciliationStreaks(),
+    });
 
     expect(repaired.repairedClassIds).toContain(cls.id);
     // The second waiter is told about the second seat. Under the window-keyed
@@ -526,7 +548,10 @@ describe('reconcileWaitlists (DB)', () => {
       data: { spotBroadcastAt: new Date(clocks.classStart.getTime() - 31 * H) },
     });
 
-    const summary = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
+    const summary = await reconcileWaitlists(prisma, {
+      now: clocks.inClaimWindow,
+      streaks: createReconciliationStreaks(),
+    });
 
     expect(summary.reconciledClassIds).toContain(cls.id);
     expect(await spotNotifications(cls.id, cls.waiter)).toBe(1);
@@ -574,7 +599,10 @@ describe('reconcileWaitlists (DB)', () => {
 
     // In the claim window, so the blocked class fails inside lockClassRow's
     // bounded wait rather than waiting the holder out.
-    const summary = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
+    const summary = await reconcileWaitlists(prisma, {
+      now: clocks.inClaimWindow,
+      streaks: createReconciliationStreaks(),
+    });
 
     await holder;
     await holderClient.$disconnect();
@@ -596,7 +624,10 @@ describe('reconcileWaitlists (DB)', () => {
     // dropped by the 2s lock bound` through the same `55P03` `lock_timeout`
     // mechanism, on the other branch of `handleSpotFreed`. This test is the
     // one #220 was actually filed about.
-    const repair = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
+    const repair = await reconcileWaitlists(prisma, {
+      now: clocks.inClaimWindow,
+      streaks: createReconciliationStreaks(),
+    });
 
     expect(repair.reconciledClassIds).toContain(blocked.id);
     expect(repair.repairedClassIds).toContain(blocked.id);
@@ -641,6 +672,7 @@ describe('reconcileWaitlists (DB)', () => {
 
     const summary = await reconcileWaitlists(prisma, {
       now: windowClocks(cls.startTime).autoPromote,
+      streaks: createReconciliationStreaks(),
     });
 
     expect(summary.reconciledClassIds).toContain(cls.id);
@@ -686,6 +718,7 @@ describe('reconcileWaitlists (DB)', () => {
 
     const summary = await reconcileWaitlists(prisma, {
       now: windowClocks(cls.startTime).autoPromote,
+      streaks: createReconciliationStreaks(),
     });
 
     expect(summary.reconciledClassIds).not.toContain(cls.id);
@@ -698,14 +731,22 @@ describe('reconcileWaitlists (DB)', () => {
   });
 
   /**
-   * **The production call path**, which no other test in this file touches:
-   * `reconcileWaitlists(prisma)` with no `opts`, exactly as `buildJobs`'
-   * `waitlist-reconciliation` entry invokes it.
+   * **The production CLOCK**, which no other test in this file exercises: every
+   * window resolved from the real `new Date()` rather than an injected instant,
+   * as the scheduler's tick reaches the sweep.
    *
    * Thread `opts.now ?? new Date(0)` through the module and every other test
    * stays green while production resolves every class to `auto_promote` and the
    * broadcast branch never runs again. Only a test that passes no clock at all
    * can catch that.
+   *
+   * It passes `opts` all the same, because `streaks` is required — and the
+   * tracker below is this test's own rather than the module-level one
+   * `runWaitlistReconciliationTick` holds. Calling that wrapper here would look
+   * closer to production and behave worse: its tracker outlives the test, so
+   * this test would inherit whatever streak ran before it and leave its own
+   * behind for whatever runs next. `now` is the thing that must stay absent,
+   * and it is the only thing this test keeps absent.
    *
    * The class is built in the ACTUAL future and its window is asserted rather
    * than assumed, so a boundary error shows up as a failed precondition instead
@@ -770,11 +811,15 @@ describe('reconcileWaitlists (DB)', () => {
       data: { status: 'cancelled', cancelledAt: new Date() },
     });
 
-    const first = await reconcileWaitlists(prisma);
+    // One tracker across both calls, so the second tick sees what the first
+    // left — the same continuity production has, without production's reach.
+    const streaks = createReconciliationStreaks();
+
+    const first = await reconcileWaitlists(prisma, { streaks });
     expect(first.repairedClassIds).toContain(cls.id);
     expect(await spotNotifications(cls.id, waiter)).toBe(1);
 
-    const second = await reconcileWaitlists(prisma);
+    const second = await reconcileWaitlists(prisma, { streaks });
     expect(second.reconciledClassIds).not.toContain(cls.id);
     expect(await spotNotifications(cls.id, waiter)).toBe(1);
   });
@@ -791,6 +836,7 @@ describe('reconcileWaitlists (DB)', () => {
 
     const summary = await reconcileWaitlists(prisma, {
       now: windowClocks(cls.startTime).frozen,
+      streaks: createReconciliationStreaks(),
     });
 
     expect(summary.reconciledClassIds).not.toContain(cls.id);
@@ -846,7 +892,10 @@ describe('reconcileWaitlists (DB)', () => {
       // `email-fallback.test.ts` precedent.
     }) as unknown as PrismaClient;
 
-    const summary = await reconcileWaitlists(faulty, { now: clocks.inClaimWindow });
+    const summary = await reconcileWaitlists(faulty, {
+      now: clocks.inClaimWindow,
+      streaks: createReconciliationStreaks(),
+    });
 
     expect(summary.failedClassIds).toContain(broken.id);
     expect(summary.reconciledClassIds).toContain(healthy.id);
@@ -888,7 +937,10 @@ describe('reconcileWaitlists (DB)', () => {
       },
     }) as unknown as PrismaClient;
 
-    const summary = await reconcileWaitlists(faulty, { now: clocks.inClaimWindow });
+    const summary = await reconcileWaitlists(faulty, {
+      now: clocks.inClaimWindow,
+      streaks: createReconciliationStreaks(),
+    });
 
     expect(summary.failedClassIds).toContain(contended.id);
     expect(summary.reconciledClassIds).toContain(healthy.id);
@@ -936,7 +988,174 @@ describe('reconcileWaitlists (DB)', () => {
     }) as unknown as PrismaClient;
 
     await expect(
-      reconcileWaitlists(faulty, { now: clocks.inClaimWindow }),
+      reconcileWaitlists(faulty, {
+      now: clocks.inClaimWindow,
+      streaks: createReconciliationStreaks(),
+    }),
     ).rejects.toThrow(ReconciliationFailedError);
   });
+
+  /**
+   * The production entry point runs the sweep and, unlike every other caller in
+   * this file, carries memory between ticks. Asserting it delegates at all is
+   * what stops the wiring in `scheduler.ts` from pointing at a function that
+   * quietly forgets.
+   */
+  it('runs the sweep through the production entry point', async () => {
+    const summary = await runWaitlistReconciliationTick(prisma);
+    expect(summary.candidates).toBeGreaterThanOrEqual(0);
+  });
+
+  /**
+   * A tick that lost every class to contention must NOT report the job
+   * degraded — and after five of them in a row, it must.
+   *
+   * On a single-teacher VPS one candidate class per tick is the ordinary case,
+   * so "every class it tried failed" is reachable from one benign lock race that
+   * the next tick repairs. Throwing on that trains an operator to ignore
+   * `/api/health`. But never throwing reproduces #354 here: a leaked `idle in
+   * transaction` session holding a Class row makes every tick fail forever while
+   * the job reports success.
+   */
+  it('tolerates consecutive all-transient ticks, then reports the job degraded', async () => {
+    const contended = await makeFreedSeat('StreakContended');
+    const clocks = windowClocks(contended.startTime);
+    const streaks = createReconciliationStreaks();
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => {
+      warn.mockRestore();
+      error.mockRestore();
+    });
+
+    // Injected for EVERY class, so whatever leftover candidates another run left
+    // behind fail too and the all-failed condition holds without this test
+    // owning every row — the same reasoning as `throws when every class it
+    // invoked failed`.
+    const faulty = prisma.$extends({
+      query: {
+        class: {
+          findUnique() {
+            throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
+              code: 'P2024',
+              clientVersion: Prisma.prismaVersion.client,
+            });
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    for (let tick = 1; tick < 5; tick += 1) {
+      const summary = await reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks });
+      expect(summary.failedClassIds).toContain(contended.id);
+      expect(streaks.allTransientTicks).toBe(tick);
+    }
+
+    await expect(
+      reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks }),
+    ).rejects.toMatchObject({ name: 'ReconciliationFailedError', reason: 'contended' });
+  });
+
+  /**
+   * The streak is about UNBROKEN contention. A tick that reconciled something
+   * proves the sweep is working, so the count starts again — otherwise five
+   * scattered lock races over an hour would report a wedged sweep.
+   */
+  it('resets the contention streak on a tick that reconciled a class', async () => {
+    const contended = await makeFreedSeat('StreakReset');
+    const clocks = windowClocks(contended.startTime);
+    const streaks = createReconciliationStreaks();
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+
+    const faulty = prisma.$extends({
+      query: {
+        class: {
+          findUnique() {
+            throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
+              code: 'P2024',
+              clientVersion: Prisma.prismaVersion.client,
+            });
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    await reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks });
+    expect(streaks.allTransientTicks).toBe(1);
+
+    await reconcileWaitlists(prisma, { now: clocks.inClaimWindow, streaks });
+    expect(streaks.allTransientTicks).toBe(0);
+  });
+
+  /**
+   * A failure that will never clear by retrying escalates on the FIRST tick.
+   * Routing it through the streak would hide a permanently broken promotion path
+   * for five minutes, which is the defect this module exists to remove.
+   */
+  it('reports the job degraded immediately for a non-transient all-failed tick', async () => {
+    const cls = await makeFreedSeat('ImmediateFail');
+    const clocks = windowClocks(cls.startTime);
+    const streaks = createReconciliationStreaks();
+
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+
+    const faulty = prisma.$extends({
+      query: { class: { findUnique() { throw new Error('schema drift'); } } },
+    }) as unknown as PrismaClient;
+
+    await expect(
+      reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks }),
+    ).rejects.toMatchObject({ name: 'ReconciliationFailedError', reason: 'non_transient' });
+  });
+
+  /**
+   * **Issue #269's acceptance criterion, at the real mechanism.** Everything
+   * above injects a fault; this holds an actual `Class` row past
+   * `lockClassRow`'s 2 s bound so the failure is a genuine `55P03` from
+   * Postgres, with ONE candidate so the tick is all-failed.
+   *
+   * Follows `reconciles the remaining classes when one loses its lock race`,
+   * which uses the same holder shape with two candidates.
+   *
+   * A hazard this test respects: the sweep is database-wide, so another class
+   * left behind by an earlier test may reconcile in the same tick and make this
+   * one not all-failed. The assertions are deliberately about `contended.id`
+   * alone rather than about the tick throwing, which keeps them true either
+   * way. Do not strengthen them to `expect(...).resolves` on the tick.
+   */
+  it('does not report degraded when its only class loses a real lock race', async () => {
+    const contended = await makeFreedSeat('RealLockSolo');
+    const clocks = windowClocks(contended.startTime);
+    const streaks = createReconciliationStreaks();
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+
+    const holderClient = new PrismaClient();
+    let signalHeld!: () => void;
+    const lockHeld = new Promise<void>((r) => { signalHeld = r; });
+    const holder = holderClient.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${contended.id} FOR UPDATE`;
+        signalHeld();
+        // Past lockClassRow's 2s bound, under Prisma's 5s default budget, so the
+        // failure is 55P03 from Postgres rather than P2028 from the client.
+        await new Promise((r) => setTimeout(r, 3_500));
+      },
+      { timeout: 30_000 },
+    );
+    await lockHeld;
+
+    const summary = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow, streaks });
+
+    await holder;
+    await holderClient.$disconnect();
+
+    expect(summary.failedClassIds).toContain(contended.id);
+    expect(summary.transientFailedClassIds).toContain(contended.id);
+  }, 60_000);
 });

@@ -30,7 +30,7 @@ const SWEEP_NAMES = [
   'processEmailFallback',
   'processPaymentReminders',
   'cleanupExpiredAuth',
-  'reconcileWaitlists',
+  'runWaitlistReconciliationTick',
   'reapClosedWaitlistEntries',
   'auditTeacherTimezones',
 ] as const;
@@ -168,7 +168,7 @@ describe('buildJobs', () => {
         // problem this one reports every run until someone fixes the row.
         'auditTeacherTimezones',
       ],
-      'waitlist-reconciliation': ['reconcileWaitlists'],
+      'waitlist-reconciliation': ['runWaitlistReconciliationTick'],
     });
   });
 });
@@ -231,8 +231,9 @@ describe('makeTick', () => {
   /**
    * A throwing job must leave `lastError` set and `lastSuccessAt` untouched —
    * this is the whole path by which `/api/health` reports a job degraded, and
-   * it is why `reconcileWaitlists` throws `ReconciliationFailedError` rather
-   * than swallowing a tick in which every class failed.
+   * it is why the waitlist sweep throws `ReconciliationFailedError` on a tick
+   * that failed every class it invoked and is worth escalating, rather than
+   * swallowing it.
    */
   it('records a failure without stamping success, and releases the guard', async () => {
     const { job, health } = fixture(async () => {
