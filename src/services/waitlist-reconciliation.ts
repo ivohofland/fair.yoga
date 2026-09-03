@@ -46,7 +46,13 @@ import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { classStartInstant } from '@/lib/timezone';
-import { DEADLINE_HOURS, getWaitlistWindow, handleSpotFreed } from './waitlist';
+import {
+  DEADLINE_HOURS,
+  getWaitlistWindow,
+  handleSpotFreed,
+  SpotFreedError,
+  spotFreedLoss,
+} from './waitlist';
 
 /**
  * Why a candidate class was not handed to `handleSpotFreed`. Three reasons,
@@ -112,6 +118,16 @@ export interface ReconcileSummary {
   /** Classes whose invocation threw. Disjoint from `reconciledClassIds`. */
   readonly failedClassIds: readonly string[];
   /**
+   * The subset of `failedClassIds` whose failure `isTransientDbError`
+   * classified as a lost contention race — one a retry can win.
+   *
+   * A subset rather than a second partition, following `repairedClassIds`'
+   * relationship to `reconciledClassIds`. It is what lets a caller separate "the
+   * next tick will fix this" from "this fails again every sixty seconds
+   * forever", which the summary previously could not express at all.
+   */
+  readonly transientFailedClassIds: readonly string[];
+  /**
    * Candidates deliberately not invoked, each with its reason.
    *
    * Reasons travel with the class rather than being reduced to counters
@@ -128,7 +144,7 @@ export interface ReconcileSummary {
 type ClassOutcome =
   | { kind: 'skipped'; reason: SkipReason }
   | { kind: 'invoked'; repaired: boolean }
-  | { kind: 'failed' };
+  | { kind: 'failed'; transient: boolean };
 
 /** The candidate shape the per-class body needs, and no more. */
 interface CandidateClass {
@@ -422,13 +438,14 @@ async function reconcileOne(
     // that actually surfaces a broken sweep NOW is `ReconciliationFailedError`,
     // which reaches `/api/health` through the scheduler.
     const transient = isTransientDbError(err);
+    const window = err instanceof SpotFreedError ? err.window : null;
     log[transient ? 'warn' : 'error'](
-      { err, classId: cls.id, transient },
+      { err, classId: cls.id, transient, branch: window ?? 'unknown' },
       transient
-        ? 'waitlist reconciliation lost a lock race for one class — retrying next tick'
-        : 'waitlist reconciliation failed for one class and will not recover by retrying',
+        ? `waitlist reconciliation lost a lock race for one class — ${spotFreedLoss(window)}, retrying next tick`
+        : `waitlist reconciliation failed for one class and will not recover by retrying — ${spotFreedLoss(window)}`,
     );
-    return { kind: 'failed' };
+    return { kind: 'failed', transient };
   }
 }
 
@@ -486,6 +503,7 @@ function foldOutcomes(
   const reconciledClassIds: string[] = [];
   const repairedClassIds: string[] = [];
   const failedClassIds: string[] = [];
+  const transientFailedClassIds: string[] = [];
   const skipped: SkippedClass[] = [];
 
   for (const { classId, outcome } of outcomes) {
@@ -499,6 +517,7 @@ function foldOutcomes(
         break;
       case 'failed':
         failedClassIds.push(classId);
+        if (outcome.transient) transientFailedClassIds.push(classId);
         break;
       default: {
         const unhandled: never = outcome;
@@ -507,7 +526,14 @@ function foldOutcomes(
     }
   }
 
-  return { candidates, reconciledClassIds, repairedClassIds, failedClassIds, skipped };
+  return {
+    candidates,
+    reconciledClassIds,
+    repairedClassIds,
+    failedClassIds,
+    transientFailedClassIds,
+    skipped,
+  };
 }
 
 /**
@@ -614,6 +640,7 @@ function emptySummary(candidates: number): ReconcileSummary {
     reconciledClassIds: [],
     repairedClassIds: [],
     failedClassIds: [],
+    transientFailedClassIds: [],
     skipped: [],
   };
 }

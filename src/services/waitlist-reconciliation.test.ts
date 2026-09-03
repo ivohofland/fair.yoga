@@ -792,9 +792,10 @@ describe('reconcileWaitlists (DB)', () => {
   });
 
   /**
-   * The classification, which nothing observed before: `isTransientDbError`
-   * decides only a log level and a message, so inverting it, or hard-coding
-   * either side, passed the entire suite.
+   * The classification: `isTransientDbError` decides a log level and a
+   * message, and — via `ClassOutcome`'s `transient` field — whether the class
+   * lands in `summary.transientFailedClassIds`. Inverting it, or hard-coding
+   * either side, fails a log assertion and a summary assertion together.
    *
    * That mattered more than a normal logging gap. The module argues at length
    * that the split is the difference between a permanently broken promotion
@@ -842,6 +843,10 @@ describe('reconcileWaitlists (DB)', () => {
     );
     expect(logged).toBeDefined();
     expect(logged?.[0]).toMatchObject({ classId: broken.id, transient: false });
+    // The classification now leaves the function that computed it. Before this it
+    // picked a log level and was discarded, so nothing downstream could tell a
+    // lost race from a defect that will never clear.
+    expect(summary.transientFailedClassIds).not.toContain(broken.id);
   });
 
   it('logs a transient per-class failure at warn level', async () => {
@@ -880,6 +885,10 @@ describe('reconcileWaitlists (DB)', () => {
     );
     expect(logged).toBeDefined();
     expect(logged?.[0]).toMatchObject({ classId: contended.id, transient: true });
+    expect(summary.transientFailedClassIds).toContain(contended.id);
+    // A subset of `failedClassIds`, not a replacement for it — the same
+    // relationship `repairedClassIds` has to `reconciledClassIds`.
+    expect(summary.failedClassIds).toContain(contended.id);
   });
 
   /**
