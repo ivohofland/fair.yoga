@@ -136,6 +136,10 @@ export const magicLinkVerifySchema = z.object({
   token: z.string().min(1),
 });
 
+export const magicLinkClaimSchema = z.object({
+  code: z.string().regex(/^\d{6}$/, 'Enter the six-digit code'),
+});
+
 export const passkeyRegisterVerifySchema = z.object({
   response: z.record(z.string(), z.unknown()), // WebAuthn response is complex, validate shape loosely
 });
