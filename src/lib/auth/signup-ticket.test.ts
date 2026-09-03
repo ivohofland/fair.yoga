@@ -1,6 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { PrismaClient } from '@prisma/client';
-import { mintSignupTicket, peekSignupTicket, consumeSignupTicket } from './signup-ticket';
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
+import { PrismaClient, type MagicLinkPurpose } from '@prisma/client';
+import { mintSignupTicket, peekSignupTicket, consumeSignupTicket, signupTicketFor } from './signup-ticket';
+import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
+import { log } from '@/lib/log';
 
 const db = new PrismaClient();
 const email = 'ticket-family@example.com';
@@ -15,6 +17,7 @@ afterAll(async () => {
 
 afterEach(async () => {
   await db.magicLinkToken.deleteMany({ where: { email } });
+  vi.restoreAllMocks();
 });
 
 describe('signup ticket families', () => {
@@ -49,5 +52,73 @@ describe('signup ticket families', () => {
       data: { expiresAt: new Date(Date.now() - 1000) },
     });
     expect(await peekSignupTicket(db, token, 'student')).toBeNull();
+  });
+});
+
+// PR #427 review, C3: `signupTicketFor` was two `if`s over a five-member
+// union, not a `switch` a future member fails to compile against — and its
+// `null` case (a verified `student_signup` token with no usable redirect)
+// answered a false "Account not found" with nothing logged. Every branch of
+// the switch below, including both `log.error` paths, previously had no
+// direct test at all — it was only ever exercised transitively through the
+// `verify`/`claim` integration suites.
+describe('signupTicketFor', () => {
+  it('names the teacher family and its fixed destination for a teacher_signup token', () => {
+    expect(signupTicketFor('teacher_signup', null)).toEqual({
+      family: 'teacher',
+      dest: TEACHER_PROFILE_PATH,
+    });
+    // The teacher destination never depends on the token's own redirect.
+    expect(signupTicketFor('teacher_signup', '/some/other/path')).toEqual({
+      family: 'teacher',
+      dest: TEACHER_PROFILE_PATH,
+    });
+  });
+
+  it('names the student family and the token redirect for a student_signup token with a safe redirect', () => {
+    expect(signupTicketFor('student_signup', '/some-teacher/book/some-class')).toEqual({
+      family: 'student',
+      dest: '/some-teacher/book/some-class',
+    });
+  });
+
+  it('refuses (and logs) a student_signup token with no redirect', () => {
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => log);
+    expect(signupTicketFor('student_signup', null)).toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ purpose: 'student_signup', hasRedirect: false }),
+      expect.stringContaining('redirect is missing or unsafe'),
+    );
+  });
+
+  it('refuses (and logs) a student_signup token whose redirect is unsafe', () => {
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => log);
+    expect(signupTicketFor('student_signup', 'https://evil.example/steal')).toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ purpose: 'student_signup', hasRedirect: true }),
+      expect.stringContaining('redirect is missing or unsafe'),
+    );
+  });
+
+  it('mints no ticket for the three non-signup purposes, silently', () => {
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => log);
+    expect(signupTicketFor('sign_in', '/anywhere')).toBeNull();
+    expect(signupTicketFor('teacher_profile_pending', '/anywhere')).toBeNull();
+    expect(signupTicketFor('student_profile_pending', '/anywhere')).toBeNull();
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it('logs and refuses a purpose the switch does not recognize', () => {
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => log);
+    // The `never` assignment in `signupTicketFor`'s `default` case is what
+    // makes an unhandled sixth `MagicLinkPurpose` a compile error, not a
+    // silent `null` — this cast is the only way to exercise that branch
+    // without actually adding one to the schema.
+    const bogusPurpose = 'bogus_purpose' as unknown as MagicLinkPurpose;
+    expect(signupTicketFor(bogusPurpose, '/anywhere')).toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ purpose: bogusPurpose }),
+      expect.stringContaining('unhandled MagicLinkPurpose'),
+    );
   });
 });

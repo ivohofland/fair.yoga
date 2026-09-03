@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Icon } from '@/components/ui/icon';
+import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
 
 type Status = 'verifying' | 'success' | 'error' | 'already-signed-in' | 'handoff';
 type StepState = 'done' | 'now' | 'pending';
@@ -113,15 +114,16 @@ function destinationCopy(dest: string): string {
   if (dest.includes('/book/')) return 'Taking you back to your class now.';
   if (dest.startsWith('/bookings')) return 'Taking you to your bookings now.';
   if (dest === '/schedule') return 'Taking you to your schedule now.';
-  if (dest === '/signup/profile') return 'Taking you to set up your page now.';
+  if (dest === TEACHER_PROFILE_PATH) return 'Taking you to set up your page now.';
   return 'Taking you back to where you left off.';
 }
 
 /** The signup branch of `verify/route.ts` serves both families, and they are
- *  going to different places. Keyed on the destination, like
- *  `destinationCopy` above, so the two lines cannot disagree. */
+ *  going to different places. Keyed on `TEACHER_PROFILE_PATH`
+ *  (`src/lib/schemas.ts`) — the same constant `signupTicketFor` produces the
+ *  teacher destination from — so the two cannot desync on the literal. */
 function newSignupHeadline(dest: string): string {
-  return dest === '/signup/profile' ? "Let's set up your page." : "Let's finish your booking.";
+  return dest === TEACHER_PROFILE_PATH ? "Let's set up your page." : "Let's finish your booking.";
 }
 
 /**
