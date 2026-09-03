@@ -161,7 +161,7 @@ describe('GET /settings/reporting (reporting page)', () => {
 
       expect(html).toContain('Reporting');
       expect(html).toContain('Nothing to report yet');
-      expect(html).toContain('Completed classes and their earnings appear here.');
+      expect(html).toContain('Completed classes and what they charged appear here.');
       expect(html).not.toContain('Total charged for teaching');
       expect(html).not.toContain('>By month</h2>');
     });
@@ -286,7 +286,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       expect(html).toContain('MONTH');
       expect(html).toContain('CLASSES');
       expect(html).toContain('STUDENTS');
-      expect(html).toContain('EARNED');
+      expect(html).toContain('CHARGED');
 
       // August 2026: 2 classes (1 regular + 1 studio), 10 students (2 + 8), 127.00 earned (59.50 + 67.50)
       const augLabel = formatMonthLabel(2026, 7); // monthIndex 7 is August
