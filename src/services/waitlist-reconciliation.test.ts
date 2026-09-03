@@ -1158,4 +1158,104 @@ describe('reconcileWaitlists (DB)', () => {
     expect(summary.failedClassIds).toContain(contended.id);
     expect(summary.transientFailedClassIds).toContain(contended.id);
   }, 60_000);
+
+  /**
+   * A class stuck behind a healthy sibling.
+   *
+   * The tick-level escalation cannot see this one: it requires that NO class
+   * reconciled, so a single wedged class hides completely as soon as anything
+   * else works. That was inherited rather than decided. The decision is an
+   * `error` line naming the class and its streak — visible to log alerting,
+   * without holding an otherwise-working job at `degraded` indefinitely.
+   */
+  it('escalates a class contended for too many consecutive ticks, without reddening the job', async () => {
+    const stuck = await makeFreedSeat('PerClassStuck');
+    const healthy = await makeFreedSeat('PerClassHealthy');
+    const clocks = windowClocks(stuck.startTime);
+    const streaks = createReconciliationStreaks();
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => {
+      warn.mockRestore();
+      error.mockRestore();
+    });
+
+    const faulty = prisma.$extends({
+      query: {
+        class: {
+          findUnique({ args, query }) {
+            if (args.where?.id === stuck.id) {
+              throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
+                code: 'P2024',
+                clientVersion: Prisma.prismaVersion.client,
+              });
+            }
+            return query(args);
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const forClass = (
+      calls: Array<[unknown, ...unknown[]]>,
+    ): Array<{ classId?: string; classStreak?: number }> =>
+      calls
+        .map((c) => c[0] as { classId?: string; classStreak?: number })
+        .filter((p) => p?.classId === stuck.id);
+
+    for (let tick = 1; tick < 5; tick += 1) {
+      await reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks });
+      expect(forClass(warn.mock.calls).at(-1)).toMatchObject({ classStreak: tick });
+      expect(forClass(error.mock.calls)).toHaveLength(0);
+    }
+
+    // The fifth consecutive failure crosses the threshold. `healthy`
+    // reconciled on the first of these five ticks and its broadcast still
+    // stands — a genuinely free seat is a one-shot event, so a healthy class
+    // does not re-invoke every tick, it invokes once and then correctly gates
+    // itself (`already_broadcast`). What matters for "without reddening the
+    // job" is that this call resolves rather than throwing
+    // `ReconciliationFailedError`: `decideEscalation` never crosses the
+    // tick-level `allTransientTicks` threshold across this sequence, because
+    // tick 1's success reset it and only four ticks remain.
+    const summary = await reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks });
+    expect(summary.skipped).toContainEqual({ classId: healthy.id, reason: 'already_broadcast' });
+    expect(forClass(error.mock.calls).at(-1)).toMatchObject({ classStreak: 5 });
+  });
+
+  /**
+   * The map is rebuilt from each tick's failures, so a class that recovers does
+   * not carry its old count into a later failure.
+   */
+  it('drops a class from the streak map once it stops failing', async () => {
+    const flaky = await makeFreedSeat('PerClassFlaky');
+    const clocks = windowClocks(flaky.startTime);
+    const streaks = createReconciliationStreaks();
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+
+    const faulty = prisma.$extends({
+      query: {
+        class: {
+          findUnique({ args, query }) {
+            if (args.where?.id === flaky.id) {
+              throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
+                code: 'P2024',
+                clientVersion: Prisma.prismaVersion.client,
+              });
+            }
+            return query(args);
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    await reconcileWaitlists(faulty, { now: clocks.inClaimWindow, streaks });
+    expect(streaks.failuresByClass.get(flaky.id)).toBe(1);
+
+    await reconcileWaitlists(prisma, { now: clocks.inClaimWindow, streaks });
+    expect(streaks.failuresByClass.has(flaky.id)).toBe(false);
+  });
 });

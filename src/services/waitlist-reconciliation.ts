@@ -194,9 +194,10 @@ export interface ReconciliationStreaks {
   /** Consecutive ticks in which every invoked class failed, all transiently. */
   allTransientTicks: number;
   /**
-   * Consecutive failures per class. Nothing reads it yet — the per-class
-   * escalation is what will, and it is carried here so both escalations share
-   * one tracker rather than each growing its own.
+   * Consecutive failures per class, read and written once per tick by
+   * `reconcileWaitlists` through a `TickFailures` built from this map — never
+   * mutated in place, so both escalations share one tracker rather than each
+   * growing its own.
    *
    * Its invariant, for whoever writes it: rebuild the map each tick from that
    * tick's failures, so a class that did not fail leaves it and its size stays
@@ -207,6 +208,16 @@ export interface ReconciliationStreaks {
 
 export function createReconciliationStreaks(): ReconciliationStreaks {
   return { allTransientTicks: 0, failuresByClass: new Map() };
+}
+
+/**
+ * The two failure maps one tick needs: the previous tick's counts to read, and
+ * this tick's to build. Swapped in once after the loop, so a class that did
+ * not fail simply is not in the new one.
+ */
+interface TickFailures {
+  readonly prior: ReadonlyMap<string, number>;
+  readonly next: Map<string, number>;
 }
 
 export interface ReconcileOptions {
@@ -419,13 +430,24 @@ export async function reconcileWaitlists(
   });
   const activeByClass = new Map(counts.map((c) => [c.classId, c._count._all]));
 
+  // The previous tick's counts to read, this tick's to build — swapped into
+  // `opts.streaks.failuresByClass` once after the loop below, per
+  // `TickFailures`'s docblock. Built here rather than passed in so
+  // `reconcileOne` never sees the mutable tracker itself, only this tick's
+  // slice of it.
+  const failures: TickFailures = { prior: opts.streaks.failuresByClass, next: new Map() };
+
   const outcomes: Array<{ classId: string; outcome: ClassOutcome }> = [];
   for (const cls of classes) {
     outcomes.push({
       classId: cls.id,
-      outcome: await reconcileOne(db, cls, activeByClass.get(cls.id) ?? 0, opts.now),
+      outcome: await reconcileOne(db, cls, activeByClass.get(cls.id) ?? 0, opts.now, failures),
     });
   }
+  // Rebuilt, not merged: a class absent from `failures.next` did not fail this
+  // tick, so it must not be found still failing when the next tick reads
+  // `.prior`. See `ReconciliationStreaks.failuresByClass`'s invariant.
+  opts.streaks.failuresByClass = failures.next;
 
   const summary = foldOutcomes(classes.length, outcomes);
   // Updated BEFORE the decision, so `decideEscalation` reads a count that
@@ -455,6 +477,7 @@ async function reconcileOne(
   cls: CandidateClass,
   activeCount: number,
   now: Date | undefined,
+  failures: TickFailures,
 ): Promise<ClassOutcome> {
   // The whole body is inside the `try`, not just the `handleSpotFreed` call —
   // and today nothing before that call can actually throw. `getWaitlistWindow`
@@ -563,9 +586,20 @@ async function reconcileOne(
     // moves an escalation by five minutes in one direction or hides it in the
     // other — a larger consequence than the log level this line picks.
     const transient = isTransientDbError(err);
+    // Consecutive failures for THIS class, read from the tick before and
+    // written for the tick after — see `TickFailures`'s docblock for why the
+    // write lands in `.next` rather than mutating `.prior` in place.
+    const classStreak = (failures.prior.get(cls.id) ?? 0) + 1;
+    failures.next.set(cls.id, classStreak);
     const window = err instanceof SpotFreedError ? err.window : null;
-    log[transient ? 'warn' : 'error'](
-      { err, classId: cls.id, transient, branch: window ?? 'unknown' },
+    // `error` for a failure that will not clear by retrying (as before) OR for a
+    // transient one that has now stood for the whole threshold. The second is the
+    // only signal a class wedged behind a healthy sibling ever produces: the
+    // tick-level escalation requires that nothing reconciled, so it cannot see
+    // this class at all.
+    const stuck = transient && classStreak >= MAX_CONSECUTIVE_CONTENDED_TICKS;
+    log[transient && !stuck ? 'warn' : 'error'](
+      { err, classId: cls.id, transient, classStreak, branch: window ?? 'unknown' },
       transient
         ? `waitlist reconciliation lost a lock race for one class — ${spotFreedLoss(window)}, retrying next tick`
         : `waitlist reconciliation failed for one class and will not recover by retrying — ${spotFreedLoss(window)}`,
