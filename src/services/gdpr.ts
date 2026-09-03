@@ -750,8 +750,9 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // status, because that set IS the pre-lock's lock set. (This sentence used
     // to read "no plausible legitimate student waiting in more than a handful
     // of classes at once", sizing the budget on the very axis the paragraphs
-    // above spend twenty lines discrediting.) On a single-teacher CRM tool
-    // that lock set is a handful of classes.
+    // above spend twenty lines discrediting.) That set is ONE student's own
+    // entries, so what sizes it is how many classes that student is queued in
+    // at once — a handful — and not how many teachers share the deployment.
     //
     // #238 SHRINKS THAT AXIS; IT DOES NOT BOUND IT. The mismatch is between two
     // predicates: the pre-lock above joins `WaitlistEntry` with NO status
