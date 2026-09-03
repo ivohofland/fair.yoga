@@ -90,10 +90,15 @@ stop the teacher reaching them. Until one of those two sites has run there is
 no row, and every read treats absence as maximum privacy
 (`privacy?.shareX ?? false`). One projection reads these flags for nearly
 every teacher-facing surface: `src/lib/student-visibility.ts`. The one
-exception is `rosterLinkState` (`src/services/invitations.ts`), which reads
-`StudentPrivacy.shareEmail` directly, outside that projection, to decide
-what `POST /api/students` may tell a teacher about a guessed address (#412) —
-see the Invitation section below. No server-side predicate may filter
+exception is `rosterLinkState` (`src/services/invitations.ts`), which decides
+what `POST /api/students` may tell a teacher about a guessed address (#412)
+outside that projection — and so has to answer "may this teacher see this
+address" by both of the projection's own routes, not just the flag: this
+teacher's `StudentPrivacy.shareEmail`, **or** `Student.claimedAt IS NULL`,
+which `bypassesPrivacy` treats as fully visible to any teacher (#419). Those
+two modules are the whole census of that rule; a change to either without the
+other is the drift #419 was filed for. See the Invitation section below.
+No server-side predicate may filter
 (`where`) or order (`orderBy`) on a privacy-gated `Student` column —
 `lastName`, `email`, `phone`, `birthday`, or `address`, one per
 `VisibilityFlags` member in that file — because a match, or a sort position,
@@ -145,7 +150,9 @@ A teacher may not link themselves to a student unilaterally. `POST /api/students
 
 `accepted` is not a second tombstone. Whether the teacher may invite that address again turns on whether a `TeacherStudent` link actually exists, never on the status alone — erasing a student deletes their links and leaves this row `accepted`, and reading the status there would tell the teacher "already one of your students" forever about someone off their roster, with `unique (teacher_id, email)` blocking any second row. `inviteContact` therefore returns such a row to `pending` (clearing `responded_at`) rather than creating one, and a `TeacherBlock` on the address still withholds delivery exactly as it does for a first invitation.
 
-Since #412, a live link is no longer sufficient on its own to refuse the invite: `inviteContact` refuses (`ALREADY_LINKED`) only when the link exists AND (the student's `StudentPrivacy.shareEmail` for this teacher is true, or this same `accepted` status holds) — see `rosterLinkState`, `src/services/invitations.ts`. A linked student who has not shared their email gets a real, silent pending invitation instead of a refusal that would confirm the address belongs to one of this teacher's own students.
+Since #412, a live link is no longer sufficient on its own to refuse the invite: `inviteContact` refuses (`ALREADY_LINKED`) only when the link exists AND the teacher could already have had that address anyway — which since #419 is three disjuncts, not two: the student's `StudentPrivacy.shareEmail` for this teacher is true, or the student is unclaimed (`claimedAt IS NULL`, which `bypassesPrivacy` hands to any teacher in full — see the StudentPrivacy section above), or this same `accepted` status holds. See `rosterLinkState`, `src/services/invitations.ts`. A *claimed* linked student who has not shared their email gets a real, silent pending invitation instead of a refusal that would confirm the address belongs to one of this teacher's own students.
+
+The unclaimed disjunct restores what #412 accidentally took away, rather than opening anything: before #412 the link alone refused, so an unclaimed linked contact met `ALREADY_LINKED` then too. In between it fell through to an invitation that could never arrive — `notifyInvitee` returns early on a live link, so the row sat in Contacts forever under a name the teacher typed, undeliverable and unexplained.
 
 ### TeacherBlock (a student's standing refusal of one teacher, #166)
 

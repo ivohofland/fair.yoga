@@ -82,6 +82,48 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+/**
+ * Run `body` with one of the seeded students temporarily CLAIMED, then put
+ * the row back exactly as it was.
+ *
+ * Every student this file seeds above is created without an `Account`, so all
+ * of them are unclaimed — and an unclaimed student withholds nothing from
+ * anyone: `bypassesPrivacy` (`src/lib/student-visibility.ts`) ungates every
+ * privacy flag for them, which since #419 includes the `ALREADY_LINKED` gate.
+ * Any assertion here that means to test a privacy FLAG has to claim its
+ * student first, or it passes on the bypass and would pass with the flag
+ * deleted. Measured: without this, removing the `shareEmail: true` row from
+ * the 409 test below left the test green.
+ *
+ * `Student_claim_link_check` is `CHECK (("claimedAt" IS NULL) = ("accountId"
+ * IS NULL))`, so the `Account` is mandatory on the way in and both columns
+ * have to be cleared in one statement on the way out.
+ *
+ * The account id is held in this closure rather than read back off the
+ * student row: a restore that re-reads `accountId` cannot find the account it
+ * needs to delete if the update it is restoring never committed.
+ */
+async function withClaimedStudent<T>(studentId: string, body: () => Promise<T>): Promise<T> {
+  const { email } = await prisma.student.findUniqueOrThrow({
+    where: { id: studentId },
+    select: { email: true },
+  });
+  const account = await prisma.account.create({ data: { email }, select: { id: true } });
+  try {
+    await prisma.student.update({
+      where: { id: studentId },
+      data: { accountId: account.id, claimedAt: new Date() },
+    });
+    return await body();
+  } finally {
+    await prisma.student.update({
+      where: { id: studentId },
+      data: { accountId: null, claimedAt: null },
+    });
+    await prisma.account.delete({ where: { id: account.id } });
+  }
+}
+
 describe('GET /api/students', () => {
   it('returns every student linked to the teacher', async () => {
     const res = await fetch(`${BASE_URL}/api/students`, {
@@ -330,143 +372,169 @@ describe('POST /api/students', () => {
     // of being invited" case. The privacy row is what entitles this teacher
     // to the refusal at all (#412) — without it the address is one they may
     // not see, and the invite falls through instead.
+    //
+    // CLAIMED for the duration, which is what keeps that last sentence true:
+    // the seeded rows are unclaimed, and #419 entitles a teacher to the
+    // refusal for an unclaimed student regardless of any flag, so this test
+    // certified nothing about `shareEmail` until the claim was added.
     const linked = await prisma.student.findUniqueOrThrow({
       where: { id: studentIds[0]! },
       select: { email: true },
     });
-    // Removed in the finally: the GET tests in this file project this same
-    // student, and a leaked share would change what they assert on.
-    await prisma.studentPrivacy.create({
-      data: { studentId: studentIds[0]!, teacherId, shareEmail: true },
+
+    await withClaimedStudent(studentIds[0]!, async () => {
+      // Removed in the finally: the GET tests in this file project this same
+      // student, and a leaked share would change what they assert on.
+      await prisma.studentPrivacy.create({
+        data: { studentId: studentIds[0]!, teacherId, shareEmail: true },
+      });
+
+      try {
+        const res = await fetch(`${BASE_URL}/api/students`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+          body: JSON.stringify({ firstName: 'Already', lastName: 'Mine', email: linked.email }),
+        });
+
+        expect(res.status).toBe(409);
+        const json = await res.json();
+        expect(json.error.code).toBe('ALREADY_LINKED');
+
+        // A refusal, not a refusal-shaped success: no invitation was written
+        // beside it.
+        expect(
+          await prisma.invitation.findUnique({
+            where: { teacherId_email: { teacherId, email: linked.email } },
+          }),
+        ).toBeNull();
+      } finally {
+        await prisma.studentPrivacy.deleteMany({
+          where: { studentId: studentIds[0]!, teacherId },
+        });
+      }
+    });
+  });
+
+  it('returns 409 ALREADY_LINKED for an UNCLAIMED student on the roster (#419)', async () => {
+    // The route-level half of #419. Until this existed, reverting the fix
+    // outright left every test in this file green — the behaviour the issue
+    // is actually about had no test at the tier that serves it.
+    //
+    // `studentIds[2]` needs no fixture work: the seeded rows are unclaimed
+    // already, and this one carries no `StudentPrivacy`, so the ONLY thing
+    // that can produce a 409 here is the unclaimed bypass. Before #419 this
+    // fell through to a real `Invitation` that `notifyInvitee` then refused
+    // to deliver — a contact stuck in the teacher's list forever.
+    const unclaimed = await prisma.student.findUniqueOrThrow({
+      where: { id: studentIds[2]! },
+      select: { email: true, claimedAt: true },
+    });
+    expect(unclaimed.claimedAt).toBeNull();
+
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'Already', lastName: 'Mine', email: unclaimed.email }),
     });
 
-    try {
-      const res = await fetch(`${BASE_URL}/api/students`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
-        body: JSON.stringify({ firstName: 'Already', lastName: 'Mine', email: linked.email }),
-      });
-
-      expect(res.status).toBe(409);
-      const json = await res.json();
-      expect(json.error.code).toBe('ALREADY_LINKED');
-
-      // A refusal, not a refusal-shaped success: no invitation was written
-      // beside it.
-      expect(
-        await prisma.invitation.findUnique({
-          where: { teacherId_email: { teacherId, email: linked.email } },
-        }),
-      ).toBeNull();
-    } finally {
-      await prisma.studentPrivacy.deleteMany({
-        where: { studentId: studentIds[0]!, teacherId },
-      });
-    }
+    expect(res.status).toBe(409);
+    const json = await res.json();
+    expect(json.error.code).toBe('ALREADY_LINKED');
+    expect(
+      await prisma.invitation.findUnique({
+        where: { teacherId_email: { teacherId, email: unclaimed.email } },
+      }),
+    ).toBeNull();
   });
 
   it('invites, rather than confirming, when the linked student has not shared their email (#412)', async () => {
     // The disclosure this closes: `ALREADY_LINKED` told a teacher that an
     // address they typed belongs to one of their own students, even one who
     // withheld it — a fact projectStudentForTeacher returns as null on every
-    // other surface (unless the student is unclaimed). A hit was free and
+    // other surface, once that student is CLAIMED. A hit was free and
     // silent, which is what made the targeted guess worth closing.
+    //
+    // Claimed for the duration, and not as bookkeeping: the seeded rows are
+    // unclaimed, and an unclaimed student is fully visible to any teacher, so
+    // #419 answers 409 for them. Withholding is a claimed student's to do.
     const linked = await prisma.student.findUniqueOrThrow({
       where: { id: studentIds[1]! },
       select: { email: true },
     });
-    const account = await prisma.account.create({
-      data: { email: linked.email },
-      select: { id: true },
-    });
-    await prisma.student.update({
-      where: { id: studentIds[1]! },
-      data: { accountId: account.id, claimedAt: new Date() },
-    });
 
-    const controlEmail = `crm-already-linked-control-${suffix}@test.local`;
-    let controlStudentId: string | undefined;
-    try {
-      const res = await fetch(`${BASE_URL}/api/students`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
-        body: JSON.stringify({ firstName: 'Already', lastName: 'Mine', email: linked.email }),
-      });
-
-      const json = await res.json();
-      if (res.status !== 201) console.log('DEBUG RESPONSE:', json);
-      expect(res.status).toBe(201);
-      expect(Object.keys(json.data)).toEqual(['id']);
-
-      // The row must genuinely exist: "did a new contact appear in my list?"
-      // is itself a channel carrying the bit the refusal withheld, so the
-      // gated path has to leave the artifact a real invitation leaves.
-      const row = await prisma.invitation.findUniqueOrThrow({
-        where: { teacherId_email: { teacherId, email: linked.email } },
-        select: { status: true },
-      });
-      expect(row.status).toBe('pending');
-
-      // The user-facing property the whole PR exists to produce: the
-      // student receives NOTHING, not merely an HTTP response shaped like a
-      // withheld one. `deliverInvitation` runs fire-and-forget
-      // (services/invitations.ts), so reading `Notification` immediately
-      // would prove nothing — a dropped guard's write could still be in
-      // flight. Same idiom as invitations-api.test.ts's "withholds delivery
-      // entirely from a blocked address": invite a second, CONTROL address
-      // issued strictly after the gated one, with its own unlinked Student
-      // row, and `waitFor` ITS notification first — delivery runs
-      // sequentially from this single process, so once the control's write
-      // is confirmed, the gated student's would have landed too, if it were
-      // ever going to.
-      const controlStudent = await prisma.student.create({
-        data: { firstName: 'Already', lastName: 'Control', email: controlEmail },
-        select: { id: true },
-      });
-      controlStudentId = controlStudent.id;
-      const controlRes = await fetch(`${BASE_URL}/api/students`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
-        body: JSON.stringify({ firstName: 'Already', lastName: 'Control', email: controlEmail }),
-      });
-      expect(controlRes.status).toBe(201);
-      await waitFor(
-        () =>
-          prisma.notification.findFirst({
-            where: {
-              recipientType: 'student',
-              recipientId: controlStudentId!,
-              type: 'teacher_invitation',
-            },
-          }),
-        { description: "already-linked gate test's control teacher_invitation notification (#412)" },
-      );
-
-      const notifications = await prisma.notification.findMany({
-        where: { recipientType: 'student', recipientId: studentIds[1]!, type: 'teacher_invitation' },
-      });
-      expect(notifications).toHaveLength(0);
-    } finally {
-      await prisma.invitation.deleteMany({
-        where: { teacherId, email: linked.email },
-      });
-      if (controlStudentId) {
-        await prisma.invitation.deleteMany({ where: { teacherId, email: controlEmail } });
-        await prisma.notification.deleteMany({ where: { recipientId: controlStudentId } });
-        await prisma.student.delete({ where: { id: controlStudentId } });
-      }
-      const student = await prisma.student.findUnique({
-        where: { id: studentIds[1]! },
-        select: { accountId: true },
-      });
-      if (student?.accountId) {
-        await prisma.student.update({
-          where: { id: studentIds[1]! },
-          data: { accountId: null, claimedAt: null },
+    await withClaimedStudent(studentIds[1]!, async () => {
+      const controlEmail = `crm-already-linked-control-${suffix}@test.local`;
+      let controlStudentId: string | undefined;
+      try {
+        const res = await fetch(`${BASE_URL}/api/students`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+          body: JSON.stringify({ firstName: 'Already', lastName: 'Mine', email: linked.email }),
         });
-        await prisma.account.delete({ where: { id: student.accountId } });
+
+        expect(res.status).toBe(201);
+        const json = await res.json();
+        expect(Object.keys(json.data)).toEqual(['id']);
+
+        // The row must genuinely exist: "did a new contact appear in my list?"
+        // is itself a channel carrying the bit the refusal withheld, so the
+        // gated path has to leave the artifact a real invitation leaves.
+        const row = await prisma.invitation.findUniqueOrThrow({
+          where: { teacherId_email: { teacherId, email: linked.email } },
+          select: { status: true },
+        });
+        expect(row.status).toBe('pending');
+
+        // The user-facing property the whole PR exists to produce: the
+        // student receives NOTHING, not merely an HTTP response shaped like a
+        // withheld one. `deliverInvitation` runs fire-and-forget
+        // (services/invitations.ts), so reading `Notification` immediately
+        // would prove nothing — a dropped guard's write could still be in
+        // flight. Same idiom as invitations-api.test.ts's "withholds delivery
+        // entirely from a blocked address": invite a second, CONTROL address
+        // issued strictly after the gated one, with its own unlinked Student
+        // row, and `waitFor` ITS notification first — delivery runs
+        // sequentially from this single process, so once the control's write
+        // is confirmed, the gated student's would have landed too, if it were
+        // ever going to.
+        const controlStudent = await prisma.student.create({
+          data: { firstName: 'Already', lastName: 'Control', email: controlEmail },
+          select: { id: true },
+        });
+        controlStudentId = controlStudent.id;
+        const controlRes = await fetch(`${BASE_URL}/api/students`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+          body: JSON.stringify({ firstName: 'Already', lastName: 'Control', email: controlEmail }),
+        });
+        expect(controlRes.status).toBe(201);
+        await waitFor(
+          () =>
+            prisma.notification.findFirst({
+              where: {
+                recipientType: 'student',
+                recipientId: controlStudentId!,
+                type: 'teacher_invitation',
+              },
+            }),
+          { description: "already-linked gate test's control teacher_invitation notification (#412)" },
+        );
+
+        const notifications = await prisma.notification.findMany({
+          where: { recipientType: 'student', recipientId: studentIds[1]!, type: 'teacher_invitation' },
+        });
+        expect(notifications).toHaveLength(0);
+      } finally {
+        await prisma.invitation.deleteMany({
+          where: { teacherId, email: linked.email },
+        });
+        if (controlStudentId) {
+          await prisma.invitation.deleteMany({ where: { teacherId, email: controlEmail } });
+          await prisma.notification.deleteMany({ where: { recipientId: controlStudentId } });
+          await prisma.student.delete({ where: { id: controlStudentId } });
+        }
       }
-    }
+    });
   });
 
   // `'returns 409 ALREADY_LINKED even when the stored address carries

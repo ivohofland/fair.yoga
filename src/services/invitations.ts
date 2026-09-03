@@ -80,8 +80,15 @@ export const REFUSAL_MESSAGES: Record<InviteRefusal, string> = {
 interface RosterLinkState {
   /** A `TeacherStudent` row joins this teacher to the Student owning `email`. */
   linked: boolean;
-  /** This teacher's `StudentPrivacy.shareEmail` for that student. */
-  shareEmail: boolean;
+  /**
+   * May this teacher be told? Their own `StudentPrivacy.shareEmail` for that
+   * student, OR the student being unclaimed — the two ways this teacher could
+   * already have the address. Reading it as the flag alone is what #419
+   * corrected, so it is no longer named after the flag.
+   *
+   * Meaningful only in conjunction with `linked` — see the docblock below.
+   */
+  mayBeTold: boolean;
 }
 
 /**
@@ -91,19 +98,29 @@ interface RosterLinkState {
  * `inviteContact` needs `linked` again below to decide whether delivery is
  * withheld.
  *
- * Both fields read `false` for "no Student row" and for "Student row, no
- * link" alike, and that is a property rather than an implementation detail:
- * the caller must not be able to tell those two apart, or it becomes the
+ * `linked` reads `false` for "no Student row" and for "Student row, no link"
+ * alike, and that is a property rather than an implementation detail: the
+ * caller must not be able to tell those two apart, or it becomes the
  * account-enumeration oracle the old `POST /api/students` was (#166).
  *
- * `shareEmail` is the second property (#412), and it is about a different
+ * `mayBeTold` is the second property (#412), and it is about a different
  * thing: #167 made `Student.email` per-teacher redacted, so a teacher who
  * may not see an address must not be handed a confirmation of one they
  * typed. Answering `ALREADY_LINKED` on the strength of the link alone told
- * them a guessed address belongs to one of their own students — which
- * `projectStudentForTeacher` (lib/student-visibility.ts) returns as `null`
- * on every other surface (unless the student is unclaimed). A missing
- * `StudentPrivacy` row reads as `false`.
+ * them a guessed address belongs to one of their own students. So it asks
+ * the question the teacher-facing projection asks, and by the same two
+ * routes: the per-teacher flag, and the unclaimed-Student bypass that
+ * ungates every field (#419). A missing `StudentPrivacy` row reads as
+ * `false`. That rule spans two modules and neither owns it —
+ * `docs/data-model.md` does, under StudentPrivacy and Invitation.
+ *
+ * `mayBeTold` does NOT carry the indistinguishability above, and since #419
+ * it cannot: an unclaimed `Student` row reads `true` whether or not it is on
+ * this teacher's roster, while "no Student row" still reads `false`. Reading
+ * it outside a `linked` conjunct therefore rebuilds the #166 oracle.
+ * `inviteContact` below is its only reader and does conjoin it, and
+ * `invitations.gate.test.ts` pins that conjunct from both sides — including
+ * the unclaimed stranger, who is the case this paragraph is about.
  *
  * ONE query, and `student.findUnique` must stay the first statement in it:
  * `invitations.revive.test.ts` hooks that call through a Prisma extension to
@@ -126,15 +143,38 @@ async function rosterLinkState(
   const student = await db.student.findUnique({
     where: { email },
     select: {
+      id: true,
       claimedAt: true,
       teacherStudents: { where: { teacherId }, select: { id: true } },
       studentPrivacy: { where: { teacherId }, select: { teacherId: true, shareEmail: true } },
     },
   });
-  if (!student) return { linked: false, shareEmail: false };
+  if (!student) return { linked: false, mayBeTold: false };
+
+  const linked = student.teacherStudents.length > 0;
+  const unclaimed = student.claimedAt === null;
+
+  // The second tripwire on the unclaimed-Student branch, and the reason this
+  // one exists rather than deferring to `bypassesPrivacy`'s: that warn fires
+  // when a student is PROJECTED, and this gate reaches students the
+  // projection does not. `teacherStudents` here is unfiltered, while
+  // `GET /api/students` scopes its listing to `isArchived: false`, so an
+  // archived unclaimed contact is bypassed here and nowhere else. Gated on
+  // `linked` because that is when the bypass changes an answer.
+  //
+  // `=== null` rather than `bypassesPrivacy`'s `if (student.claimedAt)`: this
+  // spelling fails CLOSED on a field that went missing, and `claimedAt: true`
+  // above is a compile tether besides — dropping it is a `tsc` error here,
+  // the same way dropping `teacherId: true` is one below.
+  if (unclaimed && linked) {
+    log.warn(
+      { studentId: student.id, teacherId },
+      'unclaimed Student reached the ALREADY_LINKED gate — shareEmail is being bypassed',
+    );
+  }
 
   return {
-    linked: student.teacherStudents.length > 0,
+    linked,
     // A missing row reads as `false`, matching
     // `projectStudentForTeacher`'s own `flags?.shareEmail ?? false` and the
     // promise on /account/privacy that new teachers start with nothing shared.
@@ -148,8 +188,13 @@ async function rosterLinkState(
     // error, because the callback below would then reference `.teacherId` on
     // a type that no longer has it. See that file's `studentNameSelect` for
     // the same pattern, stated once and measured.
-    shareEmail:
-      student.claimedAt === null ||
+    //
+    // `unclaimed ||` is the other half, and it short-circuits the flag
+    // entirely rather than defaulting it: an unclaimed student's address is
+    // already in this teacher's directory in plain text, so the flag has
+    // nothing left to withhold (#419).
+    mayBeTold:
+      unclaimed ||
       (student.studentPrivacy.find((p) => p.teacherId === teacherId)?.shareEmail ?? false),
   };
 }
@@ -229,7 +274,7 @@ export async function inviteContact(
   //
   // Since #412, `existing?.status === 'accepted'` reaching this point is
   // also the second disjunct of the `ALREADY_LINKED` gate below: an accepted
-  // row on a linked pair is refused even when `shareEmail` is false, because
+  // row on a linked pair is refused even when `mayBeTold` is false, because
   // falling through would reach `revivePendingInvitation` further down and
   // flip that row from `accepted` (invisible in Contacts) to `pending`
   // (rendered "Invited"), clear `isArchived`, and overwrite the names —
@@ -249,7 +294,7 @@ export async function inviteContact(
   // privacy justification above is specifically about `accepted`, not "any
   // non-null row".
   const link = await rosterLinkState(db, teacherId, email);
-  if (link.linked && (link.shareEmail || existing?.status === 'accepted')) {
+  if (link.linked && (link.mayBeTold || existing?.status === 'accepted')) {
     return { ok: false, reason: 'ALREADY_LINKED' };
   }
 
