@@ -31,4 +31,24 @@ describe('VerifyPage', () => {
       '/login',
     );
   });
+
+  /**
+   * The signup-ticket branch of `verify/route.ts` (`magic-link/verify`)
+   * serves both the teacher and student families, and both land here with
+   * no `accountId` in the response. A booking destination must not show the
+   * teacher-only "Let's set up your page." headline.
+   */
+  it('shows the booking headline, not the teacher one, for a student signup destination', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { redirectTo: '/some-teacher/book/some-class-id' } }),
+      }),
+    );
+    render(<VerifyPage />);
+
+    expect(await screen.findByText("Let's finish your booking.")).toBeInTheDocument();
+    expect(screen.queryByText("Let's set up your page.")).not.toBeInTheDocument();
+  });
 });

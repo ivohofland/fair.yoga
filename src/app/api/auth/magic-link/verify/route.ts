@@ -33,13 +33,26 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const resolved = await resolveOrClaimAccount(prisma, email);
 
+  // Destination first, mint second. The teacher ticket has a page that always
+  // exists; the student ticket's home is a redirect the caller supplied, so
+  // "mint a ticket" and "have somewhere to spend it" are two facts that can
+  // come apart. Computing the destination before minting means a token whose
+  // redirect is missing or unsafe falls through to the 400 below rather than
+  // producing a credential with no page to spend it on.
+  const signupTicket =
+    purpose === 'teacher_signup'
+      ? { family: 'teacher' as const, dest: '/signup/profile' }
+      : purpose === 'student_signup' && tokenRedirect && isSafeRelativePath(tokenRedirect)
+        ? { family: 'student' as const, dest: tokenRedirect }
+        : null;
+
   // A signup token whose address still has no account: hand back a ticket,
-  // NOT a session. `validateSession` deletes any session whose account has
-  // no live profile, and `SessionUser` cannot represent one — so the
-  // account is created later, together with the teacher profile.
-  if (!resolved && purpose === 'teacher_signup') {
-    const ticket = await mintSignupTicket(prisma, email, 'teacher');
-    const response = respondOk({ redirectTo: '/signup/profile' });
+  // NOT a session. `validateSession` deletes any session whose account has no
+  // live profile, and `SessionUser` cannot represent one — so the account is
+  // created later, together with the profile.
+  if (!resolved && signupTicket) {
+    const ticket = await mintSignupTicket(prisma, email, signupTicket.family);
+    const response = respondOk({ redirectTo: signupTicket.dest });
     setSignupTicketCookie(response.headers, ticket);
     clearOriginNonceCookie(response.headers);
     return response;

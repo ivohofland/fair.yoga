@@ -117,6 +117,13 @@ function destinationCopy(dest: string): string {
   return 'Taking you back to where you left off.';
 }
 
+/** The signup branch of `verify/route.ts` serves both families, and they are
+ *  going to different places. Keyed on the destination, like
+ *  `destinationCopy` above, so the two lines cannot disagree. */
+function newSignupHeadline(dest: string): string {
+  return dest === '/signup/profile' ? "Let's set up your page." : "Let's finish your booking.";
+}
+
 /**
  * Deliberately minimal: this state is visible for under a second, so it
  * carries only what that beat can hold (the confirmation) plus the
@@ -125,9 +132,10 @@ function destinationCopy(dest: string): string {
  * wrong-account) lives on the states people actually dwell on.
  *
  * `isNewSignup` distinguishes the one destination that never sets a
- * session: a `teacher_signup` token with no account yet hands back a
- * signup ticket, not a session (`magic-link/verify/route.ts`) — so "Welcome
- * back / You're signed in" would be false on both halves for that reader.
+ * session: a `teacher_signup` or `student_signup` token with no account yet
+ * hands back a signup ticket, not a session (`magic-link/verify/route.ts`)
+ * — so "Welcome back / You're signed in" would be false on both halves for
+ * that reader.
  */
 function SuccessState({ redirectTo, isNewSignup }: { redirectTo: string; isNewSignup: boolean }) {
   const dest = redirectTo || '/schedule';
@@ -135,7 +143,7 @@ function SuccessState({ redirectTo, isNewSignup }: { redirectTo: string; isNewSi
     <div className="flex-1 flex flex-col justify-center py-4">
       <p className="type-label text-teal mb-[10px]">{isNewSignup ? 'Email confirmed' : 'Welcome back'}</p>
       <h1 className="type-display mb-4">
-        {isNewSignup ? "Let's set up your page." : "You're signed in."}
+        {isNewSignup ? newSignupHeadline(dest) : "You're signed in."}
       </h1>
       <p className="type-body max-w-[360px]">
         {isNewSignup ? 'Almost there.' : 'The link checked out.'} {destinationCopy(dest)}
