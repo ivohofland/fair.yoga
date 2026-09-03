@@ -101,3 +101,13 @@ export function isOutstanding(status: PaymentStatus): boolean {
     }
   }
 }
+
+/**
+ * The `PaymentStatus` members `isOutstanding` accepts, as the array shape a
+ * Prisma `where: { status: { in: ... } } }` clause needs — derived from that
+ * predicate so a query's outstanding set can't drift from the one function
+ * this repo treats as the definition.
+ */
+export const OUTSTANDING_STATUSES: PaymentStatus[] = (
+  Object.keys(PAYMENT_STATUSES) as PaymentStatus[]
+).filter(isOutstanding);

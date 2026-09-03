@@ -90,11 +90,6 @@ export default async function BookClassPage({
   const viewer = student
     ? { ...student, tier: readIncomeTier(student.incomeTier, { studentId: student.id }) }
     : null;
-  // Scoped to this class's teacher (#389): a debt to a different teacher
-  // isn't actionable from this screen.
-  const openPaymentsCount = viewer
-    ? await countOutstandingPaymentsForStudent(prisma, viewer.id, entry.teacher.id)
-    : 0;
   // The viewer's own charged row, if any. They are already in the pool,
   // so the personal spread must quote them from that row — not append a
   // second copy of them ("+1 joining"). A late_cancel row also stays
@@ -104,6 +99,13 @@ export default async function BookClassPage({
     ? (cls.registrations.find((r) => r.studentId === student.id) ?? null)
     : null;
   const alreadyBooked = ownRegistration !== null && ownRegistration.status !== 'late_cancel';
+  // Scoped to this class's teacher (#389): a debt to a different teacher
+  // isn't actionable from this screen. Skipped once already booked —
+  // BookingFlow's confirmation view never reads this prop.
+  const openPaymentsCount =
+    viewer && !alreadyBooked
+      ? await countOutstandingPaymentsForStudent(prisma, viewer.id, entry.teacher.id)
+      : 0;
   // The tier the personal line would quote: a booked viewer is billed at the
   // tier stamped on their registration, anyone else would join at their
   // profile one. Null from either read means the line may not claim the tier

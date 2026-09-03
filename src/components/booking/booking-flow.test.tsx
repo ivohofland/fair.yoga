@@ -133,5 +133,12 @@ describe('BookingFlow', () => {
       renderFlow({ alreadyBooked: true, openPaymentsCount: 2 });
       expect(screen.queryByText(/open payment/)).not.toBeInTheDocument();
     });
+
+    it('still shows the reminder above a full class waitlist button', () => {
+      stubFetch();
+      renderFlow({ isFull: true, openPaymentsCount: 1 });
+      expect(screen.getByText('You have 1 open payment with this teacher.')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /join the waitlist/i })).toBeInTheDocument();
+    });
   });
 });
