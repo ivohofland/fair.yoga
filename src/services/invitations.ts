@@ -355,6 +355,14 @@ async function revivePendingInvitation(
  * the row in the same request it dispatches, so there is no equivalent
  * staleness window for it to worry about.
  *
+ * A pair that is already linked gets nothing at all. #412's gate creates a
+ * real pending invitation rather than refuse one for a student whose address
+ * this teacher may not see, and this is what keeps that row from reaching
+ * the invitee: "would like to connect" is false for someone already
+ * connected, and declining it would not unlink them. The check lives here
+ * rather than in the caller because `POST /api/invitations/[id]/resend`
+ * calls this function for any pending row without one.
+ *
  * Neither `POST /api/students` (route.ts) nor `POST
  * /api/invitations/[id]/resend` (#173) awaits this function — both call it
  * fire-and-forget, after the response's status and body are already fully
@@ -417,10 +425,27 @@ export async function notifyInvitee(
   // holder to go and sign up.
   const student = await db.student.findUnique({
     where: { email },
-    select: { id: true },
+    select: {
+      id: true,
+      teacherStudents: { where: { teacherId: input.teacherId }, select: { id: true } },
+    },
   });
 
   if (student) {
+    // Already on this teacher's roster: there is no connection left to ask
+    // for, and #412's gate creates real pending invitations for exactly this
+    // pair rather than refuse them. "A teacher would like to connect" is
+    // false here, and the decline it invites does not unlink —
+    // `declineInvitation` writes only the tombstone — so a student acting on
+    // it would stay linked and permanently block a re-invite they might
+    // later want.
+    //
+    // Structural, like the `TeacherBlock` re-check above and for the same
+    // reason: `POST /api/invitations/[id]/resend` gates only on `declined`
+    // and `not pending` before calling `deliverInvitation`, so a guard
+    // living only in `inviteContact`'s `delivered` value would not survive a
+    // resend.
+    if (student.teacherStudents.length > 0) return;
     // The three-layer model handles email from here: the fallback cron
     // picks this up unread after the threshold (or sooner, near a linked
     // class — not applicable here, this notification has none), honouring
