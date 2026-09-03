@@ -5,16 +5,20 @@ import { hashToken } from './magic-link';
 declare const browserNonceBrand: unique symbol;
 
 /** A browser's origin nonce, obtained only from `ensureOriginNonce` or
- *  `readOriginNonce`. Exists so `deliverSignInLink` cannot be called with an
- *  arbitrary string standing in for a real browser's nonce. */
+ *  `readOriginNonce`. Exists so a plain string cannot stand in for a real
+ *  browser's nonce at any call site that requires one. */
 export type BrowserNonce = string & { readonly [browserNonceBrand]: true };
 
 /** Names the browser that asked for a sign-in link. */
 export const ORIGIN_NONCE_COOKIE = 'fair_yoga_origin';
 
-/** A year: this identifies a browser across many sign-ins, not one ceremony.
- *  A short life would push returning users into the handoff branch for no
- *  security gain, since the nonce is worthless without a live token. */
+/** A year: covers the gap between requesting a link and finally opening it —
+ *  a forgotten tab, a slow inbox check, days later. `clearOriginNonceCookie`
+ *  rotates it on every successful consume, so this long lifetime does NOT
+ *  mean the cookie survives across completed sign-ins — only across
+ *  abandoned or not-yet-opened ones. A short life would push returning
+ *  users into the handoff branch for no security gain in that gap, since
+ *  the nonce is worthless without a live token. */
 const NONCE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
 
 /** SHA-256 of the nonce. Only the hash is ever persisted, so a database read
@@ -45,6 +49,10 @@ export function ensureOriginNonce(request: NextRequest, headers: Headers): Brows
   return nonce;
 }
 
+/** Rotates the browser's nonce after a successful consume (verify or claim),
+ *  so it does not persist across completed sign-ins — see
+ *  `NONCE_MAX_AGE_SECONDS` above for what its long, un-rotated lifetime is
+ *  actually for. */
 export function clearOriginNonceCookie(headers: Headers): void {
   let cookie = `${ORIGIN_NONCE_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
   if (process.env.NODE_ENV === 'production') cookie += '; Secure';
