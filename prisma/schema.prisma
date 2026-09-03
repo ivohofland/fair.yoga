@@ -1022,6 +1022,12 @@ model MagicLinkToken {
   purpose    MagicLinkPurpose @default(sign_in)
   expiresAt  DateTime
   createdAt  DateTime         @default(now())
+
+  originBrowserHash String?
+  handoffCode       String?
+  handoffAttempts   Int     @default(0)
+
+  @@index([originBrowserHash])
 }
 
 model PasskeyCredential {
