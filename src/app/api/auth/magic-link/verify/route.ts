@@ -38,7 +38,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // no live profile, and `SessionUser` cannot represent one — so the
   // account is created later, together with the teacher profile.
   if (!resolved && purpose === 'teacher_signup') {
-    const ticket = await mintSignupTicket(prisma, email);
+    const ticket = await mintSignupTicket(prisma, email, 'teacher');
     const response = respondOk({ redirectTo: '/signup/profile' });
     setSignupTicketCookie(response.headers, ticket);
     clearOriginNonceCookie(response.headers);

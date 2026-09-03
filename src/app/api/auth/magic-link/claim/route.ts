@@ -45,7 +45,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const resolved = await resolveOrClaimAccount(prisma, email);
 
   if (!resolved && purpose === 'teacher_signup') {
-    const ticket = await mintSignupTicket(prisma, email);
+    const ticket = await mintSignupTicket(prisma, email, 'teacher');
     const response = respondOk({ redirectTo: '/signup/profile' });
     setSignupTicketCookie(response.headers, ticket);
     clearOriginNonceCookie(response.headers);

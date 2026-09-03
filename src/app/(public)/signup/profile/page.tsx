@@ -35,7 +35,7 @@ export default async function ProfileSetupPage() {
   if (session?.teacherId) redirect('/schedule');
 
   const token = (await cookies()).get(SIGNUP_TICKET_COOKIE)?.value;
-  const ticketEmail = token ? await peekSignupTicket(prisma, token) : null;
+  const ticketEmail = token ? await peekSignupTicket(prisma, token, 'teacher') : null;
 
   // The ticket wins where both exist, which is the order the route resolves
   // them in too: it is the narrower authorization — it names one address and

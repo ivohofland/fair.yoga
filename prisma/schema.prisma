@@ -111,12 +111,15 @@ enum OnboardingStep {
 }
 
 /// What a MagicLinkToken authorises. Delivery differs by member —
-/// sign_in and teacher_signup are emailed, teacher_profile_pending is
-/// issued at verification and held in an httpOnly cookie.
+/// sign_in, teacher_signup and student_signup are emailed;
+/// teacher_profile_pending and student_profile_pending are issued at
+/// verification and held in an httpOnly cookie.
 enum MagicLinkPurpose {
   sign_in
   teacher_signup
   teacher_profile_pending
+  student_signup
+  student_profile_pending
 }
 
 // ============================================================================
