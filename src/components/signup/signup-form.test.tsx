@@ -26,6 +26,7 @@ describe('SignupForm', () => {
 
     expect(await screen.findByText('Check your inbox')).toBeInTheDocument();
     expect(screen.getByText(PROPS.sentMessage)).toBeInTheDocument();
+    expect(screen.getByLabelText('Code')).toBeInTheDocument();
   });
 
   it('sends the typed email as the request body', async () => {

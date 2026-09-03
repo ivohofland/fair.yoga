@@ -4,8 +4,8 @@ import { HandoffCodeEntry } from './handoff-code-entry';
 
 /**
  * The success path leaves via `window.location.assign` (a full navigation —
- * `/claim` just set the session cookie), matching the pattern in
- * `delete-studio-class-button.test.tsx`.
+ * `/claim` just set the session cookie). jsdom's `location` is replaced
+ * wholesale for each such test and restored in `afterEach`.
  */
 const realLocation = window.location;
 const stubLocation = () => {
