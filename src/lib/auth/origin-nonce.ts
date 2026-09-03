@@ -2,6 +2,13 @@ import crypto from 'crypto';
 import type { NextRequest } from 'next/server';
 import { hashToken } from './magic-link';
 
+declare const browserNonceBrand: unique symbol;
+
+/** A browser's origin nonce, obtained only from `ensureOriginNonce` or
+ *  `readOriginNonce`. Exists so `deliverSignInLink` cannot be called with an
+ *  arbitrary string standing in for a real browser's nonce. */
+export type BrowserNonce = string & { readonly [browserNonceBrand]: true };
+
 /** Names the browser that asked for a sign-in link. */
 export const ORIGIN_NONCE_COOKIE = 'fair_yoga_origin';
 
@@ -16,8 +23,8 @@ export function hashNonce(nonce: string): string {
   return hashToken(nonce);
 }
 
-export function readOriginNonce(request: NextRequest): string | null {
-  return request.cookies.get(ORIGIN_NONCE_COOKIE)?.value ?? null;
+export function readOriginNonce(request: NextRequest): BrowserNonce | null {
+  return (request.cookies.get(ORIGIN_NONCE_COOKIE)?.value as BrowserNonce | undefined) ?? null;
 }
 
 /**
@@ -27,11 +34,11 @@ export function readOriginNonce(request: NextRequest): string | null {
  * Must be called unconditionally for every accepted request, before any
  * lookup that might not find an account — see the design spec §5 for why.
  */
-export function ensureOriginNonce(request: NextRequest, headers: Headers): string {
+export function ensureOriginNonce(request: NextRequest, headers: Headers): BrowserNonce {
   const existing = readOriginNonce(request);
   if (existing) return existing;
 
-  const nonce = crypto.randomBytes(32).toString('hex');
+  const nonce = crypto.randomBytes(32).toString('hex') as BrowserNonce;
   let cookie = `${ORIGIN_NONCE_COOKIE}=${nonce}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${NONCE_MAX_AGE_SECONDS}`;
   if (process.env.NODE_ENV === 'production') cookie += '; Secure';
   headers.append('Set-Cookie', cookie);
