@@ -302,11 +302,12 @@ CLAUDE.md — a claim is corrected by replacement, not annotation):
 
 ## What this does not do
 
-- **The timing residual stays open**, and is now smaller: §1 collapses two
-  sequential queries into one, so the "Student exists but is not on this
-  teacher's roster" path no longer issues an extra round trip. Closing it
-  entirely would still mean dummy queries, which `inviteContact`'s docblock
-  already declines at this threat level.
+- **The timing residual stays open**, unchanged in kind. §1 uses one Prisma call,
+  but Prisma still issues the relation selects as separate SQL round trips, so
+  the "Student exists but is not on this teacher's roster" path remains
+  distinguishable by timing. Closing it entirely would still mean dummy
+  queries, which `inviteContact`'s docblock already declines at this threat
+  level.
 - **A teacher who invited an address and saw it accepted still gets
   `ALREADY_LINKED`**, by design (§1).
 - **A ghost invitation does not resolve when the student later shares their

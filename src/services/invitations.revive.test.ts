@@ -10,8 +10,8 @@ const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
  * The one race `revivePendingInvitation`'s `status: 'accepted'` scope exists
  * for (M3, #166 re-review).
  *
- * `inviteContact` reads the row's status, then runs `hasRosterLink` — two
- * awaited queries — and only then revives. `unlinkTeacher` can commit a
+ * `inviteContact` reads the row's status, then runs `rosterLinkState` — one
+ * awaited query — and only then revives. `unlinkTeacher` can commit a
  * `declined` tombstone plus a `TeacherBlock` anywhere inside that window. An
  * unscoped `update` by id would flip the fresh tombstone back to `pending`,
  * and `PUT`/`DELETE /api/invitations/[id]` both refuse to touch a declined
@@ -26,7 +26,7 @@ const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
  * interleaved to order.
  *
  * So the interleaving is made deterministic instead of raced for: a Prisma
- * client extension hooks the first query of `hasRosterLink` and runs the
+ * client extension hooks `rosterLinkState`'s one query and runs the
  * REAL `unlinkTeacher` there, once. Nothing about `inviteContact` is stubbed
  * — it takes the same code path with the same client, and the only thing the
  * extension changes is *when* the concurrent commit lands. The alternative
@@ -99,12 +99,14 @@ describe('inviteContact — a revive that loses its race with unlinkTeacher', ()
     const racing = prisma.$extends({
       query: {
         student: {
-          // `hasRosterLink`'s first query — `student.findUnique` (#170 Task
-          // 3 replaced its case-insensitive `findFirst` with this) — after
-          // the status read, before the revive. Hooked here rather than on
-          // `teacherStudent.findUnique` because that second query only runs
-          // when a Student row exists, and this window has to close whether
-          // or not one does.
+          // `rosterLinkState`'s one and only query — `student.findUnique`
+          // (#170 Task 3 replaced its case-insensitive `findFirst` with this;
+          // #412 then collapsed the sibling `teacherStudent.findUnique` into
+          // this same call's nested `select`) — after the status read,
+          // before the revive. There is no second query left to choose
+          // between: this is the only place left to hook, and it fires
+          // whether or not a Student row exists, since the window has to
+          // close either way.
           async findUnique({ args, query }) {
             if (!unlinked) {
               unlinked = true;

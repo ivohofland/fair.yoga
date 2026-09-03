@@ -27,16 +27,17 @@ export type InviteRefusal =
 export interface InviteResult {
   id: string;
   /**
-   * False when a `TeacherBlock` exists for this (teacher, email) pair, true
-   * otherwise. Not a detail — it is the field that stops a caller from
-   * notifying on every `ok: true`. `POST /api/students` (route.ts) gates its
-   * `notifyInvitee` call (below) on `delivered === true`; that gate is one of
-   * two things that keep this from becoming a channel back to the exact
-   * person who unlinked to get away from this teacher — `notifyInvitee`
-   * re-checks `TeacherBlock` itself too (F3, #166 review), since this value
-   * is computed once, here, and can go stale by the time a caller reads it.
-   * The invitation itself is created either way — only delivery is withheld
-   * (#166 task 6c; wired in task 8).
+   * False when delivery must be withheld — either a `TeacherBlock` exists for
+   * this (teacher, email) pair, or the pair is already linked and #412's gate
+   * declined to say so. True otherwise. Not a detail — it is the field that
+   * stops a caller from notifying on every `ok: true`. `POST /api/students`
+   * (route.ts) gates its `notifyInvitee` call (below) on `delivered ===
+   * true`; that gate is one of two things that keep this from becoming a
+   * channel back to the exact person who unlinked to get away from this
+   * teacher — `notifyInvitee` re-checks `TeacherBlock` itself too (F3, #166
+   * review), since this value is computed once, here, and can go stale by the
+   * time a caller reads it. The invitation itself is created either way —
+   * only delivery is withheld (#166 task 6c; wired in task 8).
    */
   delivered: boolean;
 }
@@ -76,46 +77,64 @@ export const REFUSAL_MESSAGES: Record<InviteRefusal, string> = {
   CONTACT_CHANGED: 'This contact changed while you were sending — reload and try again.',
 };
 
+interface RosterLinkState {
+  /** A `TeacherStudent` row joins this teacher to the Student owning `email`. */
+  linked: boolean;
+  /** This teacher's `StudentPrivacy.shareEmail` for that student. */
+  shareEmail: boolean;
+}
+
 /**
- * Is this address on this teacher's roster right now?
+ * Is this address on this teacher's roster, and may this teacher be told?
  *
- * The one question `ALREADY_LINKED` is allowed to be an answer to (F8, #166
- * review). It used to be asked two different ways: `Invitation.status ===
- * 'accepted'` on the row-exists path, and this pair of queries on the
- * no-row path. Those two disagree the moment a link is deleted without the
- * invitation being touched — which is exactly what erasing a student does —
- * and the `status` reading is the one that lies.
+ * Two facts rather than one verdict: the caller composes the policy, and
+ * `inviteContact` needs `linked` again below to decide whether delivery is
+ * withheld.
  *
- * `false` for "no Student row" and for "Student row, no link" alike, and
- * that is the property, not an implementation detail: the caller must not be
- * able to tell those two apart, or it becomes the account-enumeration oracle
- * the old `POST /api/students` was.
+ * Both fields read `false` for "no Student row" and for "Student row, no
+ * link" alike, and that is a property rather than an implementation detail:
+ * the caller must not be able to tell those two apart, or it becomes the
+ * account-enumeration oracle the old `POST /api/students` was (#166).
+ *
+ * `shareEmail` is the second property (#412), and it is about a different
+ * thing: #167 made `Student.email` per-teacher redacted, so a teacher who
+ * may not see an address must not be handed a confirmation of one they
+ * typed. Answering `ALREADY_LINKED` on the strength of the link alone told
+ * them a guessed address belongs to one of their own students — which
+ * `projectStudentForTeacher` (lib/student-visibility.ts) returns as `null`
+ * on every other surface. A missing `StudentPrivacy` row reads as `false`.
+ *
+ * ONE query, and `student.findUnique` must stay the first statement in it:
+ * `invitations.revive.test.ts` hooks that call through a Prisma extension to
+ * close a race window deterministically, and a rewrite that reached
+ * `TeacherStudent` first would silently stop that test testing anything.
  *
  * A plain, case-SENSITIVE `findUnique`, safe because both sides are
- * guaranteed lowercase now (#170): this `email` argument already passed
- * through `requireNormalised` at the caller (`inviteContact` below), and
- * `Student.email` can only ever hold lowercase —
- * `Student_email_lowercase_check` rejects anything else at rest. Neither
- * guarantee existed when this ran a case-folding `findFirst` instead; both
- * do now, which is what makes the plain unique-index lookup below correct
- * instead of merely convenient.
+ * guaranteed lowercase (#170): this `email` already passed through
+ * `requireNormalised` at the caller, and `Student.email` can only hold
+ * lowercase — `Student_email_lowercase_check` rejects anything else at rest.
  */
-async function hasRosterLink(
+async function rosterLinkState(
   db: PrismaClient,
   teacherId: string,
   email: string,
-): Promise<boolean> {
+): Promise<RosterLinkState> {
   const student = await db.student.findUnique({
     where: { email },
-    select: { id: true },
+    select: {
+      teacherStudents: { where: { teacherId }, select: { id: true } },
+      studentPrivacy: { where: { teacherId }, select: { shareEmail: true } },
+    },
   });
-  if (!student) return false;
+  if (!student) return { linked: false, shareEmail: false };
 
-  const link = await db.teacherStudent.findUnique({
-    where: { teacherId_studentId: { teacherId, studentId: student.id } },
-    select: { id: true },
-  });
-  return link !== null;
+  return {
+    linked: student.teacherStudents.length > 0,
+    // A missing row reads as `false`, matching
+    // `projectStudentForTeacher`'s own `flags?.shareEmail ?? false` and the
+    // promise on /account/privacy that new teachers start with nothing shared.
+    shareEmail: student.studentPrivacy[0]?.shareEmail ?? false,
+  };
 }
 
 /**
@@ -129,16 +148,20 @@ async function hasRosterLink(
  * Nothing else is consulted. In particular there is no "does a Student
  * row exist for this address" branch, which is what made the old route an
  * account-enumeration oracle: 200 meant taken, 201 meant free.
- * `hasRosterLink` above is answerable only about this teacher's own roster,
- * which is what keeps calling it safe. Do not add a branch on whether a
- * Student row was found.
+ * `rosterLinkState` above is answerable only about this teacher's own roster
+ * (and, since #412, this teacher's own visibility into it), which is what
+ * keeps calling it safe. Do not add a branch on whether a Student row was
+ * found.
  *
- * One residual channel is knowingly left open: the "Student exists but is not
- * on this teacher's roster" path issues one extra query, so it is marginally
- * slower than the path where no Student row exists. That is outside the
- * property this function claims — identical status, identical body, identical
- * side effects — and closing it would mean issuing dummy queries to flatten
- * the timing, which is not worth the contortion at this threat level.
+ * A residual timing channel is knowingly left open. `rosterLinkState` is one
+ * Prisma call, but Prisma still issues the relation selects as separate SQL
+ * round trips under the hood: no `Student` row costs 1 statement, `Student`
+ * row exists costs 3 statements (Student, TeacherStudent, StudentPrivacy).
+ * The "Student exists but is not on this teacher's roster" path remains
+ * distinguishable by timing, same as before this task — unchanged in kind,
+ * not shrunk. Closing it fully would still mean issuing dummy queries to
+ * flatten the timing, which is not worth the contortion at this threat
+ * level.
  *
  * The block check below runs unconditionally, after the invitation row is
  * already written — a blocked and a fresh address run the exact same query
@@ -188,9 +211,19 @@ export async function inviteContact(
   // The `@@unique([teacherId, email])` key means the way back is this row,
   // returned to `pending`.
   //
+  // Since #412, `existing !== null` reaching this point is also the second
+  // disjunct of the `ALREADY_LINKED` gate below: an accepted row on a linked
+  // pair is refused even when `shareEmail` is false, because falling through
+  // would reach `revivePendingInvitation` further down and flip that row
+  // from `accepted` (invisible in Contacts) to `pending` (rendered
+  // "Invited"), clear `isArchived`, and overwrite the names — resurrecting
+  // an already-accepted, already-in-the-directory student as an outstanding
+  // contact under someone else's typed name.
+  //
   // No row at all is the same question with a different history: a link with
   // no invitation is a student who booked a class instead of being invited.
-  if (await hasRosterLink(db, teacherId, email)) {
+  const link = await rosterLinkState(db, teacherId, email);
+  if (link.linked && (link.shareEmail || existing !== null)) {
     return { ok: false, reason: 'ALREADY_LINKED' };
   }
 
@@ -262,7 +295,7 @@ export async function inviteContact(
     select: { id: true },
   });
 
-  return { ok: true, value: { id: invitationId, delivered: blocked === null } };
+  return { ok: true, value: { id: invitationId, delivered: blocked === null && !link.linked } };
 }
 
 /**
@@ -283,8 +316,8 @@ export async function inviteContact(
  * `updateMany` scoped to `status: 'accepted'`, rather than `update` by id,
  * for one race: `unlinkTeacher` writes `declined` + a `TeacherBlock` in a
  * single transaction, and it can commit between this function's caller
- * reading the row and this write — a window two awaited queries wide, since
- * `hasRosterLink` runs inside it. An unscoped update would flip that fresh
+ * reading the row and this write — a window one awaited query wide, since
+ * `rosterLinkState` runs inside it. An unscoped update would flip that fresh
  * tombstone back to `pending` — and `PUT`/`DELETE /api/invitations/[id]`
  * both refuse to touch a declined row precisely because it is meant to be
  * permanent, so the flip would hand the teacher back the delete the
@@ -417,7 +450,7 @@ export async function notifyInvitee(
   if (blocked) return;
 
   // A plain, case-SENSITIVE `findUnique` — safe for the same reason
-  // `hasRosterLink`'s is (`Student_email_lowercase_check` plus the
+  // `rosterLinkState`'s is (`Student_email_lowercase_check` plus the
   // `requireNormalised` above) — but with a worse consequence if that ever
   // stops holding: a miss here does not merely skip the in-app notification,
   // it falls through to the plain-email branch below — which bypasses
