@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { mintSignupTicket } from '@/lib/auth';
-import { BASE_URL, uniqueSuffix, freshIp } from '../helpers';
+import { BASE_URL, uniqueSuffix, freshIp, seedSession } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -19,6 +19,9 @@ afterAll(async () => {
   ).map((a) => a.id);
   await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
   await prisma.student.deleteMany({ where: { email: { contains: suffix } } });
+  // Teacher rows before Account: Teacher.accountId has no cascade, so an
+  // Account with a live Teacher still attached would fail the delete below.
+  await prisma.teacher.deleteMany({ where: { email: { contains: suffix } } });
   await prisma.account.deleteMany({ where: { email: { contains: suffix } } });
   await prisma.$disconnect();
 });
@@ -108,5 +111,45 @@ describe('POST /api/account/student-profile — ticket authorization', () => {
     const res = await post(ticket, { firstName: 'Too', lastName: 'Late' });
     expect(res.status).toBe(401);
     expect(await prisma.student.findUnique({ where: { email } })).toBeNull();
+  });
+});
+
+describe('POST /api/account/student-profile — a stale ticket cookie must not block the session path', () => {
+  it('succeeds via session with no body, even with an expired signup-ticket cookie also present', async () => {
+    const email = `profile-session-stale-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Stale',
+        lastName: 'Ticket',
+        email,
+        bio: 'Fixture for #399 finding 4',
+        pageSlug: `profile-session-stale-${suffix}`,
+        account: { create: { email } },
+      },
+    });
+    const rawSession = await seedSession(prisma, teacher.accountId);
+
+    // A ticket for an abandoned signup at a DIFFERENT address, expired.
+    // `magic-link/verify` never clears the ticket cookie, so a browser that
+    // starts a signup, abandons it, then signs into an existing account can
+    // carry both a live session and a dead ticket at once.
+    const abandonedEmail = `profile-session-stale-abandoned-${suffix}@test.local`;
+    const staleTicket = await mintSignupTicket(prisma, abandonedEmail, 'student');
+    await prisma.magicLinkToken.updateMany({
+      where: { email: abandonedEmail },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+
+    const res = await fetch(`${BASE_URL}/api/account/student-profile`, {
+      method: 'POST',
+      headers: {
+        Cookie: `fair_yoga_session=${rawSession}; fair_yoga_signup=${staleTicket}`,
+        ...freshIp(),
+      },
+    });
+
+    expect(res.status).toBe(201);
+    const student = await prisma.student.findUniqueOrThrow({ where: { email } });
+    expect(student.accountId).toBe(teacher.accountId);
   });
 });
