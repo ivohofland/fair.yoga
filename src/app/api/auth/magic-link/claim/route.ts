@@ -44,9 +44,20 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const { email, redirectTo: tokenRedirect, purpose } = outcome;
   const resolved = await resolveOrClaimAccount(prisma, email);
 
-  if (!resolved && purpose === 'teacher_signup') {
-    const ticket = await mintSignupTicket(prisma, email, 'teacher');
-    const response = respondOk({ redirectTo: '/signup/profile' });
+  // Same destination-first, family-scoped ticket decision as
+  // `magic-link/verify` — a code redeemed here reached the same token row
+  // that route would have consumed directly, so the two doors must agree on
+  // what it authorizes.
+  const signupTicket =
+    purpose === 'teacher_signup'
+      ? { family: 'teacher' as const, dest: '/signup/profile' }
+      : purpose === 'student_signup' && tokenRedirect && isSafeRelativePath(tokenRedirect)
+        ? { family: 'student' as const, dest: tokenRedirect }
+        : null;
+
+  if (!resolved && signupTicket) {
+    const ticket = await mintSignupTicket(prisma, email, signupTicket.family);
+    const response = respondOk({ redirectTo: signupTicket.dest });
     setSignupTicketCookie(response.headers, ticket);
     clearOriginNonceCookie(response.headers);
     return response;

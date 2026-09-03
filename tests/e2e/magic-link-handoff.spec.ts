@@ -276,6 +276,15 @@ test.describe('Magic link device handoff', () => {
   // Student x Signup: booking page, new mode, handoff — the only cell where
   // a token's `redirectTo` and a second browser interact. Losing it drops
   // the student on /bookings instead of the class they were booking.
+  //
+  // Since #399 the outcome of a successful claim here is a TICKET, not a
+  // session (`api/auth/student-signup` mints `student_signup`-purpose
+  // tokens for a fresh address) — so the token seeded below carries that
+  // purpose, matching what the real route would have minted, and the
+  // assertion is the name step appearing, not just a URL that never left
+  // the booking page: `page.waitForURL` on a target the browser is already
+  // sitting on resolves immediately, whether or not the claim behind it
+  // actually succeeded.
   test('student signup from the booking page: new mode, handoff on another device preserves the class redirect', async ({
     page,
     browser,
@@ -284,8 +293,6 @@ test.describe('Magic link device handoff', () => {
 
     await page.goto(classPath);
     // Default mode is 'new'.
-    await page.getByLabel('First name').fill('Handoff');
-    await page.getByLabel('Last name').fill('Student');
     await page.getByLabel('Email').fill(newStudentEmail);
     await page.getByRole('button', { name: 'Send me the link' }).click();
     await expect(page.getByText('Check your inbox')).toBeVisible();
@@ -294,7 +301,10 @@ test.describe('Magic link device handoff', () => {
 
     const strangerContext = await browser.newContext();
     const strangerPage = await strangerContext.newPage();
-    const token = await createBoundToken(newStudentEmail, nonce, { redirectTo: classPath });
+    const token = await createBoundToken(newStudentEmail, nonce, {
+      redirectTo: classPath,
+      purpose: 'student_signup',
+    });
     await strangerPage.goto(`/verify?token=${token}`);
     await expect(
       strangerPage.getByRole('heading', { name: 'Enter this where you started' }),
@@ -304,8 +314,11 @@ test.describe('Magic link device handoff', () => {
 
     await page.getByLabel('Code').fill(code);
     await page.getByRole('button', { name: 'Continue' }).click();
-    await page.waitForURL(`**${classPath}`, { timeout: 10_000 });
-    await expect(page.getByText(/depending on your income tier/).first()).toBeVisible();
+    // The claim response set a ticket cookie and reloaded this same page —
+    // the name step is what proves the ticket actually landed, since the
+    // URL itself never changes.
+    await expect(page.getByText('One last thing')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(newStudentEmail)).toBeVisible();
   });
 
   // Scanner regression (Defect B): a link opened from a browser with no

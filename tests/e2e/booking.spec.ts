@@ -203,6 +203,74 @@ test.describe('Public booking flow', () => {
     await prisma.account.deleteMany({ where: { email } });
   });
 
+  test('the whole chain: email, verify, name, tier, book — for a real fresh signup', async ({ page }) => {
+    // Task 5's own coverage: unlike the test above, nothing here is seeded
+    // directly — the email form is driven for real, exercising the actual
+    // POST /api/auth/student-signup route this task rewrote.
+    const email = `e2e-booking-fullpath-${suffix}@test.local`;
+    const classPath = `/${slug}/book/${classId}`;
+
+    await page.goto(classPath);
+    await page.getByLabel('Email').fill(email);
+    await page.getByRole('button', { name: 'Send me the link' }).click();
+    await expect(page.getByText('Check your inbox')).toBeVisible();
+
+    // "click the emailed link" — the real POST above minted its own token
+    // bound to this browser's nonce, but hashes it immediately and persists
+    // nothing else, so there is no way to recover it. Seed an equivalent one
+    // instead, the way the real route mints it: `student_signup` purpose,
+    // bound to this same browser's nonce, redirecting back to this class.
+    const nonce = (await page.context().cookies()).find((c) => c.name === 'fair_yoga_origin')?.value;
+    if (!nonce) throw new Error('expected fair_yoga_origin to already be set on this context');
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    await prisma.magicLinkToken.create({
+      data: {
+        tokenHash: hashToken(rawToken),
+        email,
+        purpose: 'student_signup',
+        redirectTo: classPath,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+        originBrowserHash: hashToken(nonce),
+      },
+    });
+
+    await page.goto(`/verify?token=${rawToken}`);
+    await page.waitForURL(`**${classPath}`, { timeout: 10_000 });
+
+    // The ticket branch: no session yet, so the name step shows, not the
+    // tier picker.
+    await expect(page.getByText('One last thing')).toBeVisible();
+    await page.getByLabel('First name').fill('Full');
+    await page.getByLabel('Last name').fill('Path');
+    await page.getByRole('button', { name: 'Continue' }).click();
+
+    // The response set the session cookie and router.refresh() re-rendered
+    // this same page as the signed-in viewer: the tier picker.
+    await expect(page.getByText('Your tier')).toBeVisible();
+    await page.getByRole('radio', { name: /Tier 2/ }).click();
+    await page.getByRole('button', { name: /^Book — around/ }).click();
+    await expect(page.getByText("You're in", { exact: true })).toBeVisible();
+
+    const created = await prisma.student.findUniqueOrThrow({ where: { email } });
+    expect(created.claimedAt).not.toBeNull();
+    // The booking above stamped it — the picker showed once and never
+    // shows again for this student.
+    expect(created.tierSelectedAt).not.toBeNull();
+
+    const link = await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId: created.id } },
+    });
+    expect(link).not.toBeNull();
+
+    // This test's own rows — the shared afterAll only knows about `studentId`.
+    await prisma.registration.deleteMany({ where: { studentId: created.id } });
+    await prisma.teacherStudent.deleteMany({ where: { studentId: created.id } });
+    await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, created.id) } });
+    await prisma.student.delete({ where: { id: created.id } });
+    await prisma.account.deleteMany({ where: { email } });
+    await prisma.magicLinkToken.deleteMany({ where: { email } });
+  });
+
   test('magic link returns the student to the booking page and books with a chosen tier', async ({ page }) => {
     // Simulate the emailed link: token with the booking page as redirect,
     // bound to this browser's nonce so it takes the same-browser branch.
