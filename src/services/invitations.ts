@@ -625,6 +625,10 @@ const DELIVERY_FAILURE_MESSAGE = {
  * Fire-and-forget is safe here specifically: this is a long-lived Node
  * process on a single VPS, not a serverless function that could be frozen
  * mid-request.
+ *
+ * Everything this function does must happen inside the
+ * `void (async () => { … })()` wrapper below — a statement placed before it
+ * would throw synchronously into the caller, bypassing the `.catch` entirely.
  */
 export function deliverInvitation(
   db: PrismaClient,

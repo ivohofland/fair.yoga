@@ -1570,7 +1570,7 @@ Every hit is either a real `.catch()` call site — on `db`/`prisma`, on a
 `$transaction(…)` promise, on a promise from a helper querying outside any
 transaction, or outside the database entirely — or a comment merely
 mentioning `.catch()` with no call site, which the post-commit diagnostic in
-`deleteTeacherAccount`'s comment is the current instance of.
+`deleteTeacherAccount`'s comment is one instance of.
 
 ## Known conformance
 
