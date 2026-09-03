@@ -28,8 +28,8 @@ export function timeAgo(date: Date): string {
  * brown, "! Overdue" danger, "\u2298 Not charged" muted brown. Returns label
  * + the text-color class.
  *
- * Three surfaces render these, one of them student-facing, so the last branch
- * is deliberately quiet at runtime and loud at compile time \u2014 see below.
+ * Rendered across teacher and student payment surfaces, so the last branch is
+ * deliberately quiet at runtime and loud at compile time \u2014 see below.
  */
 export function paymentStateText(status: PaymentStatus): { label: string; className: string } {
   if (status === 'paid') return { label: '✓ Paid', className: 'text-teal' };

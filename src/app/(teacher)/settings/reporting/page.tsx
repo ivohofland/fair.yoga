@@ -118,7 +118,7 @@ export default async function ReportingPage() {
       {nothingYet ? (
         <EmptyState
           title="Nothing to report yet"
-          body="Completed classes and their earnings appear here."
+          body="Completed classes and what they charged appear here."
         />
       ) : (
         <>
@@ -155,7 +155,7 @@ export default async function ReportingPage() {
                 <span className="flex-1">MONTH</span>
                 <span className="w-20 text-right">CLASSES</span>
                 <span className="w-20 text-right">STUDENTS</span>
-                <span className="w-24 text-right">EARNED</span>
+                <span className="w-24 text-right">CHARGED</span>
               </div>
               {months.map((m) => (
                 <div
