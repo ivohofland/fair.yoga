@@ -835,6 +835,17 @@ describe('isRestrictViolationOn', () => {
   });
 });
 
+/**
+ * A transient SQLSTATE under exactly `layers` wrappers — `layers: 0` is the
+ * transient error itself. One builder for every depth case below, so the three
+ * of them cannot differ in anything but the number they pass.
+ */
+function buriedUnder(layers: number): Error {
+  let wrapped: Error = new Error('ERROR code: "55P03" here');
+  for (let i = 0; i < layers; i += 1) wrapped = new Error(`layer ${i}`, { cause: wrapped });
+  return wrapped;
+}
+
 describe('isTransientDbError', () => {
   /**
    * The wrapping seam. `SpotFreedError` (`services/waitlist.ts`) carries the
@@ -869,11 +880,29 @@ describe('isTransientDbError', () => {
    * direction (it escalates rather than quieting).
    */
   it('stops walking past its depth bound', () => {
-    const transient = new Error('ERROR code: "55P03" here');
-    let wrapped: Error = transient;
-    for (let i = 0; i < 8; i += 1) wrapped = new Error(`layer ${i}`, { cause: wrapped });
+    expect(isTransientDbError(buriedUnder(8))).toBe(false);
+  });
 
-    expect(isTransientDbError(wrapped)).toBe(false);
+  /**
+   * The two sides of the bound itself, which the pair above cannot pin between
+   * them: "two layers is found" and "eight layers is not" hold for every bound
+   * from two to seven, so `MAX_CAUSE_DEPTH` could be changed to any of those
+   * and leave this file green. These two fix it at its actual value — the walk
+   * follows `cause` that many times past the error it was handed, so a
+   * transient error at exactly that depth is still found and one layer further
+   * out is not. Lowering the constant reddens the first; raising it reddens the
+   * second.
+   *
+   * The direction matters more than the number: a chain buried one layer too
+   * deep is reported NON-transient, which escalates rather than quieting, so
+   * the second test is also the one that keeps that safe direction honest.
+   */
+  it('finds a transient cause buried at exactly the depth bound', () => {
+    expect(isTransientDbError(buriedUnder(4))).toBe(true);
+  });
+
+  it('misses a transient cause buried one layer past the depth bound', () => {
+    expect(isTransientDbError(buriedUnder(5))).toBe(false);
   });
 
   it('terminates on a cyclic cause chain', () => {
