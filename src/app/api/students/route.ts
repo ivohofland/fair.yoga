@@ -123,13 +123,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     data: { lastNotifiedAt: new Date(), lastNotifiedEmail: parsed.data.email },
   });
 
-  // `result.value.delivered` is false when a `TeacherBlock` exists for this
-  // address (services/invitations.ts) — the invitation row is still real,
-  // only delivery is withheld. Gating on it here is one of two things that
-  // stop this from emailing the exact person who unlinked to get away from
-  // this teacher — `notifyInvitee` re-checks the same block itself (F3,
-  // #166 review), belt and braces, so this gate only saves a query on the
-  // common (unblocked) path rather than being the sole guard.
+  // `result.value.delivered` is false when delivery must be withheld: either
+  // a `TeacherBlock` exists for this (teacher, email) pair (services/invitations.ts),
+  // or the pair is already linked and #412's gate declined to say so. The
+  // invitation row is still real, only delivery is withheld. Gating on it here
+  // is one of two things that stop this from emailing the exact person who
+  // unlinked to get away from this teacher — `notifyInvitee` re-checks both
+  // conditions itself (F3, #166 review), belt and braces, so this gate only
+  // saves a query on the common (unblocked, unlinked) path rather than being the
+  // sole guard.
   //
   // Fire-and-forget, on purpose — see `deliverInvitation`'s docblock
   // (services/invitations.ts). The explicit `.catch` is required, not
