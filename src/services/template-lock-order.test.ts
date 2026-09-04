@@ -155,14 +155,10 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
 
     // Entry ids assigned for the same reason the class ids above are, and
     // against a second source of drift. The premise probes in each `it` read
-    // under a forced index-nested-loop plan, and that plan has two shapes
-    // here: driven from `Class` through `Class_calendarEntryId_key`, ordering
-    // by `calendarEntryId`, or driven from `ClassTemplate` through
-    // `CalendarEntry_scheduleRuleId_date_key`, ordering by `date`. Which one
-    // wins is a cost decision that moves with table size. Assigning the entry
-    // ids makes the first shape's order the one this fixture chose; the dates
-    // below already make the second shape's order the same. The two therefore
-    // agree, and the premise holds whichever direction the planner takes.
+    // under a forced index-nested-loop plan, but which side that plan drives
+    // from is a cost decision that moves with table statistics, and the
+    // driving side is what fixes the output order. The entry ids here and the
+    // entry dates below are therefore assigned to put HIGH first either way.
     //
     // HIGH takes the LOW entry id: HIGH is the row that must come FIRST.
     const highEntryId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
