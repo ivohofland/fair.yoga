@@ -61,9 +61,9 @@ export async function peekSignupTicket(
  * The cookie is an ordinary bearer value, not something only ever set by
  * `setSignupTicketCookie` — a token of another purpose presented here still
  * gets consumed (deleted) by `verifyMagicLinkToken` before the purpose check
- * below can run. That includes a ticket minted for the OTHER family: a
- * cross-family ticket reaches the `log.warn` below and is discarded, not
- * honoured.
+ * below can run, including a ticket minted for the OTHER family, and the
+ * `log.warn` below fires for it. Not reached in practice today — see
+ * `signupTicketCrossFamilyPurpose` for how that case is actually observed.
  */
 export async function consumeSignupTicket(
   db: PrismaClient,
@@ -115,6 +115,28 @@ export async function signupTicketIsLive(
   if (!row) return false;
   const isTicket = (Object.values(TICKET_PURPOSE) as MagicLinkPurpose[]).includes(row.purpose);
   return isTicket && row.expiresAt > new Date();
+}
+
+/**
+ * The other family's purpose, if that's genuinely what this token is — a
+ * live ticket for a family other than the one asked about — or `null` for
+ * every other reason a caller's own family-scoped read of this token would
+ * fail (missing, expired, not a ticket, or already the right family). Reads
+ * only; the row is never touched.
+ */
+export async function signupTicketCrossFamilyPurpose(
+  db: PrismaClient,
+  token: string,
+  family: SignupFamily,
+): Promise<MagicLinkPurpose | null> {
+  const row = await db.magicLinkToken.findUnique({
+    where: { tokenHash: hashToken(token) },
+    select: { expiresAt: true, purpose: true },
+  });
+  if (!row || row.expiresAt <= new Date()) return null;
+  const isTicket = (Object.values(TICKET_PURPOSE) as MagicLinkPurpose[]).includes(row.purpose);
+  const otherFamily = row.purpose !== TICKET_PURPOSE[family];
+  return isTicket && otherFamily ? row.purpose : null;
 }
 
 /**

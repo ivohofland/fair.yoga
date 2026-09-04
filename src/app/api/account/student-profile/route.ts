@@ -72,7 +72,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         data: { claimedAt: new Date(), accountId: session.accountId },
         select: { id: true },
       });
-      const claimed = respondOk({ studentId: student.id }, 201);
+      const claimed = respondOk(
+        { studentId: student.id, signupCancelled: authorization.staleTicketCancelled },
+        201,
+      );
       if (authorization.staleTicketCookie) clearSignupTicketCookie(claimed.headers);
       return claimed;
     }
@@ -119,7 +122,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       select: { id: true, accountId: true },
     });
 
-    const response = respondOk({ studentId: student.id }, 201);
+    const response = respondOk({
+      studentId: student.id,
+      // Only meaningful (and only ever true) on the session path — a ticket
+      // authorization has no sibling cookie left to have cancelled anything.
+      signupCancelled: authorization.source === 'session' && authorization.staleTicketCancelled,
+    }, 201);
     if (auth.source === 'ticket') {
       // `accountId` types as nullable — the column predates #166 and stays
       // nullable for those rows — but this statement's own nested

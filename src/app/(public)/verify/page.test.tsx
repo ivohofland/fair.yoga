@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
+const push = vi.fn();
+
 vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams('token=a-real-token'),
-  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push, refresh: vi.fn() }),
 }));
 
 import VerifyPage from './page';
@@ -11,6 +13,8 @@ import VerifyPage from './page';
 describe('VerifyPage', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    push.mockReset();
   });
 
   /**
@@ -72,9 +76,8 @@ describe('VerifyPage', () => {
   });
 
   /**
-   * `signupCancelled` is an optional flag on the verify response (see
-   * `verify/route.ts`); this component test is what pins that this page
-   * actually renders a notice for it.
+   * This component test is what pins that the page actually renders a
+   * notice when its response carries a `signupCancelled` flag.
    */
   it('shows the cancelled-signup notice when the response carries the flag', async () => {
     vi.stubGlobal(
@@ -107,5 +110,48 @@ describe('VerifyPage', () => {
     expect(
       screen.queryByText(/Your pending signup was cancelled because you signed in/),
     ).not.toBeInTheDocument();
+  });
+
+  /**
+   * The notice above only does its job if the auto-redirect gives it time
+   * to be read. Verified by the exact delay scheduled, not by waiting out
+   * the real interval — a regression collapsing this back to the ordinary
+   * 900ms would leave the DOM assertions above passing while the notice is
+   * gone before anyone could read it.
+   */
+  it('schedules the auto-redirect for 4000ms when the cancellation notice is showing', async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: { accountId: 'acct-1', redirectTo: '/schedule', signupCancelled: true },
+        }),
+      }),
+    );
+    render(<VerifyPage />);
+
+    await screen.findByText(/Your pending signup was cancelled because you signed in/);
+
+    const redirectCall = setTimeoutSpy.mock.calls.find(([, delay]) => delay === 900 || delay === 4000);
+    expect(redirectCall?.[1]).toBe(4000);
+  });
+
+  it('keeps the ordinary 900ms redirect when there is no cancellation to show', async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { accountId: 'acct-1', redirectTo: '/schedule' } }),
+      }),
+    );
+    render(<VerifyPage />);
+
+    await screen.findByText("You're signed in.");
+
+    const redirectCall = setTimeoutSpy.mock.calls.find(([, delay]) => delay === 900 || delay === 4000);
+    expect(redirectCall?.[1]).toBe(900);
   });
 });

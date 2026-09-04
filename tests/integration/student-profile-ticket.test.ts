@@ -279,6 +279,33 @@ describe('POST /api/account/student-profile — a stale ticket cookie must not b
 
     expect(res.status).toBe(201);
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
+    const body = (await res.json()) as { data: { signupCancelled: boolean } };
+    expect(body.data.signupCancelled).toBe(true);
+  });
+
+  it('does not report signupCancelled for a declined cookie that names a dead ticket', async () => {
+    const email = `profile-session-notcancelled-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Not', lastName: 'Cancelled', email,
+        bio: 'Fixture for the dead-ticket non-report', pageSlug: `profile-session-notcancelled-${suffix}`,
+        account: { create: { email } },
+      },
+    });
+    const rawSession = await seedSession(prisma, teacher.accountId);
+
+    const res = await fetch(`${BASE_URL}/api/account/student-profile`, {
+      method: 'POST',
+      headers: {
+        Cookie: `fair_yoga_session=${rawSession}; fair_yoga_signup=long-gone-token`,
+        ...freshIp(),
+      },
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
+    const body = (await res.json()) as { data: { signupCancelled: boolean } };
+    expect(body.data.signupCancelled).toBe(false);
   });
 
   // The test above only exercises the main session branch's clear; the
@@ -317,6 +344,8 @@ describe('POST /api/account/student-profile — a stale ticket cookie must not b
 
     expect(res.status).toBe(201);
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
+    const body = (await res.json()) as { data: { signupCancelled: boolean } };
+    expect(body.data.signupCancelled).toBe(true);
 
     const student = await prisma.student.findUniqueOrThrow({ where: { id: unclaimed.id } });
     expect(student.accountId).toBe(teacher.accountId);

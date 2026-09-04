@@ -9,8 +9,20 @@ import {
   SIGNUP_TICKET_COOKIE,
   peekSignupTicket,
   consumeSignupTicket,
+  signupTicketCrossFamilyPurpose,
+  signupTicketIsLive,
   type SignupFamily,
 } from './signup-ticket';
+
+/**
+ * The minimal read surface this module needs from a cookie jar — satisfied
+ * structurally by both `NextRequest.cookies` (a route handler) and
+ * `next/headers`'s `cookies()` (a server component), so `ticketTokenFrom`
+ * applies the same rule from either.
+ */
+interface CookieReader {
+  get(name: string): { value: string } | undefined;
+}
 
 /**
  * The precedence rule, and the only place it is spelled: a signup ticket is
@@ -20,38 +32,39 @@ import {
  * routes to the session path, so the caller meets `requireSession`'s own 401
  * rather than silently spending a ticket that is not theirs.
  */
-export function ticketTokenFrom(request: NextRequest): string | undefined {
-  return request.cookies.get(SESSION_COOKIE_NAME) !== undefined
+export function ticketTokenFrom(cookies: CookieReader): string | undefined {
+  return cookies.get(SESSION_COOKIE_NAME) !== undefined
     ? undefined
-    : request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
+    : cookies.get(SIGNUP_TICKET_COOKIE)?.value;
+}
+
+/**
+ * `staleTicketCookie` (presence) drives whether the session path clears the
+ * cookie at all; `staleTicketCancelled` (liveness) is the narrower fact
+ * worth telling the caller about — a declined cookie that named nothing
+ * live is not a cancellation, only cookie hygiene.
+ */
+interface StaleTicket {
+  staleTicketCookie: boolean;
+  staleTicketCancelled: boolean;
 }
 
 /** Both paths submit the same form (teacher). */
 export type FormProfileAuthorization<TBody> =
   | { source: 'ticket'; email: string; body: TBody }
-  | {
-      source: 'session';
-      email: string;
-      session: SessionUser;
-      staleTicketCookie: boolean;
-      body: TBody;
-    };
+  | ({ source: 'session'; email: string; session: SessionUser; body: TBody } & StaleTicket);
 
 /** Only the ticket path submits a form; the session path posts nothing (student). */
 export type TicketFormProfileAuthorization<TBody> =
   | { source: 'ticket'; email: string; body: TBody }
-  | {
-      source: 'session';
-      email: string;
-      session: SessionUser;
-      staleTicketCookie: boolean;
-    };
+  | ({ source: 'session'; email: string; session: SessionUser } & StaleTicket);
 
 /**
- * `reason` is redundant to today's callers, which return `response` verbatim.
- * It is here so the two failures stay distinguishable to tests and to the
- * next refactor — a helper with more than one failure mode that reports only
- * a response has already collapsed them.
+ * Two failure shapes stay distinguishable here — `invalid_body` (the
+ * caller's request was malformed) and `no_session` (no credential at all) —
+ * because a caller that only ever forwards `response` verbatim still needs a
+ * way to tell them apart in tests, and a future caller that wants to react
+ * differently to each has somewhere to branch.
  */
 export type ProfileAuthorizationOutcome<TAuth> =
   | { ok: true; auth: TAuth }
@@ -78,7 +91,22 @@ async function ticketAuthorization<TBody>(
   token: string,
 ): Promise<TicketOutcome<TBody>> {
   const peeked = await peekSignupTicket(db, token, family);
-  if (!peeked) return { kind: 'fall_through' };
+  if (!peeked) {
+    // `peekSignupTicket` itself stays silent (see its own docblock for why).
+    // A ticket cookie reaching an actual profile submission is a more
+    // consequential moment than a mere peek, so this is where cross-family
+    // presentation gets a trail instead — the row itself is left untouched;
+    // see `consumeSignupTicket`'s docblock for why this function never
+    // reaches it.
+    const crossFamilyPurpose = await signupTicketCrossFamilyPurpose(db, token, family);
+    if (crossFamilyPurpose) {
+      log.warn(
+        { purpose: crossFamilyPurpose, family },
+        'signup ticket cookie carried a token from a different family; left untouched, not honoured',
+      );
+    }
+    return { kind: 'fall_through' };
+  }
 
   const parsed = await parseBody(request, schema);
   if ('error' in parsed) return { kind: 'invalid_body', response: parsed.error };
@@ -95,16 +123,38 @@ async function ticketAuthorization<TBody>(
   return { kind: 'authorized', email, body: parsed.data };
 }
 
+/**
+ * Applies a `TicketOutcome` to the shape both resolvers return, or signals
+ * that there was nothing terminal to return — an exhaustive `switch` so a
+ * fourth `TicketOutcome` kind fails to compile here instead of silently
+ * falling through to the session path the way an `if`-chain would.
+ */
+function dispatchTicketOutcome<TBody>(
+  ticket: TicketOutcome<TBody>,
+): ProfileAuthorizationOutcome<{ source: 'ticket'; email: string; body: TBody }> | undefined {
+  switch (ticket.kind) {
+    case 'invalid_body':
+      return { ok: false, reason: 'invalid_body', response: ticket.response };
+    case 'authorized':
+      return { ok: true, auth: { source: 'ticket', email: ticket.email, body: ticket.body } };
+    case 'fall_through':
+      return undefined;
+    default: {
+      const unreachable: never = ticket;
+      throw new Error(`dispatchTicketOutcome: unhandled TicketOutcome kind: ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
 type SessionOutcome =
   | { ok: true; email: string; session: SessionUser }
   | { ok: false; reason: 'no_session'; response: NextResponse };
 
 /**
- * `db` covers the account lookup only. `requireSession` reaches into the
- * shared `prisma` singleton directly and takes no client argument — that's
- * its existing shape, not something to route through here. Do not "fix" it
- * by threading `db` through `requireSession`; that widens this change into
- * every route that calls it.
+ * `db` covers the account lookup only — do not "fix" that by threading it
+ * through `requireSession` too; that widens this change into every route
+ * that calls it, for a parameter `requireSession`'s own signature doesn't
+ * accept.
  */
 async function sessionAuthorization(
   db: PrismaClient,
@@ -119,6 +169,19 @@ async function sessionAuthorization(
   return { ok: true, email: account.email, session };
 }
 
+/**
+ * The session path declines to read a ticket cookie whenever one is
+ * present, whether or not it names anything live — this is what tells the
+ * caller whether that decline also cancelled something real.
+ */
+async function staleTicketOf(db: PrismaClient, request: NextRequest): Promise<StaleTicket> {
+  const token = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
+  return {
+    staleTicketCookie: token !== undefined,
+    staleTicketCancelled: token !== undefined && (await signupTicketIsLive(db, token)),
+  };
+}
+
 /** For a family whose session path submits the same form as its ticket path. */
 export async function resolveProfileAuthorization<TBody>(
   db: PrismaClient,
@@ -126,15 +189,11 @@ export async function resolveProfileAuthorization<TBody>(
   family: SignupFamily,
   schema: z.ZodType<TBody>,
 ): Promise<ProfileAuthorizationOutcome<FormProfileAuthorization<TBody>>> {
-  const token = ticketTokenFrom(request);
+  const token = ticketTokenFrom(request.cookies);
   if (token) {
     const ticket = await ticketAuthorization(db, request, family, schema, token);
-    if (ticket.kind === 'invalid_body') {
-      return { ok: false, reason: 'invalid_body', response: ticket.response };
-    }
-    if (ticket.kind === 'authorized') {
-      return { ok: true, auth: { source: 'ticket', email: ticket.email, body: ticket.body } };
-    }
+    const dispatched = dispatchTicketOutcome(ticket);
+    if (dispatched) return dispatched;
   }
 
   const session = await sessionAuthorization(db, request);
@@ -155,7 +214,7 @@ export async function resolveProfileAuthorization<TBody>(
       source: 'session',
       email: session.email,
       session: session.session,
-      staleTicketCookie: request.cookies.get(SIGNUP_TICKET_COOKIE) !== undefined,
+      ...(await staleTicketOf(db, request)),
       body: parsed.data,
     },
   };
@@ -168,15 +227,11 @@ export async function resolveTicketOnlyProfileAuthorization<TBody>(
   family: SignupFamily,
   schema: z.ZodType<TBody>,
 ): Promise<ProfileAuthorizationOutcome<TicketFormProfileAuthorization<TBody>>> {
-  const token = ticketTokenFrom(request);
+  const token = ticketTokenFrom(request.cookies);
   if (token) {
     const ticket = await ticketAuthorization(db, request, family, schema, token);
-    if (ticket.kind === 'invalid_body') {
-      return { ok: false, reason: 'invalid_body', response: ticket.response };
-    }
-    if (ticket.kind === 'authorized') {
-      return { ok: true, auth: { source: 'ticket', email: ticket.email, body: ticket.body } };
-    }
+    const dispatched = dispatchTicketOutcome(ticket);
+    if (dispatched) return dispatched;
   }
 
   const session = await sessionAuthorization(db, request);
@@ -188,7 +243,7 @@ export async function resolveTicketOnlyProfileAuthorization<TBody>(
       source: 'session',
       email: session.email,
       session: session.session,
-      staleTicketCookie: request.cookies.get(SIGNUP_TICKET_COOKIE) !== undefined,
+      ...(await staleTicketOf(db, request)),
     },
   };
 }
