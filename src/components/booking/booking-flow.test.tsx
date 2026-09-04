@@ -29,7 +29,6 @@ describe('BookingFlow', () => {
     render(
       <BookingFlow
         classId="class-1"
-        slug="teacher-slug"
         isFull={false}
         alreadyBooked={false}
         currentTier={3}
@@ -60,7 +59,7 @@ describe('BookingFlow', () => {
     ).toBeInTheDocument();
   });
 
-  it('toggles the pricing explanation in-place without navigating away', () => {
+  it('toggles the pricing explanation in-place without navigating away or losing the chosen tier', () => {
     stubFetch();
     renderFlow({ currentTier: null, isFirstBooking: false });
 
@@ -68,6 +67,12 @@ describe('BookingFlow', () => {
     expect(
       screen.queryByText(/Prices are income-based: everyone in the room pays/i),
     ).not.toBeInTheDocument();
+
+    // A tier chosen before opening the explainer is the state this whole
+    // toggle exists to protect (#432 replaced a navigating <Link> with it).
+    const tierRadio = screen.getByRole('radio', { name: /Tier 2 · Managing/ });
+    fireEvent.click(tierRadio);
+    expect(tierRadio).toHaveAttribute('aria-checked', 'true');
 
     const toggleButton = screen.getByRole('button', { name: 'Learn more' });
     expect(toggleButton).toHaveAttribute('aria-expanded', 'false');
@@ -81,14 +86,17 @@ describe('BookingFlow', () => {
     ).toBeInTheDocument();
     expect(toggleButton).toHaveAttribute('aria-expanded', 'true');
     expect(toggleButton).toHaveTextContent('Hide explanation');
+    expect(toggleButton).toHaveAttribute('aria-controls', 'pricing-explainer-panel');
+    expect(tierRadio).toHaveAttribute('aria-checked', 'true');
 
-    // Click "Hide explanation" to collapse
+    // Click "Hide explanation" to collapse — tier selection still intact
     fireEvent.click(toggleButton);
     expect(
       screen.queryByText(/Prices are income-based: everyone in the room pays/i),
     ).not.toBeInTheDocument();
     expect(toggleButton).toHaveAttribute('aria-expanded', 'false');
     expect(toggleButton).toHaveTextContent('Learn more');
+    expect(tierRadio).toHaveAttribute('aria-checked', 'true');
   });
 
   it('refuses to book until an unreadable tier has been replaced', () => {

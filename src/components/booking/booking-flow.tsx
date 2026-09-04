@@ -9,7 +9,6 @@ import { PricingExplainer } from './pricing-explainer';
 
 interface BookingFlowProps {
   classId: string;
-  slug?: string;
   isFull: boolean;
   alreadyBooked: boolean;
   /**
@@ -230,13 +229,16 @@ export function BookingFlow({
           type="button"
           onClick={() => setShowExplainer((prev) => !prev)}
           aria-expanded={showExplainer}
-          className="text-teal cursor-pointer hover:underline focus:outline-none"
+          aria-controls="pricing-explainer-panel"
+          className="text-teal"
         >
           {showExplainer ? 'Hide explanation' : 'Learn more'}
         </button>
       </p>
 
-      {showExplainer && <PricingExplainer className="mt-3 max-w-[420px]" />}
+      {showExplainer && (
+        <PricingExplainer id="pricing-explainer-panel" className="mt-3 max-w-[420px]" />
+      )}
 
       <div className="mt-5">
         <Button variant="primary" onClick={handleBook} disabled={submitting || tier === null} className="w-full">
