@@ -124,6 +124,24 @@ export async function invalidateSession(
 }
 
 /**
+ * Revoke whatever session the request carries, if it carries one. For a door
+ * that ends a sign-in as a side effect of doing something else, where the
+ * caller has no token in hand to pass to `invalidateSession`.
+ *
+ * `deleteMany` rather than `delete`: a row that has already gone is this
+ * function's postcondition, not an error worth catching — and writing it that
+ * way keeps a genuine database failure from being swallowed alongside it.
+ */
+export async function revokeRequestSession(
+  db: PrismaClient,
+  request: NextRequest,
+): Promise<void> {
+  const token = getSessionToken(request);
+  if (!token) return;
+  await db.session.deleteMany({ where: { id: hashToken(token) } });
+}
+
+/**
  * Read through the request's own cookie store, never a hand-rolled split of
  * the `Cookie` header. Two parsers can disagree about whether this cookie is
  * present at all — and a caller that gates on its presence would then route

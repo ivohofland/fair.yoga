@@ -6,6 +6,7 @@ import {
   createSession,
   setSessionCookie,
   clearSessionCookie,
+  revokeRequestSession,
   resolveOrClaimAccount,
   mintSignupTicket,
   setSignupTicketCookie,
@@ -56,10 +57,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     const response = respondOk({ redirectTo: signupTicket.dest });
     setSignupTicketCookie(response.headers, ticket);
     clearOriginNonceCookie(response.headers);
-    // A session cookie surviving this response would permanently block the
-    // very ticket it just set (see `ticketTokenFrom`'s docblock in
-    // `profile-authorization.ts`) — clearing it here is what makes this
-    // response's ticket usable at all, not just hygiene.
+    // A session cookie surviving this response would block the very ticket it
+    // just set, for that ticket's whole life (`ticketTokenFrom`) — so the
+    // clear is what makes the ticket usable at all, not hygiene. Revoked as
+    // well as cleared: the cookie ends the sign-in for this browser, the row
+    // behind it decides whether that token still authenticates anywhere.
+    await revokeRequestSession(prisma, request);
     clearSessionCookie(response.headers);
     return response;
   }

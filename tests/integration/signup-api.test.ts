@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { generateMagicLinkToken, hashNonce, mintSignupTicket } from '@/lib/auth';
+import { generateMagicLinkToken, hashNonce, mintSignupTicket, validateSession } from '@/lib/auth';
 import { BASE_URL, uniqueSuffix, freshIp, seedSession } from '../helpers';
 
 const prisma = new PrismaClient();
@@ -399,8 +399,9 @@ describe('POST /api/auth/magic-link/claim — the ticket-minting branch clears a
     expect(claimRes.status).toBe(200);
     expect(claimRes.headers.get('set-cookie')).toContain('fair_yoga_signup=');
     expect(claimRes.headers.get('set-cookie')).toContain('fair_yoga_session=;');
-
-    await prisma.session.deleteMany({ where: { accountId: teacher.accountId } });
+    // Revoked, not merely un-carried — so this needs no session cleanup of
+    // its own, and would need one again the moment the door stopped revoking.
+    expect(await validateSession(prisma, rawSession)).toBeNull();
   });
 });
 
