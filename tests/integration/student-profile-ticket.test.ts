@@ -280,4 +280,49 @@ describe('POST /api/account/student-profile — a stale ticket cookie must not b
     expect(res.status).toBe(201);
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
   });
+
+  // Task review finding: the test above only exercises the main session
+  // branch's clear. The CRM-claim early-return (`route.ts`'s `if (unclaimed)`
+  // block) clears the cookie on its own separate response object and had
+  // never been observed to fire — this combines both preconditions so it
+  // does.
+  it('clears the stray ticket cookie it declined to honour on the CRM-claim early return', async () => {
+    const email = `profile-crmclaim-clear-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'CrmClaim',
+        lastName: 'Cookie',
+        email,
+        bio: 'Fixture for the CRM-claim stale-cookie clear',
+        pageSlug: `profile-crmclaim-clear-${suffix}`,
+        account: { create: { email } },
+      },
+    });
+    // Unclaimed CRM row under the SAME email as the teacher's account —
+    // this is what makes the route take the claim early-return instead of
+    // the plain `student.create` path.
+    const unclaimed = await prisma.student.create({
+      data: { firstName: 'Crm', lastName: 'Ghost', email },
+    });
+    const rawSession = await seedSession(prisma, teacher.accountId);
+    const otherEmail = `profile-crmclaim-clear-other-${suffix}@test.local`;
+    const liveTicket = await mintSignupTicket(prisma, otherEmail, 'student');
+
+    const res = await fetch(`${BASE_URL}/api/account/student-profile`, {
+      method: 'POST',
+      headers: {
+        Cookie: `fair_yoga_session=${rawSession}; fair_yoga_signup=${liveTicket}`,
+        ...freshIp(),
+      },
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
+
+    const student = await prisma.student.findUniqueOrThrow({ where: { id: unclaimed.id } });
+    expect(student.accountId).toBe(teacher.accountId);
+    expect(student.claimedAt).not.toBeNull();
+    // The other address's ticket was never spent.
+    expect(await prisma.student.findUnique({ where: { email: otherEmail } })).toBeNull();
+  });
 });
