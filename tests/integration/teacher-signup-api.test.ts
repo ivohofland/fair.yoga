@@ -27,6 +27,7 @@ const revokeOwnerSlug = `revoke-owner-${suffix}`;
 const displacedOtherEmail = `teacher-signup-displaced-other-${suffix}@test.local`;
 const displacedNewEmail = `teacher-signup-displaced-new-${suffix}@test.local`;
 const displacedSameEmail = `teacher-signup-displaced-same-${suffix}@test.local`;
+const deadSessionTicketEmail = `teacher-signup-deadsession-${suffix}@test.local`;
 const onboardingEmail = `teacher-signup-onboarding-${suffix}@test.local`;
 const onboardingSlug = `onboarding-teacher-${suffix}`;
 // #168 follow-up test's fixtures — an address per attempt, none of which
@@ -125,6 +126,7 @@ afterAll(async () => {
           displacedOtherEmail,
           displacedNewEmail,
           displacedSameEmail,
+          deadSessionTicketEmail,
           ...existingAccountEmails,
         ],
       },
@@ -406,6 +408,32 @@ describe('POST /api/auth/magic-link/verify — teacher-signup ticket branch', ()
     // and this one used to end a sign-in without a word.
     const body = (await res.json()) as { data: { sessionEnded: boolean } };
     expect(body.data.sessionEnded).toBe(true);
+  });
+
+  it('reports no sign-out for a session cookie that names nothing', async () => {
+    // The false direction, which the test above cannot reach: a cookie whose
+    // session is already gone cost its holder nothing, and telling them they
+    // were signed out describes something that did not happen. Only a test
+    // expecting `false` fails when the check degrades to cookie presence.
+    const nonce = `teacher-signup-deadsession-nonce-${suffix}`;
+    const token = await generateMagicLinkToken(prisma, deadSessionTicketEmail, {
+      purpose: 'teacher_signup',
+      originBrowserHash: hashNonce(nonce),
+    });
+
+    const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${nonce}; fair_yoga_session=long-gone-session`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ token }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { sessionEnded: boolean } };
+    expect(body.data.sessionEnded).toBe(false);
   });
 
   it('reports the OTHER pending signup this ticket displaces', async () => {
