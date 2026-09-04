@@ -90,6 +90,15 @@ describe('POST /api/account/teacher-profile — a session always beats a ticket 
 
     expect(res.status).toBe(201);
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
+
+    // The clear alone does not say the ticket was DECLINED: spending one
+    // clears the same cookie, with the same header, so this assertion passed
+    // against the route that honoured the ticket instead. What separates the
+    // two is the row — a declined ticket is still there to be spent later —
+    // and the absence of the session a spend would have minted.
+    const declined = await prisma.magicLinkToken.findFirst({ where: { email: ticketEmail } });
+    expect(declined).not.toBeNull();
+    expect(res.headers.get('set-cookie') ?? '').not.toContain('fair_yoga_session=');
   });
 
   it('clears a stray cookie that names a dead ticket the same as a live one', async () => {
