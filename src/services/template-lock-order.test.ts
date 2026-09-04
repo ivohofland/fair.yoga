@@ -261,18 +261,10 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       date: futureDate(jsDayOfWeek, 2),
     });
     // LOW is `draft`, HIGH is `open` — one of each of `SCHEDULED_STATUSES`,
-    // deliberately, and specifically `draft` on the row that must be locked
-    // FIRST for the order to hold.
-    //
-    // Both statuses are equally valid here (`draft` and `open` are both
-    // delete candidates for the archive, so every count below is unchanged),
-    // but a fixture that used only `open` could not observe the pre-lock's
-    // status list at all. `archiveOrUnarchiveTemplate`'s pre-lock renders that
-    // list from `SCHEDULED_STATUSES` into raw SQL, and dropping `'draft'` from
-    // it left every test covering that function green while the deadlock
-    // reopened — measured during issue 180 task 4. With LOW as `draft`, a
-    // narrowed list skips the row the erasure takes first, and the archive
-    // `it` below fails.
+    // deliberately. Both are delete candidates for the archive, so every count
+    // below is unchanged; the split costs nothing and keeps the fixture
+    // exercising both scheduled statuses. Whether the two `it`s below detect a
+    // weakened archive pre-lock at all is open — #244 owns that question.
     await createClassFixture(prisma, {
       ...classBase,
       id: lowClassId,
