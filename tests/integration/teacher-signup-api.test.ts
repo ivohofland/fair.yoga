@@ -118,6 +118,7 @@ afterAll(async () => {
   const existingAccountEmails = [
     `teacher-signup-existing-${suffix}@test.local`,
     `teacher-signup-new-dest-${suffix}@test.local`,
+    destStudentEmail,
   ];
   await prisma.magicLinkToken.deleteMany({
     where: {
@@ -134,6 +135,7 @@ afterAll(async () => {
           displacedNewEmail,
           displacedSameEmail,
           deadSessionTicketEmail,
+          destTeacherEmail,
           ...existingAccountEmails,
         ],
       },
@@ -147,6 +149,7 @@ afterAll(async () => {
           ...ticketBackedEmails,
           clearSessionOwnerEmail,
           revokeOwnerEmail,
+          destTeacherEmail,
           ...existingAccountEmails,
         ],
       },
@@ -156,7 +159,9 @@ afterAll(async () => {
   const accountIds = accounts.map((a) => a.id);
   await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
   await prisma.teacher.deleteMany({
-    where: { email: { in: [...ticketBackedEmails, clearSessionOwnerEmail, revokeOwnerEmail] } },
+    where: {
+      email: { in: [...ticketBackedEmails, clearSessionOwnerEmail, revokeOwnerEmail, destTeacherEmail] },
+    },
   });
   await prisma.student.deleteMany({
     where: { email: { in: existingAccountEmails } },
