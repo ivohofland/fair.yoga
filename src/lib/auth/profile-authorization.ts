@@ -181,11 +181,10 @@ export async function resolveProfileAuthorization<TBody>(
   if (!session.ok) return session;
 
   // A second call to parseBody, but never a second read of the same stream:
-  // reaching here after the ticket branch already parsed the body can only
-  // happen via a peek-then-lost-consume race, and that race always dead-ends
-  // at sessionAuthorization's 401 above, because ticketTokenFrom gates on
-  // cookie presence rather than validity. If that gate ever changes, re-check
-  // this ordering.
+  // reaching here with the body already parsed takes a peek-then-lost-consume
+  // race, and such a request carries no session cookie at all — `ticketTokenFrom`
+  // hands back a token only when there is none — so `sessionAuthorization`
+  // has already answered 401 and returned above.
   const parsed = await parseBody(request, schema);
   if ('error' in parsed) return { ok: false, reason: 'invalid_body', response: parsed.error };
 

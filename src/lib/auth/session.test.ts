@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { NextRequest } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
@@ -346,21 +347,51 @@ describe('invalidateSession', () => {
 
 describe('getSessionToken', () => {
   it('parses the session cookie from the Cookie header', () => {
-    const request = new Request('http://localhost', {
+    const request = new NextRequest('http://localhost', {
       headers: { Cookie: 'fair_yoga_session=abc123; other=xyz' },
     });
     expect(getSessionToken(request)).toBe('abc123');
   });
 
   it('returns null when the session cookie is not present', () => {
-    const request = new Request('http://localhost', {
+    const request = new NextRequest('http://localhost', {
       headers: { Cookie: 'other=xyz' },
     });
     expect(getSessionToken(request)).toBeNull();
   });
 
   it('returns null when there is no Cookie header', () => {
-    expect(getSessionToken(new Request('http://localhost'))).toBeNull();
+    expect(getSessionToken(new NextRequest('http://localhost'))).toBeNull();
+  });
+
+  it('returns null for a present but empty session cookie', () => {
+    const request = new NextRequest('http://localhost', {
+      headers: { Cookie: 'fair_yoga_session=' },
+    });
+    expect(getSessionToken(request)).toBeNull();
+  });
+
+  // Presence of this cookie is also what gates the signup-ticket path
+  // (`ticketTokenFrom`, profile-authorization.ts), which asks
+  // `NextRequest.cookies`. Two readers that disagreed would let one route the
+  // request to the ticket path while the other authenticates it — so what is
+  // asserted here is the AGREEMENT, on a header the platform parser refuses.
+  it('agrees with the request cookie store when a tab follows the separator', () => {
+    const request = new NextRequest('http://localhost', {
+      headers: { Cookie: 'other=1;\tfair_yoga_session=abc123' },
+    });
+
+    expect(request.cookies.get(SESSION_COOKIE_NAME)).toBeUndefined();
+    expect(getSessionToken(request)).toBeNull();
+  });
+
+  it('agrees with the request cookie store when the value is not decodable', () => {
+    const request = new NextRequest('http://localhost', {
+      headers: { Cookie: 'fair_yoga_session=%zz' },
+    });
+
+    expect(request.cookies.get(SESSION_COOKIE_NAME)).toBeUndefined();
+    expect(getSessionToken(request)).toBeNull();
   });
 });
 
