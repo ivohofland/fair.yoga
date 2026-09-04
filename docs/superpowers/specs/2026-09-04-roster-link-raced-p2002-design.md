@@ -324,10 +324,34 @@ with the `upsert` back is not exercising the race.
 ## Out of scope
 
 - **`unlinkTeacher`'s `TeacherBlock` upsert** (`invitations.ts:1076`). Also
-  `update: {}`, also non-atomic, and `docs/lock-order.md:1868-1874` records that
-  it is knowingly unfixed. It is a different table and a different question —
-  whether a raced block insert should be swallowed at all is a policy call, not
-  a transcription. Named in the docs section that survives.
+  `update: {}`, also non-atomic — but **its `P2002` is not reachable**, which is
+  why it is excluded on evidence rather than on scope.
+
+  ```bash
+  grep -rn "teacherBlock\.\(upsert\|create\|createMany\|delete\|deleteMany\)" src --include="*.ts" | grep -v "\.test\."
+  # invitations.ts:1076  — the only INSERT
+  # link-consent.ts:73   — a deleteMany
+  ```
+
+  One insert site, and it sits behind `teacherStudent.delete({ where: { id:
+  link.id } })` at `:1064`. Two concurrent unlinks of the same pair serialise on
+  that delete: the loser blocks on the row lock, finds no row, raises `P2025`,
+  and is translated to `NOT_LINKED` → 404 (`:1084`) before ever reaching the
+  upsert. Two unlinks of different pairs write different `(teacherId, email)`
+  keys and cannot collide. That is the structural difference from the five
+  `TeacherStudent` sites, which are five independent inserters racing each other
+  with nothing serialising them.
+
+  What `docs/lock-order.md:1861-1876` records about this upsert is a different
+  failure — a **lock-order** inversion between `resolveInvitationOnLink`
+  (`TeacherBlock` then `Invitation`) and `unlinkTeacher` (the reverse), held safe
+  by the same empty-`update` accident. That entry states its own trigger: *"if a
+  future edit to either upsert's `update` payload makes it non-empty, this pair
+  needs the same treatment."* **This branch does not trip it** — neither
+  upsert's `update` payload is touched, and the `TeacherStudent` statement that
+  changes is a different lock node, so the ordering between `TeacherBlock` and
+  `Invitation` is unchanged. Say so in the PR body; a reader of this diff will
+  reasonably ask.
 - **`StudentPrivacy`'s upsert.** Six real columns, always atomic, never had this
   race.
 - **`api/students/[id]/route.ts`'s `teacherStudent.update`** — the archive
