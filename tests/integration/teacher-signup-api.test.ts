@@ -56,6 +56,13 @@ const alreadyTeacherSlug = `already-teacher-${suffix}`;
 const shareSettledEmail = `teacher-signup-share-settled-${suffix}@test.local`;
 const shareSettledSlug = `share-settled-${suffix}`;
 
+// #431: the teacher-signup destination against an account that already
+// exists — one of each kind, because the guard has two directions and only
+// one of them is the bug.
+const destTeacherEmail = `teacher-signup-dest-teacher-${suffix}@test.local`;
+const destTeacherSlug = `dest-teacher-${suffix}`;
+const destStudentEmail = `teacher-signup-dest-student-${suffix}@test.local`;
+
 // A live teacher+session fixture, needed by the slug-available "already
 // taken" test and by every POST /api/account/onboarding test.
 let onboardingTeacherId: string;
@@ -959,5 +966,84 @@ describe('POST /api/account/teacher-profile — session mode', () => {
     expect(
       await prisma.teacher.findUnique({ where: { pageSlug: alreadyTeacherSlug } }),
     ).toBeNull();
+  });
+});
+
+/**
+ * #431. `teacher-signup` names `/signup/profile` on every attempt, existing
+ * accounts included — correct, and deliberate since #430. Whether that page
+ * is usable depends on a TEACHER PROFILE, which only verification can see.
+ */
+describe('POST /api/auth/magic-link/verify — teacher-signup destination for an existing account', () => {
+  it('sends an account that already teaches to its schedule, not to a page it would be bounced from', async () => {
+    await prisma.teacher.create({
+      data: {
+        firstName: 'Existing',
+        lastName: 'Teacher',
+        email: destTeacherEmail,
+        bio: '',
+        pageSlug: destTeacherSlug,
+        account: { create: { email: destTeacherEmail } },
+      },
+    });
+    const nonce = `teacher-signup-dest-teacher-nonce-${suffix}`;
+    const token = await generateMagicLinkToken(prisma, destTeacherEmail, {
+      purpose: 'sign_in',
+      redirectTo: '/signup/profile',
+      originBrowserHash: hashNonce(nonce),
+    });
+
+    const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${nonce}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ token }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { redirectTo: string } };
+    // `/signup/profile` would redirect straight to `/schedule` on arrival,
+    // and `/verify`'s copy reads this path — so naming it here promises
+    // something false out loud and then costs a hop.
+    expect(body.data.redirectTo).toBe('/schedule');
+  });
+
+  it('still sends an account with no teacher profile to the profile form', async () => {
+    await prisma.student.create({
+      data: {
+        firstName: 'Second',
+        lastName: 'Hat',
+        email: destStudentEmail,
+        incomeTier: 3,
+        claimedAt: new Date(),
+        account: { create: { email: destStudentEmail } },
+      },
+    });
+    const nonce = `teacher-signup-dest-student-nonce-${suffix}`;
+    const token = await generateMagicLinkToken(prisma, destStudentEmail, {
+      purpose: 'sign_in',
+      redirectTo: '/signup/profile',
+      originBrowserHash: hashNonce(nonce),
+    });
+
+    const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${nonce}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ token }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { redirectTo: string } };
+    // The second-hat flow: a student becoming a teacher too. This is what a
+    // guard written as `dest === TEACHER_PROFILE_PATH ? fallback : dest`
+    // would destroy while the case above still passed.
+    expect(body.data.redirectTo).toBe('/signup/profile');
   });
 });
