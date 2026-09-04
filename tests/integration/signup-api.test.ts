@@ -265,9 +265,8 @@ describe('POST /api/auth/magic-link/verify — reporting a cancelled signup tick
 
   /**
    * The primary scenario #421 was filed about: the SAME address holds both
-   * a live signup ticket and the sign-in link now being verified — unlike
-   * the cross-address test above, where the ticket's address is untouched
-   * by consuming the sign-in token.
+   * a live signup ticket and the sign-in link now being verified — the
+   * cross-address test above uses two separate addresses instead.
    */
   it('reports the cancellation when the ticket and the sign-in link share an address', async () => {
     const email = `same-address-cancel-${suffix}@test.local`;
@@ -299,6 +298,58 @@ describe('POST /api/auth/magic-link/verify — reporting a cancelled signup tick
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { signupCancelled: boolean } };
     expect(body.data.signupCancelled).toBe(true);
+  });
+});
+
+describe('POST /api/auth/magic-link/claim — reporting a cancelled signup ticket', () => {
+  /**
+   * The claim door's version of the same-address test above: the code
+   * exchanged here is redeemed through the handoff flow rather than a
+   * direct token verify, but the address holding both the live signup
+   * ticket and the sign-in link is the same address either way.
+   */
+  it('reports the cancellation when the ticket and the sign-in link share an address', async () => {
+    const email = `same-address-claim-cancel-${suffix}@test.local`;
+    await prisma.student.create({
+      data: {
+        firstName: 'Same', lastName: 'Claim', email, incomeTier: 3,
+        claimedAt: new Date(), account: { create: { email } },
+      },
+    });
+
+    const ticket = await mintSignupTicket(prisma, email, 'teacher');
+
+    const nonce = `same-address-claim-nonce-${suffix}`;
+    const raw = await generateMagicLinkToken(prisma, email, {
+      purpose: 'sign_in',
+      originBrowserHash: hashNonce(nonce),
+    });
+
+    // Opened on a browser with no `fair_yoga_origin` cookie, so /verify
+    // hands back a code instead of consuming the token directly.
+    const verifyRes = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ token: raw }),
+    });
+    expect(verifyRes.status).toBe(200);
+    const verifyBody = (await verifyRes.json()) as { data: { handoffCode: string } };
+
+    // Claimed back on the requesting browser, which carries both its origin
+    // cookie and the signup-ticket cookie.
+    const claimRes = await fetch(`${BASE_URL}/api/auth/magic-link/claim`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${nonce}; fair_yoga_signup=${ticket}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ code: verifyBody.data.handoffCode }),
+    });
+
+    expect(claimRes.status).toBe(200);
+    const claimBody = (await claimRes.json()) as { data: { signupCancelled: boolean } };
+    expect(claimBody.data.signupCancelled).toBe(true);
   });
 });
 

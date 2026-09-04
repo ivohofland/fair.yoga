@@ -40,9 +40,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Must run before `claimWithCode` below, not after — see
   // `consumeTokenRow` (magic-link.ts) for why the ordering matters here.
-  // Checked against the database rather than cookie presence alone, so an
-  // expired or already-consumed cookie still reads as "no live ticket"
-  // rather than as evidence of a cancellation.
+  // (checked via `signupTicketIsLive`, not cookie presence — see its
+  // docblock in signup-ticket.ts)
   const strayTicket = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
   const signupCancelled = strayTicket ? await signupTicketIsLive(prisma, strayTicket) : false;
 
