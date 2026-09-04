@@ -35,10 +35,9 @@ export default async function ProfileSetupPage() {
   const session = await getSession();
   if (session?.teacherId) redirect('/schedule');
 
-  // Session first, matching `POST /api/account/teacher-profile`: that route
-  // will not read a ticket cookie while a session cookie is present, so a
-  // ticket-mode form for a signed-in visitor would prefill another address
-  // and 401 on submit.
+  // Session first: a ticket-mode form for a signed-in visitor would prefill
+  // another address and 401 on submit against the route (see
+  // `teacher-profile/route.ts`).
   let identity: { email: string; mode: 'ticket' | 'session' } | null = null;
   if (session) {
     const account = await prisma.account.findUniqueOrThrow({

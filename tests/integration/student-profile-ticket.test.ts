@@ -281,11 +281,10 @@ describe('POST /api/account/student-profile — a stale ticket cookie must not b
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
   });
 
-  // Task review finding: the test above only exercises the main session
-  // branch's clear. The CRM-claim early-return (`route.ts`'s `if (unclaimed)`
-  // block) clears the cookie on its own separate response object and had
-  // never been observed to fire — this combines both preconditions so it
-  // does.
+  // The test above only exercises the main session branch's clear; the
+  // CRM-claim early-return (`route.ts`'s `if (unclaimed)` block) clears the
+  // cookie on its own separate response object — this test combines both
+  // preconditions to exercise that path specifically.
   it('clears the stray ticket cookie it declined to honour on the CRM-claim early return', async () => {
     const email = `profile-crmclaim-clear-${suffix}@test.local`;
     const teacher = await prisma.teacher.create({
