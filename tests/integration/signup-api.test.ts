@@ -352,6 +352,54 @@ describe('POST /api/auth/magic-link/claim — reporting a cancelled signup ticke
     const claimBody = (await claimRes.json()) as { data: { signupCancelled: boolean } };
     expect(claimBody.data.signupCancelled).toBe(true);
   });
+
+  /**
+   * The false-positive direction, which the sibling test above cannot reach:
+   * only a test that expects `false` can fail when the check degrades from
+   * liveness to cookie presence. Sharing its shape with the verify door's
+   * version of this test is the point — identical code is not covered code,
+   * and this door had no test of the `false` branch at all.
+   */
+  it('does not claim a cancellation when the ticket cookie names a dead token', async () => {
+    const email = `no-false-claim-cancel-${suffix}@test.local`;
+    await prisma.student.create({
+      data: {
+        firstName: 'No', lastName: 'Claim', email, incomeTier: 3,
+        claimedAt: new Date(), account: { create: { email } },
+      },
+    });
+
+    const nonce = `no-false-claim-nonce-${suffix}`;
+    const raw = await generateMagicLinkToken(prisma, email, {
+      purpose: 'sign_in',
+      originBrowserHash: hashNonce(nonce),
+    });
+
+    const verifyRes = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ token: raw }),
+    });
+    expect(verifyRes.status).toBe(200);
+    const verifyBody = (await verifyRes.json()) as { data: { handoffCode: string } };
+
+    const claimRes = await fetch(`${BASE_URL}/api/auth/magic-link/claim`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // A cookie naming a token that no longer exists. Cookie presence
+        // alone would report a signup cancelled that was never pending — and
+        // hold the reader on the notice for four seconds to read it.
+        Cookie: `fair_yoga_origin=${nonce}; fair_yoga_signup=long-gone-token`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ code: verifyBody.data.handoffCode }),
+    });
+
+    expect(claimRes.status).toBe(200);
+    const claimBody = (await claimRes.json()) as { data: { signupCancelled: boolean } };
+    expect(claimBody.data.signupCancelled).toBe(false);
+  });
 });
 
 describe('POST /api/auth/magic-link/claim — the ticket-minting branch clears a stray session', () => {
