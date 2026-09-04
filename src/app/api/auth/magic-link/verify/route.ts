@@ -84,19 +84,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // relative paths — everything else falls back to the role default;
   // dual-role accounts default to the teacher home.
   const fallback = resolved.teacherId ? '/schedule' : '/bookings';
-  // One destination is refused rather than merely defaulted (#431): the
-  // teacher profile form, for an account that already teaches. That page's
-  // own first line sends such a browser to `/schedule`, and `/verify`'s copy
-  // reads this path — so honouring it here promises a page the reader is
-  // about to be bounced from, out loud, and costs a hop saying it.
-  //
-  // Scoped to this one path. Every other destination a token can carry is
-  // usable by whoever receives it, and `teacher-signup/route.ts` is right to
-  // send this one unconditionally: whether the ADDRESS has an account is not
-  // the question, and whether it has a TEACHER PROFILE is knowable only
-  // here. The condition is `resolved.teacherId`, never the path alone —
-  // a student-only account keeps this destination, which is the second-hat
-  // flow.
+  // Refused rather than defaulted: this destination would immediately bounce
+  // an existing teacher back off `/signup/profile` (#431) — pinned by the
+  // directional integration cases in teacher-signup-api.test.ts and
+  // magic-link-claim.test.ts. Directional: only `teacherId !== null` is
+  // blocked, so a student's second-hat flow keeps this destination.
   const bouncedTeacherForm =
     tokenRedirect === TEACHER_PROFILE_PATH && resolved.teacherId !== null;
   const redirectTo =
