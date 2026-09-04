@@ -18,9 +18,9 @@ import { log } from '@/lib/log';
  * Creates the teacher profile (#385). Two authorizations, one route: the
  * signup ticket (new signup, no account yet) or a live session (an existing
  * account adding the teacher hat — the mirror of `student-profile`'s "join
- * as a student"). `resolveProfileAuthorization` applies the shared
- * ticket-vs-session precedence rule (#428): a session cookie's mere presence
- * rules out the ticket branch entirely.
+ * as a student"). `resolveProfileAuthorization` applies the resolver's
+ * shared ticket-vs-session precedence rule (#428) — see
+ * `profile-authorization.ts`.
  */
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const outcome = await resolveProfileAuthorization(
