@@ -11,10 +11,6 @@ import { getSession } from '@/lib/session';
  * authorizations `POST /api/account/teacher-profile` accepts plus the case
  * where neither holds:
  *
- *   - TICKET. The ordinary new signup: `/verify` left the signup ticket in a
- *     cookie and sent the browser here. `peekSignupTicket` reads the address
- *     WITHOUT consuming it — the profile route is the only thing that spends
- *     it, so opening this page twice costs nothing.
  *   - SESSION. An account that already exists and has no teacher profile,
  *     adding the second hat. `SessionUser` makes that precisely a
  *     student-only session: a profile-less session is unrepresentable, so
@@ -25,6 +21,11 @@ import { getSession } from '@/lib/session';
  *     state a second way: `/verify` CLAIMS such a student and issues an
  *     ordinary session rather than a ticket, so the ticket branch never fires
  *     for them either.
+ *   - TICKET. The ordinary new signup, reached only when no session cookie is
+ *     present: `/verify` left the signup ticket in a cookie and sent the
+ *     browser here. `peekSignupTicket` reads the address WITHOUT consuming it —
+ *     the profile route is the only thing that spends it, so opening this page
+ *     twice costs nothing.
  *   - NEITHER. A dead or missing ticket and no session. Not a dead end: it
  *     renders the same email form `/signup` does, so the way out is one
  *     field rather than a back button and a guess about which page to start
@@ -34,21 +35,21 @@ export default async function ProfileSetupPage() {
   const session = await getSession();
   if (session?.teacherId) redirect('/schedule');
 
-  const token = (await cookies()).get(SIGNUP_TICKET_COOKIE)?.value;
-  const ticketEmail = token ? await peekSignupTicket(prisma, token, 'teacher') : null;
-
-  // The ticket wins where both exist, which is the order the route resolves
-  // them in too: it is the narrower authorization — it names one address and
-  // dies on use — so letting the session shadow it would spend neither.
+  // Session first, matching `POST /api/account/teacher-profile`: that route
+  // will not read a ticket cookie while a session cookie is present, so a
+  // ticket-mode form for a signed-in visitor would prefill another address
+  // and 401 on submit.
   let identity: { email: string; mode: 'ticket' | 'session' } | null = null;
-  if (ticketEmail) {
-    identity = { email: ticketEmail, mode: 'ticket' };
-  } else if (session) {
+  if (session) {
     const account = await prisma.account.findUniqueOrThrow({
       where: { id: session.accountId },
       select: { email: true },
     });
     identity = { email: account.email, mode: 'session' };
+  } else {
+    const token = (await cookies()).get(SIGNUP_TICKET_COOKIE)?.value;
+    const ticketEmail = token ? await peekSignupTicket(prisma, token, 'teacher') : null;
+    if (ticketEmail) identity = { email: ticketEmail, mode: 'ticket' };
   }
 
   return (
