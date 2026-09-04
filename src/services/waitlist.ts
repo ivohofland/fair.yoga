@@ -12,6 +12,7 @@ import type { PrismaClient, CancelDeadline, WaitlistEntry } from '@prisma/client
 import { classStartInstant } from '@/lib/timezone';
 import { createBulkNotifications } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
+import { linkTeacherStudent } from './roster-link';
 import { lockClassRow, lockClassRowsOrdered, type TransactionClientOnly } from '@/lib/db-locks';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { readSeatCount } from './capacity';
@@ -273,11 +274,7 @@ export async function addToWaitlist(
       select: { email: true },
     });
 
-    await tx.teacherStudent.upsert({
-      where: { teacherId_studentId: { teacherId: cls.calendarEntry.teacherId, studentId } },
-      update: {},
-      create: { teacherId: cls.calendarEntry.teacherId, studentId },
-    });
+    await linkTeacherStudent(tx, { teacherId: cls.calendarEntry.teacherId, studentId });
 
     // The student's own act at this instant, so it resolves whatever
     // invitation state stood between them and this teacher — a `declined`
@@ -552,10 +549,9 @@ export async function promoteNext(
     // written by hand (fixtures, a psql fix-up). One idempotent query, and
     // without it such a promotion registers a student the teacher's CRM
     // cannot see.
-    await tx.teacherStudent.upsert({
-      where: { teacherId_studentId: { teacherId: cls.calendarEntry.teacherId, studentId: nextEntry.studentId } },
-      update: {},
-      create: { teacherId: cls.calendarEntry.teacherId, studentId: nextEntry.studentId },
+    await linkTeacherStudent(tx, {
+      teacherId: cls.calendarEntry.teacherId,
+      studentId: nextEntry.studentId,
     });
 
     // No `resolveInvitationOnLink` here, deliberately. A promotion fires at
@@ -675,11 +671,7 @@ export async function claimSpot(
     // from someone already holding a `waiting` entry, and the join that
     // created it is what created the link and resolved the invitation.
     // There is nothing left here to resolve.
-    await tx.teacherStudent.upsert({
-      where: { teacherId_studentId: { teacherId: cls.calendarEntry.teacherId, studentId } },
-      update: {},
-      create: { teacherId: cls.calendarEntry.teacherId, studentId },
-    });
+    await linkTeacherStudent(tx, { teacherId: cls.calendarEntry.teacherId, studentId });
 
     const updatedEntry = await tx.waitlistEntry.update({
       where: { id: entry.id },
