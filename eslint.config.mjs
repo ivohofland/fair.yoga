@@ -28,7 +28,7 @@ const eslintConfig = defineConfig([
         'error',
         {
           selector:
-            "CallExpression[callee.object.property.name='teacherStudent'][callee.property.name=/^(create|createMany|upsert)$/]",
+            "CallExpression[callee.object.property.name='teacherStudent'][callee.property.name=/^(create|createMany|createManyAndReturn|upsert)$/]",
           message:
             'Create the roster link with linkTeacherStudent (src/services/roster-link.ts) — a direct create/upsert here reopens the #181 race.',
         },
