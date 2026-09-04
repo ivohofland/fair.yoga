@@ -74,6 +74,7 @@ const LOCK_CONTENTION_TESTS = [
   // this note in `gdpr-lock-order.test.ts` was de-numbered for the same
   // reason; this one was missed and went stale.
   'src/services/gdpr-lock-order.test.ts',
+  'src/services/roster-link.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

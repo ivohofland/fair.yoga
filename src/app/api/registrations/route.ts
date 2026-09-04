@@ -13,6 +13,7 @@ import { createRegistrationSchema } from '@/lib/schemas';
 import { createBulkNotifications } from '@/services/notifications';
 import { activateRegistration, reorderWaitingEntries } from '@/services/waitlist';
 import { resolveInvitationOnLink } from '@/services/link-consent';
+import { linkTeacherStudent } from '@/services/roster-link';
 import { classStartInstant } from '@/lib/timezone';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { CLAIMABLE_WAITLIST_STATUSES } from '@/lib/waitlist-status';
@@ -231,11 +232,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // A self-booking student joins the teacher's roster: this link is how
       // the CRM sees them and how per-teacher privacy gets its scope.
       if (!isTeacher) {
-        await tx.teacherStudent.upsert({
-          where: { teacherId_studentId: { teacherId: cls.calendarEntry.teacherId, studentId } },
-          update: {},
-          create: { teacherId: cls.calendarEntry.teacherId, studentId },
-        });
+        await linkTeacherStudent(tx, { teacherId: cls.calendarEntry.teacherId, studentId });
 
         // #166: only the student's own booking is consent — this call sits
         // inside `!isTeacher` on purpose, so a roster add or a walk-in never
