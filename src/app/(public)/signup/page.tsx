@@ -30,8 +30,8 @@ import { getSession } from '@/lib/session';
 export default async function SignupPage() {
   const session = await getSession();
   if (session?.teacherId) {
-    // `SessionUser` carries ids and no address, so the panel's copy needs the
-    // same lookup `/signup/profile` makes for its own session-mode identity.
+    // SessionUser carries ids, not an address — this lookup is required to
+    // render the panel's copy.
     const account = await prisma.account.findUniqueOrThrow({
       where: { id: session.accountId },
       select: { email: true },
