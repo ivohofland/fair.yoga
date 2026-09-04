@@ -119,17 +119,18 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * booked a class while the invitation sat waiting.
    *
    * `linked` is not cosmetic; it decides whether `acceptInvitation`'s
-   * `teacherStudent.upsert` takes a row lock at all. With the row present,
-   * `upsert({ where, update: {}, create })` compiles to three plain,
-   * non-locking `SELECT`s on this Prisma version (see the quirk section of
-   * `docs/lock-order.md`), so the upsert never asks for the lock and the
-   * write ORDER is unobservable — which is exactly what the hand-rolled
-   * tests below exist to work around, by forcing a non-empty `update`.
-   * Without the row, the same call genuinely `INSERT`s, and an `INSERT`
-   * against a `@@unique([teacherId, studentId])` index DOES block a
-   * concurrent inserter of the same key. That is the only shape in which
-   * the real, unmodified `acceptInvitation` can be caught taking its two
-   * rows in the wrong sequence.
+   * roster-link write (`linkTeacherStudent`, `services/roster-link.ts`)
+   * takes a row lock at all. With the row present, `createMany({data:[pair],
+   * skipDuplicates:true})` resolves against it via `ON CONFLICT DO NOTHING`
+   * without asking for a lock, so the write ORDER is unobservable — which is
+   * exactly what the hand-rolled tests below exist to work around, by
+   * forcing a synthetic `upsert` with a non-empty `update` to reach the
+   * lock-taking path Prisma's OLD compilation could produce. Without the
+   * row, the same call genuinely `INSERT`s, and an `INSERT` against a
+   * `@@unique([teacherId, studentId])` index DOES block a concurrent
+   * inserter of the same key (measured, #181 task 1). That is the only
+   * shape in which the real, unmodified `acceptInvitation` can be caught
+   * taking its two rows in the wrong sequence.
    *
    * A fresh teacher AND student every call, not the file's shared
    * `teacherId`/`studentId` fixtures — more than one test below calls this,
@@ -286,12 +287,12 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * The other half of the pin: the SAME non-empty `TeacherStudent` write
    * that deadlocks above, in `unlinkTeacher`'s order — `TeacherStudent`
    * before `Invitation` — does not. This is the property the reorder in
-   * `acceptInvitation` actually buys, independent of whether Prisma keeps
-   * compiling an empty `update` the way it does today: even if a future
-   * edit (or a future Prisma version) makes every `TeacherStudent` upsert
-   * in this codebase take a real lock, the write order alone is enough to
-   * prevent the cycle, because both sides now agree which row to reach for
-   * first.
+   * `acceptInvitation` actually buys, independent of any Prisma
+   * upsert-compilation quirk: even if `unlinkTeacher`'s `TeacherBlock`
+   * `update: {}` (`invitations.ts` — the one real site left this quirk still
+   * governs, see `docs/lock-order.md`) started taking a real lock tomorrow,
+   * the write order alone is enough to prevent the cycle, because both
+   * sides now agree which row to reach for first.
    *
    * No `bReady`/`bHasLink` handshake here, unlike the two tests above —
    * deliberately, not an oversight. Both transactions now reach for
@@ -347,7 +348,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * Measured three runs: the accept transaction (`a`) rejected with a real
    * Postgres `40P01 deadlock detected` every time, the booking transaction
    * (`b`) committed every time — the same shape as the upsert baseline
-   * recorded above (`old: {"accept":"REJECTED 40P01","booking":"ok"} x3`).
+   * recorded below (`old: {"accept":"REJECTED 40P01","booking":"ok"} x3`).
    * `ON CONFLICT DO NOTHING` still asks Postgres for the row lock against an
    * uncommitted conflicting tuple, and that wait still participates in
    * deadlock detection: the wait edge survives the statement change. #179's
@@ -445,13 +446,14 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * /api/registrations` puts it. See the test below for the reproduction.)
    *
    * What remains true and is worth keeping: with a link already present,
-   * `upsert({ where, update: {}, create })` compiles to three non-locking
-   * `SELECT`s, so the real function asks for no `TeacherStudent` lock in
-   * either order — that is why the tests above hand-roll a synthetic
-   * non-empty `update`, and why the previous version of THIS test passed
-   * with the reorder reverted. The fixture here is unlinked so the recorded
-   * write is the lock-taking `INSERT` path, the write whose position
-   * actually matters.
+   * `linkTeacherStudent`'s `createMany({...,skipDuplicates:true})` resolves
+   * via `ON CONFLICT DO NOTHING` without asking for a `TeacherStudent` lock
+   * in either order — that is why the tests above hand-roll a synthetic
+   * upsert with a non-empty `update` to force the lock-taking path Prisma's
+   * OLD compilation could reach, and why the previous version of THIS test
+   * passed with the reorder reverted. The fixture here is unlinked so the
+   * recorded write is the lock-taking `INSERT` path, the write whose
+   * position actually matters.
    *
    * The result assertion is `{ ok: true }`, not "did not reject". The
    * previous version only checked that nothing threw, which a version of
@@ -731,6 +733,53 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
     });
     expect(result).toEqual({ ok: true });
   });
+
+  /**
+   * The third meaning of a zero-row match: the row itself is gone, not just
+   * status-shifted. A teacher can delete a still-`pending` invitation
+   * outright (`DELETE /api/invitations/[id]`, which protects only
+   * `declined` rows from removal) — so the re-read this branch depends on
+   * must be null-safe, not `findUniqueOrThrow` (#181 final review). Forced
+   * via a handshake on `invitation.updateMany` rather than left to timing:
+   * an unforced window this narrow would flake rather than fail cleanly.
+   */
+  it('a pending invitation deleted mid-accept still answers NOT_PENDING, not a bare 500', async () => {
+    const { studentId, email, invitationId } =
+      await makeLinkedStudentWithPendingInvite({ linked: true });
+
+    let deleteInvitation!: () => void;
+    const invitationDeleted = new Promise<void>((r) => { deleteInvitation = r; });
+
+    // Hooks the exact statement whose zero-row branch is under test. If the
+    // source stops calling this method here, the handshake never fires and
+    // this test passes without ever forcing the interleaving it claims to.
+    let handshakeFired = false;
+    const accepting = prisma.$extends({
+      query: {
+        invitation: {
+          async updateMany({ args, query }) {
+            handshakeFired = true;
+            deleteInvitation();
+            await new Promise((r) => setTimeout(r, 200));
+            return query(args);
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const deleting = (async () => {
+      await invitationDeleted;
+      await prisma.invitation.delete({ where: { id: invitationId } });
+    })();
+
+    const [acceptResult] = await Promise.all([
+      acceptInvitation(accepting, { invitationId, studentId, accountEmail: email }),
+      deleting,
+    ]);
+
+    expect(handshakeFired).toBe(true);
+    expect(acceptResult).toEqual({ ok: false, reason: 'NOT_PENDING' });
+  }, 15_000);
 });
 
 describe('StudentPrivacy and TeacherStudent take one lock order (#174 task 7)', () => {
