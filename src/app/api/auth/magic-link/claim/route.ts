@@ -17,7 +17,7 @@ import {
 } from '@/lib/auth';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
-import { magicLinkClaimSchema, isSafeRelativePath } from '@/lib/schemas';
+import { magicLinkClaimSchema, isSafeRelativePath, TEACHER_PROFILE_PATH } from '@/lib/schemas';
 import { checkIpRateLimit, clientIp, RateLimitResult } from '@/lib/rate-limit';
 
 const WINDOW_MS = 15 * 60 * 1000;
@@ -89,8 +89,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const sessionToken = await createSession(prisma, resolved.accountId);
   const fallback = resolved.teacherId ? '/schedule' : '/bookings';
+  // Refused rather than defaulted: this destination would immediately bounce
+  // an existing teacher back off `/signup/profile` (#431) — pinned by the
+  // directional integration cases in teacher-signup-api.test.ts and
+  // magic-link-claim.test.ts. Directional: only `teacherId !== null` is
+  // blocked, so a student's second-hat flow keeps this destination.
+  const bouncedTeacherForm =
+    tokenRedirect === TEACHER_PROFILE_PATH && resolved.teacherId !== null;
   const redirectTo =
-    tokenRedirect && isSafeRelativePath(tokenRedirect) ? tokenRedirect : fallback;
+    tokenRedirect && isSafeRelativePath(tokenRedirect) && !bouncedTeacherForm
+      ? tokenRedirect
+      : fallback;
 
   const response = respondOk({
     accountId: resolved.accountId,

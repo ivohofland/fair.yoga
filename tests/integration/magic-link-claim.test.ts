@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, uniqueSuffix, freshIp, teardownStudent } from '../helpers';
+import { BASE_URL, uniqueSuffix, freshIp, teardownStudent, teardownTeacher } from '../helpers';
 import { generateMagicLinkToken } from '@/lib/auth/magic-link';
 import { hashNonce } from '@/lib/auth/origin-nonce';
+import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -194,5 +195,147 @@ describe('POST /api/auth/magic-link/claim — device handoff over HTTP', () => {
     expect(claimRes.headers.get('set-cookie') ?? '').not.toContain('fair_yoga_session=');
 
     await prisma.magicLinkToken.deleteMany({ where: { email: wrongEmail } });
+  });
+});
+
+/**
+ * #431 via the device-handoff door. `magic-link/claim` redeems the same
+ * token row `magic-link/verify` would have consumed directly (see the
+ * comment on `signupTicket` above) — so the `bouncedTeacherForm` guard that
+ * keeps an existing teacher off `/signup/profile` must hold here too, and
+ * the directional check (a student's second-hat flow keeps the
+ * destination) must hold on this door as well.
+ */
+describe('POST /api/auth/magic-link/claim — teacher-signup destination for an existing account', () => {
+  const destTeacherEmail = `claim-dest-teacher-${suffix}@test.local`;
+  const destTeacherSlug = `claim-dest-teacher-${suffix}`;
+  const destStudentEmail = `claim-dest-student-${suffix}@test.local`;
+
+  let destTeacherId: string;
+  let destTeacherAccountId: string;
+  let destStudentId: string;
+  let destStudentAccountId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Existing',
+        lastName: 'Teacher',
+        email: destTeacherEmail,
+        bio: '',
+        pageSlug: destTeacherSlug,
+        account: { create: { email: destTeacherEmail } },
+      },
+    });
+    destTeacherId = teacher.id;
+    destTeacherAccountId = teacher.accountId;
+
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Second',
+        lastName: 'Hat',
+        email: destStudentEmail,
+        incomeTier: 3,
+        claimedAt: new Date(),
+        account: { create: { email: destStudentEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    destStudentId = student.id;
+    destStudentAccountId = student.accountId ?? '';
+  });
+
+  afterAll(async () => {
+    await prisma.magicLinkToken.deleteMany({
+      where: { email: { in: [destTeacherEmail, destStudentEmail] } },
+    });
+    await teardownTeacher(prisma, destTeacherId, destTeacherAccountId);
+    await teardownStudent(prisma, destStudentId, destStudentAccountId);
+  });
+
+  it('sends an account that already teaches to its schedule, not to a page it would be bounced from', async () => {
+    const sendRes = await fetch(`${BASE_URL}/api/auth/magic-link/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ email: destTeacherEmail }),
+    });
+    expect(sendRes.status).toBe(200);
+    const originCookie = /fair_yoga_origin=([^;]+)/.exec(
+      sendRes.headers.get('set-cookie') ?? '',
+    )?.[1];
+    expect(originCookie).toBeTruthy();
+
+    const token = await generateMagicLinkToken(prisma, destTeacherEmail, {
+      purpose: 'sign_in',
+      redirectTo: TEACHER_PROFILE_PATH,
+      originBrowserHash: hashNonce(originCookie!),
+    });
+
+    const verifyRes = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ token }),
+    });
+    expect(verifyRes.status).toBe(200);
+    const verifyBody = (await verifyRes.json()) as { data: { handoffCode: string } };
+    const code = verifyBody.data.handoffCode;
+    expect(code).toMatch(/^\d{6}$/);
+
+    const claimRes = await fetch(`${BASE_URL}/api/auth/magic-link/claim`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${originCookie}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ code }),
+    });
+    expect(claimRes.status).toBe(200);
+    const claimBody = (await claimRes.json()) as { data: { redirectTo: string } };
+    expect(claimBody.data.redirectTo).toBe('/schedule');
+  });
+
+  it('still sends an account with no teacher profile to the profile form', async () => {
+    const sendRes = await fetch(`${BASE_URL}/api/auth/magic-link/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ email: destStudentEmail }),
+    });
+    expect(sendRes.status).toBe(200);
+    const originCookie = /fair_yoga_origin=([^;]+)/.exec(
+      sendRes.headers.get('set-cookie') ?? '',
+    )?.[1];
+    expect(originCookie).toBeTruthy();
+
+    const token = await generateMagicLinkToken(prisma, destStudentEmail, {
+      purpose: 'sign_in',
+      redirectTo: TEACHER_PROFILE_PATH,
+      originBrowserHash: hashNonce(originCookie!),
+    });
+
+    const verifyRes = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ token }),
+    });
+    expect(verifyRes.status).toBe(200);
+    const verifyBody = (await verifyRes.json()) as { data: { handoffCode: string } };
+    const code = verifyBody.data.handoffCode;
+
+    const claimRes = await fetch(`${BASE_URL}/api/auth/magic-link/claim`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${originCookie}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ code }),
+    });
+    expect(claimRes.status).toBe(200);
+    const claimBody = (await claimRes.json()) as { data: { redirectTo: string } };
+    // The second-hat flow: a student becoming a teacher too. This is what a
+    // one-sided guard (checking only `tokenRedirect === TEACHER_PROFILE_PATH`)
+    // would destroy while the case above still passed.
+    expect(claimBody.data.redirectTo).toBe('/signup/profile');
   });
 });
