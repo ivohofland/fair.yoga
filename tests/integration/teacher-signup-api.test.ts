@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
-import { mintSignupTicket, generateMagicLinkToken, hashNonce } from '@/lib/auth';
+import { mintSignupTicket, generateMagicLinkToken, hashNonce, validateSession } from '@/lib/auth';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -18,6 +18,9 @@ const verifySignInNoAccountEmail = `teacher-signup-verify-signin-${suffix}@test.
 const clearSessionTicketEmail = `teacher-signup-verify-clearsession-${suffix}@test.local`;
 const clearSessionOwnerEmail = `teacher-signup-verify-clearsession-owner-${suffix}@test.local`;
 const clearSessionOwnerSlug = `clearsession-owner-${suffix}`;
+const revokeTicketEmail = `teacher-signup-verify-revoke-${suffix}@test.local`;
+const revokeOwnerEmail = `teacher-signup-verify-revoke-owner-${suffix}@test.local`;
+const revokeOwnerSlug = `revoke-owner-${suffix}`;
 const onboardingEmail = `teacher-signup-onboarding-${suffix}@test.local`;
 const onboardingSlug = `onboarding-teacher-${suffix}`;
 // #168 follow-up test's fixtures — an address per attempt, none of which
@@ -112,6 +115,7 @@ afterAll(async () => {
           verifyTeacherSignupEmail,
           verifySignInNoAccountEmail,
           clearSessionTicketEmail,
+          revokeTicketEmail,
           ...existingAccountEmails,
         ],
       },
@@ -119,13 +123,22 @@ afterAll(async () => {
   });
 
   const accounts = await prisma.account.findMany({
-    where: { email: { in: [...ticketBackedEmails, clearSessionOwnerEmail, ...existingAccountEmails] } },
+    where: {
+      email: {
+        in: [
+          ...ticketBackedEmails,
+          clearSessionOwnerEmail,
+          revokeOwnerEmail,
+          ...existingAccountEmails,
+        ],
+      },
+    },
     select: { id: true },
   });
   const accountIds = accounts.map((a) => a.id);
   await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
   await prisma.teacher.deleteMany({
-    where: { email: { in: [...ticketBackedEmails, clearSessionOwnerEmail] } },
+    where: { email: { in: [...ticketBackedEmails, clearSessionOwnerEmail, revokeOwnerEmail] } },
   });
   await prisma.student.deleteMany({
     where: { email: { in: existingAccountEmails } },
@@ -342,6 +355,42 @@ describe('POST /api/auth/magic-link/verify — teacher-signup ticket branch', ()
     expect(res.status).toBe(200);
     expect(res.headers.get('set-cookie')).toContain('fair_yoga_signup=');
     expect(res.headers.get('set-cookie')).toContain('fair_yoga_session=;');
+  });
+
+  it('revokes the session it signs out, not only the cookie carrying it', async () => {
+    // Clearing the cookie ends the sign-in for this browser; the row behind it
+    // decides whether the token still authenticates anywhere. `DELETE
+    // /api/auth/session` revokes before it clears, and this door signs someone
+    // out just as much — so it owes the same.
+    const nonce = `teacher-signup-verify-revoke-nonce-${suffix}`;
+    const token = await generateMagicLinkToken(prisma, revokeTicketEmail, {
+      purpose: 'teacher_signup',
+      originBrowserHash: hashNonce(nonce),
+    });
+
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Revoke', lastName: 'Session',
+        email: revokeOwnerEmail,
+        bio: '', pageSlug: revokeOwnerSlug,
+        account: { create: { email: revokeOwnerEmail } },
+      },
+    });
+    const rawSession = await seedSession(prisma, teacher.accountId);
+    expect(await validateSession(prisma, rawSession)).not.toBeNull();
+
+    const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${nonce}; fair_yoga_session=${rawSession}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ token }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await validateSession(prisma, rawSession)).toBeNull();
   });
 
   it('still 400s a sign_in token for an address with no account, and sets no ticket', async () => {
