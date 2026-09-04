@@ -39,6 +39,12 @@ describe('ticketTokenFrom — the precedence rule', () => {
       .toBeUndefined();
   });
 
+  it('returns undefined when a session cookie is present with an empty value', () => {
+    // Empty value is still presence; the rule blocks the ticket path entirely.
+    expect(ticketTokenFrom(req('fair_yoga_session=; fair_yoga_signup=abc')))
+      .toBeUndefined();
+  });
+
   it('returns undefined when neither cookie is present', () => {
     expect(ticketTokenFrom(req(''))).toBeUndefined();
   });

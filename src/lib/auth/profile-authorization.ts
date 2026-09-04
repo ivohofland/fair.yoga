@@ -19,13 +19,9 @@ import {
  * PRESENCE, not validity. An unparseable or expired session cookie still
  * routes to the session path, so the caller meets `requireSession`'s own 401
  * rather than silently spending a ticket that is not theirs.
- *
- * Callers outside this module have no reason to reach for
- * `SIGNUP_TICKET_COOKIE` directly; every route that needs a ticket goes
- * through one of the two resolvers below, which apply this first.
  */
 export function ticketTokenFrom(request: NextRequest): string | undefined {
-  return request.cookies.get(SESSION_COOKIE_NAME)?.value
+  return request.cookies.get(SESSION_COOKIE_NAME) !== undefined
     ? undefined
     : request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
 }
