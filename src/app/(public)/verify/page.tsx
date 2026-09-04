@@ -127,26 +127,33 @@ function newSignupHeadline(dest: string): string {
 }
 
 /**
- * Deliberately minimal: this state is visible for under a second, so it
- * carries only what that beat can hold (the confirmation) plus the
- * fallback link — the one line that matters exactly when the redirect
- * fails and the reader suddenly has time. Longer education (spent links,
- * wrong-account) lives on the states people actually dwell on.
+ * Two lengths, and the flags decide which. With nothing to report this state
+ * is visible for under a second, so it carries only the confirmation plus the
+ * fallback link — the one line that matters exactly when the redirect fails
+ * and the reader suddenly has time. Longer education (spent links,
+ * wrong-account) still lives on the states people dwell on by choice.
+ *
+ * `signupCancelled` and `sessionEnded` are the exception: each names
+ * something the reader HAD and no longer has, which they cannot act on
+ * without being told. The redirect slows to match (see `VerifyContent`).
  *
  * `isNewSignup` distinguishes the one destination that never sets a
  * session: a `teacher_signup` or `student_signup` token with no account yet
  * hands back a signup ticket, not a session (`magic-link/verify/route.ts`)
  * — so "Welcome back / You're signed in" would be false on both halves for
- * that reader.
+ * that reader, and it is also what separates the two ways a pending signup
+ * can end: displaced by a newer one here, or abandoned by signing in.
  */
 function SuccessState({
   redirectTo,
   isNewSignup,
   signupCancelled,
+  sessionEnded,
 }: {
   redirectTo: string;
   isNewSignup: boolean;
   signupCancelled: boolean;
+  sessionEnded: boolean;
 }) {
   const dest = redirectTo || '/schedule';
   return (
@@ -169,8 +176,16 @@ function SuccessState({
       </StatusLine>
       {signupCancelled && (
         <StatusLine>
-          Your pending signup was cancelled because you signed in. You can start it
-          again from the signup page.
+          {isNewSignup
+            ? 'Your other pending signup was cancelled by this one.'
+            : 'Your pending signup was cancelled because you signed in.'}{' '}
+          You can start it again from the signup page.
+        </StatusLine>
+      )}
+      {sessionEnded && (
+        <StatusLine>
+          Starting this signup signed you out of your other account. You can sign
+          back in any time.
         </StatusLine>
       )}
     </div>
@@ -300,6 +315,7 @@ function VerifyContent() {
   const [redirectTo, setRedirectTo] = useState<string>('');
   const [isNewSignup, setIsNewSignup] = useState(false);
   const [signupCancelled, setSignupCancelled] = useState(false);
+  const [sessionEnded, setSessionEnded] = useState(false);
   const [home, setHome] = useState<string>('/schedule');
   const [handoffCode, setHandoffCode] = useState<string>('');
 
@@ -329,13 +345,15 @@ function VerifyContent() {
         // all.
         setIsNewSignup(!json.data.accountId);
         const cancelled = Boolean(json.data.signupCancelled);
+        const endedSession = Boolean(json.data.sessionEnded);
         setSignupCancelled(cancelled);
+        setSessionEnded(endedSession);
         setRedirectTo(dest);
         setStatus('success');
-        // A cancelled-signup reader has a two-sentence notice to read below
+        // Either notice is something the reader lost and has to read below
         // the redirect line — give it enough time to actually be read
         // instead of the ordinary redirect beat.
-        setTimeout(() => router.push(dest), cancelled ? 4000 : 900);
+        setTimeout(() => router.push(dest), cancelled || endedSession ? 4000 : 900);
       })
       .catch(async () => {
         // A stale link is often re-clicked from the inbox AFTER a
@@ -363,7 +381,12 @@ function VerifyContent() {
   if (status === 'already-signed-in') return <AlreadySignedInState home={home} />;
   if (status === 'success')
     return (
-      <SuccessState redirectTo={redirectTo} isNewSignup={isNewSignup} signupCancelled={signupCancelled} />
+      <SuccessState
+        redirectTo={redirectTo}
+        isNewSignup={isNewSignup}
+        signupCancelled={signupCancelled}
+        sessionEnded={sessionEnded}
+      />
     );
   if (status === 'handoff') return <HandoffState code={handoffCode} />;
   return <VerifyingState />;

@@ -94,34 +94,39 @@ export function clearSignupTicketCookie(headers: Headers): void {
 }
 
 /**
- * A token's purpose, but only if it's still a LIVE ticket of some family —
- * checked against `TICKET_PURPOSE` rather than a duplicated purpose list, so
- * a third family's purpose joins this predicate by construction. The one
- * definition `signupTicketIsLive` and `signupTicketCrossFamilyPurpose` both
- * build on, so neither can drift from the other on what "live" means.
+ * A token's address and purpose, but only if it's still a LIVE ticket of some
+ * family — membership checked against `TICKET_PURPOSE` rather than a
+ * duplicated purpose list, so any `SignupFamily`'s purpose joins this
+ * predicate by construction. The one definition every reader below builds on,
+ * so none of them can drift from the others on what "live" means.
  */
-async function readLiveTicketPurpose(
+async function readLiveTicket(
   db: PrismaClient,
   token: string,
-): Promise<MagicLinkPurpose | null> {
+): Promise<{ email: string; purpose: MagicLinkPurpose } | null> {
   const row = await db.magicLinkToken.findUnique({
     where: { tokenHash: hashToken(token) },
-    select: { expiresAt: true, purpose: true },
+    select: { email: true, expiresAt: true, purpose: true },
   });
   if (!row || row.expiresAt <= new Date()) return null;
   const isTicket = (Object.values(TICKET_PURPOSE) as MagicLinkPurpose[]).includes(row.purpose);
-  return isTicket ? row.purpose : null;
+  return isTicket ? { email: row.email, purpose: row.purpose } : null;
 }
 
 /**
- * Whether a token names a live signup ticket of either family, without
- * consuming it or caring which family it belongs to. Cookie presence alone
- * is not enough for this check to mean anything: a token that is missing,
- * expired, or was never a ticket at all must all read as "no live ticket"
- * here, not as evidence something was cancelled.
+ * The address behind a live signup ticket of either family, without consuming
+ * it or caring which family it belongs to — or `null` when there is no live
+ * ticket to speak of. Cookie presence alone is not enough for a caller to
+ * mean anything by this: a token that is missing, expired, or was never a
+ * ticket at all must all read as "no live ticket", not as evidence something
+ * was cancelled. The address is what lets a caller tell a signup it DISPLACES
+ * from the same signup being restarted.
  */
-export async function signupTicketIsLive(db: PrismaClient, token: string): Promise<boolean> {
-  return (await readLiveTicketPurpose(db, token)) !== null;
+export async function liveSignupTicketEmail(
+  db: PrismaClient,
+  token: string,
+): Promise<string | null> {
+  return (await readLiveTicket(db, token))?.email ?? null;
 }
 
 /**
@@ -136,8 +141,8 @@ export async function signupTicketCrossFamilyPurpose(
   token: string,
   family: SignupFamily,
 ): Promise<MagicLinkPurpose | null> {
-  const purpose = await readLiveTicketPurpose(db, token);
-  return purpose && purpose !== TICKET_PURPOSE[family] ? purpose : null;
+  const ticket = await readLiveTicket(db, token);
+  return ticket && ticket.purpose !== TICKET_PURPOSE[family] ? ticket.purpose : null;
 }
 
 /**
