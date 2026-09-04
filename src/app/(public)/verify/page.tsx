@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Icon } from '@/components/ui/icon';
 import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
@@ -77,6 +77,13 @@ function Fineprint({ children }: { children: React.ReactNode }) {
   return <p className="mt-6 type-caption leading-[1.55]">{children}</p>;
 }
 
+/**
+ * Written for a slow connection, and shown only on one: `useVerifyingRail`
+ * below decides when this is on screen, and every route to it goes through
+ * that hook. It is the heaviest screen in the flow, and before #435 it was
+ * also the shortest-lived — visible for 89–194ms on a local verification,
+ * gone before it resolved into anything.
+ */
 function VerifyingState() {
   return (
     <div className="flex-1 flex flex-col justify-center py-4">
@@ -307,6 +314,87 @@ function HandoffState({ code }: { code: string }) {
   );
 }
 
+/**
+ * How long verification may run before the reader is shown anything about
+ * it. Below this the rail never renders at all — the `(public)` layout's
+ * wordmark carries the screen on its own, and the reader's next sight is the
+ * outcome.
+ */
+const RAIL_APPEARS_AFTER_MS = 300;
+
+/**
+ * How long the rail keeps the screen once it HAS appeared, even when the
+ * outcome lands a millisecond behind it.
+ *
+ * The pair removes the flicker; neither number does it alone. A threshold on
+ * its own moves the cliff rather than removing it — a verification settling
+ * just past `RAIL_APPEARS_AFTER_MS` would paint the rail for the few
+ * milliseconds between the two events, which is the defect, not a smaller
+ * version of it. Nothing here slows the fast path: below the threshold there
+ * is nothing to hold, because nothing was shown.
+ */
+const RAIL_STAYS_FOR_MS = 600;
+
+/**
+ * Bounds the verifying rail's life away from zero.
+ *
+ * A screen's lifetime has two ends, and nothing can know at render time
+ * whether a verification will answer in 90ms or three seconds — so gating
+ * only the start could never bound that lifetime. `settle` is the other end:
+ * every path out of `verifying` applies its outcome through it, so none of
+ * them can take the screen while the rail is mid-flash. It runs its callback
+ * immediately when the rail was never shown, which is the ordinary fast
+ * sign-in and the reason this costs that reader nothing.
+ *
+ * The minimum is timed from the rail's own appearance rather than measured
+ * against a clock read, so no part of this depends on `Date` being faked
+ * alongside the timers.
+ */
+function useVerifyingRail(enabled: boolean): {
+  railVisible: boolean;
+  settle: (apply: () => void) => void;
+} {
+  const [railVisible, setRailVisible] = useState(false);
+  /** True while the rail is on screen and still owed its minimum. */
+  const owed = useRef(false);
+  const waiting = useRef<(() => void) | null>(null);
+  const appearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    appearTimer.current = setTimeout(() => {
+      owed.current = true;
+      setRailVisible(true);
+      stayTimer.current = setTimeout(() => {
+        owed.current = false;
+        const held = waiting.current;
+        waiting.current = null;
+        held?.();
+      }, RAIL_STAYS_FOR_MS);
+    }, RAIL_APPEARS_AFTER_MS);
+
+    return () => {
+      if (appearTimer.current) clearTimeout(appearTimer.current);
+      if (stayTimer.current) clearTimeout(stayTimer.current);
+      waiting.current = null;
+    };
+  }, [enabled]);
+
+  const settle = useCallback((apply: () => void) => {
+    // Cancelled rather than merely ignored: an outcome is on its way to the
+    // screen, and the rail must not appear from behind it.
+    if (appearTimer.current) {
+      clearTimeout(appearTimer.current);
+      appearTimer.current = null;
+    }
+    if (owed.current) waiting.current = apply;
+    else apply();
+  }, []);
+
+  return { railVisible, settle };
+}
+
 function VerifyContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -318,6 +406,7 @@ function VerifyContent() {
   const [sessionEnded, setSessionEnded] = useState(false);
   const [home, setHome] = useState<string>('/schedule');
   const [handoffCode, setHandoffCode] = useState<string>('');
+  const { railVisible, settle } = useVerifyingRail(token !== null);
 
   useEffect(() => {
     if (!token) return;
@@ -334,8 +423,11 @@ function VerifyContent() {
         // Nothing was consumed: the code names a pending claim, still
         // waiting on the browser that requested the link.
         if (json.data.handoffCode) {
-          setHandoffCode(json.data.handoffCode);
-          setStatus('handoff');
+          const code: string = json.data.handoffCode;
+          settle(() => {
+            setHandoffCode(code);
+            setStatus('handoff');
+          });
           return;
         }
         const dest: string = json.data.redirectTo;
@@ -343,17 +435,22 @@ function VerifyContent() {
         // `accountId` — it hands back a ticket cookie instead of a session
         // — so its absence is the signal this reader was never signed in at
         // all.
-        setIsNewSignup(!json.data.accountId);
+        const isNew = !json.data.accountId;
         const cancelled = Boolean(json.data.signupCancelled);
         const endedSession = Boolean(json.data.sessionEnded);
-        setSignupCancelled(cancelled);
-        setSessionEnded(endedSession);
-        setRedirectTo(dest);
-        setStatus('success');
-        // Either notice is something the reader lost and has to read below
-        // the redirect line — give it enough time to actually be read
-        // instead of the ordinary redirect beat.
-        setTimeout(() => router.push(dest), cancelled || endedSession ? 4000 : 900);
+        settle(() => {
+          setIsNewSignup(isNew);
+          setSignupCancelled(cancelled);
+          setSessionEnded(endedSession);
+          setRedirectTo(dest);
+          setStatus('success');
+          // Either notice is something the reader lost and has to read below
+          // the redirect line — give it enough time to actually be read
+          // instead of the ordinary redirect beat. Scheduled from inside
+          // `settle`, so the beat is measured from where this state takes the
+          // screen rather than from where the response arrived.
+          setTimeout(() => router.push(dest), cancelled || endedSession ? 4000 : 900);
+        });
       })
       .catch(async () => {
         // A stale link is often re-clicked from the inbox AFTER a
@@ -366,16 +463,19 @@ function VerifyContent() {
             const json = (await res.json()) as {
               data: { teacherId: string | null; studentId: string | null };
             };
-            setHome(json.data.teacherId ? '/schedule' : '/bookings');
-            setStatus('already-signed-in');
+            const landing = json.data.teacherId ? '/schedule' : '/bookings';
+            settle(() => {
+              setHome(landing);
+              setStatus('already-signed-in');
+            });
             return;
           }
         } catch {
           // fall through to the plain failure state
         }
-        setStatus('error');
+        settle(() => setStatus('error'));
       });
-  }, [token, router]);
+  }, [token, router, settle]);
 
   if (status === 'error') return <ErrorState />;
   if (status === 'already-signed-in') return <AlreadySignedInState home={home} />;
@@ -389,12 +489,25 @@ function VerifyContent() {
       />
     );
   if (status === 'handoff') return <HandoffState code={handoffCode} />;
-  return <VerifyingState />;
+  return railVisible ? <VerifyingState /> : null;
 }
 
 export default function VerifyPage() {
   return (
-    <Suspense fallback={<VerifyingState />}>
+    // Renders nothing, for the same reason the gate below the threshold does:
+    // this is a pre-mount render. It happens before a verification has been
+    // sent, so it cannot know whether one will take 90ms or three seconds,
+    // and a screen it paints may be replaced on the very next frame.
+    // `useVerifyingRail` decides instead, and only once `VerifyContent` has
+    // mounted.
+    //
+    // Not interchangeable with the gate: which of the two is the FIRST paint
+    // depends on how this page is being served. Built, it prerenders (a
+    // `useSearchParams` bailout takes the nearest boundary with it), so this
+    // fallback is the HTML a deployed reader gets before any JavaScript runs;
+    // under `next dev` the page is rendered per request and `VerifyContent`
+    // produces that HTML itself. Each site covers what the other cannot.
+    <Suspense fallback={null}>
       <VerifyContent />
     </Suspense>
   );
