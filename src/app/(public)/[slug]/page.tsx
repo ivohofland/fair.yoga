@@ -94,7 +94,6 @@ export default async function TeacherBookingPage({
       </h1>
       {teacher.bio && <p className="type-body mt-2 max-w-[480px]">{teacher.bio}</p>}
 
-      {/* Teal tint sets the pricing promise apart from the personal bio. */}
       <PricingExplainer className="mt-5 max-w-[480px]" />
 
       <h2 className="type-subtitle mt-8 mb-3">Upcoming classes</h2>

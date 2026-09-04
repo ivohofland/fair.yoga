@@ -21,4 +21,11 @@ describe('PricingExplainer', () => {
     expect(card).toHaveClass('p-5');
     expect(card).toHaveClass('custom-class');
   });
+
+  it('carries no stray whitespace in its class list when className is omitted', () => {
+    const { container } = render(<PricingExplainer />);
+    const card = container.firstChild as HTMLElement;
+
+    expect(card).toHaveAttribute('class', 'bg-teal-tint rounded-card p-5');
+  });
 });

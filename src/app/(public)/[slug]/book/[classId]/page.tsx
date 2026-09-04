@@ -177,7 +177,6 @@ export default async function BookClassPage({
       {viewer ? (
         <BookingFlow
           classId={cls.id}
-          slug={slug}
           isFull={isFull}
           alreadyBooked={alreadyBooked}
           currentTier={viewer.tier}
