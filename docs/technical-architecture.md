@@ -471,7 +471,7 @@ will not read one while a session cookie is present (`ticketTokenFrom`,
 Re-derive the roster with:
 
 ```sh
-grep -rn "setSessionCookie(" src/app src/lib | grep -v "\.test\."
+grep -rn "setSessionCookie(" src/app | grep -v "\.test\."
 ```
 
 Five at the time of writing: `magic-link/verify`, `magic-link/claim`,

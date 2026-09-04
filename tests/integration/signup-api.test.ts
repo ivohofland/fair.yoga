@@ -105,6 +105,7 @@ describe('POST /api/auth/student-signup', () => {
     // it to an address that already has one would push a real user down the
     // signup path.
     expect(token.purpose).toBe('sign_in');
+    expect(token.redirectTo).toBe('/t/book/c1');
   });
 
   it('refuses a body that still carries the old name fields', async () => {

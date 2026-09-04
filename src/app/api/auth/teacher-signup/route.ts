@@ -39,11 +39,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   try {
     await deliverSignInLink(prisma, email, nonce, {
-      // Unconditional, as `student-signup` has always passed its own
-      // destination: the purpose decides whether an account may be created,
-      // the redirect decides where the person lands, and dropping the second
-      // for addresses that already have an account discarded the whole intent
-      // of "start teaching".
+      // Unconditional: the purpose decides whether an account may be
+      // created, the redirect decides where the person lands, and dropping
+      // the second for addresses that already have an account discarded the
+      // whole intent of "start teaching".
       redirectTo: TEACHER_PROFILE_PATH,
       purpose,
     });

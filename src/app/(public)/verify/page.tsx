@@ -328,10 +328,14 @@ function VerifyContent() {
         // — so its absence is the signal this reader was never signed in at
         // all.
         setIsNewSignup(!json.data.accountId);
-        setSignupCancelled(Boolean(json.data.signupCancelled));
+        const cancelled = Boolean(json.data.signupCancelled);
+        setSignupCancelled(cancelled);
         setRedirectTo(dest);
         setStatus('success');
-        setTimeout(() => router.push(dest), 900);
+        // A cancelled-signup reader has a two-sentence notice to read below
+        // the redirect line — give it enough time to actually be read
+        // instead of the ordinary redirect beat.
+        setTimeout(() => router.push(dest), cancelled ? 4000 : 900);
       })
       .catch(async () => {
         // A stale link is often re-clicked from the inbox AFTER a

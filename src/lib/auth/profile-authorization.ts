@@ -68,8 +68,7 @@ type TicketOutcome<TBody> =
  * Peek first so a stale cookie falls through to the session path instead of
  * failing a body parse the caller never needed. Parse before consuming so a
  * typo does not burn a single-use ticket. Take the address from the CONSUMED
- * value, never the peek: `consumeSignupTicket` is explicit that a profile
- * route must take the authorized email from nowhere else.
+ * value, never the peek — see `consumeSignupTicket`'s docblock for why.
  */
 async function ticketAuthorization<TBody>(
   db: PrismaClient,
@@ -101,11 +100,11 @@ type SessionOutcome =
   | { ok: false; reason: 'no_session'; response: NextResponse };
 
 /**
- * `db` covers the account lookup only. `requireSession` reaches for
- * `api-utils`' own module-level client and takes no client argument — that
- * is its existing shape, not an oversight here, and both resolve the same
- * `DATABASE_URL`. Do not "fix" it by threading `db` through `requireSession`;
- * that widens this change into every route that calls it.
+ * `db` covers the account lookup only. `requireSession` reaches into the
+ * shared `prisma` singleton directly and takes no client argument — that's
+ * its existing shape, not something to route through here. Do not "fix" it
+ * by threading `db` through `requireSession`; that widens this change into
+ * every route that calls it.
  */
 async function sessionAuthorization(
   db: PrismaClient,
@@ -141,6 +140,12 @@ export async function resolveProfileAuthorization<TBody>(
   const session = await sessionAuthorization(db, request);
   if (!session.ok) return session;
 
+  // A second call to parseBody, but never a second read of the same stream:
+  // reaching here after the ticket branch already parsed the body can only
+  // happen via a peek-then-lost-consume race, and that race always dead-ends
+  // at sessionAuthorization's 401 above, because ticketTokenFrom gates on
+  // cookie presence rather than validity. If that gate ever changes, re-check
+  // this ordering.
   const parsed = await parseBody(request, schema);
   if ('error' in parsed) return { ok: false, reason: 'invalid_body', response: parsed.error };
 
