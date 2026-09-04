@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfStudent } from './account-helpers';
-import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { uniqueSuffix, seedSession, sessionCookie, BASE_URL } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 
@@ -162,9 +162,17 @@ test.describe('Passkey sign-in', () => {
     // Same passkey from /login, which passes no redirect: the role default
     // applies and the student lands on their bookings.
     await context.clearCookies();
+    // A stray ticket from a signup abandoned earlier in this browser. The
+    // passkey door mints a session; nothing should carry the ticket past it.
+    await context.addCookies([
+      { name: 'fair_yoga_signup', value: 'stale-abandoned-ticket', url: BASE_URL },
+    ]);
     await page.goto('/login');
     await page.getByRole('button', { name: 'Sign in with a passkey' }).click();
     await page.waitForURL('**/bookings', { timeout: 10_000 });
+
+    const strayAfterSignIn = (await context.cookies()).find((c) => c.name === 'fair_yoga_signup');
+    expect(strayAfterSignIn?.value ?? '').toBe('');
 
     // One credential, both hats: grow the account a teacher profile and the
     // very same passkey now lands on the dual default — the teacher home.
