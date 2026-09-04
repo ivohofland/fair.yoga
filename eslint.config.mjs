@@ -13,6 +13,27 @@ const eslintConfig = defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
+  // `TeacherStudent` rows are created in exactly one place, and
+  // `src/lib/student-visibility.ts` reasons about the set of callers that
+  // reach it. Before #181 the same statement was written at five call sites,
+  // each with its own read-then-write race; collapsing them is only durable
+  // if a sixth cannot quietly appear. Tests are exempt: the lock-order suite
+  // writes this table directly on purpose, to pin Prisma's own behaviour.
+  {
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
+    ignores: ['src/services/roster-link.ts', 'src/**/*.test.ts', 'src/**/*.test.tsx'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "CallExpression[callee.object.property.name='teacherStudent'][callee.property.name=/^(create|createMany|upsert)$/]",
+          message:
+            'Create the roster link with linkTeacherStudent (src/services/roster-link.ts) — a direct create/upsert here reopens the #181 race.',
+        },
+      ],
+    },
+  },
   // docs/ holds the vendored design-system reference (prototype JSX, generated
   // support.js) — documentation, not app code.
   //
