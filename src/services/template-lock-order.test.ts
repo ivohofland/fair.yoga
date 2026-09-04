@@ -263,8 +263,9 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
     // LOW is `draft`, HIGH is `open` — one of each of `SCHEDULED_STATUSES`,
     // deliberately. Both are delete candidates for the archive, so every count
     // below is unchanged; the split costs nothing and keeps the fixture
-    // exercising both scheduled statuses. Whether the two `it`s below detect a
-    // weakened archive pre-lock at all is open — #244 owns that question.
+    // exercising both scheduled statuses. Whether narrowing the archive
+    // pre-lock's status list is caught by the `it`s below is open — #244 owns
+    // that question.
     await createClassFixture(prisma, {
       ...classBase,
       id: lowClassId,
