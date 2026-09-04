@@ -95,6 +95,10 @@ afterAll(async () => {
     ticketEmail, spentEmail, clashEmail, recoveryEmail, raceEmailA, raceEmailB,
     tzDetectedEmail, tzFallbackEmail,
   ];
+  const existingAccountEmails = [
+    `teacher-signup-existing-${suffix}@test.local`,
+    `teacher-signup-new-dest-${suffix}@test.local`,
+  ];
   await prisma.magicLinkToken.deleteMany({
     where: {
       email: {
@@ -104,19 +108,23 @@ afterAll(async () => {
           ...noIpEmails,
           verifyTeacherSignupEmail,
           verifySignInNoAccountEmail,
+          ...existingAccountEmails,
         ],
       },
     },
   });
 
   const accounts = await prisma.account.findMany({
-    where: { email: { in: ticketBackedEmails } },
+    where: { email: { in: [...ticketBackedEmails, ...existingAccountEmails] } },
     select: { id: true },
   });
   const accountIds = accounts.map((a) => a.id);
   await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
   await prisma.teacher.deleteMany({
     where: { email: { in: ticketBackedEmails } },
+  });
+  await prisma.student.deleteMany({
+    where: { email: { in: existingAccountEmails } },
   });
   await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
 
@@ -204,6 +212,55 @@ describe('POST /api/auth/teacher-signup', () => {
     // this pins against.
     expect(refusalMessage).toMatch(/^Too many signup attempts\./);
     expect(refusalMessage).not.toMatch(/invitation/i);
+  });
+
+  it('sends an existing account to the teacher profile form, not to its role default', async () => {
+    // A student who wants to teach types their address into "Start teaching".
+    // The link they get is an ordinary sign_in link — correct, since the
+    // signup marker is what lets verification create an account — but it must
+    // still land them where they were going.
+    const email = `teacher-signup-existing-${suffix}@test.local`;
+    await prisma.student.create({
+      data: {
+        firstName: 'Already',
+        lastName: 'Here',
+        email,
+        incomeTier: 3,
+        claimedAt: new Date(),
+        account: { create: { email } },
+      },
+    });
+
+    const res = await fetch(`${BASE_URL}/api/auth/teacher-signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ email }),
+    });
+    expect(res.status).toBe(200);
+
+    const token = await prisma.magicLinkToken.findFirstOrThrow({
+      where: { email },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(token.purpose).toBe('sign_in');
+    expect(token.redirectTo).toBe('/signup/profile');
+  });
+
+  it('carries the same destination for an address with no account', async () => {
+    const email = `teacher-signup-new-dest-${suffix}@test.local`;
+    const res = await fetch(`${BASE_URL}/api/auth/teacher-signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ email }),
+    });
+    expect(res.status).toBe(200);
+
+    const token = await prisma.magicLinkToken.findFirstOrThrow({ where: { email } });
+    expect(token.purpose).toBe('teacher_signup');
+    // The tether for both signup routes: the destination a signup names does
+    // not depend on whether the address already has an account. A conditional
+    // on either side turns this red.
+    expect(token.redirectTo).toBe('/signup/profile');
   });
 });
 
