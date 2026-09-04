@@ -38,6 +38,78 @@ function post(ticket: string | null, body: unknown) {
   });
 }
 
+describe('POST /api/account/student-profile — a session cookie outranks a ticket here too', () => {
+  // The teacher route has both of these; the student route inherited the rule
+  // through the shared resolver and had neither, so a change that loosened the
+  // gate for this family alone would have shown up on one route only.
+  async function postWithSessionCookie(sessionCookie: string) {
+    const email = `profile-outranked-${sessionCookie.length}-${suffix}@test.local`;
+    const ticket = await mintSignupTicket(prisma, email, 'student');
+    const res = await fetch(`${BASE_URL}/api/account/student-profile`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `${sessionCookie}; fair_yoga_signup=${ticket}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ firstName: 'Out', lastName: 'Ranked' }),
+    });
+    return { res, email };
+  }
+
+  it('401s on an INVALID session cookie rather than spending the ticket', async () => {
+    const { res, email } = await postWithSessionCookie('fair_yoga_session=not-a-real-session');
+
+    expect(res.status).toBe(401);
+    expect(await prisma.student.findUnique({ where: { email } })).toBeNull();
+    // Unspent, so the browser can still finish the signup once the dead
+    // session cookie is gone.
+    expect(await prisma.magicLinkToken.findFirst({ where: { email } })).not.toBeNull();
+  });
+
+  it('401s on a session cookie that is present but empty', async () => {
+    const { res, email } = await postWithSessionCookie('fair_yoga_session=');
+
+    expect(res.status).toBe(401);
+    expect(await prisma.student.findUnique({ where: { email } })).toBeNull();
+    expect(await prisma.magicLinkToken.findFirst({ where: { email } })).not.toBeNull();
+  });
+});
+
+describe('POST /api/account/student-profile — the declined ticket cookie on a refusal', () => {
+  it('clears the declined ticket cookie on ALREADY_STUDENT, as the success paths do', async () => {
+    // The cookie is dead weight either way, but it outlives the refusal by up
+    // to an hour — and every OTHER exit on this route clears it, so a reader
+    // cannot tell from the code which exits were meant to and which forgot.
+    const email = `profile-already-student-${suffix}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Already', lastName: 'Student', email, incomeTier: 3,
+        claimedAt: new Date(), account: { create: { email } },
+      },
+      select: { accountId: true },
+    });
+    if (!student.accountId) throw new Error('fixture: student created without an account');
+    const sessionToken = await seedSession(prisma, student.accountId);
+    const ticket = await mintSignupTicket(
+      prisma, `profile-already-student-ticket-${suffix}@test.local`, 'student',
+    );
+
+    const res = await fetch(`${BASE_URL}/api/account/student-profile`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_session=${sessionToken}; fair_yoga_signup=${ticket}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
+  });
+});
+
 describe('POST /api/account/student-profile — ticket authorization', () => {
   it('creates the student and account, claimed and with no tier chosen yet', async () => {
     const email = `profile-ticket-${suffix}@test.local`;

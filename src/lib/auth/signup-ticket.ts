@@ -27,6 +27,9 @@ const TICKET_PURPOSE = {
   student: 'student_profile_pending',
 } as const satisfies Record<SignupFamily, MagicLinkPurpose>;
 
+/** Derived, so a family added above joins this membership test with it. */
+const TICKET_PURPOSES: ReadonlySet<MagicLinkPurpose> = new Set(Object.values(TICKET_PURPOSE));
+
 export async function mintSignupTicket(
   db: PrismaClient,
   email: string,
@@ -95,13 +98,11 @@ export function clearSignupTicketCookie(headers: Headers): void {
 }
 
 /**
- * A token's address and purpose, but only if it's still a LIVE ticket of some
- * family — membership checked against `TICKET_PURPOSE` rather than a
- * duplicated purpose list, so any `SignupFamily`'s purpose joins this
- * predicate by construction. The one definition every reader below builds on,
- * so none of them can drift from the others on what "live" means.
+ * Any unexpired token, whatever it is for. The one definition of "live" both
+ * readers below build on, so neither can drift from the other on it — each
+ * applies its own purpose test on top.
  */
-async function readLiveTicket(
+async function readLiveToken(
   db: PrismaClient,
   token: string,
 ): Promise<{ email: string; purpose: MagicLinkPurpose } | null> {
@@ -110,8 +111,7 @@ async function readLiveTicket(
     select: { email: true, expiresAt: true, purpose: true },
   });
   if (!row || row.expiresAt <= new Date()) return null;
-  const isTicket = (Object.values(TICKET_PURPOSE) as MagicLinkPurpose[]).includes(row.purpose);
-  return isTicket ? { email: row.email, purpose: row.purpose } : null;
+  return { email: row.email, purpose: row.purpose };
 }
 
 /**
@@ -127,23 +127,30 @@ export async function liveSignupTicketEmail(
   db: PrismaClient,
   token: string,
 ): Promise<string | null> {
-  return (await readLiveTicket(db, token))?.email ?? null;
+  const live = await readLiveToken(db, token);
+  // Membership from `TICKET_PURPOSE` rather than a duplicated list, so any
+  // `SignupFamily`'s purpose joins this test by construction.
+  return live && TICKET_PURPOSES.has(live.purpose) ? live.email : null;
 }
 
 /**
- * The other family's purpose, if that's genuinely what this token is — a
- * live ticket for a family other than the one asked about — or `null` for
- * every other reason a caller's own family-scoped read of this token would
- * fail (missing, expired, not a ticket, or already the right family). Reads
- * only; the row is never touched.
+ * The purpose of a LIVE token that this family's door will not honour — the
+ * other family's ticket, or something that was never a ticket at all, such as
+ * a sign-in link. `null` when there is nothing anomalous to say: no row, an
+ * expired one, or this family's own ticket. Reads only; the row is untouched.
+ *
+ * Deliberately not restricted to tickets. The cookie it arrives in is
+ * HttpOnly and only ever written with a ticket, so a live sign-in token
+ * turning up in it is a client doing something no browser of ours does — the
+ * case most worth a trail, and the one a ticket-only test would drop.
  */
-export async function signupTicketCrossFamilyPurpose(
+export async function foreignTicketCookiePurpose(
   db: PrismaClient,
   token: string,
   family: SignupFamily,
 ): Promise<MagicLinkPurpose | null> {
-  const ticket = await readLiveTicket(db, token);
-  return ticket && ticket.purpose !== TICKET_PURPOSE[family] ? ticket.purpose : null;
+  const live = await readLiveToken(db, token);
+  return live && live.purpose !== TICKET_PURPOSE[family] ? live.purpose : null;
 }
 
 /**

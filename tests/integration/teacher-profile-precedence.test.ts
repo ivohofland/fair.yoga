@@ -78,6 +78,30 @@ describe('POST /api/account/teacher-profile — a session always beats a ticket 
     expect(res.headers.get('set-cookie') ?? '').not.toContain('fair_yoga_session=');
   });
 
+  it('clears the declined ticket cookie on ALREADY_TEACHER, as the success paths do', async () => {
+    const email = `tp-precedence-already-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Already', lastName: 'Teacher', email,
+        bio: '', pageSlug: `tp-already-${suffix}`,
+        account: { create: { email } },
+      },
+      select: { accountId: true },
+    });
+    const sessionToken = await seedSession(prisma, teacher.accountId);
+    const ticket = await mintSignupTicket(
+      prisma, `tp-precedence-already-ticket-${suffix}@test.local`, 'teacher',
+    );
+
+    const res = await post(
+      `fair_yoga_session=${sessionToken}; fair_yoga_signup=${ticket}`,
+      { firstName: 'No', lastName: 'Twice', bio: '', pageSlug: `tp-already-2-${suffix}` },
+    );
+
+    expect(res.status).toBe(409);
+    expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
+  });
+
   it('clears the stray ticket cookie it declined to honour', async () => {
     const me = await seedStudentAccount('tp-precedence-clear');
     const ticketEmail = `tp-precedence-clear-ticket-${suffix}@test.local`;

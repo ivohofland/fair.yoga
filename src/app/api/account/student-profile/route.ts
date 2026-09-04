@@ -9,6 +9,7 @@ import {
   createSession,
   setSessionCookie,
   resolveTicketOnlyProfileAuthorization,
+  clearDeclinedTicketCookie,
 } from '@/lib/auth';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { log } from '@/lib/log';
@@ -45,10 +46,23 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   } else {
     const session = authorization.session;
     if (session.studentId) {
-      return respondError('Account already has a student profile', 409, 'ALREADY_STUDENT');
+      return clearDeclinedTicketCookie(
+        respondError('Account already has a student profile', 409, 'ALREADY_STUDENT'),
+        authorization,
+      );
     }
+    // A guard whose response is unreachable and whose CHECK is not: this is
+    // the narrowing that gives the teacher lookup below a `string` id, and
+    // deleting it fails the build. `SessionUser` makes "neither profile"
+    // unrepresentable, but narrowing on `studentId`'s truthiness cannot rule
+    // out `""`, so the compiler still admits a null `teacherId` here. The 409
+    // is what an invariant violation would answer, not a state a caller can
+    // reach — which is also why it has no test.
     if (!session.teacherId) {
-      return respondError('Account has no profile to copy from', 409, 'NO_PROFILE_SOURCE');
+      return clearDeclinedTicketCookie(
+        respondError('Account has no profile to copy from', 409, 'NO_PROFILE_SOURCE'),
+        authorization,
+      );
     }
     const teacher = await prisma.teacher.findUniqueOrThrow({
       where: { id: session.teacherId },
@@ -72,9 +86,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         data: { claimedAt: new Date(), accountId: session.accountId },
         select: { id: true },
       });
-      const claimed = respondOk({ studentId: student.id }, 201);
-      if (authorization.staleTicketCookie) clearSignupTicketCookie(claimed.headers);
-      return claimed;
+      return clearDeclinedTicketCookie(respondOk({ studentId: student.id }, 201), authorization);
     }
 
     auth = {
@@ -105,8 +117,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // during the ticket's one-hour window (a real, if narrow, race — not a
   // double-tap), so the catch below answers it separately, with its own
   // message and a log line.
+  // Only the `create` is inside: every branch of the catch below names a
+  // unique constraint on the student row, so a failure from the session mint
+  // that followed would be reported as a collision that never happened.
+  let student;
   try {
-    const student = await prisma.student.create({
+    student = await prisma.student.create({
       data: {
         firstName: auth.firstName,
         lastName: auth.lastName,
@@ -118,26 +134,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       },
       select: { id: true, accountId: true },
     });
-
-    const response = respondOk({ studentId: student.id }, 201);
-    if (auth.source === 'ticket') {
-      // `accountId` types as nullable — the column predates #166 and stays
-      // nullable for those rows — but this statement's own nested
-      // `account: { create }` just set it, so a null here means the create
-      // above silently produced a different row than this one.
-      if (!student.accountId) {
-        throw new Error('student profile create: ticket-authorized row has no accountId');
-      }
-      const sessionToken = await createSession(prisma, student.accountId);
-      setSessionCookie(response.headers, sessionToken);
-      clearSignupTicketCookie(response.headers);
-    } else if (authorization.source === 'session' && authorization.staleTicketCookie) {
-      clearSignupTicketCookie(response.headers);
-    }
-    return response;
   } catch (err) {
     if (isUniqueConflictOn(err, ['accountId'])) {
-      return respondError('Account already has a student profile', 409, 'ALREADY_STUDENT');
+      return clearDeclinedTicketCookie(
+        respondError('Account already has a student profile', 409, 'ALREADY_STUDENT'),
+        authorization,
+      );
     }
     if (isUniqueConflictOn(err, ['email'])) {
       if (auth.source === 'ticket') {
@@ -145,7 +147,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         // Worth a log line: unlike the session path's double-tap, this is
         // not the benign, expected shape of this collision.
         log.warn(
-          {},
+          { route: 'student-profile' },
           'student profile ticket path lost to an email that gained an account during the ticket window',
         );
         return respondError(
@@ -154,7 +156,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           'ACCOUNT_EXISTS',
         );
       }
-      return respondError('Account already has a student profile', 409, 'ALREADY_STUDENT');
+      return clearDeclinedTicketCookie(
+        respondError('Account already has a student profile', 409, 'ALREADY_STUDENT'),
+        authorization,
+      );
     }
     // Not rethrown as a P2002: `classifyApiError` answers any P2002 with a
     // code-less 409, which is the defect this catch exists to remove.
@@ -171,4 +176,19 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
     throw err;
   }
+
+  const response = respondOk({ studentId: student.id }, 201);
+  if (auth.source === 'ticket') {
+    // `accountId` types as nullable — the column predates #166 and stays
+    // nullable for those rows — but the create's own nested
+    // `account: { create }` just set it, so a null here means that statement
+    // silently produced a different row than this one.
+    if (!student.accountId) {
+      throw new Error('student profile create: ticket-authorized row has no accountId');
+    }
+    const sessionToken = await createSession(prisma, student.accountId);
+    setSessionCookie(response.headers, sessionToken);
+    clearSignupTicketCookie(response.headers);
+  }
+  return clearDeclinedTicketCookie(response, authorization);
 });

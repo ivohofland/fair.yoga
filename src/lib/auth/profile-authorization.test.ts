@@ -262,7 +262,7 @@ describe('resolveTicketOnlyProfileAuthorization', () => {
 
     expect(warnSpy).toHaveBeenCalledWith(
       expect.objectContaining({ purpose: 'teacher_profile_pending', family: 'student' }),
-      expect.stringContaining('carried a token from a different family'),
+      expect.stringContaining('a live token this door does not honour'),
     );
   });
 

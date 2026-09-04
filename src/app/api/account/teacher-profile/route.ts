@@ -10,6 +10,7 @@ import {
   createSession,
   setSessionCookie,
   resolveProfileAuthorization,
+  clearDeclinedTicketCookie,
 } from '@/lib/auth';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { log } from '@/lib/log';
@@ -34,11 +35,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const { firstName, lastName, bio, pageSlug, defaultTimezone } = auth.body;
 
   if (auth.source === 'session' && auth.session.teacherId) {
-    return respondError('Account already has a teacher profile', 409, 'ALREADY_TEACHER');
+    return clearDeclinedTicketCookie(
+      respondError('Account already has a teacher profile', 409, 'ALREADY_TEACHER'),
+      auth,
+    );
   }
 
+  // Only the `create` is inside: every branch of the catch below names a
+  // unique constraint on the teacher row, so a failure from the session mint
+  // that followed would be reported as a collision that never happened.
+  let teacher;
   try {
-    const teacher = await prisma.teacher.create({
+    teacher = await prisma.teacher.create({
       data: {
         firstName, lastName, bio, pageSlug,
         email: auth.email,
@@ -53,18 +61,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           : { account: { create: { email: auth.email } } }),
       },
     });
-
-    const response = respondOk({ teacherId: teacher.id }, 201);
-    if (auth.source === 'ticket') {
-      const sessionToken = await createSession(prisma, teacher.accountId);
-      setSessionCookie(response.headers, sessionToken);
-      clearSignupTicketCookie(response.headers);
-    } else if (auth.staleTicketCookie) {
-      // The precedence rule declined it — never looked at it, in fact — so
-      // clear it here rather than let it age out.
-      clearSignupTicketCookie(response.headers);
-    }
-    return response;
   } catch (err) {
     if (isUniqueConflictOn(err, ['pageSlug'])) {
       const conflict = respondError('Page address already in use', 409, 'SLUG_TAKEN');
@@ -74,19 +70,19 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // `requireSession` and 401s. Safe to re-mint: `auth.source === 'ticket'`
       // only holds because THIS request already consumed a ticket proving
       // ownership of it, so minting another proves nothing new. Session-authed
-      // callers have no ticket to replace, so this is skipped for them —
-      // but a stale cookie they declined earlier still gets cleared here,
-      // matching the success path instead of surviving only this one 409.
+      // callers have no ticket to replace, so this is skipped for them; the
+      // cookie the rule declined for them is cleared below instead.
       if (auth.source === 'ticket') {
         const freshTicket = await mintSignupTicket(prisma, auth.email, 'teacher');
         setSignupTicketCookie(conflict.headers, freshTicket);
-      } else if (auth.staleTicketCookie) {
-        clearSignupTicketCookie(conflict.headers);
       }
-      return conflict;
+      return clearDeclinedTicketCookie(conflict, auth);
     }
     if (isUniqueConflictOn(err, ['email']) || isUniqueConflictOn(err, ['accountId'])) {
-      return respondError('Account already has a teacher profile', 409, 'ALREADY_TEACHER');
+      return clearDeclinedTicketCookie(
+        respondError('Account already has a teacher profile', 409, 'ALREADY_TEACHER'),
+        auth,
+      );
     }
     // Not rethrown as a P2002: `classifyApiError` answers any P2002 with a
     // code-less 409, which is the defect this catch exists to remove.
@@ -99,4 +95,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
     throw err;
   }
+
+  const response = respondOk({ teacherId: teacher.id }, 201);
+  if (auth.source === 'ticket') {
+    const sessionToken = await createSession(prisma, teacher.accountId);
+    setSessionCookie(response.headers, sessionToken);
+    clearSignupTicketCookie(response.headers);
+  }
+  return clearDeclinedTicketCookie(response, auth);
 });
