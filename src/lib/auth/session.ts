@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import type { NextRequest } from 'next/server';
 import type { PrismaClient } from '@prisma/client';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
@@ -122,21 +123,15 @@ export async function invalidateSession(
   });
 }
 
-export function getSessionToken(request: Request): string | null {
-  const cookieHeader = request.headers.get('Cookie');
-  if (!cookieHeader) {
-    return null;
-  }
-
-  const cookies = cookieHeader.split(';').map((c) => c.trim());
-  for (const cookie of cookies) {
-    const [name, ...valueParts] = cookie.split('=');
-    if (name === SESSION_COOKIE_NAME) {
-      return valueParts.join('=') || null;
-    }
-  }
-
-  return null;
+/**
+ * Read through the request's own cookie store, never a hand-rolled split of
+ * the `Cookie` header. Two parsers can disagree about whether this cookie is
+ * present at all — and a caller that gates on its presence would then route
+ * the same request differently from one that authenticates it. `NextRequest`
+ * rather than `Request` is what makes that store available.
+ */
+export function getSessionToken(request: NextRequest): string | null {
+  return request.cookies.get(SESSION_COOKIE_NAME)?.value || null;
 }
 
 export function setSessionCookie(headers: Headers, token: string): void {
