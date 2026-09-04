@@ -18,14 +18,16 @@ interface SignOutButtonProps {
 export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [signOutFailed, setSignOutFailed] = useState(false);
 
   async function handleSignOut() {
     setBusy(true);
+    let cleared = false;
     try {
-      await fetch('/api/auth/session', { method: 'DELETE' });
+      const res = await fetch('/api/auth/session', { method: 'DELETE' });
+      cleared = res.ok;
     } catch {
-      // The cookie clear is what matters; a network hiccup here should
-      // not trap someone in a signed-in state — leave anyway.
+      // Network failure; cleared stays false — surfaced below, not silent.
     } finally {
       // #40. Neither the push nor the refresh is guaranteed to commit on a
       // starved or offline device, and both return `void`, so this component
@@ -33,6 +35,7 @@ export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
       // leaves a tappable button rather than a stale authenticated shell with
       // no way out. DELETE /api/auth/session is idempotent, so a second tap
       // costs nothing.
+      setSignOutFailed(!cleared);
       router.push(redirectTo);
       router.refresh();
       setBusy(false);
@@ -40,13 +43,18 @@ export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
   }
 
   return (
-    <button
-      type="button"
-      onClick={handleSignOut}
-      disabled={busy}
-      className="type-label text-teal disabled:opacity-50"
-    >
-      {busy ? 'Signing out...' : 'Sign out'}
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={handleSignOut}
+        disabled={busy}
+        className="type-label text-teal disabled:opacity-50"
+      >
+        {busy ? 'Signing out...' : 'Sign out'}
+      </button>
+      {signOutFailed && (
+        <p role="alert" className="type-caption text-danger">Couldn&apos;t sign out — try again.</p>
+      )}
+    </>
   );
 }

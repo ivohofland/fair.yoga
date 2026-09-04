@@ -73,4 +73,22 @@ describe('SignOutButton', () => {
     expect(routerPush).not.toHaveBeenCalledWith('/login');
     expect(routerRefresh).toHaveBeenCalledTimes(1);
   });
+
+  // A non-2xx DELETE (a 502 during a deploy, say) was previously
+  // indistinguishable from a genuine success — the session cookie survives,
+  // and on a page like /signup that re-mounts this same panel, the reader
+  // sees no sign of anything having gone wrong. This pins that the failure
+  // is now visible AND that the "never trap the user in a signed-in shell"
+  // guarantee (#40) still holds even when the response says failure.
+  it('shows a failure message when the DELETE responds not-ok, and still pushes and refreshes', async () => {
+    fetchMock.mockResolvedValue({ ok: false });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(routerPush).toHaveBeenCalledWith('/login');
+    expect(routerRefresh).toHaveBeenCalledTimes(1);
+  });
 });
