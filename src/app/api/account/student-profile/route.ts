@@ -1,24 +1,14 @@
 import { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
-import {
-  respondOk,
-  respondError,
-  parseBody,
-  requireSession,
-  isErrorResponse,
-  withErrorHandler,
-} from '@/lib/api-utils';
+import { respondOk, respondError, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import { studentProfileSchema } from '@/lib/schemas';
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
 import {
-  SIGNUP_TICKET_COOKIE,
-  SESSION_COOKIE_NAME,
-  peekSignupTicket,
-  consumeSignupTicket,
   clearSignupTicketCookie,
   createSession,
   setSessionCookie,
+  resolveTicketOnlyProfileAuthorization,
 } from '@/lib/auth';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { log } from '@/lib/log';
@@ -28,87 +18,38 @@ import { log } from '@/lib/log';
  * signup ticket (new booking-page signup, no account yet) or a live session
  * (an existing account adding the student hat — "join as a student", the
  * mirror of `teacher-profile`'s ticket+session shape).
+ * `resolveTicketOnlyProfileAuthorization` applies the resolver's shared
+ * ticket-vs-session precedence rule (#428) — see `profile-authorization.ts`.
  */
 export const POST = withErrorHandler(async (request: NextRequest) => {
-  // A session cookie's mere presence — not its validity — rules out the
-  // ticket branch entirely. The ticket exists to authorize creating a
-  // brand-new account; a caller already carrying a session has one, so the
-  // ticket is stray no matter how it got there (a signup abandoned earlier
-  // on this browser, or a fresh one minted for an unrelated address after
-  // this session already existed — `magic-link/verify`'s ticket-minting
-  // branch never touches the session cookie either way). An invalid session
-  // cookie still routes here rather than to the ticket path, so it surfaces
-  // as `requireSession`'s own 401 instead of silently spending someone
-  // else's ticket.
-  const ticketToken = request.cookies.get(SESSION_COOKIE_NAME)?.value
-    ? undefined
-    : request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
-
-  // Peeked (not consumed) first: whether a body is worth parsing depends on
-  // the ticket actually resolving, not merely on the cookie's presence. A
-  // stale or expired ticket cookie must fall through to the session path
-  // below instead of failing the body parse before `requireSession` ever
-  // runs. Conditional because the session path has no body at all:
-  // `JoinAsStudent` POSTs without one, and `parseBody` opens with
-  // `request.json()`, which throws on an empty body.
-  const ticketAddress = ticketToken
-    ? await peekSignupTicket(prisma, ticketToken, 'student')
-    : null;
-
-  let names: { firstName: string; lastName: string } | null = null;
-  if (ticketAddress) {
-    const parsed = await parseBody(request, studentProfileSchema);
-    if ('error' in parsed) return parsed.error;
-    names = parsed.data;
-  }
+  const outcome = await resolveTicketOnlyProfileAuthorization(
+    prisma,
+    request,
+    'student',
+    studentProfileSchema,
+  );
+  if (!outcome.ok) return outcome.response;
+  const authorization = outcome.auth;
 
   type Authorization =
     | { source: 'ticket'; email: string; firstName: string; lastName: string }
     | { source: 'session'; accountId: string; email: string; firstName: string; lastName: string };
   let auth: Authorization;
-
-  // Consumed (single-use) only after a successful parse, so a typo in the
-  // name fields doesn't cost the ticket — `teacher-profile`'s ordering, for
-  // its reason: losing a ticket to a typo is a bad first interaction.
-  //
-  // `consumeSignupTicket`'s own return value, not `ticketAddress` (the
-  // earlier, non-consuming peek) — its docblock is explicit that the
-  // profile route must never take the authorized email from any source but
-  // this one. Today the two reads resolve the same row, so using
-  // `ticketAddress` here would be functionally identical, but the
-  // invariant belongs on the consumed value, not on whichever variable
-  // happens to still be in scope.
-  const consumedEmail =
-    ticketAddress && names && ticketToken
-      ? await consumeSignupTicket(prisma, ticketToken, 'student')
-      : null;
-
-  if (ticketAddress && names && !consumedEmail) {
-    // The peek found a live, correct-family ticket moments earlier, but the
-    // consume then lost it — a TTL boundary crossed, or a concurrent
-    // double-submit spent it first. Both benign, but silent: without this,
-    // nothing distinguishes the request from a session-path request that
-    // never had a ticket at all.
-    log.warn({}, 'student profile: ticket peeked live but did not consume; falling through to session');
-  }
-
-  if (consumedEmail && names) {
-    auth = { source: 'ticket', email: consumedEmail, firstName: names.firstName, lastName: names.lastName };
+  if (authorization.source === 'ticket') {
+    auth = {
+      source: 'ticket',
+      email: authorization.email,
+      firstName: authorization.body.firstName,
+      lastName: authorization.body.lastName,
+    };
   } else {
-    const session = await requireSession(request);
-    if (isErrorResponse(session)) return session;
-
+    const session = authorization.session;
     if (session.studentId) {
       return respondError('Account already has a student profile', 409, 'ALREADY_STUDENT');
     }
     if (!session.teacherId) {
       return respondError('Account has no profile to copy from', 409, 'NO_PROFILE_SOURCE');
     }
-
-    const account = await prisma.account.findUniqueOrThrow({
-      where: { id: session.accountId },
-      select: { email: true },
-    });
     const teacher = await prisma.teacher.findUniqueOrThrow({
       where: { id: session.teacherId },
       select: { firstName: true, lastName: true },
@@ -118,7 +59,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // under this email — claiming that row keeps their history instead of
     // colliding with its unique email.
     const unclaimed = await prisma.student.findFirst({
-      where: { email: account.email, claimedAt: null },
+      where: { email: authorization.email, claimedAt: null },
       select: { id: true },
     });
 
@@ -131,13 +72,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         data: { claimedAt: new Date(), accountId: session.accountId },
         select: { id: true },
       });
-      return respondOk({ studentId: student.id }, 201);
+      const claimed = respondOk({ studentId: student.id }, 201);
+      if (authorization.staleTicketCookie) clearSignupTicketCookie(claimed.headers);
+      return claimed;
     }
 
     auth = {
       source: 'session',
       accountId: session.accountId,
-      email: account.email,
+      email: authorization.email,
       firstName: teacher.firstName,
       lastName: teacher.lastName,
     };
@@ -187,6 +130,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       }
       const sessionToken = await createSession(prisma, student.accountId);
       setSessionCookie(response.headers, sessionToken);
+      clearSignupTicketCookie(response.headers);
+    } else if (authorization.source === 'session' && authorization.staleTicketCookie) {
       clearSignupTicketCookie(response.headers);
     }
     return response;

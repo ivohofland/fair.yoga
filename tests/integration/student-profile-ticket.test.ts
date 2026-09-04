@@ -252,4 +252,32 @@ describe('POST /api/account/student-profile — a stale ticket cookie must not b
     expect(student.accountId).toBe(teacher.accountId);
     expect(await prisma.student.findUnique({ where: { email: otherEmail } })).toBeNull();
   });
+
+  it('clears the stray ticket cookie it declined to honour', async () => {
+    const email = `profile-session-clear-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Clear',
+        lastName: 'Cookie',
+        email,
+        bio: 'Fixture for the stale-cookie clear',
+        pageSlug: `profile-session-clear-${suffix}`,
+        account: { create: { email } },
+      },
+    });
+    const rawSession = await seedSession(prisma, teacher.accountId);
+    const otherEmail = `profile-session-clear-other-${suffix}@test.local`;
+    const liveTicket = await mintSignupTicket(prisma, otherEmail, 'student');
+
+    const res = await fetch(`${BASE_URL}/api/account/student-profile`, {
+      method: 'POST',
+      headers: {
+        Cookie: `fair_yoga_session=${rawSession}; fair_yoga_signup=${liveTicket}`,
+        ...freshIp(),
+      },
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
+  });
 });
