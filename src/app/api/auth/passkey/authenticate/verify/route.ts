@@ -63,8 +63,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
   setSessionCookie(apiResponse.headers, sessionToken);
   // A browser that just received a session has no legitimate reason to keep
-  // carrying a ticket cookie forward — the same reason `magic-link/verify`
-  // and `claim` clear it in their session-issuing branches.
+  // carrying a ticket cookie forward.
   clearSignupTicketCookie(apiResponse.headers);
 
   return apiResponse;
