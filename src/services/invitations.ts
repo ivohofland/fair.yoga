@@ -11,6 +11,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { withdrawWaitingEntriesForTeacher } from './waitlist';
+import { linkTeacherStudent } from './roster-link';
 import { createNotification } from './notifications';
 import { sendInvitationEmail } from '@/lib/email';
 import { isRecordNotFound } from '@/lib/api-errors';
@@ -849,16 +850,7 @@ export async function acceptInvitation(
     // rolls back and the upsert goes with it (see `NotPendingError` above
     // for why that has to be a throw rather than a `return false`).
     //
-    // `upsert`, not `create`: this student may already share this teacher's
-    // roster from booking a class while the invitation sat pending, and
-    // accepting must not throw on that overlap.
-    await tx.teacherStudent.upsert({
-      where: {
-        teacherId_studentId: { teacherId: invitation.teacherId, studentId: input.studentId },
-      },
-      update: {},
-      create: { teacherId: invitation.teacherId, studentId: input.studentId },
-    });
+    await linkTeacherStudent(tx, { teacherId: invitation.teacherId, studentId: input.studentId });
 
     // The pending check lives in this `updateMany`'s `where`, not in a read
     // beforehand — a concurrent accept and decline from the same account
@@ -869,7 +861,28 @@ export async function acceptInvitation(
       where: { id: invitation.id, status: 'pending' },
       data: { status: 'accepted', respondedAt: new Date() },
     });
-    if (updated.count === 0) throw new NotPendingError();
+    if (updated.count === 0) {
+      // Zero rows can mean two different things, and only one of them is a
+      // refusal. A concurrent DECLINE from the same account (the race the
+      // comment above names) leaves this row 'declined' — genuinely not what
+      // this call wanted, still NOT_PENDING. But `resolveInvitationOnLink`
+      // (services/link-consent.ts) can ALSO reach this exact row: a booking
+      // or waitlist join by this same account, with this same teacher,
+      // resolves the identical invitation as a side effect of the student's
+      // own consenting act (#166) — and the roster-link write above already
+      // waits for that transaction to fully commit before it can proceed
+      // (measured, #181 task 1), so by the time this line runs, that other
+      // writer's 'accepted' may already be visible. That is not a failure to
+      // report: the invitation IS accepted, which is what this call wanted
+      // too — just achieved by a different hand. Re-reading it and returning
+      // success is what makes a stale double-tap of "Accept" idempotent
+      // instead of a 409, the same shape #197 asks for elsewhere.
+      const current = await tx.invitation.findUniqueOrThrow({
+        where: { id: invitation.id },
+        select: { status: true },
+      });
+      if (current.status !== 'accepted') throw new NotPendingError();
+    }
 
     return true;
   }).catch((err: unknown) => {

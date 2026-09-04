@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { acceptInvitation, unlinkTeacher } from './invitations';
 import { resolveInvitationOnLink } from './link-consent';
+import { linkTeacherStudent } from './roster-link';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 
@@ -459,8 +460,8 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
     const { teacherId, studentId, email, invitationId } =
       await makeLinkedStudentWithPendingInvite({ linked: false });
 
-    // The premise, asserted rather than assumed: this records the upsert on
-    // its INSERT path, which it only takes with no row already here.
+    // The premise, asserted rather than assumed: this records the roster-link
+    // write actually inserting, which only happens with no row already here.
     expect(
       await prisma.teacherStudent.findUnique({
         where: { teacherId_studentId: { teacherId, studentId } },
@@ -471,7 +472,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
     const recording = prisma.$extends({
       query: {
         teacherStudent: {
-          async upsert({ args, query }) {
+          async createMany({ args, query }) {
             writes.push('TeacherStudent');
             return query(args);
           },
@@ -545,16 +546,13 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * reorder reverted and the handshake removed, 1 of 6 runs deadlocked. The
    * same widen-the-window device the erasure lock tests in `gdpr.test.ts` use.
    *
-   * The assertion is the ABSENCE of `40P01`, not a specific success, and that
-   * is deliberate. Under the fixed order the accept still loses this race —
-   * with `P2002`, because Prisma's non-atomic upsert answers a lost `INSERT`
-   * race that way. That is a real, separately-filed, pre-existing bug in
-   * `acceptInvitation`'s upsert and it has nothing to do with lock order;
-   * pinning it here would make this test fail the day it is fixed. What this
-   * test owns is the difference between a 409 the caller can act on and a
-   * deadlock Postgres resolves by killing someone.
+   * What this test owns now is a specific success, not just the absence of
+   * `40P01`: on a lost `INSERT` race, the accept still succeeds, because the
+   * link itself is not the thing being decided — `linkTeacherStudent`'s
+   * `ON CONFLICT DO NOTHING` (#181) needs only that the row exist once the
+   * transaction commits, not that this call was the one that inserted it.
    */
-  it('does not deadlock when a real accept races a real booking on an unlinked pair', async () => {
+  it('a real accept racing a real booking on an unlinked pair succeeds — the link exists, which is what both callers wanted (#181)', async () => {
     const { teacherId, studentId, email, invitationId } =
       await makeLinkedStudentWithPendingInvite({ linked: false });
     const cls = await makeOpenClass(teacherId);
@@ -562,13 +560,17 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
     let bookingHasLink!: () => void;
     const linkInserted = new Promise<void>((r) => { bookingHasLink = r; });
 
-    // The accept's own upsert waits until the booking has inserted the same
-    // key. Widens the window; does not change which row either side reaches
-    // for first, which is the property under test.
+    // The interceptor hooks a Prisma method BY NAME. If the source stops
+    // calling this method, the handshake silently never fires, both
+    // transactions run unsynchronised, and this test passes having exercised
+    // nothing. `handshakeFired` is what turns that vacuous pass into a
+    // failure — do not remove it.
+    let handshakeFired = false;
     const accepting = prisma.$extends({
       query: {
         teacherStudent: {
-          async upsert({ args, query }) {
+          async createMany({ args, query }) {
+            handshakeFired = true;
             await linkInserted;
             return query(args);
           },
@@ -586,11 +588,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
       await tx.registration.create({
         data: { classId: cls.id, studentId, status: 'registered', tierAtBooking: 3 },
       });
-      await tx.teacherStudent.upsert({
-        where: { teacherId_studentId: { teacherId, studentId } },
-        update: {},
-        create: { teacherId, studentId },
-      });
+      await linkTeacherStudent(tx, { teacherId, studentId });
       bookingHasLink();
       await new Promise((r) => setTimeout(r, 300));
       // The real call, not a hand-rolled stand-in: TeacherBlock then
@@ -603,11 +601,14 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
       booking,
     ]);
 
-    for (const settled of [acceptResult, bookingResult]) {
-      if (settled.status === 'rejected') {
-        expect(String(settled.reason)).not.toMatch(/40P01|deadlock/i);
-      }
-    }
+    expect(handshakeFired).toBe(true);
+    expect(acceptResult).toMatchObject({ status: 'fulfilled', value: { ok: true } });
+    expect(bookingResult.status).toBe('fulfilled');
+    await expect(
+      prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId, studentId } },
+      }),
+    ).resolves.not.toBeNull();
   }, 30_000);
 
   /**
