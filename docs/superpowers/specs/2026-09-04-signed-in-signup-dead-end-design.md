@@ -107,9 +107,14 @@ You already have a page.                          (type-display)
 You're signed in as ivo@example.com, and that      (type-body)
 address already has a teacher page.
 [ Go to your schedule ]                           (pill link → /schedule)
-Setting up a page for a different address?         (fineprint + sign-out)
-Sign out first.
+Setting up a page for a different address?         (fineprint)
+Sign out                                          (the control, own line)
 ```
+
+The control sits on its own line rather than inside the sentence. `type-label`
+(14px medium) inside `type-caption` (13px regular) is a visible size step
+mid-sentence, and the button already reads "Sign out" — putting the same words
+in the prose says it twice.
 
 **The docblock.** `signup/page.tsx`'s header currently explains why *both*
 redirects exist, as a pair. Half of that pair is going away. Per CLAUDE.md's
@@ -128,9 +133,10 @@ Session mode's intro at line 341 already names the address. One line is added
 beneath it, session mode only:
 
 > That's the address you're signed in with. Setting up a page for a different
-> one? **Sign out** and start again.
+> one?
 
-with the sign-out control inline. Ticket mode gains nothing — there the address
+with the sign-out control on the line beneath it, completing the sentence —
+same shape and same reason as Change 1's. Ticket mode gains nothing — there the address
 came from the link the reader themselves requested, and there is no session to
 sign out of.
 
