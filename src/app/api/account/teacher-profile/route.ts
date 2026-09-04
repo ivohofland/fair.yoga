@@ -1,23 +1,15 @@
 import { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
-import {
-  respondOk,
-  respondError,
-  parseBody,
-  requireSession,
-  isErrorResponse,
-  withErrorHandler,
-} from '@/lib/api-utils';
+import { respondOk, respondError, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import { teacherProfileSchema } from '@/lib/schemas';
 import {
-  SIGNUP_TICKET_COOKIE,
-  consumeSignupTicket,
   mintSignupTicket,
   clearSignupTicketCookie,
   setSignupTicketCookie,
   createSession,
   setSessionCookie,
+  resolveProfileAuthorization,
 } from '@/lib/auth';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { log } from '@/lib/log';
@@ -26,41 +18,23 @@ import { log } from '@/lib/log';
  * Creates the teacher profile (#385). Two authorizations, one route: the
  * signup ticket (new signup, no account yet) or a live session (an existing
  * account adding the teacher hat — the mirror of `student-profile`'s "join
- * as a student").
+ * as a student"). `resolveProfileAuthorization` applies the shared
+ * ticket-vs-session precedence rule (#428): a session cookie's mere presence
+ * rules out the ticket branch entirely.
  */
 export const POST = withErrorHandler(async (request: NextRequest) => {
-  // Body validation runs before the ticket is ever consumed: a malformed
-  // request must not burn a real, single-use ticket for nothing — losing it
-  // to a typo is exactly the bad-first-interaction `signup-ticket.ts`'s own
-  // TTL rationale exists to avoid.
-  const parsed = await parseBody(request, teacherProfileSchema);
-  if ('error' in parsed) return parsed.error;
-  const { firstName, lastName, bio, pageSlug, defaultTimezone } = parsed.data;
+  const outcome = await resolveProfileAuthorization(
+    prisma,
+    request,
+    'teacher',
+    teacherProfileSchema,
+  );
+  if (!outcome.ok) return outcome.response;
+  const auth = outcome.auth;
+  const { firstName, lastName, bio, pageSlug, defaultTimezone } = auth.body;
 
-  const ticketToken = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
-  const ticketEmail = ticketToken ? await consumeSignupTicket(prisma, ticketToken, 'teacher') : null;
-
-  // One value, not two independently-mutable locals: `accountId` and `email`
-  // used to be set separately, which let nothing stop a future branch from
-  // setting one without the other. The discriminant is what every later
-  // decision (which `teacher.create` shape, whether to mint a session,
-  // whether SLUG_TAKEN re-mints a ticket) actually switches on.
-  type Authorization = { source: 'ticket'; email: string } | { source: 'session'; accountId: string; email: string };
-  let auth: Authorization;
-
-  if (ticketEmail) {
-    auth = { source: 'ticket', email: ticketEmail };
-  } else {
-    const session = await requireSession(request);
-    if (isErrorResponse(session)) return session;
-    if (session.teacherId) {
-      return respondError('Account already has a teacher profile', 409, 'ALREADY_TEACHER');
-    }
-    const account = await prisma.account.findUniqueOrThrow({
-      where: { id: session.accountId },
-      select: { email: true },
-    });
-    auth = { source: 'session', accountId: session.accountId, email: account.email };
+  if (auth.source === 'session' && auth.session.teacherId) {
+    return respondError('Account already has a teacher profile', 409, 'ALREADY_TEACHER');
   }
 
   try {
@@ -74,7 +48,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         // carries through from detection.
         defaultTimezone: defaultTimezone ?? 'Europe/Amsterdam',
         // A ticket has no account yet; a session has one already.
-        ...(auth.source === 'session' ? { accountId: auth.accountId } : { account: { create: { email: auth.email } } }),
+        ...(auth.source === 'session'
+          ? { accountId: auth.session.accountId }
+          : { account: { create: { email: auth.email } } }),
       },
     });
 
@@ -82,6 +58,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     if (auth.source === 'ticket') {
       const sessionToken = await createSession(prisma, teacher.accountId);
       setSessionCookie(response.headers, sessionToken);
+      clearSignupTicketCookie(response.headers);
+    } else if (auth.staleTicketCookie) {
+      // Declined above, so it is dead weight on every later request this
+      // browser makes. Cleared here rather than left to age out.
       clearSignupTicketCookie(response.headers);
     }
     return response;
