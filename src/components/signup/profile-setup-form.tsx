@@ -343,10 +343,9 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
         <span className="text-ink">{email}</span>. Your name and a page address
         are all we need &mdash; the bio can wait.
       </p>
-      {/* Session mode arrives here by redirect from `/signup`, before any
-          address was typed — so the address above is the session's, not one
-          the reader chose, and this is where that is said. Ticket mode needs
-          none of it: that address came from a link the reader requested. */}
+      {/* Session mode means a live session decided this address — there is no
+          email field on this page, so ending the session is the only way to a
+          different one. Ticket mode has no session to end. */}
       {mode === 'session' && (
         <div className="max-w-[420px] mb-8">
           <p className="type-caption leading-[1.55]">
