@@ -39,10 +39,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   try {
     await deliverSignInLink(prisma, email, nonce, {
-      // Unconditional: the purpose decides whether an account may be
-      // created, the redirect decides where the person lands, and dropping
-      // the second for addresses that already have an account discarded the
-      // whole intent of "start teaching".
+      // Unconditional, because the two settings answer different questions:
+      // `purpose` decides whether an account may be created, `redirectTo`
+      // decides where the person lands. Conditioning this one on `existing`
+      // would send someone who asked to start teaching to their role default
+      // instead of the page they asked for.
       redirectTo: TEACHER_PROFILE_PATH,
       purpose,
     });

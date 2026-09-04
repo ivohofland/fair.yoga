@@ -54,15 +54,16 @@ export async function peekSignupTicket(
 }
 
 /**
- * Single-use: `verifyMagicLinkToken` deletes atomically, so two concurrent
- * submissions cannot both create a profile for one ticket. Returns the
- * VERIFIED address — the profile route must never take an email from a body.
+ * Single-use, and destructive before it is discriminating: the delete inside
+ * `verifyMagicLinkToken` (see `consumeTokenRow` for its full reach — it takes
+ * more than the one row) happens before the purpose check below, so a token
+ * of the wrong purpose is spent by being refused. That is deliberate — the
+ * atomic delete is what stops two concurrent submissions both creating a
+ * profile for one ticket — but it means this is not the function to reach for
+ * when a wrong-family token should survive being looked at.
  *
- * The cookie is an ordinary bearer value, not something only ever set by
- * `setSignupTicketCookie` — a token of another purpose presented here still
- * gets consumed (deleted) by `verifyMagicLinkToken` before the purpose check
- * below can run, including a ticket minted for the OTHER family, and the
- * `log.warn` below fires for it.
+ * Returns the VERIFIED address. The profile route must never take an email
+ * from a request body.
  */
 export async function consumeSignupTicket(
   db: PrismaClient,
@@ -167,14 +168,11 @@ export function signupTicketFor(
       if (tokenRedirect && isSafeRelativePath(tokenRedirect)) {
         return { family: 'student', dest: tokenRedirect };
       }
-      // Reachable in principle, not in practice today: `student-signup`
-      // never marks a token `student_signup` without a validated redirect
-      // (see that route's own comment), so a token that got here already
-      // verified — its single use is spent — with nowhere for the ticket it
-      // would authorize to go. Both callers turn `null` into a flat
-      // "Account not found," which is false for this case specifically, so
-      // it needs its own trace rather than vanishing silently the way the
-      // `claim/route.ts` gap once did.
+      // A `student_signup` token whose redirect is gone or unsafe: its
+      // single use is already spent by the time this runs, and there is
+      // nowhere for the ticket it would authorize to go. Refusing is right;
+      // refusing silently is not, because the caller's `null` handling reads
+      // as "Account not found" and this is not that.
       log.error(
         { purpose, hasRedirect: tokenRedirect !== null },
         'signup token verified but its redirect is missing or unsafe; no ticket minted',

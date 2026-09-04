@@ -24,12 +24,15 @@ interface CookieReader {
 }
 
 /**
- * The precedence rule, and the only place it is spelled: a signup ticket is
- * readable only when the request carries no session cookie at all.
+ * The precedence rule: a signup ticket is readable only when the request
+ * carries no session cookie at all.
  *
  * PRESENCE, not validity. An unparseable or expired session cookie still
  * routes to the session path, so the caller meets `requireSession`'s own 401
  * rather than silently spending a ticket that is not theirs.
+ *
+ * Which callers apply it is a census, and it has a home: see
+ * `docs/technical-architecture.md`, "The signup-ticket precedence rule".
  */
 export function ticketTokenFrom(cookies: CookieReader): string | undefined {
   return cookies.get(SESSION_COOKIE_NAME) !== undefined
@@ -59,11 +62,10 @@ export type TicketFormProfileAuthorization<TBody> =
     };
 
 /**
- * Two failure shapes stay distinguishable here — `invalid_body` (the
- * caller's request was malformed) and `no_session` (no credential at all) —
- * because a caller that only ever forwards `response` verbatim still needs a
- * way to tell them apart in tests, and a future caller that wants to react
- * differently to each has somewhere to branch.
+ * `reason` drives no control flow: every failure arrives with a `response`
+ * already built, so `return outcome.response` is total over the union. It is
+ * named because the tests read it, and asserting `invalid_body` says more
+ * than asserting `400` — one is the domain fact, the other `respondError`'s.
  */
 export type ProfileAuthorizationOutcome<TAuth> =
   | { ok: true; auth: TAuth }
@@ -80,7 +82,8 @@ type TicketOutcome<TBody> =
  * Peek first so a stale cookie falls through to the session path instead of
  * failing a body parse the caller never needed. Parse before consuming so a
  * typo does not burn a single-use ticket. Take the address from the CONSUMED
- * value, never the peek — see `consumeSignupTicket`'s docblock for why.
+ * value, never the peek: only the consume proves the ticket was still live,
+ * and still ours, at the moment it was spent.
  */
 async function ticketAuthorization<TBody>(
   db: PrismaClient,
@@ -91,12 +94,10 @@ async function ticketAuthorization<TBody>(
 ): Promise<TicketOutcome<TBody>> {
   const peeked = await peekSignupTicket(db, token, family);
   if (!peeked) {
-    // `peekSignupTicket` itself stays silent (see its own docblock for why).
     // A ticket cookie reaching an actual profile submission is a more
-    // consequential moment than a mere peek, so this is where cross-family
-    // presentation gets a trail instead — the row itself is left untouched:
-    // this branch returns below without ever reaching the `consumeSignupTicket`
-    // call further down.
+    // consequential moment than a page render's peek, so cross-family
+    // presentation gets its trail here. The row is left untouched: this
+    // branch returns below without reaching the `consumeSignupTicket` call.
     const crossFamilyPurpose = await signupTicketCrossFamilyPurpose(db, token, family);
     if (crossFamilyPurpose) {
       log.warn(
@@ -125,8 +126,8 @@ async function ticketAuthorization<TBody>(
 /**
  * Applies a `TicketOutcome` to the shape both resolvers return, or signals
  * that there was nothing terminal to return — an exhaustive `switch` so a
- * fourth `TicketOutcome` kind fails to compile here instead of silently
- * falling through to the session path the way an `if`-chain would.
+ * NEW `TicketOutcome` kind fails to compile here instead of silently falling
+ * through to the session path the way an `if`-chain would.
  */
 function dispatchTicketOutcome<TBody>(
   ticket: TicketOutcome<TBody>,
@@ -149,7 +150,6 @@ type SessionOutcome =
   | { ok: true; email: string; session: SessionUser }
   | { ok: false; reason: 'no_session'; response: NextResponse };
 
-/** `db` is for the account lookup; `requireSession` takes no client parameter. */
 async function sessionAuthorization(
   db: PrismaClient,
   request: NextRequest,

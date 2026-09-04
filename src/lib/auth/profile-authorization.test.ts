@@ -140,9 +140,10 @@ describe('resolveProfileAuthorization — ticket path', () => {
       teacherProfileSchema,
     );
 
-    // No session cookie either, so the fall-through dead-ends at the 401
-    // `ticketAuthorization`'s own comment says it must — not a coincidence,
-    // the precedence rule (session cookie presence) guarantees it.
+    // No session cookie either, so the fall-through dead-ends at a 401 — not
+    // a coincidence: a request only reaches the ticket path when no session
+    // cookie is present, which is exactly what leaves the session path
+    // nothing to authenticate.
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.reason).toBe('no_session');

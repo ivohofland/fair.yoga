@@ -60,8 +60,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       setSessionCookie(response.headers, sessionToken);
       clearSignupTicketCookie(response.headers);
     } else if (auth.staleTicketCookie) {
-      // Declined above, so it is dead weight on every later request this
-      // browser makes. Cleared here rather than left to age out.
+      // The precedence rule declined it — never looked at it, in fact — so
+      // clear it here rather than let it age out.
       clearSignupTicketCookie(response.headers);
     }
     return response;
