@@ -257,9 +257,9 @@ describe('POST /api/auth/teacher-signup', () => {
 
     const token = await prisma.magicLinkToken.findFirstOrThrow({ where: { email } });
     expect(token.purpose).toBe('teacher_signup');
-    // The tether for both signup routes: the destination a signup names does
-    // not depend on whether the address already has an account. A conditional
-    // on either side turns this red.
+    // The destination this signup names does not depend on whether the
+    // address already has an account — the equivalent pair of assertions
+    // for student-signup live in signup-api.test.ts.
     expect(token.redirectTo).toBe('/signup/profile');
   });
 });

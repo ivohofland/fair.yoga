@@ -79,8 +79,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   setSessionCookie(response.headers, sessionToken);
   clearOriginNonceCookie(response.headers);
   // A browser that just received a session has no legitimate reason to keep
-  // carrying a stray ticket cookie forward: `student-profile`'s ticket path
-  // would otherwise read it on the very next request this session makes.
+  // carrying a ticket cookie forward.
   clearSignupTicketCookie(response.headers);
   return response;
 });

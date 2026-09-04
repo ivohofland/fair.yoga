@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { ProfileSetupForm } from '@/components/signup/profile-setup-form';
 import { SignupForm } from '@/components/signup/signup-form';
-import { SIGNUP_TICKET_COOKIE, peekSignupTicket } from '@/lib/auth';
+import { peekSignupTicket, ticketTokenFrom } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 
@@ -35,9 +35,6 @@ export default async function ProfileSetupPage() {
   const session = await getSession();
   if (session?.teacherId) redirect('/schedule');
 
-  // Session first: a ticket-mode form for a signed-in visitor would prefill
-  // another address and 401 on submit against the route (see
-  // `teacher-profile/route.ts`).
   let identity: { email: string; mode: 'ticket' | 'session' } | null = null;
   if (session) {
     const account = await prisma.account.findUniqueOrThrow({
@@ -46,7 +43,13 @@ export default async function ProfileSetupPage() {
     });
     identity = { email: account.email, mode: 'session' };
   } else {
-    const token = (await cookies()).get(SIGNUP_TICKET_COOKIE)?.value;
+    // `getSession()` returning falsy is not the same fact as "no session
+    // cookie" — it also covers a present cookie that failed to validate.
+    // `ticketTokenFrom` applies this page's own precedence rule on the raw
+    // cookie jar, so a browser in that second state still lands here with
+    // `identity` unset (the fresh-link fallback below), never a ticket-mode
+    // form for an address the caller cannot actually submit under.
+    const token = ticketTokenFrom(await cookies());
     const ticketEmail = token ? await peekSignupTicket(prisma, token, 'teacher') : null;
     if (ticketEmail) identity = { email: ticketEmail, mode: 'ticket' };
   }

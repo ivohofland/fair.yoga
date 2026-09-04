@@ -54,7 +54,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       },
     });
 
-    const response = respondOk({ teacherId: teacher.id }, 201);
+    const response = respondOk({
+      teacherId: teacher.id,
+      // Only meaningful (and only ever true) on the session path — a ticket
+      // authorization has no sibling cookie left to have cancelled anything.
+      signupCancelled: auth.source === 'session' && auth.staleTicketCancelled,
+    }, 201);
     if (auth.source === 'ticket') {
       const sessionToken = await createSession(prisma, teacher.accountId);
       setSessionCookie(response.headers, sessionToken);
@@ -74,10 +79,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // `requireSession` and 401s. Safe to re-mint: `auth.source === 'ticket'`
       // only holds because THIS request already consumed a ticket proving
       // ownership of it, so minting another proves nothing new. Session-authed
-      // callers have no ticket to replace, so this is skipped for them.
+      // callers have no ticket to replace, so this is skipped for them —
+      // but a stale cookie they declined earlier still gets cleared here,
+      // matching the success path instead of surviving only this one 409.
       if (auth.source === 'ticket') {
         const freshTicket = await mintSignupTicket(prisma, auth.email, 'teacher');
         setSignupTicketCookie(conflict.headers, freshTicket);
+      } else if (auth.staleTicketCookie) {
+        clearSignupTicketCookie(conflict.headers);
       }
       return conflict;
     }

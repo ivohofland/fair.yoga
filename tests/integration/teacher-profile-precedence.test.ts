@@ -92,6 +92,58 @@ describe('POST /api/account/teacher-profile — a session always beats a ticket 
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
   });
 
+  it('reports signupCancelled when the declined ticket it clears was actually live', async () => {
+    const me = await seedStudentAccount('tp-precedence-cancelled');
+    const ticketEmail = `tp-precedence-cancelled-ticket-${suffix}@test.local`;
+    const ticket = await mintSignupTicket(prisma, ticketEmail, 'teacher');
+
+    const res = await post(
+      `fair_yoga_session=${me.sessionToken}; fair_yoga_signup=${ticket}`,
+      { firstName: 'Really', lastName: 'Cancelled', bio: '', pageSlug: `tp-cancelled-${suffix}` },
+    );
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { data: { signupCancelled: boolean } };
+    expect(body.data.signupCancelled).toBe(true);
+  });
+
+  it('does not report signupCancelled for a stray cookie that names a dead ticket', async () => {
+    const me = await seedStudentAccount('tp-precedence-notcancelled');
+
+    const res = await post(
+      `fair_yoga_session=${me.sessionToken}; fair_yoga_signup=long-gone-token`,
+      { firstName: 'Not', lastName: 'Cancelled', bio: '', pageSlug: `tp-notcancelled-${suffix}` },
+    );
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { data: { signupCancelled: boolean } };
+    expect(body.data.signupCancelled).toBe(false);
+    // And the same declined-cookie clear as any other stale cookie.
+    expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
+  });
+
+  it('clears a declined stray ticket cookie on SLUG_TAKEN too, not only on success', async () => {
+    const me = await seedStudentAccount('tp-precedence-slugtaken');
+    const takenSlug = `tp-slugtaken-${suffix}`;
+    await prisma.teacher.create({
+      data: {
+        firstName: 'Holds', lastName: 'TheSlug', email: `tp-slugholder-${suffix}@test.local`,
+        bio: '', pageSlug: takenSlug, account: { create: { email: `tp-slugholder-${suffix}@test.local` } },
+      },
+    });
+    const ticketEmail = `tp-precedence-slugtaken-ticket-${suffix}@test.local`;
+    const ticket = await mintSignupTicket(prisma, ticketEmail, 'teacher');
+
+    const res = await post(
+      `fair_yoga_session=${me.sessionToken}; fair_yoga_signup=${ticket}`,
+      { firstName: 'Slug', lastName: 'Taken', bio: '', pageSlug: takenSlug },
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('SLUG_TAKEN');
+    expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
+  });
+
   it('401s on an INVALID session cookie rather than spending the ticket', async () => {
     const ticketEmail = `tp-precedence-invalid-${suffix}@test.local`;
     const ticket = await mintSignupTicket(prisma, ticketEmail, 'teacher');
