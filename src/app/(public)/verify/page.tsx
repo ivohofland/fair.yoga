@@ -139,7 +139,15 @@ function newSignupHeadline(dest: string): string {
  * — so "Welcome back / You're signed in" would be false on both halves for
  * that reader.
  */
-function SuccessState({ redirectTo, isNewSignup }: { redirectTo: string; isNewSignup: boolean }) {
+function SuccessState({
+  redirectTo,
+  isNewSignup,
+  signupCancelled,
+}: {
+  redirectTo: string;
+  isNewSignup: boolean;
+  signupCancelled: boolean;
+}) {
   const dest = redirectTo || '/schedule';
   return (
     <div className="flex-1 flex flex-col justify-center py-4">
@@ -159,6 +167,12 @@ function SuccessState({ redirectTo, isNewSignup }: { redirectTo: string; isNewSi
         </Link>
         .
       </StatusLine>
+      {signupCancelled && (
+        <StatusLine>
+          Your pending signup was cancelled because you signed in. You can start it
+          again from the signup page.
+        </StatusLine>
+      )}
     </div>
   );
 }
@@ -285,6 +299,7 @@ function VerifyContent() {
   const [status, setStatus] = useState<Status>(token ? 'verifying' : 'error');
   const [redirectTo, setRedirectTo] = useState<string>('');
   const [isNewSignup, setIsNewSignup] = useState(false);
+  const [signupCancelled, setSignupCancelled] = useState(false);
   const [home, setHome] = useState<string>('/schedule');
   const [handoffCode, setHandoffCode] = useState<string>('');
 
@@ -313,6 +328,7 @@ function VerifyContent() {
         // — so its absence is the signal this reader was never signed in at
         // all.
         setIsNewSignup(!json.data.accountId);
+        setSignupCancelled(Boolean(json.data.signupCancelled));
         setRedirectTo(dest);
         setStatus('success');
         setTimeout(() => router.push(dest), 900);
@@ -341,7 +357,10 @@ function VerifyContent() {
 
   if (status === 'error') return <ErrorState />;
   if (status === 'already-signed-in') return <AlreadySignedInState home={home} />;
-  if (status === 'success') return <SuccessState redirectTo={redirectTo} isNewSignup={isNewSignup} />;
+  if (status === 'success')
+    return (
+      <SuccessState redirectTo={redirectTo} isNewSignup={isNewSignup} signupCancelled={signupCancelled} />
+    );
   if (status === 'handoff') return <HandoffState code={handoffCode} />;
   return <VerifyingState />;
 }

@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
 import { PrismaClient, type MagicLinkPurpose } from '@prisma/client';
-import { mintSignupTicket, peekSignupTicket, consumeSignupTicket, signupTicketFor } from './signup-ticket';
+import {
+  mintSignupTicket,
+  peekSignupTicket,
+  consumeSignupTicket,
+  signupTicketFor,
+  signupTicketIsLive,
+} from './signup-ticket';
+import { generateMagicLinkToken } from './magic-link';
 import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
 import { log } from '@/lib/log';
 
@@ -120,5 +127,34 @@ describe('signupTicketFor', () => {
       expect.objectContaining({ purpose: bogusPurpose }),
       expect.stringContaining('unhandled MagicLinkPurpose'),
     );
+  });
+});
+
+describe('signupTicketIsLive', () => {
+  it('is true for an unexpired ticket of either family', async () => {
+    const liveEmail = `live-ticket-${Date.now()}@test.local`;
+    const token = await mintSignupTicket(db, liveEmail, 'teacher');
+    expect(await signupTicketIsLive(db, token)).toBe(true);
+    await db.magicLinkToken.deleteMany({ where: { email: liveEmail } });
+  });
+
+  it('is false for an expired ticket', async () => {
+    const deadEmail = `dead-ticket-${Date.now()}@test.local`;
+    const token = await mintSignupTicket(db, deadEmail, 'student');
+    await db.magicLinkToken.updateMany({
+      where: { email: deadEmail },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    expect(await signupTicketIsLive(db, token)).toBe(false);
+    await db.magicLinkToken.deleteMany({ where: { email: deadEmail } });
+  });
+
+  it('is false for a token that is not a signup ticket at all', async () => {
+    // A sign-in link is not a pending signup; reporting one as cancelled
+    // would tell the user we discarded something we never held.
+    const notTicketEmail = `not-a-ticket-${Date.now()}@test.local`;
+    const token = await generateMagicLinkToken(db, notTicketEmail, { purpose: 'sign_in' });
+    expect(await signupTicketIsLive(db, token)).toBe(false);
+    await db.magicLinkToken.deleteMany({ where: { email: notTicketEmail } });
   });
 });

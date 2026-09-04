@@ -70,4 +70,42 @@ describe('VerifyPage', () => {
     expect(await screen.findByText("Let's set up your page.")).toBeInTheDocument();
     expect(screen.queryByText("Let's finish your booking.")).not.toBeInTheDocument();
   });
+
+  /**
+   * `signupCancelled` is an optional flag on the verify response (see
+   * `verify/route.ts`); this component test is what pins that this page
+   * actually renders a notice for it.
+   */
+  it('shows the cancelled-signup notice when the response carries the flag', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: { accountId: 'acct-1', redirectTo: '/schedule', signupCancelled: true },
+        }),
+      }),
+    );
+    render(<VerifyPage />);
+
+    expect(
+      await screen.findByText(/Your pending signup was cancelled because you signed in/),
+    ).toBeInTheDocument();
+  });
+
+  it('does not show the cancelled-signup notice when the flag is absent', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { accountId: 'acct-1', redirectTo: '/schedule' } }),
+      }),
+    );
+    render(<VerifyPage />);
+
+    expect(await screen.findByText("You're signed in.")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Your pending signup was cancelled because you signed in/),
+    ).not.toBeInTheDocument();
+  });
 });
