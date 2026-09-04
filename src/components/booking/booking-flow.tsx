@@ -5,10 +5,11 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { readErrorMessage } from '@/lib/client-errors';
 import { TIER_INFO, TIER_QUOTE, type IncomeTier } from '@/lib/tiers';
+import { PricingExplainer } from './pricing-explainer';
 
 interface BookingFlowProps {
   classId: string;
-  slug: string;
+  slug?: string;
   isFull: boolean;
   alreadyBooked: boolean;
   /**
@@ -37,7 +38,6 @@ type Phase = 'choose' | 'booked' | 'waitlisted';
 // proof needed, changeable any time. Inviting, never guilt-inducing.
 export function BookingFlow({
   classId,
-  slug,
   isFull,
   alreadyBooked,
   currentTier,
@@ -50,6 +50,7 @@ export function BookingFlow({
   const [phase, setPhase] = useState<Phase>('choose');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [showExplainer, setShowExplainer] = useState(false);
 
   async function handleBook() {
     if (tier === null) return;
@@ -225,10 +226,17 @@ export function BookingFlow({
       <p className="type-caption mt-4 max-w-[420px]">
         Estimates assume the class at least reaches its minimum; the final price settles after
         class.{summaryTier === null && ' The highest tier pays about twice the lowest.'}{' '}
-        <Link href={`/${slug}`} className="text-teal">
-          Learn more
-        </Link>
+        <button
+          type="button"
+          onClick={() => setShowExplainer((prev) => !prev)}
+          aria-expanded={showExplainer}
+          className="text-teal cursor-pointer hover:underline focus:outline-none"
+        >
+          {showExplainer ? 'Hide explanation' : 'Learn more'}
+        </button>
       </p>
+
+      {showExplainer && <PricingExplainer className="mt-3 max-w-[420px]" />}
 
       <div className="mt-5">
         <Button variant="primary" onClick={handleBook} disabled={submitting || tier === null} className="w-full">
