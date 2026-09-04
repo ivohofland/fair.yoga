@@ -262,6 +262,44 @@ describe('POST /api/auth/magic-link/verify — reporting a cancelled signup tick
     const body = (await res.json()) as { data: { signupCancelled: boolean } };
     expect(body.data.signupCancelled).toBe(false);
   });
+
+  /**
+   * The primary scenario #421 was filed about: the SAME address holds both
+   * a live signup ticket and the sign-in link now being verified — unlike
+   * the cross-address test above, where the ticket's address is untouched
+   * by consuming the sign-in token.
+   */
+  it('reports the cancellation when the ticket and the sign-in link share an address', async () => {
+    const email = `same-address-cancel-${suffix}@test.local`;
+    await prisma.student.create({
+      data: {
+        firstName: 'Same', lastName: 'Address', email, incomeTier: 3,
+        claimedAt: new Date(), account: { create: { email } },
+      },
+    });
+
+    const ticket = await mintSignupTicket(prisma, email, 'teacher');
+
+    const nonce = `same-address-nonce-${suffix}`;
+    const raw = await generateMagicLinkToken(prisma, email, {
+      purpose: 'sign_in',
+      originBrowserHash: hashNonce(nonce),
+    });
+
+    const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${nonce}; fair_yoga_signup=${ticket}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ token: raw }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { signupCancelled: boolean } };
+    expect(body.data.signupCancelled).toBe(true);
+  });
 });
 
 /**

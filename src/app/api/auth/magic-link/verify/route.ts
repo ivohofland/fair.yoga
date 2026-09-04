@@ -22,6 +22,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if ('error' in parsed) return parsed.error;
   const { token } = parsed.data;
 
+  // Must run before `verifyWithHandoff` below, not after — see
+  // `consumeTokenRow` (magic-link.ts) for why the ordering matters here.
+  // Checked against the database rather than cookie presence alone, so an
+  // expired or already-consumed cookie still reads as "no live ticket"
+  // rather than as evidence of a cancellation.
+  const strayTicket = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
+  const signupCancelled = strayTicket ? await signupTicketIsLive(prisma, strayTicket) : false;
+
   const outcome = await verifyWithHandoff(prisma, token, readOriginNonce(request));
 
   if (outcome.kind !== 'verified') {
@@ -62,12 +70,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const fallback = resolved.teacherId ? '/schedule' : '/bookings';
   const redirectTo =
     tokenRedirect && isSafeRelativePath(tokenRedirect) ? tokenRedirect : fallback;
-
-  // Reported from a DB check, not from cookie presence alone: a cookie
-  // naming an expired or already-consumed token must not be told back to the
-  // user as a signup we just cancelled for them.
-  const strayTicket = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
-  const signupCancelled = strayTicket ? await signupTicketIsLive(prisma, strayTicket) : false;
 
   const response = respondOk({ accountId: resolved.accountId, redirectTo, signupCancelled });
   setSessionCookie(response.headers, sessionToken);
