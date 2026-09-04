@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **Test-only.** No production code, no schema change, no migration. `src/lib/db-locks.ts` and `src/services/rule-lifecycle.ts` are untouched.
-- **Mirror, do not import.** The three `SET LOCAL`s are written inline in this file. Recorded decision, `src/services/gdpr-lock-order.test.ts:228-230`: *"a test helper crossing suites would couple two files whose fixtures are independent."* Do not extract a shared helper.
+- **Mirror, do not import.** The three `SET LOCAL`s are written inline in this file. Recorded decision, `src/services/gdpr-lock-order.test.ts:228-230`: *"a test helper crossing suites would couple two files whose fixtures are independent."* Do not extract a helper that crosses files. A file-local helper consolidating this file's own call sites — `expectPremiseOrder`, which the review of this work introduced — is not what this constraint forbids: what it protects is the independence of the two files' fixtures, not intra-file de-duplication.
 - **Comments state what is true now** (CLAUDE.md, *Comment Discipline*). No "this previously read X". Correction history goes in the PR body.
 - **A comment annotates the code it sits on.** Claims about `db-locks-lock-order.test.ts`'s measurements are cited by name, not restated with numbers.
 - **Worktree limits.** `integration` and `e2e` cannot run here (both need the dev server on `:3000` and the shared dev DB). Scope local verification to typecheck, lint, `unit`, `unit-sweeps`, `components`; cite the CI run for the other tiers.
