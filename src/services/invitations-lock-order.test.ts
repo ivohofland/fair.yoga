@@ -551,6 +551,12 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * link itself is not the thing being decided — `linkTeacherStudent`'s
    * `ON CONFLICT DO NOTHING` (#181) needs only that the row exist once the
    * transaction commits, not that this call was the one that inserted it.
+   * The atomic write alone is not enough, though: the booking's own
+   * `resolveInvitationOnLink` call can commit — and mark this same
+   * invitation `accepted` — before the blocked write returns, so
+   * `acceptInvitation`'s pending-check (`invitations.ts`) re-reads the
+   * invitation on a zero-row update and treats it already having been
+   * accepted by that other writer as success too, not `NOT_PENDING`.
    */
   it('a real accept racing a real booking on an unlinked pair succeeds — the link exists, which is what both callers wanted (#181)', async () => {
     const { teacherId, studentId, email, invitationId } =
