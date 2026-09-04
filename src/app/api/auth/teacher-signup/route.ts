@@ -43,8 +43,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // destination: the purpose decides whether an account may be created,
       // the redirect decides where the person lands, and dropping the second
       // for addresses that already have an account discarded the whole intent
-      // of "start teaching". `/signup/profile` sorts arrivals on its own — a
-      // teacher is sent to `/schedule`, a student gets the profile form.
+      // of "start teaching".
       redirectTo: TEACHER_PROFILE_PATH,
       purpose,
     });
