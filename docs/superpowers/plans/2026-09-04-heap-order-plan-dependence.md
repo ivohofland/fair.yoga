@@ -181,7 +181,9 @@ In the fixture, swap the two constants so HIGH takes the *higher* entry id:
 ```bash
 npx vitest run --project unit-sweeps src/services/template-lock-order.test.ts
 ```
-Expected: both tests FAIL at the `premiseOrder` assertion, reporting the received order as `[lowClassId, highClassId]`. Copy the verbatim `AssertionError` block into the PR body. If either test *passes*, the probe is not reading what this plan claims it reads — stop and report rather than proceeding.
+Copy the verbatim `AssertionError` block into the PR body for whichever mutation fails.
+
+A passing run here is not a defect, and must not be read as one. The entry-id swap only fails under a `Class`-driven plan ordered by `calendarEntryId`; under a `ClassTemplate`- or `CalendarEntry`-driven plan the output is ordered by `CalendarEntry.date`, which this swap does not touch, so the probe passes while working exactly as designed. The mutation that fails under **every** shape observed so far is the **date** swap — exchange the two `futureDate(jsDayOfWeek, …)` arguments on the `createClassFixture` calls instead. Cite that one as the evidence the premise can fail; cite the entry-id swap only alongside the plan shape it is sensitive to.
 
 - [ ] **Step 3: Restore, and re-verify**
 
@@ -215,9 +217,9 @@ Expected, measured on 2026-09-04 and to be reproduced:
 | 0 | `Class` via `Class_calendarEntryId_key` | `Class.calendarEntryId` ascending |
 | 2 … 50000 | `ClassTemplate` → `CalendarEntry_scheduleRuleId_date_key` → `Class` | `CalendarEntry.date` ascending |
 
-Two shapes, and only two. Confirm the run reproduces that, then confirm both order by a key Task 1 assigns — `calendarEntryId` for the first, `date` for the second — which is what makes the premise hold under either. Record the table in the PR body.
+Confirm the run reproduces that boundary, and note that the shapes above are the ones observed rather than the ones possible — a third has been seen on this database, driven from `CalendarEntry`, with `ClassTemplate` innermost, and it too orders by `CalendarEntry.date`. The set is not closed and nothing here should be written as though it were.
 
-If a **third** shape appears, or either shape orders by something the fixture does not assign, stop and report: the design rests on there being exactly these two.
+What the design rests on is narrower and survives a fourth shape: every shape observed orders by a key Task 1 assigns — `calendarEntryId` where `Class` drives, `date` otherwise — so the premise holds under each. Record the table, and the shapes behind it, in the PR body. If a shape appears that orders by something the fixture does not assign, stop and report: that is the case the design does not cover.
 
 - [ ] **Step 5: Measure against an inverted heap**
 
@@ -253,4 +255,12 @@ git commit -m "test(lock-order): record what the assigned premise catches, and w
 ## Finishing
 
 - Update issue #441's body: it named only the join-plan mechanism, and missed both the heap-churn mechanism and the two-part shape of the sibling's fix. Correct it in place rather than appending a comment that contradicts the body (CLAUDE.md, *Comment Discipline*, applied to the tracker).
-- PR body carries: the measured N → order table, the inverted-heap count, the verbatim mutation failure text, the observed archive-side revert rate, and the arithmetic behind the census (7 order-asserting unordered raw reads = 4 pinned siblings + 1 false positive + 2 fixed here). Cite the CI run for `integration` and `e2e`.
+- PR body carries: the measured N → order table, the inverted-heap count, the verbatim mutation failure text, the observed archive-side revert rate, and the arithmetic behind the census (7 unordered raw id-list reads in tests = 4 pinned siblings + 1 that asserts no order + 2 fixed here). Cite the CI run for `integration` and `e2e`.
+
+  The census is of the tree this branch starts from, so it re-derives against the merge base:
+
+  ```bash
+  git grep -n 'queryRaw<Array<{ id: string }>>' "$(git merge-base HEAD main)" -- 'src/*.test.ts'
+  ```
+
+  Seven lines. Against HEAD the same command returns six, because the two reads in `template-lock-order.test.ts` now share one file-local helper called once per `it`.
