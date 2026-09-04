@@ -6,7 +6,7 @@ import {
   consumeSignupTicket,
   signupTicketFor,
   liveSignupTicketEmail,
-  signupTicketCrossFamilyPurpose,
+  foreignTicketCookiePurpose,
 } from './signup-ticket';
 import { generateMagicLinkToken } from './magic-link';
 import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
@@ -164,18 +164,18 @@ describe('liveSignupTicketEmail', () => {
   });
 });
 
-describe('signupTicketCrossFamilyPurpose', () => {
+describe('foreignTicketCookiePurpose', () => {
   it('names the other family\'s purpose for a live cross-family ticket', async () => {
     const crossEmail = `cross-family-${Date.now()}@test.local`;
     const token = await mintSignupTicket(db, crossEmail, 'teacher');
-    expect(await signupTicketCrossFamilyPurpose(db, token, 'student')).toBe('teacher_profile_pending');
+    expect(await foreignTicketCookiePurpose(db, token, 'student')).toBe('teacher_profile_pending');
     await db.magicLinkToken.deleteMany({ where: { email: crossEmail } });
   });
 
   it('is null for a ticket that already belongs to the asked-about family', async () => {
     const sameEmail = `same-family-${Date.now()}@test.local`;
     const token = await mintSignupTicket(db, sameEmail, 'teacher');
-    expect(await signupTicketCrossFamilyPurpose(db, token, 'teacher')).toBeNull();
+    expect(await foreignTicketCookiePurpose(db, token, 'teacher')).toBeNull();
     await db.magicLinkToken.deleteMany({ where: { email: sameEmail } });
   });
 
@@ -186,14 +186,22 @@ describe('signupTicketCrossFamilyPurpose', () => {
       where: { email: expiredEmail },
       data: { expiresAt: new Date(Date.now() - 1000) },
     });
-    expect(await signupTicketCrossFamilyPurpose(db, token, 'student')).toBeNull();
+    expect(await foreignTicketCookiePurpose(db, token, 'student')).toBeNull();
     await db.magicLinkToken.deleteMany({ where: { email: expiredEmail } });
   });
 
-  it('is null for a token that is not a ticket at all', async () => {
-    const notTicketEmail = `cross-family-not-ticket-${Date.now()}@test.local`;
+  it('names the purpose of a live token that was never a ticket', async () => {
+    // Broadened deliberately: this used to answer null, which meant a live
+    // sign-in token arriving in the HttpOnly signup cookie left no trail
+    // anywhere. It is the least ordinary thing that can turn up in that
+    // cookie, so it is the case most worth reporting.
+    const notTicketEmail = `foreign-not-ticket-${Date.now()}@test.local`;
     const token = await generateMagicLinkToken(db, notTicketEmail, { purpose: 'sign_in' });
-    expect(await signupTicketCrossFamilyPurpose(db, token, 'teacher')).toBeNull();
+    expect(await foreignTicketCookiePurpose(db, token, 'teacher')).toBe('sign_in');
     await db.magicLinkToken.deleteMany({ where: { email: notTicketEmail } });
+  });
+
+  it('is null for a token with no row at all', async () => {
+    expect(await foreignTicketCookiePurpose(db, 'never-existed', 'teacher')).toBeNull();
   });
 });
