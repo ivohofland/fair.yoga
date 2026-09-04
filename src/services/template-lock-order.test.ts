@@ -117,13 +117,12 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    *
    * Shared by both `it`s below, not duplicated: each drives
    * `archiveOrUnarchiveTemplate` into a different corner of the same race,
-   * and both need this exact shape for its heap-order `deleteMany` to
-   * disagree with `deleteStudentAccount`'s ascending sort — two rows, one
-   * student waiting on both, inserted so their heap order is the
-   * deterministic REVERSE of ascending-by-id (explicit ids below, not
-   * `uuid()` defaults — see the insertion-order comment inline). A third
-   * `it` shared it until #194, for `syncTemplateInstances`; the fixture did
-   * not change when that one went.
+   * and both need this exact shape for its `deleteMany` to visit the two
+   * rows [HIGH, LOW] — the reverse of `deleteStudentAccount`'s ascending-by-id
+   * sort — which the premise probe in each `it` asserts rather than assumes
+   * (explicit ids below, not `uuid()` defaults). A third `it` shared it until
+   * #194, for `syncTemplateInstances`; the fixture did not change when that
+   * one went.
    *
    * Also, incidentally, exactly what `archiveOrUnarchiveTemplate`'s
    * `calendarEntry.deleteMany` predicate requires to touch these rows at all:
@@ -148,14 +147,26 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
 
     // Explicit ids, low and high, so "ascending by id" — deleteStudentAccount's
     // order — is a KNOWN sequence rather than whatever two `uuid()` calls
-    // happened to produce. Inserted HIGH-then-LOW below, which is what makes
-    // the table's heap order the REVERSE of the sorted order — the whole
-    // premise of the race, asserted directly by each `it` rather than
-    // assumed. Same technique `gdpr-lock-order.test.ts`'s "the two erasures take
-    // multiple Class rows in one order" describe uses for the sibling
-    // pairing that IS fixed.
+    // happened to produce. Same technique `gdpr-lock-order.test.ts`'s "the two
+    // erasures take multiple Class rows in one order" describe uses for the
+    // sibling pairing that IS fixed.
     const lowClassId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
     const highClassId = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+
+    // Entry ids assigned for the same reason the class ids above are, and
+    // against a second source of drift. The premise probes in each `it` read
+    // under a forced index-nested-loop plan, and that plan has two shapes
+    // here: driven from `Class` through `Class_calendarEntryId_key`, ordering
+    // by `calendarEntryId`, or driven from `ClassTemplate` through
+    // `CalendarEntry_scheduleRuleId_date_key`, ordering by `date`. Which one
+    // wins is a cost decision that moves with table size. Assigning the entry
+    // ids makes the first shape's order the one this fixture chose; the dates
+    // below already make the second shape's order the same. The two therefore
+    // agree, and the premise holds whichever direction the planner takes.
+    //
+    // HIGH takes the LOW entry id: HIGH is the row that must come FIRST.
+    const highEntryId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+    const lowEntryId = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
 
     const teacher = await prisma.teacher.create({
       data: {
@@ -237,30 +248,42 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       settingsLocked: false,
     };
 
-    // HIGH inserted FIRST. An unordered scan over a table this small is a
-    // sequential scan, which returns rows in physical order — insertion
-    // order for rows this fresh — so a multi-row `Class` writer with no
-    // explicit order (`archiveOrUnarchiveTemplate`'s `deleteMany`) visits
-    // [HIGH, LOW] while
-    // `deleteStudentAccount`'s sorted lock loop visits [LOW, HIGH]. Asserted
-    // by each `it` below, not assumed.
-    await createClassFixture(prisma, { ...classBase, id: highClassId, date: futureDate(jsDayOfWeek, 2) });
+    // HIGH first, and HIGH dated earlier, and HIGH holding the lower entry id
+    // — three statements of one fact: HIGH is the row a `Class` writer with no
+    // explicit order reaches first, so `archiveOrUnarchiveTemplate`'s
+    // `deleteMany` visits [HIGH, LOW] while `deleteStudentAccount`'s sorted
+    // lock loop visits [LOW, HIGH]. Only the last two are load-bearing;
+    // insertion order is not a property this table can carry, because `Class`
+    // shares a page with every other file in this tier (the reasoning is
+    // `db-locks-lock-order.test.ts`'s, in the docblock above
+    // `forceIndexOrderedPlan`). Each `it` asserts the order rather than
+    // assuming it.
+    await createClassFixture(prisma, {
+      ...classBase,
+      id: highClassId,
+      calendarEntryId: highEntryId,
+      date: futureDate(jsDayOfWeek, 2),
+    });
     // LOW is `draft`, HIGH is `open` — one of each of `SCHEDULED_STATUSES`,
     // deliberately, and specifically `draft` on the row that must be locked
     // FIRST for the order to hold.
     //
     // Both statuses are equally valid here (`draft` and `open` are both
     // delete candidates for the archive, so every count below is unchanged),
-    // but a fixture that used
-    // only `open` could not observe the pre-lock's status list at all.
-    // `archiveOrUnarchiveTemplate`'s pre-lock renders that list from
-    // `SCHEDULED_STATUSES` into raw SQL, and dropping `'draft'` from it left
-    // every test covering that function green while the deadlock reopened —
-    // measured during issue 180 task 4, and still true of this file until
-    // this line: with two `open` rows, a `'open'`-only pre-lock locks exactly
-    // what the full one locks. With LOW as `draft`, a narrowed list skips the
-    // row the erasure takes first, and the archive `it` below fails.
-    await createClassFixture(prisma, { ...classBase, id: lowClassId, status: 'draft', date: futureDate(jsDayOfWeek, 3) });
+    // but a fixture that used only `open` could not observe the pre-lock's
+    // status list at all. `archiveOrUnarchiveTemplate`'s pre-lock renders that
+    // list from `SCHEDULED_STATUSES` into raw SQL, and dropping `'draft'` from
+    // it left every test covering that function green while the deadlock
+    // reopened — measured during issue 180 task 4. With LOW as `draft`, a
+    // narrowed list skips the row the erasure takes first, and the archive
+    // `it` below fails.
+    await createClassFixture(prisma, {
+      ...classBase,
+      id: lowClassId,
+      calendarEntryId: lowEntryId,
+      status: 'draft',
+      date: futureDate(jsDayOfWeek, 3),
+    });
 
     const student = await prisma.student.create({
       data: {
@@ -387,16 +410,15 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    *    possible. A test that never contended for the rows is not "does not
    *    deadlock"; it is "never tried". `deleted: 2` is what proves both
    *    fixture classes were actually matched and actually locked by this
-   *    statement — the same role the heap-order assertion below plays for
+   *    statement — the same role the premise-order assertion below plays for
    *    lock ORDER, this plays for lock EXISTENCE.
    * 5. **Leave the erasure branch as a rejection check, and keep the
-   *    heap-order assertion above.** Nothing in points 1-4 touches
+   *    premise-order assertion above.** Nothing in points 1-4 touches
    *    `deleteStudentAccount`'s side of the race — it has no transient-error
    *    `catch` of its own, so `bSettled.status === 'rejected'` stays a
-   *    meaningful, direct signal there. And the heap-order read stays
+   *    meaningful, direct signal there. And the premise-order read stays
    *    load-bearing under the fix for the same reason it was load-bearing
-   *    before: if `HIGH`/`LOW` insertion ever stopped producing the
-   *    reverse-of-ascending heap order this fixture depends on, "does not
+   *    before: if the fixture ever stopped putting HIGH first, "does not
    *    deadlock" would be true of a race that was never adversarial in the
    *    first place, proving nothing about the pre-lock.
    *
@@ -413,17 +435,29 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       const { templateId, studentId, teacherId, lowClassId, highClassId } =
         await makeTemplateWithTwoWaitedInstances();
 
-      // The premise, asserted rather than assumed: the fixture's HIGH-then-LOW
-      // insertion is what makes heap order the reverse of ascending-by-id, and
-      // without that the race is not adversarial. Re-read per `it` because
-      // each builds its own fixture with fresh ids, not a rerun of one read.
-      const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
-        SELECT c.id FROM "Class" c
-        JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
-        JOIN "ClassTemplate" ct ON ct."scheduleRuleId" = e."scheduleRuleId"
-        WHERE ct."id" = ${templateId}
-      `;
-      expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
+      // The premise, asserted rather than assumed: HIGH comes first, which is
+      // what makes the race adversarial. Read under a forced index-nested-loop
+      // plan, because an unforced read here is a cost decision — `enable_hashjoin`
+      // alone removes a join ALGORITHM, not a join DIRECTION, and the direction
+      // is non-monotonic in table size. The three settings and the measurements
+      // behind them are `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan`,
+      // mirrored rather than imported so the two files' fixtures stay
+      // independent. `SET LOCAL` is transaction-scoped and `enable_seqscan = off`
+      // discourages rather than forbids, so neither reaches production nor can
+      // make this statement fail. Re-read per `it` because each builds its own
+      // fixture with fresh ids.
+      const premiseOrder = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
+        await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
+        await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
+        return tx.$queryRaw<Array<{ id: string }>>`
+          SELECT c.id FROM "Class" c
+          JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+          JOIN "ClassTemplate" ct ON ct."scheduleRuleId" = e."scheduleRuleId"
+          WHERE ct."id" = ${templateId}
+        `;
+      });
+      expect(premiseOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
 
       let lowLocked!: () => void;
       const lowLockedPromise = new Promise<void>((resolve) => {
@@ -596,13 +630,29 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       const { templateId, studentId, teacherId, lowClassId, highClassId } =
         await makeTemplateWithTwoWaitedInstances();
 
-      const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
-        SELECT c.id FROM "Class" c
-        JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
-        JOIN "ClassTemplate" ct ON ct."scheduleRuleId" = e."scheduleRuleId"
-        WHERE ct."id" = ${templateId}
-      `;
-      expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
+      // The premise, asserted rather than assumed: HIGH comes first, which is
+      // what makes the race adversarial. Read under a forced index-nested-loop
+      // plan, because an unforced read here is a cost decision — `enable_hashjoin`
+      // alone removes a join ALGORITHM, not a join DIRECTION, and the direction
+      // is non-monotonic in table size. The three settings and the measurements
+      // behind them are `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan`,
+      // mirrored rather than imported so the two files' fixtures stay
+      // independent. `SET LOCAL` is transaction-scoped and `enable_seqscan = off`
+      // discourages rather than forbids, so neither reaches production nor can
+      // make this statement fail. Re-read per `it` because each builds its own
+      // fixture with fresh ids.
+      const premiseOrder = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
+        await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
+        await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
+        return tx.$queryRaw<Array<{ id: string }>>`
+          SELECT c.id FROM "Class" c
+          JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+          JOIN "ClassTemplate" ct ON ct."scheduleRuleId" = e."scheduleRuleId"
+          WHERE ct."id" = ${templateId}
+        `;
+      });
+      expect(premiseOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
 
       // A SECOND student, registered rather than waitlisted, so the erasure
       // below (which erases the waitlisted one) leaves this row standing for
