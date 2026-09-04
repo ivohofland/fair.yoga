@@ -86,9 +86,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const fallback = resolved.teacherId ? '/schedule' : '/bookings';
   // Refused rather than defaulted: this destination would immediately bounce
   // an existing teacher back off `/signup/profile` (#431) — pinned by the
-  // directional integration cases in teacher-signup-api.test.ts and
-  // magic-link-claim.test.ts. Directional: only `teacherId !== null` is
-  // blocked, so a student's second-hat flow keeps this destination.
+  // directional integration cases in teacher-signup-api.test.ts. The
+  // identical guard on the device-handoff door (`magic-link/claim`) is
+  // pinned the same way in magic-link-claim.test.ts. Directional: only
+  // `teacherId !== null` is blocked, so a student's second-hat flow keeps
+  // this destination.
   const bouncedTeacherForm =
     tokenRedirect === TEACHER_PROFILE_PATH && resolved.teacherId !== null;
   const redirectTo =
