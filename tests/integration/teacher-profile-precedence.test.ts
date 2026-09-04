@@ -92,22 +92,7 @@ describe('POST /api/account/teacher-profile — a session always beats a ticket 
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
   });
 
-  it('reports signupCancelled when the declined ticket it clears was actually live', async () => {
-    const me = await seedStudentAccount('tp-precedence-cancelled');
-    const ticketEmail = `tp-precedence-cancelled-ticket-${suffix}@test.local`;
-    const ticket = await mintSignupTicket(prisma, ticketEmail, 'teacher');
-
-    const res = await post(
-      `fair_yoga_session=${me.sessionToken}; fair_yoga_signup=${ticket}`,
-      { firstName: 'Really', lastName: 'Cancelled', bio: '', pageSlug: `tp-cancelled-${suffix}` },
-    );
-
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { data: { signupCancelled: boolean } };
-    expect(body.data.signupCancelled).toBe(true);
-  });
-
-  it('does not report signupCancelled for a stray cookie that names a dead ticket', async () => {
+  it('clears a stray cookie that names a dead ticket the same as a live one', async () => {
     const me = await seedStudentAccount('tp-precedence-notcancelled');
 
     const res = await post(
@@ -116,9 +101,6 @@ describe('POST /api/account/teacher-profile — a session always beats a ticket 
     );
 
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { data: { signupCancelled: boolean } };
-    expect(body.data.signupCancelled).toBe(false);
-    // And the same declined-cookie clear as any other stale cookie.
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
   });
 

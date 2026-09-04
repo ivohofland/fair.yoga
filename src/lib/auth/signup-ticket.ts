@@ -62,8 +62,7 @@ export async function peekSignupTicket(
  * `setSignupTicketCookie` — a token of another purpose presented here still
  * gets consumed (deleted) by `verifyMagicLinkToken` before the purpose check
  * below can run, including a ticket minted for the OTHER family, and the
- * `log.warn` below fires for it. Not reached in practice today — see
- * `signupTicketCrossFamilyPurpose` for how that case is actually observed.
+ * `log.warn` below fires for it.
  */
 export async function consumeSignupTicket(
   db: PrismaClient,
@@ -95,26 +94,34 @@ export function clearSignupTicketCookie(headers: Headers): void {
 }
 
 /**
- * Whether a token names a live signup ticket of either family, without
- * consuming it or caring which family it belongs to.
- *
- * Checked against `TICKET_PURPOSE` rather than a duplicated purpose list, so
- * a third family's purpose joins this predicate by construction. Cookie
- * presence alone is not enough for this check to mean anything: a token that
- * is missing, expired, or was never a ticket at all must all read as "no
- * live ticket" here, not as evidence something was cancelled.
+ * A token's purpose, but only if it's still a LIVE ticket of some family —
+ * checked against `TICKET_PURPOSE` rather than a duplicated purpose list, so
+ * a third family's purpose joins this predicate by construction. The one
+ * definition `signupTicketIsLive` and `signupTicketCrossFamilyPurpose` both
+ * build on, so neither can drift from the other on what "live" means.
  */
-export async function signupTicketIsLive(
+async function readLiveTicketPurpose(
   db: PrismaClient,
   token: string,
-): Promise<boolean> {
+): Promise<MagicLinkPurpose | null> {
   const row = await db.magicLinkToken.findUnique({
     where: { tokenHash: hashToken(token) },
     select: { expiresAt: true, purpose: true },
   });
-  if (!row) return false;
+  if (!row || row.expiresAt <= new Date()) return null;
   const isTicket = (Object.values(TICKET_PURPOSE) as MagicLinkPurpose[]).includes(row.purpose);
-  return isTicket && row.expiresAt > new Date();
+  return isTicket ? row.purpose : null;
+}
+
+/**
+ * Whether a token names a live signup ticket of either family, without
+ * consuming it or caring which family it belongs to. Cookie presence alone
+ * is not enough for this check to mean anything: a token that is missing,
+ * expired, or was never a ticket at all must all read as "no live ticket"
+ * here, not as evidence something was cancelled.
+ */
+export async function signupTicketIsLive(db: PrismaClient, token: string): Promise<boolean> {
+  return (await readLiveTicketPurpose(db, token)) !== null;
 }
 
 /**
@@ -129,14 +136,8 @@ export async function signupTicketCrossFamilyPurpose(
   token: string,
   family: SignupFamily,
 ): Promise<MagicLinkPurpose | null> {
-  const row = await db.magicLinkToken.findUnique({
-    where: { tokenHash: hashToken(token) },
-    select: { expiresAt: true, purpose: true },
-  });
-  if (!row || row.expiresAt <= new Date()) return null;
-  const isTicket = (Object.values(TICKET_PURPOSE) as MagicLinkPurpose[]).includes(row.purpose);
-  const otherFamily = row.purpose !== TICKET_PURPOSE[family];
-  return isTicket && otherFamily ? row.purpose : null;
+  const purpose = await readLiveTicketPurpose(db, token);
+  return purpose && purpose !== TICKET_PURPOSE[family] ? purpose : null;
 }
 
 /**

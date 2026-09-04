@@ -56,8 +56,8 @@ describe('ProfileSetupPage identity precedence', () => {
     const tree = await ProfileSetupPage();
     const json = JSON.stringify(tree);
 
-    // Neither identity renders: this page's own precedence rule blocks the
-    // ticket the moment a session cookie is present, so it falls to the
+    // Neither identity renders: the shared precedence rule (`ticketTokenFrom`)
+    // blocks the ticket the moment a session cookie is present, so it falls to the
     // same "get a fresh link" form `/signup` itself uses.
     expect(json).not.toContain('ticket-holder@test.local');
     expect(json).not.toContain('signed-in@test.local');

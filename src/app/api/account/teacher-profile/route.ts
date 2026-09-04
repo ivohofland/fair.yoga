@@ -54,12 +54,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       },
     });
 
-    const response = respondOk({
-      teacherId: teacher.id,
-      // Only meaningful (and only ever true) on the session path — a ticket
-      // authorization has no sibling cookie left to have cancelled anything.
-      signupCancelled: auth.source === 'session' && auth.staleTicketCancelled,
-    }, 201);
+    const response = respondOk({ teacherId: teacher.id }, 201);
     if (auth.source === 'ticket') {
       const sessionToken = await createSession(prisma, teacher.accountId);
       setSessionCookie(response.headers, sessionToken);

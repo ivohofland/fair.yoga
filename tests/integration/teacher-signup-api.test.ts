@@ -15,6 +15,9 @@ const recoveryEmail = `teacher-signup-recovery-${suffix}@test.local`;
 const recoverySlug = `recovery-${suffix}`;
 const verifyTeacherSignupEmail = `teacher-signup-verify-ticket-${suffix}@test.local`;
 const verifySignInNoAccountEmail = `teacher-signup-verify-signin-${suffix}@test.local`;
+const clearSessionTicketEmail = `teacher-signup-verify-clearsession-${suffix}@test.local`;
+const clearSessionOwnerEmail = `teacher-signup-verify-clearsession-owner-${suffix}@test.local`;
+const clearSessionOwnerSlug = `clearsession-owner-${suffix}`;
 const onboardingEmail = `teacher-signup-onboarding-${suffix}@test.local`;
 const onboardingSlug = `onboarding-teacher-${suffix}`;
 // #168 follow-up test's fixtures — an address per attempt, none of which
@@ -108,6 +111,7 @@ afterAll(async () => {
           ...noIpEmails,
           verifyTeacherSignupEmail,
           verifySignInNoAccountEmail,
+          clearSessionTicketEmail,
           ...existingAccountEmails,
         ],
       },
@@ -115,13 +119,13 @@ afterAll(async () => {
   });
 
   const accounts = await prisma.account.findMany({
-    where: { email: { in: [...ticketBackedEmails, ...existingAccountEmails] } },
+    where: { email: { in: [...ticketBackedEmails, clearSessionOwnerEmail, ...existingAccountEmails] } },
     select: { id: true },
   });
   const accountIds = accounts.map((a) => a.id);
   await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
   await prisma.teacher.deleteMany({
-    where: { email: { in: ticketBackedEmails } },
+    where: { email: { in: [...ticketBackedEmails, clearSessionOwnerEmail] } },
   });
   await prisma.student.deleteMany({
     where: { email: { in: existingAccountEmails } },
@@ -301,6 +305,43 @@ describe('POST /api/auth/magic-link/verify — teacher-signup ticket branch', ()
     expect(
       await prisma.account.findUnique({ where: { email: verifyTeacherSignupEmail } }),
     ).toBeNull();
+  });
+
+  it('clears a stray session cookie when it mints a ticket, so the ticket is not permanently blocked', async () => {
+    // A session cookie surviving this response would make the ticket it just
+    // set unusable everywhere: `ticketTokenFrom` refuses a ticket whenever
+    // any session cookie is present, regardless of validity. Without this
+    // clear, a browser that reaches this branch while carrying a stray
+    // session cookie is stuck in a loop no resend can escape.
+    const nonce = `teacher-signup-verify-clearsession-nonce-${suffix}`;
+    const token = await generateMagicLinkToken(prisma, clearSessionTicketEmail, {
+      purpose: 'teacher_signup',
+      originBrowserHash: hashNonce(nonce),
+    });
+
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Stray', lastName: 'Session',
+        email: clearSessionOwnerEmail,
+        bio: '', pageSlug: clearSessionOwnerSlug,
+        account: { create: { email: clearSessionOwnerEmail } },
+      },
+    });
+    const rawSession = await seedSession(prisma, teacher.accountId);
+
+    const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${nonce}; fair_yoga_session=${rawSession}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ token }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('set-cookie')).toContain('fair_yoga_signup=');
+    expect(res.headers.get('set-cookie')).toContain('fair_yoga_session=;');
   });
 
   it('still 400s a sign_in token for an address with no account, and sets no ticket', async () => {

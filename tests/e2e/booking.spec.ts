@@ -202,6 +202,29 @@ test.describe('Public booking flow', () => {
     await prisma.account.deleteMany({ where: { email } });
   });
 
+  test('a session cookie that fails to validate blocks the ticket the same as a valid one', async ({ page, context }) => {
+    // `session` (from getSession) is falsy for BOTH "no cookie" and "a
+    // present cookie that doesn't validate" — this page must not read that
+    // as license to fall through to the ticket, or it renders a name-step
+    // form for the ticket's address that 401s on submit against the route,
+    // which gates on cookie PRESENCE, not validity.
+    const email = `e2e-booking-invalidsession-${suffix}@test.local`;
+    const rawToken = await mintSignupTicket(prisma, email, 'student');
+    await context.addCookies([
+      { name: 'fair_yoga_signup', value: rawToken, domain: 'localhost', path: '/' },
+      { name: 'fair_yoga_session', value: 'not-a-real-session-token', domain: 'localhost', path: '/' },
+    ]);
+
+    await page.goto(`/${slug}/book/${classId}`);
+
+    // The sign-in form, not the name step — and never the ticket's address.
+    await expect(page.getByText('First time here?')).toBeVisible();
+    await expect(page.getByText('One last thing')).not.toBeVisible();
+    await expect(page.getByText(email)).not.toBeVisible();
+
+    await prisma.magicLinkToken.deleteMany({ where: { email } });
+  });
+
   test('the whole chain: email, verify, name, tier, book — for a real fresh signup', async ({ page }) => {
     // Task 5's own coverage: unlike the test above, nothing here is seeded
     // directly — the email form is driven for real, exercising the actual

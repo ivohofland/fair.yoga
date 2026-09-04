@@ -146,8 +146,12 @@ describe('POST /api/auth/magic-link/claim — device handoff over HTTP', () => {
     expect(claimRes.status).toBe(200);
     const cookies = claimRes.headers.get('set-cookie') ?? '';
     expect(cookies).toContain('fair_yoga_signup=');
-    // A ticket, not a session: the address still has no account.
-    expect(cookies).not.toContain('fair_yoga_session=');
+    // A ticket, not a session: the address still has no account. The clear
+    // directive (`fair_yoga_session=;`) is still present unconditionally —
+    // a session cookie surviving this response would permanently block the
+    // ticket this response just set — but no session is ever SET here.
+    expect(cookies).not.toMatch(/fair_yoga_session=(?!;)/);
+    expect(cookies).toContain('fair_yoga_session=;');
     const claimBody = (await claimRes.json()) as { data: { redirectTo: string } };
     expect(claimBody.data.redirectTo).toBe(redirectTo);
 

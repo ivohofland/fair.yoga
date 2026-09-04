@@ -10,7 +10,6 @@ import {
   peekSignupTicket,
   consumeSignupTicket,
   signupTicketCrossFamilyPurpose,
-  signupTicketIsLive,
   type SignupFamily,
 } from './signup-ticket';
 
@@ -38,26 +37,26 @@ export function ticketTokenFrom(cookies: CookieReader): string | undefined {
     : cookies.get(SIGNUP_TICKET_COOKIE)?.value;
 }
 
-/**
- * `staleTicketCookie` (presence) drives whether the session path clears the
- * cookie at all; `staleTicketCancelled` (liveness) is the narrower fact
- * worth telling the caller about — a declined cookie that named nothing
- * live is not a cancellation, only cookie hygiene.
- */
-interface StaleTicket {
-  staleTicketCookie: boolean;
-  staleTicketCancelled: boolean;
-}
-
 /** Both paths submit the same form (teacher). */
 export type FormProfileAuthorization<TBody> =
   | { source: 'ticket'; email: string; body: TBody }
-  | ({ source: 'session'; email: string; session: SessionUser; body: TBody } & StaleTicket);
+  | {
+      source: 'session';
+      email: string;
+      session: SessionUser;
+      staleTicketCookie: boolean;
+      body: TBody;
+    };
 
 /** Only the ticket path submits a form; the session path posts nothing (student). */
 export type TicketFormProfileAuthorization<TBody> =
   | { source: 'ticket'; email: string; body: TBody }
-  | ({ source: 'session'; email: string; session: SessionUser } & StaleTicket);
+  | {
+      source: 'session';
+      email: string;
+      session: SessionUser;
+      staleTicketCookie: boolean;
+    };
 
 /**
  * Two failure shapes stay distinguishable here — `invalid_body` (the
@@ -95,9 +94,9 @@ async function ticketAuthorization<TBody>(
     // `peekSignupTicket` itself stays silent (see its own docblock for why).
     // A ticket cookie reaching an actual profile submission is a more
     // consequential moment than a mere peek, so this is where cross-family
-    // presentation gets a trail instead — the row itself is left untouched;
-    // see `consumeSignupTicket`'s docblock for why this function never
-    // reaches it.
+    // presentation gets a trail instead — the row itself is left untouched:
+    // this branch returns below without ever reaching the `consumeSignupTicket`
+    // call further down.
     const crossFamilyPurpose = await signupTicketCrossFamilyPurpose(db, token, family);
     if (crossFamilyPurpose) {
       log.warn(
@@ -150,12 +149,7 @@ type SessionOutcome =
   | { ok: true; email: string; session: SessionUser }
   | { ok: false; reason: 'no_session'; response: NextResponse };
 
-/**
- * `db` covers the account lookup only — do not "fix" that by threading it
- * through `requireSession` too; that widens this change into every route
- * that calls it, for a parameter `requireSession`'s own signature doesn't
- * accept.
- */
+/** `db` is for the account lookup; `requireSession` takes no client parameter. */
 async function sessionAuthorization(
   db: PrismaClient,
   request: NextRequest,
@@ -167,19 +161,6 @@ async function sessionAuthorization(
     select: { email: true },
   });
   return { ok: true, email: account.email, session };
-}
-
-/**
- * The session path declines to read a ticket cookie whenever one is
- * present, whether or not it names anything live — this is what tells the
- * caller whether that decline also cancelled something real.
- */
-async function staleTicketOf(db: PrismaClient, request: NextRequest): Promise<StaleTicket> {
-  const token = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
-  return {
-    staleTicketCookie: token !== undefined,
-    staleTicketCancelled: token !== undefined && (await signupTicketIsLive(db, token)),
-  };
 }
 
 /** For a family whose session path submits the same form as its ticket path. */
@@ -214,7 +195,7 @@ export async function resolveProfileAuthorization<TBody>(
       source: 'session',
       email: session.email,
       session: session.session,
-      ...(await staleTicketOf(db, request)),
+      staleTicketCookie: request.cookies.get(SIGNUP_TICKET_COOKIE) !== undefined,
       body: parsed.data,
     },
   };
@@ -243,7 +224,7 @@ export async function resolveTicketOnlyProfileAuthorization<TBody>(
       source: 'session',
       email: session.email,
       session: session.session,
-      ...(await staleTicketOf(db, request)),
+      staleTicketCookie: request.cookies.get(SIGNUP_TICKET_COOKIE) !== undefined,
     },
   };
 }
