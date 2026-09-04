@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { PageAddressField, slugFromName } from './page-address-field';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
+import { SignOutButton } from '@/components/account/sign-out-button';
 
 const BIO_MAX = 250;
 
@@ -337,11 +338,26 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
   return (
     <div>
       <h1 className="type-display mb-5">Set up your teacher page</h1>
-      <p className="type-body max-w-[420px] mb-8">
+      <p className={`type-body max-w-[420px] ${mode === 'session' ? 'mb-3' : 'mb-8'}`}>
         {mode === 'session' ? 'Adding a teacher page to ' : "You're signing up as "}
         <span className="text-ink">{email}</span>. Your name and a page address
         are all we need &mdash; the bio can wait.
       </p>
+      {/* Session mode arrives here by redirect from `/signup`, before any
+          address was typed — so the address above is the session's, not one
+          the reader chose, and this is where that is said. Ticket mode needs
+          none of it: that address came from a link the reader requested. */}
+      {mode === 'session' && (
+        <div className="max-w-[420px] mb-8">
+          <p className="type-caption leading-[1.55]">
+            That&apos;s the address you&apos;re signed in with. Setting up a page
+            for a different one?
+          </p>
+          <div className="mt-2">
+            <SignOutButton redirectTo="/signup" />
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <Input

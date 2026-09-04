@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ProfileSetupForm } from './profile-setup-form';
+import { routerPush } from '../../../tests/setup/components';
 
 const DRAFT_KEY = 'fair_yoga_profile_draft';
 
@@ -58,6 +59,27 @@ describe('ProfileSetupForm', () => {
   it('names the address it will attach the hat to in session mode', () => {
     render(<ProfileSetupForm email="anna@example.com" mode="session" />);
     expect(screen.getByText(/Adding a teacher page to/)).toBeInTheDocument();
+  });
+
+  // #431. Naming the address is not the same as explaining it. The signed-in
+  // student who wanted a DIFFERENT address has exactly one thing to do, and
+  // until now this page neither named it nor offered it.
+  it('session mode explains the address is the session\'s, and offers the sign-out that changes it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ProfileSetupForm email="anna@example.com" mode="session" />);
+
+    expect(screen.getByText(/That's the address you're signed in with/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/signup'));
+  });
+
+  it('ticket mode offers no sign-out — there is no session behind that address', () => {
+    render(<ProfileSetupForm email="anna@example.com" mode="ticket" />);
+
+    expect(screen.queryByText(/That's the address you're signed in with/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull();
   });
 
   it('creates the profile and hard-navigates to /schedule on success, clearing any draft', async () => {
