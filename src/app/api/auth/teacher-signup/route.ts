@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { respondOk, parseBody, withErrorHandler } from '@/lib/api-utils';
-import { teacherSignupSchema } from '@/lib/schemas';
+import { teacherSignupSchema, TEACHER_PROFILE_PATH } from '@/lib/schemas';
 import { ensureOriginNonce, deliverSignInLink } from '@/lib/auth';
 import { checkRateLimit, checkIpRateLimit, clientIp, rateLimitKey, respondRateLimited } from '@/lib/rate-limit';
 import { log } from '@/lib/log';
@@ -39,7 +39,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   try {
     await deliverSignInLink(prisma, email, nonce, {
-      redirectTo: existing ? undefined : '/signup/profile',
+      // Unconditional, as `student-signup` has always passed its own
+      // destination: the purpose decides whether an account may be created,
+      // the redirect decides where the person lands, and dropping the second
+      // for addresses that already have an account discarded the whole intent
+      // of "start teaching". `/signup/profile` sorts arrivals on its own — a
+      // teacher is sent to `/schedule`, a student gets the profile form.
+      redirectTo: TEACHER_PROFILE_PATH,
       purpose,
     });
   } catch (err) {
