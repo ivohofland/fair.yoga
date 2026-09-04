@@ -5,13 +5,11 @@ import { useRouter } from 'next/navigation';
 
 interface SignOutButtonProps {
   /**
-   * Where the browser lands once the session is gone. `/login` is right for
-   * Settings and the account page, which is why it is the default. The signup
-   * flow passes `/signup` (#431): someone signing out in order to sign UP
-   * wants the signup page, and `/login` would be a second closed door in a
-   * flow this control exists to open.
+   * Where the browser lands once the session is gone. Defaults to `/login`;
+   * pass an explicit destination when signing out is a step toward
+   * somewhere else (e.g. re-starting a signup under a different address).
    */
-  redirectTo?: string;
+  redirectTo?: '/login' | '/signup';
 }
 
 /** Ends the session and sends the browser to `redirectTo`. */
