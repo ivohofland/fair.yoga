@@ -336,6 +336,64 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
   });
 
   /**
+   * The statement #181 replaced the upsert with, in the OLD (pre-#179) order,
+   * on an unlinked pair — the one interleaving where both sides genuinely
+   * `INSERT`. `ON CONFLICT DO NOTHING` resolves a conflict with a COMMITTED
+   * tuple without waiting; what this measures is the uncommitted case, where a
+   * plain `INSERT` waits and that wait participates in deadlock detection.
+   *
+   * Measured three runs: the accept transaction (`a`) rejected with a real
+   * Postgres `40P01 deadlock detected` every time, the booking transaction
+   * (`b`) committed every time — the same shape as the upsert baseline
+   * recorded above (`old: {"accept":"REJECTED 40P01","booking":"ok"} x3`).
+   * `ON CONFLICT DO NOTHING` still asks Postgres for the row lock against an
+   * uncommitted conflicting tuple, and that wait still participates in
+   * deadlock detection: the wait edge survives the statement change. #179's
+   * reorder is still what closes this cycle — the new statement does not
+   * close it by itself.
+   */
+  it('the pre-#179 order still deadlocks with ON CONFLICT DO NOTHING — the wait edge survives the statement change', async () => {
+    const { teacherId, studentId, email, invitationId } =
+      await makeLinkedStudentWithPendingInvite({ linked: false });
+
+    let bReady!: () => void;
+    const bHasLink = new Promise<void>((r) => { bReady = r; });
+
+    // a: the OLD accept order — Invitation held, then the roster link.
+    const a = prisma.$transaction(async (tx) => {
+      await tx.invitation.updateMany({
+        where: { id: invitationId, status: 'pending' },
+        data: { status: 'accepted', respondedAt: new Date() },
+      });
+      await bHasLink;
+      await tx.teacherStudent.createMany({
+        data: [{ teacherId, studentId }],
+        skipDuplicates: true,
+      });
+    }, { timeout: 15_000 });
+
+    // b: the booking route's order — roster link held, then Invitation.
+    const b = prisma.$transaction(async (tx) => {
+      await tx.teacherStudent.createMany({
+        data: [{ teacherId, studentId }],
+        skipDuplicates: true,
+      });
+      bReady();
+      await new Promise((r) => setTimeout(r, 200));
+      await tx.invitation.updateMany({
+        where: { teacherId, email },
+        data: { status: 'declined', respondedAt: new Date() },
+      });
+    }, { timeout: 15_000 });
+
+    const results = await Promise.allSettled([a, b]);
+    const rejections = results.filter((r) => r.status === 'rejected');
+
+    expect(rejections).toHaveLength(1);
+    expect(String((rejections[0] as PromiseRejectedResult).reason)).toMatch(/40P01|deadlock/i);
+  }, 30_000);
+
+  /**
    * Kept, but demoted to what it actually is: a smoke test that the real
    * `acceptInvitation` and a real-shaped unlink coexist. It cannot fail on
    * the write order, and the four-specialist review of #174 proved that by
