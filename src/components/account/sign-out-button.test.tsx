@@ -58,4 +58,19 @@ describe('SignOutButton', () => {
     await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/login'));
     await waitFor(() => expect(screen.getByRole('button')).toBeEnabled());
   });
+
+  // #431. The signup flow mounts this button to open a door, and landing on
+  // /login would be a second closed one: someone signing out in order to sign
+  // UP wants the signup page.
+  it('honours an explicit destination instead of the /login default', async () => {
+    fetchMock.mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SignOutButton redirectTo="/signup" />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/signup'));
+    expect(routerPush).not.toHaveBeenCalledWith('/login');
+    expect(routerRefresh).toHaveBeenCalledTimes(1);
+  });
 });
