@@ -12,7 +12,8 @@ interface SignOutButtonProps {
   redirectTo?: '/login' | '/signup';
 }
 
-/** Ends the session and sends the browser to `redirectTo`. */
+/** Ends the session and sends the browser to `redirectTo` either way —
+ *  a failed DELETE surfaces a visible message but never blocks the leave. */
 export function SignOutButton({ redirectTo = '/login' }: SignOutButtonProps) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);

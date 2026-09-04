@@ -200,11 +200,13 @@ describe('POST /api/auth/magic-link/claim — device handoff over HTTP', () => {
 
 /**
  * #431 via the device-handoff door. `magic-link/claim` redeems the same
- * token row `magic-link/verify` would have consumed directly (see the
- * comment on `signupTicket` above) — so the `bouncedTeacherForm` guard that
- * keeps an existing teacher off `/signup/profile` must hold here too, and
- * the directional check (a student's second-hat flow keeps the
- * destination) must hold on this door as well.
+ * token row `magic-link/verify` would have consumed directly (see
+ * `claim/route.ts`'s own `signupTicket` comment) — so the
+ * `bouncedTeacherForm` guard that keeps an existing teacher off
+ * `/signup/profile` must hold here too, and the directional check (a
+ * student's second-hat flow keeps the destination) must hold on this door
+ * as well. These two cases are this door's half of that pin; the sibling
+ * cases for `magic-link/verify` live in teacher-signup-api.test.ts.
  */
 describe('POST /api/auth/magic-link/claim — teacher-signup destination for an existing account', () => {
   const destTeacherEmail = `claim-dest-teacher-${suffix}@test.local`;
