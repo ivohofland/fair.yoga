@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { AlreadyTeachingPanel } from '@/components/signup/already-teaching-panel';
 
 const getSession = vi.fn();
+const findUniqueOrThrow = vi.fn(async (_args: unknown) => ({ email: 'signed-in@test.local' }));
 
 vi.mock('@/lib/session', () => ({ getSession: () => getSession() }));
 vi.mock('next/navigation', () => ({
@@ -14,12 +16,13 @@ vi.mock('next/navigation', () => ({
 }));
 vi.mock('@/lib/db', () => ({
   prisma: {
-    account: { findUniqueOrThrow: async () => ({ email: 'signed-in@test.local' }) },
+    account: { findUniqueOrThrow: (args: unknown) => findUniqueOrThrow(args) },
   },
 }));
 
 beforeEach(() => {
   getSession.mockReset();
+  findUniqueOrThrow.mockClear();
 });
 
 const TEACHER_SESSION = {
@@ -45,7 +48,19 @@ describe('SignupPage', () => {
     // the test with REDIRECT:/schedule, and nothing was ever said.
     const tree = await SignupPage();
 
+    // Not just that an account was looked up — that it was looked up by the
+    // SESSION's account id. A mock ignoring its `where` argument would not
+    // notice a swap for `session.teacherId`.
+    expect(findUniqueOrThrow).toHaveBeenCalledWith({
+      where: { id: 'a1' },
+      select: { email: true },
+    });
     expect(JSON.stringify(tree)).toContain('signed-in@test.local');
+    // Not just that the email string appears somewhere — that
+    // AlreadyTeachingPanel is the component that rendered it. A page that
+    // swapped this for a bare `<div>{account.email}</div>` would still pass
+    // the assertion above.
+    expect(tree.type).toBe(AlreadyTeachingPanel);
   });
 
   it('still sends a signed-in student straight to the profile form', async () => {
