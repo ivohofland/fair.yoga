@@ -5,4 +5,5 @@ export * from './handoff';
 export * from './passkey';
 export * from './account';
 export * from './signup-ticket';
+export * from './profile-authorization';
 export * from './link-delivery';
