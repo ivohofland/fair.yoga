@@ -5,6 +5,7 @@ import {
   clearOriginNonceCookie,
   createSession,
   setSessionCookie,
+  clearSessionCookie,
   resolveOrClaimAccount,
   mintSignupTicket,
   setSignupTicketCookie,
@@ -55,6 +56,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     const response = respondOk({ redirectTo: signupTicket.dest });
     setSignupTicketCookie(response.headers, ticket);
     clearOriginNonceCookie(response.headers);
+    // A session cookie surviving this response would permanently block the
+    // very ticket it just set (see `ticketTokenFrom`'s docblock in
+    // `profile-authorization.ts`) — clearing it here is what makes this
+    // response's ticket usable at all, not just hygiene.
+    clearSessionCookie(response.headers);
     return response;
   }
 

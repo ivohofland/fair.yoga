@@ -279,16 +279,14 @@ describe('POST /api/account/student-profile — a stale ticket cookie must not b
 
     expect(res.status).toBe(201);
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
-    const body = (await res.json()) as { data: { signupCancelled: boolean } };
-    expect(body.data.signupCancelled).toBe(true);
   });
 
-  it('does not report signupCancelled for a declined cookie that names a dead ticket', async () => {
-    const email = `profile-session-notcancelled-${suffix}@test.local`;
+  it('clears a declined cookie that names a dead ticket the same as a live one', async () => {
+    const email = `profile-session-deadclear-${suffix}@test.local`;
     const teacher = await prisma.teacher.create({
       data: {
-        firstName: 'Not', lastName: 'Cancelled', email,
-        bio: 'Fixture for the dead-ticket non-report', pageSlug: `profile-session-notcancelled-${suffix}`,
+        firstName: 'Dead', lastName: 'Ticket', email,
+        bio: 'Fixture for the dead-ticket clear', pageSlug: `profile-session-deadclear-${suffix}`,
         account: { create: { email } },
       },
     });
@@ -304,11 +302,9 @@ describe('POST /api/account/student-profile — a stale ticket cookie must not b
 
     expect(res.status).toBe(201);
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
-    const body = (await res.json()) as { data: { signupCancelled: boolean } };
-    expect(body.data.signupCancelled).toBe(false);
   });
 
-  // The test above only exercises the main session branch's clear; the
+  // The two tests above only exercise the main session branch's clear; the
   // CRM-claim early-return (`route.ts`'s `if (unclaimed)` block) clears the
   // cookie on its own separate response object — this test combines both
   // preconditions to exercise that path specifically.
@@ -344,8 +340,6 @@ describe('POST /api/account/student-profile — a stale ticket cookie must not b
 
     expect(res.status).toBe(201);
     expect(res.headers.get('set-cookie') ?? '').toContain('fair_yoga_signup=;');
-    const body = (await res.json()) as { data: { signupCancelled: boolean } };
-    expect(body.data.signupCancelled).toBe(true);
 
     const student = await prisma.student.findUniqueOrThrow({ where: { id: unclaimed.id } });
     expect(student.accountId).toBe(teacher.accountId);

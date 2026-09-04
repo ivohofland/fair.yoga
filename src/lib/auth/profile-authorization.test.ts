@@ -265,10 +265,37 @@ describe('resolveTicketOnlyProfileAuthorization', () => {
     );
   });
 
-  it('does not log for an ordinary missing ticket (no cookie at all)', async () => {
+  it('does not log when there is no ticket cookie to begin with', async () => {
+    // A weaker check than the one below: `ticketAuthorization` (and its
+    // cross-family guard) never runs at all here, so this only proves the
+    // resolver stays quiet with nothing to report — not that the guard
+    // itself discriminates correctly.
     const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => log);
 
     await resolveTicketOnlyProfileAuthorization(prisma, req(''), 'student', studentProfileSchema);
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not log for a same-family cookie naming a dead ticket, the actual foil for the guard above', async () => {
+    // Unlike the "no cookie" case above, this reaches `ticketAuthorization`'s
+    // `if (!peeked)` branch — the same branch the cross-family log fires
+    // from — so this is what actually proves the guard discriminates
+    // "expired" from "cross-family" rather than logging on every fall-through.
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    const email = `resolver-deadticket-nolog-${suffix}@test.local`;
+    const token = await mintSignupTicket(prisma, email, 'student');
+    await prisma.magicLinkToken.updateMany({
+      where: { email },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+
+    await resolveTicketOnlyProfileAuthorization(
+      prisma,
+      req(`fair_yoga_signup=${token}`),
+      'student',
+      studentProfileSchema,
+    );
 
     expect(warnSpy).not.toHaveBeenCalled();
   });

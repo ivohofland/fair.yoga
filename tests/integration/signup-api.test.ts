@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { generateMagicLinkToken, hashNonce, mintSignupTicket } from '@/lib/auth';
-import { BASE_URL, uniqueSuffix, freshIp } from '../helpers';
+import { BASE_URL, uniqueSuffix, freshIp, seedSession } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -351,6 +351,56 @@ describe('POST /api/auth/magic-link/claim — reporting a cancelled signup ticke
     expect(claimRes.status).toBe(200);
     const claimBody = (await claimRes.json()) as { data: { signupCancelled: boolean } };
     expect(claimBody.data.signupCancelled).toBe(true);
+  });
+});
+
+describe('POST /api/auth/magic-link/claim — the ticket-minting branch clears a stray session', () => {
+  it('clears a stray session cookie when it mints a ticket, so the ticket is not permanently blocked', async () => {
+    // Same reasoning as the verify door: a session cookie surviving this
+    // response would make the ticket it just set unusable everywhere, since
+    // `ticketTokenFrom` refuses a ticket while any session cookie is present.
+    const ticketEmail = `claim-clearsession-${suffix}@test.local`;
+    const nonce = `claim-clearsession-nonce-${suffix}`;
+    const token = await generateMagicLinkToken(prisma, ticketEmail, {
+      purpose: 'teacher_signup',
+      originBrowserHash: hashNonce(nonce),
+    });
+
+    // Opened on a browser with no origin cookie, so /verify hands back a
+    // code instead of consuming the token directly.
+    const verifyRes = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
+      body: JSON.stringify({ token }),
+    });
+    expect(verifyRes.status).toBe(200);
+    const verifyBody = (await verifyRes.json()) as { data: { handoffCode: string } };
+
+    const ownerEmail = `claim-clearsession-owner-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Stray', lastName: 'Session', email: ownerEmail,
+        bio: '', pageSlug: `claim-clearsession-owner-${suffix}`,
+        account: { create: { email: ownerEmail } },
+      },
+    });
+    const rawSession = await seedSession(prisma, teacher.accountId);
+
+    const claimRes = await fetch(`${BASE_URL}/api/auth/magic-link/claim`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${nonce}; fair_yoga_session=${rawSession}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ code: verifyBody.data.handoffCode }),
+    });
+
+    expect(claimRes.status).toBe(200);
+    expect(claimRes.headers.get('set-cookie')).toContain('fair_yoga_signup=');
+    expect(claimRes.headers.get('set-cookie')).toContain('fair_yoga_session=;');
+
+    await prisma.session.deleteMany({ where: { accountId: teacher.accountId } });
   });
 });
 

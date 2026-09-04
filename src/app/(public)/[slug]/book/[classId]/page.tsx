@@ -12,7 +12,7 @@ import { BookingFlow } from '@/components/booking/booking-flow';
 import { BookingSignIn } from '@/components/booking/booking-sign-in';
 import { BookingNameStep } from '@/components/booking/booking-name-step';
 import { JoinAsStudent } from '@/components/booking/join-as-student';
-import { SIGNUP_TICKET_COOKIE, peekSignupTicket } from '@/lib/auth';
+import { peekSignupTicket, ticketTokenFrom } from '@/lib/auth';
 import { readIncomeTier, toIncomeTier } from '@/lib/tiers.server';
 import { countOutstandingPaymentsForStudent } from '@/services/payments';
 
@@ -128,10 +128,13 @@ export default async function BookClassPage({
         })
       : null;
 
-  // Only when there is no session at all: a signed-in viewer takes one of
-  // the two branches above, so an ordinary anonymous render must not pay for
-  // a lookup neither of them needs.
-  const ticketToken = session ? undefined : (await cookies()).get(SIGNUP_TICKET_COOKIE)?.value;
+  // `ticketTokenFrom` is the shared precedence rule (`profile-authorization.ts`)
+  // — the same gate `POST /api/account/student-profile` applies, so this page
+  // and that route cannot disagree about who a ticket is readable by. A
+  // session cookie that failed to validate still blocks it, the same as a
+  // valid one: `session` is falsy either way, but the ticket must not fill
+  // that gap with an address the route will refuse on submit.
+  const ticketToken = ticketTokenFrom(await cookies());
   const ticketEmail = ticketToken
     ? await peekSignupTicket(prisma, ticketToken, 'student')
     : null;

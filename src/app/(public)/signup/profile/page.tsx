@@ -26,10 +26,12 @@ import { getSession } from '@/lib/session';
  *     browser here. `peekSignupTicket` reads the address WITHOUT consuming it —
  *     the profile route is the only thing that spends it, so opening this page
  *     twice costs nothing.
- *   - NEITHER. A dead or missing ticket and no session. Not a dead end: it
- *     renders the same email form `/signup` does, so the way out is one
- *     field rather than a back button and a guess about which page to start
- *     from.
+ *   - NEITHER. A dead or missing ticket and no session — including a live
+ *     ticket blocked by a session cookie that is present but failed to
+ *     validate, since that state has no readable identity either. Not a
+ *     dead end: it renders the same email form `/signup` does, so the way
+ *     out is one field rather than a back button and a guess about which
+ *     page to start from.
  */
 export default async function ProfileSetupPage() {
   const session = await getSession();
@@ -45,10 +47,12 @@ export default async function ProfileSetupPage() {
   } else {
     // `getSession()` returning falsy is not the same fact as "no session
     // cookie" — it also covers a present cookie that failed to validate.
-    // `ticketTokenFrom` applies this page's own precedence rule on the raw
-    // cookie jar, so a browser in that second state still lands here with
-    // `identity` unset (the fresh-link fallback below), never a ticket-mode
-    // form for an address the caller cannot actually submit under.
+    // `ticketTokenFrom` is the shared precedence rule (`profile-authorization.ts`)
+    // — the same gate the profile route applies, so this page and that route
+    // cannot disagree about who a ticket is readable by: a browser in that
+    // second state lands here with `identity` unset (the fresh-link
+    // fallback below), never a ticket-mode form for an address the caller
+    // cannot actually submit under.
     const token = ticketTokenFrom(await cookies());
     const ticketEmail = token ? await peekSignupTicket(prisma, token, 'teacher') : null;
     if (ticketEmail) identity = { email: ticketEmail, mode: 'ticket' };
