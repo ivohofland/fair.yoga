@@ -461,6 +461,23 @@ the head is the correct eviction victim under capacity pressure.
 
 Sessions are stored in the database (not JWTs) so they can be revoked. Session cookie points to a session record with `expires_at`. Middleware checks session validity on every authenticated request.
 
+### Session-issuing doors
+
+Every site that mints a session cookie also clears the signup-ticket cookie:
+a browser holding a session has no use for a ticket, and the profile routes
+will not read one while a session cookie is present (`ticketTokenFrom`,
+`src/lib/auth/profile-authorization.ts`).
+
+Re-derive the roster with:
+
+```sh
+grep -rn "setSessionCookie(" src/app src/lib | grep -v "\.test\."
+```
+
+Five at the time of writing: `magic-link/verify`, `magic-link/claim`,
+`passkey/authenticate/verify`, and the ticket paths of `teacher-profile` and
+`student-profile`.
+
 ---
 
 ## Database
