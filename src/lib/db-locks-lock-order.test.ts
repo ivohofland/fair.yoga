@@ -62,7 +62,7 @@ async function forceIndexOrderedPlan(tx: Prisma.TransactionClient): Promise<void
  * every lock in a single ordered statement, the per-pairing reproductions in
  * `template-lock-order.test.ts` can no longer CONSTRUCT an AB-BA cycle, so
  * they no longer detect a missing `ORDER BY` on the erasure side (verified:
- * deleting it leaves all three green). Testing the shared primitive once
+ * deleting it leaves them green). Testing the shared primitive once
  * repays that for every call site at the same time.
  *
  * WHY TWO DIFFERENT PLANS, and not two calls with the same predicate. Two
