@@ -13,12 +13,13 @@ const eslintConfig = defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
-  // `TeacherStudent` rows are created in exactly one place, and
+  // `TeacherStudent` rows are created in exactly one place —
+  // `linkTeacherStudent` (src/services/roster-link.ts) — and
   // `src/lib/student-visibility.ts` reasons about the set of callers that
-  // reach it. Before #181 the same statement was written at five call sites,
-  // each with its own read-then-write race; collapsing them is only durable
-  // if a sixth cannot quietly appear. Tests are exempt: the lock-order suite
-  // writes this table directly on purpose, to pin Prisma's own behaviour.
+  // reach it. This rule is what keeps that true: a direct create/upsert
+  // outside that one function reopens the read-then-write race #181 closed.
+  // Tests are exempt: some write this table directly on purpose, whether for
+  // plain fixture setup or to pin Prisma's own locking behaviour.
   {
     files: ['src/**/*.ts', 'src/**/*.tsx'],
     ignores: ['src/services/roster-link.ts', 'src/**/*.test.ts', 'src/**/*.test.tsx'],
