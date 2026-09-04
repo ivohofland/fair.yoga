@@ -11,6 +11,7 @@ import { formatRoomLocation, formatDayHeader } from '@/lib/format';
 import { startOfLocalDay } from '@/lib/timezone';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { PriceRange } from '@/components/booking/price-range';
+import { PricingExplainer } from '@/components/booking/pricing-explainer';
 import { toIncomeTier } from '@/lib/tiers.server';
 
 export const dynamic = 'force-dynamic';
@@ -94,13 +95,7 @@ export default async function TeacherBookingPage({
       {teacher.bio && <p className="type-body mt-2 max-w-[480px]">{teacher.bio}</p>}
 
       {/* Teal tint sets the pricing promise apart from the personal bio. */}
-      <div className="bg-teal-tint rounded-card p-5 mt-5 max-w-[480px]">
-        <p className="type-caption">
-          Prices are income-based: everyone in the room pays what fits their
-          situation, and the final price settles after class based on who came.
-          The highest tier never pays more than about twice the lowest.
-        </p>
-      </div>
+      <PricingExplainer className="mt-5 max-w-[480px]" />
 
       <h2 className="type-subtitle mt-8 mb-3">Upcoming classes</h2>
 

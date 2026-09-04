@@ -60,6 +60,37 @@ describe('BookingFlow', () => {
     ).toBeInTheDocument();
   });
 
+  it('toggles the pricing explanation in-place without navigating away', () => {
+    stubFetch();
+    renderFlow({ currentTier: null, isFirstBooking: false });
+
+    // The explanation is not visible initially
+    expect(
+      screen.queryByText(/Prices are income-based: everyone in the room pays/i),
+    ).not.toBeInTheDocument();
+
+    const toggleButton = screen.getByRole('button', { name: 'Learn more' });
+    expect(toggleButton).toHaveAttribute('aria-expanded', 'false');
+    // It is an in-place button, not a navigation link (#432)
+    expect(screen.queryByRole('link', { name: 'Learn more' })).not.toBeInTheDocument();
+
+    // Click "Learn more" to reveal explanation
+    fireEvent.click(toggleButton);
+    expect(
+      screen.getByText(/Prices are income-based: everyone in the room pays what fits their situation/i),
+    ).toBeInTheDocument();
+    expect(toggleButton).toHaveAttribute('aria-expanded', 'true');
+    expect(toggleButton).toHaveTextContent('Hide explanation');
+
+    // Click "Hide explanation" to collapse
+    fireEvent.click(toggleButton);
+    expect(
+      screen.queryByText(/Prices are income-based: everyone in the room pays/i),
+    ).not.toBeInTheDocument();
+    expect(toggleButton).toHaveAttribute('aria-expanded', 'false');
+    expect(toggleButton).toHaveTextContent('Learn more');
+  });
+
   it('refuses to book until an unreadable tier has been replaced', () => {
     stubFetch();
     renderFlow({ currentTier: null });
