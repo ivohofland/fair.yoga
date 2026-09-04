@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import {
   respondOk,
   respondError,
@@ -283,9 +283,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     if (err instanceof ClassFullError) {
       return respondError('Class is full', 409);
     }
+    // The column set, not a bare `P2002`. `Registration @@unique([classId,
+    // studentId])` is the only conflict this message is true of; a bare check
+    // would put these words on any unique violation the transaction can raise,
+    // which is how a roster-link collision used to be reported as a booking
+    // the student did not have (#181). An unmatched `P2002` falls through to
+    // `withErrorHandler`, which answers 409 and logs `warn` naming
+    // `meta.target` — the right family for a unique violation, and observable.
     if (
       err instanceof AlreadyRegisteredError ||
-      (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')
+      isUniqueConflictOn(err, ['classId', 'studentId'])
     ) {
       return respondError('Student is already registered for this class', 409);
     }
