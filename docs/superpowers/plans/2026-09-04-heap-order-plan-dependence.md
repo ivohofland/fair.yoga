@@ -235,9 +235,11 @@ Record which tests fail and at which assertion. Restore the clause and re-run to
 - [ ] **Step 7: Verify the whole local surface**
 
 ```bash
-npx tsc --noEmit && npx next lint && npx vitest run --project unit --project unit-sweeps --project components
+npx tsc --noEmit && npm run lint && npx vitest run --project unit --project unit-sweeps --project components
 ```
 Expected: clean typecheck, clean lint, all three projects pass. `integration` and `e2e` are not runnable in a worktree — CI covers them.
+
+Use `npm run lint` (the project's own script, which runs `eslint`). `next lint` was removed in Next 16 and fails with `Invalid project directory provided, no such directory: …/lint`.
 
 - [ ] **Step 8: Commit**
 
