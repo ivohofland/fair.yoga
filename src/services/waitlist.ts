@@ -261,8 +261,9 @@ export async function addToWaitlist(
     // be in need it — a `waiting` row written before this change never got a
     // link, and an unlink racing a join can leave a `waiting` row whose link
     // the unlink then deleted (see `withdrawWaitingEntriesForTeacher`'s
-    // docblock for that race). The cost is one upsert on a no-op rejoin, and
-    // it buys all three exits agreeing about whether a link exists.
+    // docblock for that race). The cost is one `linkTeacherStudent` call on a
+    // no-op rejoin, and it buys all three exits agreeing about whether a link
+    // exists.
     //
     // Order matters and is not a preference: the class lock is already held
     // (top of this transaction) and the `TeacherStudent` row is taken after
@@ -439,7 +440,7 @@ export async function removeFromWaitlist(
  *
  * `lockClassRow`'s bound now covers the rest of this transaction too, not
  * just the lock itself (see its docblock in `db-locks.ts`) — so
- * `activateRegistration`, the `teacherStudent.upsert` below and
+ * `activateRegistration`, the `linkTeacherStudent` call below and
  * `reorderWaitingEntries` each run under a 2s ceiling on any lock THEY wait
  * on. PER ACQUISITION, though, not a shared 2s allowance across them: `SET
  * LOCAL lock_timeout` arms afresh for every lock a statement waits on, so what
@@ -544,7 +545,7 @@ export async function promoteNext(
 
     // #166: a backstop, not the mechanism. The link is created where the
     // consent is given — `addToWaitlist` above — and nobody reaches this
-    // function without having joined. This upsert repairs the cases that
+    // function without having joined. This call repairs the cases that
     // join cannot reach: a `waiting` row written before that change, and one
     // written by hand (fixtures, a psql fix-up). One idempotent query, and
     // without it such a promotion registers a student the teacher's CRM
@@ -978,8 +979,8 @@ async function hasActiveRegistration(
  * It lives HERE rather than there because it must take the class row's
  * `FOR UPDATE` lock, and that convention belongs with the table it
  * protects. Without the lock, a `promoteNext` racing an unlink promotes the
- * student off the queue, and its `teacherStudent.upsert` re-creates the very
- * link the unlink is in the middle of deleting. (It no longer clears the
+ * student off the queue, and its `linkTeacherStudent` call re-creates the
+ * very link the unlink is in the middle of deleting. (It no longer clears the
  * `TeacherBlock` too: since the link moved to the join, promotion resolves
  * no invitations at all. The link alone is enough to want this lock.)
  *
@@ -1057,7 +1058,7 @@ async function hasActiveRegistration(
  * correctness requirement rather than a style note: a caller that deleted
  * the `TeacherStudent` row first would hold that row's lock while waiting
  * on a class lock `promoteNext` already had, while `promoteNext`'s own
- * `teacherStudent.upsert` waited on the row — a deadlock instead of a race.
+ * `linkTeacherStudent` call waited on the row — a deadlock instead of a race.
  *
  * A student with no `waiting` entry for this teacher locks nothing, so an
  * unlink racing a waitlist JOIN of that same student's can leave the new
@@ -1065,7 +1066,8 @@ async function hasActiveRegistration(
  * closes is the teacher's. That race is the one way a `waiting` entry can
  * outlive its link (the join creates one; an unlink that commits after the
  * join's withdrawal window deletes it), which is why `addToWaitlist` writes
- * the link on its no-op path too and `promoteNext` keeps its upsert.
+ * the link on its no-op path too and `promoteNext` keeps its
+ * `linkTeacherStudent` call.
  */
 export async function withdrawWaitingEntriesForTeacher(
   tx: TransactionClientOnly,

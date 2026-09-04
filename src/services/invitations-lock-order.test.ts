@@ -243,8 +243,9 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * cycle re-forms and Postgres answers with `40P01` again. This is what
    * makes the empty-update protection "one payload away from vanishing"
    * rather than a permanent safety net: nothing stops a future edit to
-   * `acceptInvitation`'s `update: {}` (a bookkeeping field, an
-   * `updatedAt`, anything) from landing exactly here with no warning.
+   * `unlinkTeacher`'s `TeacherBlock` `update: {}` (`invitations.ts` — the one
+   * real site left this quirk still governs, see `docs/lock-order.md`) from
+   * landing exactly here with no warning.
    */
   it('the opposite order deadlocks once the TeacherStudent write is not empty — the quirk this project stopped relying on', async () => {
     const { teacherId, studentId, email, invitationId } = await makeLinkedStudentWithPendingInvite();

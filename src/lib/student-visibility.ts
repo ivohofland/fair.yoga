@@ -189,23 +189,22 @@ void _projectionCarriesNoRawIdentity;
  *
  * An earlier draft of this comment argued it from the link side instead —
  * "every `TeacherStudent` writer requires a `session.studentId`" — and that is
- * false. Four of the five link-creating upsert sites do — `POST
- * /api/registrations`, `acceptInvitation` (`services/invitations.ts`), and
- * `addToWaitlist` and `claimSpot` (both `services/waitlist.ts`), each via
- * its own `teacherStudent.upsert` — but `promoteNext`'s own
- * `teacherStudent.upsert` (`services/waitlist.ts`) links `nextEntry.studentId`
- * off a persisted `WaitlistEntry`, during a cancellation someone else
- * initiated (`promoteAfterCancel` in `api/registrations/[id]/route.ts`;
+ * false. Every site that can CREATE a link goes through `linkTeacherStudent`
+ * (`services/roster-link.ts`), and an ESLint rule keeps it that way, so the set
+ * to check is that function's callers rather than a roster written down here.
+ * Most of them do hold a session — the student is acting for themselves. But
+ * `promoteNext` (`services/waitlist.ts`) links a `studentId` read off a
+ * persisted `WaitlistEntry`, during a cancellation someone else initiated
+ * (`promoteAfterCancel` in `api/registrations/[id]/route.ts`;
  * `deleteStudentAccount`'s `handleSpotFreed` call in `services/gdpr.ts`) —
  * and its own docblock says it is there to repair rows "written by hand
- * (fixtures, a psql fix-up)", i.e. precisely the rows no session produced.
- * The conclusion survives on the two supports above; the support that did
- * not survive is what a census of writers looks like when the writers are
+ * (fixtures, a psql fix-up)", i.e. precisely the rows no session produced. The
+ * conclusion survives on the two supports above; the support that did not
+ * survive is what a census of writers looks like when the writers are
  * counted, not read.
  *
- * "Five" counts the upserts that can *create* a link, which is the only set
- * this argument is about. `TeacherStudent` has a sixth writer —
- * `api/students/[id]/route.ts`'s `teacherStudent.update`, the archive toggle —
+ * `TeacherStudent` has one writer that is not a creator and so not in that set
+ * — `api/students/[id]/route.ts`'s `teacherStudent.update`, the archive toggle,
  * which only flips a flag on a link that already exists.
  *
  * It is kept rather than deleted because removing it means removing the claim
