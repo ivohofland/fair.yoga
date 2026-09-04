@@ -497,12 +497,57 @@ will not read one while a session cookie is present (`ticketTokenFrom`,
 Re-derive the roster with:
 
 ```sh
-grep -rn "setSessionCookie(" src/app | grep -v "\.test\."
+grep -rl "setSessionCookie" src --include='*.ts' --include='*.tsx' \
+  | grep -v '\.test\.' | grep -v 'src/lib/auth/session.ts'
 ```
 
 Five at the time of writing: `magic-link/verify`, `magic-link/claim`,
 `passkey/authenticate/verify`, and the ticket paths of `teacher-profile` and
 `student-profile`.
+
+Two things about that command, both learned by getting it wrong. It matches
+the bare name rather than `setSessionCookie(`, so a wrapped or reformatted
+call still counts; and it searches `src`, not `src/app`, so a door added
+outside the route tree cannot hide. `src/lib/auth/session.ts` is excluded
+because it defines the helper rather than using it. Cross-check against
+
+```sh
+grep -rl "createSession(" src --include='*.ts' --include='*.tsx' \
+  | grep -v '\.test\.' | grep -v 'src/lib/auth/session.ts'
+```
+
+which should name the same five files. The two are 1:1 today, and a
+divergence is itself the signal that a door was added or lost.
+
+The one door that ends a session rather than issuing one is the ticket-minting
+branch of `magic-link/verify` and `magic-link/claim`: minting a ticket clears
+AND revokes any session the request carried, because the precedence rule below
+would otherwise leave the new ticket unusable for its whole life.
+
+### The signup-ticket precedence rule
+
+A signup ticket is readable only when the request carries no session cookie —
+presence, not validity. `ticketTokenFrom` (`src/lib/auth/profile-authorization.ts`)
+is the only place that decision is spelled; everything else calls it. Four
+callers at the time of writing: the two resolvers in that same module (serving
+`POST /api/account/teacher-profile` and `POST /api/account/student-profile`),
+and the two server-rendered pages that prefill a form from a ticket —
+`/signup/profile` and the booking page. Re-derive with:
+
+```sh
+grep -rn "ticketTokenFrom(" src --include='*.ts' --include='*.tsx' \
+  | grep -v '\.test\.'
+```
+
+A page that re-derived the rule from `getSession()` instead would be subtly
+wrong in the same way twice over: `getSession()` is falsy both when no session
+cookie was sent and when one was sent but failed to validate, and only the
+first of those may fall back to a ticket.
+
+Presence has one definition because one parser answers it. `getSessionToken`
+reads `NextRequest.cookies`, the same store `ticketTokenFrom` asks; a second,
+hand-rolled `Cookie`-header split used to disagree with it about headers the
+platform parser refuses.
 
 ---
 

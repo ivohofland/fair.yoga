@@ -128,12 +128,11 @@ export default async function BookClassPage({
         })
       : null;
 
-  // `ticketTokenFrom` is the shared precedence rule (`profile-authorization.ts`)
-  // — the same gate `POST /api/account/student-profile` applies, so this page
-  // and that route cannot disagree about who a ticket is readable by. A
-  // session cookie that failed to validate still blocks it, the same as a
-  // valid one: `session` is falsy either way, but the ticket must not fill
-  // that gap with an address the route will refuse on submit.
+  // The shared precedence rule (`ticketTokenFrom`, profile-authorization.ts):
+  // no ticket while a session cookie is present, valid or not. Calling it
+  // rather than re-deriving it is the whole guarantee — `session` above is
+  // falsy for both "no cookie" and "a cookie that failed to validate", and
+  // the ticket must not fill that second gap with a prefilled address.
   const ticketToken = ticketTokenFrom(await cookies());
   const ticketEmail = ticketToken
     ? await peekSignupTicket(prisma, ticketToken, 'student')

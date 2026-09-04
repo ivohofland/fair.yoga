@@ -7,9 +7,9 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 
 /**
- * Step two of teacher signup (#385). Three ways to arrive, matching the two
- * authorizations `POST /api/account/teacher-profile` accepts plus the case
- * where neither holds:
+ * Step two of teacher signup (#385). Three ways to arrive, and this page
+ * only decides which form to render for each — the ticket-vs-session
+ * precedence itself is `ticketTokenFrom`'s, not this page's:
  *
  *   - SESSION. An account that already exists and has no teacher profile,
  *     adding the second hat. `SessionUser` makes that precisely a
@@ -45,14 +45,13 @@ export default async function ProfileSetupPage() {
     });
     identity = { email: account.email, mode: 'session' };
   } else {
-    // `getSession()` returning falsy is not the same fact as "no session
-    // cookie" — it also covers a present cookie that failed to validate.
-    // `ticketTokenFrom` is the shared precedence rule (`profile-authorization.ts`)
-    // — the same gate the profile route applies, so this page and that route
-    // cannot disagree about who a ticket is readable by: a browser in that
-    // second state lands here with `identity` unset (the fresh-link
-    // fallback below), never a ticket-mode form for an address the caller
-    // cannot actually submit under.
+    // The shared precedence rule (`ticketTokenFrom`, profile-authorization.ts):
+    // no ticket while a session cookie is present, valid or not. Calling it
+    // rather than re-deriving it is the whole guarantee — `getSession()`
+    // returning falsy is not the same fact as "no session cookie", since it
+    // also covers a present cookie that failed to validate, and a browser in
+    // that second state must land on the fresh-link fallback below rather
+    // than a ticket-mode form.
     const token = ticketTokenFrom(await cookies());
     const ticketEmail = token ? await peekSignupTicket(prisma, token, 'teacher') : null;
     if (ticketEmail) identity = { email: ticketEmail, mode: 'ticket' };
