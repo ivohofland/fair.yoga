@@ -5,7 +5,7 @@ import {
   peekSignupTicket,
   consumeSignupTicket,
   signupTicketFor,
-  signupTicketIsLive,
+  liveSignupTicketEmail,
   signupTicketCrossFamilyPurpose,
 } from './signup-ticket';
 import { generateMagicLinkToken } from './magic-link';
@@ -131,32 +131,36 @@ describe('signupTicketFor', () => {
   });
 });
 
-describe('signupTicketIsLive', () => {
-  it('is true for an unexpired ticket of either family', async () => {
+describe('liveSignupTicketEmail', () => {
+  it('names the address for an unexpired ticket of either family', async () => {
     const liveEmail = `live-ticket-${Date.now()}@test.local`;
     const token = await mintSignupTicket(db, liveEmail, 'teacher');
-    expect(await signupTicketIsLive(db, token)).toBe(true);
+    expect(await liveSignupTicketEmail(db, token)).toBe(liveEmail);
     await db.magicLinkToken.deleteMany({ where: { email: liveEmail } });
   });
 
-  it('is false for an expired ticket', async () => {
+  it('is null for an expired ticket', async () => {
     const deadEmail = `dead-ticket-${Date.now()}@test.local`;
     const token = await mintSignupTicket(db, deadEmail, 'student');
     await db.magicLinkToken.updateMany({
       where: { email: deadEmail },
       data: { expiresAt: new Date(Date.now() - 1000) },
     });
-    expect(await signupTicketIsLive(db, token)).toBe(false);
+    expect(await liveSignupTicketEmail(db, token)).toBeNull();
     await db.magicLinkToken.deleteMany({ where: { email: deadEmail } });
   });
 
-  it('is false for a token that is not a signup ticket at all', async () => {
+  it('is null for a token that is not a signup ticket at all', async () => {
     // A sign-in link is not a pending signup; reporting one as cancelled
     // would tell the user we discarded something we never held.
     const notTicketEmail = `not-a-ticket-${Date.now()}@test.local`;
     const token = await generateMagicLinkToken(db, notTicketEmail, { purpose: 'sign_in' });
-    expect(await signupTicketIsLive(db, token)).toBe(false);
+    expect(await liveSignupTicketEmail(db, token)).toBeNull();
     await db.magicLinkToken.deleteMany({ where: { email: notTicketEmail } });
+  });
+
+  it('is null for a token with no row at all', async () => {
+    expect(await liveSignupTicketEmail(db, 'never-existed')).toBeNull();
   });
 });
 

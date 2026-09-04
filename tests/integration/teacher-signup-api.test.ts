@@ -21,6 +21,12 @@ const clearSessionOwnerSlug = `clearsession-owner-${suffix}`;
 const revokeTicketEmail = `teacher-signup-verify-revoke-${suffix}@test.local`;
 const revokeOwnerEmail = `teacher-signup-verify-revoke-owner-${suffix}@test.local`;
 const revokeOwnerSlug = `revoke-owner-${suffix}`;
+// The ticket branch's two displacement cases: a live ticket for someone else's
+// address is cancelled by the new one; a live ticket for the SAME address is
+// the same signup being restarted.
+const displacedOtherEmail = `teacher-signup-displaced-other-${suffix}@test.local`;
+const displacedNewEmail = `teacher-signup-displaced-new-${suffix}@test.local`;
+const displacedSameEmail = `teacher-signup-displaced-same-${suffix}@test.local`;
 const onboardingEmail = `teacher-signup-onboarding-${suffix}@test.local`;
 const onboardingSlug = `onboarding-teacher-${suffix}`;
 // #168 follow-up test's fixtures — an address per attempt, none of which
@@ -116,6 +122,9 @@ afterAll(async () => {
           verifySignInNoAccountEmail,
           clearSessionTicketEmail,
           revokeTicketEmail,
+          displacedOtherEmail,
+          displacedNewEmail,
+          displacedSameEmail,
           ...existingAccountEmails,
         ],
       },
@@ -391,6 +400,65 @@ describe('POST /api/auth/magic-link/verify — teacher-signup ticket branch', ()
 
     expect(res.status).toBe(200);
     expect(await validateSession(prisma, rawSession)).toBeNull();
+
+    // And says so. Being signed out is the reader's own account disappearing;
+    // the sibling branch already reports its mirror image (`signupCancelled`),
+    // and this one used to end a sign-in without a word.
+    const body = (await res.json()) as { data: { sessionEnded: boolean } };
+    expect(body.data.sessionEnded).toBe(true);
+  });
+
+  it('reports the OTHER pending signup this ticket displaces', async () => {
+    // One ticket cookie, one address: minting for a second address leaves the
+    // first ticket unreachable, and its raw value existed nowhere but the
+    // cookie now overwritten.
+    const displaced = await mintSignupTicket(prisma, displacedOtherEmail, 'teacher');
+    const nonce = `teacher-signup-displaced-other-nonce-${suffix}`;
+    const token = await generateMagicLinkToken(prisma, displacedNewEmail, {
+      purpose: 'teacher_signup',
+      originBrowserHash: hashNonce(nonce),
+    });
+
+    const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${nonce}; fair_yoga_signup=${displaced}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ token }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { signupCancelled: boolean } };
+    expect(body.data.signupCancelled).toBe(true);
+  });
+
+  it('reports no cancellation when the displaced ticket is for the SAME address', async () => {
+    // Asking for a second link to the address you are already signing up
+    // under is the same signup continuing, not a cancelled one — the old
+    // ticket goes because this request replaces it, which is what the reader
+    // asked for. Nothing to report, and reporting it would be a lie.
+    const earlier = await mintSignupTicket(prisma, displacedSameEmail, 'teacher');
+    const nonce = `teacher-signup-displaced-same-nonce-${suffix}`;
+    const token = await generateMagicLinkToken(prisma, displacedSameEmail, {
+      purpose: 'teacher_signup',
+      originBrowserHash: hashNonce(nonce),
+    });
+
+    const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${nonce}; fair_yoga_signup=${earlier}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ token }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { signupCancelled: boolean } };
+    expect(body.data.signupCancelled).toBe(false);
   });
 
   it('still 400s a sign_in token for an address with no account, and sets no ticket', async () => {

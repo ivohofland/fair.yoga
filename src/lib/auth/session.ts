@@ -131,14 +131,20 @@ export async function invalidateSession(
  * `deleteMany` rather than `delete`: a row that has already gone is this
  * function's postcondition, not an error worth catching — and writing it that
  * way keeps a genuine database failure from being swallowed alongside it.
+ *
+ * Answers whether a sign-in actually ended, which is narrower than whether a
+ * cookie was carried: a cookie naming a session that had already expired or
+ * been revoked cost its holder nothing, and a caller reporting the sign-out
+ * to them would be describing something that did not happen.
  */
 export async function revokeRequestSession(
   db: PrismaClient,
   request: NextRequest,
-): Promise<void> {
+): Promise<boolean> {
   const token = getSessionToken(request);
-  if (!token) return;
-  await db.session.deleteMany({ where: { id: hashToken(token) } });
+  if (!token) return false;
+  const { count } = await db.session.deleteMany({ where: { id: hashToken(token) } });
+  return count > 0;
 }
 
 /**

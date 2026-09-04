@@ -12,6 +12,10 @@ import VerifyPage from './page';
 
 describe('VerifyPage', () => {
   afterEach(() => {
+    // Before the rest: a test that fails partway through a fake-timer block
+    // would otherwise leave them installed, and every test after it times out
+    // waiting for a clock nothing advances.
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     push.mockReset();
@@ -113,14 +117,93 @@ describe('VerifyPage', () => {
   });
 
   /**
+   * The ticket-minting branch answers with no `accountId`, and its two
+   * displacements are not the sign-in the session branch's copy describes:
+   * the reader did not sign in here, they started a signup that replaced
+   * something. Same flags, different sentence.
+   */
+  it('says the OTHER signup was cancelled by this one, not by signing in', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: { redirectTo: '/signup/profile', signupCancelled: true },
+        }),
+      }),
+    );
+    render(<VerifyPage />);
+
+    expect(
+      await screen.findByText(/Your other pending signup was cancelled by this one/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/cancelled because you signed in/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('says so when starting this signup signed the reader out', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: { redirectTo: '/signup/profile', sessionEnded: true },
+        }),
+      }),
+    );
+    render(<VerifyPage />);
+
+    expect(
+      await screen.findByText(/signed you out of your other account/),
+    ).toBeInTheDocument();
+  });
+
+  it('shows no sign-out notice when no session was ended', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { redirectTo: '/signup/profile' } }),
+      }),
+    );
+    render(<VerifyPage />);
+
+    expect(await screen.findByText("Let's set up your page.")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/signed you out of your other account/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('gives the sign-out notice the same reading time as the cancellation one', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: { redirectTo: '/signup/profile', sessionEnded: true },
+        }),
+      }),
+    );
+    render(<VerifyPage />);
+
+    await vi.advanceTimersByTimeAsync(900);
+    expect(push).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(3100);
+    expect(push).toHaveBeenCalledWith('/signup/profile');
+    vi.useRealTimers();
+  });
+
+  /**
    * The notice above only does its job if the auto-redirect gives it time
    * to be read. Verified by the exact delay scheduled, not by waiting out
    * the real interval — a regression collapsing this back to the ordinary
    * 900ms would leave the DOM assertions above passing while the notice is
    * gone before anyone could read it.
    */
-  it('schedules the auto-redirect for 4000ms when the cancellation notice is showing', async () => {
-    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+  it('holds the redirect past 900ms while the cancellation notice is showing', async () => {
+    vi.useFakeTimers();
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -132,14 +215,17 @@ describe('VerifyPage', () => {
     );
     render(<VerifyPage />);
 
-    await screen.findByText(/Your pending signup was cancelled because you signed in/);
-
-    const redirectCall = setTimeoutSpy.mock.calls.find(([, delay]) => delay === 900 || delay === 4000);
-    expect(redirectCall?.[1]).toBe(4000);
+    // The redirect itself, not the `setTimeout` call that schedules it: a
+    // spy over every scheduled callback cannot say which one navigates, and
+    // matching on the delay value asserts the number back to itself.
+    await vi.advanceTimersByTimeAsync(900);
+    expect(push).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(3100);
+    expect(push).toHaveBeenCalledWith('/schedule');
   });
 
-  it('keeps the ordinary 900ms redirect when there is no cancellation to show', async () => {
-    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+  it('redirects on the ordinary beat when there is nothing to read', async () => {
+    vi.useFakeTimers();
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -149,9 +235,7 @@ describe('VerifyPage', () => {
     );
     render(<VerifyPage />);
 
-    await screen.findByText("You're signed in.");
-
-    const redirectCall = setTimeoutSpy.mock.calls.find(([, delay]) => delay === 900 || delay === 4000);
-    expect(redirectCall?.[1]).toBe(900);
+    await vi.advanceTimersByTimeAsync(900);
+    expect(push).toHaveBeenCalledWith('/schedule');
   });
 });

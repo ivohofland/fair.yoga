@@ -12,7 +12,7 @@ import {
   setSignupTicketCookie,
   clearSignupTicketCookie,
   signupTicketFor,
-  signupTicketIsLive,
+  liveSignupTicketEmail,
   SIGNUP_TICKET_COOKIE,
 } from '@/lib/auth';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
@@ -26,10 +26,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Must run before `verifyWithHandoff` below, not after — see
   // `consumeTokenRow` (magic-link.ts) for why the ordering matters here.
-  // (checked via `signupTicketIsLive`, not cookie presence — see its
-  // docblock in signup-ticket.ts)
   const strayTicket = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
-  const signupCancelled = strayTicket ? await signupTicketIsLive(prisma, strayTicket) : false;
+  const strayTicketEmail = strayTicket
+    ? await liveSignupTicketEmail(prisma, strayTicket)
+    : null;
 
   const outcome = await verifyWithHandoff(prisma, token, readOriginNonce(request));
 
@@ -54,15 +54,23 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // created later, together with the profile.
   if (!resolved && signupTicket) {
     const ticket = await mintSignupTicket(prisma, email, signupTicket.family);
-    const response = respondOk({ redirectTo: signupTicket.dest });
-    setSignupTicketCookie(response.headers, ticket);
-    clearOriginNonceCookie(response.headers);
     // A session cookie surviving this response would block the very ticket it
     // just set, for that ticket's whole life (`ticketTokenFrom`) — so the
     // clear is what makes the ticket usable at all, not hygiene. Revoked as
     // well as cleared: the cookie ends the sign-in for this browser, the row
     // behind it decides whether that token still authenticates anywhere.
-    await revokeRequestSession(prisma, request);
+    const sessionEnded = await revokeRequestSession(prisma, request);
+    const response = respondOk({
+      redirectTo: signupTicket.dest,
+      // This branch overwrites the ticket cookie, and a ticket's raw value
+      // lives nowhere else — so a live ticket for ANOTHER address is a signup
+      // that just became unreachable. The same address is this signup being
+      // restarted, which is what the reader asked for and no cancellation.
+      signupCancelled: strayTicketEmail !== null && strayTicketEmail !== email,
+      sessionEnded,
+    });
+    setSignupTicketCookie(response.headers, ticket);
+    clearOriginNonceCookie(response.headers);
     clearSessionCookie(response.headers);
     return response;
   }
@@ -79,7 +87,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const redirectTo =
     tokenRedirect && isSafeRelativePath(tokenRedirect) ? tokenRedirect : fallback;
 
-  const response = respondOk({ accountId: resolved.accountId, redirectTo, signupCancelled });
+  const response = respondOk({
+    accountId: resolved.accountId,
+    redirectTo,
+    // Any live ticket, whatever its address: signing in abandons the signup.
+    signupCancelled: strayTicketEmail !== null,
+  });
   setSessionCookie(response.headers, sessionToken);
   clearOriginNonceCookie(response.headers);
   // A browser that just received a session has no legitimate reason to keep
