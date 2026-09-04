@@ -95,6 +95,29 @@ export function clearSignupTicketCookie(headers: Headers): void {
 }
 
 /**
+ * Whether a token names a live signup ticket of either family, without
+ * consuming it or caring which family it belongs to.
+ *
+ * Checked against `TICKET_PURPOSE` rather than a duplicated purpose list, so
+ * a third family's purpose joins this predicate by construction. Cookie
+ * presence alone is not enough for this check to mean anything: a token that
+ * is missing, expired, or was never a ticket at all must all read as "no
+ * live ticket" here, not as evidence something was cancelled.
+ */
+export async function signupTicketIsLive(
+  db: PrismaClient,
+  token: string,
+): Promise<boolean> {
+  const row = await db.magicLinkToken.findUnique({
+    where: { tokenHash: hashToken(token) },
+    select: { expiresAt: true, purpose: true },
+  });
+  if (!row) return false;
+  const isTicket = (Object.values(TICKET_PURPOSE) as MagicLinkPurpose[]).includes(row.purpose);
+  return isTicket && row.expiresAt > new Date();
+}
+
+/**
  * The destination-first ticket decision shared by `magic-link/verify` and
  * `magic-link/claim` — both routes redeem the same token family/purpose
  * shape and must agree on what a resulting ticket authorizes. Destination

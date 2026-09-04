@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { generateMagicLinkToken, hashNonce } from '@/lib/auth';
+import { generateMagicLinkToken, hashNonce, mintSignupTicket } from '@/lib/auth';
 import { BASE_URL, uniqueSuffix, freshIp } from '../helpers';
 
 const prisma = new PrismaClient();
@@ -192,6 +192,75 @@ describe('POST /api/auth/magic-link/verify — the claim moment over HTTP', () =
     });
     expect(student.claimedAt).not.toBeNull();
     expect(student.accountId).not.toBeNull();
+  });
+});
+
+describe('POST /api/auth/magic-link/verify — reporting a cancelled signup ticket', () => {
+  it('reports the cancellation when signing in drops a live signup ticket', async () => {
+    const signupEmail = `cancelled-signup-${suffix}@test.local`;
+    const ticket = await mintSignupTicket(prisma, signupEmail, 'teacher');
+
+    // A different address, which already has an account, signs in on the
+    // same browser.
+    const signInEmail = `cancels-it-${suffix}@test.local`;
+    await prisma.student.create({
+      data: {
+        firstName: 'Signs', lastName: 'In', email: signInEmail, incomeTier: 3,
+        claimedAt: new Date(), account: { create: { email: signInEmail } },
+      },
+    });
+
+    const nonce = `cancel-notice-nonce-${suffix}`;
+    const raw = await generateMagicLinkToken(prisma, signInEmail, {
+      purpose: 'sign_in',
+      originBrowserHash: hashNonce(nonce),
+    });
+
+    const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_origin=${nonce}; fair_yoga_signup=${ticket}`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ token: raw }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { signupCancelled: boolean } };
+    expect(body.data.signupCancelled).toBe(true);
+  });
+
+  it('does not claim a cancellation when the ticket cookie names a dead token', async () => {
+    const signInEmail = `no-false-cancel-${suffix}@test.local`;
+    await prisma.student.create({
+      data: {
+        firstName: 'No', lastName: 'Notice', email: signInEmail, incomeTier: 3,
+        claimedAt: new Date(), account: { create: { email: signInEmail } },
+      },
+    });
+
+    const nonce = `no-cancel-nonce-${suffix}`;
+    const raw = await generateMagicLinkToken(prisma, signInEmail, {
+      purpose: 'sign_in',
+      originBrowserHash: hashNonce(nonce),
+    });
+
+    const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // A cookie naming a token that no longer exists. Cookie presence
+        // alone would report a signup cancelled that was never pending.
+        Cookie: `fair_yoga_origin=${nonce}; fair_yoga_signup=long-gone-token`,
+        ...freshIp(),
+      },
+      body: JSON.stringify({ token: raw }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { signupCancelled: boolean } };
+    expect(body.data.signupCancelled).toBe(false);
   });
 });
 

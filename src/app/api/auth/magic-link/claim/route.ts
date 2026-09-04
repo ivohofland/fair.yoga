@@ -10,6 +10,8 @@ import {
   setSignupTicketCookie,
   clearSignupTicketCookie,
   signupTicketFor,
+  signupTicketIsLive,
+  SIGNUP_TICKET_COOKIE,
 } from '@/lib/auth';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
@@ -66,7 +68,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const redirectTo =
     tokenRedirect && isSafeRelativePath(tokenRedirect) ? tokenRedirect : fallback;
 
-  const response = respondOk({ accountId: resolved.accountId, redirectTo });
+  // Reported from a DB check, not from cookie presence alone: a cookie
+  // naming an expired or already-consumed token must not be told back to the
+  // user as a signup we just cancelled for them.
+  const strayTicket = request.cookies.get(SIGNUP_TICKET_COOKIE)?.value;
+  const signupCancelled = strayTicket ? await signupTicketIsLive(prisma, strayTicket) : false;
+
+  const response = respondOk({ accountId: resolved.accountId, redirectTo, signupCancelled });
   setSessionCookie(response.headers, sessionToken);
   clearOriginNonceCookie(response.headers);
   // A browser that just received a session has no legitimate reason to keep
