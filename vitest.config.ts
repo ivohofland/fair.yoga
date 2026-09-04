@@ -74,6 +74,11 @@ const LOCK_CONTENTION_TESTS = [
   // this note in `gdpr-lock-order.test.ts` was de-numbered for the same
   // reason; this one was missed and went stale.
   'src/services/gdpr-lock-order.test.ts',
+  // The first kind again: its insert-race test holds a transaction open —
+  // via an external release signal, for 200ms+ — while a concurrent
+  // `linkTeacherStudent` call contends for the same uncommitted
+  // `(teacherId, studentId)` tuple, the same shape as
+  // `room-archive-lock-order.test.ts`.
   'src/services/roster-link.test.ts',
 ] as const;
 

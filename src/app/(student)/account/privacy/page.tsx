@@ -103,7 +103,7 @@ export default async function PrivacySettingsPage() {
           title="No teachers yet."
           // Three ways in, not two. Joining a waitlist creates the link as
           // surely as booking does (`addToWaitlist`, services/waitlist.ts,
-          // upserts `TeacherStudent` and calls `resolveInvitationOnLink`) —
+          // links `TeacherStudent` and calls `resolveInvitationOnLink`) —
           // naming only booking made this an incomplete list stated as a
           // complete one, on the page whose whole job is telling a student
           // how their teacher relationships come to exist. Both branches are

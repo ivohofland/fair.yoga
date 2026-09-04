@@ -858,26 +858,32 @@ export async function acceptInvitation(
       data: { status: 'accepted', respondedAt: new Date() },
     });
     if (updated.count === 0) {
-      // Zero rows can mean two different things, and only one of them is a
-      // refusal. A concurrent DECLINE from the same account (the race the
+      // Zero rows can mean THREE different things, and only one of them is
+      // success. A concurrent DECLINE from the same account (the race the
       // comment above names) leaves this row 'declined' — genuinely not what
-      // this call wanted, still NOT_PENDING. But `resolveInvitationOnLink`
-      // (services/link-consent.ts) can ALSO reach this exact row: a booking
-      // or waitlist join by this same account, with this same teacher,
-      // resolves the identical invitation as a side effect of the student's
-      // own consenting act (#166) — and the roster-link write above already
-      // waits for that transaction to fully commit before it can proceed
-      // (measured, #181 task 1), so by the time this line runs, that other
-      // writer's 'accepted' may already be visible. That is not a failure to
-      // report: the invitation IS accepted, which is what this call wanted
-      // too — just achieved by a different hand. Re-reading it and returning
-      // success is what makes a stale double-tap of "Accept" idempotent
-      // instead of a 409, the same shape #197 asks for elsewhere.
-      const current = await tx.invitation.findUniqueOrThrow({
+      // this call wanted, still NOT_PENDING. A concurrent DELETE — the
+      // teacher can remove a still-pending invitation outright
+      // (`DELETE /api/invitations/[id]`, which protects only `declined`
+      // rows from removal) — leaves no row at all; `findUnique`, not
+      // `findUniqueOrThrow`, is what keeps that case a clean NOT_PENDING
+      // instead of an unhandled `P2025` `classifyApiError` has no branch
+      // for. But `resolveInvitationOnLink` (services/link-consent.ts) can
+      // ALSO reach this exact row: a booking or waitlist join by this same
+      // account, with this same teacher, resolves the identical invitation
+      // as a side effect of the student's own consenting act (#166) — and
+      // the roster-link write above already waits for that transaction to
+      // fully commit before it can proceed (measured, #181 task 1), so by
+      // the time this line runs, that other writer's 'accepted' may already
+      // be visible. That is not a failure to report: the invitation IS
+      // accepted, which is what this call wanted too — just achieved by a
+      // different hand. Treating that case as success is what makes a stale
+      // double-tap of "Accept" idempotent instead of a 409, the same shape
+      // #197 asks for elsewhere.
+      const current = await tx.invitation.findUnique({
         where: { id: invitation.id },
         select: { status: true },
       });
-      if (current.status !== 'accepted') throw new NotPendingError();
+      if (current?.status !== 'accepted') throw new NotPendingError();
     }
 
     return true;

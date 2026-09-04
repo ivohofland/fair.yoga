@@ -400,9 +400,10 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * `acceptInvitation` and a real-shaped unlink coexist. It cannot fail on
    * the write order, and the four-specialist review of #174 proved that by
    * reverting the reorder in `invitations.ts` and watching it stay green.
-   * The fixture is `linked`, so the upsert takes the three-`SELECT` path and
-   * never requests the row lock the cycle needs — in EITHER order. The
-   * falsifiable version is the test below it.
+   * The fixture is `linked`, so `linkTeacherStudent`'s `ON CONFLICT DO
+   * NOTHING` resolves against the row already there without requesting the
+   * lock the cycle needs — in EITHER order. The falsifiable version is the
+   * test below it.
    */
   it('the real accept and a real-shaped unlink coexist on an existing link', async () => {
     const { teacherId, studentId, email, invitationId } = await makeLinkedStudentWithPendingInvite();
@@ -449,7 +450,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * either order — that is why the tests above hand-roll a synthetic
    * non-empty `update`, and why the previous version of THIS test passed
    * with the reorder reverted. The fixture here is unlinked so the recorded
-   * upsert is the lock-taking `INSERT` path, the write whose position
+   * write is the lock-taking `INSERT` path, the write whose position
    * actually matters.
    *
    * The result assertion is `{ ok: true }`, not "did not reject". The
@@ -519,7 +520,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * The counterparty is `POST /api/registrations`' own statement order,
    * copied rather than paraphrased, and the copying is the whole point: the
    * route takes the `Class` row lock, reads, inserts the `Registration`, and
-   * only THEN upserts `TeacherStudent` before reaching `Invitation` through
+   * only THEN links `TeacherStudent` before reaching `Invitation` through
    * `resolveInvitationOnLink`. A counterparty that upserts `TeacherStudent`
    * as its FIRST statement — which is what an earlier attempt at this test
    * used — always wins that insert, so the accept can only ever lose it with
@@ -619,18 +620,19 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
   }, 30_000);
 
   /**
-   * The reorder moved the `TeacherStudent` upsert BEFORE the pending check —
-   * unconditionally, every call, whether or not the invitation turns out
-   * still to be pending. A `return false` on the stale-invitation path would
-   * commit that upsert regardless: the transaction reaches its end, Prisma
-   * commits it, and a link now exists for an invitation nobody accepted.
-   * Only a throw (`NotPendingError`, caught outside `$transaction`) rolls
-   * the upsert back with the rest of the transaction. This fixture starts
-   * already-declined with no `TeacherStudent` row, so `acceptInvitation`'s
-   * own `updateMany` matches nothing on the very first call — no
-   * concurrency needed to hit the path this guards.
+   * The reorder moved the `TeacherStudent` roster-link write BEFORE the
+   * pending check — unconditionally, every call, whether or not the
+   * invitation turns out still to be pending. A `return false` on the
+   * stale-invitation path would commit that write regardless: the
+   * transaction reaches its end, Prisma commits it, and a link now exists
+   * for an invitation nobody accepted. Only a throw (`NotPendingError`,
+   * caught outside `$transaction`) rolls the write back with the rest of
+   * the transaction. This fixture starts already-declined with no
+   * `TeacherStudent` row, so `acceptInvitation`'s own `updateMany` matches
+   * nothing on the very first call — no concurrency needed to hit the path
+   * this guards.
    */
-  it('a NOT_PENDING refusal leaves no TeacherStudent row, even though the upsert ran first', async () => {
+  it('a NOT_PENDING refusal leaves no TeacherStudent row, even though the roster-link write ran first', async () => {
     const local = uniqueSuffix();
     const email = `lock-order-notpending-${local}@test.local`;
 
@@ -675,6 +677,59 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
     expect(await prisma.teacherStudent.findUnique({
       where: { teacherId_studentId: { teacherId: teacher.id, studentId: student.id } },
     })).toBeNull();
+  });
+
+  /**
+   * The other side of the same re-read, isolated rather than entangled in a
+   * race. `'a real accept racing a real booking on an unlinked pair
+   * succeeds'` above exercises this same branch, but only as one strand of a
+   * timing-forced interleaving — this fixture starts already-`accepted`, no
+   * concurrency needed, so `acceptInvitation`'s own `updateMany` (scoped to
+   * `status: 'pending'`) is guaranteed to match nothing and the re-read's
+   * `current?.status === 'accepted'` arm is what decides the outcome, not a
+   * handshake landing at the right moment.
+   */
+  it('an invitation already accepted by a different writer is idempotent success, not NOT_PENDING', async () => {
+    const local = uniqueSuffix();
+    const email = `lock-order-alreadyaccepted-${local}@test.local`;
+
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Lock', lastName: 'Order',
+        email: `lock-order-alreadyaccepted-teacher-${local}@test.local`,
+        account: { create: { email: `lock-order-alreadyaccepted-teacher-${local}@test.local` } },
+        bio: '#181 final review Finding 5 fixture teacher',
+        pageSlug: `lock-order-alreadyaccepted-${local}`,
+      },
+      select: { id: true, accountId: true },
+    });
+    lockOrderTeacherIds.push(teacher.id);
+    lockOrderTeacherAccountIds.push(teacher.accountId);
+
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Lock', lastName: 'Order', email, claimedAt: new Date(),
+        account: { create: { email } },
+      },
+      select: { id: true, accountId: true },
+    });
+    lockOrderStudentIds.push(student.id);
+    lockOrderStudentAccountIds.push(student.accountId as string);
+
+    // Already `accepted` — as if some other writer (a booking's
+    // `resolveInvitationOnLink`) had already resolved it.
+    const invitation = await prisma.invitation.create({
+      data: {
+        teacherId: teacher.id, email, firstName: 'Lock', lastName: 'Order',
+        status: 'accepted', respondedAt: new Date(),
+      },
+      select: { id: true },
+    });
+
+    const result = await acceptInvitation(prisma, {
+      invitationId: invitation.id, studentId: student.id, accountEmail: email,
+    });
+    expect(result).toEqual({ ok: true });
   });
 });
 

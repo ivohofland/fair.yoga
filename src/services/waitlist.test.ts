@@ -1637,8 +1637,8 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
   it('a promotion repairs a missing link but leaves the invitation as it stands', async () => {
     // Written by hand, because that is the only way to reach a promotion
     // with no link now that joining makes one — and it is exactly what a row
-    // written before this change looks like. The upsert in `promoteNext` is
-    // the backstop for those rows.
+    // written before this change looks like. The `linkTeacherStudent` call
+    // in `promoteNext` is the backstop for those rows.
     await prisma.waitlistEntry.create({
       data: { classId: promoteClassId, studentId: promoteId, position: 1, status: 'waiting' },
     });

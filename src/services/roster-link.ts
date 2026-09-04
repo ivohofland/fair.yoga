@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 
 /**
  * Put this student on this teacher's roster, whether or not they already are.
