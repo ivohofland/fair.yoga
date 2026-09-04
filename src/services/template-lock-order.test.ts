@@ -313,9 +313,10 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
 
   /**
    * The second half of issue 180. `archiveOrUnarchiveTemplate`'s multi-row
-   * `calendarEntry.deleteMany` took its locks in heap order for the same reason the
-   * sync's `updateMany` did (issue 180's first half, deleted with the
-   * function in #194) — and had no id array to sort even in principle,
+   * `calendarEntry.deleteMany` took its locks in whatever order the planner
+   * picked, for the same reason the sync's `updateMany` did (issue 180's first
+   * half, deleted with the function in #194) — and had no id array to sort
+   * even in principle,
    * because its delete takes a predicate, not an
    * `id: { in: [...] } }` filter (`docs/lock-order.md`: "`archiveOrUnarchiveTemplate`
    * does not even pass ids — its `deleteMany` takes a predicate, so it has no
