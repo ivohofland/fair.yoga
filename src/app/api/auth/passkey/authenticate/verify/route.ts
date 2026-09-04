@@ -4,6 +4,7 @@ import {
   getAndDeleteChallenge,
   createSession,
   setSessionCookie,
+  clearSignupTicketCookie,
 } from '@/lib/auth';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
@@ -61,6 +62,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     redirectTo,
   });
   setSessionCookie(apiResponse.headers, sessionToken);
+  // A browser that just received a session has no legitimate reason to keep
+  // carrying a ticket cookie forward — the same reason `magic-link/verify`
+  // and `claim` clear it in their session-issuing branches.
+  clearSignupTicketCookie(apiResponse.headers);
 
   return apiResponse;
 });
