@@ -253,9 +253,14 @@ configuration #428 documents as an account-switching vector.
 
 Tests precede the extraction.
 
-**New — `tests/integration/teacher-profile-ticket.test.ts`.** No teacher
-sibling to `student-profile-ticket.test.ts` exists, so the teacher side has no
-ticket coverage at all. Red before the resolver exists:
+**New — `tests/integration/teacher-profile-precedence.test.ts`.**
+`teacher-signup-api.test.ts` already covers `teacher-profile`'s ticket path
+(create, spent ticket, `SLUG_TAKEN`, the #161 race, timezone — lines 268-478)
+and its session path (line 680, "creates the teacher on the signed-in account,
+with no ticket"). What no test anywhere presents is **both cookies on one
+request**, which is exactly #428. A new focused file rather than growing a
+720-line one, with self-contained fixtures so it does not depend on that
+file's shared `beforeAll`. Red before the resolver exists:
 
 - session cookie + live ticket for another address → session path wins; no
   second account; the caller's session unchanged *(the #428 regression test)*
