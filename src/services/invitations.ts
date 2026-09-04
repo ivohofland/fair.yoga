@@ -719,13 +719,13 @@ export async function listPendingInvitations(
 
 /**
  * Rolls back `acceptInvitation`'s transaction when the invitation is no
- * longer pending. A plain `return false` would commit the `TeacherStudent`
- * upsert taken above it — including, on the create path, a genuine
+ * longer pending. A plain `return false` would commit the roster-link write
+ * taken above it — including, on the create path, a genuine
  * `INSERT` — so the link would exist for an invitation nobody accepted.
  * Only a throw, caught outside `$transaction`, rolls that write back with
  * everything else. `invitations-lock-order.test.ts` proves the negative
  * directly: a NOT_PENDING refusal leaves no `TeacherStudent` row even though
- * the upsert already ran by the time this fires.
+ * that write already ran by the time this fires.
  *
  * Declared ABOVE `acceptInvitation`'s docblock, not between it and the
  * function. It sat between them until #174's four-specialist review, which
@@ -771,8 +771,8 @@ class NotPendingError extends Error {}
  * (`deleteTeacherAccount`, services/gdpr.ts) deletes every `TeacherStudent`
  * row this teacher had, but it does not touch `Invitation` — so an
  * invitation sent before the erasure is still `pending`, and without this
- * the `upsert` below RECREATES a link erasure deleted, against an account
- * that no longer exists. Every reader that surfaces a teacher to another
+ * the roster-link write below RECREATES a link erasure deleted, against an
+ * account that no longer exists. Every reader that surfaces a teacher to another
  * person filters this (`(public)/[slug]`, `(public)/[slug]/book/[classId]`,
  * `validateSession`, `payment-reminders`); this one did not.
  *
@@ -809,46 +809,42 @@ export async function acceptInvitation(
     // round, which is a genuine cycle on paper — two transactions, each
     // holding what the other wants next.
     //
-    // It does not currently deadlock, and the reason is not that the old
-    // order was safe: `upsert({ where, update: {}, create: {...} })`
-    // compiles to three plain, non-locking `SELECT`s when the row already
-    // exists (confirmed by query log, #174 task 7), not the atomic
-    // `INSERT ... ON CONFLICT DO UPDATE` a non-empty `update` produces — so
-    // the upsert below has never actually asked Postgres for the row lock
-    // the cycle needs. That is an accident of how Prisma compiles an empty
-    // `update` object, not a design decision, and it is one real column
-    // away from vanishing: give this `update` a single field (an
-    // `updatedAt`, a bookkeeping flag) and the atomic path returns, the
-    // lock is taken, the cycle re-forms, and Postgres starts answering
-    // `40P01 deadlock detected` — surfaced as a 500 by `withErrorHandler` —
-    // with no warning anywhere that the edit did that. Reordering removes
-    // the dependency on that accident rather than leaving it as the only
-    // thing standing between this function and a deadlock the next
-    // contributor who "tidies" `update: {}` would reintroduce silently. See
-    // `docs/lock-order.md`, and the mechanism-pinning tests in
-    // `invitations-lock-order.test.ts` (this directory) that force the
-    // atomic path with a synthetic non-empty `update` and show the old order
-    // deadlocks under it while this one does not.
+    // The write below is `linkTeacherStudent` (services/roster-link.ts), one
+    // atomic statement — `createMany` with `skipDuplicates`, which compiles
+    // to `INSERT ... ON CONFLICT DO NOTHING` (#181). That closed a real 409
+    // (a caller that lost the race used to get Prisma's `P2002`), but it did
+    // NOT make the cycle above go away: measured directly (#181 task 1), the
+    // wait edge survives the statement change — `ON CONFLICT DO NOTHING`
+    // still asks Postgres for the row lock against an uncommitted
+    // conflicting tuple, and that wait still participates in deadlock
+    // detection. #179's reorder is what closes this cycle; the new statement
+    // does not close it by itself.
     //
-    // The cycle is not only hypothetical, either: on a pair with no link yet,
-    // this upsert genuinely `INSERT`s, and so does `POST
-    // /api/registrations`'s — which upserts `TeacherStudent` and then reaches
+    // On a pair with no link yet, this call genuinely `INSERT`s, and so does
+    // `POST /api/registrations`'s — which reaches the roster link and then
     // `Invitation` through `resolveInvitationOnLink`. Postgres makes the
     // second inserter wait on the first's uncommitted tuple, and that wait
     // deadlocks exactly like a row lock. Reproduced against the real function
     // and the route's real statement order, three runs per order: old order
     // `accept: REJECTED 40P01` 3/3, this order no deadlock 3/3
-    // (`does not deadlock when a real accept races a real booking on an
-    // unlinked pair`). That reproduction needs a handshake to widen a
-    // one-round-trip window, so the order itself is pinned separately and
-    // unconditionally by `takes TeacherStudent before Invitation, and
-    // accepts`.
+    // (`a real accept racing a real booking on an unlinked pair succeeds —
+    // the link exists, which is what both callers wanted (#181)`,
+    // `invitations-lock-order.test.ts`). That reproduction needs a handshake
+    // to widen a one-round-trip window, so the order itself is pinned
+    // separately and unconditionally by `takes TeacherStudent before
+    // Invitation, and accepts`. `invitations-lock-order.test.ts` also pins
+    // the order's effect directly: a hand-rolled non-empty `TeacherStudent`
+    // write deadlocks under the old order and does not under this one. See
+    // `docs/lock-order.md`, and the pending-check below for what happens
+    // when this write's own wait resolves after the other side has already
+    // committed.
     //
-    // Upserting first is safe to do unconditionally: the link is not the
-    // thing being decided. If the `updateMany` below then matches nothing —
-    // a concurrent decline or unlink got there first — the transaction
-    // rolls back and the upsert goes with it (see `NotPendingError` above
-    // for why that has to be a throw rather than a `return false`).
+    // Writing the roster link first is safe to do unconditionally: the link
+    // is not the thing being decided. If the `updateMany` below then matches
+    // nothing — a concurrent decline or unlink got there first — the
+    // transaction rolls back and that write goes with it (see
+    // `NotPendingError` above for why that has to be a throw rather than a
+    // `return false`).
     //
     await linkTeacherStudent(tx, { teacherId: invitation.teacherId, studentId: input.studentId });
 
@@ -995,7 +991,7 @@ export async function unlinkTeacher(
     // from along with the link — left in place, it hands the teacher a lever
     // to reach back through: cancel any other registration in that class,
     // `handleSpotFreed` promotes this student off the queue, and the
-    // promotion's own `teacherStudent.upsert` restores the link this
+    // promotion's own `linkTeacherStudent` call restores the link this
     // transaction is deleting. Withdrawing (rather than having `promoteNext`
     // skip a blocked candidate) is deliberate — skipping leaves a zombie
     // entry that keeps trying and occupying a queue position forever;

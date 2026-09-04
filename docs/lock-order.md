@@ -692,8 +692,9 @@ A slot key is a lock in every sense that matters here. Two transactions
 writing the same key make the second wait on the first's uncommitted index
 entry, as a `ShareLock` on the first's transaction id, which the deadlock
 detector reads exactly like a row lock. The upsert-quirk section below already
-says this in one line about `TeacherStudent`. It has two consequences a site
-enumeration over `FOR UPDATE`/`UPDATE`/`DELETE` is shaped to miss.
+says as much about `TeacherStudent`'s roster-link write. It has two
+consequences a site enumeration over `FOR UPDATE`/`UPDATE`/`DELETE` is shaped
+to miss.
 
 **The key moved twice, and the mechanism did not.** Everything measured in this
 section was measured against `Class_teacher_slot_unique`, `(teacherId, date,
@@ -986,40 +987,41 @@ Give the same call a single real column — `update: { isArchived: false }`, for
 instance — and Prisma switches to the atomic path, which **does** take the row
 lock.
 
-This matters here because five call sites upsert `TeacherStudent` with
-`update: {}` while racing a transaction that takes the opposite order on
-purpose or by circumstance:
+This still matters for one real site: `unlinkTeacher`'s `TeacherBlock` upsert
+(`invitations.ts`), `update: {}`. `resolveInvitationOnLink` takes
+`TeacherBlock` and `Invitation` in the opposite order (see "Known safe by
+accident" below), and the reason racing the two doesn't currently deadlock is
+this upsert taking no row lock whenever the block row already exists — **not**
+because either order is safe.
 
-- `acceptInvitation` (`invitations.ts`) — `TeacherStudent` upsert, `update: {}`.
-- `addToWaitlist`, `promoteNext`, `claimSpot` (`waitlist.ts`) and
-  `POST /api/registrations` (`route.ts`) — same, `update: {}`.
-- `unlinkTeacher`'s `TeacherBlock` upsert (`invitations.ts`) — also `update: {}`,
-  a sixth upsert, on a different table.
+Until #181 the same quirk also covered five `TeacherStudent` call sites, each
+upserting it with `update: {}` while racing a transaction that took the
+opposite order on purpose or by circumstance — `acceptInvitation`
+(`invitations.ts`); `addToWaitlist`, `promoteNext`, `claimSpot`
+(`waitlist.ts`); and `POST /api/registrations` (`route.ts`). #181 replaced all
+five with one shared writer, `linkTeacherStudent` (`services/roster-link.ts`)
+— `createMany` with `skipDuplicates`, which compiles to `INSERT ... ON
+CONFLICT DO NOTHING`, one statement with no separate `update` payload left for
+a future edit to widen. That retires the "one real column away from
+vanishing" risk this section used to warn about for `TeacherStudent`
+specifically.
 
-None of those five `TeacherStudent` upserts, and neither the `TeacherStudent`
-upsert nor the `TeacherBlock` upsert, currently take the row lock **when the
-row already exists** — the only case in which a race against a delete or a
-decline of that same row is possible. That is why `acceptInvitation`'s old
-order never deadlocked against `unlinkTeacher` (which needs the link to
-exist, or it returns `NOT_LINKED` and writes nothing), and why
-`resolveInvitationOnLink` racing `unlinkTeacher` on `{TeacherBlock,
-Invitation}` doesn't either (see "Known safe by accident" below) — **not**
-because either order was safe.
+It does NOT retire the wait edge the old `TeacherStudent` upsert's `INSERT`
+path already had when the row did not exist yet. Measured directly (#181 task
+1): `ON CONFLICT DO NOTHING` still asks Postgres for the row lock against an
+uncommitted conflicting tuple, and that wait still participates in deadlock
+detection exactly like the old `INSERT` path's did. #179's `{Invitation,
+TeacherStudent}` reorder (see "Known conformance" below) is what closes that
+cycle, and it remains load-bearing after this statement change — the new
+statement does not close it by itself. What #181 removed was the `P2002` a
+losing caller used to get on that wait, not the wait itself.
 
-Read that as scoped to the row-already-exists case, because the other case is
-not safe: when the row does NOT exist yet, the same `update: {}` upsert
-`INSERT`s, two concurrent `INSERT`s of one unique key make the second wait on
-the first's uncommitted tuple, and that wait deadlocks like any other.
-`acceptInvitation`'s old order against `POST /api/registrations` is exactly
-that pairing and it was reproduced — see "Known conformance" below. An earlier
-version of this section was read as covering both cases; it never did.
-
-**If you are the future reader who turns one of these `update: {}` objects
-into something with a real field in it** (an `updatedAt` stamp, a bookkeeping
-flag, anything) — stop. That edit silently restores the atomic, lock-taking
-path for that upsert, and if the write order at that call site doesn't already
-match this document, you have just reintroduced a live `40P01`. Check this
-file first.
+**If you are the future reader who turns `unlinkTeacher`'s `TeacherBlock`
+`update: {}` into something with a real field in it** (an `updatedAt` stamp, a
+bookkeeping flag, anything) — stop. That edit silently restores the atomic,
+lock-taking path for that upsert, and if the write order at that call site
+doesn't already match this document, you have just reintroduced a live
+`40P01`. Check this file first.
 
 `StudentPrivacy`'s upsert (`unlinkTeacher`, `SILENCED_PRIVACY`) is never
 empty — six real boolean columns, every call — so it was never protected by
@@ -1583,22 +1585,29 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
 - **`acceptInvitation`** (`src/services/invitations.ts`) — `TeacherStudent`
   then `Invitation`. Was the other way round until #174 task 7, and **the old
   order deadlocks against a real production writer**:
-  `POST /api/registrations` upserts `TeacherStudent` and then reaches
+  `POST /api/registrations` writes the roster link and then reaches
   `Invitation` through `resolveInvitationOnLink`, so on a pair with no link
   yet both transactions `INSERT` the same `(teacherId, studentId)` key —
   and Postgres makes the second inserter wait on the first's uncommitted
   tuple, a wait that deadlocks exactly like a row lock. Reproduced against
   the real function and the route's real statement order, three runs per
-  order: old `accept: REJECTED 40P01` 3/3, new no deadlock 3/3.
+  order: old `accept: REJECTED 40P01` 3/3, new no deadlock 3/3. #181 replaced
+  the upsert both sides used with `linkTeacherStudent`'s `createMany`/`ON
+  CONFLICT DO NOTHING`, and re-measured the same reproduction against it —
+  the wait edge survives the statement change (see the quirk section above),
+  so this order still has to hold.
 
-  What the quirk section above still explains is the case where the link
-  ALREADY exists: there the upsert takes no lock in either order, which is
-  why the reorder was made on principle before anyone had a reproduction, and
-  why `src/services/invitations-lock-order.test.ts` also pins the mechanism
-  with a synthetic non-empty `update`. That file lived in
-  `tests/integration/` until #174's four-specialist review moved it — it is a
-  DB-invariant suite with no HTTP surface, and the `integration` project
-  deliberately runs against dev.
+  When the link ALREADY exists, `linkTeacherStudent`'s `INSERT ... ON
+  CONFLICT DO NOTHING` finds the conflict already committed and returns
+  without taking a lock on that row — the same already-safe case the old
+  upsert's three-`SELECT` path covered, just by a different mechanism. That
+  is why the reorder was made on principle before anyone had a reproduction,
+  and why `src/services/invitations-lock-order.test.ts` also pins the write
+  ORDER's effect directly, with a hand-rolled non-empty `TeacherStudent`
+  write standing in for whichever statement shape sat at this call site.
+  That file lived in `tests/integration/` until #174's four-specialist
+  review moved it — it is a DB-invariant suite with no HTTP surface, and the
+  `integration` project deliberately runs against dev.
 
   Two tests, not one, and the split is deliberate. The deadlock reproduction
   needs a handshake to widen a window one round trip wide; unforced it is a
@@ -1607,8 +1616,8 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   and unconditionally by "takes
   TeacherStudent before Invitation, and accepts". An earlier version of this
   entry claimed no reproduction was possible at all; that was wrong, and
-  wrong because it generalised from a counterparty that upserted
-  `TeacherStudent` first — which is not where the registration route puts it.
+  wrong because it generalised from a counterparty whose roster-link write
+  came first — which is not where the registration route puts it.
 - **`deleteStudentAccount`** (`src/services/gdpr.ts`) — `Class`, via a single
   ordered `SELECT … FOR UPDATE OF c` joined through `WaitlistEntry`, covering
   every class the student holds an entry in of **any** status, ahead of every
@@ -1790,7 +1799,7 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   the CAS, inside the same lock. Same shape as `autoCancelClasses` immediately
   above: one row lock at a time, one transaction per class.
 - **`addToWaitlist`** (`src/services/waitlist.ts`) — `Class`, then
-  `TeacherStudent` (upsert), then `TeacherBlock`/`Invitation` via
+  `TeacherStudent` (`linkTeacherStudent`), then `TeacherBlock`/`Invitation` via
   `resolveInvitationOnLink`, then `WaitlistEntry`. That call takes
   `TeacherBlock` BEFORE `Invitation` — the opposite of this document's
   canonical line, and of `unlinkTeacher`'s own order. Not conformant on that
@@ -1874,6 +1883,13 @@ would widen this task past the two pairs it was scoped to. If a future edit to
 either upsert's `update` payload makes it non-empty, this pair needs the same
 treatment `{Invitation, TeacherStudent}` and `{StudentPrivacy, TeacherStudent}`
 already got.
+
+#181 does not trip this trigger. It replaced `acceptInvitation`'s
+`TeacherStudent` upsert with `linkTeacherStudent`'s `createMany`, a different
+lock node from either member of this pair — `TeacherBlock` and `Invitation`
+are untouched by that change, and neither upsert's `update` payload was
+touched either. The `{TeacherBlock, Invitation}` order recorded here is
+unaffected.
 
 **Why the canonical line names `unlinkTeacher`'s direction, not
 `resolveInvitationOnLink`'s.** By call site this looks like 2-against-1 —
