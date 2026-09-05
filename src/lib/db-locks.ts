@@ -553,6 +553,25 @@ function assertNoIllegalClauses(member: 'join' | 'where', fragment: Prisma.Sql):
  *
  * — one hit per call site.
  *
+ * THAT PAIRING IS ENFORCED, and by something other than a count:
+ * `src/lib/db-locks-verdict-census.test.ts` reads the calls out of the syntax
+ * tree and the verdicts out of the comment text and asserts the two sides
+ * pair — every call carries a verdict in the comments immediately above it,
+ * every verdict has a call under it. A site added without one reddens the
+ * suite, and so does a verdict left standing over a call that has gone, so
+ * the command above is a convenience for a reader rather than the only thing
+ * holding the convention up. What that test does not look at, and why, is in
+ * its own docblock.
+ *
+ * IT DOES NOT DECIDE WHETHER A VERDICT IS RIGHT. Whether the transaction
+ * really does read or write the entry's `date`, `startTime`,
+ * `durationMinutes` or `cancelledAt` is a judgement about a whole transaction
+ * that a person makes by reading it. Nor does it ask a site for a cross-owner
+ * decoy — a row the correct predicate excludes and a widened one would reach —
+ * proving that site's `where` is what narrows the lock set; those live in the
+ * call sites' own tests (#453). A new call site inherits the requirement to
+ * write a verdict, not the decoy.
+ *
  * The second statement is scoped to the ids the FIRST one returned — a
  * structural subset, not a predicate re-evaluated later — so its join member
  * is a row this transaction already holds. That matters: `FOR UPDATE OF e`
