@@ -2201,6 +2201,10 @@ describe('handleSpotFreed (DB)', () => {
  * `w."studentId"` widens the lock set and writes nothing extra, so the lock-set
  * assertion is the only thing that can witness it. That asymmetry is why this
  * test asserts the ids at all rather than only the surviving rows.
+ *
+ * In this test, dropping EITHER conjunct is caught by the `lockSets[0]`
+ * equality assertion first — the decoys' own assertions pin what the write
+ * predicate does, not which conjunct went missing.
  */
 describe('withdrawWaitingEntriesForTeacher locks only the pair it was given (#453)', () => {
   const scopeSuffix = `wl-scope-${Date.now()}`;
@@ -2210,6 +2214,7 @@ describe('withdrawWaitingEntriesForTeacher locks only the pair it was given (#45
   let teacherT2AccountId: string;
   let scopeRoomId: string;
   let studentSId: string;
+  let studentSAccountId: string;
   let studentSEmail: string;
   let studentS2Id: string;
   let classTId: string;
@@ -2319,9 +2324,10 @@ describe('withdrawWaitingEntriesForTeacher locks only the pair it was given (#45
         claimedAt: new Date(),
         account: { create: { email: studentSEmail } },
       },
-      select: { id: true },
+      select: { id: true, accountId: true },
     });
     studentSId = studentS.id;
+    studentSAccountId = studentS.accountId!;
 
     const studentS2 = await prisma.student.create({
       data: {
@@ -2360,15 +2366,17 @@ describe('withdrawWaitingEntriesForTeacher locks only the pair it was given (#45
     await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teacherIds } } });
     await prisma.room.deleteMany({ where: { id: scopeRoomId } });
     await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
-    await prisma.account.deleteMany({ where: { id: { in: [teacherTAccountId, teacherT2AccountId] } } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [teacherTAccountId, teacherT2AccountId, studentSAccountId] } },
+    });
     await prisma.$disconnect();
   });
 
   /**
    * The ids the pre-lock ACTUALLY held, read off the helper rather than
    * re-derived from a fixture. Calls through, so `unlinkTeacher`'s withdrawal
-   * runs for real. Same idiom used at each of this issue's three call sites —
-   * see `docs/superpowers/specs/2026-09-05-pre-lock-scope-decoys-design.md`
+   * runs for real. Same idiom used at this issue's other call sites — see
+   * `docs/superpowers/specs/2026-09-05-pre-lock-scope-decoys-design.md`
    * ("B. `waitlist.ts` — `withdrawWaitingEntriesForTeacher`") — copied per
    * file rather than shared, since each site's fixture is independent.
    *
