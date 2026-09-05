@@ -2194,11 +2194,14 @@ lock that then waited on `TeacherRoom` would be the counterparty — the same
 shape #272 closed on the `ClassTemplate` side with the pre-lock in
 `setTeacherRoomArchived`. There is no such transaction:
 
-- A status-only `UPDATE` on `Class` triggers no referential check at all,
-  because no foreign-key column changes — Postgres only fires an FK trigger
-  for the columns a statement actually writes. `transitionClass` and
-  `completeClass` (`class-lifecycle.ts`) both hold a `Class` row lock and both
-  write only `status`, so neither takes a room lock despite the hold.
+- An `UPDATE` on `Class` triggers no referential check at all unless it
+  touches an FK column, because Postgres only fires an FK trigger for the
+  columns a statement actually writes. `transitionClass` and `completeClass`
+  (`class-lifecycle.ts`) both hold a `Class` row lock, and neither writes
+  `teacherRoomId` or `roomArchived`: `transitionClass`'s CAS writes only
+  `status`; `completeClass`'s terminal write additionally sets
+  `effectiveTeacherRate`, `totalStudents` and `totalRevenue`. Neither set
+  touches the room mirror, so neither takes a room lock despite the hold.
 - The only statement taking `KEY SHARE` on a room via this key is a `Class`
   **INSERT** (`api/classes/route.ts`, `class-generator.ts`), and an insert
   holds no prior lock on the row it is creating — nothing for the archive to
