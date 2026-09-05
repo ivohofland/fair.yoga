@@ -181,6 +181,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // check itself reports, just discovered later by a race with a
       // concurrent delete. Same message and status for the same reason;
       // this is not a slot conflict and must not be probed or logged as one.
+      // LOGGED before responding, for the reason every refusal returned from a
+      // service carries: `respondError` does not log and `withErrorHandler`
+      // never sees a response that was RETURNED rather than thrown, so this
+      // line is what leaves a server-side record of the refusal.
+      log.warn(
+        { teacherId: session.teacherId, teacherRoomId: body.teacherRoomId },
+        'class create refused: the room was deleted while the create was parked on it',
+      );
       return respondError('Invalid teacher room', 400);
     }
     // WHICH entry, asked of the database, because a zero row count does not

@@ -41,13 +41,26 @@ ALTER TABLE "CalendarEntry"
 -- The cascade this fires — ClassTemplate.roomArchived := false, through issue
 -- 272's foreign key — can only satisfy ClassTemplate_live_needs_open_room
 -- further and can never violate it.
-UPDATE "TeacherRoom" tr SET "isArchived" = false
- WHERE tr."isArchived"
-   AND EXISTS (SELECT 1 FROM "Class" c
-                 JOIN "CalendarEntry" ce ON ce."id" = c."calendarEntryId"
-                WHERE c."teacherRoomId" = tr."id"
-                  AND c."status" IN ('open','in_progress')
-                  AND ce."cancelledAt" IS NULL);
+--
+-- `prisma db execute` surfaces RAISE EXCEPTION and swallows RAISE NOTICE;
+-- `prisma migrate deploy` (what CI and the test suite's global setup actually
+-- run) does not.
+DO $$
+DECLARE
+  affected INT;
+BEGIN
+  UPDATE "TeacherRoom" tr SET "isArchived" = false
+   WHERE tr."isArchived"
+     AND EXISTS (SELECT 1 FROM "Class" c
+                   JOIN "CalendarEntry" ce ON ce."id" = c."calendarEntryId"
+                  WHERE c."teacherRoomId" = tr."id"
+                    AND c."status" IN ('open','in_progress')
+                    AND ce."cancelledAt" IS NULL);
+  GET DIAGNOSTICS affected = ROW_COUNT;
+  IF affected > 0 THEN
+    RAISE NOTICE 'issue 339 remediation: un-archived % room(s) that were holding a live class', affected;
+  END IF;
+END $$;
 
 -- The mirrors, backfilled from the parents they mirror.
 ALTER TABLE "Class" ADD COLUMN "entryLive"    BOOLEAN NOT NULL DEFAULT true;

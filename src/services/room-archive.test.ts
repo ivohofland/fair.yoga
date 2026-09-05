@@ -54,6 +54,8 @@ describe('setTeacherRoomArchived — door 1, class clause (no template on any fi
     expect(result).toMatchObject({ ok: true, action: 'archived', isArchived: true });
     const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: f.linkId } });
     expect(after.isArchived).toBe(true);
+    const cls = await prisma.class.findFirstOrThrow({ where: { teacherRoomId: f.linkId } });
+    expect(cls.roomArchived).toBe(true);
   });
 
   // The issue's actual ask: history must stop blocking.
@@ -165,7 +167,7 @@ describe('setTeacherRoomArchived — the mid-request resume race (issue 272)', (
     // generates its rolling window synchronously (`DEFAULT_WEEKS`,
     // `entry-generation.ts`) before this transaction's write ever runs, so by
     // the time the catch re-counts, four real `open` classes already sit in
-    // this room — invisible to the pre-Task-5 catch, which re-counted only the
+    // this room — invisible to the old catch, which re-counted only the
     // template half and hardcoded the class half at zero regardless of what
     // was actually there.
     //

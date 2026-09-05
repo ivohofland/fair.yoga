@@ -127,7 +127,7 @@ describe('POST /api/classes — room deleted between the ownership check and the
       expect(res.status).toBe(400);
       const json = (await res.json()) as { error: { message: string } };
       expect(json.error.message).toBe('Invalid teacher room');
-      // The specific lie the undiscriminated `{ ok: false }` used to tell.
+      // Discriminated from a genuine slot conflict, whose message would be misleading here.
       expect(json.error.message).not.toContain('overlaps that time');
     } finally {
       release();
