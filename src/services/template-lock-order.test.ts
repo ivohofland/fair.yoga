@@ -11,11 +11,11 @@ import { createClassFixture } from '../../tests/class-fixtures';
  * Issue 180 had two halves, and this file covers the one that still has code
  * to cover. `archiveOrUnarchiveTemplate` (the shared body in
  * `rule-lifecycle.ts`, reached with `CLASS_FAMILY`) used to take its `Class`
- * row locks in heap order. Its `calendarEntry.deleteMany` is one statement,
- * and Postgres visits the matching rows in whatever order the planner picks
- * (`docs/lock-order.md`, "Sorting the id array does NOT order a multi-row
- * write"); it has no id array to sort even in principle, since the delete
- * takes a predicate. `deleteStudentAccount` (`gdpr.ts`) also used to
+ * row locks in no particular order. Its `calendarEntry.deleteMany` is one
+ * statement, and Postgres visits the matching rows in whatever order the
+ * planner picks (`docs/lock-order.md`, "Sorting the id array does NOT order a
+ * multi-row write"); it has no id array to sort even in principle, since the
+ * delete takes a predicate. `deleteStudentAccount` (`gdpr.ts`) also used to
  * disagree, via a JS `[...ids].sort()` feeding a per-class `lockClassRow`
  * loop. Two rows, opposite orders, one AB-BA cycle: reproduced against the
  * real functions and recorded in issue 180, before either site had the
@@ -478,7 +478,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         query: {
           async $queryRaw({ args, query }) {
             // Keyed on `studentId`, because that is what `deleteStudentAccount`
-            // now binds: since the #216/#182 review its class locks are taken by
+            // now binds: since #237 its class locks are taken by
             // ONE ordered `SELECT … FOR UPDATE OF c` joined through
             // `WaitlistEntry`, not by a `lockClassRow` per class. The old hook
             // keyed on `lowClassId` and simply never fired against that shape,
@@ -675,7 +675,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         query: {
           async $queryRaw({ args, query }) {
             // Keyed on `studentId`, because that is what `deleteStudentAccount`
-            // now binds: since the #216/#182 review its class locks are taken by
+            // now binds: since #237 its class locks are taken by
             // ONE ordered `SELECT … FOR UPDATE OF c` joined through
             // `WaitlistEntry`, not by a `lockClassRow` per class. The old hook
             // keyed on `lowClassId` and simply never fired against that shape,

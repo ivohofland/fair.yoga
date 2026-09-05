@@ -37,14 +37,10 @@ In `makeTemplateWithTwoWaitedInstances`, directly below the existing `lowClassId
 ```ts
     // Entry ids assigned for the same reason the class ids above are, and
     // against a second source of drift. The premise probes in each `it` read
-    // under a forced index-nested-loop plan, and that plan has two shapes
-    // here: driven from `Class` through `Class_calendarEntryId_key`, ordering
-    // by `calendarEntryId`, or driven from `ClassTemplate` through
-    // `CalendarEntry_scheduleRuleId_date_key`, ordering by `date`. Which one
-    // wins is a cost decision that moves with table size. Assigning the entry
-    // ids makes the first shape's order the one this fixture chose; the dates
-    // below already make the second shape's order the same. The two therefore
-    // agree, and the premise holds whichever direction the planner takes.
+    // under a forced index-nested-loop plan, but which side that plan drives
+    // from is a cost decision that moves with table statistics, and the
+    // driving side is what fixes the output order. The entry ids here and the
+    // entry dates below are therefore assigned to put HIGH first either way.
     //
     // HIGH takes the LOW entry id: HIGH is the row that must come FIRST.
     const highEntryId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
@@ -101,15 +97,19 @@ At `:420` and again at `:599`, replace the bare `heapOrder` read with the forced
 ```ts
       // The premise, asserted rather than assumed: HIGH comes first, which is
       // what makes the race adversarial. Read under a forced index-nested-loop
-      // plan, because an unforced read here is a cost decision — `enable_hashjoin`
-      // alone removes a join ALGORITHM, not a join DIRECTION, and the direction
-      // is non-monotonic in table size. The three settings and the measurements
-      // behind them are `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan`,
-      // mirrored rather than imported so the two files' fixtures stay
-      // independent. `SET LOCAL` is transaction-scoped and `enable_seqscan = off`
-      // discourages rather than forbids, so neither reaches production nor can
-      // make this statement fail. Re-read per `it` because each builds its own
-      // fixture with fresh ids.
+      // plan, because which side an unforced plan drives from is a cost
+      // decision that moves with table statistics, and the driving side is
+      // what fixes the output order. The three settings are
+      // `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan`, mirrored
+      // rather than imported so the two files' fixtures stay independent.
+      // That file also records a driving side that moves non-monotonically
+      // with table size, and that measurement belongs to ITS join, whose
+      // driving condition sits on a column no index leads with; this read's
+      // only condition is on `ct.id`, a primary key, and nobody has measured
+      // it for the same behaviour. `SET LOCAL` is transaction-scoped and
+      // `enable_seqscan = off` discourages rather than forbids, so neither
+      // reaches production nor can make this statement fail. Re-read per `it`
+      // because each builds its own fixture with fresh ids.
       const premiseOrder = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
         await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
