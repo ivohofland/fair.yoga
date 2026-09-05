@@ -23,13 +23,19 @@ Four of the issue's claims were checked. Three hold:
 
 One does not:
 
-- **"Two *applied* migrations."** Only one is.
-  `20260905120000_class_room_archive_invariant` is neither applied nor merged:
-  PR #462 is open, and the migration exists only on branch
-  `339-class-room-archive-constraint`. The issue's own *Related* section says
-  this was spun out of that PR's review, so it is a tense error rather than an
-  invention — but it constrains the work, because nothing here may depend on
-  that migration existing.
+- **"Two *applied* migrations."** False when this branch started, true by the
+  time it finished, and it changed mid-flight. At 22:36 local on 2026-09-05 only
+  `20260827120000_template_room_archive_invariant` was applied;
+  `20260905120000_class_room_archive_invariant` was neither merged nor applied,
+  living only on branch `339-class-room-archive-constraint` behind open PR #462.
+  That PR merged at **21:08:35Z**, `main` fast-forwarded to `9f1f95c3` at 23:09
+  local while task 1 was running, and this branch was rebased onto it.
+
+  Recorded because it changed the work, not merely because it dates it. While
+  the claim was false nothing here could depend on that migration existing, and
+  §3.2's sweep was designed to be correct whichever order the two branches
+  merged in. It now depends on it in one direction: that migration is the
+  tree's only compliant example, and every measurement in §3.2 is post-merge.
 
 ## 2. The acceptance criterion cannot be satisfied
 
@@ -145,27 +151,41 @@ every migration before it is frozen by policy. CLAUDE.md forbids prose rosters
 for exactly this reason.
 
 **Comments are stripped on both sides, and that is load-bearing.**
-`20260905120000_class_room_archive_invariant` (PR #462) contains the literal
-text `RAISE NOTICE` twice: once as the real call, and once inside a comment
+`20260905120000_class_room_archive_invariant` (#339, now on `main`) contains the
+literal text `RAISE NOTICE` twice: once as the real call, and once inside a comment
 explaining that `prisma db execute` swallows it. A detector that did not strip
 comments would accept a migration that merely *talks about* announcing. The
 same applies to the DML side: `20260826080100_calendar_entry_rewire` names
 `UPDATE "Class" SET status='completed'` inside a comment.
 
-**Measured against the current tree.** Of 46 migration directories on `main`, 7
-contain `UPDATE "…"` or `DELETE FROM "…"` outside comments; 6 of those carry one
-as a top-level migration statement, the seventh
-(`20260826080100_calendar_entry_rewire`) having its only one inside a trigger
-function body, where it defines runtime behaviour rather than running at
-migration time. Exactly 1 of the 7 (`20260825065109_schedule_rule_backfill`)
-carries a real `RAISE NOTICE`. All 7 sort before the cutoff and are unaffected.
-Re-derive with the script in `docs/lock-order.md`.
+**Measured against the current tree**, by the shipped rule itself rather than by
+a second method that could disagree with it. Of **48** migration directories on
+`main` at `9f1f95c3`, **8** contain `UPDATE "…"` or `DELETE FROM "…"` outside
+comments, and **1** of those carries a real `RAISE NOTICE`
+(`20260905120000_class_room_archive_invariant`, #339, merged today). Run
+unbounded the rule reports **8 − 1 = 7**; run at the cutoff it reports none.
 
-**PR #462 is checked against this rule and complies**: its
-`20260905120000_class_room_archive_invariant` sorts after the cutoff, contains
-DML, and carries a real `RAISE NOTICE` (1 after comment-stripping, 2 before);
-its `20260905130000_index_class_room_fk` contains no DML at all. Merging #462 in
-either order relative to this branch leaves the sweep green.
+An earlier draft of this section said `20260825065109_schedule_rule_backfill`
+carried a real `RAISE NOTICE`. **It does not, and the error was mine**: the
+census behind it grepped the raw file and so counted the comment
+``-- `prisma db execute` … swallows RAISE NOTICE`` as a call — the exact hazard
+this section names two paragraphs above and requires the detector to avoid. What
+that migration actually raises is a `RAISE EXCEPTION` pre-flight, which aborts
+instead of reporting. Before #339 merged, **no migration in this tree had ever
+emitted an operator-visible notice**.
+
+**#339's two migrations sort after the cutoff and both comply** — measured after
+the merge, where this was a prediction before it.
+`20260905120000_class_room_archive_invariant` contains DML and carries a real
+`RAISE NOTICE` (1 after comment-stripping, 2 before);
+`20260905130000_index_class_room_fk` contains no DML at all.
+
+**The cutoff stays where it is** rather than advancing to the newest migration:
+moving it forward would exempt a migration that already complies and buy
+nothing. Leaving it binds two real migrations, which is also what stops the live
+sweep being vacuous — when this was written nothing sorted after the cutoff at
+all, and the sweep's only defence against a typo'd cutoff was the assertion that
+it names a directory that exists.
 
 ## 4. Not built
 
