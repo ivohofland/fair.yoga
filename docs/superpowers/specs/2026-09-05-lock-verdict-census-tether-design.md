@@ -1,0 +1,158 @@
+# Tethering `lockClassRowsOrdered`'s call-site census (#464)
+
+## The issue's premise, re-measured
+
+Verified on the worktree base `9cd7fd43`, both censuses exactly as issue #464
+ships them:
+
+```
+grep -rn 'await lockClassRowsOrdered(' src --include='*.ts' | grep -v '\.test\.ts'
+  src/services/gdpr.ts:440
+  src/services/gdpr.ts:1133
+  src/services/class-template-lifecycle.ts:754
+  src/services/waitlist.ts:1092
+
+grep -rn 'VERDICT (#327)' src --exclude=db-locks.ts
+  src/services/gdpr.ts:432
+  src/services/gdpr.ts:1127
+  src/services/class-template-lifecycle.ts:750
+  src/services/waitlist.ts:1088
+```
+
+Four and four, agreeing, and nothing checks it. **The premise holds** — including
+both stated blind spots, both reproduced:
+
+- Dropping `await ` from the first returns a fifth,
+  `src/app/api/studio-classes/[id]/route.ts:229`, which is a comment mentioning
+  the helper.
+- The second is a comment convention, so a call site landing without the marker
+  is invisible to it.
+
+Two facts the issue does not state, both measured here, both load-bearing below:
+
+- **`.test.ts` files really do call the helper** — 12 call sites in
+  `src/lib/db-locks.test.ts` and 2 in `src/lib/db-locks-lock-order.test.ts`.
+  The first census's `grep -v '\.test\.ts'` is therefore not tidiness; those
+  calls exercise the helper rather than opening a domain transaction, so there
+  is no entry-column question for a verdict to answer. Nothing under `tests/`
+  calls it, and nothing in a `.tsx` file mentions it.
+- **`db-locks.ts` itself holds two occurrences of the marker text** — line 417,
+  the `ClassLockSource.entries` docblock that defines the convention, and line
+  552, the re-derivation command inside the "NO ROSTER HERE" paragraph. That is
+  why the second census carries `--exclude=db-locks.ts`, and any tether must
+  carry the same exclusion.
+- **The convention is specific to this helper.** `lockClassRow` (singular) locks
+  the `Class` row and its `CalendarEntry` row unconditionally — no `entries`
+  option, so no question to answer — and none of its 12 production call sites
+  carries a verdict. Widening the tether to it would assert a convention that
+  does not exist.
+
+## The design, and where it departs from the issue
+
+The issue asks for "one test [asserting] the two sets above are equal in both
+directions". Taken literally that means re-running both greps from a test. This
+spec does something strictly stronger, for a reason the issue itself supplies:
+
+> Each command's blind spot is the other command's strength.
+
+That framing accepts both blind spots and relies on them cancelling. They need
+not be accepted. `typescript` is already a devDependency (5.9.3), so **the call
+side can be read from the syntax tree** — a `CallExpression` whose callee is the
+identifier `lockClassRowsOrdered`. That census is not `await`-dependent (a
+future `return lockClassRowsOrdered(…)` or `void lockClassRowsOrdered(…)` is
+found) and cannot mistake a comment for a call. It has neither blind spot rather
+than one.
+
+The verdict side stays textual, because a comment convention has nowhere else to
+live. So the two sides are no longer two greps hoping to agree — they are
+**syntax on one side, comments on the other, asserted to pair**.
+
+### The pairing, not merely the counts
+
+Equal *sets of files* would be too weak: `gdpr.ts` holds two call sites and two
+verdicts, and a file with two calls and one verdict would satisfy a file-level
+set comparison. Equal *counts per file* would fix that but still accept a
+verdict placed anywhere in the file.
+
+The test therefore pairs each call to a specific comment:
+
+- For each `lockClassRowsOrdered` call expression, walk to the nearest enclosing
+  statement and require the marker to appear in that statement's **leading
+  comment trivia** — that is, above the call with nothing but comments between.
+- For each raw occurrence of the marker text in the file, require it to fall
+  inside one of the comment ranges just paired. A marker in a comment attached
+  to no such statement is a verdict that outlived its call; a marker inside a
+  string literal is not in a comment range at all.
+
+Both directions are reported in one assertion so a failure names which way it
+broke.
+
+**The looseness is bounded and is the convention.** "Leading trivia" can span a
+long comment block — in `class-template-lifecycle.ts` the run before the call is
+161 comment lines — so a verdict far above the call still pairs. That is correct:
+the only thing it permits is a verdict separated from its call by comments only,
+which is what the convention asks for. A second call site cannot borrow the
+first's verdict, because a second statement's leading trivia begins at the end of
+the first statement.
+
+### Non-vacuity
+
+The failure this design could have is silence: a broken file walk empties both
+sides and the test passes. Guarded by asserting both censuses are non-empty, and
+by an `existsSync` on `src/lib/db-locks.ts` — which labels a rename loudly rather
+than letting it surface as two unexplained orphan verdicts (a rename would drop
+the exclusion, so lines 417 and 552 would be reported as orphans; the guard makes
+that failure say what it is). Both mirror
+`serial-tier-membership.test.ts`'s cwd guard and its stated reason.
+
+### What the acceptance criteria's third clause becomes
+
+"…and that every path either names exists" does not transfer. In
+`serial-tier-membership.test.ts` it guards a **configured list** of paths. This
+design holds no list at all — both sides are derived from the source tree — which
+is what makes it compatible with the paragraph it has to clear rather than in
+tension with it. The non-vacuity guards above are what stand in its place.
+
+## Scope, stated as blind spots
+
+The search is every `.ts`/`.tsx` under `src/`, minus `*.test.ts`/`*.test.tsx` and
+minus `src/lib/db-locks.ts`. So:
+
+- a call site added inside `db-locks.ts` itself is not seen (it is the defining
+  module; a call there would be self-referential);
+- a call site added under `tests/` is not seen (none exists, and test callers
+  carry no verdict by design);
+- the tether forces a **verdict**, never a **decoy**. A fifth call site still
+  ships with its scoping conjunct unproven. What changes is that its author must
+  write down what the transaction reads and writes before the suite goes green.
+
+## The `db-locks.ts:547` amendment
+
+The paragraph declines a roster:
+
+> NO ROSTER HERE … a caller list kept in this file goes stale, and nothing that
+> counts can catch it. Every call site instead carries its own written verdict.
+
+Its reasoning survives intact and is not being reversed — this design holds no
+roster, which is precisely why it can sit beside that paragraph. But the
+paragraph currently reads as a refusal of any mechanical check, and after this
+change that is misleading. It is amended in the same commit to state what is now
+enforced (every call site has a verdict; every verdict has a call) and what still
+is not (which verdict is *correct*, and whether the site carries a decoy). Per
+CLAUDE.md's *Comment Discipline*, the amendment states what is true now — it does
+not narrate what the paragraph used to say; that record lives in the PR body.
+
+The re-derivation command at line 552 stays, and gains a second: a human reading
+the docblock still wants to see the set, and the shipped commands are now backed
+by a test rather than standing alone.
+
+## Acceptance
+
+1. `src/lib/db-locks-verdict-census.test.ts` fails when a call site is added
+   without a verdict, and when a verdict outlives the call it describes. Both
+   proven by mutation, with the exact error text recorded.
+2. It passes on the unmutated tree, and its non-vacuity guards fail when the file
+   walk is broken.
+3. `db-locks.ts`'s "NO ROSTER HERE" paragraph states what is enforced and what is
+   not.
+4. `npm run typecheck`, `npm run lint`, and the `unit` project are green.
