@@ -83,6 +83,12 @@ export const LOCK_CONTENTION_TESTS = [
   // argument is about time, and a count moves whenever someone adds a case.
   'src/services/gdpr-lock-order.test.ts',
   'src/services/roster-link.test.ts',
+  // The first kind again: its room-deleted-mid-create race holds a
+  // transaction open — via an external release signal, for ~1s — via an
+  // uncommitted `DELETE FROM "TeacherRoom"`, while `POST /api/classes`'s own
+  // transaction contends for the same row's `FOR KEY SHARE`, the same shape
+  // as `roster-link.test.ts` (issue 339).
+  'src/app/api/classes/route.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

@@ -5,6 +5,11 @@ import { cookie, seedSession, uniqueSuffix } from '../../../../tests/helpers';
 import { POST } from './route';
 
 /**
+ * @serial-tier lock-contention — holds a transaction open on an uncommitted
+ * `DELETE FROM "TeacherRoom"` for ~1s while a second connection's create
+ * contends for the same row's `FOR KEY SHARE`, the same shape as
+ * `roster-link.test.ts`.
+ *
  * Issue 339, PR review. The route's `POST` handler is invoked DIRECTLY here —
  * `NextRequest`/`NextResponse` are plain Web-standard-based classes Next.js
  * exports for exactly this, and `getSessionToken` (`src/lib/auth/session.ts`)
