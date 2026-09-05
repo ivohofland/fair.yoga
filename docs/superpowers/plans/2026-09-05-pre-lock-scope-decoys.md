@@ -18,6 +18,17 @@ Prisma, `tests/class-fixtures.ts`'s `createClassFixture`.
 
 **Spec:** `docs/superpowers/specs/2026-09-05-pre-lock-scope-decoys-design.md`
 
+> **Record, not current state.** The code blocks below are AS-DISPATCHED, not
+> as-shipped; the test files are what shipped. Inline annotations mark the
+> places a task's own fix round overturned the text you are reading, and two
+> errors run through the document generally. (a) The Architecture line's "two
+> sites": all three blocks shipped a decoy-survival assertion. (b) The framing
+> of those assertions as witnesses: the lock-set equality assertion sits above
+> every one of them and fails first, so under a pre-lock widening the survival
+> assertion never executes — whether or not the write reaches the row. See the
+> spec's shadowing note ("The scoping conjuncts are five, and they are not
+> alike").
+
 ## Global Constraints
 
 - **No production code changes.** This branch touches only `*.test.ts` files.
@@ -303,6 +314,15 @@ describe('the erasure pre-locks are scoped to their own owner (#453)', () => {
     expect(lockSets).toHaveLength(1);
     expect(lockSets[0]).toEqual([classAId]);
 
+    // WRONG, AND CORRECTED IN TASK 1's FIX ROUND — kept here only so the diff
+    // that rewrote it makes sense. The cancellation is real (the cancel loop
+    // reads exactly the ids the lock returned, and the bystander's entry came
+    // back cancelled under the mutation, unrestorably), but this assertion is
+    // not what reports it: the lock-set assertion above throws first and this
+    // line never executes. The `class.count` line below was deleted outright —
+    // a teacher erasure cancels entries, it never deletes `Class` rows, so it
+    // could not fail on any mutation of this predicate. What shipped is in
+    // `gdpr.test.ts`.
     // THE DATA-LOSS WITNESS, and the one assertion here that a widening
     // actually destroys: a pre-lock that reaches `classD` cancels it, because
     // the cancel loop reads exactly the ids the lock returned. Measured
@@ -663,6 +683,11 @@ describe('withdrawWaitingEntriesForTeacher locks only the pair it was given (#45
     });
     expect(withdrawn.status).toBe('removed');
 
+    // SUPERSEDED IN TASK 2 — kept here only so the diff that rewrote it makes
+    // sense. The reachability is real and was measured: under mutation 3 this
+    // row does flip to `removed`. "The witness" is what is wrong — the
+    // lock-set assertion above throws first, so this line never executes under
+    // that mutation. What shipped is in `waitlist.test.ts`.
     // DECOY 1 — the data-loss witness. S's request of ANOTHER teacher is not
     // this unlink's business, and a pre-lock missing `e."teacherId"` reaches it
     // because the `updateMany` is keyed on the ids this lock returned.
@@ -671,6 +696,12 @@ describe('withdrawWaitingEntriesForTeacher locks only the pair it was given (#45
     });
     expect(otherTeachersQueue.status).toBe('waiting');
 
+    // SUPERSEDED IN THE FINAL REVIEW's FIX ROUND — kept here only so the diff
+    // that rewrote it makes sense. "It guards that scope" claims more than the
+    // line can do: dropping `studentId` from the `updateMany` leaves
+    // `{ classId: { in: [classT] }, status: 'waiting' }`, and this row is on
+    // `classT3`, which is not in the lock set. No single-fault mutation of the
+    // write fails this assertion. What shipped is in `waitlist.test.ts`.
     // DECOY 2 — another student's request in T's own class. HONEST ABOUT WHAT
     // THIS CATCHES: it cannot fail on a widened pre-lock, since the
     // `updateMany` re-scopes on `studentId`. It guards that scope; the
@@ -718,6 +749,16 @@ Expected: the new test fails — `lockSets[0]` contains `classT2Id`, and (whiche
 assertion the runner reaches first) decoy 1's status has become `removed`.
 Record the exact output. Both failures are the point: this is the conjunct whose
 widening loses data.
+
+**Corrected during Task 2 — the run cannot report both, so the step title is
+wrong.** The lock-set assertion sits above decoy 1's and fails first: vitest
+throws out of the test body and decoy 1's assertion never executes. The RED to
+expect is the lock-set one alone, with `classT2Id` in the received array. The
+data loss is real all the same, and was measured in the Task 2 review by
+relaxing the lock-set assertion to `toContain` for one run — decoy 1's row came
+back `'removed'` (`expected 'removed' to be 'waiting'`). That diagnostic is an
+acceptable way to see the survival assertion execute; revert it immediately and
+confirm `git diff` is empty.
 
 - [ ] **Step 7: Restore, confirm green**
 
