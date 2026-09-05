@@ -1164,8 +1164,9 @@ were deleted in the same round rather than kept at zero callers —
 other files narrating what the deleted predicate used to do, no import or
 call site among them.
 
-**The migration comments that this document owns.** Two of them, both stranded
-in APPLIED migrations, which is why they live here instead.
+**The migration comments that this document owns.** Each entry below is prose
+stranded in an APPLIED migration — immutable, comments included — which is why
+the live copy lives here rather than where it was written.
 
 The first was briefly added as a comment inside
 `20260821120000_cross_family_slot_guard/migration.sql`. A comment-only edit
@@ -1210,6 +1211,122 @@ It returned 10 before #298 (the count the stranded comment records) and returns
 2026-08-25. A reader who finds the migration comment first should believe this
 paragraph, not that one: the triggers it counted dependencies for no longer
 exist, on either table.
+
+The third is `20260827120000_template_room_archive_invariant/migration.sql`,
+whose `REMEDIATION` block pauses every live `ClassTemplate` found on an
+archived `TeacherRoom`, by clearing `isActive` on the `ScheduleRule` above it —
+
+```sql
+UPDATE "ScheduleRule" sr SET "isActive" = false
+  FROM "ClassTemplate" ct
+  JOIN "TeacherRoom" tr ON tr."id" = ct."teacherRoomId"
+ WHERE ct."scheduleRuleId" = sr."id"
+   AND sr."isActive" AND NOT sr."isArchived"
+   AND tr."isArchived";
+```
+
+— and says nothing about having run. No `RAISE NOTICE`, no `GET DIAGNOSTICS`,
+no audit row (`grep -rn 'AuditLog\|audit_log' src/ prisma/` prints nothing),
+and **not even an `updatedAt` bump**: `ScheduleRule.updatedAt` is `@updatedAt`,
+which Prisma enforces in its client, and raw migration SQL never reaches that
+client. A teacher whose template stopped generating classes has, in the
+database, no record that the platform stopped it. That is issue #463. The
+comment above the statement — which calls itself `REMEDIATION` and argues why
+pausing beats un-archiving the room — is the whole of the record, and it sits
+in the source tree rather than in any database an operator can query.
+
+It is not repaired where it sits, for the reason the first entry above gives:
+the migration is applied, so a comment-only edit changes a checksum nothing
+compares until the next `prisma migrate dev` demands a reset.
+
+**A later migration re-running the remediation under a notice would be inert,
+and inert in the worst place.** The `CHECK` at the foot of that same file,
+`ClassTemplate_live_needs_open_room` — `NOT ("ruleLive" AND "roomArchived")` —
+forbids exactly the rows the `UPDATE` targets: each mirror column is one column
+of a composite foreign key to its parent, so a row cannot store a mirror its
+parent disagrees with, and `ruleLive AND roomArchived` therefore *is*
+`(isActive AND NOT isArchived) AND tr.isArchived`. Every door into that state is
+proven refused in `src/services/template-room-constraint.test.ts`. And Prisma
+applies migrations in name order, so against the one kind of database that
+would have anything to report — a stale one still holding violating rows —
+`20260827120000` runs first and silently repairs them; the later migration then
+reports zero. The announcement would be guaranteed silent in precisely the case
+it exists for.
+
+**What an operator can still run.** It lists paused rules whose template sits on
+an archived room:
+
+```sql
+SELECT sr."id" AS rule, sr."teacherId" AS teacher, ct."id" AS template,
+       tr."id" AS room, sr."updatedAt"
+  FROM "ScheduleRule"  sr
+  JOIN "ClassTemplate" ct ON ct."scheduleRuleId" = sr."id"
+  JOIN "TeacherRoom"   tr ON tr."id" = ct."teacherRoomId"
+ WHERE NOT sr."isActive" AND NOT sr."isArchived" AND tr."isArchived"
+   AND sr."updatedAt" < (SELECT finished_at FROM "_prisma_migrations"
+                          WHERE migration_name
+                              = '20260827120000_template_room_archive_invariant')
+ ORDER BY sr."updatedAt";
+```
+
+It returns 0 rows against both `ethical_yoga` and `ethical_yoga_test` —
+measured 2026-09-05. **Those are candidates, not a roster, and an empty result
+is not an all-clear.** A rule the migration paused and one the teacher paused
+before archiving the room are indistinguishable in the stored state: door 1
+refuses archiving a room a live template sits on, so pausing first is what a
+teacher doing this by hand also does. One discriminator survives, in ONE
+DIRECTION ONLY — the raw `UPDATE` never touched `updatedAt`, so a remediated
+row's `updatedAt` necessarily PREDATES the migration. That rules a later row
+OUT; an earlier one is neither ruled in nor out. Nor does 0 rows mean the
+remediation never fired: a rule it paused that was later resumed, or whose room
+was later un-archived, leaves exactly the same nothing behind.
+
+**That subquery reads `_prisma_migrations.finished_at` rather than the
+timestamp in the migration's name**, and that is not fastidiousness. The name
+encodes `2026-08-27 12:00`; the two databases on one machine finished that
+migration at `2026-08-27 20:09:42.939666+00` (`ethical_yoga`) and
+`2026-09-05 20:31:22.513938+00` (`ethical_yoga_test`, which the test setup
+rebuilds from migrations) — nine days apart. A query hard-coding the name's
+instant is wrong on at least one of any two databases; the subquery above reads
+what each database actually recorded. Those two figures are re-derivable rather
+than remembered:
+
+```sql
+SELECT migration_name, finished_at FROM "_prisma_migrations"
+ WHERE migration_name = '20260827120000_template_room_archive_invariant';
+```
+
+**Since #463 a migration landing after `20260903195051_student_signup_purposes`
+cannot do this silently.** `untracedDataChanges` (`tests/migration-sql.ts`,
+pinned by `src/lib/migration-remediation-trace.test.ts`) reports any migration
+sorting after that cutoff whose comment-stripped SQL contains `UPDATE "…"` or
+`DELETE FROM "…"` without a real `RAISE NOTICE`, unless the raw text carries
+`-- DML WITHOUT NOTICE: <reason>` with a non-empty reason. The same census
+without vitest — and it strips comments on both sides, because a command that
+did not would disagree with the rule in both directions:
+
+```sh
+perl -0777 -ne '
+  my $s = $_; $s =~ s{/\*.*?\*/}{ }gs; $s =~ s{--[^\n]*}{}g;
+  print "$ARGV\n"
+    if $s =~ /\bUPDATE\s+"|\bDELETE\s+FROM\s+"/
+    && $s !~ /\bRAISE\s+NOTICE\b/
+    && $_ !~ /--[ \t]*DML WITHOUT NOTICE:[ \t]*\S/;
+' prisma/migrations/*/migration.sql
+```
+
+Unbounded like this it prints 7 migrations today, `20260827120000` among them,
+and every one of them sorts before the cutoff — which is the condition the
+sweep is green on. Delete the two `s{…}` lines so both tests read the raw file
+and it prints 8, wrong in both directions at once: it gains
+`20260826182710_entry_completion_marker_guard` and
+`20260826200000_entry_marker_exclusivity`, which only *discuss* an `UPDATE`,
+and it loses `20260825065109_schedule_rule_backfill`, exempted by a comment
+that merely names `RAISE NOTICE` while the migration raises none. Flip
+`!~ /\bRAISE\s+NOTICE\b/` to `=~` on the stripped text and it lists the
+migrations that do announce: one,
+`20260905120000_class_room_archive_invariant` (#339), which landed the day this
+entry was written and is the first this tree has ever had.
 
 **The four SLOT partial unique indexes of `20260811202634` are all gone too.**
 That migration declared six; the other two are the `Room` identity pair.
