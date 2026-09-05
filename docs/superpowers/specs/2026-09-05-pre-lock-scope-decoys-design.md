@@ -89,14 +89,32 @@ Swept `gdpr-lock-order.test.ts`, `gdpr.test.ts`, `db-locks.test.ts`,
 
 ### The scoping conjuncts are five, and they are not alike
 
-Re-derive the call-site set with the command `db-locks.ts` ships:
+Re-derive the call-site set from the CALLS:
+
+    grep -rn 'await lockClassRowsOrdered(' src --include='*.ts' | grep -v '\.test\.ts'
+
+— four hits: `gdpr.ts:440`, `gdpr.ts:1133`, `class-template-lifecycle.ts:754`,
+`waitlist.ts:1092`. The command `db-locks.ts` ships,
 
     grep -rn 'VERDICT (#327)' src --exclude=db-locks.ts
 
-— four hits: two in `gdpr.ts`, one in `waitlist.ts`, one in
-`class-template-lifecycle.ts`. All four narrow by owner or parent. The two the
-issue does not name are **worse**, because their widenings key on a per-run
-unique fixture id, so no accumulated debris can ever fail them:
+returns the same four and is the useful cross-check — the two agreeing is what
+says every call site carries its verdict. It is not the primary census, though,
+and the difference matters for exactly the reason this document exists: it
+enumerates a COMMENT CONVENTION, so a call site added without the marker is
+invisible to it while this section's completeness claim goes on reading true.
+
+Both anchors are narrower than they look, and neither is free. Dropping `await `
+from the first one returns FIVE lines: `studio-classes/[id]/route.ts:229`
+mentions the helper inside a comment, and a bare-name grep cannot tell that from
+a call — which is why the verb is in the pattern. `await ` in turn assumes every
+call is awaited; each of the four is, and one that were not would be a bug in
+its own right, but a future `void`-ed or `.then()`-ed call would escape this
+census exactly as an unmarked one escapes the other. Run both.
+
+All four narrow by owner or parent. The two the issue does not name are
+**worse**, because their widenings key on a per-run unique fixture id, so no
+accumulated debris can ever fail them:
 
 | Site | Conjunct | What a widening does | Witness (see the shadowing note below) |
 |---|---|---|---|
@@ -432,9 +450,34 @@ that predicate's only conjunct and the `where` member is required, so an empty
 fragment is not a runnable mutation. Coverage is unaffected: a wrong-owner
 variant is caught by the same equality assertion as a missing one.
 
-Mutations 1 and 3 write to rows outside their fixture, so they must be run with
-the database's other qualifying rows accounted for, and any row they damage
-recorded — a cancelled entry cannot be restored (see above).
+**Only mutation 1 escapes its fixture, and it is the destructive one.** Dropping
+`e."teacherId"` leaves `e."cancelledAt" IS NULL AND c.status IN (…)`, which names
+no owner at all: the erasure then cancels every live cancellable
+`CalendarEntry` in the connected database, whoever owns it, and
+`entry_terminal_liveness_guard` refuses to clear `cancelledAt` again (see
+above). Each re-verification destroys more of whatever else that database holds.
+
+Mutations 2, 3, 4 and 5 are safe against the shared test database, and 3 is the
+one worth saying so about, since a widened `e."teacherId"` IS the bystander
+regression this whole document is about. It does not reach a bystander HERE: the
+surviving `w."studentId"` conjunct is a fixture-unique student, so both the
+widened lock set and the `updateMany` behind it stay inside the fixture's own
+rows. The other three widen a lock set whose write re-derives its own scope, so
+they write nothing extra at all.
+
+**Run mutation 1 against a throwaway database.** `vitest.config.ts` resolves
+both database-backed projects' `DATABASE_URL` from `DATABASE_URL_TEST`, and
+`tests/setup/unit-db.ts` CREATES and migrates that database when it does not
+exist — so a scratch name is the whole recipe:
+
+    DATABASE_URL_TEST="postgresql://…@localhost:5432/ethical_yoga_mutation" \
+      npx vitest run --project unit src/services/gdpr.test.ts
+
+then drop it. Its one precondition is the ordinary one for any unit-tier run and
+not special to this: the generated Prisma client must match the committed
+migrations, because those are what provision the scratch database. A client left
+generated from some other branch's schema fails the run on the missing column
+rather than on the mutation.
 
 **Determinism argument, which is the point of the whole change.** Under the
 correct predicate the lock set contains only rows owned by a fixture-unique
