@@ -50,7 +50,10 @@ describe('LOCK_CONTENTION_TESTS agrees with the files it names', () => {
     const marked = globSync('src/**/*.test.ts', { cwd: root })
       .filter((f) => readFileSync(path.join(root, f), 'utf8').includes(MARKER))
       .sort();
-    const listed = [...LOCK_CONTENTION_TESTS].sort();
+    // Widened deliberately: the array is `as const`, so its own element type is
+    // a union of the seven literals and `includes` would reject any path not
+    // already in it — which is exactly the comparison this test exists to make.
+    const listed: string[] = [...LOCK_CONTENTION_TESTS].sort();
 
     // Both directions in one assertion, so a failure names which way it broke
     // rather than reporting two sorted arrays and leaving the reader to diff.

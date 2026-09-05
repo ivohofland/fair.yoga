@@ -18,7 +18,7 @@
  * on issue 272's branch, always as `Test timed out in 5000ms` — the branch's
  * mirror foreign keys take row locks no application code asks for, and that is
  * enough to turn an occasional loss into a certain one. Splitting the file is
- * what lets `LOCK_CONTENTION_TESTS` (`vitest.config.ts`) hold it without
+ * what lets `LOCK_CONTENTION_TESTS` (`vitest.tiers.ts`) hold it without
  * serialising the other 81 cases in `class-lifecycle.test.ts`, which have no
  * DDL in them and are fine in parallel.
  */

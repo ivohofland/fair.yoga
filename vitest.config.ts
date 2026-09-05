@@ -8,8 +8,11 @@ import { SERIAL_TESTS } from './vitest.tiers';
 
 // The projects below have different blast radii (docs/test-database.md):
 // - unit: services + lib minus `SERIAL_TESTS`, run in parallel against the
-//   dedicated test database. Every file here mutates only rows it owns, and
-//   none of them holds a lock long enough to disturb a neighbour
+//   dedicated test database. Every file here mutates only rows it owns. Not
+//   every file here is free of long lock holds, though: `gdpr.test.ts`,
+//   `waitlist.test.ts` and `class-template-lifecycle.test.ts` each hold one
+//   AND assert on how a staged race comes out, which is what #459 exists to
+//   finish moving out
 // - unit-sweeps: `SERIAL_TESTS`, serial — the clock-injected, database-wide
 //   sweeps, kept off the dev/seed data and away from each other, plus the
 //   lock-contention files that cannot share a parallel tier
@@ -80,7 +83,7 @@ export default defineConfig(({ mode }) => {
           test: {
             name: 'unit',
             include: ['src/**/*.test.ts'],
-            // `SERIAL_TESTS` (above) is the membership list — edit that, or
+            // `SERIAL_TESTS` (`vitest.tiers.ts`) is the membership list — edit that, or
             // one of the two lists it joins, not this array, or `unit` and
             // `unit-sweeps` drift apart.
             exclude: ['**/node_modules/**', ...SERIAL_TESTS],
@@ -93,7 +96,7 @@ export default defineConfig(({ mode }) => {
           extends: true,
           test: {
             name: 'unit-sweeps',
-            // `SERIAL_TESTS` (above) is the membership list — edit that, or
+            // `SERIAL_TESTS` (`vitest.tiers.ts`) is the membership list — edit that, or
             // one of the two lists it joins, not this array, or `unit` and
             // `unit-sweeps` drift apart. Each list states its own reason for
             // being here: `SWEEP_TESTS` cannot share a database with a

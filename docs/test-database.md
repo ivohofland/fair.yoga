@@ -67,7 +67,7 @@ The interference runs both ways:
 
   A file testing a service whose sweep writes rows it was never handed,
   with no scope parameter to pass, belongs in `unit-sweeps` instead — the
-  roster is `SWEEP_TESTS` in `vitest.config.ts`, not a count in this
+  roster is `SWEEP_TESTS` in `vitest.tiers.ts`, not a count in this
   document, and it turned out to hold far more files than expected once
   #321 went looking for the criterion systematically rather than one
   failure at a time.

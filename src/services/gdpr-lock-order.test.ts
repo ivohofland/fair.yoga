@@ -73,16 +73,21 @@ async function awaitHandshake(signal: Promise<void>, label: string): Promise<voi
  * ITS OWN FILE BECAUSE OF ITS TIER, not because of its subject — the docblock
  * below covers that. The case here asserts a staged race ends in NEITHER
  * `40P01` NOR `55P03`, which is the second kind `LOCK_CONTENTION_TESTS`
- * (`vitest.config.ts`) exists to hold: lock noise from a concurrent file is a
+ * (`vitest.tiers.ts`) exists to hold: lock noise from a concurrent file is a
  * false failure it cannot tell from the defect it watches for. It sat in
  * `gdpr.test.ts` until the preventive sweep that list's own comment asks for.
  *
  * SPLIT RATHER THAN MOVING THE WHOLE FILE, and the measurement is the reason.
- * `gdpr.test.ts` runs in ~26s; exactly one of its tests reads lock timing.
- * Moving all of it takes the serial tier from 37.8s to 72.6s (+92%) to protect
- * one case; extracted, the same protection costs 2.5s. Same shape as
+ * `gdpr.test.ts` runs in ~26s, and moving all of it takes the serial tier from
+ * 37.8s to 72.6s (+92%); extracting instead cost 2.5s. Same shape as
  * `class-lifecycle-tier-guard.test.ts`, which left `class-lifecycle.test.ts`
  * for the same kind of reason.
+ *
+ * The split is INCOMPLETE, and knowingly so: `gdpr.test.ts` still stages lock
+ * races of its own — a ~9s held row lock among them — and still asserts on how
+ * they come out. Finishing the extraction is issue #459, which carries the
+ * candidates. Nothing here depends on that; this file is what was extracted,
+ * not a claim about what was left.
  *
  * The rest of `gdpr.test.ts` stays in the parallel tier: its other races assert
  * positive application outcomes rather than the absence of a SQLSTATE, so tier

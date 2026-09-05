@@ -44,48 +44,45 @@ export const SWEEP_TESTS = [
 //
 // NOT a complete census of files that hold locks. `room-archive.test.ts` still
 // holds one in `unit` — a `ClassTemplate` `FOR UPDATE` kept until the resume
-// answers, under a 6s ceiling, not the flat 2.5s this note used to claim.
-// What makes that tolerable is that no file left in the tier reads lock timing
-// to assert on, and the sweep above is what re-established it: this note
-// previously said the holder was safe "because the assertion-side file left
-// the tier" while THREE assertion-side files were still in it. The claim was
-// true of `template-lock-order.test.ts` alone and was read as true of the
-// tier. Adding a case that reads lock timing to a parallel file is what this
-// list exists to catch — re-derive the census with:
+// answers, under a 6s ceiling.
 //
-//   grep -rln 'not.toMatch(/[^/]*\(40P01\|55P03\)' src --include='*.test.ts'
+// Nor is the parallel tier free of files that assert on how a staged race comes
+// out. `gdpr.test.ts`, `waitlist.test.ts` and `class-template-lifecycle.test.ts`
+// each do, and each holds a lock while doing it. Extracting those tests into
+// `-lock-order` siblings is issue #459, which carries the candidates and the
+// measurement; until it lands, this list is short of the files that need it.
 //
-// Every hit belongs on this list.
+// MEMBERSHIP IS HELD BY THE MARKER, NOT BY A COMMAND. Every file below carries
+// `@serial-tier lock-contention` in its own header, with the reason that file
+// cannot share a parallel tier, and `src/lib/serial-tier-membership.test.ts`
+// fails if the markers and this array disagree in either direction, or if a
+// listed path stops existing.
+//
+// For FINDING a file that belongs here, the command below reaches the
+// SQLSTATE-shaped ones, asserted in either direction:
+//
+//   grep -rlE '(not\.)?toMatch\(/[^/]*(40P01|55P03|deadlock|lock timeout)' src --include='*.test.ts'
+//
+// Every hit needs a verdict; not every hit belongs. And it is a floor rather
+// than a census — the same assertion is also written `toBe('returned')`,
+// `toEqual({ ok: true, … })` and `expect(elapsedMs).toBeGreaterThan(5_000)`,
+// which no regex reaches. #459 records both census attempts that failed and
+// why the property is not recoverable from source text.
 export const LOCK_CONTENTION_TESTS = [
+  // Each file's own reason lives in its own header, beside the code that makes
+  // it true, and the membership test keeps the two from parting company. Only
+  // what is NOT visible from a single file is recorded here.
   'src/services/room-archive-lock-order.test.ts',
   'src/services/template-lock-order.test.ts',
-  // The third kind: a file whose DDL takes ACCESS EXCLUSIVE on a table the
-  // rest of the tier reads. `class-lifecycle-tier-guard.test.ts` drops and
-  // re-adds a CHECK on `Registration`, so it queues behind every concurrent
-  // user of that table and blocks them in turn. Its own header carries the
-  // measurement.
   'src/services/class-lifecycle-tier-guard.test.ts',
-  // Added by the preventive sweep the paragraph below asks for, and all three
-  // are the SECOND kind: each asserts a staged race ends in neither `40P01`
-  // nor `55P03`, so tier noise is a false failure none of them can tell from
-  // the defect it watches for — `template-lock-order.test.ts`'s exact shape.
-  // Found by looking, not by failing.
   'src/lib/db-locks-lock-order.test.ts',
   'src/services/invitations-lock-order.test.ts',
-  // Split out of `gdpr.test.ts` rather than moving it: that file runs in
-  // ~26s and exactly one of its tests reads lock timing, so moving all of it
-  // cost the serial tier +92% (37.8s -> 72.6s) against +2.5s extracted. Same
-  // move `class-lifecycle-tier-guard.test.ts` made, for the same kind of
-  // reason. No test count here — the argument is about time, and a count
-  // moves every time someone adds a case to that file. The sibling copy of
-  // this note in `gdpr-lock-order.test.ts` was de-numbered for the same
-  // reason; this one was missed and went stale.
+  // Split out of `gdpr.test.ts` rather than moving that file, which runs in
+  // ~26s: moving all of it cost the serial tier +92% (37.8s -> 72.6s). The
+  // same move `class-lifecycle-tier-guard.test.ts` made, for the same reason,
+  // and the one #459 proposes for three more files. No test count here — the
+  // argument is about time, and a count moves whenever someone adds a case.
   'src/services/gdpr-lock-order.test.ts',
-  // The first kind again: its insert-race test holds a transaction open —
-  // via an external release signal, for 200ms+ — while a concurrent
-  // `linkTeacherStudent` call contends for the same uncommitted
-  // `(teacherId, studentId)` tuple, the same shape as
-  // `room-archive-lock-order.test.ts`.
   'src/services/roster-link.test.ts',
 ] as const;
 
