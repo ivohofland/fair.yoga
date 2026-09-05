@@ -397,8 +397,14 @@ Then mutate the other direction, because a guard can be blind to the realistic r
 
 6. Change `!(err instanceof VerifyResponseError && err.status === 400)` to `!(err instanceof Error)` — the shape a future edit would most plausibly reach for, and one that silences every case.
 7. Run: `npx vitest run --project components "src/app/(public)/verify/page.test.tsx" -t "classifying a failed verification"`
-8. Expected: **4 FAIL** (the four logging cases), 1 pass (`stays silent`). Record the count.
-9. Restore, re-run, expect all 5 green.
+8. Expected: **5 FAIL** (every logging case), 1 pass (`stays silent`). Record the count.
+9. Restore, re-run, expect all 6 green.
+
+Then the mutation that the boundary case exists for — the wrong implementation a reader of #452's own wording would most plausibly write, since the issue says "the expected 4xx" and this file silences 400 alone:
+
+10. Change `err.status === 400` to `err.status >= 400 && err.status < 500`.
+11. Run: `npx vitest run --project components "src/app/(public)/verify/page.test.tsx" -t "classifying a failed verification"`
+12. Expected: **exactly 1 FAIL** — `logs a 4xx that is not the expected 400`, and nothing else. That is the whole point of that case: under this mutation every other case in the block still passes. Record the exact assertion text, restore, and re-run for 6 green.
 
 - [ ] **Step 6: Run the full file, then the runnable tiers**
 
