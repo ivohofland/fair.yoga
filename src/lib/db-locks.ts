@@ -1,6 +1,5 @@
 import { createHash } from 'crypto';
-import { Prisma } from '@prisma/client';
-import type { ClassStatus } from '@prisma/client';
+import { ClassStatus, Prisma } from '@prisma/client';
 
 /**
  * A Prisma client that must be an interactive transaction client, never the
@@ -293,45 +292,53 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
  *
  * `Prisma.raw`, not `Prisma.join`. `Prisma.join` binds each status as its own
  * parameter, and a bound text parameter compared against the `status` column's
- * enum type needs an explicit `::text` cast to resolve, which costs the index
- * the pre-locks' predicates rely on — measured during issue 180 task 4.
- * `Prisma.raw` embeds the values as literal SQL text instead, so the plan is
- * the one the hand-written lists produced.
+ * enum type needs an explicit `::text` cast to resolve — measured to cost an
+ * index during issue 180 task 4, against a schema where `Class` carried its
+ * own indexes (they moved to `CalendarEntry` in #327; re-measure before
+ * restating a specific cost against today's plan). `Prisma.raw` embeds the
+ * values as literal SQL text instead, so the plan is the one the hand-written
+ * lists produced.
  *
  * Building SQL text by concatenation is defensible here for exactly one
  * reason, and the PARAMETER TYPE is what carries it: `ClassStatus` is a
  * generated enum union, so a caller cannot reach this with input. That used to
- * be an annotation repeated beside each of the two call sites; now it is the
- * signature.
+ * be an annotation repeated at each call site; now it is the signature.
  */
 export function statusInList(statuses: readonly ClassStatus[]): Prisma.Sql {
+  if (statuses.length === 0) {
+    throw new Error('statusInList: refusing to render an empty status list into SQL text.');
+  }
   return Prisma.raw(statuses.map((s) => `'${s}'`).join(', '));
 }
 
 /**
  * The `ClassStatus` members classified `true` in a `Record<ClassStatus, boolean>`, frozen.
  *
- * The cast below to `ClassStatus[]` restores only what `Object.keys` erases: its return type is
- * `string[]` for soundness reasons that do not apply to an object whose keys `satisfies
- * Record<ClassStatus, boolean>` has already constrained to exactly `ClassStatus`. `Object.freeze`
- * is what makes rendering the result into SQL text by concatenation defensible at runtime
- * (`statusInList` above).
+ * Iterates the real runtime enum (`Object.values(ClassStatus)`) rather than the caller's object
+ * keys, so the result is genuinely `ClassStatus[]` with no cast and no assumption about the
+ * caller's object shape — a caller could otherwise pass a wider `Record<string, boolean>`
+ * structurally (TypeScript's excess-property check only fires on object literals, not variables),
+ * and iterating the caller's own keys would have silently accepted a non-`ClassStatus` string.
+ *
+ * `Object.freeze` guards the one other reader of this list — a Prisma `{ in: [...] }` filter —
+ * against later mutation; it plays no part in the `statusInList` concatenation being safe (see
+ * that function's own docblock for what actually does).
  */
 export function statusesWhere(classification: Record<ClassStatus, boolean>): readonly ClassStatus[] {
-  return Object.freeze(
-    (Object.keys(classification) as ClassStatus[]).filter((s) => classification[s]),
-  );
+  return Object.freeze(Object.values(ClassStatus).filter((s) => classification[s]));
 }
 
 /**
  * `Class` to its `CalendarEntry`, for a `ClassLockSource.join`.
  *
- * A constant rather than three hand-typed copies: a join condition a caller
- * cannot mistype is one that cannot silently match zero rows and take zero
- * locks, which is a failure the database does not report — the statement
- * succeeds and returns `[]`.
+ * A constant rather than a hand-typed copy per call site: a join condition a
+ * caller cannot mistype is one that cannot silently match zero rows and take
+ * zero locks, which is a failure the database does not report — the
+ * statement succeeds and returns `[]`.
  */
-export const CLASS_TO_ENTRY_JOIN = Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`;
+const entryJoin = Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`;
+Object.freeze(entryJoin.strings);
+export const CLASS_TO_ENTRY_JOIN = entryJoin;
 
 /**
  * `Class` to the waitlist entries on it, for a `ClassLockSource.join`. Same
@@ -341,7 +348,9 @@ export const CLASS_TO_ENTRY_JOIN = Prisma.sql`JOIN "CalendarEntry" e ON e.id = c
  * `WaitlistEntry` rows it reaches — pinned by 'locks the Class rows and NOT
  * the WaitlistEntry rows the join reaches' in `db-locks.test.ts`.
  */
-export const CLASS_TO_WAITLIST_JOIN = Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`;
+const waitlistJoin = Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`;
+Object.freeze(waitlistJoin.strings);
+export const CLASS_TO_WAITLIST_JOIN = waitlistJoin;
 
 /**
  * What `lockClassRowsOrdered` locks.
@@ -362,10 +371,13 @@ export interface ClassLockSource {
    * AN INNER JOIN IS A FILTER, and the dependency runs the opposite way from
    * how this reads. Supplying one does not merely widen the namespace the
    * `where` may reference — it NARROWS THE LOCK SET to classes having at
-   * least one matching row. `{ join: CLASS_TO_WAITLIST_JOIN, where: c."teacherId" = … }`
-   * locks that teacher's classes THAT HAVE A WAITLIST ENTRY, not that
-   * teacher's classes. A `LEFT JOIN` would not narrow, and would widen the
-   * `ON` clause's reach past what any caller here needs; no caller uses one.
+   * least one matching row. `withdrawWaitingEntriesForTeacher` (`waitlist.ts`)
+   * composes both constants — `{ join: Prisma.sql`${CLASS_TO_WAITLIST_JOIN}
+   * ${CLASS_TO_ENTRY_JOIN}`, where: e."teacherId" = … AND w."studentId" = … }`
+   * — and the result locks that teacher's classes THAT HAVE A MATCHING
+   * WAITLIST ENTRY FOR THAT STUDENT, not every class of that teacher's. A
+   * `LEFT JOIN` would not narrow, and would widen the `ON` clause's reach
+   * past what any caller here needs; no caller uses one.
    */
   join?: Prisma.Sql;
   /**
@@ -375,10 +387,19 @@ export interface ClassLockSource {
    * yours and cannot combine with anything this helper adds. Screened for the
    * clauses this helper owns — see `ILLEGAL_IN_FRAGMENT` below.
    *
+   * A predicate reaching a `join`-ed table's MUTABLE column needs that
+   * table's own lock too, or it is evaluated against a pre-wait snapshot
+   * `EvalPlanQual` will not re-fetch — see `lockClassRow`'s docblock above
+   * for the same hazard on its own two-statement lock. For an entry column
+   * (`date`, `startTime`, `durationMinutes`, `cancelledAt`), that means
+   * `entries: true`.
+   *
    * Values are BOUND: `Prisma.sql` tagged templates merge their values into
    * this statement in source order, verified against Postgres, so nothing
-   * here is interpolated unless a caller reaches for `Prisma.raw`, which for a
-   * fragment reaching this helper is always `statusInList` above.
+   * here is interpolated unless a caller reaches for `Prisma.raw` — which for
+   * a fragment reaching this helper is always `statusInList` above, checked
+   * by `grep -rn 'Prisma.raw' src` and confirming which hits are fragments
+   * passed to this function.
    */
   where: Prisma.Sql;
   /**
@@ -415,6 +436,13 @@ export interface ClassLockSource {
  *
  * No `g` flag: `RegExp.exec` on a global regex carries `lastIndex` between
  * calls and would skip every other fragment.
+ *
+ * This is a blunt keyword ban over the fragment's STATIC TEXT, not a parser — it cannot tell a
+ * caller's own legitimate subquery `ORDER BY`/`LIMIT` from one that would widen THIS statement's
+ * lock set, and it cannot tell a quoted identifier from a keyword. No caller today needs either
+ * shape (verified: none of the four production call sites use one), so the over-refusal costs
+ * nothing yet. A caller that legitimately needs one has no workaround through this parameter —
+ * hoist the subquery's result into an id list and pass that instead.
  */
 const ILLEGAL_IN_FRAGMENT =
   /\b(order\s+by|for\s+(update|share|no\s+key|key\s+share)|limit|offset)\b|;/i;
@@ -429,10 +457,12 @@ const ILLEGAL_IN_FRAGMENT =
  * into the outer `.strings`, so composition cannot smuggle a clause past this.
  */
 function assertNoIllegalClauses(member: 'join' | 'where', fragment: Prisma.Sql): void {
-  const match = ILLEGAL_IN_FRAGMENT.exec(fragment.strings.join(' ? '));
+  const text = fragment.strings.join(' ? ');
+  const match = ILLEGAL_IN_FRAGMENT.exec(text);
   if (match !== null) {
     throw new Error(
-      `lockClassRowsOrdered: the \`${member}\` fragment contains ${JSON.stringify(match[0])}, a clause this helper owns. See ClassLockSource.`,
+      `lockClassRowsOrdered: the \`${member}\` fragment contains ${JSON.stringify(match[0])}, ` +
+        `a clause this helper owns (see ClassLockSource). Fragment: ${JSON.stringify(text)}`,
     );
   }
 }
@@ -495,9 +525,9 @@ function assertNoIllegalClauses(member: 'join' | 'where', fragment: Prisma.Sql):
  * refused by name resolution; one that writes a clause this helper owns is
  * refused by `ILLEGAL_IN_FRAGMENT` above, and by the parentheses around the
  * splice if it somehow reaches Postgres. Each of those is pinned by its own
- * test in `db-locks.test.ts`. Before #245 the first two rested on `ORDER BY
- * c.id` happening to sit between the splice point and the locking clause,
- * and a locking clause inside a subquery was not refused at all.
+ * test in `db-locks.test.ts`. Before #245 a caller's own `ORDER BY` or
+ * `FOR UPDATE` was caught only because `ORDER BY c.id` happened to follow the
+ * splice point, and a locking clause inside a subquery was not caught at all.
  *
  * Returning the ids is not a convenience. It lets a caller scope its write to
  * `id: { in: … }` so the write set is a structural SUBSET of the lock set,
