@@ -31,14 +31,17 @@ and excluding `src/lib/db-locks.ts`, using the TypeScript compiler API
 
 Per file:
 
-1. **Calls** — every call expression whose callee is the identifier
-   `lockClassRowsOrdered`. Read from the syntax tree, not from text, so a
-   mention inside a comment or a string is not a call and a call without `await`
-   still is one.
-2. **Pairing** — for each such call, walk up to the nearest enclosing statement
-   and collect that statement's leading comment ranges. The call is *verdicted*
-   when at least one of those ranges contains the marker text. A call with no
-   enclosing statement counts as unverdicted rather than being skipped.
+1. **Calls** — every call expression reaching `lockClassRowsOrdered`: by that
+   name, by a local name an import specifier binds to it, or as a member of an
+   imported namespace. Read from the syntax tree, not from text, so a mention
+   inside a comment or a string is not a call and a call without `await` still
+   is one.
+2. **Pairing, one for one** — group each call by its nearest enclosing statement
+   and read that statement's leading comment ranges. A group must hold **exactly
+   one** call and **exactly one** marker. Zero markers is an unverdicted call;
+   two or more is a verdict standing over nothing; two calls under one marker is
+   one verdict asked to answer for two transactions. A call with no enclosing
+   statement counts as unverdicted rather than being skipped.
 3. **Orphans** — every raw occurrence of the marker text in the file must fall
    inside one of the comment ranges paired in step 2.
 
@@ -47,12 +50,14 @@ broke, modelled on `serial-tier-membership.test.ts`'s
 `{ listedButNotMarked, markedButNotListed }`:
 
 ```
-expect({ callsWithoutVerdict, verdictsWithoutCall })
-  .toEqual({ callsWithoutVerdict: [], verdictsWithoutCall: [] })
+expect({ callSitesNotPairedOneToOne, verdictsWithoutCall })
+  .toEqual({ callSitesNotPairedOneToOne: [], verdictsWithoutCall: [] })
 ```
 
 Each entry a repo-relative `path:line`, sorted, so a failure is a location a
-reader can open.
+reader can open, with the two counts riding inside the first key's string —
+`path:line (2 calls, 1 verdict)` — so a reader knows which of the four shapes it
+is without opening the test.
 
 ### Non-vacuity, asserted separately and first
 
@@ -77,7 +82,7 @@ only thing standing between the test and reporting itself. State that reason in
 a comment — it is the same move, and the same reason, as
 `serial-tier-membership.test.ts`'s `MARKER`.
 
-### Prove it bites — three mutations, each recorded
+### Prove it bites — five mutations, each recorded
 
 For each: apply, run the test, record the **exact** failure text, restore,
 re-run and confirm green. Commit nothing while a mutation is applied.
@@ -87,10 +92,10 @@ re-run and confirm green. Commit nothing while a mutation is applied.
    helper nor a verdict, so the mutation is one import and one statement. (It
    *mentions* the helper in two comments, lines 223 and 390, which is convenient:
    those are exactly the false positives a text census counts and this one must
-   not.) Expect it in `callsWithoutVerdict` at its line.
+   not.) Expect it in `callSitesNotPairedOneToOne` at its line.
 2. **A verdict that outlives its call.** Delete one of the four call statements,
    leaving its verdict comment. Expect that verdict's line in
-   `verdictsWithoutCall`, and confirm nothing lands in `callsWithoutVerdict`.
+   `verdictsWithoutCall`, and confirm nothing lands in `callSitesNotPairedOneToOne`.
    Pick `class-template-lifecycle.ts:754`, whose return value is discarded, so
    typecheck stays green and the mutation isolates this test's verdict.
 3. **A call the old grep would miss.** Change one existing call from
@@ -117,7 +122,7 @@ Then two guard mutations, same protocol:
    the exclusion and expect this file's own marker in `verdictsWithoutCall`. Then
    the control: re-assemble the marker with the exclusion still lifted, and
    confirm that side empties while the genuine test-file call sites stand in
-   `callsWithoutVerdict` — which is what proves the assembly, and not the
+   `callSitesNotPairedOneToOne` — which is what proves the assembly, and not the
    exclusion, is doing the work.
 
 Record all five in the commit message, with the exact error text of each.

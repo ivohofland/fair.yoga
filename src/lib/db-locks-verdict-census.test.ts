@@ -47,8 +47,10 @@
  *
  * A call that reaches the helper through a local binding — `const f =
  * lockClassRowsOrdered; f(tx, …)` — is not seen either. Resolving one needs a
- * full type-checker program, which this test does not build. An import alias
- * and a namespace member are followed; a local indirection is not.
+ * full type-checker program, which this test does not build. A namespace member
+ * is followed by name, and an import alias is followed only from a specifier
+ * naming `db-locks`, so one reached through a re-exporting barrel is not. A
+ * call that keeps the helper's own name is caught however it got there.
  */
 import { describe, it, expect } from 'vitest';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
