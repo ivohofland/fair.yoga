@@ -434,8 +434,9 @@ client-side line at all.
 
 `VerifyResponseError` carries the status on the rejection, so the type of
 what reaches the `.catch` is the classification: a 400 is silent, everything
-else logs. The throw runs before `res.json()`, so a rejection carrying no
-status could only have come from a 2xx — nothing is lost by not carrying one.
+else logs. A rejection carrying no status either never reached a response, or
+came from a 2xx — the throw runs before `res.json()` — so nothing is lost by
+not carrying one.
 
 Also covers a case #452 does not name: a 2xx whose body is mis-shaped throws
 after the server has set a session cookie, so the probe answers ok and the
