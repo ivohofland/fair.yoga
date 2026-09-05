@@ -6,7 +6,7 @@
 
 **Architecture:** The `.catch` currently cannot tell a spent link from a backend fault, because `if (!res.ok) throw new Error(...)` destroys `res.status` one line earlier. A typed sentinel — `VerifyResponseError`, carrying the status — makes the rejection's *type* the classification. Nothing else in the effect moves.
 
-**Tech Stack:** Next.js 14 App Router client component, TypeScript strict, Vitest + Testing Library (`components` project).
+**Tech Stack:** Next.js App Router client component (this repo is on 16.2.10), TypeScript strict, Vitest + Testing Library (`components` project).
 
 **Spec:** None — brainstormed as a bounded change (single file + its test, one obvious approach once the mechanism was chosen). The design decision #452 deferred was settled at the brainstorming gate: *any* 400 is silent, and the status travels on a sentinel error.
 
@@ -411,7 +411,7 @@ Then the mutation that the boundary case exists for — the wrong implementation
 Run: `npx vitest run --project components "src/app/(public)/verify/page.test.tsx"`
 Expected: every case green, including the 8 that assert on the `'Verification failed'` screen text — the sentinel's message never reaches the DOM.
 
-Then: `npx tsc --noEmit && npx next lint`
+Then: `npx tsc --noEmit && npm run lint`
 Expected: clean. If lint objects to the parameter property, convert to an explicit field assignment (`readonly status: number;` + `this.status = status;`) rather than dropping the type.
 
 Then: `npx vitest run --project unit --project unit-sweeps --project components`
