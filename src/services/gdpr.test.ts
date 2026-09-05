@@ -27,13 +27,16 @@ const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
  * those students get erased by other tests in that block, and test order is
  * not something to depend on.
  *
- * `waiting: false` is the case the waitlist-shaped tests below cannot reach
- * and the one the `SET LOCAL` hoist is about: there is no loop — the
- * ordered pre-lock statement runs unconditionally and simply matches zero
- * rows, which is why the `setLockTimeout` hoist above it is what supplies
- * the bound. `registered: true` gives that erasure a `Registration` row of
- * its own to contend over, since with no class lock there is otherwise
- * nothing for a counterparty to hold.
+ * `waiting: false` is the case the waitlist-shaped tests below cannot reach:
+ * there is no loop, and the ordered pre-lock statement runs unconditionally
+ * and simply matches zero rows. That pre-lock's OWN `setLockTimeout` call
+ * (`lockClassRowsOrdered`, `db-locks.ts`) is unconditional too — before its
+ * query runs, not gated on what it matches — so this path is bounded twice
+ * over: the hoist above and the pre-lock's own call both fire ahead of the
+ * `registration.updateMany` this test contends on. `registered: true`
+ * gives that erasure a `Registration` row of its own to contend over, since
+ * with no class lock there is otherwise nothing for a counterparty to
+ * hold.
  */
 async function makeStudentWaitingInClass(
   {
@@ -565,12 +568,16 @@ let studentAccountId: string;
    * #174 four-specialist review, Important 5. The 2s bound *arrived* from a
    * `lockClassRow` loop that *ran* once per class the student held an entry
    * in — `waiting`-only in #174, every status by #216/#182 — and today
-   * arrives unconditionally from `setLockTimeout` at the top of the
-   * transaction. Under that loop, a student holding no such entry, the
-   * common case, got an unbounded wait on every statement in the erasure
-   * transaction. Prisma's own `timeout` cannot rescue that: it refuses to
-   * START a statement past the budget, it cannot cancel one already blocked
-   * inside Postgres, so the erasure simply hung.
+   * arrives unconditionally from TWO sites: the hoist at the top of the
+   * transaction, and `lockClassRowsOrdered`'s own `setLockTimeout`
+   * (`db-locks.ts`), which fires before its query runs regardless of what
+   * it matches. Either alone bounds this path — measured by removing just
+   * the hoist, which leaves the test below passing. Under the old loop, a
+   * student holding no such entry, the common case, got an unbounded wait
+   * on every statement in the erasure transaction. Prisma's own `timeout`
+   * cannot rescue that: it refuses to START a statement past the budget, it
+   * cannot cancel one already blocked inside Postgres, so the erasure
+   * simply hung.
    *
    * Round 2 review measured exactly this and wrote the asymmetry down as
    * intended. It was not — nothing in the GDPR-clock reason for bounding an
@@ -585,10 +592,20 @@ let studentAccountId: string;
     const fixture = await makeStudentWaitingInClass({ waiting: false, registered: true });
     const { studentId: fixtureStudentId, registrationId } = fixture;
     try {
-      // The premise: an empty lock set. With an entry of ANY status here the
-      // ordered `lockClassRowsOrdered` statement would lock a row and its
-      // internal `setLockTimeout` would set the bound, so this test would
-      // pass without the unconditional hoist it exists to pin.
+      // The premise: an empty lock set — `lockClassRowsOrdered`'s WHERE
+      // matches zero rows for this student; the statement still runs.
+      // MEASURED: this test's outcome does not depend on the
+      // top-of-transaction hoist above. Deleting it alone still leaves this
+      // test passing, because `lockClassRowsOrdered`'s own `setLockTimeout`
+      // call is unconditional too — before its query runs, not gated on
+      // what it matches — and it runs ahead of the `registration.updateMany`
+      // below regardless of row count. What this test actually guards is
+      // narrower than the docblock above states: that SOME bound reaches
+      // this transaction before that statement, not that the hoist
+      // specifically is load-bearing. The hoist's own necessity is
+      // currently unverified by any test in this file — a coverage gap, not
+      // a live defect, since a second unconditional call already covers
+      // this exact path.
       expect(
         await prisma.waitlistEntry.count({
           where: { studentId: fixtureStudentId, status: 'waiting' },
@@ -806,11 +823,14 @@ let studentAccountId: string;
       // rejected — so it passes trivially if `deleteStudentAccount` never
       // takes a `Class` lock at all. It takes one whenever the student holds
       // a `WaitlistEntry` of any status, via the ordered pre-lock that runs
-      // before any read — so drifting the fixture's status leaves the lock
-      // in place, and this canary needs a different reason for its premise
-      // assertion than the one it gives. Its sibling above self-protects (a
-      // missing lock means no wait, and the wait IS its assertion); this one
-      // does not, so it says the premise out loud.
+      // before any write — so drifting the fixture's status leaves the lock
+      // in place. The assertion below is narrower than that mechanism
+      // requires — it checks `status: 'waiting'` specifically, when any
+      // status would do — but it is sufficient, not wrong: a `waiting`
+      // entry on this fixture's class is still an entry, so the pre-lock
+      // still takes the row. Its sibling above self-protects (a missing
+      // lock means no wait, and the wait IS its assertion); this one does
+      // not, so it says the premise out loud.
       expect(
         await prisma.waitlistEntry.count({
           where: { studentId: fixtureStudentId, status: 'waiting' },
