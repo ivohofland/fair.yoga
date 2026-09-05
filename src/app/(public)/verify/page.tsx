@@ -10,6 +10,26 @@ type Status = 'verifying' | 'success' | 'error' | 'already-signed-in' | 'handoff
 type StepState = 'done' | 'now' | 'pending';
 type RailStep = { num: string; text: string; when: string; state: StepState };
 
+/**
+ * A verify POST that answered, and what it answered with.
+ *
+ * The status has to survive the rejection because the outer `.catch` is the
+ * only place that can act on it, and the `!res.ok` throw is where it would
+ * otherwise be discarded. Carried on the error rather than in a variable
+ * beside the chain, so there is no write-then-read ordering for a later edit
+ * to get wrong — a rejection that IS one of these came from a response, and
+ * one that is not never got an answer worth a status.
+ *
+ * `message` deliberately avoids the words "Verification failed": that string
+ * is on-screen copy in `ErrorState` below, and a diagnostic line sharing a
+ * grep with UI copy invites one to be changed for the other's reasons.
+ */
+class VerifyResponseError extends Error {
+  constructor(readonly status: number) {
+    super(`verify POST answered ${status}`);
+  }
+}
+
 function Rail({ steps }: { steps: RailStep[] }) {
   return (
     <ul className="list-none p-0 mt-6 mb-2 border-t border-border">
@@ -605,7 +625,7 @@ function VerifyContent() {
       signal: controller.signal,
     })
       .then((res) => {
-        if (!res.ok) throw new Error('Verification failed');
+        if (!res.ok) throw new VerifyResponseError(res.status);
         return res.json();
       })
       .then((json) => {
@@ -641,12 +661,22 @@ function VerifyContent() {
           setTimeout(() => router.push(dest), cancelled || endedSession ? 4000 : 900);
         });
       })
-      .catch(async () => {
+      .catch(async (err: unknown) => {
         // The ceiling abandoned this request; the screen already says so.
         // Probing now would attempt a fetch that's already doomed, for an
         // answer nothing may act on — skip it outright rather than let it
         // fail through the probe's own guard.
         if (controller.signal.aborted) return;
+
+        // A 400 is the answer this page is built to expect — the link is
+        // expired or already used, the commonest ordinary event here and no
+        // kind of fault. Every other rejection is one, and the throw above
+        // runs before `res.json()`, so the ones carrying no status could only
+        // have come from a 2xx whose body would not read or would not
+        // destructure. Silence for the first, a line for the rest.
+        if (!(err instanceof VerifyResponseError && err.status === 400)) {
+          console.error('[verify] the verification request failed', err);
+        }
 
         // A stale link is often re-clicked from the inbox AFTER a
         // successful sign-in. Telling a signed-in user their sign-in
@@ -674,9 +704,9 @@ function VerifyContent() {
           if (controller.signal.aborted) return;
           // Reaching here means the probe itself misbehaved — the request
           // failed, or a 200 carried something that is not the shape this
-          // reads. Worth a line, unlike the rejection that brought us into
-          // this `catch`: that one is an expired or already-used link, the
-          // commonest ordinary event on this page and no kind of fault.
+          // reads. Its own line, separate from the classification above: that
+          // one is about the verification, this one about the probe sent to
+          // recover from it, and a reader who hits both wants to see both.
           console.error('[verify] the session probe failed after a failed verification', err);
         }
         settle(() => setStatus('error'));
