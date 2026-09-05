@@ -328,6 +328,9 @@ export function statusesWhere(classification: Record<ClassStatus, boolean>): rea
   return Object.freeze(Object.values(ClassStatus).filter((s) => classification[s]));
 }
 
+const entryJoin = Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`;
+Object.freeze(entryJoin.strings);
+
 /**
  * `Class` to its `CalendarEntry`, for a `ClassLockSource.join`.
  *
@@ -336,9 +339,10 @@ export function statusesWhere(classification: Record<ClassStatus, boolean>): rea
  * zero locks, which is a failure the database does not report — the
  * statement succeeds and returns `[]`.
  */
-const entryJoin = Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`;
-Object.freeze(entryJoin.strings);
 export const CLASS_TO_ENTRY_JOIN = entryJoin;
+
+const waitlistJoin = Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`;
+Object.freeze(waitlistJoin.strings);
 
 /**
  * `Class` to the waitlist entries on it, for a `ClassLockSource.join`. Same
@@ -348,8 +352,6 @@ export const CLASS_TO_ENTRY_JOIN = entryJoin;
  * `WaitlistEntry` rows it reaches — pinned by 'locks the Class rows and NOT
  * the WaitlistEntry rows the join reaches' in `db-locks.test.ts`.
  */
-const waitlistJoin = Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`;
-Object.freeze(waitlistJoin.strings);
 export const CLASS_TO_WAITLIST_JOIN = waitlistJoin;
 
 /**
@@ -373,11 +375,12 @@ export interface ClassLockSource {
    * `where` may reference — it NARROWS THE LOCK SET to classes having at
    * least one matching row. `withdrawWaitingEntriesForTeacher` (`waitlist.ts`)
    * composes both constants — `{ join: Prisma.sql`${CLASS_TO_WAITLIST_JOIN}
-   * ${CLASS_TO_ENTRY_JOIN}`, where: e."teacherId" = … AND w."studentId" = … }`
-   * — and the result locks that teacher's classes THAT HAVE A MATCHING
-   * WAITLIST ENTRY FOR THAT STUDENT, not every class of that teacher's. A
-   * `LEFT JOIN` would not narrow, and would widen the `ON` clause's reach
-   * past what any caller here needs; no caller uses one.
+   * ${CLASS_TO_ENTRY_JOIN}`, where: e."teacherId" = … AND w."studentId" = …
+   * AND w.status = 'waiting' }` — and the result locks that teacher's classes
+   * THAT HAVE A MATCHING, STILL-WAITING ENTRY FOR THAT STUDENT, not every
+   * class of that teacher's. A `LEFT JOIN` would not narrow, and would widen
+   * the `ON` clause's reach past what any caller here needs; no caller uses
+   * one.
    */
   join?: Prisma.Sql;
   /**
@@ -440,7 +443,7 @@ export interface ClassLockSource {
  * This is a blunt keyword ban over the fragment's STATIC TEXT, not a parser — it cannot tell a
  * caller's own legitimate subquery `ORDER BY`/`LIMIT` from one that would widen THIS statement's
  * lock set, and it cannot tell a quoted identifier from a keyword. No caller today needs either
- * shape (verified: none of the four production call sites use one), so the over-refusal costs
+ * shape (verified: no production call site uses one), so the over-refusal costs
  * nothing yet. A caller that legitimately needs one has no workaround through this parameter —
  * hoist the subquery's result into an id list and pass that instead.
  */

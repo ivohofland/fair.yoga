@@ -163,9 +163,11 @@ describe('statusInList', () => {
   // The `Prisma.raw`-not-`Prisma.join` decision, asserted rather than
   // described: `Prisma.join` would produce one bound parameter per status,
   // and a bound text parameter compared against the `status` column's enum
-  // type needs a `::text` cast to resolve, which costs the index both
-  // pre-locks' predicates rely on. A `Prisma.raw` fragment carries its text
-  // in `.strings` and binds nothing.
+  // type needs a `::text` cast to resolve — measured to cost an index during
+  // issue 180 task 4, against a schema where `Class` carried its own indexes
+  // (they moved to `CalendarEntry` in #327; re-measure before restating a
+  // specific cost against today's plan). A `Prisma.raw` fragment carries its
+  // text in `.strings` and binds nothing.
   it('binds no parameters, so the enum comparison keeps its index', () => {
     const rendered = statusInList(['draft', 'open']);
     expect(rendered.values).toEqual([]);
