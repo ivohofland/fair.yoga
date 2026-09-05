@@ -709,6 +709,36 @@ function VerifyContent() {
             });
             return;
           }
+
+          // The probe asked whether this reader has a session, and 401 is that
+          // question answered "no" — the ordinary case behind a spent link,
+          // and the commonest path through here. Anything else means the probe
+          // could not answer at all, and the fall-through below is about to
+          // tell the reader their link failed on the strength of a response
+          // nobody read.
+          //
+          // Below the ok check on purpose, not merely by convention: an ok
+          // probe is not an unexpected answer, and classifying one would put a
+          // fault line under the reader who is about to be told, correctly,
+          // that they are already signed in. Held by the call count in `logs
+          // the fault behind a mis-shaped success the probe then masks`.
+          //
+          // No abort guard, where the `catch` below has one: an abort makes
+          // `fetch` reject, so it cannot arrive here as a non-ok response at
+          // all. A ceiling firing after this response landed does not make the
+          // status less real, and `settle` already refuses the screen.
+          //
+          // A bare literal, where the verification's classification above uses
+          // the shared `MAGIC_LINK_REFUSED_STATUS`. That constant guards a
+          // drift that would go SILENT — move the route off 400 and real
+          // faults stop logging, which is #452. This one cannot drift that
+          // way: a session route that stopped answering 401 would make this
+          // log noise, which announces itself.
+          if (res.status !== 401) {
+            console.error('[verify] the session probe answered unexpectedly', {
+              status: res.status,
+            });
+          }
         } catch (probeErr) {
           // Our own ceiling aborted this probe; the give-up screen already
           // says so, and logging it again would blame the probe for
