@@ -61,6 +61,34 @@ describe('transitionClass — door 2: publishing into an archived room', () => {
     const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(after.status).toBe('open');
   });
+
+  // (339) The pre-check above reads `teacherRoom.isArchived` outside the
+  // transaction, and the CAS carries no predicate on the room — so a room
+  // archived in that window is invisible to the pre-check. `Class_live_needs_open_room`
+  // is what closes it: this pins that the refusal it produces, via the catch
+  // around the CAS, is the same sentence the pre-check produces, not a 500.
+  // Sequential statements can't stage the true interleaving (the archive here
+  // commits before the pre-check ever reads, so this still passes via the
+  // pre-check) — that lands in Task 5's `class-room-race.test.ts`, which holds
+  // the transaction open to land the archive inside the window. This case
+  // exists so the catch's answer is pinned even though nothing here forces it
+  // to fire yet.
+  it('refuses a publish when the room archives after the pre-check', async () => {
+    const f = await makeFixture();
+    const cls = await addClass(f, 'draft');
+    await prisma.teacherRoom.update({ where: { id: f.linkId }, data: { isArchived: true } });
+
+    const result = await transitionClass(prisma, cls.id, 'open');
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'ROOM_ARCHIVED',
+      error: 'This room is archived. Unarchive it to publish classes here.',
+    });
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+    expect(after.status).toBe('draft');
+  });
 });
 
 describe('pauseOrResumeTemplate — door 3: resuming into an archived room', () => {
