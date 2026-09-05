@@ -182,7 +182,7 @@ locally, including `useSearchParams`. It already drives the 900ms hold with
 `vi.useFakeTimers()` and `advanceTimersByTimeAsync`. Extend it; no change to
 `tests/setup/components.ts` is needed.
 
-The existing thirteen cases resolve their mocked fetch immediately, so under
+The existing eleven cases resolve their mocked fetch immediately, so under
 the new gate the rail never appears and they should pass unedited. **If any
 of them needs editing, stop and report it** — that would mean the fast path
 changed, which is exactly what must not happen.
@@ -249,7 +249,7 @@ verdict:
 implementation notes were written before the test file existed:
 
 - "The natural home is a **new** `src/app/(public)/verify/page.test.tsx`" —
-  it exists, with 13 cases.
+  it exists, and had 11 cases before this branch.
 - "the shared `next/navigation` mock in `tests/setup/components.ts` stubs
   `useRouter` only … the first `src/app` page test will have to extend that
   mock" — it did not; the verify test file mocks `next/navigation` locally,

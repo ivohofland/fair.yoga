@@ -79,16 +79,14 @@ function Fineprint({ children }: { children: React.ReactNode }) {
 
 /**
  * Written for a slow connection, and shown only on one: `useVerifyingRail`
- * below decides when this is on screen, and every route to it goes through
- * that hook. It is the heaviest screen in the flow, and before #435 it was
- * also the shortest-lived — visible for 89–194ms on a local verification,
- * gone before it resolved into anything.
+ * decides when this is on screen. It is the heaviest screen in the flow,
+ * which is why it must not appear for a verification that will finish first.
  */
 function VerifyingState() {
   return (
     <div className="flex-1 flex flex-col justify-center py-4">
       <p className="type-label text-teal mb-[10px]">One moment</p>
-      <h1 className="type-display mb-4">Checking your link</h1>
+      <h1 className="type-display mb-4">{RAIL_HEADING}</h1>
       <p className="type-body max-w-[360px]">
         You tapped a one-time link. We&apos;re confirming it&apos;s still valid,
         and that this is the browser you requested it from.
@@ -315,12 +313,12 @@ function HandoffState({ code }: { code: string }) {
 }
 
 /**
- * How long verification may run before the reader is shown anything about
- * it. Below this the rail never renders at all — the `(public)` layout's
- * wordmark carries the screen on its own, and the reader's next sight is the
- * outcome.
+ * How long after mount the rail waits before appearing. A verification that
+ * answers first never brings it to the screen at all.
+ *
+ * Exported so the tests step the clock by this rather than by a copy of it.
  */
-const RAIL_APPEARS_AFTER_MS = 300;
+export const RAIL_APPEARS_AFTER_MS = 300;
 
 /**
  * How long the rail keeps the screen once it HAS appeared, even when the
@@ -333,7 +331,11 @@ const RAIL_APPEARS_AFTER_MS = 300;
  * version of it. Nothing here slows the fast path: below the threshold there
  * is nothing to hold, because nothing was shown.
  */
-const RAIL_STAYS_FOR_MS = 600;
+export const RAIL_STAYS_FOR_MS = 600;
+
+/** The rail's heading. Exported so a test asserting its absence cannot be
+ *  quietly retired by a copy edit here. */
+export const RAIL_HEADING = 'Checking your link';
 
 /**
  * Bounds the verifying rail's life away from zero.
@@ -341,16 +343,27 @@ const RAIL_STAYS_FOR_MS = 600;
  * A screen's lifetime has two ends, and nothing can know at render time
  * whether a verification will answer in 90ms or three seconds — so gating
  * only the start could never bound that lifetime. `settle` is the other end:
- * every path out of `verifying` applies its outcome through it, so none of
- * them can take the screen while the rail is mid-flash. It runs its callback
- * immediately when the rail was never shown, which is the ordinary fast
- * sign-in and the reason this costs that reader nothing.
+ * an outcome applied through it cannot take the screen while the rail is
+ * mid-flash. It runs its callback immediately when the rail was never shown,
+ * which is the ordinary fast sign-in and the reason this costs that reader
+ * nothing.
+ *
+ * Callers must route EVERY exit from `verifying` through `settle`; the type
+ * system cannot make them, so each exit has a test that fails if it stops.
  *
  * The minimum is timed from the rail's own appearance rather than measured
  * against a clock read, so no part of this depends on `Date` being faked
  * alongside the timers.
+ *
+ * @param onApplyThrew - recovery for a callback that throws. On the fast path
+ * an outcome runs inside the caller's promise chain and a throw lands in its
+ * `.catch`; held, it runs from a timer with no such backstop, and the reader
+ * whose token is already spent would be left on a screen that never resolves.
  */
-function useVerifyingRail(enabled: boolean): {
+function useVerifyingRail(
+  enabled: boolean,
+  onApplyThrew: () => void,
+): {
   railVisible: boolean;
   settle: (apply: () => void) => void;
 } {
@@ -361,6 +374,14 @@ function useVerifyingRail(enabled: boolean): {
   const appearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Held in a ref, not closed over: `settle` has to keep one identity for the
+  // life of the mount, because the caller's verification effect depends on it
+  // and re-running that effect re-sends a single-use token.
+  const recover = useRef(onApplyThrew);
+  useEffect(() => {
+    recover.current = onApplyThrew;
+  });
+
   useEffect(() => {
     if (!enabled) return;
     appearTimer.current = setTimeout(() => {
@@ -370,7 +391,7 @@ function useVerifyingRail(enabled: boolean): {
         owed.current = false;
         const held = waiting.current;
         waiting.current = null;
-        held?.();
+        if (held) run(held);
       }, RAIL_STAYS_FOR_MS);
     }, RAIL_APPEARS_AFTER_MS);
 
@@ -378,8 +399,22 @@ function useVerifyingRail(enabled: boolean): {
       if (appearTimer.current) clearTimeout(appearTimer.current);
       if (stayTimer.current) clearTimeout(stayTimer.current);
       waiting.current = null;
+      // Cleared with the timer that would otherwise have cleared it. Leaving
+      // it set would strand a later `settle`: it would park a callback for a
+      // stay timer that no longer exists, and the reader would hold on the
+      // rail with nothing coming.
+      owed.current = false;
     };
   }, [enabled]);
+
+  function run(apply: () => void): void {
+    try {
+      apply();
+    } catch (err) {
+      console.error('[verify] the outcome threw on its way to the screen', err);
+      recover.current();
+    }
+  }
 
   const settle = useCallback((apply: () => void) => {
     // Cancelled rather than merely ignored: an outcome is on its way to the
@@ -388,8 +423,20 @@ function useVerifyingRail(enabled: boolean): {
       clearTimeout(appearTimer.current);
       appearTimer.current = null;
     }
-    if (owed.current) waiting.current = apply;
-    else apply();
+    if (!owed.current) {
+      run(apply);
+      return;
+    }
+    // Two outcomes for one verification means the token was redeemed twice —
+    // React's development double-mount is the way to see it. Last one wins,
+    // as it did before this gate existed, but the loser is worth a line: it
+    // takes its side effects (the success branch's redirect among them) with
+    // it.
+    if (waiting.current) {
+      console.error('[verify] a second outcome arrived while one was held; dropping the first');
+    }
+    waiting.current = apply;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `run` closes over refs only, and `settle` must keep one identity: the caller's verification effect depends on it, and re-running that effect re-sends a single-use token.
   }, []);
 
   return { railVisible, settle };
@@ -406,7 +453,12 @@ function VerifyContent() {
   const [sessionEnded, setSessionEnded] = useState(false);
   const [home, setHome] = useState<string>('/schedule');
   const [handoffCode, setHandoffCode] = useState<string>('');
-  const { railVisible, settle } = useVerifyingRail(token !== null);
+  // `Boolean(token)`, matching the status initializer above and the fetch
+  // guard below: `?token=` yields '', which is not a verification worth
+  // arming a timer for.
+  const { railVisible, settle } = useVerifyingRail(Boolean(token), () =>
+    setStatus('error'),
+  );
 
   useEffect(() => {
     if (!token) return;
@@ -489,24 +541,26 @@ function VerifyContent() {
       />
     );
   if (status === 'handoff') return <HandoffState code={handoffCode} />;
+  // `railVisible` only ever goes up, and must keep doing so. It is what holds
+  // the screen when the stay timer expires with nothing to run — a verify POST
+  // that failed at 400ms, say, whose session probe answers at 1500ms. Reset it
+  // there and that reader gets 600ms of blank instead.
   return railVisible ? <VerifyingState /> : null;
 }
 
 export default function VerifyPage() {
   return (
-    // Renders nothing, for the same reason the gate below the threshold does:
-    // this is a pre-mount render. It happens before a verification has been
-    // sent, so it cannot know whether one will take 90ms or three seconds,
-    // and a screen it paints may be replaced on the very next frame.
-    // `useVerifyingRail` decides instead, and only once `VerifyContent` has
-    // mounted.
+    // Renders nothing, and cannot defer to `useVerifyingRail` the way the
+    // fall-through does — this runs before `VerifyContent` mounts, so no timer
+    // of ours has started. A rail painted here would not be gated by anything:
+    // it would sit in the served HTML and then vanish at hydration, whatever
+    // the verification went on to do.
     //
-    // Not interchangeable with the gate: which of the two is the FIRST paint
-    // depends on how this page is being served. Built, it prerenders (a
-    // `useSearchParams` bailout takes the nearest boundary with it), so this
-    // fallback is the HTML a deployed reader gets before any JavaScript runs;
-    // under `next dev` the page is rendered per request and `VerifyContent`
-    // produces that HTML itself. Each site covers what the other cannot.
+    // The cost is honest and worth stating: where this markup is what the
+    // reader gets first, the wordmark-only window lasts until hydration and
+    // only then does `RAIL_APPEARS_AFTER_MS` begin. Neither constant bounds
+    // it. On a slow connection that window is longer than anything measured
+    // for this change.
     <Suspense fallback={null}>
       <VerifyContent />
     </Suspense>

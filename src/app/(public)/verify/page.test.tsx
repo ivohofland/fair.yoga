@@ -8,18 +8,28 @@ const push = vi.fn();
 const WITH_TOKEN = 'token=a-real-token';
 let searchParams = new URLSearchParams(WITH_TOKEN);
 
-/** One object for the life of the file, as Next's own `useRouter` returns.
- *  A fresh one per call would change identity on every render and re-run
- *  every effect that depends on the router — including the verification
- *  itself, which would then be sent more than once. */
+/** One object for the life of the file. A fresh one per call would change
+ *  identity on every render and re-run every effect that depends on the
+ *  router — including the verification itself, which would then be sent more
+ *  than once with a single-use token. */
 const router = { push, refresh: vi.fn() };
 
+/** Makes `useSearchParams` suspend, so the page's `<Suspense>` boundary
+ *  renders its fallback. Nothing else in this file reaches that branch: a mock
+ *  that answers synchronously never suspends. Reset in `afterEach`. */
+let suspendSearchParams = false;
+
 vi.mock('next/navigation', () => ({
-  useSearchParams: () => searchParams,
+  useSearchParams: () => {
+    // A promise that never settles: React keeps the boundary suspended for as
+    // long as the render lasts, which is all this needs.
+    if (suspendSearchParams) throw new Promise<void>(() => {});
+    return searchParams;
+  },
   useRouter: () => router,
 }));
 
-import VerifyPage from './page';
+import VerifyPage, { RAIL_APPEARS_AFTER_MS, RAIL_STAYS_FOR_MS, RAIL_HEADING } from './page';
 
 describe('VerifyPage', () => {
   afterEach(() => {
@@ -31,6 +41,7 @@ describe('VerifyPage', () => {
     vi.restoreAllMocks();
     push.mockReset();
     searchParams = new URLSearchParams(WITH_TOKEN);
+    suspendSearchParams = false;
   });
 
   /**
@@ -267,8 +278,7 @@ describe('VerifyPage', () => {
      * rather than the retrying `findByText` the rest of this file leans on —
      * and a `setState` made from a timer callback is outside React's act
      * scope, so without this its render has not reached the DOM by the next
-     * line. It also flushes the promise chain in a window where no timer
-     * fires, which `advanceTimersByTimeAsync` alone does not do.
+     * line.
      */
     async function advance(ms: number): Promise<void> {
       await act(async () => {
@@ -276,21 +286,53 @@ describe('VerifyPage', () => {
       });
     }
 
-    /** A fetch this test resolves by hand, so the rail's window is ours to
-     *  step through rather than something the mock races us to. */
-    function deferredFetch(): { resolve: (value: unknown) => void } {
+    /**
+     * A fetch this test resolves by hand, so the rail's window is ours to step
+     * through rather than something the mock races us to.
+     *
+     * `body` is a spy: a case asserting the outcome is NOT yet on screen has
+     * to tell "held by the rail" apart from "the response has not been read
+     * yet", and the two look identical in the DOM.
+     */
+    function deferredFetch(body: () => unknown): {
+      resolve: () => void;
+      read: ReturnType<typeof vi.fn>;
+      calls: () => number;
+    } {
+      const read = vi.fn(async () => body());
       let resolve!: (value: unknown) => void;
       const pending = new Promise((r) => {
         resolve = r;
       });
-      vi.stubGlobal('fetch', vi.fn().mockReturnValue(pending));
-      return { resolve };
+      const fetchMock = vi.fn().mockReturnValue(pending);
+      vi.stubGlobal('fetch', fetchMock);
+      return {
+        resolve: () => resolve({ ok: true, json: read }),
+        read,
+        calls: () => fetchMock.mock.calls.length,
+      };
     }
 
-    const signedIn = {
-      ok: true,
-      json: async () => ({ data: { accountId: 'acct-1', redirectTo: '/schedule' } }),
-    };
+    const signedInBody = () => ({ data: { accountId: 'acct-1', redirectTo: '/schedule' } });
+    const signedIn = { ok: true, json: async () => signedInBody() };
+
+    /**
+     * Walks a case to the instant the rail is up and the outcome has been
+     * read but not yet shown — the state every hold assertion is about.
+     * Returns at t = RAIL_APPEARS_AFTER_MS + 1.
+     */
+    async function railUpWithOutcomeHeld(
+      deferred: ReturnType<typeof deferredFetch>,
+    ): Promise<void> {
+      await advance(RAIL_APPEARS_AFTER_MS);
+      expect(screen.getByText(RAIL_HEADING)).toBeInTheDocument();
+      deferred.resolve();
+      await advance(1);
+      // The chain reached `settle` while the rail was up: whatever is still
+      // absent below is absent because it is HELD, not because it is unread.
+      expect(deferred.read).toHaveBeenCalled();
+      expect(screen.getByText(RAIL_HEADING)).toBeInTheDocument();
+    }
 
     /** The threshold half. Nothing renders in the window a fast verification
      *  finishes inside — not even for the frame before the outcome lands. */
@@ -299,43 +341,36 @@ describe('VerifyPage', () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(signedIn));
       render(<VerifyPage />);
 
-      // The synchronous first render: the site that used to paint the rail
-      // into the server HTML as well.
-      expect(screen.queryByText('Checking your link')).not.toBeInTheDocument();
+      // Before any timer has fired: the fall-through must render nothing
+      // while `status` is still `verifying`.
+      expect(screen.queryByText(RAIL_HEADING)).not.toBeInTheDocument();
 
       await advance(10);
       expect(screen.getByText("You're signed in.")).toBeInTheDocument();
-      expect(screen.queryByText('Checking your link')).not.toBeInTheDocument();
-
-      // Past the threshold, with the outcome long since on screen: the
-      // appearance timer must not still be armed behind it.
-      await advance(500);
-      expect(screen.queryByText('Checking your link')).not.toBeInTheDocument();
-      expect(screen.getByText("You're signed in.")).toBeInTheDocument();
+      expect(screen.queryByText(RAIL_HEADING)).not.toBeInTheDocument();
     });
 
     /** The minimum-hold half, and the whole reason this change exists: an
      *  outcome landing a millisecond into the rail's window waits for it. */
     it('keeps the screen for its minimum when the outcome lands just behind it', async () => {
       vi.useFakeTimers();
-      const { resolve } = deferredFetch();
+      const deferred = deferredFetch(signedInBody);
       render(<VerifyPage />);
 
-      await advance(299);
-      expect(screen.queryByText('Checking your link')).not.toBeInTheDocument();
+      await advance(RAIL_APPEARS_AFTER_MS - 1);
+      expect(screen.queryByText(RAIL_HEADING)).not.toBeInTheDocument();
 
-      await advance(1);
-      expect(screen.getByText('Checking your link')).toBeInTheDocument();
-
-      // t=301: verification answers one millisecond into the rail's window.
-      resolve(signedIn);
-      await advance(1);
-      expect(screen.getByText('Checking your link')).toBeInTheDocument();
+      await railUpWithOutcomeHeld(deferred);
       expect(screen.queryByText("You're signed in.")).not.toBeInTheDocument();
 
-      // t=900: the rail has had its 600ms, and only now yields the screen.
-      await advance(599);
-      expect(screen.queryByText('Checking your link')).not.toBeInTheDocument();
+      // The rail re-rendered the page mid-flight when it appeared. If `settle`
+      // ever loses its stable identity the verification effect re-runs here
+      // and re-posts a single-use token, which nothing else in this file would
+      // notice.
+      expect(deferred.calls()).toBe(1);
+
+      await advance(RAIL_STAYS_FOR_MS - 1);
+      expect(screen.queryByText(RAIL_HEADING)).not.toBeInTheDocument();
       expect(screen.getByText("You're signed in.")).toBeInTheDocument();
     });
 
@@ -343,19 +378,20 @@ describe('VerifyPage', () => {
      * The two timers compose, rather than one eating the other: the success
      * state's own reading beat is measured from when it TAKES the screen, not
      * from when the fetch settled. A regression starting the 900ms at the
-     * fetch would leave the case above green while the success state got
-     * 301ms of it.
+     * fetch would leave the case above green while the success state got only
+     * the remainder of its beat.
      */
     it('starts the redirect beat when the outcome takes the screen', async () => {
       vi.useFakeTimers();
-      const { resolve } = deferredFetch();
+      const deferred = deferredFetch(signedInBody);
       render(<VerifyPage />);
 
-      await advance(300);
-      resolve(signedIn);
-      await advance(600);
+      await railUpWithOutcomeHeld(deferred);
+      await advance(RAIL_STAYS_FOR_MS - 1);
       expect(screen.getByText("You're signed in.")).toBeInTheDocument();
 
+      // The beat runs from here, where the state took the screen — not from
+      // the outcome's arrival 599ms ago.
       await advance(899);
       expect(push).not.toHaveBeenCalled();
       await advance(1);
@@ -363,36 +399,157 @@ describe('VerifyPage', () => {
     });
 
     /**
+     * The other three exits, each held the same way.
+     *
+     * The hook's contract is that EVERY exit from `verifying` goes through
+     * `settle`, and the compiler cannot enforce it — so each exit needs a case
+     * that fails when it stops. Without these, dropping `settle` from an exit
+     * is invisible: the fast-path cases reach it with the rail down, where it
+     * is a pass-through and contributes nothing observable.
+     *
+     * `already-signed-in` and `error` matter most. Both run only AFTER the
+     * verify POST has already failed, and both add a second round trip to
+     * `/api/auth/session` before they can settle — so they are the exits most
+     * likely to land inside the rail's window on a real connection.
+     */
+    const heldExits = [
+      {
+        name: 'the handoff code',
+        body: () => ({ data: { handoffCode: '123456' } }),
+        shown: 'Enter this where you started',
+        extraFetches: 0,
+      },
+    ] as const;
+
+    it.each(heldExits)('holds the rail before showing $name', async ({ body, shown }) => {
+      vi.useFakeTimers();
+      const deferred = deferredFetch(body);
+      render(<VerifyPage />);
+
+      await railUpWithOutcomeHeld(deferred);
+      expect(screen.queryByText(shown)).not.toBeInTheDocument();
+
+      await advance(RAIL_STAYS_FOR_MS - 1);
+      expect(screen.queryByText(RAIL_HEADING)).not.toBeInTheDocument();
+      expect(screen.getByText(shown)).toBeInTheDocument();
+    });
+
+    /**
+     * The two exits behind a failed verification. Both are reached through the
+     * `.catch`, which probes `/api/auth/session` before deciding which of them
+     * applies — so the fetch mock has to answer twice.
+     */
+    it.each([
+      {
+        name: 'the already-signed-in state',
+        probe: { ok: true, json: async () => ({ data: { teacherId: 't-1', studentId: null } }) },
+        shown: 'Already signed in',
+      },
+      {
+        name: 'the failure state',
+        probe: { ok: false },
+        shown: 'Verification failed',
+      },
+    ])('holds the rail before showing $name', async ({ probe, shown }) => {
+      vi.useFakeTimers();
+      let rejectVerify!: (value: unknown) => void;
+      const pending = new Promise((r) => {
+        rejectVerify = r;
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockReturnValueOnce(pending).mockResolvedValue(probe),
+      );
+      render(<VerifyPage />);
+
+      await advance(RAIL_APPEARS_AFTER_MS);
+      expect(screen.getByText(RAIL_HEADING)).toBeInTheDocument();
+
+      // A non-ok verify response: the page throws, catches, and probes the
+      // session — all inside the rail's window.
+      rejectVerify({ ok: false });
+      await advance(1);
+      expect(screen.getByText(RAIL_HEADING)).toBeInTheDocument();
+      expect(screen.queryByText(shown)).not.toBeInTheDocument();
+
+      await advance(RAIL_STAYS_FOR_MS - 1);
+      expect(screen.queryByText(RAIL_HEADING)).not.toBeInTheDocument();
+      expect(screen.getByText(shown)).toBeInTheDocument();
+    });
+
+    /**
      * A dwelt-upon state must not inherit the threshold. The rail never
-     * appeared, so there is nothing owed and nothing to wait out — the reader
-     * sees the failure as promptly as they did before the gate existed.
+     * appeared, so there is nothing owed and nothing to wait out.
      */
     it('does not delay an error that lands inside the threshold', async () => {
       vi.useFakeTimers();
       vi.stubGlobal(
         'fetch',
-        vi
-          .fn()
-          .mockResolvedValueOnce({ ok: false })
-          .mockResolvedValueOnce({ ok: false }),
+        vi.fn().mockResolvedValueOnce({ ok: false }).mockResolvedValueOnce({ ok: false }),
       );
       render(<VerifyPage />);
 
       await advance(10);
       expect(screen.getByText('Verification failed')).toBeInTheDocument();
-      expect(screen.queryByText('Checking your link')).not.toBeInTheDocument();
+      expect(screen.queryByText(RAIL_HEADING)).not.toBeInTheDocument();
+    });
+
+    /**
+     * Leaving mid-hold takes the outcome with it. Without the cleanup the stay
+     * timer still fires on an unmounted page, applies the success state and
+     * schedules its redirect — so a reader who pressed Back during the hold is
+     * yanked forward onto the destination a second later.
+     */
+    it('drops a held outcome when the page is left before it lands', async () => {
+      vi.useFakeTimers();
+      const deferred = deferredFetch(signedInBody);
+      const { unmount } = render(<VerifyPage />);
+
+      await railUpWithOutcomeHeld(deferred);
+      unmount();
+
+      await advance(RAIL_STAYS_FOR_MS + 900);
+      expect(push).not.toHaveBeenCalled();
     });
 
     /** A URL with no token never starts a verification, so the gate must not
      *  stand between the reader and the failure it already knows about. */
-    it('shows the no-token failure on the first render', async () => {
+    it.each([
+      { name: 'no token parameter', query: '' },
+      { name: 'an empty token parameter', query: 'token=' },
+    ])('shows the failure on the first render given $name', async ({ query }) => {
       vi.useFakeTimers();
-      searchParams = new URLSearchParams('');
+      searchParams = new URLSearchParams(query);
       vi.stubGlobal('fetch', vi.fn());
       render(<VerifyPage />);
 
       expect(screen.getByText('Verification failed')).toBeInTheDocument();
-      expect(screen.queryByText('Checking your link')).not.toBeInTheDocument();
+      expect(fetch).not.toHaveBeenCalled();
+
+      // Past both constants: an appearance timer must never have been armed
+      // for a verification that was never sent.
+      await advance(RAIL_APPEARS_AFTER_MS + RAIL_STAYS_FOR_MS);
+      expect(screen.queryByText(RAIL_HEADING)).not.toBeInTheDocument();
+      expect(screen.getByText('Verification failed')).toBeInTheDocument();
+    });
+
+    /**
+     * The `<Suspense>` fallback, pinned where the serving mode cannot change
+     * the answer.
+     *
+     * That boundary exists because `useSearchParams` suspends, and it is the
+     * first paint wherever this route is prerendered. The integration file
+     * fetches real HTML, but WHICH render site produced it depends on how the
+     * app under test is being served — so this is the only assertion about the
+     * fallback that means the same thing everywhere.
+     */
+    it('paints nothing while the search params are still suspended', () => {
+      suspendSearchParams = true;
+      vi.stubGlobal('fetch', vi.fn());
+      const { container } = render(<VerifyPage />);
+
+      expect(container).toBeEmptyDOMElement();
+      expect(fetch).not.toHaveBeenCalled();
     });
   });
 });
