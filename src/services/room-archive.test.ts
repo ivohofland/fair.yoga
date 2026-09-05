@@ -168,6 +168,15 @@ describe('setTeacherRoomArchived — the mid-request resume race (issue 272)', (
     // this room — invisible to the pre-Task-5 catch, which re-counted only the
     // template half and hardcoded the class half at zero regardless of what
     // was actually there.
+    //
+    // Those same four classes mean this case can no longer be read as pinning
+    // issue 272's `ClassTemplate_live_needs_open_room` specifically: the
+    // archive's `UPDATE "TeacherRoom"` now has two live children to trip over
+    // in the same transaction, and either constraint firing first produces
+    // this identical `in_use` answer. Coverage of the template constraint on
+    // its own is not lost — `template-room-constraint.test.ts` pins it
+    // directly — but this test's assertion is agnostic to which of the two
+    // fired.
     expect(result).toEqual({ ok: false, reason: 'in_use', blockers: { classes: 4, templates: 1 } });
 
     const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: f.linkId } });
@@ -278,11 +287,11 @@ describe('setTeacherRoomArchived — ownership, idempotency, release valve', () 
   // more, by fixture or by any other write: `Class_live_needs_open_room`
   // (#339) refuses the write that would create that combination, which is
   // what `class-room-constraint.test.ts`'s "refuses archiving a room that
-  // holds a live class" pins directly at the constraint. The ordering the
-  // idempotency check's placement gives — and the release valve's
-  // unconditional un-archive — therefore has no blocked-and-archived state
-  // left to race against for a CLASS blocker; the case above (no blocker at
-  // all) is what is left to cover the ordering.
+  // holds a live class" pins directly at the constraint. The ordering
+  // between the idempotency check and the in-use check is no longer
+  // independently observable through a CLASS blocker: with zero blockers
+  // present, as in the case above, both orderings answer the same way, and
+  // the state that would have told them apart can no longer be constructed.
   //
   // The release valve itself still needs its own case: nothing above calls
   // `setTeacherRoomArchived` with `'unarchived'` at all, and "unconditional"

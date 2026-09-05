@@ -69,7 +69,7 @@ describe('transitionClass — door 2: publishing into an archived room', () => {
   // around the CAS, is the same sentence the pre-check produces, not a 500.
   // Sequential statements can't stage the true interleaving (the archive here
   // commits before the pre-check ever reads, so this still passes via the
-  // pre-check) — that lands in Task 5's `class-room-race.test.ts`, which holds
+  // pre-check) — that lands in `class-room-race.test.ts`, which holds
   // the transaction open to land the archive inside the window. This case
   // exists so the catch's answer is pinned even though nothing here forces it
   // to fire yet.

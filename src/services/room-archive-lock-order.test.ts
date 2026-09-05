@@ -267,7 +267,14 @@ describe('CalendarEntry → Class cascade — lock discipline (issue 339)', () =
     try {
       const held = holder.$transaction(
         async (tx) => {
-          await lockClassRow(tx, classId);
+          // The `Class` row ONLY — deliberately not `lockClassRow`, which also
+          // locks the entry directly. Locking the entry too would give the
+          // backward writer below a direct lock to block on, the same one it
+          // is about to write, which would mask the thing this test exists to
+          // pin: that the wait comes from `ON UPDATE CASCADE` into
+          // `Class.entryLive`, not from a second explicit statement here.
+          await setLockTimeout(tx);
+          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
           acquired();
           await Promise.race([
             releaseSignal,
