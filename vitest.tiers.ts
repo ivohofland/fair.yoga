@@ -89,6 +89,10 @@ export const LOCK_CONTENTION_TESTS = [
   // transaction contends for the same row's `FOR KEY SHARE`, the same shape
   // as `roster-link.test.ts` (issue 339).
   'src/app/api/classes/route.test.ts',
+  // The first kind again: each of its two cases holds a real row lock for
+  // the length of a staged race (~1s), the same shape as
+  // `room-archive-lock-order.test.ts` (issue 339).
+  'src/services/class-room-race.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither
