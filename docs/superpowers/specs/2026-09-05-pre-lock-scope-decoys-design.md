@@ -270,8 +270,15 @@ fixture:  ruleUnderTest + classU (future, open)
 ```
 
 `archiveOrUnarchiveTemplate` on the template under test, then: the lock set is
-exactly `[classU]`. No survival assertion — `classV` survives either way, per
-the asymmetry table, and writing one would assert nothing.
+exactly `[classU]`, and `result.deleted` is 1 so the archive is known to have
+reached its own class.
+
+`classV`'s survival is asserted too, in one line and labelled with what it
+cannot catch. It cannot fail on THIS widening — per the asymmetry table the
+delete re-scopes itself — but it guards `deleteWhere`'s own `scheduleRuleId`
+scope, which is a real and separate regression, and sections A and B both carry
+the same kind of honestly-labelled assertion. Consistency across the three
+blocks is worth the line.
 
 The census found that from the second archiving test onward this describe
 *already* leaves foreign-rule classes standing (there is no per-test cleanup,
