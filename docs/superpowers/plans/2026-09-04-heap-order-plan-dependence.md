@@ -60,8 +60,8 @@ Replace the comment block above the two `createClassFixture` calls, and the call
     // insertion order is not a property this table can carry, because `Class`
     // shares a page with every other file in this tier (the reasoning is
     // `db-locks-lock-order.test.ts`'s, in the docblock above
-    // `forceIndexOrderedPlan`). Each `it` asserts the order rather than
-    // assuming it.
+    // `forceIndexOrderedPlan`). Each `it` asserts that these assignments held,
+    // which is the part it can see; the visiting order follows from them.
     await createClassFixture(prisma, {
       ...classBase,
       id: highClassId,
@@ -69,18 +69,11 @@ Replace the comment block above the two `createClassFixture` calls, and the call
       date: futureDate(jsDayOfWeek, 2),
     });
     // LOW is `draft`, HIGH is `open` — one of each of `SCHEDULED_STATUSES`,
-    // deliberately, and specifically `draft` on the row that must be locked
-    // FIRST for the order to hold.
-    //
-    // Both statuses are equally valid here (`draft` and `open` are both
-    // delete candidates for the archive, so every count below is unchanged),
-    // but a fixture that used only `open` could not observe the pre-lock's
-    // status list at all. `archiveOrUnarchiveTemplate`'s pre-lock renders that
-    // list from `SCHEDULED_STATUSES` into raw SQL, and dropping `'draft'` from
-    // it left every test covering that function green while the deadlock
-    // reopened — measured during issue 180 task 4. With LOW as `draft`, a
-    // narrowed list skips the row the erasure takes first, and the archive
-    // `it` below fails.
+    // deliberately. Both are delete candidates for the archive, so every count
+    // below is unchanged; the split costs nothing and keeps the fixture
+    // exercising both scheduled statuses. Whether narrowing the archive
+    // pre-lock's status list is caught by the `it`s below is open — #244 owns
+    // that question.
     await createClassFixture(prisma, {
       ...classBase,
       id: lowClassId,

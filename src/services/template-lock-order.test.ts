@@ -254,8 +254,8 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
     // insertion order is not a property this table can carry, because `Class`
     // shares a page with every other file in this tier (the reasoning is
     // `db-locks-lock-order.test.ts`'s, in the docblock above
-    // `forceIndexOrderedPlan`). Each `it` asserts the order rather than
-    // assuming it.
+    // `forceIndexOrderedPlan`). Each `it` asserts that these assignments held,
+    // which is the part it can see; the visiting order follows from them.
     await createClassFixture(prisma, {
       ...classBase,
       id: highClassId,
