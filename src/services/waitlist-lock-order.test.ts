@@ -122,8 +122,17 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Swept by teacherId, not by a fixed id list: `Class.teacherRoom` has no
+  // `onDelete: Cascade` (unlike `Class.calendarEntry`), so a test that dies
+  // before reaching its own inline cleanup — which the mutation-testing
+  // protocol guarantees will happen — must not leave a class behind that
+  // then breaks this teardown's `teacherRoom` delete on an FK violation.
+  // Same fix `waitlist.test.ts`'s sibling `afterAll` already carries.
+  await prisma.waitlistEntry.deleteMany({ where: { class: { calendarEntry: { teacherId } } } });
+  await prisma.registration.deleteMany({ where: { class: { calendarEntry: { teacherId } } } });
+  await prisma.calendarEntry.deleteMany({ where: { teacherId } });
   await prisma.student.deleteMany({ where: { id: { in: [...fillerIds, ...studentIds] } } });
-  await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
+  await prisma.teacherRoom.deleteMany({ where: { teacherId } });
   await prisma.room.delete({ where: { id: roomId } });
   await prisma.teacher.delete({ where: { id: teacherId } });
   await prisma.$disconnect();
