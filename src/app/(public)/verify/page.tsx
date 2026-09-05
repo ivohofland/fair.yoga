@@ -382,6 +382,16 @@ function useVerifyingRail(
     recover.current = onApplyThrew;
   });
 
+  /** The one place an outcome is invoked, from either side of the hold. */
+  const run = useCallback((apply: () => void) => {
+    try {
+      apply();
+    } catch (err) {
+      console.error('[verify] the outcome threw on its way to the screen', err);
+      recover.current();
+    }
+  }, []);
+
   useEffect(() => {
     if (!enabled) return;
     appearTimer.current = setTimeout(() => {
@@ -405,16 +415,7 @@ function useVerifyingRail(
       // rail with nothing coming.
       owed.current = false;
     };
-  }, [enabled]);
-
-  function run(apply: () => void): void {
-    try {
-      apply();
-    } catch (err) {
-      console.error('[verify] the outcome threw on its way to the screen', err);
-      recover.current();
-    }
-  }
+  }, [enabled, run]);
 
   const settle = useCallback((apply: () => void) => {
     // Cancelled rather than merely ignored: an outcome is on its way to the
@@ -436,8 +437,11 @@ function useVerifyingRail(
       console.error('[verify] a second outcome arrived while one was held; dropping the first');
     }
     waiting.current = apply;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `run` closes over refs only, and `settle` must keep one identity: the caller's verification effect depends on it, and re-running that effect re-sends a single-use token.
-  }, []);
+    // `run` is the only non-ref here and is itself stable, so `settle` keeps
+    // one identity for the life of the mount. That matters: the caller's
+    // verification effect depends on it, and re-running that effect re-posts a
+    // single-use token — pinned by the call-count assertion in `page.test.tsx`.
+  }, [run]);
 
   return { railVisible, settle };
 }
@@ -522,8 +526,13 @@ function VerifyContent() {
             });
             return;
           }
-        } catch {
-          // fall through to the plain failure state
+        } catch (err) {
+          // Reaching here means the probe itself misbehaved — the request
+          // failed, or a 200 carried something that is not the shape this
+          // reads. Worth a line, unlike the rejection that brought us into
+          // this `catch`: that one is an expired or already-used link, the
+          // commonest ordinary event on this page and no kind of fault.
+          console.error('[verify] the session probe failed after a failed verification', err);
         }
         settle(() => setStatus('error'));
       });
