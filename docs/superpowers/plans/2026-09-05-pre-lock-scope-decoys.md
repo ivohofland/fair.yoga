@@ -738,10 +738,19 @@ In `src/services/waitlist.ts:1095`, remove that conjunct:
 Run: `npx vitest run --project unit src/services/waitlist.test.ts`
 
 Expected: the new test fails on `expect(lockSets[0]).toEqual([classTId])`, with
-`classT3Id` also present. The decoy-2 survival assertion must still PASS — that
-is the asymmetry this plan claims, and this run is where it is checked rather
-than asserted. Record the exact output, and note explicitly that decoy 2
-survived.
+`classT3Id` also present.
+
+**Corrected during Task 2 — this step originally said "the decoy-2 survival
+assertion must still PASS ... this run is where it is checked".** It cannot be
+checked that way: the lock-set assertion sits above it and fails first, so
+vitest throws out of the test body and decoy 2's assertion never executes. Ask
+instead for what is observable: record which assertion the runner reaches
+first, and verify the asymmetry claim by reading the write predicate
+(`waitlist.ts:1104` keys its `updateMany` on `input.studentId`, so the decoy's
+row is unreachable however wide the lock set gets). A one-run diagnostic that
+relaxes the lock-set assertion to `toContain` is an acceptable way to see the
+survival assertions execute — revert it immediately and confirm `git diff` is
+empty.
 
 - [ ] **Step 10: Restore, confirm green**
 
@@ -880,9 +889,14 @@ Run: `npx vitest run --project unit src/services/class-template-lifecycle.test.t
 Expected: the new test fails on `expect(lockSets[0]).toEqual([c.id])`, with
 `decoyClass.id` present (and possibly other future scheduled classes from
 earlier tests in this describe — record them; their presence is the accidental
-coverage this decoy replaces with a deliberate one). The `class.count`
-assertion must still PASS. Record the exact output, and note that the decoy
-survived.
+coverage this decoy replaces with a deliberate one).
+
+**Do NOT expect the `class.count` survival assertion to report anything.** Task
+2 established the general rule: the lock-set assertion sits above it and fails
+first, so the survival assertion never executes under a pre-lock widening. It is
+not the witness here and never was — it pins `deleteWhere`'s own
+`scheduleRuleId` scope, a different mutation class. Record which assertion the
+runner reaches first, and leave it at that.
 
 Other tests in this file may also redden under this mutation, from contention
 or from a wider lock. That is fine and worth recording, but it is not the
