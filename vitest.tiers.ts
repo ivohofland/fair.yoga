@@ -95,6 +95,8 @@ export const LOCK_CONTENTION_TESTS = [
   'src/services/class-room-race.test.ts',
   // #459: split out of `waitlist.test.ts` for the same reason.
   'src/services/waitlist-lock-order.test.ts',
+  // #459: split out of `class-template-lifecycle.test.ts` for the same reason.
+  'src/services/class-template-lifecycle-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

@@ -7,11 +7,9 @@ import {
   pauseOrResumeTemplate,
   type ClassTemplateUpdateData,
 } from './class-template-lifecycle';
-import { isTransientDbError } from '@/lib/api-errors';
 import { startOfLocalDay, classStartInstant, mondayOf } from '@/lib/timezone';
 import { getNextOccurrences } from './entry-generation';
 import { formatDayHeader } from '@/lib/format';
-import { setLockTimeout } from '@/lib/db-locks';
 import * as dbLocks from '@/lib/db-locks';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
@@ -151,21 +149,18 @@ describe('updateClassTemplate (DB)', () => {
   let otherRoomId: string;
   let otherTeacherRoomId: string;
 
-  // Counter-derived startTime: this block calls makeTemplate 11 times for one
-  // teacher/dayOfWeek, and none of its tests read or assert the created
-  // template's literal startTime — so a slot per call, spaced wider than any
-  // one call's own `durationMinutes` (60), is enough to keep every create
-  // legal under `ScheduleRule_teacher_slot_excl` (issue 298), which excludes
-  // on RANGE overlap rather than exact `startTime` match. 75, not 60: "applies
-  // the update and returns just the template" widens its own row to
-  // `durationMinutes: 75` without moving it, and 60-wide spacing would let
-  // that widened range reach into the next counter slot. Counted off the
-  // call sites when #194's fix wave added two of them, not incremented from
-  // the number that was here.
+  // Counter-derived startTime: none of this block's tests read or assert the
+  // created template's literal startTime — so a slot per call, spaced wider
+  // than any one call's own `durationMinutes` (60), is enough to keep every
+  // create legal under `ScheduleRule_teacher_slot_excl` (issue 298), which
+  // excludes on RANGE overlap rather than exact `startTime` match. 75, not
+  // 60: "applies the update and returns just the template" widens its own row
+  // to `durationMinutes: 75` without moving it, and 60-wide spacing would let
+  // that widened range reach into the next counter slot.
   //
-  // One of those two, "Archived Edit", IS archived — which FREES its slot
-  // rather than taking one, since the index is partial (WHERE isArchived =
-  // false). That direction is always safe here: a freed slot can only make a
+  // "Archived Edit" IS archived — which FREES its slot rather than taking
+  // one, since the index is partial (WHERE isArchived = false). That
+  // direction is always safe here: a freed slot can only make a
   // later create legal, never illegal. It is worth naming because the sentence
   // this replaces said no template in this block is ever archived, which was
   // true when it was written and stopped being true when that case arrived.
@@ -937,13 +932,15 @@ describe('updateClassTemplate (DB)', () => {
    * here; it hung rather than failed once the window closed, because the
    * out-of-band delete it relied on blocked on the lock instead of racing it.
    * This is the only window
-   * left; its replacement — pinning the blocking behaviour the closed window
-   * now produces in place of a race — sits below. (Not "once task 7 gave that
-   * wait a bound to test against", as this said: task 7's `setLockTimeout`
-   * bounds the EDIT's waits, and the party that waits in the replacement is
-   * the concurrent delete, bounded by that test's own `setLockTimeout(tx)`
-   * call. The replacement asserts blocking-then-completion and never tests
-   * against a bound at all.)
+   * left; its replacement — pinning the blocking behaviour the closed
+   * window now produces in place of a race — is
+   * `class-template-lifecycle-lock-order.test.ts`'s "a concurrent delete
+   * blocks on the write lock and completes cleanly once the edit commits"
+   * (#459). (Not "once task 7 gave that wait a bound to test against", as
+   * this said: task 7's `setLockTimeout` bounds the EDIT's waits, and the
+   * party that waits in the replacement is the concurrent delete, bounded by
+   * that test's own `setLockTimeout(tx)` call. The replacement asserts
+   * blocking-then-completion and never tests against a bound at all.)
    *
    * Interposed rather than raced, like the pause guard's twin: the extension
    * performs the real read and then deletes the row before returning it, which
@@ -990,116 +987,6 @@ describe('updateClassTemplate (DB)', () => {
     expect(result).toEqual({ ok: false, reason: 'not_found' });
   });
 
-  /**
-   * The replacement for the test task 6 deleted (see the docblock above).
-   * Before task 6, `classTemplate.update` and the sync's own read ran as two
-   * separately-committed statements with no lock held in between, so an
-   * out-of-band delete could land in the gap and race the write. Task 6 put
-   * them inside ONE transaction, and #194 then deleted the sync entirely.
-   * Either way the write's row lock is held for the whole transaction's
-   * lifetime — there is no gap for a concurrent delete to land in, only a
-   * lock to queue behind. That property is what this case still pins, and it
-   * is a property of the transaction, not of the sync.
-   *
-   * That is why the deleted test could not simply be un-deleted: once this
-   * window closed, its own out-of-band delete stopped racing and started
-   * blocking — and it hung rather than failed, because it ran SYNCHRONOUSLY
-   * *inside* the very `$extends` hook intercepting the write, awaited from
-   * within the still-open transaction whose row lock that delete needed. The
-   * transaction could never reach `COMMIT` to release the lock (it was
-   * paused awaiting the delete), and the delete — issued on a separate
-   * connection with no `lock_timeout` of its own — had nothing to time out
-   * against either. A genuine deadlock, not a slow test, which is why it
-   * outlasted the file's 10s `afterAll` hook rather than merely failing one
-   * assertion. Observed while writing task 7 and recorded here rather than
-   * cited: the task reports live under `.superpowers/sdd/`, which is
-   * gitignored, so a pointer to one is a pointer to nothing after merge —
-   * the same reason the archive pre-lock's evidence was inlined into the
-   * spec instead.
-   *
-   * This version does not reproduce that: the hook only signals that the
-   * write landed and then waits on a promise the test controls, so the
-   * concurrent delete can run from the test's own top level — on its own
-   * connection, in its own transaction, bounded by `setLockTimeout` the same
-   * way any bounded wait in this project is. `hookedPrisma.$transaction`'s
-   * query extension still applies inside the interactive transaction it
-   * opens, so this fires on `tx.classTemplate.update` while that transaction
-   * is genuinely still open — not merely believed to be.
-   */
-  it(
-    'a concurrent delete blocks on the write lock and completes cleanly once the edit commits',
-    async () => {
-      const t = await makeTemplate('P2025 Sync Replacement');
-
-      let writeLocked!: () => void;
-      const locked = new Promise<void>((resolve) => {
-        writeLocked = resolve;
-      });
-      let release!: () => void;
-      const held = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-
-      // Cast for the same reason the sibling hook above needs one: `$extends`
-      // is missing `$on`, so it is not assignable to `updateClassTemplate`'s
-      // `PrismaClient`-typed `db` parameter.
-      const interposing = prisma.$extends({
-        query: {
-          classTemplate: {
-            async update({ args, query }) {
-              const row = await query(args);
-              // The write has landed; its row lock is held by this
-              // still-open transaction. Signal, then hold — deliberately
-              // NOT performing the delete from inside this hook. See the
-              // docblock above for why that deadlocked the test this
-              // replaces.
-              writeLocked();
-              await held;
-              return row;
-            },
-          },
-        },
-      }) as unknown as PrismaClient;
-
-      const editing = updateClassTemplate(interposing, t.id, teacherId, {
-        classType: 'Renamed',
-      });
-
-      await locked;
-
-      let deleteSettled = false;
-      const deleting = prisma
-        .$transaction(async (tx) => {
-          await setLockTimeout(tx);
-          await tx.classTemplate.delete({ where: { id: t.id } });
-        })
-        .then(() => {
-          deleteSettled = true;
-        });
-
-      try {
-        // The edit's transaction is still open and holds the row; the
-        // delete must still be queued behind it rather than having raced it.
-        await new Promise((r) => setTimeout(r, 300));
-        expect(deleteSettled).toBe(false);
-      } finally {
-        // In a `finally`, so a failed assertion above still releases the
-        // edit's transaction rather than leaving it — and the connection it
-        // holds — parked on `held` for the rest of the file's run.
-        release();
-      }
-
-      const result = await editing;
-      expect(result.ok).toBe(true);
-
-      // Completes rather than hanging, now that the edit committed and
-      // released the lock — the assertion this test exists to make.
-      await deleting;
-      expect(deleteSettled).toBe(true);
-      expect(await prisma.classTemplate.findUnique({ where: { id: t.id } })).toBeNull();
-    },
-    10_000,
-  );
 });
 
 describe('archiveOrUnarchiveTemplate (DB)', () => {
@@ -2265,110 +2152,6 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   });
 
   /**
-   * The case the sequential idempotency tests structurally cannot reach. The
-   * `isArchived === archiving` fast path reads a row fetched *before* the
-   * transaction opens, so it is outside the row lock: two archives issued
-   * close enough together both see `false` and both clear it. Before the
-   * compare-and-swap, the loser then re-applied the whole archive — its
-   * `deleteMany` matched nothing (the winner had already deleted those
-   * classes) and it wrote `withdrawnCount: 0` over the winner's correct 2.
-   * Display-only, but #97 makes that display the durable record.
-   *
-   * Deterministic by the same lever `class-generator.test.ts` uses for the
-   * #95 races: a third transaction holds the template's row lock without
-   * changing anything, and uncommitted work is invisible under READ
-   * COMMITTED. That fixes both halves of the ordering the race needs — the
-   * second call's pre-transaction read genuinely sees `isArchived: false`
-   * (nothing has committed), and both calls' first write genuinely queue on
-   * the same lock instead of running back to back.
-   *
-   * It is also the one test that exercises the Postgres behaviour the fix
-   * rests on: the loser blocks inside its `UPDATE`, and when the winner
-   * commits, READ COMMITTED re-evaluates the CAS predicate against the row
-   * version the winner left (EvalPlanQual) and matches nothing.
-   */
-  it('two concurrent archives: the loser records nothing over the winner', async () => {
-    const t = await makeTemplate('Concurrent Archive');
-    await makeClass(t.scheduleRuleId, { date: futureOn(5) });
-    await makeClass(t.scheduleRuleId, { date: futureOn(6) });
-
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-
-    // Holds the row lock and nothing else — no write, so neither archive can
-    // observe it, only wait for it.
-    const blocking = prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT "id" FROM "ClassTemplate" WHERE "id" = ${t.id} FOR UPDATE`;
-        await held;
-      },
-      { timeout: 15_000 },
-    );
-
-    await new Promise((r) => setTimeout(r, 100));
-
-    let firstSettled = false;
-    const first = archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived').then((r) => {
-      firstSettled = true;
-      return r;
-    });
-
-    // Staggered so the two contend in a known order. The assertions below do
-    // not depend on which one wins — Postgres grants tuple-lock waiters FIFO,
-    // so it is the first — but the *invariant* is "exactly one of them
-    // archives", and asserting it that way is what makes this test about the
-    // CAS rather than about lock scheduling.
-    await new Promise((r) => setTimeout(r, 100));
-
-    let secondSettled = false;
-    const second = archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived').then((r) => {
-      secondSettled = true;
-      return r;
-    });
-
-    await new Promise((r) => setTimeout(r, 300));
-    // Both are blocked in their first write. If either had settled here, the
-    // two never contended and the rest of this test would prove nothing.
-    expect(firstSettled).toBe(false);
-    expect(secondSettled).toBe(false);
-
-    release();
-    await blocking;
-
-    const settled = await Promise.all([first, second]);
-    const won = settled.find((r) => r.ok && r.action === 'archived');
-    const lost = settled.find((r) => r.ok && r.action === 'unchanged');
-    if (!won || !lost) {
-      throw new Error(
-        `expected one archived and one unchanged, got ${settled
-          .map((r) => (r.ok ? r.action : r.reason))
-          .join(' + ')}`,
-      );
-    }
-
-    const winner = expectArchived(won);
-    expect(winner.deleted).toBe(2);
-    expect(winner.template.withdrawnCount).toBe(2);
-
-    if (!lost.ok) throw new Error('expected ok');
-    // The loser reports the state the winner left, not the pre-race snapshot
-    // it read at the top of its own call — that one still said `isArchived:
-    // false`, which by then is exactly the value the winner had falsified.
-    expect(lost.template.isArchived).toBe(true);
-    expect(lost.template.withdrawnCount).toBe(2);
-
-    // The durable record, which is what #97 is for: the winner's count and
-    // the winner's timestamp, not the loser's `0` and `now`.
-    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
-    expect(after.scheduleRule.withdrawnCount).toBe(2);
-    expect(after.scheduleRule.archivedAt).not.toBeNull();
-    expect(after.scheduleRule.archivedAt!.getTime()).toBe(winner.template.archivedAt!.getTime());
-    expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: t.id } } } } } })).toBe(0);
-  });
-
-  /**
    * #100. `archiveOrUnarchiveTemplate` carries no P2025 guard, and this is the
    * `not_found` its transaction has to produce on its own: the only other
    * archive `not_found` assertion in this file passes a ghost id, which the
@@ -2433,93 +2216,6 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     }
   });
 
-  /**
-   * The migration's `live` mirror column retired this scenario's staging. The
-   * old version interposed a raw `scheduleRule.update` to reverse the
-   * archive's CAS between its miss and its re-read so the re-read found the
-   * row in the state this request asked to move AWAY from. That write no
-   * longer commits mid-flight: `live` is FK-referenced, so it cascades to the
-   * child row the archive transaction already holds `FOR UPDATE` and WAITS on
-   * that hold until the archive's own re-read releases it (272). The reversal
-   * can't land in the [-CAS, re-read] window at all.
-   *
-   * So this test measures the serialization the old staging slipped through:
-   * the interposed flip gets a `lock_timeout` of its own and times out (55P03)
-   * against the in-flight archive, the archive's CAS then matches and
-   * completes, and the reversed-warning channel stays silent — the re-read can
-   * no longer find a transition interrupted by a sibling.
-   */
-  it('refuses a concurrent rule-state flip that would reverse an in-flight archive', async () => {
-    const t = await makeTemplate('No Reverse Window');
-
-    let straddled = false;
-    const flipFailure: unknown[] = [];
-    const interposing = prisma.$extends({
-      query: {
-        scheduleRule: {
-          async updateMany({ args, query }) {
-            if (straddled) return query(args);
-            straddled = true;
-            // Staged where the pre-272 test staged its un-archive: after the
-            // transaction has already taken the child row `FOR UPDATE`. The
-            // migrate-time flip is refused below rather than thrown, so the
-            // archive's own CAS runs against the untouched state.
-            const flip = prisma.$transaction(
-              async (tx) => {
-                await tx.$executeRawUnsafe('SET LOCAL lock_timeout = 1500');
-                await tx.scheduleRule.update({
-                  where: { id: t.scheduleRuleId },
-                  data: { isArchived: true },
-                });
-              },
-              { timeout: 20_000 },
-            );
-            await flip.then(
-              () => undefined,
-              (error: unknown) => {
-                flipFailure.push(error);
-              },
-            );
-            return query(args);
-          },
-        },
-      },
-    }) as unknown as PrismaClient;
-
-    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
-    try {
-      const result = await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived');
-
-      expect(straddled).toBe(true);
-
-      // REFUSED, not applied: the flip needed the child row the archive holds,
-      // hit its own lock_timeout, and so never reversed anything.
-      expect(flipFailure).toHaveLength(1);
-      expect(isTransientDbError(flipFailure[0])).toBe(true);
-      expect(String(flipFailure[0])).toMatch(/55P03|lock timeout/);
-
-      // With nothing reversed the CAS matches and the archive completes.
-      expect(result).toMatchObject({ ok: true, action: 'archived' });
-
-      // The 503-warning channel is silent: no interposed flip can reverse the
-      // transition between the archive's CAS and its re-read.
-      const reversedLog = warn.mock.calls.find(
-        (call) =>
-          call[1] === 'recurring class archive CAS missed and the re-read found the transition reversed',
-      );
-      expect(reversedLog).toBeUndefined();
-    } finally {
-      warn.mockRestore();
-    }
-
-    const after = await prisma.classTemplate.findUniqueOrThrow({
-      where: { id: t.id },
-      include: { scheduleRule: true },
-    });
-    expect(after.scheduleRule.isArchived).toBe(true);
-    expect(after.scheduleRule.archivedAt).not.toBeNull();
-    expect(after.scheduleRule.withdrawnCount).not.toBeNull();
-  });
 });
 
 describe('pauseOrResumeTemplate (DB)', () => {
@@ -2534,8 +2230,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
   let otherAccountId: string;
   let otherRoomId: string;
 
-  // Counter-derived startTime: this block calls makeTemplate 9 times for one
-  // teacher/dayOfWeek, and pausing (unlike archiving) never sets
+  // Counter-derived startTime: pausing (unlike archiving) never sets
   // isArchived, so a merely-paused template keeps occupying its slot for
   // the rest of the run — only the two tests that go on to archive their
   // template free theirs. No test reads or asserts a created template's
@@ -2546,11 +2241,11 @@ describe('pauseOrResumeTemplate (DB)', () => {
   // instead of the counter-derived default.
   //
   // `ScheduleRule_teacher_slot_excl` (issue 298) excludes on RANGE overlap,
-  // so each counter-derived slot is spaced a full `durationMinutes` (60)
-  // from the last, not just a minute — nine slots that way still lands
-  // inside one day (`'10:30'` .. `'18:30'`), each starting no earlier than
-  // the override's own slot ends (`'10:30'`), so the two schemes can never
-  // overlap.
+  // so each counter-derived slot is spaced a full `durationMinutes` (60) from
+  // the last, not just a minute, starting at `'10:30'` — no earlier than the
+  // override's own slot ends — so the two schemes can never overlap.
+  // `slotTime` throws naming the counter value if a call ever runs the block
+  // out of slots before `24:00`.
   let makeTemplateCounter = 0;
   const makeTemplate = (classType: string, startTime?: string) => {
     makeTemplateCounter += 1;
@@ -3008,177 +2703,6 @@ describe('pauseOrResumeTemplate (DB)', () => {
   });
 
   /**
-   * The claim's observable effect, stated as a race rather than as a lock:
-   * while `pauseOrResumeTemplate` generates, a concurrent `Class` insert for
-   * this template cannot proceed — and with the claim removed, it can.
-   *
-   * The mechanism is the mode, and the row it is on. `claimTemplateForGeneration`
-   * takes `FOR UPDATE` on the `ClassTemplate` row, which conflicts with a
-   * concurrent `FOR KEY SHARE` on it. The CAS reaches that same row only
-   * through the rule's `ON UPDATE CASCADE`, and what it writes there
-   * (`ruleLive`) is not part of any unique index ON `ClassTemplate` — so the
-   * cascade takes `FOR NO KEY UPDATE` on the child and does not conflict.
-   * (The CAS's lock on the RULE row was upgraded to `FOR UPDATE` by issue 272;
-   * that is a different row and does not change what this test measures.) So the claim is the only thing in this transaction that can
-   * block such a writer, and this test drives the collision from the other
-   * side: the holder takes `FOR KEY SHARE` first, and the resume must then
-   * fail to get its `FOR UPDATE` inside the 2s `setLockTimeout` bound and
-   * answer `busy`.
-   *
-   * THE HOLDER TAKES THAT LOCK DIRECTLY SINCE #327, and the reason is a
-   * property this test used to rely on and no longer has. It used to insert a
-   * `Class` for the template and let the FK check take `FOR KEY SHARE` on
-   * `ClassTemplate` for free. `Class.templateId` is gone: a class hangs off a
-   * `CalendarEntry`, and the entry's own FK reaches `ScheduleRule`, not
-   * `ClassTemplate` — so inserting a class no longer touches the row this
-   * claim holds at all. The claim still serialises generation against
-   * pause/resume and archive, which take that row explicitly and are what #95
-   * is about; what it stopped doing is blocking an unrelated insert. Named
-   * here rather than smoothed over, because the incidental protection is the
-   * kind of thing that is missed when it goes.
-   *
-   * The statement is still what discriminates: with the claim removed the
-   * resume touches the child row only through the cascade, at
-   * `FOR NO KEY UPDATE`, never conflicts with the holder, and succeeds.
-   *
-   * Why not a `FOR KEY SHARE NOWAIT` probe interposed on the generator's own
-   * queries, which is what an earlier version of this test did: a second
-   * `PrismaClient`'s query does not run while a Prisma interactive
-   * transaction is in flight in the same process. Measured — the probe
-   * returned after 9982ms, i.e. only once the resume's 10s transaction
-   * budget expired and released everything, so it reported "granted" whether
-   * or not the claim was ever held. `NOWAIT` was never the problem: the same
-   * statement against a psql-held `FOR UPDATE` is refused in 5ms through this
-   * same Prisma client. The probe simply never ran while the lock existed.
-   */
-  it(
-    'blocks a concurrent Class insert while generating, and answers busy',
-    async () => {
-      const t = await makeTemplate('Claim Blocks Insert');
-      await prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { isActive: false } });
-
-      const holder = new PrismaClient();
-      let release!: () => void;
-      let holdEstablished!: () => void;
-      const released = new Promise<void>((r) => {
-        release = r;
-      });
-      const holding_ = new Promise<void>((r) => {
-        holdEstablished = r;
-      });
-
-      const holding = holder.$transaction(
-        async (tx) => {
-          // `FOR KEY SHARE` on the template row, taken directly — see the
-          // docblock for why this is no longer a side effect of inserting a
-          // class. Nothing else here touches a row the resume wants, so the
-          // only reason it can wait is this lock.
-          await tx.$queryRaw`
-            SELECT "id" FROM "ClassTemplate" WHERE "id" = ${t.id} FOR KEY SHARE`;
-          holdEstablished();
-          await released;
-        },
-        { timeout: 30_000 },
-      );
-
-      try {
-        await holding_;
-        const startedAt = Date.now();
-        const result = await pauseOrResumeTemplate(prisma, t.id, teacherId, 'active');
-        const waited = Date.now() - startedAt;
-
-        expect(result).toEqual({ ok: false, reason: 'busy' });
-        // The lower bound proves the wait was a lock wait cut short by
-        // `setLockTimeout`, not an instant refusal. The 2s value is pinned by
-        // `db-locks.test.ts` (#323).
-        expect(waited).toBeGreaterThanOrEqual(1_800);
-
-        // The rollback took the flag with it.
-        const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
-        expect(after.scheduleRule.isActive).toBe(false);
-      } finally {
-        release();
-        await holding;
-        await holder.$disconnect();
-      }
-    },
-    30_000,
-  );
-
-  /**
-   * The residual-fourth-state arm had the same staging dependence as the
-   * reversed arm above, so the migration retired that window too: a pause that
-   * lands after the resume's CAS but before its re-read can no longer commit
-   * at all, because the flip cascades to the child row the resume transaction
-   * already holds `FOR UPDATE` (272). The stale flip now waits on that hold
-   * and times out, the resume's own CAS matches the untouched state and wins,
-   * and the class window is created instead of the old `busy` answer.
-   */
-  it('refuses a concurrent rule-state flip that would pre-empt an in-flight resume', async () => {
-    const t = await makeTemplate('No Pre-empt Window');
-    await prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { isActive: false } });
-
-    let straddled = false;
-    const flipFailure: unknown[] = [];
-    const interposing = prisma.$extends({
-      query: {
-        scheduleRule: {
-          async updateMany({ args, query }) {
-            if (straddled) return query(args);
-            straddled = true;
-            // Staged where the pre-272 test staged its pause: after the
-            // transaction has already taken the child row `FOR UPDATE`. The
-            // flip is refused below rather than thrown, so the resume's CAS
-            // runs against the untouched paused state and wins.
-            const flip = prisma.$transaction(
-              async (tx) => {
-                await tx.$executeRawUnsafe('SET LOCAL lock_timeout = 1500');
-                await tx.scheduleRule.update({
-                  where: { id: t.scheduleRuleId },
-                  data: { isActive: true },
-                });
-              },
-              { timeout: 20_000 },
-            );
-            await flip.then(
-              () => undefined,
-              (error: unknown) => {
-                flipFailure.push(error);
-              },
-            );
-            return query(args);
-          },
-        },
-      },
-    }) as unknown as PrismaClient;
-
-    const result = await pauseOrResumeTemplate(interposing, t.id, teacherId, 'active');
-
-    expect(straddled).toBe(true);
-
-    // REFUSED, not applied: the flip needed the child row the resume held,
-    // timed out, and so never flipped the CAS's predicate out from under it.
-    expect(flipFailure).toHaveLength(1);
-    expect(isTransientDbError(flipFailure[0])).toBe(true);
-    expect(String(flipFailure[0])).toMatch(/55P03|lock timeout/);
-
-    // With nothing pre-empted, the resume's CAS matches the paused row and the
-    // resume completes — generating the class window instead of `busy`.
-    expect(result).toMatchObject({ ok: true, action: 'active' });
-
-    const after = await prisma.classTemplate.findUniqueOrThrow({
-      where: { id: t.id },
-      include: { scheduleRule: true },
-    });
-    expect(after.scheduleRule.isActive).toBe(true);
-    expect(
-      await prisma.class.count({
-        where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: t.id } } } } },
-      }),
-    ).toBeGreaterThan(0);
-  });
-
-  /**
    * `TemplateFamily.withSlot` (`rule-lifecycle.ts`) advertises as STRUCTURAL
    * that the shared pause cannot spread a joined `scheduleRule` onto a
    * response: it takes the joined row and each family destructures in its own
@@ -3204,11 +2728,10 @@ describe('pauseOrResumeTemplate (DB)', () => {
    * there.
    */
   it('answers unchanged with a flattened template, never the joined rule row', async () => {
-    // Explicit start time rather than the block's counter slot: this block
-    // allocates one hour per template from 10:30 and `slotTime` refuses to
-    // run past 24:00, so the last counter value is spoken for. 08:00 sits
-    // below the first allocated slot and clears the 09:30 one by 30 minutes,
-    // which `ScheduleRule_teacher_slot_excl` needs on a 60-minute rule.
+    // Explicit start time rather than the block's counter slot: 08:00 sits
+    // below the first counter-allocated slot (10:30) and clears the fixed
+    // 09:30 slot above by 30 minutes, which `ScheduleRule_teacher_slot_excl`
+    // needs on a 60-minute rule.
     const t = await makeTemplate('No Joined Rule On A Pause Miss', '08:00');
 
     let paused = false;
