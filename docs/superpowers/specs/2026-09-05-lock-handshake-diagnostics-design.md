@@ -95,10 +95,26 @@ not a guarantee, and it is one sibling statement away from becoming mutation A.
 
 The issue predicts that "a maintainer who **weakens** the pre-lock differently —
 narrows its row set while keeping the statement, say — gets no signal at all".
-Confirmed: no assertion in the file reads what the pre-lock actually locked. The
-two outcome assertions at the end (`cancelled === 2`,
-`remainingEntries === 0`) are satisfied by an erasure that locked one row, or
-none.
+Confirmed — **on the student side, which is not the side the issue names.** No
+assertion in the file reads what either pre-lock actually locked, but the two
+sides are not symmetric, and measuring them separately is what showed it:
+
+| Pre-lock narrowed to one class | Outcome | Why |
+|---|---|---|
+| **teacher** (`gdpr.ts:1120`) | **fails** — `expected 1 to be 2` at `cancelled` | #367 made this a lock-then-read: `lockedIds` IS the scope of the cancel read below it, so narrowing the lock set narrows the write set, and `expect(cancelled).toBe(2)` catches it |
+| **student** (`gdpr.ts:433`) | **PASSES GREEN** | this call **discards** its return value, and the `waitlistEntry.deleteMany` below is unscoped by class — so the lock set shrinks from two rows to one while the write set is unchanged, `remainingEntries === 0` still holds, and reduced contention cannot deadlock |
+
+The teacher side is therefore already covered, but only **incidentally** — by an
+assertion about cancellation that says nothing about locking, and only for as
+long as #367's lock-then-read keeps the write set following the lock set. The
+student side is covered by nothing at all, and it is the side where
+`docs/lock-order.md:53-58` already records the lock set as "strictly smaller
+than its `WaitlistEntry` write set". Narrowing it widens a gap the project
+already tracks, silently.
+
+The lock-set assertion in §2.2 therefore does two different jobs: on the student
+side it is the only coverage, and on the teacher side it converts incidental
+coverage into stated coverage.
 
 ## 2. Design
 
@@ -174,7 +190,8 @@ from its current outcome to a **named** failure:
 |---|---|---|---|
 | **A** teacher `Class` pre-lock deleted | `gdpr.ts:1120` | passes green, 1.0 s | named timeout failure, ~2 s |
 | **B** `ORDER BY c.id` deleted | `db-locks.ts:415` | `40P01`, 2.0 s | unchanged (already named) |
-| **C′** teacher pre-lock's row set narrowed to one class | `gdpr.ts:1122-1124` | passes green *(predicted from §1.5, measured by the plan's first task before any guard is written)* | named lock-set assertion failure |
+| **C′** **student** pre-lock's row set narrowed to one class | `gdpr.ts:434-435` | passes green (measured) | named lock-set assertion failure |
+| **C″** teacher pre-lock's row set narrowed to one class | `gdpr.ts:1122-1124` | fails, but at `cancelled` — an assertion about cancellation, not about locking (measured) | fails at the lock-set assertion, naming the lock set |
 | **D** student `Class` pre-lock deleted | `gdpr.ts:433` | 30 s timeout naming nothing | named timeout failure, ~2 s |
 
 The firing-count guard is proven by a fifth mutation that adds a *second*
@@ -284,7 +301,8 @@ this paragraph does not point at it. It gets the cross-reference.
    runtime stays under 2 s against the 1.15 s baseline — the three guards add
    assertions, not waits, so any larger rise means one of them is waiting on
    something it should not.
-2. Mutations A, C′ and D each produce a **named** failure within ~2 s; B still
+2. Mutations A, C′ and D each produce a **named** failure within ~2 s; C″ fails
+   at the lock-set assertion rather than incidentally at `cancelled`; B still
    produces its `40P01`. Each error text is recorded verbatim in the PR body.
 3. The firing-count guard fails by name when a second matching statement is
    added.
