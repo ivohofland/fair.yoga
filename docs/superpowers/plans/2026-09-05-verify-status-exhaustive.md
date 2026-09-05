@@ -2,7 +2,17 @@
 
 One task, one file. No spec: the issue is explicit, its premise verified below,
 and there is one reasonable approach — the `const unhandled: never` idiom this
-repo already uses at fifteen sites.
+repo already uses widely. The census, and the command that re-derives it:
+
+```
+grep -rEn 'const [A-Za-z]+: never = ' src --include='*.ts' --include='*.tsx' | grep -v '\.test\.'
+```
+
+29 sites at `d804d55e`, 30 with this change. This sentence first said "fifteen
+sites", read off a `grep` whose output `head` had truncated — a `grep | head`
+reported as a census, which is the failure this project's lessons name. The
+argument ("the repo already has this idiom") never needed the number; it ships
+now only because it ships with the command.
 
 ## What was verified before planning
 
@@ -22,25 +32,28 @@ Baseline `npx tsc --noEmit`: exit 0, zero lines of output.
 **The fall-through is not a dead catch-all.** `return railVisible ?
 <VerifyingState /> : null` is the `verifying` render. The conversion therefore
 splits one line into a `case 'verifying'` and a genuinely-new `default`, and
-the two cannot be merged — `case 'verifying': default:` narrows `status` to
-`'verifying'` rather than `never`, so the tether would not compile. Both arms
-return the same expression; hoisting it to one `const` above the switch gives
-the `railVisible` comment a single home instead of two copies.
+the two cannot be merged into one arm — `case 'verifying': default:` narrows
+`status` to `'verifying'` rather than `never`, so the tether would not compile.
+What the `default` should return instead is a decision this plan has to make
+rather than inherit, and the review changed the answer; see *What the review
+changed* below.
 
-**The idiom has two runtime shapes, not one.** `template-action-messages.ts:417`
-throws. `format.ts:55` logs and falls back, and its docblock argues the throw it
-replaced was *strictly worse* there: a render-time throw takes down the whole
-page, and the app's only error boundary logs nothing. `/verify` is the sign-in
-page and the same reasoning applies, so this plan takes `format.ts`'s shape.
-Agreed with the issue's author before planning.
+**The idiom has two runtime shapes, not one.** `template-action-messages.ts`
+throws at its `never`. `format.ts` logs and falls back, and its docblock argues
+the throw it replaced was *strictly worse* there: that module is called during
+the render of an async server component with `force-dynamic`, so a throw took
+down a student-facing page on every request, and neither error boundary in this
+app (`src/app/error.tsx`, `src/app/global-error.tsx`) logs anything. This plan
+takes `format.ts`'s log-and-fall-back shape. Agreed with the issue's author
+before planning.
 
 That said — the `default` here is unreachable by construction, unlike
 `format.ts`'s. `PaymentStatus` arrives from the database, where enum/deploy
-drift is a real path; `Status` is local `useState`, written only by the six
-literals in this file. Nothing outside it can put a seventh value in that
-variable. The runtime shape is therefore a choice about which pattern the next
-maintainer copies, not about a live failure. The compile-time tether is the
-whole deliverable.
+drift is a real path; `status` is local `useState`, written only by the
+`setStatus` literals in this file and the ternary that initialises it. Nothing
+outside the file can put a seventh value in that variable. The runtime shape is
+therefore a choice about which pattern the next maintainer copies, not about a
+live failure. The compile-time tether is the whole deliverable.
 
 ## Task 1 — convert the dispatch to an exhaustive `switch`
 
@@ -48,18 +61,17 @@ whole deliverable.
 
 Replace the six-line `if` chain and its fall-through with:
 
-- A `const` above the switch holding `railVisible ? <VerifyingState /> : null`,
-  carrying the existing four-line `railVisible` comment unchanged.
 - `switch (status)` with one `case` per member — `error`, `timeout`,
   `already-signed-in`, `success`, `handoff`, `verifying` — each returning
-  exactly what its `if` returned today, with the same props.
+  exactly what its `if` returned today, with the same props. The `verifying`
+  arm keeps the existing four-line `railVisible` comment.
 - A `default` block that assigns `status` to a `const unhandled: never`, logs
   via `console.error` with the `[verify]` prefix the rest of the file uses, and
-  returns the hoisted rail. `console.error` and not `@/lib/log`: that module is
-  pino and server-only, and this file is `'use client'`.
+  returns `<ErrorState />` (see *What the review changed*). `console.error` and
+  not the app logger, because this file is `'use client'`.
 
 The `never` binding must be *used* (in the log payload, as `format.ts` does) —
-`@typescript-eslint/no-unused-vars` is `'error'` in `eslint.config.mjs:12`, so
+`@typescript-eslint/no-unused-vars` is `'error'` in `eslint.config.mjs:13`, so
 an unused one fails lint rather than compiling.
 
 **Behavior must not change for any of the six members.** A `switch` on a
@@ -83,27 +95,69 @@ recorded here rather than committed:
    Record the exact error text in the PR body.
 3. Revert the member. Re-run `npx tsc --noEmit`; it must return to exit 0.
 
-A second mutation, *removing* a member (`'handoff'`), was run and its result
-corrects this plan's original framing. It was written here as proving the
-tether "is not one-directional". It proves no such thing: the removal was run
-against HEAD's `if`-chain as well, and that chain catches it too —
-`TS2367: This comparison appears to be unintentional because the types
-'"verifying"' and '"handoff"' have no overlap`. Removal was never the gap,
-because an equality test against a literal is already checked against the
-union. Only ADDITION was unguarded, and only addition is what this change
-buys. The second mutation stays in the record as the measurement that
-established that, not as evidence for the switch.
+Every mutation is run against BOTH the new `switch` and HEAD's `if`-chain,
+because a mutation the old code already caught measures nothing this change
+bought. Three directions, and the control is what separates them:
 
-All mutations are edits to the union on line 9 only. None is committed.
+| Mutation | Old `if`-chain | New `switch` | New coverage? |
+|---|---|---|---|
+| Add a member, no arm | exit 0 — silent | `TS2322` at the `never` | **yes** |
+| Delete an arm, keep the member | exit 0 — silent | `TS2322` at the `never` | **yes** |
+| Remove a member entirely | `TS2367` no overlap | `TS2678` not comparable | no |
+
+The third row corrects this plan's first draft, which offered a member-removal
+mutation as proof the tether ran in both directions. It is not proof of
+anything: an equality test against a string literal is already checked against
+the union, so the old chain caught that too. The row that matters and was
+missed on the first pass is the second — deleting an arm while its member
+stands, which the old chain compiled clean and which is the likelier human
+error of the two.
+
+All mutations are edits to the union on line 9 or to a single `case` arm.
+None is committed.
 
 ### Regression coverage
 
 `page.test.tsx` (the `components` project — jsdom, no database, no dev server)
-already exercises the rendered outcome of every status through the public
-behaviour of the page. Those tests are the check that the six arms still render
-what they rendered; they must pass unedited. Adding a test that asserts "a
-future omission fails to compile" is not possible from inside the suite — the
-type system is the assertion, which is why the mutation above is the evidence.
+exercises the rendered outcome of every status through the public behaviour of
+the page, and those tests are the check that the arms still render what they
+rendered. They must pass unedited.
+
+One arm is not fully covered there, and the review found it by mutation rather
+than by reading: `home`, the only prop on the `already-signed-in` arm, could be
+set to `''`, to `redirectTo`, or hard-coded to the wrong family's path with the
+suite staying green. `''` renders `href=""`, which sends a reader who IS signed
+in back to the spent link they just came from, and the student half of
+`AlreadySignedInState`'s wording ternary had no test at any tier. This plan
+adds two cases pinning that link's accessible name and `href`, each verified to
+fail under all three mutations. The gap predates this change — the old line was
+identical — but the claim "the suite is the regression check" is this change's
+own, so it should be true.
+
+Adding a test that asserts "a future omission fails to compile" is not possible
+from inside the suite — the type system is the assertion, which is why the
+mutation table above is the evidence.
+
+## What the review changed
+
+**The `default` returns `<ErrorState />`, not the verifying rail.** The plan
+first said the rail, on the reasoning that it mirrored the old fall-through
+exactly. Review pointed out that this copied `format.ts`'s *shape* while
+inverting its *value* criterion: `format.ts` picks its fallback because it is
+the calmest state available and never overclaims, whereas the rail is the most
+committal screen on the page — a progress step marked in-progress, and a line
+offering the reader's connection as the reason for a delay that is not
+happening. Worse, issue #449 names the indefinite "Checking your link" as the
+defect itself, so the safety net reproduced the thing it guards against.
+
+Two consequences followed. The rail is no longer hoisted to a `const`, because
+only one arm returns it now — which also retires the comment explaining why the
+two arms could not be merged, a comment that would have been false the moment
+the fallback changed. And the argument against throwing had to be rewritten: it
+originally said a throw "trades a working rail for a blank screen", which is
+wrong twice over. `src/app/error.tsx` renders visible copy and a Try again
+button, so a throw is not blank; and the rail arm returns `null` before the
+rail is due, so the *fallback* was the branch that could render nothing.
 
 ## Verification
 
@@ -113,7 +167,7 @@ Run in the worktree, which has no database and no dev server:
 - `npx eslint src/app/\(public\)/verify/page.tsx` — clean, and specifically not
   reporting the `never` binding as unused
 - `npx vitest run --project components src/app/\(public\)/verify/page.test.tsx`
-  — all pass, unedited
+  — all pass: the 34 pre-existing cases unedited, plus the 2 added for `home`
 - `npx vitest run --project unit --project components` — the tiers a worktree
   can run
 

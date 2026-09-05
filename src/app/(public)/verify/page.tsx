@@ -683,17 +683,6 @@ function VerifyContent() {
       });
   }, [token, router, settle]);
 
-  // `railVisible` only ever goes up, and must keep doing so. It is what holds
-  // the screen when the stay timer expires with nothing to run — a verify POST
-  // that failed at 400ms, say, whose session probe answers at 1500ms. Reset it
-  // there and that reader gets 600ms of blank instead.
-  //
-  // Bound here rather than inline because two arms below return it, and they
-  // cannot be merged: `case 'verifying': default:` narrows `status` to
-  // `'verifying'` instead of `never`, which is the one thing the default is
-  // for.
-  const verifyingRail = railVisible ? <VerifyingState /> : null;
-
   switch (status) {
     case 'error':
       return <ErrorState />;
@@ -713,25 +702,35 @@ function VerifyContent() {
     case 'handoff':
       return <HandoffState code={handoffCode} />;
     case 'verifying':
-      return verifyingRail;
+      // `railVisible` only ever goes up, and must keep doing so. It is what
+      // holds the screen when the stay timer expires with nothing to run — a
+      // verify POST that failed at 400ms, say, whose session probe answers at
+      // 1500ms. Reset it there and that reader gets 600ms of blank instead.
+      return railVisible ? <VerifyingState /> : null;
     default: {
       // Unreachable, and the `never` is what keeps it so: a member added to
-      // `Status` without an arm above fails the build here instead of
-      // rendering as an indefinite "Checking your link". That tether is the
-      // whole point of this branch.
+      // `Status` without an arm above, or an arm deleted from under a member
+      // still in it, fails the build here instead of silently rendering
+      // whatever `verifying` renders. That tether is the whole point of this
+      // branch.
       //
       // Unreachable at runtime too, not merely unhandled: `status` is local
-      // state, written only by the `setStatus` literals in this file. What
-      // this does when reached is therefore undramatic by design, and
-      // deliberately not a throw — this is the page a reader signs in
-      // through, and a throw during render trades a working rail for a blank
-      // screen.
+      // state, written only by the `setStatus` literals in this file and the
+      // ternary that initialises it.
       //
-      // `console.error`, not `@/lib/log`: that module is pino and
-      // server-only, and this file is `'use client'`.
+      // `ErrorState` rather than the `verifying` arm, which is where an
+      // untethered fall-through used to land: reaching here means this
+      // component does not know what it is showing, and the `verifying`
+      // screen asserts the opposite — a rail mid-step, and a line offering
+      // the reader's connection as the reason it is taking so long. This one
+      // is terminal, says the link cannot be used, and offers a new one. It
+      // also renders unconditionally, where the `verifying` arm is `null`
+      // until the rail is due.
+      //
+      // `console.error`, not the app logger: this file is `'use client'`.
       const unhandled: never = status;
       console.error('[verify] unhandled status', { status: String(unhandled) });
-      return verifyingRail;
+      return <ErrorState />;
     }
   }
 }
