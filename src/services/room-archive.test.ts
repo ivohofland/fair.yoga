@@ -202,7 +202,7 @@ describe('setTeacherRoomArchived — the mid-request resume race (issue 272)', (
           acquired();
           // Held until the resume has answered, rather than a flat sleep: the
           // hold is the contention this file pays for in the PARALLEL tier
-          // (`vitest.config.ts`, LOCK_CONTENTION_TESTS), so it lasts exactly
+          // (`vitest.tiers.ts`, LOCK_CONTENTION_TESTS), so it lasts exactly
           // as long as the assertion needs. The ceiling exists only for the
           // path where the resume never gives up, so that failure surfaces as
           // this case's own assertion rather than a vitest timeout.

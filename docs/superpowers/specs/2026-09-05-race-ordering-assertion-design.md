@@ -1,0 +1,569 @@
+# Spec: a causal handshake instead of a wall-clock comparison (#447)
+
+**Issue:** #447 — "A wall-clock comparison stands in for a causal ordering, and
+one millisecond reddens CI"
+**Branch:** `fix/447-race-ordering-assertion`
+**Date:** 2026-09-05
+
+---
+
+## 1. What the issue says, and what is actually true
+
+`src/services/template-room-race.test.ts:91` asserts a causal ordering by
+comparing two wall-clock samples taken inside two racing promise callbacks:
+
+```ts
+}).then(()   => { resumeCommittedAt = Date.now(); });   // :71
+ .finally(() => { archiveSettledAt  = Date.now(); });   // :78
+expect(archiveSettledAt).toBeGreaterThanOrEqual(resumeCommittedAt);
+```
+
+**The issue's diagnosis is right, its provenance is right, and its suggested fix
+is not sufficient.** Each of the three is established below.
+
+### 1.1 Provenance — confirmed exactly as written
+
+```
+git log --oneline --follow -- src/services/template-room-race.test.ts
+  d4c5ce56 refactor: the simplifier round … (issue 272)
+  fc9c7461 test: the archive that used to slip past door 3 is refused, and waits (issue 272)
+
+git log -L 88,92:src/services/template-room-race.test.ts --oneline
+  fc9c7461
+```
+
+Introduced by `fc9c7461`, touched since only by `d4c5ce56`. No correction
+needed.
+
+### 1.2 The census — one instance, not a family
+
+The genus is *two independently-sampled wall clocks compared to infer causal
+order*. What distinguishes it syntactically is assignment to an **outer-scope**
+variable from inside a callback — `x = Date.now()`, not `const x = Date.now()`,
+because the sample has to outlive the callback to be compared against another
+one. So the declaration forms are excluded:
+
+```
+grep -rn '= Date.now()' src --include='*.test.ts' \
+  | grep -vE '(const|let|var)[[:space:]]+[A-Za-z0-9_$]+[[:space:]]*=[[:space:]]*Date\.now\(\)'
+```
+
+The bare `grep -rn "= Date.now()"` half of that pipeline returns **50** lines
+and is not a census of anything — almost all of them are `const uniqueSuffix =
+Date.now()` or `const startedAt = Date.now()`. The filter is what makes the
+number mean something.
+
+Run at `0cbb32a1` (before this branch) it returns three lines; run after the
+fix it returns one. The arithmetic is `3 − 2 = 1`:
+
+| Hit | Verdict |
+|---|---|
+| `template-room-race.test.ts:71` | the genus (this issue) |
+| `template-room-race.test.ts:78` | the genus (same assertion's other half) |
+| `class-generator.test.ts:1910` | **not** the genus — `settledAt − startedAt` on one timeline, asserted `>= 300` against a 400 ms hold: a duration with a 100 ms cushion |
+
+So this is a single-site defect. `#441` is unaffected.
+
+The limit of this command is the same one §4.2.2 states for the tier census: it
+finds the genus as *currently spelled*. A future sample taken with
+`performance.now()`, or stored on an object field rather than a bare variable,
+would not match it.
+
+### 1.3 What actually makes it flake — measured, not reasoned
+
+A 25-iteration instrumented probe recorded, per iteration, the callback order,
+`Date.now()` at each callback, `performance.now()` (monotonic) at each, and the
+archive's state sampled from *inside* the still-open transaction. Machine load
+average was 12–21 on 10 cores, so this was not an idle run.
+
+```
+callbackInversions=0   dateTies=1   clockWentBackwards=0   proposedSampleWrong=0
+perfDelta (archive settles after resume commits): 0.674 – 4.749 ms, median ≈ 1 ms
+dateDelta: 0 once, 1 in 20 of 25, 2–5 otherwise
+```
+
+**The finding is the margin, not the direction.** The two callbacks are
+separated by roughly *one millisecond*, and the assertion compares
+`Date.now()`, which is wall clock and therefore not monotonic. Any backwards
+adjustment inside that ~1 ms window flips the comparison. A tie
+(`dateDelta = 0`) already occurred once in 25 local iterations, and `>=` is
+what currently lets a tie pass.
+
+The issue's own wording — that the archive's `.finally` "can execute in an
+earlier millisecond tick … even when the archive genuinely settled later" —
+blurs two distinct mechanisms. If the callback truly executed earlier, the
+order inverted, and an order-based assertion fails too. The probe found **zero
+order inversions in 25 iterations under load**, which points at the clock, not
+the scheduler.
+
+### 1.4 Why the suggested fix is not enough
+
+The issue proposes pushing labels into an array and asserting the sequence.
+That removes the clock — a real improvement — but it keeps a margin of about
+one millisecond of callback-scheduling slack, and it inherits a second, larger
+weakness the current assertion also has:
+
+**Neither assertion can tell "the archive waited" from "the archive never
+raced at all."** If a future edit lets the resume commit *before* the archive
+is issued, the archive still fails the CHECK, the error assertions still pass,
+the room is still open, the rule is still active — and both the `>=`
+comparison and the order array **pass**. The test would look like it guards a
+race while guarding nothing. That is precisely the "guard that cannot fail"
+the issue warns about, reintroduced by its own suggested fix.
+
+---
+
+## 2. The mechanism being tested
+
+`prisma/migrations/20260827120000_template_room_archive_invariant/migration.sql`
+enforces the invariant with mirrored columns and a CHECK, not a trigger:
+
+```sql
+ALTER TABLE "ClassTemplate" ADD CONSTRAINT "ClassTemplate_live_needs_open_room"
+  CHECK (NOT ("ruleLive" AND "roomArchived"));
+```
+
+Both mirrors are maintained by `ON UPDATE CASCADE` on composite foreign keys.
+So:
+
+- the **resume** flips `ScheduleRule.isActive`, which changes the generated
+  column `live`, so the cascade rewrites `ClassTemplate.ruleLive` — taking that
+  row's lock and holding it for the transaction;
+- the **archive** flips `TeacherRoom.isArchived`, whose cascade must rewrite
+  `ClassTemplate.roomArchived` — *the same row*.
+
+The archive therefore blocks in Postgres until the resume commits, and only
+then does the CHECK refuse it. **The property is a row-lock wait**, which is a
+causal fact with a wide observable window — not a 1 ms clock comparison.
+
+---
+
+## 3. Design
+
+Replace the inferred ordering with an **observed** one, using the handshake
+this repo already uses in `src/services/update-class-lock-order.test.ts`, whose
+docblock rejects sleeps for exactly this reason: *"Both handshakes here are
+driven by observed state — a promise the completion resolves once it holds its
+locks, and `pg_stat_activity` for the reschedule's backend actually waiting on
+one."*
+
+Three clients, matching that file — only `archiveDb` is a single connection;
+`a` and `probe` each hold a pool:
+
+- `a` — the resume; holds the transaction.
+- `archiveDb` — `singleConnectionClient()`, so `pg_backend_pid()` read once
+  identifies the backend every later statement runs on. Required because
+  `pg_stat_activity` is database-wide and `unit` runs its files in parallel.
+- `probe` — reads `pg_stat_activity`; must never block.
+
+Two gates replace the two sleeps:
+
+1. the resume signals **after** its update returns, so the `ClassTemplate` lock
+   is provably held before the archive is issued;
+2. the poll loop signals the resume it may commit, once the archive's backend is
+   **observed** waiting on a lock whose blocker is the resume's own backend.
+
+```ts
+const resume = a.$transaction(async (tx) => {
+  const [own] = await tx.$queryRaw`SELECT pg_backend_pid()::int AS pid`;
+  resumePid = own!.pid;   // read INSIDE the tx: `a` holds a pool
+  await tx.scheduleRule.update({ where: { id: ruleId }, data: { isActive: true } });
+  signalLockHeld();
+  await resumeMayCommit;
+}, { timeout: 15_000 });
+
+// Raced, so an update that REJECTS surfaces here rather than leaving the gate
+// unsettled and the test hanging to its timeout.
+await Promise.race([lockHeld, resume]);
+const archive = archiveDb.teacherRoom.update({ ... })
+  .catch((e: unknown) => { archiveError = e; })
+  .finally(() => { archiveSettled = true; });
+
+const deadline = Date.now() + 5_000;
+try {
+  while (!archiveSettled) {
+    const [w] = await probe.$queryRaw<Array<{ n: number }>>`
+      SELECT count(*)::int AS n FROM pg_stat_activity
+       WHERE pid = ${archivePid}
+         AND wait_event_type = 'Lock'
+         AND ${resumePid} = ANY(pg_blocking_pids(pid))`;
+    if ((w?.n ?? 0) > 0) { observedWaiting = true; break; }
+    if (Date.now() > deadline) { notObserved = /* diagnostic */; break; }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+} finally {
+  releaseResume();
+}
+
+expect({ observedWaiting, notObserved }).toEqual({ observedWaiting: true, notObserved: '' });
+```
+
+**The deadline is load-bearing, and the first draft of this design did not have
+it.** The two state-based exits are *not* independent: while the archive is
+genuinely blocked, `archiveSettled` cannot become true until the resume
+commits, and the resume only commits after the loop. So a probe that never sees
+the wait has no state exit at all — it spins to the transaction's own 15 s
+timeout and fails with Prisma's *"Transaction already closed … Consider
+increasing the interactive transaction timeout"*, which is advice that doubles
+the deadlock. Worse, on that path `archiveError` is `undefined`: the archive
+succeeded and the guard was never exercised, which nothing in the output says.
+§3.2 records the mutation that proves the bounded version reports it properly.
+
+`pg_blocking_pids` is load-bearing too. `wait_event_type = 'Lock'` is the whole
+heavyweight-lock class — a plain advisory lock satisfies it — so without the
+blocker check the assertion says "waiting on something", while the comment
+beside it claims "waiting on the resume". The resume's pid must be read *inside*
+its transaction: `a` holds a pool, and a pid read outside would name a different
+connection of its.
+
+### 3.1 Two consequences worth stating
+
+- **No clock and no sleep remain in the assertion path.** The margin is not
+  widened, it is removed.
+- **The resume's lock hold drops from 1500 ms to tens of milliseconds**, because
+  it now waits for an observation rather than a fixed sleep. That makes the file
+  a quieter neighbour in the parallel `unit` tier on the passing path — see §4.
+  On the failing path it is the poll loop that governs, which is why that loop
+  yields 5 ms between iterations: unthrottled it was measured at ~1 200
+  `pg_stat_activity` queries a second against the database the whole tier
+  shares, and the passing path polls once or twice — whether Postgres has
+  reached the lock wait by the first probe is itself a race — so the yield costs
+  it one sleep at most. The passing-path timing is the table in §3.2, against
+  the ~2 s the two sleeps (500 ms + 1500 ms) previously guaranteed. The file
+  therefore stops being a kind‑1 lock holder and needs no tier move of its own.
+
+### 3.2 Proof that the guard bites — measured
+
+Run against four worlds — the first three on the design, the fourth added after
+review found the failure path itself misdirected the reader:
+
+| World | Failure text | verdict |
+|---|---|---|
+| GREEN — resume holds, archive races | — | passes, `tests 69–76ms` across runs |
+| RED‑M1 — resume commits *before* the archive is issued | `notObserved: "the archive settled without ever waiting on the resume"`, reached **after** the refusal assertions passed | **only the wait assertion fails** |
+| RED‑M2 — resume touches a non-cascading column, so no lock is held | `expected undefined to be defined` at the refusal | archive slips past, as in #272 |
+| RED‑M3 — probe pointed at a pid that can never match | `notObserved: "never seen blocked by pid 401034 within 5s; archive backend: active / Lock / transactionid blocked by {401034}"`, failing at 5.06 s | the observation channel is broken, and the diagnostic says so |
+
+RED‑M1 is the isolating case and the reason for this design: every other
+assertion in the file passes, and the current `>=` comparison and the issue's
+order array both pass it too.
+
+RED‑M3 is the reason for the deadline. Before it, that world spun ~19 000–24 000
+polls over 15 s and died with Prisma's P2028 — with `archiveError` undefined,
+i.e. the archive having *succeeded* and the guard never exercised, which no part
+of the output said. Note what the diagnostic now prints: the archive **was**
+blocked, by the resume's own pid. That is what tells the reader the probe was
+blind rather than the property broken, without a second run.
+
+---
+
+## 4. The second half: the tier census (in scope by decision)
+
+`vitest.config.ts` keeps `LOCK_CONTENTION_TESTS` and ships a re-derivation
+command for it at line 49:
+
+```
+grep -rln 'not.toMatch(/[^/]*\(40P01\|55P03\)' src --include='*.test.ts'
+```
+
+followed by the claim, at line 51: **"Every hit belongs on this list."**
+
+### 4.1 What is wrong with it
+
+Run verbatim it returns exactly three files: `db-locks-lock-order.test.ts`,
+`template-lock-order.test.ts`, `gdpr-lock-order.test.ts`. The claim "every hit
+belongs on this list" is **true** — all three are on it.
+
+The defect is the converse, and it is in the comment, not the command. The
+comment introduces three files as *"all three are the SECOND kind: each asserts
+a staged race ends in neither `40P01` nor `55P03`"* — naming
+`db-locks-lock-order.test.ts`, `invitations-lock-order.test.ts` and
+`gdpr-lock-order.test.ts`. But `invitations-lock-order.test.ts` asserts the
+**opposite**:
+
+```
+src/services/invitations-lock-order.test.ts:283
+  expect(String((rejections[0] as PromiseRejectedResult).reason)).toMatch(/40P01|deadlock/i);
+src/services/invitations-lock-order.test.ts:396
+  expect(String((rejections[0] as PromiseRejectedResult).reason)).toMatch(/40P01|deadlock/i);
+```
+
+It asserts the staged race **does** deadlock. The description is wrong, and the
+`not.toMatch`-only command is blind to it as a direct consequence — which is
+why a file the comment calls second-kind is absent from the command's output
+and nobody noticed.
+
+### 4.2 The corrected predicate
+
+The property that makes a file tier-unsafe on the assertion side is not
+"asserts no deadlock". It is:
+
+> **the file asserts on *which* lock-contention outcome a staged race
+> produces — in either direction.**
+
+Both directions are wrecked by a parallel neighbour's lock noise; they merely
+fail differently. Noise adds waits, so it pushes a *negative* assertion
+(`not.toMatch(/40P01/)`) toward failing, and a *positive* one
+(`toMatch(/40P01/)`) toward passing for the wrong reason.
+
+Widened command:
+
+```
+grep -rlE '(not\.)?toMatch\(/[^/]*(40P01|55P03|deadlock|lock timeout)' src --include='*.test.ts'
+```
+
+Ten hits. The arithmetic: `10 = 4 already on LOCK_CONTENTION_TESTS + 2 already
+serial via SWEEP_TESTS + 4 needing a verdict`.
+
+The four needing a verdict were adjudicated by reading each one. Three belong;
+one does not:
+
+| File | What it asserts about contention | Also holds locks? | Verdict |
+|---|---|---|---|
+| `src/lib/db-locks.test.ts` | `NOWAIT` **presence** probes on rows it owns (`:588`, `:636`), with `'free'` counter-assertions (`:587`, `:638`) | no — every holder is handshake-gated and sub-second | **legitimately off** — a presence probe answers in one round trip and has no timing threshold |
+| `src/services/class-template-lifecycle.test.ts` | census hits assert a timeout **does** occur (`:2446`, `:3110`), but `:1097`, `:2287–2296` and `:3037` assert contention does **not** | yes — 0.3 s to ~2 s, in four separate tests | **belongs** |
+| `src/services/gdpr.test.ts` | `:632` asserts a timeout does occur; `:479`, `:551` (×5 via `it.each`), `:771`/`:788` and `:870` assert an **absence** of 55P03/40P01 | yes — ~9 s across six staggered `Class … FOR UPDATE` transactions (`:686–800`), plus a 4 s and six 900 ms holds | **belongs** — the strongest case |
+| `src/services/waitlist.test.ts` | four assert a timeout **does** occur (`:596`, `:966`, `:1308`, `:2177`); `:1802` asserts one does **not** | yes — four 3 500 ms held row locks (`:579`, `:949`, `:1291`, `:2156`) | **belongs** — a noise *source* and a noise *victim* in one file |
+
+**A premise of mine was wrong here, and the sweep corrected it.** I read
+`waitlist.test.ts`'s `if (!outcome.ok) expect(outcome.err).toMatch(/55P03/)` as
+a vacuous conditional tolerance. It is not: it is a TypeScript narrowing guard
+sitting immediately after an unconditional `expect(outcome.ok).toBe(false)` at
+`:595`, so the file does assert the timeout occurs.
+
+### 4.2.1 A second false claim, in two places
+
+`vitest.config.ts:69` justifies splitting `gdpr-lock-order.test.ts` out rather
+than moving `gdpr.test.ts` wholesale with: *"that file runs in ~26s and exactly
+one of its tests reads lock timing"*. The same sentence is duplicated at
+`src/services/gdpr-lock-order.test.ts:76`.
+
+**It undercounts by roughly four.** `gdpr.test.ts` stages lock races at `:453`,
+`:519` (an `it.each` over five statuses), `:591`, `:686` and `:804` — and three
+of those assert the *absence* of 55P03/40P01, including a hand-built AB‑BA
+deadlock probe at `:804` that is `template-lock-order.test.ts`'s exact shape
+written as `toBe('returned')` rather than `not.toMatch(/40P01/)`. Both copies
+of the sentence are corrected by this branch; the `+2.5s extracted` cost figure
+beside it was measured against the undercount and is restated from the new
+measurement.
+
+### 4.2.2 Why the census missed all of it
+
+The single root cause, and it is the one worth writing down: **the shipped
+command reads syntax, and the thing it needs to find is semantic.** An
+assertion that a staged race came out a particular way is written in this repo
+as any of
+
+```
+not.toMatch(/40P01|deadlock detected/)      // what the command matches
+toMatch(/40P01|deadlock/i)                  // invitations-lock-order.test.ts
+toBe('returned')                            // gdpr.test.ts:479, :870
+toEqual({ ok: true, … })                    // class-template-lifecycle.test.ts
+expect(elapsedMs).toBeGreaterThan(5_000)    // gdpr.test.ts:788
+```
+
+Only the first is findable by a grep for `not.toMatch`. A widened regex catches
+the second and improves matters; it cannot catch the last three, and no regex
+will. That is the honest limit of the technique, and the comment must say so
+rather than promise a census it cannot deliver.
+
+### 4.2.3 The cost of the obvious fix, measured
+
+Moving the three files onto `LOCK_CONTENTION_TESTS` wholesale was measured
+before being rejected:
+
+```
+npx vitest run --project unit --no-file-parallelism \
+  src/services/gdpr.test.ts src/services/waitlist.test.ts \
+  src/services/class-template-lifecycle.test.ts
+    → 3 files, 151 tests, 50.57s
+
+npx vitest run --project unit-sweeps        (the serial tier as it stands)
+    → 17 files, 167 tests, 50.19s
+```
+
+`50.19 + 50.57 = 100.8s`, i.e. **+101%** on the serial tier. The config already
+declined exactly this trade for `gdpr.test.ts` alone at +92%.
+
+**Read that as the step, not the job.** `.github/workflows/ci.yml`'s `test-unit`
+job runs `--project unit` and then `--project unit-sweeps` as two steps, so both
+tiers are already on the same critical path. What a whole-file move actually
+costs is therefore not the +101% by itself: it is that all 151 tests in those
+three files stop running in parallel with their neighbours and start running one
+after another. Extraction moves only the contention tests and leaves the
+remainder in the parallel pool, which is why it is the cheaper answer as well as
+the more accurate one.
+
+### 4.3 Why "every hit belongs" cannot survive the widening
+
+A widened command necessarily admits conditional tolerances of the form
+`if (!outcome.ok) expect(err).toMatch(/55P03/)`, which assert nothing on the
+happy path and are tier-safe by construction. So the comment's claim has to
+change shape: from a membership proof to a triage instruction — **every hit
+needs a verdict, not every hit belongs**. That is weaker, and it is the honest
+form; a command that reads syntax cannot decide a semantic question.
+
+---
+
+## 4.4 Extraction is the right end state, and it is not this branch
+
+Moving three large files into the serial tier is the wrong answer (§4.2.3).
+The right one is to **extract** the lock-staging tests into
+`*-lock-order.test.ts` siblings and serialize only those — the shape this
+project has already used twice, for `gdpr-lock-order.test.ts` and
+`class-lifecycle-tier-guard.test.ts`.
+
+That end state is not reached here, for the reason in §4.5: deciding *which*
+tests to extract cannot be mechanised, and the honest candidate count is about
+29 across the three files rather than the 15 first counted. That is a refactor
+with its own hazards — an inter-test ordering docblock it falsifies, three
+prose call-counts, counter-derived fixture slot spacing — and it is filed as
+its own issue rather than ridden along with a one-line assertion fix.
+
+What this branch does instead is make the *existing* list unable to drift
+(§4.6), and stop the comment above it from asserting things that are not true.
+
+## 4.5 No census can decide membership — demonstrated on both axes
+
+§4.2.2 showed the shipped command reads syntax for a semantic property. The
+obvious repair is to key the census on **machinery** instead of assertion text:
+a test that stages contention must build it, and building it is visible — a raw
+row lock, an injected `lock_timeout`, a second client to hold a transaction the
+first cannot, two operations awaited together.
+
+That was built and run
+(`scratchpad/contention-census.mjs`, attached to the filed issue). **It fails
+in both directions too:**
+
+- **False positive.** `gdpr.test.ts:925` — *"teacher deletion cancels upcoming
+  classes, notifies, and anonymizes"* — flags on `new PrismaClient` alone,
+  which it constructs for ordinary setup. Nine of the nineteen it flags in that
+  file are this shape.
+- **False negative.** `gdpr.test.ts:2903` — *"waits for a concurrent studio
+  claim to release the child row before archiving the teacher templates"* — is
+  unambiguously a lock race, and matches no marker but `extra-client`, because
+  it holds through a `$transaction` and a promise gate with no raw `FOR UPDATE`
+  anywhere in it.
+
+So the property is not recoverable from the source text by either route. Two
+independent censuses, two sets of false positives and false negatives. **The
+conclusion is not "write a third regex."** It is that discovery here is a
+judgement a person makes and records, and the most a tool can do is stop the
+record from silently going stale — which is exactly what §4.6 builds.
+
+This also explains, without blame, how the original comment came to be wrong:
+whoever wrote it was doing the discoverable half of an undiscoverable job.
+
+## 4.6 What holds instead: a tether, not a promise
+
+`LOCK_CONTENTION_TESTS` gets a marker in each listed file's own header, and a
+test asserting the marked set and the configured set are equal in both
+directions, and that every configured path exists.
+
+This is the pattern CLAUDE.md's *Comment Discipline* asks for — *"where
+membership matters, tether it to the compiler"* — adapted to a membership the
+type system cannot see. It does not solve discovery, and the comment must not
+claim it does. What it removes is the failure this list has actually suffered:
+a member renamed, deleted, or drifting away from the prose that describes it,
+with nothing to notice.
+
+**The lists move to `vitest.tiers.ts`**, comments and all. Exporting
+`LOCK_CONTENTION_TESTS` from `vitest.config.ts` works and is a one-word change,
+but a named export beside a default one makes Rollup print
+
+```
+[MIXED_EXPORTS] Entry module "vitest.config.ts" is using named (including
+"LOCK_CONTENTION_TESTS", "default") and default exports together.
+```
+
+three times on **every** vitest invocation, CI included. A module beside the
+config serves both consumers without that.
+
+### 4.6.1 The tether, proven to bite
+
+Per `solve-issue` §3, each failure mode was produced deliberately and the error
+text recorded, then reverted:
+
+| Mutation | Result |
+|---|---|
+| `@serial-tier lock-contention` → `@serial-tier REMOVED-BY-MUTATION` in `roster-link.test.ts` | fails, `"listedButNotMarked": ["src/services/roster-link.test.ts"]` |
+| marker added to unlisted `template-room-race.test.ts` | fails, `"markedButNotListed": ["src/services/template-room-race.test.ts"]` |
+| `roster-link.test.ts` renamed | **two** tests fail — `absent` names the vanished path, and the set comparison names both old and new |
+| a `SWEEP_TESTS` path made stale (`waitlist-retention.test.ts` → `…-RENAMED`) | fails, naming it — added after review, see below |
+
+The marker string is assembled in the test (`['@serial-tier',
+'lock-contention'].join(' ')`) rather than written as one literal, or the test
+file would match its own search and report itself.
+
+**The existence check covers `SERIAL_TESTS`, not just `LOCK_CONTENTION_TESTS`,
+and that was a review finding rather than a design choice.** The first version
+tethered only the list carrying markers — which is the list with the *smaller*
+blast radius. `SWEEP_TESTS` has no marker and so no other tether, and a stale
+path there is silent in *both* directions: it matches nothing in
+`unit-sweeps`'s `include` and nothing in `unit`'s `exclude`, so a renamed sweep
+rejoins the parallel tier. That is a database-wide sweep with an injected
+far-future clock — per `tests/setup/unit-db.ts`, exactly what once "completed
+the seed's future classes and mailed their payment requests."
+
+## 4.7 The claim inventory
+
+Four claims about this list were false. None was discoverable from the file it
+sat in, which is the point:
+
+| # | Claim | Where | Reality |
+|---|---|---|---|
+| 1 | `invitations-lock-order.test.ts` "asserts a staged race ends in neither `40P01` nor `55P03`" | the array's own comment | `:283`, `:396` assert `toMatch(/40P01\|deadlock/i)` — that it **does** deadlock |
+| 2 | `gdpr.test.ts` "runs in ~26s and exactly one of its tests reads lock timing" | **two** copies: `vitest.config.ts:69` and `gdpr-lock-order.test.ts:76` | at least nine, four asserting an *absence* of contention |
+| 3 | "no file left in the tier reads lock timing to assert on" | the census paragraph | three do — `gdpr`, `waitlist`, `class-template-lifecycle` |
+| 4 | the `unit` tier's "none of them holds a lock long enough to disturb a neighbour" | `vitest.config.ts`'s project summary | those same three do, up to ~9 s |
+
+Claim 2 is the one worth dwelling on: it lived in two files, and the copy in
+`gdpr-lock-order.test.ts` carried a note explaining that *the other copy* had
+been de-numbered and this one missed. A comment that tracks its own twin is
+evidence the claim never belonged in either.
+
+---
+
+## 5. What this spec does not do
+
+- It does not change the invariant, the migration, or any production code. Only
+  tests and `vitest.config.ts` are touched — no file under `src/app`,
+  `src/services/*.ts` (non-test), `src/lib/*.ts` (non-test) or `prisma/`.
+- **#441 is unaffected** — same genus of "an assertion resting on something
+  nothing guarantees", different mechanism, different project.
+- It does not extract the lock-staging tests out of `gdpr.test.ts`,
+  `waitlist.test.ts` or `class-template-lifecycle.test.ts`. That is the right
+  end state (§4.4) and is filed as #459, with the candidate list, the
+  census script, the `+101%` measurement and the four hazards the inventory
+  found. Those three files therefore remain in the parallel tier at the end of
+  this branch, exactly as they began it.
+- It does not claim the tether in §4.6 solves discovery. It cannot: §4.5 is the
+  demonstration that discovery is not mechanisable here. The tether stops the
+  record from drifting; a person still has to put a file on the list in the
+  first place.
+
+## 6. Environment note (not a finding against main)
+
+The shared `ethical_yoga_test` database currently has
+`20260905120000_class_room_archive_invariant` applied, which is **not** in this
+branch (its last migration is `20260903195051_student_signup_purposes`). It
+comes from the `issue-339-class-room-archive` worktree and renames
+`Class_teacherRoomId_fkey` to `Class_teacherRoomId_roomArchived_fkey`.
+
+That makes three tests fail locally in the `unit` tier —
+`room-archive.test.ts` (2) and `room-deletion.test.ts` (1) — **on this branch
+with no changes applied**. They are pollution from an unmerged branch, not
+defects, and this PR neither causes nor fixes them.
+
+The same branch leaks through a **second** vector. This worktree's own
+`node_modules` contains only `.cache` and `.vite`; `@prisma/client` resolves up
+to the main checkout's shared copy, which was generated from a schema carrying
+a `live` field this branch's `prisma/schema.prisma` does not define. So
+`npx tsc --noEmit` reports one error, at
+`src/components/schedule/class-list.test.tsx:86`, for the same reason.
+
+Neither was corrected here: regenerating the client would write into the shared
+`node_modules` and break the `issue-339-class-room-archive` worktree's own
+typecheck. **CI is the authoritative signal for both** — it installs and
+generates per run, against a per-run database. Local evidence in this PR is
+therefore scoped to the files it touches, each of which is clean.
