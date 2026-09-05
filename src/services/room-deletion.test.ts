@@ -127,7 +127,7 @@ describe('the shared constants', () => {
   it('lists both foreign keys that RESTRICT a TeacherRoom delete', () => {
     expect([...ROOM_DELETE_RESTRICT_FKS].sort()).toEqual([
       'ClassTemplate_teacherRoomId_roomArchived_fkey',
-      'Class_teacherRoomId_fkey',
+      'Class_teacherRoomId_roomArchived_fkey',
     ]);
   });
 });
@@ -230,7 +230,7 @@ describe('the FK names, against a real refused delete', () => {
     expect(isRoomDeleteBlocked(err)).toBe(true);
   });
 
-  it('a teacherRoom delete blocked by a class reports Class_teacherRoomId_fkey', async () => {
+  it('a teacherRoom delete blocked by a class reports Class_teacherRoomId_roomArchived_fkey', async () => {
     // The second name in ROOM_DELETE_RESTRICT_FKS. Listed there because the
     // `Class` guard has the identical check-to-delete race and had no backstop
     // before this issue — so it is the half most likely to be wrong and least
@@ -242,7 +242,25 @@ describe('the FK names, against a real refused delete', () => {
 
     const known = err as Prisma.PrismaClientKnownRequestError;
     expect(known.code).toBe('P2003');
-    expect(known.meta?.constraint).toBe('Class_teacherRoomId_fkey');
+    expect(known.meta?.constraint).toBe('Class_teacherRoomId_roomArchived_fkey');
+    expect(isRoomDeleteBlocked(err)).toBe(true);
+  });
+
+  it('classifies a class-blocked delete that reaches the database', async () => {
+    // NOT via the route: both routes pre-check and never reach the catch, which
+    // is why this wiring went unpinned. Delete the room directly so Postgres
+    // raises the RESTRICT itself, then assert the production classifier
+    // recognises it.
+    const f = await fx.makeFixture(prisma);
+    await fx.addClass(prisma, f, 'completed');
+    const roomWithACompletedClassId = f.linkId;
+
+    const err = await prisma.teacherRoom
+      .delete({ where: { id: roomWithACompletedClassId } })
+      .then(() => null)
+      .catch((e: unknown) => e);
+
+    expect(err).not.toBeNull();
     expect(isRoomDeleteBlocked(err)).toBe(true);
   });
 });

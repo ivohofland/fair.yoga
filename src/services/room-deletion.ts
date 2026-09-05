@@ -42,7 +42,7 @@ import { isRestrictViolationOn } from '@/lib/api-errors';
  */
 export const ROOM_DELETE_RESTRICT_FKS = [
   'ClassTemplate_teacherRoomId_roomArchived_fkey',
-  'Class_teacherRoomId_fkey',
+  'Class_teacherRoomId_roomArchived_fkey',
 ] as const;
 
 /**
