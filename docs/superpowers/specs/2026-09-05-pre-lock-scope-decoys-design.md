@@ -225,7 +225,8 @@ fixture:  victimTeacher + classA (open, future, live entry)
           decoyStudent  -> waiting entry on classD
 ```
 
-Two tests, in this order — the order is load-bearing and stated in the file:
+Two tests, presented student-first (see the correction below on why the order
+is not, in fact, load-bearing):
 
 1. **student erasure first.** `deleteStudentAccount(prisma, victimStudent)`;
    assert the lock set is exactly `[classA]`. It leaves `classA` and
@@ -256,7 +257,9 @@ test can be re-run against the fixture on its own, and an `it.only` on either
 one still needs the whole `beforeAll`.
 
 Precondition: `victimStudent` is created WITH an `Account`
-(`deleteStudentAccount` erases sessions and the account row), as
+(`deleteStudentAccount` deletes its sessions and passkeys and anonymises the
+account's email, but only when no other live teacher profile shares that
+account — a student with no account skips that branch entirely), as
 `gdpr-lock-order.test.ts:190` does. The decoy student needs none — nothing
 erases it.
 
