@@ -915,7 +915,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
  * per-class cancel CAS's own `where` in the loop. Both derive from this
  * array rather than restating the statuses, so neither can drift from it.
  * What restating costs was measured rather than argued —
- * `SCHEDULED_STATUSES`'s own docblock (`class-template-lifecycle.ts`)
+ * `SCHEDULED_STATUSES_SQL`'s own docblock (`class-template-lifecycle.ts`)
  * records dropping a status from one of two hand-written lists as having
  * "left every test covering this function green, silently re-opening the
  * deadlock the pre-lock exists to close".
