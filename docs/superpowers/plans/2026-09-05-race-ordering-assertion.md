@@ -53,8 +53,12 @@ and a new test.
 The spec's finding is that *discovery* needs human judgment. **Drift does
 not** — and drift is what has actually bitten this list twice.
 
-1. Add `export` to `LOCK_CONTENTION_TESTS` in `vitest.config.ts`. Nothing else
-   about the array moves; its comments stay where they are.
+1. Make `LOCK_CONTENTION_TESTS` importable. Adding `export` to it in
+   `vitest.config.ts` is the one-word version and was rejected on measurement:
+   a named export beside a default one makes Rollup print `MIXED_EXPORTS`
+   three times on every vitest invocation, CI included. The lists move to
+   `vitest.tiers.ts` instead, comments and all, and the config imports
+   `SERIAL_TESTS` from there.
 2. Give each of the seven listed files a marker in its **own** header docblock,
    naming why that file cannot share a parallel tier. The marker is the tether
    CLAUDE.md's *Comment Discipline* asks for where membership matters: it lives
@@ -102,7 +106,7 @@ not** — and drift is what has actually bitten this list twice.
 recorded as a deliberate non-member with its reason (`NOWAIT` presence probes
 on rows it owns, no timing threshold); no prose member count survives.
 
-## Task 4 — file the extraction issue
+## Task 4 — file the extraction issue ✅ done — #459
 
 Content: the ~29 candidates by `file:line` and title, the census script and
 what it proves about the limits of both census axes, the `+101%` whole-file
