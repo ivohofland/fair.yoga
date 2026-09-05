@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
 import { Prisma, PrismaClient } from '@prisma/client';
 import {
   getWaitlistWindow,
@@ -15,6 +15,8 @@ import {
 import { isTransientDbError } from '@/lib/api-errors';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
+import * as dbLocks from '@/lib/db-locks';
+import { unlinkTeacher } from './invitations';
 
 // ===========================================================================
 // Pure logic tests — getWaitlistWindow
@@ -2182,5 +2184,261 @@ describe('handleSpotFreed (DB)', () => {
     // It wrote nothing on the way out, so the aborted broadcast cost the
     // waiting students nothing except the notice they never got.
     expect(await countBroadcasts()).toBe(broadcastsBefore);
+  });
+});
+
+/**
+ * TWO DECOYS, because this predicate has two owner conjuncts and they fail
+ * differently.
+ *
+ * `classT2` — student S waiting on ANOTHER TEACHER's class — is the
+ * data-observable one: the `updateMany` this pre-lock brackets is keyed on the
+ * returned ids and on `studentId`, so dropping `e."teacherId"` withdraws a
+ * standing request S made of a teacher they never unlinked from.
+ *
+ * `classT3` — ANOTHER STUDENT waiting on T's class — is not data-observable at
+ * all, because that same `updateMany` re-scopes on `studentId`. Dropping
+ * `w."studentId"` widens the lock set and writes nothing extra, so the lock-set
+ * assertion is the only thing that can witness it. That asymmetry is why this
+ * test asserts the ids at all rather than only the surviving rows.
+ *
+ * In this test, dropping EITHER conjunct is caught by the `lockSets[0]`
+ * equality assertion first — the decoys' own assertions pin what the write
+ * predicate does, not which conjunct went missing.
+ */
+describe('withdrawWaitingEntriesForTeacher locks only the pair it was given (#453)', () => {
+  const scopeSuffix = `wl-scope-${Date.now()}`;
+  let teacherTId: string;
+  let teacherTAccountId: string;
+  let teacherT2Id: string;
+  let teacherT2AccountId: string;
+  let scopeRoomId: string;
+  let studentSId: string;
+  let studentSAccountId: string;
+  let studentSEmail: string;
+  let studentS2Id: string;
+  let classTId: string;
+  let classT2Id: string;
+  let classT3Id: string;
+
+  beforeAll(async () => {
+    const teacherT = await prisma.teacher.create({
+      data: {
+        firstName: 'Unlink',
+        lastName: 'Teacher',
+        email: `${scopeSuffix}-t@test.local`,
+        account: { create: { email: `${scopeSuffix}-t@test.local` } },
+        bio: 'Unlink scope fixture',
+        pageSlug: `${scopeSuffix}-t`,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherTId = teacherT.id;
+    teacherTAccountId = teacherT.accountId;
+
+    const teacherT2 = await prisma.teacher.create({
+      data: {
+        firstName: 'Other',
+        lastName: 'Teacher',
+        email: `${scopeSuffix}-t2@test.local`,
+        account: { create: { email: `${scopeSuffix}-t2@test.local` } },
+        bio: 'Unlink scope decoy',
+        pageSlug: `${scopeSuffix}-t2`,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherT2Id = teacherT2.id;
+    teacherT2AccountId = teacherT2.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Unlink Studio',
+        address: `${scopeSuffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234UL',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherTId,
+      },
+      select: { id: true },
+    });
+    scopeRoomId = room.id;
+
+    const roomT = await prisma.teacherRoom.create({
+      data: { teacherId: teacherTId, roomId: scopeRoomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    const roomT2 = await prisma.teacherRoom.create({
+      data: { teacherId: teacherT2Id, roomId: scopeRoomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+
+    const base = {
+      classType: 'Unlink scope class',
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'open' as const,
+    };
+
+    // T's class that S waits in — the ONLY row the correct predicate matches.
+    const classT = await createClassFixture(prisma, {
+      ...base,
+      teacherId: teacherTId,
+      teacherRoomId: roomT.id,
+      date: new Date('2099-07-01'),
+    });
+    classTId = classT.id;
+
+    // Decoy 1: ANOTHER teacher's class, same student waiting.
+    const classT2 = await createClassFixture(prisma, {
+      ...base,
+      teacherId: teacherT2Id,
+      teacherRoomId: roomT2.id,
+      date: new Date('2099-07-01'),
+    });
+    classT2Id = classT2.id;
+
+    // Decoy 2: T's class again, a DIFFERENT student waiting. A different date
+    // from `classT`, so the two live entries of one teacher cannot overlap.
+    const classT3 = await createClassFixture(prisma, {
+      ...base,
+      teacherId: teacherTId,
+      teacherRoomId: roomT.id,
+      date: new Date('2099-07-02'),
+    });
+    classT3Id = classT3.id;
+
+    studentSEmail = `${scopeSuffix}-s@test.local`;
+    const studentS = await prisma.student.create({
+      data: {
+        firstName: 'Unlink',
+        lastName: 'Student',
+        email: studentSEmail,
+        incomeTier: 2,
+        claimedAt: new Date(),
+        account: { create: { email: studentSEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentSId = studentS.id;
+    studentSAccountId = studentS.accountId!;
+
+    const studentS2 = await prisma.student.create({
+      data: {
+        firstName: 'Other',
+        lastName: 'Student',
+        email: `${scopeSuffix}-s2@test.local`,
+        incomeTier: 2,
+      },
+      select: { id: true },
+    });
+    studentS2Id = studentS2.id;
+
+    // Without this link `unlinkTeacher` returns NOT_LINKED before the pre-lock
+    // runs at all — which the `toHaveLength(1)` assertion below is what catches.
+    await prisma.teacherStudent.create({ data: { teacherId: teacherTId, studentId: studentSId } });
+
+    await prisma.waitlistEntry.createMany({
+      data: [
+        { classId: classTId, studentId: studentSId, position: 1, status: 'waiting' },
+        { classId: classT2Id, studentId: studentSId, position: 1, status: 'waiting' },
+        { classId: classT3Id, studentId: studentS2Id, position: 1, status: 'waiting' },
+      ],
+    });
+  });
+
+  afterAll(async () => {
+    const studentIds = [studentSId, studentS2Id];
+    const teacherIds = [teacherTId, teacherT2Id];
+    await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
+    await prisma.waitlistEntry.deleteMany({ where: { studentId: { in: studentIds } } });
+    await prisma.teacherBlock.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.studentPrivacy.deleteMany({ where: { studentId: { in: studentIds } } });
+    await prisma.teacherStudent.deleteMany({ where: { studentId: { in: studentIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.room.deleteMany({ where: { id: scopeRoomId } });
+    await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [teacherTAccountId, teacherT2AccountId, studentSAccountId] } },
+    });
+    await prisma.$disconnect();
+  });
+
+  /**
+   * The ids the pre-lock ACTUALLY held, read off the helper rather than
+   * re-derived from a fixture. Calls through, so `unlinkTeacher`'s withdrawal
+   * runs for real. Same idiom used at this issue's other call sites — see
+   * `docs/superpowers/specs/2026-09-05-pre-lock-scope-decoys-design.md`
+   * ("B. `waitlist.ts` — `withdrawWaitingEntriesForTeacher`", and "Why a text
+   * assertion is not enough" for the instrument this one was chosen over) —
+   * copied per file rather than shared, since each site's fixture is
+   * independent.
+   */
+  const captureLockSets = (): string[][] => {
+    const original = dbLocks.lockClassRowsOrdered;
+    const lockSets: string[][] = [];
+    const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
+      const ids = await original(tx, source);
+      lockSets.push(ids);
+      return ids;
+    });
+    onTestFinished(() => spy.mockRestore());
+    return lockSets;
+  };
+
+  it('withdraws only this pair’s entries, and locks only their classes', async () => {
+    const lockSets = captureLockSets();
+
+    const result = await unlinkTeacher(prisma, {
+      teacherId: teacherTId,
+      studentId: studentSId,
+      accountEmail: studentSEmail,
+    });
+
+    // NOT_LINKED here would mean the pre-lock never ran and every assertion
+    // below is about a call that did nothing.
+    expect(result).toEqual({ ok: true });
+
+    expect(lockSets).toHaveLength(1);
+    expect(lockSets[0]).toEqual([classTId]);
+
+    // The call did its job: S's standing request of T is withdrawn.
+    const withdrawn = await prisma.waitlistEntry.findFirstOrThrow({
+      where: { classId: classTId, studentId: studentSId },
+    });
+    expect(withdrawn.status).toBe('removed');
+
+    // DECOY 1. Dropping `e."teacherId"` makes `lockSets[0]` include
+    // `classT2Id`, so the strict-equality assertion above throws first and
+    // this line is not what the run reaches under that mutation — though the
+    // row itself does flip to `removed` there, since the `updateMany` takes
+    // its `classId` set from the lock. What this line guards on its own is
+    // that write keeping the set it was given: lose `classId: { in: classIds }`
+    // and a bystander teacher's queue is withdrawn behind a correct lock set.
+    const otherTeachersQueue = await prisma.waitlistEntry.findFirstOrThrow({
+      where: { classId: classT2Id, studentId: studentSId },
+    });
+    expect(otherTeachersQueue.status).toBe('waiting');
+
+    // DECOY 2 — another student's request in T's own class. The ROW is
+    // load-bearing: drop `w."studentId"` from the pre-lock and `classT3Id`
+    // joins the array the assertion above pins. THIS LINE is a consistency
+    // check on that row, not a guard on any reachable regression — no
+    // single-fault mutation of the write can make it fail. The `updateMany`
+    // re-scopes on `studentId`, so a widened pre-lock writes nothing extra;
+    // and dropping the `updateMany`'s own `classId` set reaches decoy 1
+    // instead, since `classT3` is not in the lock set.
+    const otherStudentsRequest = await prisma.waitlistEntry.findFirstOrThrow({
+      where: { classId: classT3Id, studentId: studentS2Id },
+    });
+    expect(otherStudentsRequest.status).toBe('waiting');
   });
 });

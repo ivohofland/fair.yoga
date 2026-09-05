@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, onTestFinished } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import type { RegistrationStatus } from '@prisma/client';
 import {
@@ -12,6 +12,7 @@ import { startOfLocalDay, classStartInstant, mondayOf } from '@/lib/timezone';
 import { getNextOccurrences } from './entry-generation';
 import { formatDayHeader } from '@/lib/format';
 import { setLockTimeout } from '@/lib/db-locks';
+import * as dbLocks from '@/lib/db-locks';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
@@ -1176,23 +1177,22 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   // Closes over the block's own teacherId/teacherRoomId, like the sibling
   // block's makeTemplate does.
   //
-  // Counter-derived startTime: this block calls makeClass 38 times at runtime
-  // (37 call sites, one of them an `it.each` over 2 statuses) across many
-  // tests, and several recurring `date` values (`future()` especially) are
-  // reused across tests whose class deliberately survives the archive (a
-  // kept/registered/late_cancel class, or a forbidden request that touches
-  // nothing) — so without a counter a later test's create at the same date
-  // collides with an earlier test's still-live leftover, under whichever slot
-  // constraint is in force (`Class_teacher_slot_unique` when this was written,
+  // Counter-derived startTime: tests throughout this block create their class
+  // at the same `date` (`future()` especially), and a class that deliberately
+  // survives the archive (a kept/registered/late_cancel one, or a forbidden
+  // request that touches nothing) is still live when the next test creates its
+  // own — so without a counter that later create collides with the earlier
+  // test's leftover, under whichever slot constraint is in force
+  // (`Class_teacher_slot_unique` when this was written,
   // `CalendarEntry_teacher_slot_excl` since #327). This was masked in the
   // original baseline: those tests never even reached this call, because the
   // template-level collision fixed above threw first.
   // Routed through `slotTime` (see its docblock), like `makeTemplate`'s own
-  // counter above: the raw `09:${counter}` this replaced had only 21 minutes
-  // of headroom at this call count — the tightest margin of any counter on
-  // this branch, in the file that defines the helper. `startTime` can be
-  // overridden per call for the one test whose notification-body assertion
-  // pins the literal value.
+  // counter above: the raw `09:${counter}` it replaced could never reach past
+  // `09:59`. If a call ever does run the block out of slots, `slotTime` throws
+  // naming the counter value that did it — which is why no call count is
+  // written here. `startTime` can be overridden per call for the one test whose
+  // notification-body assertion pins the literal value.
   let makeClassCounter = 0;
   // `scheduleRuleId`, not a template id: since #327 the generated class hangs
   // off its rule through the entry. `status` still accepts `'cancelled'` and
@@ -1385,6 +1385,59 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
 
     expect(result.ok).toBe(true);
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(0);
+  });
+
+  /**
+   * The pre-lock's `e."scheduleRuleId"` conjunct, isolated by a SECOND RULE OF
+   * THE SAME TEACHER.
+   *
+   * Only the lock set can witness this one. Dropping the conjunct changes no
+   * written row, because the delete re-derives its own scope: it runs through
+   * `CLASS_FAMILY.deleteWhere`, defined in the module this file tests, which
+   * takes `scheduleRuleId` itself (`rule-lifecycle.ts` only calls it
+   * generically, as `family.deleteWhere(...)`). Why the reads below the delete
+   * re-scope the same way, and why the one symptom that remains is a flake
+   * rather than a guard, is in
+   * `docs/superpowers/specs/2026-09-05-pre-lock-scope-decoys-design.md`
+   * ("C. `class-template-lifecycle.ts` — the archive pre-lock", and the
+   * asymmetry table it refers back to).
+   *
+   * This describe leaves earlier tests' classes standing (there is no per-test
+   * cleanup), so a foreign-rule class is often present here by accident. The
+   * decoy is built explicitly anyway: an assertion resting on a neighbour
+   * test's leftovers is the defect #453 is about.
+   */
+  it('locks only the archived rule’s own classes', async () => {
+    const t = await makeTemplate('Scope Under Test');
+    const c = await makeClass(t.scheduleRuleId, { date: future() });
+
+    const decoyTemplate = await makeTemplate('Scope Decoy');
+    const decoyClass = await makeClass(decoyTemplate.scheduleRuleId, { date: future() });
+
+    const original = dbLocks.lockClassRowsOrdered;
+    const lockSets: string[][] = [];
+    const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
+      const ids = await original(tx, source);
+      lockSets.push(ids);
+      return ids;
+    });
+    onTestFinished(() => spy.mockRestore());
+
+    const result = expectArchived(
+      await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'),
+    );
+
+    // The archive ran and reached its own class — without this the assertions
+    // below are about a call that withdrew nothing.
+    expect(result.deleted).toBe(1);
+    expect(lockSets).toHaveLength(1);
+    expect(lockSets[0]).toEqual([c.id]);
+
+    // The decoy rule's class survives. HONEST ABOUT WHAT THIS CATCHES: it
+    // cannot fail on a widened pre-lock (the delete re-scopes itself); it
+    // guards `deleteWhere`'s own `scheduleRuleId` scope, a different
+    // regression.
+    expect(await prisma.class.count({ where: { id: decoyClass.id } })).toBe(1);
   });
 
   it('deletes a future class whose only registration is cancelled', async () => {
