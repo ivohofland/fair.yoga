@@ -121,37 +121,41 @@ export async function setTeacherRoomArchived(
 
   // Before the in-use check, deliberately, and before any write. Issue 98: a
   // retry after a lost response must not undo what the first attempt did.
-  // Placing it first also means an already-archived room in use (reachable via
-  // the accepted race below) reports `unchanged` rather than a refusal about a
-  // state it is already in.
+  // Placing it first also means an already-archived room always reports
+  // `unchanged` on a second archive request rather than a refusal about a
+  // state it is already in — the counts below never run for it, whatever they
+  // would have found.
   if (link.isArchived === archiving) {
     return { ok: true, action: 'unchanged', isArchived: link.isArchived };
   }
 
-  // ONE EXPRESSION, TWO READERS. The pre-write count and the post-rollback
-  // re-count in the catch must ask the same question: the catch's `blockers` is
-  // only "the answer the counts would have given a moment later" if it asks
-  // what they asked. Two copies of one predicate is how that stops being true.
+  // ONE EXPRESSION, TWO READERS, and now on both halves. The pre-write counts
+  // and the post-rollback re-counts in the catch must ask the same questions:
+  // the catch's `blockers` is only "the answer the counts would have given a
+  // moment later" if it asks what they asked.
   const countLiveTemplates = (): Promise<number> =>
     db.classTemplate.count({ where: { teacherRoomId, ...ACTIVE_TEMPLATE_WHERE } });
+
+  // `calendarEntry: { cancelledAt: null }` beside the statuses (#327). A
+  // cancelled class keeps its `open`/`in_progress` status now, and a class
+  // the teacher has already called off is not a commitment the room still
+  // has to honour — before this branch, cancelling was how a teacher
+  // cleared exactly this blocker.
+  const countBlockingClasses = (): Promise<number> =>
+    db.class.count({
+      where: {
+        teacherRoomId,
+        status: { in: [...BLOCKING_CLASS_STATUSES] },
+        calendarEntry: { cancelledAt: null },
+      },
+    });
 
   // Un-archiving is unconditional. It is the release valve that makes every
   // refusal in this lifecycle recoverable in one action, so it must never
   // acquire a guard of its own.
   if (archiving) {
     const [classes, templates] = await Promise.all([
-      // `calendarEntry: { cancelledAt: null }` beside the statuses (#327). A
-      // cancelled class keeps its `open`/`in_progress` status now, and a class
-      // the teacher has already called off is not a commitment the room still
-      // has to honour — before this branch, cancelling was how a teacher
-      // cleared exactly this blocker.
-      db.class.count({
-        where: {
-          teacherRoomId,
-          status: { in: [...BLOCKING_CLASS_STATUSES] },
-          calendarEntry: { cancelledAt: null },
-        },
-      }),
+      countBlockingClasses(),
       countLiveTemplates(),
     ]);
     if (classes > 0 || templates > 0) {
@@ -162,11 +166,7 @@ export async function setTeacherRoomArchived(
       // `transitionClass` (`class-lifecycle.ts`). A second citation used to
       // stand here naming door 5's own log line; issue 272 deleted that guard
       // and the line with it, so the citation went stale the same way the line
-      // number before it had. One example carries the point. It matters most
-      // here: the accepted
-      // race below can leave an archived room holding an `open` class, and
-      // without a line on this side there is nothing to correlate that state
-      // against afterwards.
+      // number before it had. One example carries the point.
       log.info(
         { teacherRoomId, teacherId, blockers: { classes, templates } },
         'room archive refused: the room is still in use',
@@ -175,28 +175,12 @@ export async function setTeacherRoomArchived(
     }
   }
 
-  // KNOWN-OPEN, and deliberate (spec section 8), now on the CLASS side only.
-  // The counts above are read before this write, so a class published in
-  // another tab in between leaves an archived room holding an `open` class.
-  // Accepted rather than locked: the publish guard two doors away already
-  // records the reasoning for this exact class of check ("a policy about
-  // intent, not an invariant", in `transitionClassInDb`), losing the
-  // race needs two tabs, and the state is recoverable by un-archiving and
-  // self-heals when the class completes. Locking the CLASS rows is what is
-  // declined here: under read-committed the class counts lock nothing, and
-  // giving them teeth would mean a `Class` FOR UPDATE node in the ordering
-  // `template-lock-order.test.ts` defends. The transaction below takes no
-  // `Class` lock and does not change that.
-  //
-  // The TEMPLATE half of the race was closed, not accepted, in issue 272: a
-  // template resumed between the counts and this write makes the write's own
-  // cascade to the child row trip `ClassTemplate_live_needs_open_room`, so
-  // the archive is refused by the constraint (below) exactly as if the count
-  // had seen it. The write runs in a transaction that pre-locks the room's
-  // child templates before the room row itself (see the transaction's
-  // comment) so the cascade never waits on a child the generator holds while
-  // this transaction still holds the room. The class half is what stays racy
-  // — the class invariant is deliberately out of scope (spec section 8).
+  // Both halves of this refusal are constraint-enforced (issue 339): a class
+  // or template that goes live in the window between the counts above and
+  // this write trips `Class_live_needs_open_room` or
+  // `ClassTemplate_live_needs_open_room` on the write's own cascade, and the
+  // catch below turns either into the same `in_use` answer the counts would
+  // have given a moment later.
   try {
     await db.$transaction(async (tx) => {
       // Bounds every wait in this transaction, the pre-lock below first among
@@ -240,25 +224,37 @@ export async function setTeacherRoomArchived(
       });
     });
   } catch (e) {
-    // The counts above are read before this write, so a template resumed in
-    // between is invisible to them — this is that window closing (issue 272),
+    // The counts above are read before this write, so a class published or a
+    // template resumed in between is invisible to them — this is that window
+    // closing (issue 272 for the template half, issue 339 for the class half),
     // and it is now a refusal rather than a wrong success.
     //
     // RE-COUNTED, not reported as zero. `blockers` is not a record of what this
     // function measured; it is the input to `describeRoomBlockers`, whose whole
     // job is to name what the teacher must clear. Zero renders as "This room is
     // still in use." — the subjectless fallback — for a teacher looking at a
-    // room whose blocker list appears empty. The write has rolled back and the
-    // resumed template is committed by now, so this count is the accurate one.
-    // It can still come back zero if the template was paused again in the
-    // meantime, and the fallback sentence is then the honest answer.
-    if (isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room')) {
+    // room whose blocker list appears empty. The write has rolled back and
+    // whichever row went live mid-request is committed by now, so this count is
+    // the accurate one. It can still come back zero if that row was made live
+    // again in the meantime, and the fallback sentence is then the honest
+    // answer.
+    if (
+      isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room') ||
+      isCheckViolationOn(e, 'Class_live_needs_open_room')
+    ) {
       log.warn(
         { err: e, teacherRoomId, teacherId },
-        'room archive refused by the constraint: a template went live mid-request',
+        'room archive refused by a constraint: the room went back into use mid-request',
       );
-      const templates = await countLiveTemplates();
-      return { ok: false, reason: 'in_use', blockers: { classes: 0, templates } };
+      // BOTH, whichever fired. `blockers` is not a record of what tripped; it
+      // is the input to `describeRoomBlockers`, whose job is to name what the
+      // teacher must clear. Counting only the constraint that fired reports a
+      // room as blocked by one thing when it is blocked by two.
+      const [classes, templates] = await Promise.all([
+        countBlockingClasses(),
+        countLiveTemplates(),
+      ]);
+      return { ok: false, reason: 'in_use', blockers: { classes, templates } };
     }
     throw e;
   }

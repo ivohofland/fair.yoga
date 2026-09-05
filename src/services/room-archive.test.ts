@@ -160,7 +160,15 @@ describe('setTeacherRoomArchived — the mid-request resume race (issue 272)', (
     // re-counted after the rollback so `describeRoomBlockers` can name what
     // the teacher must clear. Zero rendered as the subjectless "This room is
     // still in use.", which is a 409 with nothing in it to act on.
-    expect(result).toEqual({ ok: false, reason: 'in_use', blockers: { classes: 0, templates: 1 } });
+    //
+    // `classes: 4`, not 0 (#339). The resume's own CAS claims the template and
+    // generates its rolling window synchronously (`DEFAULT_WEEKS`,
+    // `entry-generation.ts`) before this transaction's write ever runs, so by
+    // the time the catch re-counts, four real `open` classes already sit in
+    // this room — invisible to the pre-Task-5 catch, which re-counted only the
+    // template half and hardcoded the class half at zero regardless of what
+    // was actually there.
+    expect(result).toEqual({ ok: false, reason: 'in_use', blockers: { classes: 4, templates: 1 } });
 
     const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: f.linkId } });
     expect(after.isArchived).toBe(false);
@@ -266,31 +274,28 @@ describe('setTeacherRoomArchived — ownership, idempotency, release valve', () 
     expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
   });
 
-  // Pins the ORDER of the two checks, which is not visible from either alone.
-  // The already-in-state check sits BEFORE the in-use check, so an archived
-  // room that has since acquired an open class — reachable through the
-  // accepted race in spec section 8 — reports `unchanged` rather than
-  // refusing on a state it is already in. Move the in-use check above it and
-  // this case turns into an `in_use` refusal that no other test would catch.
-  it('reports unchanged for an already-archived room that is now in use', async () => {
+  // "Already archived AND still blocked by a class" cannot be constructed any
+  // more, by fixture or by any other write: `Class_live_needs_open_room`
+  // (#339) refuses the write that would create that combination, which is
+  // what `class-room-constraint.test.ts`'s "refuses archiving a room that
+  // holds a live class" pins directly at the constraint. The ordering the
+  // idempotency check's placement gives — and the release valve's
+  // unconditional un-archive — therefore has no blocked-and-archived state
+  // left to race against for a CLASS blocker; the case above (no blocker at
+  // all) is what is left to cover the ordering.
+  //
+  // The release valve itself still needs its own case: nothing above calls
+  // `setTeacherRoomArchived` with `'unarchived'` at all, and "unconditional"
+  // is a claim about a branch this file would otherwise never run.
+  it('un-archives a room, flipping the flag back', async () => {
     const f = await makeFixture();
     await setTeacherRoomArchived(prisma, f.linkId, f.teacherId, 'archived');
-    await addClass(f, 'open');
-
-    const result = await setTeacherRoomArchived(prisma, f.linkId, f.teacherId, 'archived');
-
-    expect(result).toMatchObject({ ok: true, action: 'unchanged', isArchived: true });
-  });
-
-  // The release valve. Every refusal above is recoverable only because of this.
-  it('un-archives unconditionally, even while the room is in use', async () => {
-    const f = await makeFixture();
-    await setTeacherRoomArchived(prisma, f.linkId, f.teacherId, 'archived');
-    await addClass(f, 'open');
 
     const result = await setTeacherRoomArchived(prisma, f.linkId, f.teacherId, 'unarchived');
 
     expect(result).toMatchObject({ ok: true, action: 'unarchived', isArchived: false });
+    const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: f.linkId } });
+    expect(after.isArchived).toBe(false);
   });
 });
 

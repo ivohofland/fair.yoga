@@ -74,6 +74,17 @@ export async function createClassFixture(
     ...classFields
   } = data;
 
+  // `Class_teacherRoomId_roomArchived_fkey` (#339) widened the room link into
+  // a composite FK on `(teacherRoomId, roomArchived)`, so the child's mirror
+  // column must match the room's actual state or the create fails on the FK
+  // before this fixture ever reaches what the test is about. `classFields`
+  // never sets `roomArchived` itself, so this always wins — explicit rather
+  // than relying on that non-overlap, so a future field on `classFields`
+  // can't silently start winning instead.
+  const room = await db.teacherRoom.findUniqueOrThrow({
+    where: { id: classFields.teacherRoomId },
+  });
+
   const entry = await db.calendarEntry.create({
     data: {
       ...(calendarEntryId !== undefined ? { id: calendarEntryId } : {}),
@@ -89,6 +100,7 @@ export async function createClassFixture(
       classes: {
         create: {
           ...classFields,
+          roomArchived: room.isArchived,
           ...(classFields.status === 'completed' ? { status: 'in_progress' as const } : {}),
         },
       },
