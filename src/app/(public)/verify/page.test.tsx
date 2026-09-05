@@ -660,14 +660,22 @@ describe('VerifyPage', () => {
      */
     it('gives up when the session probe is the request that never answers', async () => {
       vi.useFakeTimers();
-      silenceErrors();
-      vi.stubGlobal(
-        'fetch',
-        vi
-          .fn()
-          .mockResolvedValueOnce({ ok: false })
-          .mockReturnValue(new Promise(() => {})),
+      const errors = silenceErrors();
+      const fetchMock = vi.fn();
+      fetchMock.mockResolvedValueOnce({ ok: false });
+      // The probe: rejects on abort rather than hanging forever unreactive,
+      // so the ceiling's abort of THIS request is something the test can
+      // actually exercise — the same shape the abandoned-verification case
+      // above uses for the same reason.
+      fetchMock.mockImplementation(
+        (_url: string, init?: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              reject(new DOMException('Aborted', 'AbortError'));
+            });
+          }),
       );
+      vi.stubGlobal('fetch', fetchMock);
       render(<VerifyPage />);
 
       await advance(RAIL_APPEARS_AFTER_MS + 1);
@@ -675,6 +683,20 @@ describe('VerifyPage', () => {
 
       await advance(VERIFY_CEILING_MS);
       expect(screen.getByText('Connection problem')).toBeInTheDocument();
+
+      // The give-up fires as expected...
+      expect(errors).toHaveBeenCalledWith(
+        '[verify] no answer within the ceiling; giving up',
+      );
+      // ...but the probe's own abort must not ALSO be logged as a probe
+      // failure: the ceiling caused it, and the give-up screen already says
+      // so. Checked with a second argument matcher, not the bare string —
+      // the real call carries the caught error as a second argument, so a
+      // single-argument match would pass whether or not the guard exists.
+      expect(errors).not.toHaveBeenCalledWith(
+        '[verify] the session probe failed after a failed verification',
+        expect.anything(),
+      );
     });
 
     /**
