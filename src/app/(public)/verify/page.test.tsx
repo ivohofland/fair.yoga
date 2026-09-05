@@ -577,9 +577,10 @@ describe('VerifyPage', () => {
      *
      * A held outcome runs from the stay timer, not from `settle`, so a ceiling
      * inside the rail's own window could fire with an outcome already parked
-     * behind it — and nothing in Task 2's one-way exit covers that path,
-     * because it does not go through `settle`. Prose in three docblocks would
-     * not survive someone shortening the ceiling; this does.
+     * behind it — and nothing in the givenUp guard covers that path,
+     * because it does not go through `settle`. A prose version of this
+     * relationship would not survive someone shortening the ceiling without
+     * anyone noticing; this assertion does.
      */
     it('is armed beyond the rail\'s own window', () => {
       expect(VERIFY_CEILING_MS).toBeGreaterThan(
@@ -612,8 +613,8 @@ describe('VerifyPage', () => {
      * screen it reaches must be distinguishable from a spent link.
      *
      * The absence assertion cannot rot silently — 'Verification failed' is
-     * asserted PRESENT by three other cases in this file, so a rename breaks
-     * them loudly rather than quietly passing here.
+     * asserted PRESENT by other cases in this file already, so a rename
+     * breaks them loudly rather than quietly passing here.
      */
     it('gives up on a verification that never answers, without blaming the link', async () => {
       vi.useFakeTimers();
@@ -643,6 +644,25 @@ describe('VerifyPage', () => {
       render(<VerifyPage />);
 
       await advance(10);
+      expect(screen.getByText("You're signed in.")).toBeInTheDocument();
+
+      await advance(VERIFY_CEILING_MS);
+      expect(screen.getByText("You're signed in.")).toBeInTheDocument();
+      expect(screen.queryByText('Connection problem')).not.toBeInTheDocument();
+    });
+
+    /** The same rule as above, but for an outcome that arrived HELD — while
+     *  the rail was up and still owed its minimum, so the outcome sat in
+     *  `waiting.current` rather than running immediately from `settle`. The
+     *  ceiling must be cancelled the moment `settle` accepts the outcome,
+     *  not only once the stay timer later releases it. */
+    it('does not give up on a verification that answered while the rail held it', async () => {
+      vi.useFakeTimers();
+      const deferred = deferredFetch(signedInBody);
+      render(<VerifyPage />);
+
+      await railUpWithOutcomeHeld(deferred);
+      await advance(RAIL_STAYS_FOR_MS);
       expect(screen.getByText("You're signed in.")).toBeInTheDocument();
 
       await advance(VERIFY_CEILING_MS);
@@ -704,8 +724,8 @@ describe('VerifyPage', () => {
      * rule the held-outcome case above applies to the stay timer.
      *
      * Without the clear it fires on an unmounted page: a give-up logged for a
-     * reader who is no longer there, and once Task 2 lands, an abort of a
-     * request belonging to a page that no longer exists.
+     * reader who is no longer there, and an abort of a request belonging to a
+     * page that no longer exists.
      */
     it('drops the ceiling when the page is left before it fires', async () => {
       vi.useFakeTimers();
@@ -764,11 +784,16 @@ describe('VerifyPage', () => {
     });
 
     /**
-     * The same rule on the failing branch: a late rejection must not turn the
-     * give-up screen into the spent-link screen, which would tell the reader
-     * something this page cannot know.
+     * A different guard than the success case above, and worth naming as
+     * such: by the time a late verify-POST rejection reaches the outer
+     * `.catch`, the ceiling has already aborted the shared controller, so
+     * `if (controller.signal.aborted) return;` exits before `settle` is
+     * ever called — `givenUp` never even gets asked. The outcome (no
+     * "Verification failed" screen appears) is the same as the success
+     * case, but the mechanism protecting it is the abort guard, not the
+     * one-way exit.
      */
-    it('refuses a late failure too, rather than blaming the link', async () => {
+    it('a late rejection after the ceiling is aborted before it can blame the link', async () => {
       vi.useFakeTimers();
       silenceErrors();
       let rejectVerify!: (value: unknown) => void;
