@@ -82,11 +82,12 @@ spec does something strictly stronger, for a reason the issue itself supplies:
 
 That framing accepts both blind spots and relies on them cancelling. They need
 not be accepted. `typescript` is already a devDependency (5.9.3), so **the call
-side can be read from the syntax tree** — a `CallExpression` whose callee is the
-identifier `lockClassRowsOrdered`. That census is not `await`-dependent (a
-future `return lockClassRowsOrdered(…)` or `void lockClassRowsOrdered(…)` is
-found) and cannot mistake a comment for a call. It has neither blind spot rather
-than one.
+side can be read from the syntax tree** — a `CallExpression` whose callee names
+`lockClassRowsOrdered`, whether by that name, by a local name an import
+specifier binds to it, or as a member of an imported namespace. That census is
+not `await`-dependent (a future `return lockClassRowsOrdered(…)` or
+`void lockClassRowsOrdered(…)` is found) and cannot mistake a comment for a
+call. It has neither blind spot rather than one.
 
 The verdict side stays textual, because a comment convention has nowhere else to
 live. So the two sides are no longer two greps hoping to agree — they are
@@ -109,26 +110,35 @@ verdicts, and a file with two calls and one verdict would satisfy a file-level
 set comparison. Equal *counts per file* would fix that but still accept a
 verdict placed anywhere in the file.
 
-The test therefore pairs each call to a specific comment:
+The test therefore pairs each call to a specific comment, one for one:
 
 - For each `lockClassRowsOrdered` call expression, walk to the nearest enclosing
-  statement and require the marker to appear in that statement's **leading
+  statement and require **exactly one** marker in that statement's **leading
   comment trivia** — that is, above the call with nothing but comments between.
+  None is an unverdicted call; two or more is a verdict standing over nothing,
+  which is what a deleted neighbour's orphan comment looks like once its trivia
+  has merged into the survivor's run.
+- Require that same statement to enclose **exactly one** such call. Two of them
+  in one statement — `[...(await lock(A)), ...(await lock(B))]` — is one verdict
+  asked to answer for two transactions' worth of lock scope, which it cannot
+  honestly do.
 - For each raw occurrence of the marker text in the file, require it to fall
   inside one of the comment ranges just paired. A marker in a comment attached
   to no such statement is a verdict that outlived its call; a marker inside a
   string literal is not in a comment range at all.
 
 Both directions are reported in one assertion so a failure names which way it
-broke.
+broke, and the two counts ride inside the reported location — `path:line (2
+calls, 1 verdict)` — so a reader knows which shape it is without opening the
+test.
 
 **The looseness is bounded and is the convention.** "Leading trivia" can span a
 long comment block — in `class-template-lifecycle.ts` the run before the call is
-161 comment lines — so a verdict far above the call still pairs. That is correct:
+162 comment lines — so a verdict far above the call still pairs. That is correct:
 the only thing it permits is a verdict separated from its call by comments only,
-which is what the convention asks for. A second call site cannot borrow the
-first's verdict, because a second statement's leading trivia begins at the end of
-the first statement.
+which is what the convention asks for. What the counts above rule out is the
+looseness turning into a pool: one marker serving two calls, or two markers
+hanging over one.
 
 ### Non-vacuity
 
@@ -157,6 +167,11 @@ minus `src/lib/db-locks.ts`. So:
   module; a call there would be self-referential);
 - a call site added under `tests/` is not seen (none exists, and test callers
   carry no verdict by design);
+- a call reaching the helper through a local binding — `const f =
+  lockClassRowsOrdered; f(tx, …)` — is not seen. Following one needs a full
+  type-checker program, which this test does not build. An import alias
+  (`import { lockClassRowsOrdered as X }`, from a module specifier naming
+  `db-locks`) and a namespace member (`ns.lockClassRowsOrdered`) both are;
 - the tether forces a **verdict**, never a **decoy**. A fifth call site still
   ships with its scoping conjunct unproven. What changes is that its author must
   write down what the transaction reads and writes before the suite goes green.
@@ -196,7 +211,9 @@ verdict rather than an edit by reflex:
   different convention, and widening scope to it is not what #464 asks for.
 - **`docs/lock-order.md:79`** — the third census, and the document that *owns*
   the "four sites" count. The count does not change (this branch adds no call
-  site), and the re-derivation command still returns what it claims.
+  site), and the re-derivation command still returns what it claims. It gains
+  one sentence naming the test, because a reader re-deriving that set by hand
+  should know the pairing behind it is now held by something that fails.
 - **`docs/lock-order.md:1376`** — *"This is a convention enforced by a grep and a
   test, not by the database … the same standing … `lockClassRowsOrdered` has for
   `Class`."* That sentence compares the template families' child-lock convention

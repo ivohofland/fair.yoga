@@ -79,7 +79,11 @@ any cross-table one.
 the fifth site. Re-derived by `grep -rn 'lockClassRowsOrdered(' src --include='*.ts' | grep -v '\.test\.ts' | grep -vE ':[0-9]+: *(//|\*)'` — the
 helper's definition plus four callers — rather than decremented, because this
 document's own history is of counts that stayed plausible while their
-membership moved.
+membership moved. Since #464 that command is not the only thing watching the
+set: `src/lib/db-locks-verdict-census.test.ts` pairs each of those calls against
+the `VERDICT (#327)` comment above it and each such comment against a call under
+it, so a membership change reddens the suite instead of waiting for someone to
+re-run the grep by hand.
 
 **The rule: ascending by `id`, taken by `lockClassRowsOrdered`
 (`src/lib/db-locks.ts`).** Every site that locks more than one `Class` row goes
