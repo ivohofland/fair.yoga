@@ -215,3 +215,107 @@ export function migrationSqlFiles(): Array<{ name: string; sql: string }> {
     .filter(({ sqlPath }) => existsSync(sqlPath))
     .map(({ name, sqlPath }) => ({ name, sql: readFileSync(sqlPath, 'utf8') }));
 }
+
+
+// Block comments first, then line comments — see `stripSqlComments`.
+const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
+const LINE_COMMENT = /--[^\n]*/g;
+
+/**
+ * `sql` with its comments removed, blocks before lines.
+ *
+ * THE ORDER IS THE WHOLE POINT, and it is not a style choice. A block comment
+ * may contain a `--`; strip line comments first and that `--` swallows the
+ * block's closing delimiter along with the rest of its line, leaving the
+ * opening delimiter dangling and — for a detector reading the result — erasing
+ * whatever statement followed it.
+ * `20260804200809_move_block_out_of_invitation` opens with a block comment, so
+ * a stripper that gets this backwards has something real to be wrong about.
+ *
+ * A comment stripper, NOT a SQL parser. A `--` inside a string literal or a
+ * dollar-quoted body is treated as opening a comment, and everything after it
+ * on that line is lost. Building the parser that would tell them apart is a
+ * much larger thing than the pins reading this need, so the limitation is
+ * stated rather than removed. Whether this tree contains such a `--` is
+ * re-derivable rather than asserted here:
+ *
+ *   grep -rnE -- '--' prisma/migrations/ | grep -vE ':[0-9]+:[[:space:]]*--'
+ *
+ * Anything that prints is a `--` somewhere other than the start of its own
+ * line, which is where an embedded one would have to be. Read each hit before
+ * trusting this helper on it.
+ *
+ * A block becomes a single space rather than nothing, so that a comment
+ * sitting between two tokens cannot fuse them into a third that no pattern
+ * matches. Line comments keep their newline, for the same reason.
+ *
+ * Pure: takes the SQL text, so a caller can hand it a synthetic migration and
+ * watch a sweep built on this go red.
+ */
+export function stripSqlComments(sql: string): string {
+  return sql.replace(BLOCK_COMMENT, ' ').replace(LINE_COMMENT, '');
+}
+
+// `UPDATE` / `DELETE FROM` immediately followed by a quoted identifier. The
+// quote is what keeps `ON UPDATE CASCADE`, `FOR UPDATE OF c` and
+// `FOR UPDATE OF "Class"` out: in each of those a word stands between the verb
+// and any quoted name.
+const DATA_CHANGE = /\bUPDATE\s+"|\bDELETE\s+FROM\s+"/;
+const RAISE_NOTICE = /\bRAISE\s+NOTICE\b/;
+// A colon, then something that is not whitespace, on the same line — a bare
+// marker with an empty reason exempts nothing.
+const NO_NOTICE_MARKER = /--[ \t]*DML WITHOUT NOTICE:[ \t]*\S/;
+
+/**
+ * The migrations sorting strictly after `cutoff` that rewrite existing rows
+ * and leave no trace of having done so.
+ *
+ * A migration under this rule must carry either a real `RAISE NOTICE` or the
+ * marker comment
+ *
+ *   -- DML WITHOUT NOTICE: <reason>
+ *
+ * whose reason may not be empty. FAILING TOWARD THE MARKER IS DELIBERATE: no
+ * regex separates a backfill from a remediation, so this does not try. An
+ * over-trigger costs the author one comment line stating why their statement
+ * needs no announcement; an under-trigger costs a data change nobody can
+ * discover afterwards, which is the whole reason the rule exists.
+ *
+ * WHICH TEXT EACH OF THE THREE READS IS THE SUBTLE PART:
+ *
+ *   - the data change and the `RAISE NOTICE`, STRIPPED, because a migration
+ *     that merely discusses either in a comment has done neither. Both shapes
+ *     are live: `20260826080100_calendar_entry_rewire` writes
+ *     `UPDATE "Class" SET status='completed'` inside a comment, and
+ *     `20260825065109_schedule_rule_backfill` names `RAISE NOTICE` in one
+ *     while raising nothing of the sort.
+ *   - the marker, RAW, because it *is* a comment and stripping erases it.
+ *
+ * `UPDATE` and `DELETE`, not `INSERT`: these are the statements that rewrite
+ * rows a teacher already has. Anywhere in the text rather than
+ * statement-initial, so a write buried in a `DO` block or a function body
+ * counts the same as a top-level one.
+ *
+ * `cutoff` is a migration DIRECTORY NAME and the comparison is lexicographic,
+ * which is chronological because Prisma prefixes every name with a timestamp.
+ * Strictly after, so the named migration is itself outside the rule. Pass `''`
+ * to run the rule unbounded, which is how a caller demonstrates that it reports
+ * anything at all.
+ *
+ * Pure, for the reason `stripSqlComments` is. Returns names in the order they
+ * arrived.
+ */
+export function untracedDataChanges(
+  migrations: ReadonlyArray<{ name: string; sql: string }>,
+  cutoff: string,
+): string[] {
+  return migrations
+    .filter(({ name, sql }) => {
+      if (name <= cutoff) return false;
+      const stripped = stripSqlComments(sql);
+      if (!DATA_CHANGE.test(stripped)) return false;
+      if (RAISE_NOTICE.test(stripped)) return false;
+      return !NO_NOTICE_MARKER.test(sql);
+    })
+    .map(({ name }) => name);
+}
