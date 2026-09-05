@@ -382,6 +382,47 @@ export interface ClassLockSource {
 }
 
 /**
+ * Clauses `lockClassRowsOrdered` owns and a caller's fragment may not carry.
+ *
+ * Not stylistic. A stray bare `FOR UPDATE` is the exact widening
+ * `FOR UPDATE OF c` exists to prevent: Postgres unions locking clauses, so it
+ * would also lock every joined table and add wait edges `docs/lock-order.md`
+ * does not model. A stray `ORDER BY` would replace the ascending-by-id
+ * acquisition order that is this helper's whole reason to exist.
+ *
+ * Parenthesising the fragment (below) already makes a TOP-LEVEL stray clause
+ * a syntax error at the clause itself. This screen exists for the one shape
+ * parens cannot reach: a locking clause inside a subquery, which is
+ * legitimately parenthesised already, parses cleanly, and takes
+ * `RowShareLock` on the subquery's table — measured, and pinned by
+ * 'would otherwise let a subquery lock the WaitlistEntry rows…' in
+ * `db-locks.test.ts`.
+ *
+ * No `g` flag: `RegExp.test` on a global regex carries `lastIndex` between
+ * calls and would skip every other fragment.
+ */
+const ILLEGAL_IN_FRAGMENT =
+  /\b(order\s+by|for\s+(update|share|no\s+key|key\s+share)|limit|offset)\b|;/i;
+
+/**
+ * Screens one caller fragment, reading its STATIC TEMPLATE TEXT only.
+ *
+ * `.strings` is the tagged template's literal parts — bound values are not in
+ * it, so a fragment whose *parameter* is the string `'for update'` passes,
+ * which it must: that is data, and refusing it would be a false positive with
+ * no workaround. A nested `Prisma.sql` or `Prisma.raw` fragment IS flattened
+ * into the outer `.strings`, so composition cannot smuggle a clause past this.
+ */
+function assertNoIllegalClauses(member: 'join' | 'where', fragment: Prisma.Sql): void {
+  const match = ILLEGAL_IN_FRAGMENT.exec(fragment.strings.join(' ? '));
+  if (match !== null) {
+    throw new Error(
+      `lockClassRowsOrdered: the \`${member}\` fragment contains ${JSON.stringify(match[0])}, a clause this helper owns. See ClassLockSource.`,
+    );
+  }
+}
+
+/**
  * Locks many `Class` rows in one statement, ascending by id, with a bounded
  * wait — and hands back the ids it holds.
  *
@@ -434,13 +475,14 @@ export interface ClassLockSource {
  *     Order is preserved: `Set` iterates in insertion order and the rows
  *     arrive ascending.
  *
- * A fragment is also not a loophole: a
- * caller that references `w.` without supplying a `join`, or writes its own
- * `ORDER BY` or `FOR UPDATE`, gets a SQL error, not a silently wrong lock.
- * Parameters are bound — `Prisma.sql` tagged templates merge their values into
- * this statement in source order, verified against Postgres — so nothing here
- * is interpolated unless a caller reaches for `Prisma.raw`, which in `src/` is
- * used only to render frozen, hard-coded status lists — never input. Grep
+ * A fragment is not a loophole, and since #245 that is checked rather than
+ * adjacent. A caller that references `w.` without supplying a `join` is
+ * refused by name resolution; one that writes a clause this helper owns is
+ * refused by `ILLEGAL_IN_FRAGMENT` above, and by the parentheses around the
+ * splice if it somehow reaches Postgres. Each of those is pinned by its own
+ * test in `db-locks.test.ts`. Before #245 the first two rested on `ORDER BY
+ * c.id` happening to sit between the splice point and the locking clause,
+ * and a locking clause inside a subquery was not refused at all. Grep
  * `Prisma.raw` rather than trusting a count here: an earlier version of this
  * sentence said "used once, for a frozen constant
  * (`SCHEDULED_STATUSES_SQL`)", and #237 added the second one
@@ -488,12 +530,14 @@ export async function lockClassRowsOrdered(
   tx: TransactionClientOnly,
   source: ClassLockSource,
 ): Promise<string[]> {
+  if (source.join !== undefined) assertNoIllegalClauses('join', source.join);
+  assertNoIllegalClauses('where', source.where);
   await setLockTimeout(tx);
   const rows = await tx.$queryRaw<Array<{ id: string }>>`
     SELECT c.id
     FROM "Class" c
     ${source.join ?? Prisma.empty}
-    WHERE ${source.where}
+    WHERE (${source.where})
     ORDER BY c.id
     FOR UPDATE OF c
   `;
