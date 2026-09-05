@@ -1,3 +1,8 @@
+/**
+ * @serial-tier lock-contention — asserts a staged race ends in neither `40P01`
+ * nor `55P03`, so a neighbour's lock noise is a false failure this file cannot
+ * tell from the defect it watches for.
+ */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';

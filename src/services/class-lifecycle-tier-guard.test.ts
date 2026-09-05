@@ -1,4 +1,9 @@
 /**
+ * @serial-tier lock-contention — its DDL drops and re-adds a CHECK on
+ * `Registration`, taking ACCESS EXCLUSIVE on a table the rest of the parallel
+ * tier reads, so it queues behind every concurrent user of that table and
+ * blocks them in turn.
+ *
  * `completeClass`'s tier guard, in a file of its own for a reason that is not
  * about what it tests.
  *

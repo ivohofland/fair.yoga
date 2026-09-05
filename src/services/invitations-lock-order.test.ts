@@ -1,3 +1,9 @@
+/**
+ * @serial-tier lock-contention — stages real `40P01` deadlocks and asserts the
+ * race DOES answer one, holding transactions open for hundreds of milliseconds
+ * to do it. A neighbour's lock noise can land a `55P03` there instead, which
+ * this file would read as the defect it watches for.
+ */
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';

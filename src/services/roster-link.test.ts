@@ -1,3 +1,9 @@
+/**
+ * @serial-tier lock-contention — its insert-race test holds a transaction open
+ * on an external release signal, for 200ms+, while a concurrent
+ * `linkTeacherStudent` contends for the same uncommitted
+ * `(teacherId, studentId)` tuple.
+ */
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
