@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Icon } from '@/components/ui/icon';
-import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
+import { MAGIC_LINK_REFUSED_STATUS, TEACHER_PROFILE_PATH } from '@/lib/schemas';
 
 type Status = 'verifying' | 'success' | 'error' | 'already-signed-in' | 'handoff' | 'timeout';
 type StepState = 'done' | 'now' | 'pending';
@@ -16,9 +16,11 @@ type RailStep = { num: string; text: string; when: string; state: StepState };
  * The status has to survive the rejection because the outer `.catch` is the
  * only place that can act on it, and the `!res.ok` throw is where it would
  * otherwise be discarded. Carried on the error rather than in a variable
- * beside the chain, so there is no write-then-read ordering for a later edit
- * to get wrong — a rejection that IS one of these came from a response, and
- * one that is not never got an answer worth carrying a status for.
+ * beside the chain, so the STATUS has no write-then-read ordering for a later
+ * edit to get wrong — a rejection that IS one of these came from a response,
+ * and one that is not either never reached a response or came from a 2xx.
+ * The classification's own position within the `.catch` is a separate
+ * ordering, and tests hold that one, not this shape.
  *
  * `message` deliberately avoids the words "Verification failed": that string
  * is on-screen copy in `ErrorState` below, and a diagnostic line sharing a
@@ -27,6 +29,9 @@ type RailStep = { num: string; text: string; when: string; state: StepState };
 class VerifyResponseError extends Error {
   constructor(readonly status: number) {
     super(`verify POST answered ${status}`);
+    // Named so the console line identifies its own cell of the partition, the
+    // way the `SyntaxError` and `TypeError` reaching the same handler do.
+    this.name = 'VerifyResponseError';
   }
 }
 
@@ -666,18 +671,22 @@ function VerifyContent() {
         // Probing now would attempt a fetch that's already doomed, for an
         // answer nothing may act on — skip it outright rather than let it
         // fail through the probe's own guard. It has to stay above the
-        // classification below, too: our own abort is not a fault, and
-        // reporting it as one would blame the server for what this page did.
+        // classification below, too: what this page abandoned is not a fault,
+        // and reporting it as one would blame the server for what this page
+        // did. The test reads the signal rather than the error's type, so a
+        // real failure landing in the same turn the ceiling fires is dropped
+        // with it — narrow, and the alternative would miss the aborts instead.
         if (controller.signal.aborted) return;
 
-        // A 400 is the answer this page is built to expect — the link is
-        // expired or already used, the commonest ordinary event here and no
-        // kind of fault. It is the one silent case; every other rejection is
-        // a fault and gets a line. Those carrying no status at all either
-        // never reached a response, or came from a 2xx: the throw above runs
-        // before `res.json()`, so nothing that got as far as parsing a body
-        // had a failing status to carry.
-        if (!(err instanceof VerifyResponseError && err.status === 400)) {
+        // A 400 means the token this page sent was not accepted — the
+        // commonest ordinary event here, and the one silent case among those
+        // that reach this handler. An abort returned above without one, so
+        // "everything else logs" is true of what gets this far rather than of
+        // every rejection. Those carrying no status at all either never
+        // reached a response, or came from a 2xx: the throw above runs before
+        // `res.json()`, so nothing that got as far as parsing a body had a
+        // failing status to carry.
+        if (!(err instanceof VerifyResponseError && err.status === MAGIC_LINK_REFUSED_STATUS)) {
           console.error('[verify] the verification request failed', err);
         }
 
@@ -700,7 +709,7 @@ function VerifyContent() {
             });
             return;
           }
-        } catch (err) {
+        } catch (probeErr) {
           // Our own ceiling aborted this probe; the give-up screen already
           // says so, and logging it again would blame the probe for
           // something we did to it.
@@ -710,7 +719,7 @@ function VerifyContent() {
           // reads. Its own line, separate from the classification above: that
           // one is about the verification, this one about the probe sent to
           // recover from it, and a reader who hits both wants to see both.
-          console.error('[verify] the session probe failed after a failed verification', err);
+          console.error('[verify] the session probe failed after a failed verification', probeErr);
         }
         settle(() => setStatus('error'));
       });

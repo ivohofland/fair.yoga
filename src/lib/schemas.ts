@@ -128,6 +128,17 @@ const relativePath = z.string().max(200).refine(isSafeRelativePath, 'Must be a r
  *  this constant instead of retyping the literal. */
 export const TEACHER_PROFILE_PATH = '/signup/profile';
 
+/**
+ * The status `magic-link/verify` answers when it refuses a token, and the one
+ * status `/verify`'s client treats as ordinary rather than a fault.
+ *
+ * Shared because the two ends drift apart silently and in opposite
+ * directions: move the route off 400 and every spent link starts logging as a
+ * backend fault; change only the client and real faults go quiet again, which
+ * is #452. Same reason `TEACHER_PROFILE_PATH` lives here.
+ */
+export const MAGIC_LINK_REFUSED_STATUS = 400;
+
 export const magicLinkSendSchema = z.object({
   email: emailField,
   redirect: relativePath.optional(),

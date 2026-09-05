@@ -17,7 +17,12 @@ import {
 } from '@/lib/auth';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
-import { magicLinkVerifySchema, isSafeRelativePath, TEACHER_PROFILE_PATH } from '@/lib/schemas';
+import {
+  magicLinkVerifySchema,
+  isSafeRelativePath,
+  TEACHER_PROFILE_PATH,
+  MAGIC_LINK_REFUSED_STATUS,
+} from '@/lib/schemas';
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, magicLinkVerifySchema);
@@ -39,7 +44,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // requested the link trades it for a session at /claim.
       return respondOk({ handoffCode: outcome.code });
     }
-    return respondError('Invalid or expired magic link', 400);
+    return respondError('Invalid or expired magic link', MAGIC_LINK_REFUSED_STATUS);
   }
 
   const { email, redirectTo: tokenRedirect, purpose } = outcome;
@@ -76,7 +81,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   if (!resolved) {
-    return respondError('Account not found', 400);
+    return respondError('Account not found', MAGIC_LINK_REFUSED_STATUS);
   }
 
   const sessionToken = await createSession(prisma, resolved.accountId);

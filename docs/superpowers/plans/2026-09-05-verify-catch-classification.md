@@ -10,12 +10,21 @@
 
 **Spec:** None — brainstormed as a bounded change (single file + its test, one obvious approach once the mechanism was chosen). The design decision #452 deferred was settled at the brainstorming gate: *any* 400 is silent, and the status travels on a sentinel error.
 
+**What this document is.** A record of the plan as issued, not a maintained
+specification. Its fenced code blocks reproduce the instructions given to each
+task at the time and are deliberately NOT re-synced against later edits — the
+shipped files are authoritative for what the code says, and `git log` for how
+it got there. The prose is the design record and is kept true. That split is
+why Task 1's Step 5 message still describes a four-failure state that later
+grew to five, while a claim about how the code *behaves* was corrected
+wherever it appeared.
+
 ## Global Constraints
 
 - **The reader sees no change.** Every existing screen, timing and transition stays exactly as it is. This is a diagnosability fix (#452's third acceptance criterion).
-- **Log prefix is `[verify]`**, matching the four lines already in this file (`page.tsx:482, 504, 554, 680`).
-- **Error argument is positional, not wrapped** — `console.error('[verify] …', err)`, the convention inside `page.tsx` (482, 680). Other files use `{ err }`; this file does not.
-- **`'Verification failed'` is on-screen copy** (`page.tsx:211`), asserted by 8 tests. The sentinel's message must not reuse that string.
+- **Log prefix is `[verify]`**, matching every `console.error` already in this file — re-derive with `grep -n "console.error('\[verify\]" "src/app/(public)/verify/page.tsx"`.
+- **An error argument is positional, not wrapped** — `console.error('[verify] …', err)`, matching this file's two existing error sites. (Its `'unhandled status'` line passes an object, but that argument is a payload, not an error.)
+- **`'Verification failed'` is on-screen copy** (`page.tsx:211`), asserted by five `it` declarations, six executed cases. The sentinel's message must not reuse that string.
 - **TypeScript strict, no `any`.** The `.catch` parameter types as `unknown`.
 - **In this worktree, `--project integration` and e2e cannot run** — they need the dev server on `:3000` and the shared dev DB. Scope local verification to typecheck, lint, `unit`, `unit-sweeps` and `components`; CI is the signal for the other tiers.
 
@@ -32,9 +41,9 @@
 | anything else (e.g. `TypeError: Failed to fetch`) | no response arrived at all | none exists |
 | `AbortError` from our own ceiling | we abandoned it | returns at the existing guard, never classified |
 
-So the only silent case is `VerifyResponseError` with `status === 400`.
+So among rejections that reach the classification, the only silent case is `VerifyResponseError` with `status === 400`; an abort returns before it.
 
-**400, where #452 says 4xx.** The issue's acceptance criterion is written against "the expected 4xx". This plan silences only **400**, deliberately: the route has no other reachable 4xx (no rate limiter, no auth requirement, no 404 path), so the two are the same set today — and where they ever diverge, a new 4xx appearing on this route should log rather than be silently absorbed by a band that was widened before the case existed. Narrower is the honest reading of the same intent.
+**400, where #452 says 4xx.** The issue's acceptance criterion is written against "the expected 4xx". This plan silences only **400**, deliberately: the route has no other reachable 4xx (no rate limiter, no auth requirement, no 404 path; a 409 from `withErrorHandler`'s fallback is the one other 4xx that can arrive, and it is a fault that should log), so the two are the same set today — and where they ever diverge, a new 4xx appearing on this route should log rather than be silently absorbed by a band that was widened before the case existed. Narrower is the honest reading of the same intent.
 
 **Which 400s that silences.** `magic-link/verify/route.ts` can answer 400 four ways: `parseBody`'s `'Invalid JSON'` and its zod message (`api-utils.ts:59, 67`), `'Invalid or expired magic link'` (route:42), and `'Account not found'` (route:79). All four go silent. That is the accepted trade — distinguishing them client-side would mean parsing a human-readable server message, which is not a contract this codebase has. The route has **no rate limiter** (`send` and `claim` import `checkRateLimit`, this route does not), so no 429 reaches here. Above 4xx, `withErrorHandler` can answer 409, 500 or 503 (`api-errors.ts:50`) — all logged.
 
@@ -42,12 +51,12 @@ So the only silent case is `VerifyResponseError` with `status === 400`.
 
 ## File Structure
 
-- `src/app/(public)/verify/page.tsx` — the only source change. Adds one module-scope class near the `Status` type; changes one `throw`; adds one guarded `console.error` in the `.catch`; rewrites one comment whose claim this change falsifies.
-- `src/app/(public)/verify/page.test.tsx` — six new cases in a new `describe` block, plus a correction to five existing mocks.
+- `src/app/(public)/verify/page.tsx` — the only source change. Adds one module-scope class near the `Status` type; changes one `throw`; adds one guarded `console.error` in the `.catch`; rewrites one comment whose claim this change falsifies, and extends the abort guard's comment to say why it must precede the classification.
+- `src/app/(public)/verify/page.test.tsx` — six new cases in a new `describe` block, plus a correction to five existing mocks, and an assertion added to a pre-existing ceiling case.
 
 No new files. No other file in the repo makes a claim this change falsifies — verified by
 `grep -rn "expired or already-used\|already-used link\|Verification failed\|no kind of fault" src docs .github`.
-The one other hit outside these two files is `docs/superpowers/plans/2026-09-05-verify-ceiling.md`, #446's **archived** plan. That is a record of what was decided then, not a live claim; editing it would falsify the record. Leave it.
+Outside those two files it also matches this plan document throughout, and one other file: `docs/superpowers/plans/2026-09-05-verify-ceiling.md`, #446's **archived** plan. That is a record of what was decided then, not a live claim; editing it would falsify the record. Leave it.
 
 ---
 
@@ -296,7 +305,7 @@ EOF
 - Modify: `src/app/(public)/verify/page.tsx` — add the class after the type aliases (currently line 11); change the throw (currently line 608); add the guarded log in the `.catch` (currently after line 649); rewrite the comment at 675-679.
 
 **Interfaces:**
-- Consumes: Task 1's five assertions.
+- Consumes: Task 1's six assertions.
 - Produces: `class VerifyResponseError extends Error { constructor(readonly status: number) }` — module-scope in `page.tsx`, **not exported**, no other module refers to it.
 
 **Line numbers below are as the file stands now.** Step 1 inserts ~18 lines near the top, so everything Steps 2-4 name shifts down by that much once Step 1 lands. Locate each edit by the quoted code, not by the number.
@@ -410,7 +419,7 @@ Then the mutation that the boundary case exists for — the wrong implementation
 - [ ] **Step 6: Run the full file, then the runnable tiers**
 
 Run: `npx vitest run --project components "src/app/(public)/verify/page.test.tsx"`
-Expected: every case green, including the 8 that assert on the `'Verification failed'` screen text — the sentinel's message never reaches the DOM.
+Expected: every case green, including the pre-existing cases asserting on the `'Verification failed'` screen text — the sentinel's message never reaches the DOM.
 
 Then: `npx tsc --noEmit && npm run lint`
 Expected: clean. If lint objects to the parameter property, convert to an explicit field assignment (`readonly status: number;` + `this.status = status;`) rather than dropping the type.
