@@ -76,7 +76,7 @@ them taking the same pair in opposite sequences is an AB-BA cycle exactly like
 any cross-table one.
 
 **Five until #194**, which deleted the template edit's propagation and with it
-the fifth site. Re-derived by `grep -rn 'lockClassRowsOrdered(' src/` — the
+the fifth site. Re-derived by `grep -rn 'lockClassRowsOrdered(' src --include='*.ts' | grep -v '\.test\.ts' | grep -vE ':[0-9]+: *(//|\*)'` — the
 helper's definition plus four callers — rather than decremented, because this
 document's own history is of counts that stayed plausible while their
 membership moved.
@@ -120,7 +120,9 @@ comment says so.
 
 `lockClassRowsOrdered` owns the order, the `FOR UPDATE OF c` lock mode, the
 shared 2s bound and the dedupe for `Class`; a new `Class` site inherits all
-four by calling it.
+FIVE by calling it: the order, the lock mode, the timeout, the dedupe, and —
+since #245 — the fragment screen that refuses a caller's own `ORDER BY`/
+locking clause/`LIMIT`/`OFFSET`/`;` (`ILLEGAL_IN_FRAGMENT`, `db-locks.ts`).
 
 ## Ordering BETWEEN `Class` and its `CalendarEntry` (#327)
 
@@ -1924,7 +1926,8 @@ both now takes them in that direction.
 
 **History.** `deleteTeacherAccount` (`gdpr.ts`) was the sole site taking
 `Class` before `ClassTemplate`. Five other sites — `claimTemplateForGeneration`
-(`entry-generation.ts`), `pauseOrResumeTemplate`,
+(`class-generator.ts`, calling `claimRuleForGeneration` in `entry-generation.ts`),
+`pauseOrResumeTemplate`,
 `archiveOrUnarchiveTemplate`, `POST /api/class-templates`, and
 `updateClassTemplate` (`class-template-lifecycle.ts`) — took the opposite
 order. No deadlock was ever reproduced between them, but the inversion was
