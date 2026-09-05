@@ -240,8 +240,20 @@ Two tests, in this order — the order is load-bearing and stated in the file:
    assertion is the data-loss witness, and it is the one that fails on the
    mutation measured above.
 
-Running the student erasure first is required: the teacher erasure cancels
-`classA`'s entry, and a cancelled entry is terminal.
+**The order is NOT load-bearing, and this document said it was.** The first
+draft argued the student erasure had to run first because the teacher erasure
+cancels `classA`'s entry and a cancelled entry is terminal. False on two
+counts, both checkable at the source: `deleteStudentAccount` writes no
+`CalendarEntry` column at all (its own `VERDICT (#327)` comment says so), so
+`entry_terminal_liveness_guard` is never in its path; and its pre-lock carries
+no status or liveness filter (`w."studentId" = ${studentId}` alone), so a
+cancelled `classA` still matches. Task 1's reviewer swapped the two tests and
+the file stayed 37/37.
+
+What IS true and worth stating: the two tests share one fixture and each
+erasure is one-shot — an erased account cannot be erased again — so neither
+test can be re-run against the fixture on its own, and an `it.only` on either
+one still needs the whole `beforeAll`.
 
 Precondition: `victimStudent` is created WITH an `Account`
 (`deleteStudentAccount` erases sessions and the account row), as
