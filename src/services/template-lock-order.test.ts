@@ -249,9 +249,11 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
     // HIGH first, and HIGH dated earlier, and HIGH holding the lower entry id
     // — three statements of one fact: HIGH is the row a `Class` writer with no
     // explicit order reaches first, so `archiveOrUnarchiveTemplate`'s
-    // `deleteMany` visits [HIGH, LOW] while `deleteStudentAccount`'s sorted
-    // lock loop visits [LOW, HIGH]. Only the last two are load-bearing;
-    // insertion order is not a property this table can carry, because `Class`
+    // `deleteMany` visits [HIGH, LOW] while `deleteStudentAccount` requests
+    // both rows in ONE statement ordered `ORDER BY c.id`, asking for
+    // [LOW, HIGH] in a single acquisition — no JS sort, no loop. Only the
+    // last two are load-bearing; insertion order is not a property this table
+    // can carry, because `Class`
     // shares a page with every other file in this tier (the reasoning is
     // `db-locks-lock-order.test.ts`'s, in the docblock above
     // `forceIndexOrderedPlan`). Each `it` asserts that these assignments held,
@@ -372,20 +374,16 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * because it is a property of `deleteMany`, not of the pairing; the
    * comparison does not, and is stated in the past above.
    *
-   * The hook lives on `deleteStudentAccount`'s `lockClassRow` loop instead —
-   * the same `erasureDb` shape, keyed on the LOW class id, signalling once
-   * LOW is locked and holding 300ms before reaching for HIGH. Once the
-   * signal fires, `archiveOrUnarchiveTemplate` starts fresh: its pre-lock now
-   * asks for LOW first too — ascending, the same order the erasure already
-   * takes — finds it held, and WAITS rather than reaching for HIGH out of
-   * order first. That wait is what used to be the cycle: with the pre-lock,
-   * it is bounded instead, by the transaction's own 2s `lock_timeout`
-   * (`setLockTimeout`, issued once at this transaction's top) against the
-   * erasure's 300ms artificial hold — comfortably inside the bound. Once the
-   * erasure commits and releases both rows, the pre-lock finishes acquiring
-   * them (LOW then HIGH, still ascending) and the rest of the transaction —
-   * the candidate read, the `deleteMany`, the notifications, the record
-   * write — runs uncontended, because every row it touches is already held.
+   * The hook keys on `studentId` and fires on `deleteStudentAccount`'s single
+   * ordered `lockClassRowsOrdered` statement instead — the same `erasureDb`
+   * shape, signalling BEFORE that statement runs (not between two per-class
+   * locks; there is only the one) and then holding 300ms. The erasure
+   * therefore signals before it takes any row at all, so
+   * `archiveOrUnarchiveTemplate` takes its own ordered pre-lock first and the
+   * erasure blocks behind it once its 300ms hold ends and it finally asks —
+   * the archive is the holder here, not the waiter. The `erasureDb`
+   * `$queryRaw` interceptor below carries its own comment stating that
+   * interleaving at length; this paragraph does not restate it.
    *
    * **Not a plain rejection race, unlike the sync test was — measured, not
    * assumed from the brief's illustrative snippet.** Before this task's fix
@@ -610,12 +608,13 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * This is the negative control that can. It was built and measured during
    * issue 180 task 4's review, run as a throwaway, and then NOT committed —
    * the spec called it "a mutation harness, not a regression guard". That
-   * reasoning does not hold up: both `it`s above are the same shape (each
-   * hooks `deleteStudentAccount`'s `lockClassRow` loop to land a write
-   * mid-transaction), and the design decision this protects is the branch's
-   * most-defended one — about forty lines of comment argue for the wide set,
-   * and narrowing it for performance is a natural-looking optimisation that
-   * silently reopens a reproduced `40P01`.
+   * reasoning does not hold up: both `it`s hook `deleteStudentAccount`'s
+   * single ordered `lockClassRowsOrdered` statement, keyed on `studentId` —
+   * one is the `it` above this docblock, the other is the `it` BELOW this
+   * docblock, not a second one above it — and the design decision this
+   * protects is the branch's most-defended one — about forty lines of comment
+   * argue for the wide set, and narrowing it for performance is a
+   * natural-looking optimisation that silently reopens a reproduced `40P01`.
    *
    * The mechanism, and why it needs a charged registration specifically:
    *
@@ -628,7 +627,8 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    *    lets it land while the archive holds locks.
    * 3. The `deleteMany` re-evaluates its predicate at execution time (by
    *    design), now matches LOW, and reaches for a row a narrow pre-lock never
-   *    held — out of order, against the erasure's ascending loop.
+   *    held — out of order, against the erasure's single ascending
+   *    `ORDER BY c.id` acquisition.
    *
    * Under the shipped wide pre-lock: `{ ok: true, deleted: 2, remaining: 0 }`.
    * Under a narrowed one: `40P01` at the `deleteMany`, swallowed by
