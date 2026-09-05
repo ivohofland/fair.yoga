@@ -525,6 +525,17 @@ model Class {
   waitlistEntries WaitlistEntry[]
   notifications   Notification[]
   announcements   Announcement[]
+
+  /// The REFERENCING side of `Class_teacherRoomId_roomArchived_fkey`.
+  /// PostgreSQL indexes the referenced side automatically and this one never,
+  /// so without this both the `ON UPDATE CASCADE` that rewrites the mirror
+  /// when a room's `isArchived` flips and the `ON DELETE RESTRICT` check read
+  /// the whole table. This door has no explicit application pre-lock the way
+  /// `ClassTemplate`'s sibling index does — issue 339's archive takes no
+  /// `Class` lock of its own. Measured rather than added on principle (issue
+  /// 272 design §7.3, the same precedent) — the numbers are in
+  /// `docs/lock-order.md`, the `#339` section.
+  @@index([teacherRoomId, roomArchived])
 }
 
 /// Since #298, carries neither a slot index nor a trigger: the calendar

@@ -36,9 +36,14 @@ import { isRestrictViolationOn } from '@/lib/api-errors';
  * the backstop match nothing.
  *
  * Used with `isRestrictViolationOn` as the backstop for the check-to-delete
- * race. `Class_teacherRoomId_fkey` is here even though the `Class` guard
- * predates this issue: that guard has the identical race and had no backstop
- * at all.
+ * race. `Class_teacherRoomId_roomArchived_fkey` is here even though the
+ * `Class` guard predates this issue: that guard has the identical race and
+ * had no backstop at all. Issue 339 renamed this one too, the same way issue
+ * 272 renamed the template half above — the `Class` FK widened to carry its
+ * own room mirror (`Class_live_needs_open_room`,
+ * `20260905120000_class_room_archive_invariant/migration.sql`), and the name
+ * it replaced is gone, so the OLD name here would again make this half of the
+ * backstop match nothing.
  */
 export const ROOM_DELETE_RESTRICT_FKS = [
   'ClassTemplate_teacherRoomId_roomArchived_fkey',

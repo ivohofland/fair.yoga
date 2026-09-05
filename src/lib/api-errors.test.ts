@@ -749,16 +749,18 @@ describe('isRestrictViolationOn', () => {
   /**
    * The three shapes were MEASURED on 2026-08-19 by provoking each delete
    * against a TeacherRoom carrying one archived ClassTemplate and zero Class
-   * rows, not hand-written. The template constraint's NAME has since changed —
-   * issue 272's mirror (`20260827120000_template_room_archive_invariant`) renamed
-   * `ClassTemplate_teacherRoomId_fkey` to
-   * `ClassTemplate_teacherRoomId_roomArchived_fkey` — so the old name is not
-   * the one a refused delete reports any more. The payload lines below were
-   * updated by hand for that rename rather than re-provoked — which would make
-   * them a claim with no owner, except that `room-deletion.test.ts` provokes
-   * all three deletes against the real database and asserts `meta.constraint`
-   * equals the new name. That file is the measurement; these lines are the
-   * illustration:
+   * rows, not hand-written. Both constraints' NAMEs have since changed —
+   * issue 272's mirror (`20260827120000_template_room_archive_invariant`)
+   * renamed `ClassTemplate_teacherRoomId_fkey` to
+   * `ClassTemplate_teacherRoomId_roomArchived_fkey`, and issue 339's mirror
+   * (`20260905120000_class_room_archive_invariant`) renamed
+   * `Class_teacherRoomId_fkey` to `Class_teacherRoomId_roomArchived_fkey` the
+   * same way — so neither old name is one a refused delete reports any more.
+   * The payload lines below were updated by hand for both renames rather than
+   * re-provoked — which would make them a claim with no owner, except that
+   * `room-deletion.test.ts` provokes all three deletes against the real
+   * database and asserts `meta.constraint` equals the new name. That file is
+   * the measurement; these lines are the illustration:
    *
    *   teacherRoom.delete:     {"modelName":"TeacherRoom","constraint":"ClassTemplate_teacherRoomId_roomArchived_fkey"}
    *   teacherRoom.deleteMany: {"modelName":"TeacherRoom","constraint":"ClassTemplate_teacherRoomId_roomArchived_fkey"}
@@ -777,7 +779,7 @@ describe('isRestrictViolationOn', () => {
    */
   const ROOM_FKS = [
     'ClassTemplate_teacherRoomId_roomArchived_fkey',
-    'Class_teacherRoomId_fkey',
+    'Class_teacherRoomId_roomArchived_fkey',
   ] as const;
 
   it('matches the template FK from either delete, despite the differing modelName', () => {
@@ -793,7 +795,7 @@ describe('isRestrictViolationOn', () => {
   it('matches the class FK too — the Class guard has the same race and no other backstop', () => {
     const err = prismaError('P2003', {
       modelName: 'TeacherRoom',
-      constraint: 'Class_teacherRoomId_fkey',
+      constraint: 'Class_teacherRoomId_roomArchived_fkey',
     });
     expect(isRestrictViolationOn(err, ROOM_FKS)).toBe(true);
   });

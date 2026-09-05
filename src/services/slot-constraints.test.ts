@@ -66,10 +66,10 @@ beforeAll(async () => {
 afterAll(async () => {
   const teachers = [teacherId, otherTeacherId];
   // Entries first, and they take both families' children with them
-  // (`Class_calendarEntryId_kind_fkey` and its `StudioClass` twin are
-  // `ON DELETE CASCADE`). Must precede `teacherRoom.deleteMany`:
-  // `Class_teacherRoomId_fkey` is `ON DELETE RESTRICT`, so a surviving class
-  // blocks the room link's delete.
+  // (`Class_calendarEntryId_kind_entryLive_fkey` and its `StudioClass` twin
+  // are `ON DELETE CASCADE`). Must precede `teacherRoom.deleteMany`:
+  // `Class_teacherRoomId_roomArchived_fkey` is `ON DELETE RESTRICT`, so a
+  // surviving class blocks the room link's delete.
   await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teachers } } });
   // `ClassTemplate`/`StudioClassTemplate` are `onDelete: Cascade` from
   // `ScheduleRule` (issue 298), so deleting the rules removes both

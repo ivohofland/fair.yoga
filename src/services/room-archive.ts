@@ -9,22 +9,36 @@ import { log } from '@/lib/log';
  *
  * `TeacherRoom.isArchived` shipped in `e57b8bd` as a display flag: it decided
  * which of two list pages a row appeared on and nothing else read it. This
- * module is what gives it meaning for the CLASS half — a room may not be
- * archived while it still honours a commitment — and `describeRoomBlockers`
- * turns the counts that refuse archiving into a sentence a teacher can clear.
+ * module is what gives it meaning for BOTH families a room can hold —
+ * a room may not be archived while it still honours a commitment — and
+ * `describeRoomBlockers` turns the counts that refuse archiving into a
+ * sentence a teacher can clear.
  *
- * The TEMPLATE half of that refusal used to be a count here too; issue 272 made
- * it the database's own rule instead. `ClassTemplate_live_needs_open_room`
- * refuses every write that would leave a live template on an archived room, so
- * the count below is no longer load-bearing for the template clause — it is
- * kept because the constraint is a refusal a teacher cannot see, and this
- * module still produces the words for it. The doors are named by verb rather
- * than counted; a count here has no owner and goes stale in another file.
- * They are publish (`class-lifecycle`), resume and move (`PATCH`/`PUT` on
- * `api/class-templates/[id]`), and create (`POST /api/class-templates`) —
- * each of the last three now just a probe in front of the constraint that
- * enforces it. Issue 272 moved resume and move OUT of
+ * NEITHER half's refusal is enforced by a count any more, though both used to
+ * be. Issue 272 made the TEMPLATE half the database's own rule —
+ * `ClassTemplate_live_needs_open_room` refuses every write that would leave a
+ * live template on an archived room — and issue 339 did the identical thing
+ * for the CLASS half: `Class_live_needs_open_room` refuses every write that
+ * would leave a live class in one. Neither count below is load-bearing for
+ * its clause any more — each is kept because its constraint is a refusal a
+ * teacher cannot see, and this module still produces the words for both. The
+ * doors are named by verb rather than counted; a count here has no owner and
+ * goes stale in another file.
+ *
+ * The TEMPLATE doors are publish (`class-lifecycle`), resume and move
+ * (`PATCH`/`PUT` on `api/class-templates/[id]`), and create
+ * (`POST /api/class-templates`) — each now just a probe in front of the
+ * constraint that enforces it. Issue 272 moved resume and move OUT of
  * `class-template-lifecycle`, which is where they used to sit.
+ *
+ * The CLASS doors are narrower: a class has no resume and no move, since
+ * nothing pauses a `Class` and `updateClassSchema` carries no
+ * `teacherRoomId` — a class never changes rooms. They are publish
+ * (`transitionClass`, `class-lifecycle.ts`) and the two create paths
+ * (`POST /api/classes`, `class-generator.ts`), and the create paths are the
+ * one place this pattern is not symmetric with the template's: they COPY the
+ * room's `isArchived` onto the new row rather than asserting it false, because
+ * a `draft` in an archived room is legal where a live template in one is not.
  *
  * Framework-agnostic per CLAUDE.md: no HTTP, no `next/*`. The route is a thin
  * wrapper.
