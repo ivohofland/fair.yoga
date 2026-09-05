@@ -28,10 +28,12 @@ const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
  * not something to depend on.
  *
  * `waiting: false` is the case the waitlist-shaped tests below cannot reach
- * and the one the `SET LOCAL` hoist is about: an erasure with an empty lock
- * set, where the lock loop never runs. `registered: true` gives that erasure
- * a `Registration` row of its own to contend over, since with no class lock
- * there is otherwise nothing for a counterparty to hold.
+ * and the one the `SET LOCAL` hoist is about: there is no loop — the
+ * ordered pre-lock statement runs unconditionally and simply matches zero
+ * rows, which is why the `setLockTimeout` hoist above it is what supplies
+ * the bound. `registered: true` gives that erasure a `Registration` row of
+ * its own to contend over, since with no class lock there is otherwise
+ * nothing for a counterparty to hold.
  */
 async function makeStudentWaitingInClass(
   {
@@ -560,10 +562,12 @@ let studentAccountId: string;
   );
 
   /**
-   * #174 four-specialist review, Important 5. The 2s bound used to arrive
-   * only as a side effect of `lockClassRow`, which runs once per class the
-   * erased student is `waiting` in — so a student waiting in ZERO classes,
-   * the common case, got an unbounded wait on every statement in the erasure
+   * #174 four-specialist review, Important 5. The 2s bound *arrived* from a
+   * `lockClassRow` loop that *ran* once per class the student held an entry
+   * in — `waiting`-only in #174, every status by #216/#182 — and today
+   * arrives unconditionally from `setLockTimeout` at the top of the
+   * transaction. Under that loop, a student holding no such entry, the
+   * common case, got an unbounded wait on every statement in the erasure
    * transaction. Prisma's own `timeout` cannot rescue that: it refuses to
    * START a statement past the budget, it cannot cancel one already blocked
    * inside Postgres, so the erasure simply hung.
@@ -581,9 +585,10 @@ let studentAccountId: string;
     const fixture = await makeStudentWaitingInClass({ waiting: false, registered: true });
     const { studentId: fixtureStudentId, registrationId } = fixture;
     try {
-      // The premise: an empty lock set. With a `waiting` entry here the lock
-      // loop would run, `lockClassRow` would set the bound, and this test
-      // would pass without the hoist it exists to pin.
+      // The premise: an empty lock set. With an entry of ANY status here the
+      // ordered `lockClassRowsOrdered` statement would lock a row and its
+      // internal `setLockTimeout` would set the bound, so this test would
+      // pass without the unconditional hoist it exists to pin.
       expect(
         await prisma.waitlistEntry.count({
           where: { studentId: fixtureStudentId, status: 'waiting' },
@@ -799,11 +804,11 @@ let studentAccountId: string;
     try {
       // Canary. Everything this test asserts is an absence — neither side
       // rejected — so it passes trivially if `deleteStudentAccount` never
-      // takes a `Class` lock at all, and it only takes one when its own
-      // `waitlistEntry.findMany({ where: { studentId, status: 'waiting' } })`
-      // returns something. Drift the fixture's status, or narrow that filter,
-      // and the lock loop stops running while this test stays green with
-      // nothing left to deadlock over. Its sibling above self-protects (a
+      // takes a `Class` lock at all. It takes one whenever the student holds
+      // a `WaitlistEntry` of any status, via the ordered pre-lock that runs
+      // before any read — so drifting the fixture's status leaves the lock
+      // in place, and this canary needs a different reason for its premise
+      // assertion than the one it gives. Its sibling above self-protects (a
       // missing lock means no wait, and the wait IS its assertion); this one
       // does not, so it says the premise out loud.
       expect(

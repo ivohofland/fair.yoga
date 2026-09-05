@@ -113,10 +113,9 @@ describe('the shared lock timeout', () => {
   });
 
   /**
-   * Called twice in one transaction — `deleteStudentAccount` (`gdpr.ts`) does
-   * exactly this, once up front and again inside `lockClassRow` per class it
-   * locks. The docblock claims the second call overwrites the first rather
-   * than erroring or stacking; this is that claim, checked.
+   * Called twice in one transaction — at least one caller does this. The
+   * docblock claims the second call overwrites the first rather than
+   * erroring or stacking; this is that claim, checked.
    */
   it('survives being set twice in one transaction', async () => {
     const observed = await prisma.$transaction(async (tx) => {

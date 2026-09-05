@@ -562,12 +562,10 @@ describe('DELETE /api/account', () => {
    * reachable: a lost lock race is a 503 that DOES tell the caller to try
    * again, because the next attempt can win.
    *
-   * Provoked with the real mechanism rather than a mock — this test holds the
-   * `Class` row that `deleteStudentAccount`'s own `lockClassRow` loop must
-   * take (the student is `waiting` in that class), for longer than the 2s
-   * `SET LOCAL lock_timeout` that loop sets. Postgres cancels the erasure's
-   * `FOR UPDATE` with `55P03`, the whole transaction rolls back, and the
-   * route has to recognise it as contention rather than a defect.
+   * Provoked with the real mechanism rather than a mock — this test holds
+   * the `Class` row the erasure's ordered pre-lock takes, for longer than
+   * the 2s bound, so Postgres cancels the erasure with `55P03` and the
+   * route has to read it as contention.
    */
   it('reports ERASURE_BUSY with retry advice when the erasure loses a lock race', async () => {
     const acc = await seedStudentOnly('busy');

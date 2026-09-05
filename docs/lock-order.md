@@ -1656,8 +1656,12 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   in production deletes a `WaitlistEntry` except this very transaction, making
   an all-status count monotone for the life of the account. Past the ceiling the
   erasure failed and the retry re-read the same count and failed identically: an
-  account that could never be erased. The single statement makes the lock cost
-  O(1) ROUND TRIPS — not O(1) waiting, which an earlier version of this
+  account that could never be erased. (The count half of that argument is
+  rebutted in `gdpr.ts`'s transaction-budget comment, #246:
+  `min(5_000 + N × 2_000, 20_000)` is monotone non-decreasing in N and
+  capped, so an all-status count could only ever grant MORE budget, never
+  less.) The single statement makes the lock cost O(1) ROUND TRIPS — not
+  O(1) waiting, which an earlier version of this
   sentence implied by saying "O(1) statements" and letting the budget be sized
   by the reorder loop's `waiting` count. `lock_timeout` is armed per lock
   acquisition, so one statement over N contended rows can still spend N × 2s
