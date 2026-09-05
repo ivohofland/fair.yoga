@@ -111,12 +111,12 @@ The interference runs both ways:
 ### 3.1 The vitest projects
 
 Vitest 4's `projects` config splits the suite by blast radius. The roster of
-each is in `vitest.config.ts`; this table is the shape, not the membership:
+each is in `vitest.tiers.ts`; this table is the shape, not the membership:
 
 | Project | Files | Database |
 |---|---|---|
-| `unit` | `src/**/*.test.ts` minus `SWEEP_TESTS` | **`ethical_yoga_test`** |
-| `unit-sweeps` | `SWEEP_TESTS` | **`ethical_yoga_test`** |
+| `unit` | `src/**/*.test.ts` minus `SERIAL_TESTS` | **`ethical_yoga_test`** |
+| `unit-sweeps` | `SERIAL_TESTS` | **`ethical_yoga_test`** |
 | `integration` | `tests/integration/**/*.test.ts` | dev `ethical_yoga` (unchanged — must match the running app) |
 | `components` | `src/**/*.test.tsx` | none (jsdom) |
 

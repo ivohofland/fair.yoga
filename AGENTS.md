@@ -27,8 +27,8 @@ npm run test:e2e            # Playwright (starts dev server if not running)
 
 | Project | Files | Environment | DB |
 |---|---|---|---|
-| unit | `src/**/*.test.ts` minus `SWEEP_TESTS` | node | `DATABASE_URL_TEST` (auto-created in setup) |
-| unit-sweeps | `SWEEP_TESTS` (`vitest.tiers.ts`) — database-wide sweeps, serial | node | `DATABASE_URL_TEST` |
+| unit | `src/**/*.test.ts` minus `SERIAL_TESTS` | node | `DATABASE_URL_TEST` (auto-created in setup) |
+| unit-sweeps | `SERIAL_TESTS` (`vitest.tiers.ts`) — database-wide sweeps plus the lock-contention files, serial | node | `DATABASE_URL_TEST` |
 | integration | `tests/integration/**/*.test.ts` | node, hits `:3000` | whatever app reads (dev DB locally) |
 | components | `src/components/**/*.test.tsx`, `src/app/**/*.test.tsx` | jsdom | none |
 

@@ -22,7 +22,7 @@ const SENTINEL = 'Invalid/Test_Zone_145';
  * teachers freely, and a global assertion would be measuring them.
  *
  * It stays out of `SWEEP_TESTS` because that list's membership rule is
- * "a sweep that WRITES rows it was never handed" (vitest.config.ts) and this
+ * "a sweep that WRITES rows it was never handed" (vitest.tiers.ts) and this
  * sweep writes nothing at all. What it does do is READ database-wide, which
  * is why the containment-only discipline above is load-bearing rather than
  * stylistic.

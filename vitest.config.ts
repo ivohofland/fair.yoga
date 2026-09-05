@@ -9,10 +9,8 @@ import { SERIAL_TESTS } from './vitest.tiers';
 // The projects below have different blast radii (docs/test-database.md):
 // - unit: services + lib minus `SERIAL_TESTS`, run in parallel against the
 //   dedicated test database. Every file here mutates only rows it owns. Not
-//   every file here is free of long lock holds, though: `gdpr.test.ts`,
-//   `waitlist.test.ts` and `class-template-lifecycle.test.ts` each hold one
-//   AND assert on how a staged race comes out, which is what #459 exists to
-//   finish moving out
+//   every file here is free of long lock holds, though — `vitest.tiers.ts`
+//   says so beside the list, and #459 owns which files those are
 // - unit-sweeps: `SERIAL_TESTS`, serial — the clock-injected, database-wide
 //   sweeps, kept off the dev/seed data and away from each other, plus the
 //   lock-contention files that cannot share a parallel tier

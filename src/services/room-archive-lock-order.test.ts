@@ -11,8 +11,9 @@
  * race ends in neither `40P01` nor `55P03`, and a concurrent multi-second hold
  * pushes it into the second — measured: it passes alone, passes run beside
  * this file alone, and fails in the full tier. That is why this file is on
- * `LOCK_CONTENTION_TESTS` in `vitest.tiers.ts` and runs serially, in the
- * invocation `template-lock-order.test.ts` is not part of.
+ * `LOCK_CONTENTION_TESTS` in `vitest.tiers.ts`. Both files are on it, so both
+ * left the parallel tier; what protects the assertion is `unit-sweeps` running
+ * its files one at a time, not the two being separated.
  *
  * WHAT THE SIBLING FILE'S RACE CASE DOES NOT COVER. Its
  * "answers busy when the archive already holds the child row" holds the child

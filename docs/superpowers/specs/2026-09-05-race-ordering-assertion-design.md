@@ -174,22 +174,42 @@ const archive = archiveDb.teacherRoom.update({ ... })
   .catch((e: unknown) => { archiveError = e; })
   .finally(() => { archiveSettled = true; });
 
-// Every iteration is a database round trip, not a timer, and the loop cannot
-// spin for ever: it exits on whichever of the two happens.
-while (!archiveSettled) {
-  const [w] = await probe.$queryRaw<Array<{ n: number }>>`
-    SELECT count(*)::int AS n FROM pg_stat_activity
-     WHERE pid = ${archivePid} AND wait_event_type = 'Lock'`;
-  if ((w?.n ?? 0) > 0) { observedWaiting = true; break; }
+const deadline = Date.now() + 5_000;
+try {
+  while (!archiveSettled) {
+    const [w] = await probe.$queryRaw<Array<{ n: number }>>`
+      SELECT count(*)::int AS n FROM pg_stat_activity
+       WHERE pid = ${archivePid}
+         AND wait_event_type = 'Lock'
+         AND ${resumePid} = ANY(pg_blocking_pids(pid))`;
+    if ((w?.n ?? 0) > 0) { observedWaiting = true; break; }
+    if (Date.now() > deadline) { notObserved = /* diagnostic */; break; }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+} finally {
+  releaseResume();
 }
-releaseResume();
 
-expect(observedWaiting).toBe(true);
+expect({ observedWaiting, notObserved }).toEqual({ observedWaiting: true, notObserved: '' });
 ```
 
-If the archive never blocks, it settles, the loop exits on `archiveSettled`,
-`observedWaiting` stays `false`, and the failure message names the property
-rather than reporting two integers one apart.
+**The deadline is load-bearing, and the first draft of this design did not have
+it.** The two state-based exits are *not* independent: while the archive is
+genuinely blocked, `archiveSettled` cannot become true until the resume
+commits, and the resume only commits after the loop. So a probe that never sees
+the wait has no state exit at all — it spins to the transaction's own 15 s
+timeout and fails with Prisma's *"Transaction already closed … Consider
+increasing the interactive transaction timeout"*, which is advice that doubles
+the deadlock. Worse, on that path `archiveError` is `undefined`: the archive
+succeeded and the guard was never exercised, which nothing in the output says.
+§3.2 records the mutation that proves the bounded version reports it properly.
+
+`pg_blocking_pids` is load-bearing too. `wait_event_type = 'Lock'` is the whole
+heavyweight-lock class — a plain advisory lock satisfies it — so without the
+blocker check the assertion says "waiting on something", while the comment
+beside it claims "waiting on the resume". The resume's pid must be read *inside*
+its transaction: `a` holds a pool, and a pid read outside would name a different
+connection of its.
 
 ### 3.1 Two consequences worth stating
 
@@ -197,24 +217,37 @@ rather than reporting two integers one apart.
   widened, it is removed.
 - **The resume's lock hold drops from 1500 ms to tens of milliseconds**, because
   it now waits for an observation rather than a fixed sleep. That makes the file
-  a quieter neighbour in the parallel `unit` tier, not a louder one — see §4.
+  a quieter neighbour in the parallel `unit` tier on the passing path — see §4.
+  On the failing path it is the poll loop that governs, which is why that loop
+  yields 5 ms between iterations: unthrottled it was measured at ~1 200
+  `pg_stat_activity` queries a second against the database the whole tier
+  shares, and the passing path polls once, so the yield costs it nothing.
   Measured on the rewritten file: `tests 76ms`–`104ms`, against the ~2 s the two
   sleeps (500 ms + 1500 ms) previously guaranteed. The file therefore stops
   being a kind‑1 lock holder and needs no tier move of its own.
 
 ### 3.2 Proof that the guard bites — measured
 
-A prototype was run against three worlds. All three behaved as designed:
+Run against four worlds — the first three on the design, the fourth added after
+review found the failure path itself misdirected the reader:
 
-| World | `observedWaiting` | refusal still correct? | verdict |
-|---|---|---|---|
-| GREEN — resume holds, archive races | `true` | yes | passes |
-| RED‑M1 — resume commits *before* the archive is issued | `false` | **yes** (`isCheckViolationOn` true, room open, rule active) | **only the new assertion fails** |
-| RED‑M2 — resume touches a non-cascading column, so no lock is held | `false` | no error at all; `roomArchived: true` | archive slips past, as in #272 |
+| World | Failure text | verdict |
+|---|---|---|
+| GREEN — resume holds, archive races | — | passes, `tests 71–76ms` |
+| RED‑M1 — resume commits *before* the archive is issued | `notObserved: "the archive settled without ever waiting on the resume"`, reached **after** the refusal assertions passed | **only the wait assertion fails** |
+| RED‑M2 — resume touches a non-cascading column, so no lock is held | `expected undefined to be defined` at the refusal | archive slips past, as in #272 |
+| RED‑M3 — probe pointed at a pid that can never match | `notObserved: "never seen blocked by pid 401034 within 5s; archive backend: active / Lock / transactionid blocked by {401034}"`, failing at 5.06 s | the observation channel is broken, and the diagnostic says so |
 
 RED‑M1 is the isolating case and the reason for this design: every other
 assertion in the file passes, and the current `>=` comparison and the issue's
 order array both pass it too.
+
+RED‑M3 is the reason for the deadline. Before it, that world spun ~19 000–24 000
+polls over 15 s and died with Prisma's P2028 — with `archiveError` undefined,
+i.e. the archive having *succeeded* and the guard never exercised, which no part
+of the output said. Note what the diagnostic now prints: the archive **was**
+blocked, by the resume's own pid. That is what tells the reader the probe was
+blind rather than the property broken, without a second run.
 
 ---
 
@@ -450,10 +483,21 @@ text recorded, then reverted:
 | `@serial-tier lock-contention` → `@serial-tier REMOVED-BY-MUTATION` in `roster-link.test.ts` | fails, `"listedButNotMarked": ["src/services/roster-link.test.ts"]` |
 | marker added to unlisted `template-room-race.test.ts` | fails, `"markedButNotListed": ["src/services/template-room-race.test.ts"]` |
 | `roster-link.test.ts` renamed | **two** tests fail — `absent` names the vanished path, and the set comparison names both old and new |
+| a `SWEEP_TESTS` path made stale (`waitlist-retention.test.ts` → `…-RENAMED`) | fails, naming it — added after review, see below |
 
 The marker string is assembled in the test (`['@serial-tier',
 'lock-contention'].join(' ')`) rather than written as one literal, or the test
 file would match its own search and report itself.
+
+**The existence check covers `SERIAL_TESTS`, not just `LOCK_CONTENTION_TESTS`,
+and that was a review finding rather than a design choice.** The first version
+tethered only the list carrying markers — which is the list with the *smaller*
+blast radius. `SWEEP_TESTS` has no marker and so no other tether, and a stale
+path there is silent in *both* directions: it matches nothing in
+`unit-sweeps`'s `include` and nothing in `unit`'s `exclude`, so a renamed sweep
+rejoins the parallel tier. That is a database-wide sweep with an injected
+far-future clock — per `tests/setup/unit-db.ts`, exactly what once "completed
+the seed's future classes and mailed their payment requests."
 
 ## 4.7 The claim inventory
 

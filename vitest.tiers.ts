@@ -47,10 +47,10 @@ export const SWEEP_TESTS = [
 // answers, under a 6s ceiling.
 //
 // Nor is the parallel tier free of files that assert on how a staged race comes
-// out. `gdpr.test.ts`, `waitlist.test.ts` and `class-template-lifecycle.test.ts`
-// each do, and each holds a lock while doing it. Extracting those tests into
-// `-lock-order` siblings is issue #459, which carries the candidates and the
-// measurement; until it lands, this list is short of the files that need it.
+// out while holding a lock of their own. Issue #459 owns which files those are,
+// with the candidate list and the measurement — a roster here would be a second
+// copy of it, and a second copy is how the claim above this one went wrong.
+// Until #459 lands, this list is short of the files that need it.
 //
 // MEMBERSHIP IS HELD BY THE MARKER, NOT BY A COMMAND. Every file below carries
 // `@serial-tier lock-contention` in its own header, with the reason that file
@@ -87,6 +87,7 @@ export const LOCK_CONTENTION_TESTS = [
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither
-// comment has to describe the other's membership. This is what the projects
-// below splice, so a file added to either list moves tiers in one edit.
+// comment has to describe the other's membership. This is what `vitest.config.ts`
+// splices into both projects, so a file added to either list moves tiers in one
+// edit.
 export const SERIAL_TESTS = [...SWEEP_TESTS, ...LOCK_CONTENTION_TESTS];
