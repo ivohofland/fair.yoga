@@ -18,6 +18,7 @@ import { toIncomeTierOrThrow } from '@/lib/tiers.server';
 import { lockClassRow } from '@/lib/db-locks';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
+import { isCheckViolationOn } from '@/lib/check-violation';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
@@ -301,6 +302,17 @@ export type TransitionDbResult<
   | { ok: false; reason: R; error: string };
 
 /**
+ * The one sentence a teacher reads for `ROOM_ARCHIVED`, whichever of
+ * `transitionClass`'s two doors answers it: the pre-check's read of
+ * `teacherRoom.isArchived` before the transaction opens, or the catch around
+ * the CAS below when `Class_live_needs_open_room` closes the window between
+ * that read and the write (#339). A teacher who lost that race and a teacher
+ * who never had it need the same thing done, so both sites share this
+ * constant rather than each spelling the string out.
+ */
+const ROOM_ARCHIVED_MESSAGE = 'This room is archived. Unarchive it to publish classes here.';
+
+/**
  * Transition a class to a new status in the database.
  *
  * Compare-and-swap AND a row lock, which was one thing until #327. The
@@ -440,7 +452,7 @@ export async function transitionClass(
       return {
         ok: false,
         reason: 'ROOM_ARCHIVED',
-        error: 'This room is archived. Unarchive it to publish classes here.',
+        error: ROOM_ARCHIVED_MESSAGE,
       };
     }
 
@@ -494,54 +506,78 @@ export async function transitionClass(
   // The CAS and the queue close in one transaction; the diagnostic reads below
   // stay outside it, because they decide nothing that gets persisted and would
   // only hold the transaction open on the failure path.
-  const moved = await db.$transaction(async (tx) => {
-    // `lockClassRow`, not the bare `setLockTimeout` this used to be, AND THE
-    // REASON CHANGED WITH THE CAS BELOW. It was lock-free for free while its
-    // only conjunct sat on the row the `UPDATE` itself locks: a writer that
-    // blocked on that row and then unblocked had its qual re-checked by
-    // `EvalPlanQual` against the freshly committed tuple. #327 gave the CAS a
-    // SECOND table — `calendarEntry: { cancelledAt: null }` — and
-    // `EvalPlanQual` re-fetches only the locked row. The `calendarEntry`
-    // subplan is evaluated in the PRE-WAIT snapshot, where `cancelledAt` is
-    // still NULL, so a cancel committing mid-transition is invisible and the
-    // class ends up live-and-cancelled. `db-locks.ts` documents that mechanism
-    // and the spec's §2.3 measures it; this was the one status writer left
-    // without the lock, where the cancel route, `completeClass`, `updateClass`
-    // and both sweeps all take it.
-    //
-    // It still bounds the wait — `lockClassRow` issues `setLockTimeout` itself
-    // — which is what keeps an unbounded wait from becoming Prisma's 5s budget
-    // expiring mid-transaction (`P2028`, a 503 the caller cannot act on)
-    // instead of the 2s `55P03` its siblings get, which `classifyApiError`
-    // answers with a retry. That is now a side effect of taking the lock
-    // rather than the whole of what this line does.
-    //
-    // `Class` then `CalendarEntry`, the order every writer of the pair takes
-    // (`docs/lock-order.md`) — the same order the trigger that writes the entry
-    // from a `Class` update acquires them in.
-    await lockClassRow(tx, classId);
+  let moved: boolean;
+  try {
+    moved = await db.$transaction(async (tx) => {
+      // `lockClassRow`, not the bare `setLockTimeout` this used to be, AND THE
+      // REASON CHANGED WITH THE CAS BELOW. It was lock-free for free while its
+      // only conjunct sat on the row the `UPDATE` itself locks: a writer that
+      // blocked on that row and then unblocked had its qual re-checked by
+      // `EvalPlanQual` against the freshly committed tuple. #327 gave the CAS a
+      // SECOND table — `calendarEntry: { cancelledAt: null }` — and
+      // `EvalPlanQual` re-fetches only the locked row. The `calendarEntry`
+      // subplan is evaluated in the PRE-WAIT snapshot, where `cancelledAt` is
+      // still NULL, so a cancel committing mid-transition is invisible and the
+      // class ends up live-and-cancelled. `db-locks.ts` documents that mechanism
+      // and the spec's §2.3 measures it; this was the one status writer left
+      // without the lock, where the cancel route, `completeClass`, `updateClass`
+      // and both sweeps all take it.
+      //
+      // It still bounds the wait — `lockClassRow` issues `setLockTimeout` itself
+      // — which is what keeps an unbounded wait from becoming Prisma's 5s budget
+      // expiring mid-transaction (`P2028`, a 503 the caller cannot act on)
+      // instead of the 2s `55P03` its siblings get, which `classifyApiError`
+      // answers with a retry. That is now a side effect of taking the lock
+      // rather than the whole of what this line does.
+      //
+      // `Class` then `CalendarEntry`, the order every writer of the pair takes
+      // (`docs/lock-order.md`) — the same order the trigger that writes the entry
+      // from a `Class` update acquires them in.
+      await lockClassRow(tx, classId);
 
-    // `calendarEntry: { cancelledAt: null }` is not decoration and it is not
-    // covered by the status conjunct beside it. Before #327 a cancelled class
-    // WAS `status: 'cancelled'`, so `sourceStatesFor` excluded it for free;
-    // now a cancelled class keeps whatever status it had, and this CAS would
-    // happily publish or start one. The liveness half has to be asked for.
-    const updated = await tx.class.updateMany({
-      where: {
-        id: classId,
-        status: { in: sourceStatesFor(targetStatus) },
-        calendarEntry: { cancelledAt: null },
-      },
-      data: { status: targetStatus },
+      // `calendarEntry: { cancelledAt: null }` is not decoration and it is not
+      // covered by the status conjunct beside it. Before #327 a cancelled class
+      // WAS `status: 'cancelled'`, so `sourceStatesFor` excluded it for free;
+      // now a cancelled class keeps whatever status it had, and this CAS would
+      // happily publish or start one. The liveness half has to be asked for.
+      const updated = await tx.class.updateMany({
+        where: {
+          id: classId,
+          status: { in: sourceStatesFor(targetStatus) },
+          calendarEntry: { cancelledAt: null },
+        },
+        data: { status: targetStatus },
+      });
+      if (updated.count !== 1) return false;
+      // #216. Predicated on the TARGET: `draft -> open` must not expire a queue,
+      // and `cancelled` is not a `ClassStatus` since #327 — it cannot be named
+      // here at all. Cancelling closes the queue in its own door,
+      // `POST /api/classes/[id]/cancel`.
+      if (targetStatus === 'in_progress') await closeQueueOnStart(tx, classId);
+      return true;
     });
-    if (updated.count !== 1) return false;
-    // #216. Predicated on the TARGET: `draft -> open` must not expire a queue,
-    // and `cancelled` is not a `ClassStatus` since #327 — it cannot be named
-    // here at all. Cancelling closes the queue in its own door,
-    // `POST /api/classes/[id]/cancel`.
-    if (targetStatus === 'in_progress') await closeQueueOnStart(tx, classId);
-    return true;
-  });
+  } catch (e) {
+    // The pre-check above (`cls.teacherRoom.isArchived`) read the room OUTSIDE
+    // this transaction, and the CAS carries no predicate on the room at all —
+    // so a room archived in that window is invisible to the pre-check and the
+    // class would otherwise publish into it (#339, door 2). This is that
+    // window closing: `Class_live_needs_open_room` refuses the write instead,
+    // and the answer here is the identical sentence the pre-check would have
+    // given, because a teacher who lost this race and a teacher who never had
+    // it need the same thing done.
+    if (isCheckViolationOn(e, 'Class_live_needs_open_room')) {
+      log.info(
+        { classId, targetStatus },
+        'class publish refused by the constraint: the room archived mid-request',
+      );
+      return {
+        ok: false,
+        reason: 'ROOM_ARCHIVED',
+        error: ROOM_ARCHIVED_MESSAGE,
+      };
+    }
+    throw e;
+  }
   if (moved) return { ok: true, newStatus: targetStatus };
 
   // Nothing was written, so this read decides nothing that gets persisted —
