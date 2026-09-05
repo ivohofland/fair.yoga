@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, onTestFinished } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import type { RegistrationStatus } from '@prisma/client';
 import {
@@ -12,6 +12,7 @@ import { startOfLocalDay, classStartInstant, mondayOf } from '@/lib/timezone';
 import { getNextOccurrences } from './entry-generation';
 import { formatDayHeader } from '@/lib/format';
 import { setLockTimeout } from '@/lib/db-locks';
+import * as dbLocks from '@/lib/db-locks';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
@@ -1385,6 +1386,58 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
 
     expect(result.ok).toBe(true);
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(0);
+  });
+
+  /**
+   * The pre-lock's `e."scheduleRuleId"` conjunct, isolated by a SECOND RULE OF
+   * THE SAME TEACHER.
+   *
+   * Only the lock set can witness this one. Dropping the conjunct changes no
+   * written row: the delete re-derives its own scope through
+   * `family.deleteWhere(scheduleRuleId, today)` (`rule-lifecycle.ts`), the
+   * notification candidate read re-scopes independently, and so does
+   * `remaining` — so a rule-unscoped pre-lock deletes, cancels and notifies
+   * exactly the same rows. Its only other symptom is contention: `FOR UPDATE`
+   * on every future scheduled class in the database, colliding intermittently
+   * with whatever else the parallel tier is running and swallowed into
+   * `{ ok: false, reason: 'busy' }`. That is a flake, not a guard.
+   *
+   * This describe leaves earlier tests' classes standing (there is no per-test
+   * cleanup), so a foreign-rule class is often present here by accident. The
+   * decoy is built explicitly anyway: an assertion resting on a neighbour
+   * test's leftovers is the defect #453 is about.
+   */
+  it('locks only the archived rule’s own classes', async () => {
+    const t = await makeTemplate('Scope Under Test');
+    const c = await makeClass(t.scheduleRuleId, { date: future() });
+
+    const decoyTemplate = await makeTemplate('Scope Decoy');
+    const decoyClass = await makeClass(decoyTemplate.scheduleRuleId, { date: future() });
+
+    const original = dbLocks.lockClassRowsOrdered;
+    const lockSets: string[][] = [];
+    const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
+      const ids = await original(tx, source);
+      lockSets.push(ids);
+      return ids;
+    });
+    onTestFinished(() => spy.mockRestore());
+
+    const result = expectArchived(
+      await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'),
+    );
+
+    // The archive ran and reached its own class — without this the assertions
+    // below are about a call that withdrew nothing.
+    expect(result.deleted).toBe(1);
+    expect(lockSets).toHaveLength(1);
+    expect(lockSets[0]).toEqual([c.id]);
+
+    // The decoy rule's class survives. HONEST ABOUT WHAT THIS CATCHES: it
+    // cannot fail on a widened pre-lock (the delete re-scopes itself); it
+    // guards `deleteWhere`'s own `scheduleRuleId` scope, a different
+    // regression.
+    expect(await prisma.class.count({ where: { id: decoyClass.id } })).toBe(1);
   });
 
   it('deletes a future class whose only registration is cancelled', async () => {
