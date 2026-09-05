@@ -87,7 +87,7 @@ describe('VerifyPage', () => {
         .fn()
         // The verify POST: the link is spent, which is what sends the page to
         // the session probe below.
-        .mockResolvedValueOnce({ ok: false })
+        .mockResolvedValueOnce({ ok: false, status: 400 })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ data: session }) }),
     );
     render(<VerifyPage />);
@@ -511,7 +511,7 @@ describe('VerifyPage', () => {
 
       // A non-ok verify response: the page throws, catches, and probes the
       // session — all inside the rail's window.
-      rejectVerify({ ok: false });
+      rejectVerify({ ok: false, status: 400 });
       await advance(1);
       expect(screen.getByText(RAIL_HEADING)).toBeInTheDocument();
       expect(screen.queryByText(shown)).not.toBeInTheDocument();
@@ -529,7 +529,7 @@ describe('VerifyPage', () => {
       vi.useFakeTimers();
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockResolvedValueOnce({ ok: false }).mockResolvedValueOnce({ ok: false }),
+        vi.fn().mockResolvedValueOnce({ ok: false, status: 400 }).mockResolvedValueOnce({ ok: false }),
       );
       render(<VerifyPage />);
 
@@ -721,7 +721,7 @@ describe('VerifyPage', () => {
       vi.useFakeTimers();
       const errors = silenceErrors();
       const fetchMock = vi.fn();
-      fetchMock.mockResolvedValueOnce({ ok: false });
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 400 });
       // The probe: rejects on abort rather than hanging forever unreactive,
       // so the ceiling's abort of THIS request is something the test can
       // actually exercise — the same shape the abandoned-verification case
@@ -848,7 +848,7 @@ describe('VerifyPage', () => {
       await advance(VERIFY_CEILING_MS);
       expect(screen.getByText('Connection problem')).toBeInTheDocument();
 
-      rejectVerify({ ok: false });
+      rejectVerify({ ok: false, status: 400 });
       await advance(RAIL_STAYS_FOR_MS);
       expect(screen.getByText('Connection problem')).toBeInTheDocument();
       expect(screen.queryByText('Verification failed')).not.toBeInTheDocument();
@@ -895,6 +895,134 @@ describe('VerifyPage', () => {
       await advance(VERIFY_CEILING_MS);
       await advance(RAIL_STAYS_FOR_MS);
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
+   * #452. The outer `.catch` used to treat every rejection as a spent link,
+   * so a 5xx, an unreadable body and a mis-shaped one all reached the error
+   * screen with nothing logged anywhere on the client.
+   *
+   * The 400 is the one silent case, and it is the commonest event on this
+   * page — a link clicked twice. Everything else is a fault, and the last
+   * case here is the one that most needed a line: the reader is shown a
+   * perfectly ordinary screen while something genuine is broken.
+   */
+  describe('classifying a failed verification', () => {
+    const FAULT_LINE = '[verify] the verification request failed';
+
+    /** Silenced rather than allowed through: these cases log by design, and
+     *  an unstubbed spy prints each line once per test. Restored by
+     *  `vi.restoreAllMocks()` in `afterEach`. */
+    function watchErrors(): ReturnType<typeof vi.spyOn> {
+      return vi.spyOn(console, 'error').mockImplementation(() => {});
+    }
+
+    /** The probe behind a failed verification, answering "no session". Sends
+     *  every case below to the error screen except where stated. */
+    const noSession = { ok: false };
+
+    it('logs a server fault rather than blaming the link', async () => {
+      const errors = watchErrors();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValueOnce({ ok: false, status: 500 }).mockResolvedValueOnce(noSession),
+      );
+      render(<VerifyPage />);
+
+      expect(await screen.findByText('Verification failed')).toBeInTheDocument();
+      expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.objectContaining({ status: 500 }));
+    });
+
+    /**
+     * The deliberate silence, and the reason this fix is a classification
+     * rather than an unconditional log: a spent link is the commonest
+     * ordinary event on this page, and logging it would bury the cases above
+     * and below in noise.
+     *
+     * This assertion cannot fail against an implementation that logs nothing
+     * at all, which is what the file did before #452 — its evidence is the
+     * mutation recorded in Task 2 Step 5, not this run.
+     */
+    it('stays silent for the spent link that is the ordinary case', async () => {
+      const errors = watchErrors();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValueOnce({ ok: false, status: 400 }).mockResolvedValueOnce(noSession),
+      );
+      render(<VerifyPage />);
+
+      expect(await screen.findByText('Verification failed')).toBeInTheDocument();
+      expect(errors).not.toHaveBeenCalled();
+    });
+
+    /** A 2xx the body of which will not parse. Reaches the `.catch` from
+     *  `res.json()`, which the throw above it means can only ever run on an
+     *  ok response — so no status needs carrying for this one. */
+    it('logs a success whose body cannot be read', async () => {
+      const errors = watchErrors();
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => {
+              throw new SyntaxError('Unexpected token <');
+            },
+          })
+          .mockResolvedValueOnce(noSession),
+      );
+      render(<VerifyPage />);
+
+      expect(await screen.findByText('Verification failed')).toBeInTheDocument();
+      expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.any(SyntaxError));
+    });
+
+    /** No response at all. The rejection carries no status because none
+     *  exists, and `instanceof` is what tells it from the 400. */
+    it('logs a verification that never reached the server', async () => {
+      const errors = watchErrors();
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+          .mockResolvedValueOnce(noSession),
+      );
+      render(<VerifyPage />);
+
+      expect(await screen.findByText('Verification failed')).toBeInTheDocument();
+      expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.any(TypeError));
+    });
+
+    /**
+     * The case with no symptom, which is why it is the one worth having.
+     *
+     * A 2xx whose body is mis-shaped throws on `json.data`, and by then the
+     * server has already set a session cookie — so the probe in the `.catch`
+     * answers ok and the reader is shown "Already signed in". Nothing is
+     * wrong on screen and something is genuinely broken. Both halves are
+     * asserted: the screen is unchanged (#452 is not a UX change) and the
+     * fault now has a line.
+     */
+    it('logs the fault behind a mis-shaped success the probe then masks', async () => {
+      const errors = watchErrors();
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ data: { teacherId: 't-1', studentId: null } }),
+          }),
+      );
+      render(<VerifyPage />);
+
+      expect(await screen.findByText('Already signed in')).toBeInTheDocument();
+      expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.any(TypeError));
     });
   });
 });
