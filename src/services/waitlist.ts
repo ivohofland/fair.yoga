@@ -1018,14 +1018,14 @@ async function hasActiveRegistration(
  * The needle carries its client prefix so this line does not match itself —
  * both prefixes, because `reorderWaitingEntries` below takes either.
  *
- * Two answer today. `deleteTeacherAccount`'s cancel loop (`gdpr.ts`, near its
- * `class.updateMany` CAS, to `removed`) holds a conflicting `Class` lock
- * anyway, through the ordered `lockClassRowsOrdered` pre-lock its loop runs
- * behind. `closeQueueOnStart` below (to `expired` — see its own docblock)
- * takes none of its own and instead trusts its caller to have already taken
- * one; every caller does, via `lockClassRow`, `transitionClass` included since
- * #327 gave it a lock of its own. Neither can race a `lockClassRow` holder
- * into corrupting anything.
+ * Two answer today. `deleteTeacherAccount`'s cancel loop (`gdpr.ts`, near
+ * its `tx.calendarEntry.updateMany` CAS, to `removed`) holds a conflicting
+ * `Class` lock anyway, through the ordered `lockClassRowsOrdered` pre-lock
+ * its loop runs behind. `closeQueueOnStart` below (to `expired` — see its
+ * own docblock) takes none of its own and instead trusts its caller to
+ * have already taken one; every caller does, via `lockClassRow`,
+ * `transitionClass` included since #327 gave it a lock of its own. Neither
+ * can race a `lockClassRow` holder into corrupting anything.
  *
  * NEITHER IS UNBOUNDED, and the one that used to be is the one that moved.
  * The transition route's cancel branch is `POST /api/classes/[id]/cancel`
