@@ -11,7 +11,7 @@
  * race ends in neither `40P01` nor `55P03`, and a concurrent multi-second hold
  * pushes it into the second — measured: it passes alone, passes run beside
  * this file alone, and fails in the full tier. That is why this file is on
- * `LOCK_CONTENTION_TESTS` in `vitest.config.ts` and runs serially, in the
+ * `LOCK_CONTENTION_TESTS` in `vitest.tiers.ts` and runs serially, in the
  * invocation `template-lock-order.test.ts` is not part of.
  *
  * WHAT THE SIBLING FILE'S RACE CASE DOES NOT COVER. Its
