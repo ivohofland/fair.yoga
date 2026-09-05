@@ -2151,6 +2151,7 @@ That is the case for every regular-entry `cancelledAt` writer in `src/`:
 | `autoCancelClasses` (`class-transitions.ts`) | `:410` `lockClassRow` | `:493` |
 | `deleteTeacherAccount` erasure (`gdpr.ts`) | `:1120` `lockClassRowsOrdered` | `:1209` |
 | `deleteTeacherAccount` studio cancel (`gdpr.ts:1292`) | — | `kind: 'studio'`; no `Class` child, so no counterpart lock is needed |
+| `PUT /api/studio-classes/[id]` (`route.ts:192-198`) | — | `kind: 'studio'`; no `Class` child, so no counterpart lock is needed |
 
 Re-derive the writer set with:
 
@@ -2158,11 +2159,29 @@ Re-derive the writer set with:
 
 which returns 7 lines. Three write `Registration.cancelledAt` — a different
 column on a different table — at `api/registrations/[id]/route.ts:269`, `:285`
-and `gdpr.ts:529`. `7 − 3 = 4`, the four rows of the table above. The
-subtraction has to be done by READING each hit rather than by path alone:
-`gdpr.ts:529` writes a `Registration` while *filtering* on `calendarEntry:
-{ cancelledAt: null }`, so the needle appears in a statement that mentions
-both columns and a path-only count would misclassify it.
+and `gdpr.ts:529`. `7 − 3 = 4`, the FIRST four rows of the table above — this
+command cannot find the fifth. The subtraction has to be done by READING each
+hit rather than by path alone: `gdpr.ts:529` writes a `Registration` while
+*filtering* on `calendarEntry: { cancelledAt: null }`, so the needle appears
+in a statement that mentions both columns and a path-only count would
+misclassify it.
+
+This command is scoped to the literal call shape `cancelledAt: new Date()` —
+an unconditional cancel — because that is the shape every regular-entry writer
+takes (a regular entry, once cancelled, can never be un-cancelled:
+`entry_terminal_liveness_guard` below refuses the reverse write), and it
+happens to also be `gdpr.ts:1292`'s studio shape. `PUT /api/studio-classes/[id]`
+does not share it: a studio cancellation is reversible, so its write is a
+ternary that can set `cancelledAt` to either `new Date(…)` or `null` in the
+same statement, and the literal grep above does not match it — it is found
+only by the wider
+
+    grep -rn "cancelledAt:" --include="*.ts" src/ | grep -v '\.test\.' | grep -v "cancelledAt: null"
+
+The row is added to the table above by reading, not by the narrower command,
+the same way the `gdpr.ts:1292` studio row already was. Its safety argument is
+identical to that row's: `kind: 'studio'`, no `Class` child, so the cascade
+this section is about cannot fire from it regardless of direction.
 
 The flip is one-way for this family, which bounds how many times the cascade
 can fire: `entry_terminal_liveness_guard` (`entry_reject_terminal_liveness_change`,
@@ -2177,14 +2196,22 @@ lock discipline (issue 339)": one case runs the canonical order (lock the
 class, then write the entry) concurrently against a second writer wanting the
 same class row, and asserts neither `40P01` nor `55P03` — meaningless on its
 own, since it would also pass against a schema with no cascade at all. The
-second case is the mutation as a test: a real `Class` lock held open on a
-second connection, then a `cancelledAt` write that goes straight to the entry
-WITHOUT taking the class lock first — the shape a fifth writer would have if
-it skipped `lockClassRow`. Measured, not assumed: this blocks and then fails
-with `55P03 canceling statement due to lock timeout`, not `40P01` — the holder
-here only waits on an external release signal, never on anything the backward
+second case is the mutation as a test: a real `Class` row held open on a
+second connection — the row alone, deliberately not through `lockClassRow`,
+which would also lock the entry directly and give the backward writer a
+second, direct lock to block on instead of the cascade this case exists to
+pin — then a `cancelledAt` write that goes straight to the entry WITHOUT
+taking the class lock first — the shape a fifth writer would have if it
+skipped `lockClassRow`. Measured, not assumed: this blocks and then fails with
+`55P03 canceling statement due to lock timeout`, not `40P01` — the holder here
+only waits on an external release signal, never on anything the backward
 writer holds, so there is no cycle for the deadlock detector to find. The
-backward writer's own `setLockTimeout` is what ends the wait.
+backward writer's own `setLockTimeout` is what ends the wait. Confirmed
+sensitive to the mechanism itself, not just to the staging: with
+`Class_calendarEntryId_kind_entryLive_fkey` dropped outright on a scratch
+database, the same backward write resolves instead of rejecting — the
+assertion reddens, because there is no longer anything on the `Class` row for
+it to wait on.
 
 ### `TeacherRoom → Class` has no live counterparty, and that was checked rather than assumed
 
@@ -2205,7 +2232,17 @@ shape #272 closed on the `ClassTemplate` side with the pre-lock in
 - The only statement taking `KEY SHARE` on a room via this key is a `Class`
   **INSERT** (`api/classes/route.ts`, `class-generator.ts`), and an insert
   holds no prior lock on the row it is creating — nothing for the archive to
-  wait behind.
+  wait behind. `api/classes/route.ts` reads the room with an explicit
+  `SELECT "isArchived" FROM "TeacherRoom" … FOR KEY SHARE` ahead of that
+  insert — the only explicit `FOR KEY SHARE` anywhere in `src/` — held for the
+  length of the create transaction and, deliberately, with no
+  `setLockTimeout` of its own (issue 228, the same bound the route's own
+  comment already names for the create paths generally). It introduces no
+  cycle: it takes the room lock FIRST and only inserts afterward, so it never
+  waits on anything the archive or a room delete holds; `KEY SHARE` is
+  self-compatible with the generator's own `KEY SHARE` on the same row; and
+  the ordering is `TeacherRoom → Class` on every side, the same as everywhere
+  else in this section.
 - `gdpr.ts` never writes `TeacherRoom` at all —
   `grep -n "teacherRoom\.\|teacherRoom:" src/services/gdpr.ts` returns nothing.
 

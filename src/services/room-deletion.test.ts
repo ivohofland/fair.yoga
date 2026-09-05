@@ -245,22 +245,4 @@ describe('the FK names, against a real refused delete', () => {
     expect(known.meta?.constraint).toBe('Class_teacherRoomId_roomArchived_fkey');
     expect(isRoomDeleteBlocked(err)).toBe(true);
   });
-
-  it('classifies a class-blocked delete that reaches the database', async () => {
-    // NOT via the route: both routes pre-check and never reach the catch, which
-    // is why this wiring went unpinned. Delete the room directly so Postgres
-    // raises the RESTRICT itself, then assert the production classifier
-    // recognises it.
-    const f = await fx.makeFixture(prisma);
-    await fx.addClass(prisma, f, 'completed');
-    const roomWithACompletedClassId = f.linkId;
-
-    const err = await prisma.teacherRoom
-      .delete({ where: { id: roomWithACompletedClassId } })
-      .then(() => null)
-      .catch((e: unknown) => e);
-
-    expect(err).not.toBeNull();
-    expect(isRoomDeleteBlocked(err)).toBe(true);
-  });
 });

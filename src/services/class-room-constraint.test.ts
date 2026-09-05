@@ -214,14 +214,17 @@ describe('the CHECK and BLOCKING_CLASS_STATUSES agree', () => {
   // database constraint cannot import a constant, so a TEST is the tether:
   // iterate the ENUM, not a hand-written list, so a new ClassStatus member
   // fails here until someone decides its side.
-  const ALL: ClassStatus[] = ['draft', 'open', 'in_progress', 'completed'];
-
+  //
   // Compile-time tether: a new ClassStatus member makes this assignment fail,
-  // which is the signal to add it to ALL above and decide its side.
+  // which is the signal to add it to `_exhaustive` below and decide its side.
   const _exhaustive: Record<ClassStatus, true> = {
     draft: true, open: true, in_progress: true, completed: true,
   };
-  void _exhaustive;
+  // Derived FROM `_exhaustive`, not hand-written beside it: the fix for a
+  // broken `_exhaustive` above is to add the new member there, and a
+  // separately hand-written `ALL` would silently keep missing it — `it.each`
+  // would never cover the new status even after the build was green again.
+  const ALL = Object.keys(_exhaustive) as ClassStatus[];
 
   it.each(ALL)('status %s blocks iff it is in BLOCKING_CLASS_STATUSES', async (status) => {
     const blocks = BLOCKING_CLASS_STATUSES.includes(status);
