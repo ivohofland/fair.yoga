@@ -111,7 +111,9 @@ The interference runs both ways:
 ### 3.1 The vitest projects
 
 Vitest 4's `projects` config splits the suite by blast radius. The roster of
-each is in `vitest.tiers.ts`; this table is the shape, not the membership:
+each is in `vitest.config.ts`, except the two unit tiers' — those split on
+`SERIAL_TESTS`, which lives in `vitest.tiers.ts` with the reason each member is
+on it. This table is the shape, not the membership:
 
 | Project | Files | Database |
 |---|---|---|
@@ -124,7 +126,9 @@ each is in `vitest.tiers.ts`; this table is the shape, not the membership:
 them, `integration` included, which needs the app up on `:3000` — use
 `npm test`, which sequences the tiers, rather than running vitest directly.
 The dangerous tests — everything that calls a service sweep with an injected
-clock — are the `unit-sweeps` roster.
+clock — are all in the `unit-sweeps` roster, but no longer all of it: that tier
+also carries the lock-contention files, which are there for a different reason
+(`vitest.tiers.ts` states each).
 
 **`npm test` is two invocations joined by `&&`, so a red first half means the
 second half never runs at all.**

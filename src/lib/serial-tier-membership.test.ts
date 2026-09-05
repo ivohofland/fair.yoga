@@ -42,8 +42,13 @@ const MARKER = ['@serial-tier', 'lock-contention'].join(' ');
 
 const root = process.cwd();
 
-/** Every `src/**` test the `unit` project would collect, repo-relative. */
-function unitTestFiles(): string[] {
+/**
+ * Every `src/**` test matching the `unit` project's INCLUDE glob, repo-relative
+ * — deliberately before its `SERIAL_TESTS` exclude, which removes exactly the
+ * marked files. Filtering by what `unit` finally collects would empty `marked`
+ * and leave the `markedButNotListed` direction unable to fail.
+ */
+function markerSearchScope(): string[] {
   return readdirSync(path.join(root, 'src'), { recursive: true, encoding: 'utf8' })
     .map((p) => `src/${p.split(path.sep).join('/')}`)
     .filter((p) => p.endsWith('.test.ts'))
@@ -70,7 +75,7 @@ describe('the serial-tier lists agree with the files they name', () => {
   });
 
   it('names exactly the files carrying the marker', () => {
-    const marked = unitTestFiles().filter((f) =>
+    const marked = markerSearchScope().filter((f) =>
       readFileSync(path.join(root, f), 'utf8').includes(MARKER),
     );
     // Widened deliberately: the array is `as const`, so its element type is a

@@ -28,7 +28,7 @@ function singleConnectionClient(): PrismaClient {
   const configured = process.env.DATABASE_URL;
   // Named, rather than parsed as `''`: `new URL('')` throws `Invalid URL` at
   // module scope, which reports a missing environment variable as a syntax
-  // problem in a file that never mentions it.
+  // problem and names nothing the reader can act on.
   if (!configured) throw new Error('DATABASE_URL is not set; this file needs the test database');
   const url = new URL(configured);
   url.searchParams.set('connection_limit', '1');
@@ -177,13 +177,14 @@ describe('the room archive that used to slip past door 3', () => {
                  || ' / ' || coalesce(wait_event, 'null')
                  || ' blocked by ' || pg_blocking_pids(pid)::text AS detail
               FROM pg_stat_activity WHERE pid = ${archivePid}`;
-          notObserved = `never seen blocked by pid ${resumePid} within 5s; archive backend: ${
-            seen?.detail ?? 'absent from pg_stat_activity'}`;
+          notObserved = `the poll never matched a wait on pid ${resumePid} within 5s; ` +
+            `archive backend was: ${seen?.detail ?? 'absent from pg_stat_activity'}`;
           break;
         }
         // Yielding, so a failing run does not put ~1200 queries a second on the
-        // database the rest of the parallel tier is sharing. The happy path
-        // polls once, so this costs it nothing.
+        // database the rest of the parallel tier is sharing. The passing path
+        // polls once or twice — whether Postgres has reached the lock wait by
+        // the first probe is itself a race — so this costs it one sleep at most.
         await new Promise((r) => setTimeout(r, 5));
       }
       if (!observedWaiting && !notObserved) {
