@@ -3160,15 +3160,9 @@ describe('the cancellable-status classification reaches the pre-lock (#245)', ()
  * victimTeacher` excludes it and `w."studentId" = victimStudent` excludes it
  * too — and either conjunct's deletion pulls it into that pre-lock's set.
  *
- * What this adds over `gdpr-lock-order.test.ts`'s lock-set assertion, which
- * already pins the ids both erasures lock: that assertion proves the set's SIZE
- * and MEMBERS for a fixture containing nothing the predicate should reject, so
- * a widened `WHERE` fails it only if some unrelated qualifying row happens to
- * be in the shared database. Measured on 2026-09-05: dropping
- * `e."teacherId"` failed it while one orphaned class from another suite sat in
- * `ethical_yoga_test`, and passed once that row left predicate scope. The decoy
- * below is always present, so the failure is a construction rather than a
- * coincidence.
+ * What this adds over the sibling lock-order suite, and the measurement
+ * behind it: `docs/superpowers/specs/2026-09-05-pre-lock-scope-decoys-design.md`
+ * ("A. `gdpr.ts` — both erasures").
  */
 describe('the erasure pre-locks are scoped to their own owner (#453)', () => {
   const prisma = new PrismaClient();
@@ -3269,8 +3263,10 @@ describe('the erasure pre-locks are scoped to their own owner (#453)', () => {
     classDId = classD.id;
     classDEntryId = classD.calendarEntry.id;
 
-    // WITH an account: `deleteStudentAccount` erases sessions and the account
-    // row, so a student without one is not the shape under test.
+    // WITH an account: `deleteStudentAccount` deletes its sessions and
+    // passkeys and anonymises the account's email, but only when no other
+    // live teacher profile shares that account — a student created with no
+    // account at all skips that branch entirely.
     const victimStudent = await prisma.student.create({
       data: {
         firstName: 'Scope',
@@ -3345,10 +3341,10 @@ describe('the erasure pre-locks are scoped to their own owner (#453)', () => {
     return lockSets;
   };
 
-  // STUDENT ERASURE FIRST, and the order is load-bearing: the teacher erasure
-  // below cancels `classA`'s entry, and a cancelled REGULAR entry is terminal
-  // (`entry_terminal_liveness_guard`), so this test cannot be made to run
-  // after it.
+  // These two tests share one fixture, and each erasure is one-shot — an
+  // erased account cannot be erased again — so neither test can be re-run
+  // against this fixture on its own, and an `it.only` on either one still
+  // needs the whole `beforeAll`.
   it('locks only classes the erased student actually waits in', async () => {
     const lockSets = captureLockSets();
 
@@ -3377,13 +3373,16 @@ describe('the erasure pre-locks are scoped to their own owner (#453)', () => {
     expect(lockSets).toHaveLength(1);
     expect(lockSets[0]).toEqual([classAId]);
 
-    // THE DATA-LOSS WITNESS, and the one assertion here that a widening
-    // actually destroys: a pre-lock that reaches `classD` cancels it, because
-    // the cancel loop reads exactly the ids the lock returned. Measured
-    // 2026-09-05 against the mutation — the bystander's entry came back
-    // cancelled, and the database then refused to restore it.
+    // NOT witnessed by either mutation run against this file: mutation 1
+    // (`e."teacherId"` dropped) fails the `lockSets` assertion just above,
+    // before the run ever reaches here, and mutation 2 only touches the
+    // sibling test above. Its job is different: the CAS cancel loop below the
+    // pre-lock (`gdpr.ts`) writes `calendarEntry.updateMany` keyed on the
+    // locked id and the class's own status, with no second `teacherId` check
+    // of its own — so the pre-lock's `WHERE` is the only thing standing
+    // between this erasure and a bystander's schedule, and this assertion is
+    // what fails if that ever stops being true.
     const decoyEntry = await prisma.calendarEntry.findUniqueOrThrow({ where: { id: classDEntryId } });
     expect(decoyEntry.cancelledAt).toBeNull();
-    expect(await prisma.class.count({ where: { id: classDId } })).toBe(1);
   });
 });
