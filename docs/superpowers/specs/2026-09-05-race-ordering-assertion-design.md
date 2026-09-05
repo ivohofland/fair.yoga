@@ -344,8 +344,16 @@ npx vitest run --project unit-sweeps        (the serial tier as it stands)
 ```
 
 `50.19 + 50.57 = 100.8s`, i.e. **+101%** on the serial tier. The config already
-declined exactly this trade for `gdpr.test.ts` alone at +92%. So the whole-file
-move is not the answer; extraction is.
+declined exactly this trade for `gdpr.test.ts` alone at +92%.
+
+**Read that as the step, not the job.** `.github/workflows/ci.yml`'s `test-unit`
+job runs `--project unit` and then `--project unit-sweeps` as two steps, so both
+tiers are already on the same critical path. What a whole-file move actually
+costs is therefore not the +101% by itself: it is that all 151 tests in those
+three files stop running in parallel with their neighbours and start running one
+after another. Extraction moves only the contention tests and leaves the
+remainder in the parallel pool, which is why it is the cheaper answer as well as
+the more accurate one.
 
 ### 4.3 Why "every hit belongs" cannot survive the widening
 
