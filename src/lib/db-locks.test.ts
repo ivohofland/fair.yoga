@@ -12,6 +12,7 @@ import {
   lockClassRowsOrdered,
   setLockTimeout,
   statusInList,
+  type TransactionClientOnly,
 } from './db-locks';
 import { claimTemplateForGeneration } from '@/services/class-generator';
 import { claimStudioTemplateForGeneration } from '@/services/studio-class-generator';
@@ -604,5 +605,100 @@ describe('lockClassRowsOrdered', () => {
       'JOIN "WaitlistEntry" w ON w."classId" = c.id JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"',
     );
     expect(both.values).toEqual([]);
+  });
+
+  // A client that records the statement text instead of running it. The
+  // fragments arrive as VALUES of the outer template, so `strings` is exactly
+  // this helper's own static SQL — which is what these assertions are about.
+  const captureStatements = (): { tx: TransactionClientOnly; statements: string[] } => {
+    const statements: string[] = [];
+    const tx = {
+      $executeRawUnsafe: async () => 0,
+      $queryRaw: async (strings: TemplateStringsArray) => {
+        statements.push(strings.join(' ? '));
+        return [];
+      },
+    } as unknown as TransactionClientOnly;
+    return { tx, statements };
+  };
+
+  it('parenthesises the caller predicate before splicing it', async () => {
+    const { tx, statements } = captureStatements();
+    await lockClassRowsOrdered(tx, { where: Prisma.sql`c."id" = ${'x'}` });
+    // The parens are what make a stray clause a syntax error AT THE CLAUSE
+    // rather than at the `ORDER BY` that happens to follow it — the guarantee
+    // stops depending on where `ORDER BY c.id` sits. They also keep a caller's
+    // `OR` from combining with anything this helper appends later.
+    expect(statements[0]).toMatch(/WHERE \( \? \)\s*ORDER BY c\.id/);
+  });
+
+  it.each([
+    ['a locking clause', Prisma.sql`c."id" = ${'x'} FOR UPDATE`],
+    ['its own ordering', Prisma.sql`c."id" = ${'x'} ORDER BY c."createdAt"`],
+    ['a row limit', Prisma.sql`c."id" = ${'x'} LIMIT 1`],
+    ['a statement separator', Prisma.sql`c."id" = ${'x'};`],
+    [
+      'a locking clause inside a subquery',
+      Prisma.sql`c.id IN (SELECT "classId" FROM "WaitlistEntry" FOR UPDATE)`,
+    ],
+  ])('refuses a where fragment carrying %s', async (_label, where) => {
+    const { tx, statements } = captureStatements();
+    await expect(lockClassRowsOrdered(tx, { where })).rejects.toThrow(
+      /clause this helper owns/,
+    );
+    // Refused BEFORE the statement is issued, not after it errors: the point is
+    // that a fragment which would parse cannot reach Postgres.
+    expect(statements).toEqual([]);
+  });
+
+  it('refuses a join fragment carrying one too', async () => {
+    const { tx } = captureStatements();
+    await expect(
+      lockClassRowsOrdered(tx, {
+        join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id FOR UPDATE`,
+        where: Prisma.sql`w."studentId" = ${'x'}`,
+      }),
+    ).rejects.toThrow(/clause this helper owns/);
+  });
+
+  // The screen reads STATIC TEMPLATE TEXT. A bound value that happens to spell
+  // a keyword is data, and refusing it would be a false positive a caller
+  // could not work around.
+  it('does not refuse a bound value that spells one', async () => {
+    const { tx, statements } = captureStatements();
+    await lockClassRowsOrdered(tx, { where: Prisma.sql`c."id" = ${'for update'}` });
+    expect(statements).toHaveLength(1);
+  });
+
+  // The third loudness guarantee, and the one that was already structural:
+  // name resolution, not clause order. Kept as a test because nothing else
+  // asserts it and the docblock claims it.
+  it('lets Postgres refuse a where that names a table no join brought in', async () => {
+    await expect(
+      prisma.$transaction((tx) =>
+        lockClassRowsOrdered(tx, { where: Prisma.sql`w."studentId" = ${'x'}` }),
+      ),
+    ).rejects.toThrow(/missing FROM-clause entry for table "w"/);
+  });
+
+  // Why the subquery case above is guarded at all — the widening is real, and
+  // this measures it on a raw statement the helper would now refuse. The
+  // control is what stops it passing vacuously: without the locking clause the
+  // same query leaves `WaitlistEntry` at `AccessShareLock`.
+  it('would otherwise let a subquery lock the WaitlistEntry rows FOR UPDATE OF c excludes', async () => {
+    const modeOf = (subqueryLock: Prisma.Sql) =>
+      prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`
+          SELECT c.id FROM "Class" c
+          WHERE (c.id IN (SELECT "classId" FROM "WaitlistEntry" ${subqueryLock}))
+          ORDER BY c.id FOR UPDATE OF c`;
+        const held = await tx.$queryRaw<Array<{ mode: string }>>`
+          SELECT mode FROM pg_locks
+          WHERE pid = pg_backend_pid() AND relation = '"WaitlistEntry"'::regclass`;
+        return held.map((row) => row.mode);
+      });
+
+    expect(await modeOf(Prisma.sql`FOR UPDATE`)).toContain('RowShareLock');
+    expect(await modeOf(Prisma.empty)).toEqual(['AccessShareLock']);
   });
 });
