@@ -491,7 +491,7 @@ describe('VerifyPage', () => {
       },
       {
         name: 'the failure state',
-        probe: { ok: false },
+        probe: { ok: false, status: 401 },
         shown: 'Verification failed',
       },
     ])('holds the rail before showing $name', async ({ probe, shown }) => {
@@ -529,7 +529,10 @@ describe('VerifyPage', () => {
       vi.useFakeTimers();
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockResolvedValueOnce({ ok: false, status: 400 }).mockResolvedValueOnce({ ok: false }),
+        vi
+          .fn()
+          .mockResolvedValueOnce({ ok: false, status: 400 })
+          .mockResolvedValueOnce({ ok: false, status: 401 }),
       );
       render(<VerifyPage />);
 
@@ -841,7 +844,7 @@ describe('VerifyPage', () => {
       });
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockReturnValueOnce(pending).mockResolvedValue({ ok: false }),
+        vi.fn().mockReturnValueOnce(pending).mockResolvedValue({ ok: false, status: 401 }),
       );
       render(<VerifyPage />);
 
@@ -924,6 +927,11 @@ describe('VerifyPage', () => {
    */
   describe('classifying a failed verification', () => {
     const FAULT_LINE = '[verify] the verification request failed';
+    /** The probe's own status line. Distinct from the probe's THROW line
+     *  (`'…the session probe failed after a failed verification'`, asserted at
+     *  the bottom of this block) because the two are distinguishable causes: a
+     *  probe that answered badly and one that never answered. */
+    const PROBE_STATUS_LINE = '[verify] the session probe answered unexpectedly';
 
     /** Silenced rather than allowed through: these cases log by design, and
      *  an unstubbed spy prints each line once per test. Restored by
@@ -933,8 +941,15 @@ describe('VerifyPage', () => {
     }
 
     /** The probe behind a failed verification, answering "no session". Sends
-     *  every case below to the error screen except where stated. */
-    const noSession = { ok: false };
+     *  every case below to the error screen except where stated.
+     *
+     *  The 401 is not decoration: it is what `/api/auth/session` answers a
+     *  request carrying no usable session, and the probe's classification
+     *  treats it as the ordinary case. Drop it and `res.status` is
+     *  `undefined` here, which the classification reads as a fault — so the
+     *  two call-count assertions in this block fail rather than quietly
+     *  passing on a mock that lies. */
+    const noSession = { ok: false, status: 401 };
 
     it('logs a server fault rather than blaming the link', async () => {
       const errors = watchErrors();
@@ -1075,6 +1090,95 @@ describe('VerifyPage', () => {
 
       expect(await screen.findByText('Already signed in')).toBeInTheDocument();
       expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.any(TypeError));
+      // Holds WHERE the probe's classification sits, which nothing else here
+      // does. This is the only case in the file with an ok probe and a watched
+      // console: move the classification above the `if (res.ok)` block and this
+      // ok response is classified too, making it two lines instead of one.
+      // Every other case in this block answers the probe not-ok and stays green
+      // under that move.
+      expect(errors).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * #456. The probe's own half of the partition, and the case it exists for.
+     *
+     * A non-ok probe does not throw, so the `catch (probeErr)` below it never
+     * runs: before this, a 503 and a 401 were indistinguishable, both falling
+     * past `if (res.ok)` to the error screen with no line of any kind. The
+     * reader is then told their link failed — possibly while signed in, and
+     * on the strength of an answer nothing read.
+     *
+     * Both cases pair the probe with a 400 verification, the one silent case
+     * above, so `toHaveBeenCalledTimes(1)` names the probe's line specifically
+     * rather than counting two classifications together.
+     *
+     * 404 is here for the reason `logs a 4xx that is not the expected 400`
+     * exists one level up: it is the only case that can tell this rule apart
+     * from `status >= 500`, which the 503 alone would pass.
+     */
+    it.each([
+      { status: 503, why: 'a backend fault' },
+      { status: 404, why: 'a 4xx that is not the silent 401' },
+    ])('logs a probe answering $status — $why', async ({ status }) => {
+      const errors = watchErrors();
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce({ ok: false, status: 400 })
+          .mockResolvedValueOnce({ ok: false, status }),
+      );
+      render(<VerifyPage />);
+
+      expect(await screen.findByText('Verification failed')).toBeInTheDocument();
+      expect(errors).toHaveBeenCalledWith(PROBE_STATUS_LINE, { status });
+      expect(errors).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * The silent branch, and the only test in this file that names 401 in its
+     * own body.
+     *
+     * Three deliberate choices separate it from `stays silent for the spent
+     * link that is the ordinary case`, which pins a different rule that today
+     * shares a fixture with this one:
+     *
+     * - The 401 is written inline rather than taken from `noSession`. The
+     *   shared helper carries it too, which is why `logs a server fault` and
+     *   the spent-link case above both go red if the probe's 401 is ever
+     *   classified as a fault — but both hold it by a call count, and a call
+     *   count is what someone loosens when an unrelated line is added to this
+     *   page. This case survives that, and survives an edit to the helper.
+     * - The verification beside it is 500, not 400 — loud on purpose. The
+     *   fault line is asserted PRESENT before the probe line is asserted
+     *   absent, so this cannot pass by observing nothing at all: the spy is
+     *   live and the `.catch` demonstrably ran. That is the vacuity the
+     *   spent-link case has to disclaim in its own docblock, and this case
+     *   does not inherit it.
+     * - The absence is argument-matched. Per the rule set out under `stays
+     *   silent for the spent link`, the bare form claims no console output at
+     *   all while the argument-matched form names one line among others that
+     *   legitimately fire. A legitimate line fires here, so this is the
+     *   correct form rather than merely the safer one.
+     *
+     * It remains vacuous with respect to the guard's EXISTENCE — delete the
+     * classification entirely and this still passes. Only mutation M2 in Task 2
+     * (`401` → `418`) turns it red, which is why that mutation is not optional.
+     */
+    it('stays silent for the 401 that is the probe being told "no session"', async () => {
+      const errors = watchErrors();
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce({ ok: false, status: 500 })
+          .mockResolvedValueOnce({ ok: false, status: 401 }),
+      );
+      render(<VerifyPage />);
+
+      expect(await screen.findByText('Verification failed')).toBeInTheDocument();
+      expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.objectContaining({ status: 500 }));
+      expect(errors).not.toHaveBeenCalledWith(PROBE_STATUS_LINE, expect.anything());
     });
 
     /**
