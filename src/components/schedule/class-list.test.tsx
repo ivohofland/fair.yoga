@@ -92,12 +92,20 @@ function classRow(
       startTime: hhmmToTime(overrides?.startTime ?? '09:30'),
       durationMinutes: 60,
       cancelledAt: overrides?.cancelled === true ? AT : null,
+      // GENERATED in the database as `cancelledAt IS NULL` (issue 339) — a
+      // fixture has to state what Postgres would compute.
+      live: overrides?.cancelled !== true,
       classCompletedAt: null,
       scheduleRuleId: null,
       createdAt: AT,
       updatedAt: AT,
     },
     teacherRoomId: 'tr-1',
+    // MIRRORS (issue 339): `entryLive` copies the entry's generated `live`
+    // above, `roomArchived` copies `teacherRoom.isArchived` (always `false`
+    // in this fixture).
+    entryLive: overrides?.cancelled !== true,
+    roomArchived: false,
     description: null,
     roomCost: new Decimal(20),
     minRate: new Decimal(40),
