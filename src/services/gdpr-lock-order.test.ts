@@ -347,6 +347,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     await Promise.all([holderHighHasRows, holderLowHasRows]);
 
     let teacherPreLockFirings = 0;
+    let teacherLockedIds: string[] = [];
     let preLockReached!: () => void;
     const preLockReachedPromise = new Promise<void>((resolve) => {
       preLockReached = resolve;
@@ -360,6 +361,9 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           if (isClassPreLock(args.sql)) {
             teacherPreLockFirings += 1;
             preLockReached();
+            const rows = await query(args);
+            teacherLockedIds = (rows as Array<{ id: string }>).map((row) => row.id);
+            return rows;
           }
           return query(args);
         },
@@ -397,6 +401,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     }) as unknown as PrismaClient;
 
     let studentPreLockFirings = 0;
+    let studentLockedIds: string[] = [];
     let studentPreLockReached!: () => void;
     const studentPreLockReachedPromise = new Promise<void>((resolve) => {
       studentPreLockReached = resolve;
@@ -413,6 +418,9 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           if (isClassPreLock(args.sql)) {
             studentPreLockFirings += 1;
             studentPreLockReached();
+            const rows = await query(args);
+            studentLockedIds = (rows as Array<{ id: string }>).map((row) => row.id);
+            return rows;
           }
           return query(args);
         },
@@ -505,6 +513,27 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
         throw new Error(`${label} rejected unexpectedly: ${outcome.error}`);
       }
     }
+
+    // EXACTLY ONE firing each, and this is the assertion the rest of the file
+    // rests on. `isClassPreLock` argues that no sibling statement matches it;
+    // this is that argument checked, every run. A statement added to either
+    // erasure that happens to match drives its count to 2 and fails here —
+    // which is what the bound-value key could not do, and why deleting the
+    // teacher's pre-lock used to pass green.
+    expect({ teacher: teacherPreLockFirings, student: studentPreLockFirings }).toEqual({
+      teacher: 1,
+      student: 1,
+    });
+
+    // And each pre-lock asked for BOTH rows, ascending. A statement that still
+    // runs but locks a narrower set satisfies every other assertion in this
+    // file — the erasures still succeed, both classes still end cancelled, the
+    // entries still go — so this is the only thing standing between a narrowed
+    // `WHERE` and a green run.
+    expect({ teacher: teacherLockedIds, student: studentLockedIds }).toEqual({
+      teacher: [LOW_CLASS_ID, HIGH_CLASS_ID],
+      student: [LOW_CLASS_ID, HIGH_CLASS_ID],
+    });
 
     // Pre-fix one of these is `{ error: '... 40P01 ...' }` — Postgres picks
     // the victim, not this code, so both are asserted rather than one.
