@@ -144,7 +144,7 @@ afterAll(async () => {
   await prisma.payment.deleteMany({ where: { registration: { classId: { in: classIds } } } });
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.student.deleteMany({ where: { id: studentId } });
-  // Entries, not classes: `Class_calendarEntryId_kind_fkey` is
+  // Entries, not classes: `Class_calendarEntryId_kind_entryLive_fkey` is
   // `ON DELETE CASCADE`, so deleting the entry takes its class with it, and
   // the entry is what would otherwise be left behind holding a slot.
   await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: { in: classIds } } } } });

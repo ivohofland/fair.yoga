@@ -1034,7 +1034,9 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
 
 `ClassTemplate_teacherRoomId_roomArchived_fkey`
 (`20260827120000_template_room_archive_invariant/migration.sql`; formerly
-`ClassTemplate_teacherRoomId_fkey`) and `Class_teacherRoomId_fkey` are both
+`ClassTemplate_teacherRoomId_fkey`) and `Class_teacherRoomId_roomArchived_fkey`
+(`20260905120000_class_room_archive_invariant/migration.sql`; formerly
+`Class_teacherRoomId_fkey`) are both
 `ON DELETE RESTRICT`. A
 `DELETE FROM "TeacherRoom"` therefore locks the parent row and then runs the
 triggers' `SELECT 1 FROM "ClassTemplate" WHERE "teacherRoomId" = $1 AND
@@ -1043,7 +1045,12 @@ enumeration can see, because no source line issues it. The second conjunct
 arrived with issue 272, which widened the key to carry the room mirror; it
 changes nothing about the lock, because the mirror guarantees every child row
 matches its parent's value, but the check Postgres runs is the two-column one
-and this section exists to state it exactly.
+and this section exists to state it exactly. Issue 339 widened the `Class`
+side's key the same way, so its own RESTRICT trigger runs the identical
+two-column check against `Class` — see "The class mirrors' foreign keys are
+wait edges (#339)" below for that edge; nothing in the argument here changes,
+because it was never about `Class`'s name, only about whether a second,
+independent cycle exists (next).
 
 The cycle:
 
@@ -1076,7 +1083,7 @@ and fails when the DELETE waits on it instead of refusing outright. That case
 is the only thing in the repo that observes this edge, so treat it as part of
 the guard rather than as coverage.
 
-**Why `Class_teacherRoomId_fkey` does NOT add a second unclosable cycle**, which
+**Why `Class_teacherRoomId_roomArchived_fkey` does NOT add a second unclosable cycle**, which
 an earlier version of this section wrongly claimed. For the sweep to be
 inserting a `Class` on `TeacherRoom` X it must be holding
 `claimTemplateForGeneration`'s `FOR UPDATE` on a `ClassTemplate` whose
@@ -2110,3 +2117,184 @@ The unqualified `grep -rn 'ClassTemplate_live_needs_open_room' src/ prisma/`
 answers a different question: it returns 21 lines across 12 files — the
 migration, the schema comment, the tests, and the prose about all of it — which
 is the constraint's whole footprint rather than the set of sites that refuse.
+
+## The class mirrors' foreign keys are wait edges (#339)
+
+`Class_calendarEntryId_kind_entryLive_fkey` and
+`Class_teacherRoomId_roomArchived_fkey` are the same mechanism as the
+`ClassTemplate` pair above, one layer over — `Class_live_needs_open_room`
+(`20260905120000_class_room_archive_invariant`) is #272's constraint applied
+to `Class`, and its two mirror columns acquire the same uninvited locks:
+
+- flipping `CalendarEntry."cancelledAt"` from null must rewrite the mirroring
+  `Class` row's `entryLive`, so it locks that row (`CalendarEntry → Class`)
+- updating `TeacherRoom."isArchived"` must rewrite every `Class` row that
+  mirrors it, not only every `ClassTemplate` row, so it locks those rows too
+  (`TeacherRoom → Class`, alongside `TeacherRoom → ClassTemplate`)
+
+### `CalendarEntry → Class` is backward, and safe because every writer takes `Class` first
+
+This edge runs the OPPOSITE direction from this repo's fixed order — `Class`
+first, then its entry ("Ordering BETWEEN `Class` and its `CalendarEntry`"
+above) — because the cascade fires from the entry side. A transaction that
+writes `cancelledAt` therefore locks the `Class` row from INSIDE the statement
+that holds its entry, which is exactly the shape an AB-BA cycle needs, unless
+every such writer already owns the `Class` lock before it gets there — in
+which case the cascade re-locks a row the transaction already holds and waits
+on nothing.
+
+That is the case for every regular-entry `cancelledAt` writer in `src/`:
+
+| writer | `Class` lock | entry write |
+|---|---|---|
+| `POST /api/classes/[id]/cancel` | `:61` `lockClassRow` | `:72` |
+| `autoCancelClasses` (`class-transitions.ts`) | `:410` `lockClassRow` | `:493` |
+| `deleteTeacherAccount` erasure (`gdpr.ts`) | `:1120` `lockClassRowsOrdered` | `:1209` |
+| `deleteTeacherAccount` studio cancel (`gdpr.ts:1292`) | — | `kind: 'studio'`; no `Class` child, so no counterpart lock is needed |
+
+Re-derive the writer set with:
+
+    grep -rn "cancelledAt: new Date()" --include="*.ts" src/ | grep -v '\.test\.'
+
+which returns 7 lines. Three write `Registration.cancelledAt` — a different
+column on a different table — at `api/registrations/[id]/route.ts:269`, `:285`
+and `gdpr.ts:529`. `7 − 3 = 4`, the four rows of the table above. The
+subtraction has to be done by READING each hit rather than by path alone:
+`gdpr.ts:529` writes a `Registration` while *filtering* on `calendarEntry:
+{ cancelledAt: null }`, so the needle appears in a statement that mentions
+both columns and a path-only count would misclassify it.
+
+The flip is one-way for this family, which bounds how many times the cascade
+can fire: `entry_terminal_liveness_guard` (`entry_reject_terminal_liveness_change`,
+`20260826140000_entry_guard_restorations`) refuses a change to `cancelledAt`
+on a regular entry that is already terminal — cancelled or completed — so once
+a regular entry's `cancelledAt` has flipped once, no writer, conforming or not,
+can flip it again. The cascade into `Class.entryLive` therefore fires at most
+once per class.
+
+Pinned by `room-archive-lock-order.test.ts`, "CalendarEntry → Class cascade —
+lock discipline (issue 339)": one case runs the canonical order (lock the
+class, then write the entry) concurrently against a second writer wanting the
+same class row, and asserts neither `40P01` nor `55P03` — meaningless on its
+own, since it would also pass against a schema with no cascade at all. The
+second case is the mutation as a test: a real `Class` lock held open on a
+second connection, then a `cancelledAt` write that goes straight to the entry
+WITHOUT taking the class lock first — the shape a fifth writer would have if
+it skipped `lockClassRow`. Measured, not assumed: this blocks and then fails
+with `55P03 canceling statement due to lock timeout`, not `40P01` — the holder
+here only waits on an external release signal, never on anything the backward
+writer holds, so there is no cycle for the deadlock detector to find. The
+backward writer's own `setLockTimeout` is what ends the wait.
+
+### `TeacherRoom → Class` has no live counterparty, and that was checked rather than assumed
+
+The archive's write now cascades into every `Class` row in the room as well as
+every `ClassTemplate` row, so in principle a transaction holding a `Class` row
+lock that then waited on `TeacherRoom` would be the counterparty — the same
+shape #272 closed on the `ClassTemplate` side with the pre-lock in
+`setTeacherRoomArchived`. There is no such transaction:
+
+- A status-only `UPDATE` on `Class` triggers no referential check at all,
+  because no foreign-key column changes — Postgres only fires an FK trigger
+  for the columns a statement actually writes. `transitionClass` and
+  `completeClass` (`class-lifecycle.ts`) both hold a `Class` row lock and both
+  write only `status`, so neither takes a room lock despite the hold.
+- The only statement taking `KEY SHARE` on a room via this key is a `Class`
+  **INSERT** (`api/classes/route.ts`, `class-generator.ts`), and an insert
+  holds no prior lock on the row it is creating — nothing for the archive to
+  wait behind.
+- `gdpr.ts` never writes `TeacherRoom` at all —
+  `grep -n "teacherRoom\.\|teacherRoom:" src/services/gdpr.ts` returns nothing.
+
+The generator's insert does take `KEY SHARE` on the room while the archive
+wants an exclusive lock on it, but the two already serialise earlier: both
+take the room's `ClassTemplate` rows `FOR UPDATE` first, the same pre-lock
+#272 added. Pinned by extending #272's own case rather than duplicating it —
+`room-archive-lock-order.test.ts`, "has not taken the room row while it waits
+on a child — the same order protects the Class cascade too (#339)". The
+underlying property ("children before the room") is symmetric across both
+cascades: it is about WHEN the room lock is taken, not about which children the
+pre-lock explicitly names, so the existing single case covers both without a
+second staging.
+
+The mutation: removing the `if (archiving)` pre-lock block from
+`room-archive.ts`. **Measured rather than assumed to be `40P01`, and it is
+not.** This case stages one blocked archive against a statically held child on
+a second connection — no second REAL transaction that is itself blocked on the
+archive — so there is nothing for a genuine two-sided deadlock to form between.
+With the pre-lock removed, `teacherRoom.update` takes the free room row
+immediately and then blocks on its own cascade into the held child; the
+probe's own `SET LOCAL lock_timeout = '500ms'; SELECT … FOR UPDATE` on the room
+then times out too, because the room is no longer free — `55P03 canceling
+statement due to lock timeout` on the probe, and the archive's own wait ends
+the same way once its longer bound elapses. The genuine two-sided `40P01` this
+edge would produce needs a second real actor independently blocked on the
+archive — the generator, in production — which is exactly the shape measured
+in "The room mirror's foreign keys are wait edges" above and detailed in PR
+#340, not the shape this unit test stages.
+
+### The referencing side is indexed, and that was measured (#339)
+
+`Class` had no index on `teacherRoomId`. Two paths read the referencing side
+of `Class_teacherRoomId_roomArchived_fkey`, neither of them holding this
+transaction's own `Class` lock while it does: the `ON UPDATE CASCADE` that
+rewrites every mirroring `Class` row when a room's `isArchived` flips, and the
+`ON DELETE RESTRICT` check behind `ROOM_DELETE_RESTRICT_FKS`. (#272 had a
+third path on the `ClassTemplate` side — the archive's own explicit pre-lock —
+and this door has no counterpart, because it takes no `Class` lock of its
+own.)
+
+Measured before adding, the same way #272's design §7.3 asked for. Scratch
+database (`ethical_yoga_scratch_339`) seeded with one target `TeacherRoom`
+holding a handful of `Class` rows and a background `TeacherRoom` holding the
+rest, so a scan of the whole table has to pass over almost every row before
+reaching a match — the target rows are inserted last, at the physical tail of
+the heap. Median of 15 runs, `EXPLAIN (ANALYZE, BUFFERS)`, each wrapped in
+`BEGIN; … ROLLBACK;` so repeated runs never accumulate state:
+
+| rows | path | no index | with index |
+|---|---|---|---|
+| 10k | archive (`ON UPDATE CASCADE`) | 2.075 ms | 0.743 ms |
+| 10k | room-delete `RESTRICT` check | 1.440 ms | 0.058 ms |
+| 100k | archive (`ON UPDATE CASCADE`) | 13.644 ms | 0.695 ms |
+| 100k | room-delete `RESTRICT` check | 12.991 ms | 0.051 ms |
+
+The "archive" row is the sum of the `Trigger for constraint
+Class_teacherRoomId_roomArchived_fkey` lines `EXPLAIN ANALYZE` prints for the
+`UPDATE "TeacherRoom" SET "isArchived" = true …` that fires the cascade — two
+lines (one on `TeacherRoom`, one on `Class`) because the cascade both rewrites
+the child row and re-validates its own foreign key against the parent it just
+changed.
+
+**The literal `EXPLAIN (ANALYZE, BUFFERS) DELETE FROM "TeacherRoom" WHERE …`
+this issue's plan named cannot be run against a room WITH children, and that
+was checked rather than assumed.** `ON DELETE RESTRICT` raises the foreign-key
+violation from inside an `AFTER` trigger before `EXPLAIN` ever gets to print a
+plan, so the statement returns only the error — verified directly: an
+`EXPLAIN ANALYZE DELETE` against the measurement's own target room produced no
+plan output at all, only `ERROR: update or delete on table "TeacherRoom"
+violates foreign key constraint …`. The "room-delete RESTRICT check" row above
+measures the query Postgres's own RI trigger issues internally instead —
+`SELECT 1 FROM ONLY "Class" x WHERE x."teacherRoomId" = … AND x."roomArchived"
+= false LIMIT 1 FOR KEY SHARE OF x` — the same substitution this document's
+`#272` section already makes for the archive's own pre-lock (a representative
+`SELECT`, not a literal call into the guarded function).
+
+The scan alone, which is the part that scales: at 100k rows the no-index plan
+is `Seq Scan on "Class" x … actual time=12.743..12.743 rows=1 … Rows Removed
+by Filter: 99995` against `Index Scan using
+"Class_teacherRoomId_roomArchived_idx" … actual time=0.018..0.018 rows=1`.
+Index size 704 kB against a 14 MB table.
+
+The case for it is the SLOPE, the same argument #272's own index made: without
+it, both paths grow roughly linearly with the table (2.075 ms → 13.644 ms and
+1.440 ms → 12.991 ms across a 10× row-count increase); with it, both stay flat
+regardless of table size. Added as its own migration,
+`20260905130000_index_class_room_fk`, whose comment carries this section's
+location rather than the numbers, per the convention
+`20260828120000_index_template_room_fk` set. Re-derive with:
+
+    EXPLAIN (ANALYZE, BUFFERS)
+    SELECT 1 FROM ONLY "Class" x
+     WHERE x."teacherRoomId" = '<a room with children>' AND x."roomArchived" = false
+     LIMIT 1 FOR KEY SHARE OF x;

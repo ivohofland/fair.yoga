@@ -157,9 +157,11 @@ never applies to a *live bug*: a pre-existing defect is still a defect someone w
 fourth coverage issue.
 
 #128's accessible-name gap is pointed at from beside the button it describes, not filed as an
-issue nobody opens. `room-archive.ts` does the same for the archive-versus-publish race it
-accepts, and `template-sync` carried a `known-open` note in CLAUDE.md until #194 deleted the
-function — recorded there specifically because someone would reach it: it admitted an
+issue nobody opens. `room-archive.ts` did the same for the archive-versus-publish race it once
+accepted, until #339 closed the race with a database constraint and the note went with it —
+pointing the note at the code is what made it easy to find and retire correctly once the state it
+described stopped being true. `template-sync` carried a `known-open` note in CLAUDE.md until #194
+deleted the function — recorded there specifically because someone would reach it: it admitted an
 already-started class only east of UTC, a narrow route that was still a route.
 
 ## 8. Finish

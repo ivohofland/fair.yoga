@@ -64,10 +64,10 @@ afterAll(async () => {
   // the failure actually worth reading.
   if (teacherIds.length > 0) {
     // Entries first, and they take their children with them
-    // (`Class_calendarEntryId_kind_fkey` / the `StudioClass` twin are
-    // `ON DELETE CASCADE`). Must precede `teacherRoom.deleteMany`:
-    // `Class_teacherRoomId_fkey` is `ON DELETE RESTRICT`, so a surviving class
-    // blocks the room link's delete.
+    // (`Class_calendarEntryId_kind_entryLive_fkey` / the `StudioClass` twin
+    // are `ON DELETE CASCADE`). Must precede `teacherRoom.deleteMany`:
+    // `Class_teacherRoomId_roomArchived_fkey` is `ON DELETE RESTRICT`, so a
+    // surviving class blocks the room link's delete.
     const ids = teacherIds.map((_, i) => `$${i + 1}`).join(',');
     await prisma.$executeRawUnsafe(
       `DELETE FROM "CalendarEntry" WHERE "teacherId" IN (${ids})`, ...teacherIds,

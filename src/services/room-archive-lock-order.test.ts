@@ -27,11 +27,21 @@
  * row afterwards. The margins are wide enough that only the guard's absence
  * fits between them, and each case was verified to fail when its own guard is
  * removed.
+ *
+ * ISSUE 339 ADDED A SECOND FILE-RESIDENT EDGE, for the same reason as the
+ * first: `CalendarEntry → Class` runs backward against this repo's fixed
+ * order (`Class` then its entry — `docs/lock-order.md`, "Ordering BETWEEN
+ * `Class` and its `CalendarEntry`"), and showing a writer that gets the order
+ * backwards deadlocking against it means holding a real `Class` row lock open
+ * on a second connection for the length of the shared lock-timeout bound —
+ * the same multi-second hold the paragraphs above already argue belongs in
+ * this serial file rather than the parallel tier.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { fixtureRun, type RoomFixture } from '../../tests/room-fixtures';
+import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { setTeacherRoomArchived } from './room-archive';
+import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
 
 const prisma = new PrismaClient();
 // `ral-` distinguishes this file's rows from `room-archive.test.ts`'s (`ra-`)
@@ -41,6 +51,7 @@ const fx = fixtureRun('ral');
 const makeFixture = () => fx.makeFixture(prisma);
 const addTemplate = (f: RoomFixture, opts: { isActive: boolean; isArchived: boolean }) =>
   fx.addTemplate(prisma, f, opts);
+const addClass = (f: RoomFixture, status: ClassFixtureStatus) => fx.addClass(prisma, f, status);
 
 beforeAll(async () => { await prisma.$connect(); });
 afterAll(async () => {
@@ -154,9 +165,33 @@ describe('setTeacherRoomArchived — lock discipline (issue 272)', () => {
   // it, so the probe below times out instead. That is the backward edge the
   // generator deadlocked against (`40P01`, `docs/lock-order.md`, "The room
   // mirror's foreign keys are wait edges").
-  it('has not taken the room row while it waits on a child', async () => {
+  //
+  // ONE MECHANISM, BOTH CASCADES (issue 339 widened this case rather than
+  // duplicating it). The pre-lock takes every `ClassTemplate` row in the room
+  // `FOR UPDATE` before the room row itself, and that ordering is what this
+  // test proves — but the eventual `teacherRoom.update`, when it runs,
+  // cascades into every `Class` row in the room exactly as it cascades into
+  // every `ClassTemplate` row, via the same statement's `ON UPDATE CASCADE`.
+  // "Children before the room" is a property of WHEN the room lock is taken,
+  // not of which children the pre-lock names, so it protects a cascade it
+  // never explicitly locks. The `Class` row added to the fixture below is
+  // there so that claim has something concrete to point at: the room stays
+  // free while the archive is blocked on the (unrelated) held `ClassTemplate`
+  // row, regardless of what else the room's eventual cascade would rewrite.
+  //
+  // DRAFT, not `open` — deliberately. `setTeacherRoomArchived`'s pre-write
+  // count (`countBlockingClasses`) runs BEFORE the transaction this case is
+  // about, and it counts `BLOCKING_CLASS_STATUSES` (`open`/`in_progress`)
+  // only. An `open` class here would refuse the archive at that count and the
+  // transaction under test — the pre-lock, the cascade, all of it — would
+  // never run. `draft` is uncounted there and still `entryLive: true,
+  // roomArchived: false`, so it is exactly as live a cascade target as an
+  // `open` class would be, without tripping the earlier door this case is not
+  // about.
+  it('has not taken the room row while it waits on a child — the same order protects the Class cascade too (#339)', async () => {
     const f = await makeFixture();
     const tpl = await addTemplate(f, { isActive: false, isArchived: false });
+    const cls = await addClass(f, 'draft');
     const prober = new PrismaClient();
     await prober.$connect();
 
@@ -183,5 +218,142 @@ describe('setTeacherRoomArchived — lock discipline (issue 272)', () => {
 
     const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: f.linkId } });
     expect(after.isArchived).toBe(false);
+    // The failed archive never reached its cascade, so the Class mirror is
+    // exactly where it started — the same "refused, not half-applied" shape
+    // `after.isArchived` above already checks for the room and the template.
+    const clsAfter = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(clsAfter.roomArchived).toBe(false);
+  }, HELD_CASE_TIMEOUT_MS);
+});
+
+/**
+ * The `CalendarEntry → Class` edge (issue 339): `ON UPDATE CASCADE` into
+ * `Class.entryLive` makes a cancel take the `Class` row lock while it holds
+ * the entry — the reverse of this repo's fixed order (`Class` first, then its
+ * entry; `docs/lock-order.md`, "Ordering BETWEEN `Class` and its
+ * `CalendarEntry`"). What makes that safe is that every regular-entry
+ * `cancelledAt` writer already takes the `Class` lock FIRST, so the cascade
+ * re-locks a row its own transaction already owns rather than waiting on
+ * anything. The two cases below pin that property and its failure mode.
+ */
+describe('CalendarEntry → Class cascade — lock discipline (issue 339)', () => {
+  const HELD_CASE_TIMEOUT_MS = 20_000;
+  const HOLD_CEILING_MS = 4_000;
+
+  /**
+   * Runs `body` while a `Class` row (and, via `lockClassRow`, its entry) is
+   * held open on a connection of its own — the counterpart the second case
+   * below needs: a real writer legitimately holding the `Class` lock, so a
+   * hypothetical `cancelledAt` writer that skipped `lockClassRow` can be shown
+   * blocking on it.
+   *
+   * Same acquire-signal / release-signal / ceiling shape as `withHeldChild`
+   * in the describe above, parameterized on a `Class` row (via `lockClassRow`)
+   * instead of a raw `ClassTemplate` `FOR UPDATE`. Kept local to this describe
+   * rather than merged with `withHeldChild`: the two hold different rows via
+   * different statements, and a shared abstraction over "which row" would
+   * have to reach back into the sibling describe's `ClassTemplate`-specific
+   * literal SQL for no reader's benefit.
+   */
+  async function withHeldClassRow<T>(classId: string, body: () => Promise<T>): Promise<T> {
+    const holder = new PrismaClient();
+    await holder.$connect();
+    let acquired!: () => void;
+    let release!: () => void;
+    const acquiredSignal = new Promise<void>((r) => { acquired = r; });
+    const releaseSignal = new Promise<void>((r) => { release = r; });
+    let ceiling: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const held = holder.$transaction(
+        async (tx) => {
+          await lockClassRow(tx, classId);
+          acquired();
+          await Promise.race([
+            releaseSignal,
+            new Promise<void>((r) => { ceiling = setTimeout(r, HOLD_CEILING_MS); }),
+          ]);
+          return 'released';
+        },
+        { timeout: HOLD_CEILING_MS + 10_000 },
+      );
+      held.catch(() => {});
+
+      await acquiredSignal;
+      let result: T;
+      try {
+        result = await body();
+      } finally {
+        release();
+      }
+      expect(await held).toBe('released');
+      return result;
+    } finally {
+      if (ceiling) clearTimeout(ceiling);
+      await holder.$disconnect();
+    }
+  }
+
+  it('a cancel that takes the class lock first does not deadlock its own cascade', async () => {
+    const f = await makeFixture();
+    const cls = await addClass(f, 'open');
+    const classId = cls.id;
+    const entryId = cls.calendarEntryId;
+
+    // The shape every production writer uses: lockClassRow, then write the
+    // entry. The cascade back into Class.entryLive re-locks a row this
+    // transaction already holds, so it waits on nothing.
+    const cancelling = prisma.$transaction(async (tx) => {
+      await lockClassRow(tx, classId);
+      await tx.calendarEntry.update({
+        where: { id: entryId },
+        data: { cancelledAt: new Date() },
+      });
+    });
+
+    // Concurrently, a writer that wants the same class row.
+    const competing = prisma.$transaction(async (tx) => {
+      await lockClassRow(tx, classId);
+      await tx.class.update({ where: { id: classId }, data: { description: 'x' } });
+    });
+
+    const results = await Promise.allSettled([cancelling, competing]);
+    const errs = results.flatMap((r) => (r.status === 'rejected' ? [String(r.reason)] : []));
+    // Neither a deadlock nor a lock timeout: one waits for the other.
+    expect(errs.join('\n')).not.toMatch(/40P01|55P03/);
+  });
+
+  // THE MUTATION, as a test rather than a manual step: this is what a fifth
+  // `cancelledAt` writer added without `lockClassRow` would do, and it is the
+  // regression the ordering rule exists to prevent. It documents the edge by
+  // showing it biting.
+  //
+  // Measured: this is a one-directional wait, not a genuine circular
+  // deadlock — the holder below takes the `Class`/entry lock and then simply
+  // waits on an external release signal, so it is never itself blocked on
+  // anything the backward writer holds. There is nothing for Postgres's
+  // deadlock detector to find a cycle in, so the backward writer's own
+  // `setLockTimeout` is what ends the wait: `55P03`, not `40P01`. Recorded
+  // here rather than assumed, and the exact text is in the task's report.
+  it('a cancel that writes the entry FIRST blocks on a class-lock holder and times out', async () => {
+    const f = await makeFixture();
+    const cls = await addClass(f, 'open');
+    const classId = cls.id;
+    const entryId = cls.calendarEntryId;
+
+    await withHeldClassRow(classId, async () => {
+      const backwards = prisma.$transaction(async (tx) => {
+        await setLockTimeout(tx);
+        await tx.calendarEntry.update({
+          where: { id: entryId },
+          data: { cancelledAt: new Date() },
+        });
+      });
+
+      await expect(backwards).rejects.toThrow(/40P01|55P03/);
+    });
+
+    const entryAfter = await prisma.calendarEntry.findUniqueOrThrow({ where: { id: entryId } });
+    expect(entryAfter.cancelledAt).toBeNull();
   }, HELD_CASE_TIMEOUT_MS);
 });
