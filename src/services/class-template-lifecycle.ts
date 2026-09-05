@@ -466,6 +466,11 @@ export function updateClassTemplate(
  */
 export type PauseTemplateResult = PauseRuleResult<ClassTemplate>;
 
+/**
+ * Whether a generated instance in this status can still be withdrawn or
+ * regenerated. The ONE classification `SCHEDULED_STATUSES` below is derived
+ * from.
+ */
 const CLASS_STATUS_SCHEDULED = {
   draft: true,
   open: true,
@@ -475,12 +480,11 @@ const CLASS_STATUS_SCHEDULED = {
 
 /**
  * Statuses a generated instance can still be withdrawn or regenerated from,
- * DERIVED from the classification above rather than restated beside it. Same
- * tether and same reasoning as `CANCELLABLE_STATUSES` (`gdpr.ts`): a fifth
- * `ClassStatus` is a compile error on that literal until it is classified,
- * and the classification reaches this list without a second edit. Derived
- * via `statusesWhere` (`db-locks.ts`), which is where the cast to
- * `ClassStatus[]` is justified.
+ * DERIVED from `CLASS_STATUS_SCHEDULED` above rather than restated beside it.
+ * Same tether and same reasoning as `CANCELLABLE_STATUSES` (`gdpr.ts`): a
+ * fifth `ClassStatus` is a compile error on `CLASS_STATUS_SCHEDULED` until it
+ * is classified, and the classification reaches this list without a second
+ * edit. Derived via `statusesWhere` (`db-locks.ts`).
  *
  * Frozen for the same reason as `CHARGED_STATUSES`: it gates a destructive
  * delete. Prisma's `in` wants a mutable array, so call sites spread.

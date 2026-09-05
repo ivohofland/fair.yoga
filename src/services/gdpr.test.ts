@@ -1990,6 +1990,155 @@ describe('deleteTeacherAccount locks and reads the same snapshot (#367)', () => 
 });
 
 /**
+ * `CANCELLABLE_STATUSES` classifies `in_progress` cancellable, and
+ * `gdpr.test.ts`'s "renders exactly the statuses classified cancellable"
+ * (below) pins that the ordered pre-lock's rendered SQL says so — but the
+ * rendered fragment is not proof that a real `in_progress` class is ever
+ * cancelled by the CAS loop that reads it, which is a distinct claim (#245
+ * review, Important 14).
+ *
+ * It cannot be proved by simply creating an `in_progress` class before
+ * calling `deleteTeacherAccount`: this function's own top-of-function sweep
+ * (`db.class.findMany({ where: { status: 'in_progress', ... } })`, above)
+ * completes every `in_progress` class of this teacher's BEFORE the erasure
+ * transaction even opens, so a class already `in_progress` at that point
+ * never reaches the CAS loop as `in_progress` at all — it reaches it as
+ * `completed`. The shape that DOES reach the loop as `in_progress` is the
+ * same race "locks and reads the same snapshot (#367)" above proves for
+ * `open`: a class becoming cancellable in the window between that sweep and
+ * the class pre-lock's own predicate. Reusing that injection point with
+ * `status: 'in_progress'` is therefore not a stand-in for a direct fixture —
+ * it is the only way an `in_progress` class can legitimately reach this
+ * loop at all.
+ */
+describe('deleteTeacherAccount cancels an in_progress class on the CAS loop, not just in the SQL text (#245)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-inprogress-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+  let completedClassId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'InProgress',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'in_progress cancellation fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'InProgress Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234IP',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    teacherRoomId = teacherRoom.id;
+
+    // The negative control: never `in_progress` at any point, so it is
+    // never seen by the top-of-function completion sweep either, and the
+    // CAS loop's own status conjunct must be what keeps it uncancelled.
+    const completed = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'Completed control',
+      date: new Date('2026-06-01'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'completed',
+    });
+    completedClassId = completed.id;
+  });
+
+  afterAll(async () => {
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  it('cancels a class that is in_progress when the CAS loop reaches it, and leaves a completed one alone', async () => {
+    // Same injection point as "locks and reads the same snapshot (#367)"
+    // above: `source.entries === true` fires exactly once, at
+    // deleteTeacherAccount's own Class+CalendarEntry pre-lock — AFTER the
+    // top-of-function `completeClass` sweep over `in_progress` classes has
+    // already run and found none. `status: 'in_progress'` here, where that
+    // test used `'open'`.
+    const original = dbLocks.lockClassRowsOrdered;
+    let injectedClassId: string | undefined;
+    const spy = vi
+      .spyOn(dbLocks, 'lockClassRowsOrdered')
+      .mockImplementation(async (tx, source) => {
+        if (source.entries === true) {
+          const created = await createClassFixture(prisma, {
+            teacherId,
+            teacherRoomId,
+            classType: 'Injected in-progress class',
+            date: new Date('2026-06-02'),
+            startTime: hhmmToTime('09:00'),
+            durationMinutes: 60,
+            roomCost: 20,
+            minRate: 15,
+            targetRate: 25,
+            minStudents: 1,
+            maxStudents: 10,
+            status: 'in_progress',
+          });
+          injectedClassId = created.id;
+        }
+        return original(tx, source);
+      });
+    onTestFinished(() => spy.mockRestore());
+
+    await deleteTeacherAccount(prisma, teacherId);
+
+    expect(injectedClassId).toBeDefined();
+    const inProgressAfter = await prisma.class.findUniqueOrThrow({
+      where: { id: injectedClassId! },
+      include: { calendarEntry: true },
+    });
+    // Still `in_progress` — this erasure cancels via the entry's
+    // `cancelledAt`, it does not flip `Class.status` (#327).
+    expect(inProgressAfter.status).toBe('in_progress');
+    expect(inProgressAfter.calendarEntry.cancelledAt).not.toBeNull();
+
+    const completedAfter = await prisma.class.findUniqueOrThrow({
+      where: { id: completedClassId },
+      include: { calendarEntry: true },
+    });
+    expect(completedAfter.calendarEntry.cancelledAt).toBeNull();
+  });
+});
+
+/**
  * Whole-branch review of #174, Important, closed further by #367.
  * Originally: `deleteTeacherAccount` read its classes — and, eager-loaded
  * alongside them, the registrations it would notify — before taking any
