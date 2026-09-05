@@ -10,18 +10,22 @@ import { createClassFixture } from '../../tests/class-fixtures';
  * The `Class` pre-lock, identified by the statement's own shape.
  *
  * NOT by a bound value. `values[0] === teacherId` names a SET of statements —
- * every one whose first bind is that id — and this file keyed on exactly that
- * until the set grew underneath it. Measured 2026-09-05: three of
- * `deleteTeacherAccount`'s statements bind `teacherId` first, so the handshake
- * fired on #229's `ClassTemplate` pre-lock and deleting the `Class` pre-lock
- * passed green.
+ * every one whose first bind is that id — and this file keyed on exactly
+ * that until the set grew underneath it: a sibling statement, added to
+ * `deleteTeacherAccount` well after this handshake was written, came to bind
+ * `teacherId` first too, so the handshake fired on THAT statement and
+ * deleting the real `Class` pre-lock passed green. The count and the
+ * PR/issue that added the sibling belong in the commit history, not here —
+ * a number in this comment would rot the next time the set changes size.
  *
- * `lockClassRowsOrdered`'s statement is the only one carrying BOTH fragments,
- * and each excludes a different sibling: the template pre-locks are
- * `FROM "ClassTemplate" ct` (which does contain `FOR UPDATE OF c`, as a prefix
- * of `OF ct`), and the entries lock is `JOIN "Class" c … FOR UPDATE OF e`.
- * That reasoning is argued here and ASSERTED by the firing counts below — a
- * future statement that matches drives one past 1 and fails by name.
+ * `lockClassRowsOrdered`'s statement is the only one carrying BOTH
+ * fragments, and together they exclude every sibling: the template
+ * pre-locks are `FROM "ClassTemplate" ct` (which does contain
+ * `FOR UPDATE OF c`, as a prefix of `OF ct`, so that fragment alone would
+ * not exclude them), and the entries lock is `JOIN "Class" c … FOR UPDATE OF
+ * e` (fails both). That reasoning is argued here and ASSERTED by the firing
+ * counts below — a future statement that matches drives one past 1 and
+ * fails by name.
  */
 const isClassPreLock = (sql: string): boolean =>
   sql.includes('FROM "Class" c') && sql.includes('FOR UPDATE OF c');
@@ -462,34 +466,55 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       .then(() => 'teacher-ok' as const)
       .catch((err: unknown) => ({ error: String(err) }) as const);
 
-    // Start the student erasure once the teacher's pre-lock is in flight, so
-    // both statements are running against the holders before either releases.
-    await awaitHandshake(preLockReachedPromise, 'teacher Class pre-lock');
-    // Time for the teacher's pre-lock to reach and block on its first row.
-    await new Promise((r) => setTimeout(r, 200));
+    // From here on, a thrown handshake timeout must not leave `holderHigh`/
+    // `holderLow` abandoned. Each is a real transaction under its own
+    // `{ timeout: 10_000 }`; with `highReleased`/`lowReleased` never
+    // resolved, Prisma eventually rejects it (`P2028`) with nothing attached
+    // to catch it — an unhandled rejection ~10s after this test has already
+    // failed and reported, landing on whatever the next file in this serial
+    // tier happens to be running by then. `releaseLow`/`releaseHigh` are
+    // idempotent (a second `resolve()` is a no-op), so calling them again in
+    // the finally below costs nothing on the happy path, where they already
+    // ran inline.
+    let studentErasure!: Promise<'student-ok' | { readonly error: string }>;
+    try {
+      // Start the student erasure once the teacher's pre-lock is in flight, so
+      // both statements are running against the holders before either releases.
+      await awaitHandshake(preLockReachedPromise, 'teacher Class pre-lock');
+      // Time for the teacher's pre-lock to reach and block on its first row.
+      await new Promise((r) => setTimeout(r, 200));
 
-    const studentErasure = deleteStudentAccount(studentRacing, studentId)
-      .then(() => 'student-ok' as const)
-      .catch((err: unknown) => ({ error: String(err) }) as const);
+      studentErasure = deleteStudentAccount(studentRacing, studentId)
+        .then(() => 'student-ok' as const)
+        .catch((err: unknown) => ({ error: String(err) }) as const);
 
-    // Both pre-locks are now in flight. Wait for the student's to be issued
-    // too, then give it time to reach and block on its first row. Then:
-    //
-    // 1. Release LOW first. The student (parked there under the mutation)
-    //    takes it and re-queues on HIGH, where the teacher is already parked.
-    // 2. Release HIGH. The teacher takes it, reaches for LOW — held by the
-    //    student — and Postgres answers the cycle with `40P01`.
-    //
-    // With the shared `ORDER BY` both erasures ask [LOW, HIGH], park on the
-    // same row, and serialise. All waits sit comfortably inside the helper's
-    // shared 2s `lock_timeout`.
-    await awaitHandshake(studentPreLockReachedPromise, 'student Class pre-lock');
-    await new Promise((r) => setTimeout(r, 400));
-    releaseLow();
-    await holderLow;
-    await new Promise((r) => setTimeout(r, 150));
-    releaseHigh();
-    await holderHigh;
+      // Both pre-locks are now in flight. Wait for the student's to be issued
+      // too, then give it time to reach and block on its first row. Then:
+      //
+      // 1. Release LOW first. The student (parked there under the mutation)
+      //    takes it and re-queues on HIGH, where the teacher is already parked.
+      // 2. Release HIGH. The teacher takes it, reaches for LOW — held by the
+      //    student — and Postgres answers the cycle with `40P01`.
+      //
+      // With the shared `ORDER BY` both erasures ask [LOW, HIGH], park on the
+      // same row, and serialise. All waits sit comfortably inside the helper's
+      // shared 2s `lock_timeout`.
+      await awaitHandshake(studentPreLockReachedPromise, 'student Class pre-lock');
+      await new Promise((r) => setTimeout(r, 400));
+      releaseLow();
+      await holderLow;
+      await new Promise((r) => setTimeout(r, 150));
+      releaseHigh();
+      await holderHigh;
+    } finally {
+      // Unconditional and `allSettled`, not `all` — a THROWN handshake means
+      // one or both holders are still parked, and this must never itself
+      // reject (that would replace the real error with a cleanup one). Once
+      // both settle, neither can produce a later, disconnected rejection.
+      releaseLow();
+      releaseHigh();
+      await Promise.allSettled([holderLow, holderHigh]);
+    }
 
     const [teacherOutcome, studentOutcome] = await Promise.all([teacherErasure, studentErasure]);
 
