@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
 import { Prisma, PrismaClient } from '@prisma/client';
+import crypto from 'crypto';
 import {
   getWaitlistWindow,
   addToWaitlist,
@@ -2207,7 +2208,12 @@ describe('handleSpotFreed (DB)', () => {
  * predicate does, not which conjunct went missing.
  */
 describe('withdrawWaitingEntriesForTeacher locks only the pair it was given (#453)', () => {
-  const scopeSuffix = `wl-scope-${Date.now()}`;
+  // Random half as well as the clock, matching the sibling decoy fixture in
+  // `gdpr.test.ts`: every unique column this fixture writes — the page slugs
+  // and the email addresses — is keyed off this suffix, so two runs starting
+  // in the same millisecond would collide in `beforeAll` rather than in an
+  // assertion.
+  const scopeSuffix = `wl-scope-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherTId: string;
   let teacherTAccountId: string;
   let teacherT2Id: string;
