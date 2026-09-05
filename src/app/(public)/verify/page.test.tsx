@@ -795,7 +795,14 @@ describe('VerifyPage', () => {
     it('does not probe the session for a verification it abandoned', async () => {
       vi.useFakeTimers();
       silenceErrors();
-      const fetchMock = vi.fn().mockReturnValue(new Promise(() => {}));
+      const fetchMock = vi.fn(
+        (_url: string, init?: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              reject(new DOMException('Aborted', 'AbortError'));
+            });
+          }),
+      );
       vi.stubGlobal('fetch', fetchMock);
       render(<VerifyPage />);
 
