@@ -83,30 +83,44 @@ For each: apply, run the test, record the **exact** failure text, restore,
 re-run and confirm green. Commit nothing while a mutation is applied.
 
 1. **A fifth call site with no verdict.** Add a real call to a production file
-   that has none today — `src/services/class-transitions.ts` is a service that
-   imports neither the helper nor a verdict, so the mutation is one import and
-   one statement. Expect it in `callsWithoutVerdict` at its line.
+   that has none today — `src/services/class-transitions.ts` imports neither the
+   helper nor a verdict, so the mutation is one import and one statement. (It
+   *mentions* the helper in two comments, lines 223 and 390, which is convenient:
+   those are exactly the false positives a text census counts and this one must
+   not.) Expect it in `callsWithoutVerdict` at its line.
 2. **A verdict that outlives its call.** Delete one of the four call statements,
    leaving its verdict comment. Expect that verdict's line in
    `verdictsWithoutCall`, and confirm nothing lands in `callsWithoutVerdict`.
-   (Deleting the statement will also fail typecheck where its return value is
-   used — pick `class-template-lifecycle.ts:754`, whose result is discarded, so
-   the mutation isolates this test's verdict.)
+   Pick `class-template-lifecycle.ts:754`, whose return value is discarded, so
+   typecheck stays green and the mutation isolates this test's verdict.
 3. **A call the old grep would miss.** Change one existing call from
-   `await lockClassRowsOrdered(` to a form without `await` — e.g. assigning the
-   promise and awaiting it on the next line — *and* delete its verdict. The
-   shipped `await`-anchored grep reports four either way; this test must report
-   five call sites' worth of pairing and name the unverdicted one. This is the
-   mutation that demonstrates the departure from the issue's design, so its
-   error text is the one the PR body quotes.
+   `await lockClassRowsOrdered(` to a form without `await` — assign the promise,
+   `await` it on the next line — *and* delete its verdict. Under that mutation
+   both shipped greps return **three**, and they **agree**, so the test the issue
+   asked for would pass on a tree with an unverdicted call site in it. This test
+   must name that site. It is the mutation that demonstrates the departure from
+   the issue's design, so its error text is the one the PR body quotes.
 
 Then two guard mutations, same protocol:
 
-4. Break the file walk (point it at a directory that does not exist) and confirm
-   the non-vacuity assertion fails rather than the census passing empty.
-5. Inline the marker as a single literal and confirm the test reports itself.
+4. **Empty the file walk — do not break it.** Point `searchScope` at a real
+   directory that matches nothing (`prisma/migrations`), not at one that does not
+   exist: a missing directory makes `readdirSync` throw `ENOENT` before any
+   assertion runs, which proves nothing about the guard. The guard exists for a
+   walk that goes *silently empty*. Expect the pairing assertion to **pass** on
+   two empty sets and the non-vacuity assertion alone to go red. Run the throwing
+   variant too, and record that it fails for the other reason.
+5. **Inline the marker — and lift the `*.test.ts` exclusion with it.** Inlining
+   alone leaves the suite green, because the exclusion keeps this file out of
+   scope; the assembly is the *second* line of defence, so the first has to be
+   down for the mutation to bite. Record the green run, then inline **and** lift
+   the exclusion and expect this file's own marker in `verdictsWithoutCall`. Then
+   the control: re-assemble the marker with the exclusion still lifted, and
+   confirm that side empties while the genuine test-file call sites stand in
+   `callsWithoutVerdict` — which is what proves the assembly, and not the
+   exclusion, is doing the work.
 
-Record all five in the commit message.
+Record all five in the commit message, with the exact error text of each.
 
 ### Done when
 
@@ -152,13 +166,31 @@ Constraints:
 
 ### Sweep for what this invalidates
 
-After the edit, search for other prose making the now-amended claim — that the
-call-site set is checked by nothing, or that it is held by convention alone.
-Search at least `src/lib/db-locks.ts` (it discusses the register in more than one
-place), `docs/lock-order.md`, `docs/solve-issue-lessons.md`, and the four call
-sites' own comments. Give every hit a verdict; expect legitimate survivors, and
-say which and why. A hit that is about `lockClassRow` (singular) or about the
-*decoys* rather than the verdicts is a survivor, not a defect.
+Search for prose making the now-amended claim — that the call-site set is checked
+by nothing, or held by convention alone. **Every hit gets a written verdict, and
+a verdict of "survivor" needs its reason.** Expect most to survive; a hit about
+`lockClassRow` (singular), or about the *decoys* rather than the verdicts, is a
+survivor by construction.
+
+Three targets are already located and must each be answered by name — the spec's
+"What the amendment invalidates elsewhere" section states what is at stake in
+each, so read that before deciding:
+
+1. `src/lib/rule-slot-holder.ts:51` — a second "NO ROSTER HERE" paragraph opening
+   *"for the reason `db-locks.ts` spends a paragraph on"*. **Open the amended
+   paragraph and check the pointer still lands**, rather than assuming it does.
+2. `docs/lock-order.md:79` — the third shipped census (`grep -rn
+   'lockClassRowsOrdered(' src --include='*.ts' | grep -v '\.test\.ts' | grep -vE
+   ':[0-9]+: *(//|\*)'`), measured returning five: the definition plus four
+   callers. Re-run it and confirm.
+3. `docs/lock-order.md:1376` — "a convention enforced by a grep and a test … the
+   same standing … `lockClassRowsOrdered` has for `Class`", which compares the
+   template families' convention to this one.
+
+Then sweep beyond those three yourself: `src/lib/db-locks.ts` says "No roster
+here" in more than one place (line 191 is one), and the four call sites carry
+their own prose. `docs/lock-order.md` mentions the helper ~30 times. Do not edit
+a hit that is merely *related*; edit only one this branch made **inaccurate**.
 
 ### Done when
 

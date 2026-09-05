@@ -28,7 +28,32 @@ both stated blind spots, both reproduced:
 - The second is a comment convention, so a call site landing without the marker
   is invisible to it.
 
-Two facts the issue does not state, both measured here, both load-bearing below:
+**The issue's census inventory is incomplete.** It says "two censuses"; there is
+a third, shipped in `docs/lock-order.md:79` and re-measured here:
+
+```
+grep -rn 'lockClassRowsOrdered(' src --include='*.ts' \
+  | grep -v '\.test\.ts' | grep -vE ':[0-9]+: *(//|\*)'
+  src/lib/db-locks.ts:571          ← the definition
+  src/services/class-template-lifecycle.ts:754
+  src/services/waitlist.ts:1092
+  src/services/gdpr.ts:440
+  src/services/gdpr.ts:1133
+```
+
+Five, exactly as that document claims ("the helper's definition plus four
+callers"). It is the **most robust of the three**: bare-name, so not
+`await`-anchored, and its `grep -vE ':[0-9]+: *(//|\*)'` drops comment lines, so
+it excludes `studio-classes/[id]/route.ts:229` where the first census's `await`
+anchor only excludes it by luck. It is still textual — a call sharing a line with
+other code after a `/* */` would slip past, and it counts the definition as a row
+the reader must know to subtract — but it is the one to beat, and the design
+below is measured against it rather than against the weaker pair the issue names.
+Three untethered censuses of one set is a stronger case for a tether than two,
+not a weaker one.
+
+Two further facts the issue does not state, both measured here, both load-bearing
+below:
 
 - **`.test.ts` files really do call the helper** — 12 call sites in
   `src/lib/db-locks.test.ts` and 2 in `src/lib/db-locks-lock-order.test.ts`.
@@ -66,6 +91,16 @@ than one.
 The verdict side stays textual, because a comment convention has nowhere else to
 live. So the two sides are no longer two greps hoping to agree — they are
 **syntax on one side, comments on the other, asserted to pair**.
+
+Measured against `docs/lock-order.md:79`, the best of the three shipped censuses:
+that one already avoids the `await` anchor and already filters comment lines, so
+the syntax-tree census beats it on two narrower points rather than on the obvious
+one. It does not need to know to subtract the definition — a declaration is not a
+call expression — and it cannot be fooled by a call sharing a line with a closed
+block comment, or by the helper's name inside a string. None of those is likely;
+the point is that each is a way for a *textual* census to be wrong, and the
+syntax-tree one has no textual failure mode at all. What it cannot do is decide
+whether a verdict is *true*, which is why the second half of the test exists.
 
 ### The pairing, not merely the counts
 
@@ -142,9 +177,32 @@ is not (which verdict is *correct*, and whether the site carries a decoy). Per
 CLAUDE.md's *Comment Discipline*, the amendment states what is true now — it does
 not narrate what the paragraph used to say; that record lives in the PR body.
 
-The re-derivation command at line 552 stays, and gains a second: a human reading
-the docblock still wants to see the set, and the shipped commands are now backed
-by a test rather than standing alone.
+The re-derivation command at line 552 stays: a human reading the docblock still
+wants to see the set, and the shipped commands are now backed by a test rather
+than standing alone.
+
+### What the amendment invalidates elsewhere
+
+Three artifacts point at that paragraph or make the claim it carries. Each gets a
+verdict rather than an edit by reflex:
+
+- **`src/lib/rule-slot-holder.ts:51`** — its own "NO ROSTER HERE" paragraph opens
+  *"for the reason `db-locks.ts` spends a paragraph on"*. That pointer survives
+  only if the amendment keeps the reasoning it points at, which is why the
+  amendment keeps it. It must be confirmed by opening the amended paragraph, not
+  assumed — a pointer that points at something no longer saying that is a defect
+  only an auditor who follows it can find. `ruleSlotHolder`'s own census stays
+  untethered by this change, deliberately: it is a different helper with a
+  different convention, and widening scope to it is not what #464 asks for.
+- **`docs/lock-order.md:79`** — the third census, and the document that *owns*
+  the "four sites" count. The count does not change (this branch adds no call
+  site), and the re-derivation command still returns what it claims.
+- **`docs/lock-order.md:1376`** — *"This is a convention enforced by a grep and a
+  test, not by the database … the same standing … `lockClassRowsOrdered` has for
+  `Class`."* That sentence compares the template families' child-lock convention
+  to this one. After this branch the two no longer have identical standing, so it
+  needs a verdict: either it stays true at the altitude it is written at, or it
+  is narrowed. Decide by reading it, not by pattern-matching the words.
 
 ## Acceptance
 
