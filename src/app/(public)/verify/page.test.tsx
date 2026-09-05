@@ -29,7 +29,12 @@ vi.mock('next/navigation', () => ({
   useRouter: () => router,
 }));
 
-import VerifyPage, { RAIL_APPEARS_AFTER_MS, RAIL_STAYS_FOR_MS, RAIL_HEADING } from './page';
+import VerifyPage, {
+  RAIL_APPEARS_AFTER_MS,
+  RAIL_STAYS_FOR_MS,
+  RAIL_HEADING,
+  VERIFY_CEILING_MS,
+} from './page';
 
 describe('VerifyPage', () => {
   afterEach(() => {
@@ -526,10 +531,12 @@ describe('VerifyPage', () => {
       expect(screen.getByText('Verification failed')).toBeInTheDocument();
       expect(fetch).not.toHaveBeenCalled();
 
-      // Past both constants: an appearance timer must never have been armed
-      // for a verification that was never sent.
-      await advance(RAIL_APPEARS_AFTER_MS + RAIL_STAYS_FOR_MS);
+      // Past all three constants: no timer of any kind may be armed for a
+      // verification that was never sent, and the ceiling would otherwise
+      // turn a reader's own bad link into a connection problem.
+      await advance(RAIL_APPEARS_AFTER_MS + RAIL_STAYS_FOR_MS + VERIFY_CEILING_MS);
       expect(screen.queryByText(RAIL_HEADING)).not.toBeInTheDocument();
+      expect(screen.queryByText('Connection problem')).not.toBeInTheDocument();
       expect(screen.getByText('Verification failed')).toBeInTheDocument();
     });
 
@@ -550,6 +557,163 @@ describe('VerifyPage', () => {
 
       expect(container).toBeEmptyDOMElement();
       expect(fetch).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The far end of the same lifetime the two cases above bound the near end
+     * of. Grouped here because they share the ceiling's clock, not because
+     * they share a mechanism with the flash cases.
+     *
+     * `console.error` is silenced rather than allowed through: the ceiling
+     * logs on every case here, and an unstubbed spy would print that line
+     * once per test. `vi.restoreAllMocks()` in `afterEach` puts it back.
+     */
+    function silenceErrors(): ReturnType<typeof vi.spyOn> {
+      return vi.spyOn(console, 'error').mockImplementation(() => {});
+    }
+
+    /**
+     * The relationship the ceiling's correctness rests on, made executable.
+     *
+     * A held outcome runs from the stay timer, not from `settle`, so a ceiling
+     * inside the rail's own window could fire with an outcome already parked
+     * behind it — and nothing in Task 2's one-way exit covers that path,
+     * because it does not go through `settle`. Prose in three docblocks would
+     * not survive someone shortening the ceiling; this does.
+     */
+    it('is armed beyond the rail\'s own window', () => {
+      expect(VERIFY_CEILING_MS).toBeGreaterThan(
+        RAIL_APPEARS_AFTER_MS + RAIL_STAYS_FOR_MS,
+      );
+    });
+
+    /**
+     * #446's acceptance criterion: a slow-but-working sign-in still completes.
+     * The response lands well past the rail's window — the reader has been
+     * watching the interstitial for seconds — but inside the ceiling, and the
+     * ordinary success path runs untouched.
+     */
+    it('signs in a verification that answers slowly but inside the ceiling', async () => {
+      vi.useFakeTimers();
+      const deferred = deferredFetch(signedInBody);
+      render(<VerifyPage />);
+
+      await advance(VERIFY_CEILING_MS - 1);
+      expect(screen.getByText(RAIL_HEADING)).toBeInTheDocument();
+
+      deferred.resolve();
+      await advance(1);
+      expect(screen.getByText("You're signed in.")).toBeInTheDocument();
+      expect(screen.queryByText('Connection problem')).not.toBeInTheDocument();
+    });
+
+    /**
+     * The ceiling's own case, and the half that makes it worth building: the
+     * screen it reaches must be distinguishable from a spent link.
+     *
+     * The absence assertion cannot rot silently — 'Verification failed' is
+     * asserted PRESENT by three other cases in this file, so a rename breaks
+     * them loudly rather than quietly passing here.
+     */
+    it('gives up on a verification that never answers, without blaming the link', async () => {
+      vi.useFakeTimers();
+      silenceErrors();
+      vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => {})));
+      render(<VerifyPage />);
+
+      await advance(VERIFY_CEILING_MS - 1);
+      expect(screen.getByText(RAIL_HEADING)).toBeInTheDocument();
+      expect(screen.queryByText('Connection problem')).not.toBeInTheDocument();
+
+      await advance(1);
+      expect(screen.getByText('Connection problem')).toBeInTheDocument();
+      expect(screen.queryByText('Verification failed')).not.toBeInTheDocument();
+      expect(screen.queryByText(RAIL_HEADING)).not.toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Send a new link' })).toHaveAttribute(
+        'href',
+        '/login',
+      );
+    });
+
+    /** A verification that answered must not be given up on afterwards. The
+     *  ceiling is cancelled by `settle`, not merely ignored by it. */
+    it('does not give up on a verification that already answered', async () => {
+      vi.useFakeTimers();
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(signedIn));
+      render(<VerifyPage />);
+
+      await advance(10);
+      expect(screen.getByText("You're signed in.")).toBeInTheDocument();
+
+      await advance(VERIFY_CEILING_MS);
+      expect(screen.getByText("You're signed in.")).toBeInTheDocument();
+      expect(screen.queryByText('Connection problem')).not.toBeInTheDocument();
+    });
+
+    /**
+     * #446's fourth question, pinned: the session probe is covered by the same
+     * ceiling, because what is bounded is the STATE, not the verify request.
+     *
+     * The verify POST fails immediately; the probe behind it never answers.
+     * A ceiling armed inside the fetch's `.then`, or scoped to the first
+     * request, leaves this reader stranded exactly as before.
+     */
+    it('gives up when the session probe is the request that never answers', async () => {
+      vi.useFakeTimers();
+      silenceErrors();
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce({ ok: false })
+          .mockReturnValue(new Promise(() => {})),
+      );
+      render(<VerifyPage />);
+
+      await advance(RAIL_APPEARS_AFTER_MS + 1);
+      expect(screen.getByText(RAIL_HEADING)).toBeInTheDocument();
+
+      await advance(VERIFY_CEILING_MS);
+      expect(screen.getByText('Connection problem')).toBeInTheDocument();
+    });
+
+    /**
+     * Leaving before the ceiling fires takes the ceiling with it — the same
+     * rule the held-outcome case above applies to the stay timer.
+     *
+     * Without the clear it fires on an unmounted page: a give-up logged for a
+     * reader who is no longer there, and once Task 2 lands, an abort of a
+     * request belonging to a page that no longer exists.
+     */
+    it('drops the ceiling when the page is left before it fires', async () => {
+      vi.useFakeTimers();
+      const errors = silenceErrors();
+      vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => {})));
+      const { unmount } = render(<VerifyPage />);
+
+      await advance(RAIL_APPEARS_AFTER_MS + 1);
+      unmount();
+
+      // Named rather than `not.toHaveBeenCalled()`: this spy catches every
+      // console.error in the process, so a bare assertion would also fail on
+      // an unrelated React warning and report it as this defect.
+      await advance(VERIFY_CEILING_MS);
+      expect(errors).not.toHaveBeenCalledWith(
+        '[verify] no answer within the ceiling; giving up',
+      );
+    });
+
+    /** Nothing about this is diagnosable after the fact otherwise (#446). */
+    it('logs the give-up with the prefix the rest of the file uses', async () => {
+      vi.useFakeTimers();
+      const errors = silenceErrors();
+      vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => {})));
+      render(<VerifyPage />);
+
+      await advance(VERIFY_CEILING_MS);
+      expect(errors).toHaveBeenCalledWith(
+        '[verify] no answer within the ceiling; giving up',
+      );
     });
   });
 });
