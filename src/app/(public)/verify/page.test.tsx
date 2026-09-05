@@ -899,9 +899,12 @@ describe('VerifyPage', () => {
   });
 
   /**
-   * #452. The outer `.catch` used to treat every rejection as a spent link,
-   * so a 5xx, an unreadable body and a mis-shaped one all reached the error
-   * screen with nothing logged anywhere on the client.
+   * #452. The outer `.catch` used to treat every rejection as a spent link:
+   * a 5xx, an unreadable body, a mis-shaped one and a network failure all
+   * arrived indistinguishable from an expired link, and none of them put a
+   * line of their own on the console. Where they landed on screen varied —
+   * the error screen usually, but "Already signed in" when the session probe
+   * behind them answered ok, which is the last case below.
    *
    * The 400 is the one silent case, and it is the commonest event on this
    * page — a link clicked twice. Everything else is a fault, and the last
@@ -931,7 +934,28 @@ describe('VerifyPage', () => {
       render(<VerifyPage />);
 
       expect(await screen.findByText('Verification failed')).toBeInTheDocument();
+      expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.any(Error));
       expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.objectContaining({ status: 500 }));
+    });
+
+    /**
+     * The boundary this design narrows on purpose. #452's wording says to
+     * silence "the expected 4xx"; this file silences 400 alone, because the
+     * route has no other reachable 4xx today and a new one appearing here
+     * should read as a fault rather than something a band absorbed before the
+     * case existed. Nothing else in this block can tell those two rules
+     * apart — an implementation silencing all of 4xx passes every other case.
+     */
+    it('logs a 4xx that is not the expected 400', async () => {
+      const errors = watchErrors();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValueOnce({ ok: false, status: 404 }).mockResolvedValueOnce(noSession),
+      );
+      render(<VerifyPage />);
+
+      expect(await screen.findByText('Verification failed')).toBeInTheDocument();
+      expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.objectContaining({ status: 404 }));
     });
 
     /**
