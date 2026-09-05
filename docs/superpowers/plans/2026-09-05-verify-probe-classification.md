@@ -444,13 +444,6 @@ Insert the guard between the `}` closing `if (res.ok)` and the `} catch`:
           // `fetch` reject, so it cannot arrive here as a non-ok response at
           // all. A ceiling firing after this response landed does not make the
           // status less real, and `settle` already refuses the screen.
-          //
-          // A bare literal, where the verification's classification above uses
-          // the shared `MAGIC_LINK_REFUSED_STATUS`. That constant guards a
-          // drift that would go SILENT — move the route off 400 and real
-          // faults stop logging, which is #452. This one cannot drift that
-          // way: a session route that stopped answering 401 would make this
-          // log noise, which announces itself.
           if (res.status !== 401) {
             console.error('[verify] the session probe answered unexpectedly', {
               status: res.status,
