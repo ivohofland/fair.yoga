@@ -21,6 +21,22 @@
 - **Comment discipline** (CLAUDE.md): a comment annotates the code it sits on. No prose counts, no member rosters, no correction history — that goes in the PR body. Where membership matters, tether it to the compiler or a test.
 - **Correct a claim by replacing it**, never by annotating it. No "this previously read X".
 - **Which database does what** (`docs/test-database.md`): the `unit` and `unit-sweeps` tiers run against `ethical_yoga_test` (`DATABASE_URL_TEST`), whose global setup (`tests/setup/unit-db.ts`) runs `prisma migrate deploy` automatically — so every constraint test in this plan picks the new migration up with no manual step. The `integration` tier talks to the app on `:3000` against the **dev** database. **A worktree has neither a `.env` nor the dev server**, so: copy `.env` in before running anything, scope `npm run verify` to typecheck/lint/unit/components, and cite CI for the integration and e2e tiers.
+- **Every mutation proof runs against a scratch database, never `ethical_yoga_test`.** `ethical_yoga_test` is shared across every worktree on this machine, and proving a guard bites means *dropping a constraint* — during which any concurrent session running `--project unit` silently gets wrong answers. Work in this repo is currently active in the main checkout, so this is a live collision, not a hypothetical one.
+
+  The mechanism is a per-command override. `vitest.config.ts` reads `process.env.DATABASE_URL_TEST` ahead of the `.env` value, and the global setup creates the database and runs `migrate deploy` if it does not exist — so a scratch run needs no provisioning step of its own:
+
+  ```bash
+  export SCRATCH="postgresql://yoga:<pw>@localhost:5432/ethical_yoga_scratch_339"
+  DATABASE_URL_TEST="$SCRATCH" npx vitest run --project unit <file>
+  ```
+
+  The safety assertion in global setup still holds: `$SCRATCH` differs from `DATABASE_URL`. Drop the scratch database when the branch is done:
+
+  ```bash
+  docker exec fairyoga-db-1 psql -U yoga -d postgres -c 'DROP DATABASE ethical_yoga_scratch_339;'
+  ```
+
+  Plain (non-mutating) test runs stay on `ethical_yoga_test` — they only add rows they own, which is what that database is for.
 
 **Task order is load-bearing.** Task 1's migration renames `Class_teacherRoomId_fkey`, which Task 2 fixes, and makes `POST /api/classes` refuse a legal write, which Task 3 fixes. Running them out of order leaves the tree red for reasons unrelated to the task under review.
 
@@ -407,16 +423,26 @@ Expected: PASS, every case.
 
 - [ ] **Step 8: Prove the CHECK bites**
 
-Drop it, re-run, restore, re-run. Against `ethical_yoga_test`, never dev:
+Drop it, re-run, restore, re-run — **on the scratch database**, per Global Constraints. Dropping a constraint on `ethical_yoga_test` would give any concurrent session's unit run wrong answers.
 
 ```bash
-psql "$DATABASE_URL_TEST" -c 'ALTER TABLE "Class" DROP CONSTRAINT "Class_live_needs_open_room";'
-npx vitest run --project unit src/services/class-room-constraint.test.ts   # expect FAIL
-psql "$DATABASE_URL_TEST" -c 'ALTER TABLE "Class" ADD CONSTRAINT "Class_live_needs_open_room" CHECK (NOT ("status" IN (''open'',''in_progress'') AND "entryLive" AND "roomArchived"));'
-npx vitest run --project unit src/services/class-room-constraint.test.ts   # expect PASS
+export SCRATCH="postgresql://yoga:<pw>@localhost:5432/ethical_yoga_scratch_339"
+
+# Provision + migrate by running the suite once; expect PASS.
+DATABASE_URL_TEST="$SCRATCH" npx vitest run --project unit src/services/class-room-constraint.test.ts
+
+docker exec fairyoga-db-1 psql -U yoga -d ethical_yoga_scratch_339 \
+  -c 'ALTER TABLE "Class" DROP CONSTRAINT "Class_live_needs_open_room";'
+DATABASE_URL_TEST="$SCRATCH" npx vitest run --project unit src/services/class-room-constraint.test.ts
+#   expect FAIL — every "refuses" case now resolves
+
+docker exec fairyoga-db-1 psql -U yoga -d ethical_yoga_scratch_339 \
+  -c 'ALTER TABLE "Class" ADD CONSTRAINT "Class_live_needs_open_room" CHECK (NOT ("status" IN (''open'',''in_progress'') AND "entryLive" AND "roomArchived"));'
+DATABASE_URL_TEST="$SCRATCH" npx vitest run --project unit src/services/class-room-constraint.test.ts
+#   expect PASS again
 ```
 
-Record the exact failure text. Do the same for each widened foreign key, narrowing it to its old column list and confirming the two "refuses a mirror that disagrees" cases redden.
+Record the exact failure text. Then do the same for each widened foreign key — narrow it to its old column list and confirm the matching "refuses a mirror that disagrees" case reddens. Both foreign keys get their own mutation: a proof against one says nothing about the other, and `entryLive` is the one whose cascade is novel.
 
 - [ ] **Step 9: Prove the remediation actually remediates**
 
@@ -898,7 +924,7 @@ Expected: PASS.
 
 - [ ] **Step 7: Prove both race tests bite — the negative control**
 
-Drop `Class_live_needs_open_room` on `ethical_yoga_test`, re-run `class-room-race.test.ts`, and confirm both cases fail **by reproducing their original bugs** rather than merely going red:
+Drop `Class_live_needs_open_room` **on the scratch database** (Global Constraints), re-run `class-room-race.test.ts` against it, and confirm both cases fail **by reproducing their original bugs** rather than merely going red:
 
 - the archive case: the archive *succeeds* and the room ends up `isArchived = true` while holding an `open` class;
 - the publish case: the publish *succeeds* and the class ends up `open` in a room that is `isArchived = true`.
