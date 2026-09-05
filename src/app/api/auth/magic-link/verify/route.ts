@@ -17,6 +17,7 @@ import {
 } from '@/lib/auth';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
+import { log } from '@/lib/log';
 import {
   magicLinkVerifySchema,
   isSafeRelativePath,
@@ -81,6 +82,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   if (!resolved) {
+    // The token was real, unexpired and for this browser — and consuming it
+    // has already deleted every other live token for the address. So the
+    // reader is stranded behind a burned link and a fresh one burns the same
+    // way, which is worth a line even though the client deliberately treats
+    // every 400 here as ordinary. `purpose` and nothing else: the address is
+    // the one thing an operator must not need, and `signupTicketFor`'s own
+    // refusal one layer down logs the same way for the same reason.
+    log.error(
+      { purpose },
+      'a magic link verified but its address has no account; the link is spent and the reader is stranded',
+    );
     return respondError('Account not found', MAGIC_LINK_REFUSED_STATUS);
   }
 
