@@ -287,8 +287,7 @@ cases → both together.
     });
 
     /**
-     * The silent branch, and the only test in this file that names 401 in its
-     * own body.
+     * The silent branch.
      *
      * Three deliberate choices separate it from `stays silent for the spent
      * link that is the ordinary case`, which pins a different rule that today
