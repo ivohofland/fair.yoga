@@ -690,7 +690,10 @@ describe('lockClassRowsOrdered', () => {
       prisma.$transaction(async (tx) => {
         await tx.$queryRaw`
           SELECT c.id FROM "Class" c
-          WHERE (c.id IN (SELECT "classId" FROM "WaitlistEntry" ${subqueryLock}))
+          WHERE (c.id IN (
+            SELECT "classId" FROM "WaitlistEntry"
+            WHERE "classId" IN (${lowClassId}, ${highClassId}) ${subqueryLock}
+          ))
           ORDER BY c.id FOR UPDATE OF c`;
         const held = await tx.$queryRaw<Array<{ mode: string }>>`
           SELECT mode FROM pg_locks
