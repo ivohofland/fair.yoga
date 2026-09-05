@@ -715,5 +715,93 @@ describe('VerifyPage', () => {
         '[verify] no answer within the ceiling; giving up',
       );
     });
+
+    /**
+     * The one-way exit, on the branch where getting it wrong is worst.
+     *
+     * A success landing after the ceiling would apply the success state AND
+     * schedule its redirect — and that redirect's timer is not cleared on
+     * unmount, so it fires wherever the reader has got to by then. Before this
+     * page had a button on the give-up screen there was nowhere for them to
+     * have got to, which is why the hazard arrives with the fix.
+     */
+    it('refuses an outcome that arrives after it has given up', async () => {
+      vi.useFakeTimers();
+      silenceErrors();
+      const deferred = deferredFetch(signedInBody);
+      render(<VerifyPage />);
+
+      await advance(VERIFY_CEILING_MS);
+      expect(screen.getByText('Connection problem')).toBeInTheDocument();
+
+      deferred.resolve();
+      await advance(RAIL_STAYS_FOR_MS + 900);
+      expect(screen.getByText('Connection problem')).toBeInTheDocument();
+      expect(screen.queryByText("You're signed in.")).not.toBeInTheDocument();
+      expect(push).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The same rule on the failing branch: a late rejection must not turn the
+     * give-up screen into the spent-link screen, which would tell the reader
+     * something this page cannot know.
+     */
+    it('refuses a late failure too, rather than blaming the link', async () => {
+      vi.useFakeTimers();
+      silenceErrors();
+      let rejectVerify!: (value: unknown) => void;
+      const pending = new Promise((r) => {
+        rejectVerify = r;
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockReturnValueOnce(pending).mockResolvedValue({ ok: false }),
+      );
+      render(<VerifyPage />);
+
+      await advance(VERIFY_CEILING_MS);
+      expect(screen.getByText('Connection problem')).toBeInTheDocument();
+
+      rejectVerify({ ok: false });
+      await advance(RAIL_STAYS_FOR_MS);
+      expect(screen.getByText('Connection problem')).toBeInTheDocument();
+      expect(screen.queryByText('Verification failed')).not.toBeInTheDocument();
+    });
+
+    /**
+     * Hygiene rather than correctness — the refusals above are what keep a
+     * late answer off the screen. But a page saying it could not reach the
+     * server while still holding an open request to that server is asserting
+     * something it has not acted on, and the aborted signal is a positive
+     * observable where the cases above can only assert absence.
+     */
+    it('abandons the request it has stopped waiting for', async () => {
+      vi.useFakeTimers();
+      silenceErrors();
+      const fetchMock = vi.fn().mockReturnValue(new Promise(() => {}));
+      vi.stubGlobal('fetch', fetchMock);
+      render(<VerifyPage />);
+
+      const { signal } = fetchMock.mock.calls[0]![1]! as { signal: AbortSignal };
+      expect(signal.aborted).toBe(false);
+
+      await advance(VERIFY_CEILING_MS);
+      expect(signal.aborted).toBe(true);
+    });
+
+    /** An abandoned verification must not go on to probe the session: the
+     *  answer is one nothing may act on, and its failure would log a fault
+     *  that did not happen. */
+    it('does not probe the session for a verification it abandoned', async () => {
+      vi.useFakeTimers();
+      silenceErrors();
+      const fetchMock = vi.fn().mockReturnValue(new Promise(() => {}));
+      vi.stubGlobal('fetch', fetchMock);
+      render(<VerifyPage />);
+
+      await advance(VERIFY_CEILING_MS);
+      await advance(RAIL_STAYS_FOR_MS);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
   });
 });
