@@ -228,9 +228,11 @@ const LINE_COMMENT = /--[^\n]*/g;
  * may contain a `--`; strip line comments first and that `--` swallows the
  * block's closing delimiter along with the rest of its line, leaving the
  * opening delimiter dangling and — for a detector reading the result — erasing
- * whatever statement followed it.
- * `20260804200809_move_block_out_of_invitation` opens with a block comment, so
- * a stripper that gets this backwards has something real to be wrong about.
+ * whatever statement followed it. The tether is a fixture rather than a live
+ * migration: `src/lib/migration-remediation-trace.test.ts` strips a block
+ * comment holding a `--` in front of an `UPDATE` and asserts the `UPDATE`
+ * survives, so swapping the two `.replace` calls below fails a test rather than
+ * passing quietly.
  *
  * A comment stripper, NOT a SQL parser. A `--` inside a string literal or a
  * dollar-quoted body is treated as opening a comment, and everything after it
@@ -259,11 +261,16 @@ export function stripSqlComments(sql: string): string {
 // `UPDATE` / `DELETE FROM` immediately followed by a quoted identifier. The
 // quote is what keeps `ON UPDATE CASCADE`, `FOR UPDATE OF c` and
 // `FOR UPDATE OF "Class"` out: in each of those a word stands between the verb
-// and any quoted name.
-const DATA_CHANGE = /\bUPDATE\s+"|\bDELETE\s+FROM\s+"/;
-const RAISE_NOTICE = /\bRAISE\s+NOTICE\b/;
+// and any quoted name, whichever case it is written in.
+//
+// CASE-INSENSITIVE ON BOTH, because lowercase keywords are legal SQL and a
+// case-sensitive pattern reads `update "X" set …` as no write at all — silence
+// on a real data change, which is the expensive direction.
+const DATA_CHANGE = /\bUPDATE\s+"|\bDELETE\s+FROM\s+"/i;
+const RAISE_NOTICE = /\bRAISE\s+NOTICE\b/i;
 // A colon, then something that is not whitespace, on the same line — a bare
-// marker with an empty reason exempts nothing.
+// marker with an empty reason exempts nothing. Case-sensitive, unlike the two
+// above: the marker is this rule's own spelling, not SQL's.
 const NO_NOTICE_MARKER = /--[ \t]*DML WITHOUT NOTICE:[ \t]*\S/;
 
 /**
@@ -280,6 +287,15 @@ const NO_NOTICE_MARKER = /--[ \t]*DML WITHOUT NOTICE:[ \t]*\S/;
  * over-trigger costs the author one comment line stating why their statement
  * needs no announcement; an under-trigger costs a data change nobody can
  * discover afterwards, which is the whole reason the rule exists.
+ *
+ * THE EXEMPTION IS PER FILE, NOT PER STATEMENT, and that bounds the guarantee.
+ * One real `RAISE NOTICE` anywhere in a migration exempts every data change in
+ * it, so a silent remediation added beside an announced one passes this rule.
+ * Pairing each write with its own notice needs a plpgsql-aware statement
+ * splitter — a much larger thing than this — and is deliberately not built.
+ * The recognised shapes bound it too: `UPDATE "…"` and `DELETE FROM "…"`, so a
+ * schema-qualified, `TRUNCATE`, `MERGE` or `ON CONFLICT DO UPDATE` write is not
+ * seen.
  *
  * WHICH TEXT EACH OF THE THREE READS IS THE SUBTLE PART:
  *

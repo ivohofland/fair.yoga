@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { migrationSqlFiles, untracedDataChanges } from '../../tests/migration-sql';
+import { migrationSqlFiles, stripSqlComments, untracedDataChanges } from '../../tests/migration-sql';
 
 /**
  * The last migration on `main` when this rule landed, and the only thing
@@ -28,6 +28,24 @@ UPDATE "ScheduleRule" sr SET "isActive" = false
   FROM "ClassTemplate" ct JOIN "TeacherRoom" tr ON tr."id" = ct."teacherRoomId"
  WHERE ct."scheduleRuleId" = sr."id" AND sr."isActive" AND tr."isArchived";
 `;
+
+/**
+ * The same remediation in lowercase, which Postgres accepts exactly as readily
+ * and which a case-sensitive pattern would read as no write at all.
+ */
+const UNTRACED_LOWERCASE_SQL = `
+update "ScheduleRule" sr set "isActive" = false
+  from "ClassTemplate" ct join "TeacherRoom" tr on tr."id" = ct."teacherRoomId"
+ where ct."scheduleRuleId" = sr."id" and sr."isActive" and tr."isArchived";
+`;
+
+/**
+ * A block comment holding a `--`, immediately in front of a data change and on
+ * its line. Stripping line comments first would take the block's closing
+ * delimiter and the `UPDATE` behind it together.
+ */
+const DASH_DASH_IN_A_BLOCK_COMMENT_SQL =
+  '/* -- */ UPDATE "ScheduleRule" SET "isActive" = false;';
 
 /**
  * The hazard the `RAISE NOTICE` detection has to survive, transcribed from the
@@ -83,21 +101,28 @@ UPDATE "ClassTemplate" SET "kind" = 'regular';
 `;
 
 /**
- * The two phrases this tree is full of that a careless pattern would read as
- * data changes, both here in the forms they actually take: every generated
- * foreign key in `prisma/migrations/` ends `ON UPDATE CASCADE`, and
- * `src/lib/db-locks.ts` writes `FOR UPDATE OF` with a bare alias and would be
- * equally correct writing a quoted one. This migration changes no data at all.
+ * The two phrases a careless pattern would read as data changes, in the forms
+ * they actually take: `ON UPDATE CASCADE` on a generated foreign key, and the
+ * `FOR UPDATE OF` this codebase locks rows with (`src/lib/db-locks.ts` writes a
+ * bare alias; a quoted identifier would be equally correct). The quote rather
+ * than the verb is what keeps them out, which is what makes them safe to match
+ * case-insensitively — so both appear here lowercase as well. This migration
+ * changes no data at all.
  */
 const NO_DATA_CHANGE_SQL = `
 ALTER TABLE "Class" ADD CONSTRAINT "Class_teacherRoomId_fkey"
   FOREIGN KEY ("teacherRoomId") REFERENCES "TeacherRoom"("id")
   ON DELETE RESTRICT ON UPDATE CASCADE;
 
+ALTER TABLE "Class" ADD CONSTRAINT "Class_teacherId_fkey"
+  FOREIGN KEY ("teacherId") REFERENCES "Teacher"("id")
+  on delete restrict on update cascade;
+
 CREATE OR REPLACE FUNCTION synthetic_lock() RETURNS void AS $$
 BEGIN
   PERFORM 1 FROM "Class" c WHERE c."id" = 'x' FOR UPDATE OF c;
   PERFORM 1 FROM "Class" "Class" WHERE "Class"."id" = 'x' FOR UPDATE OF "Class";
+  PERFORM 1 FROM "Class" "Class" WHERE "Class"."id" = 'x' for update of "Class";
 END;
 $$ LANGUAGE plpgsql;
 `;
@@ -109,11 +134,10 @@ describe('untraced data changes in migrations', () => {
    *
    * What this is for is the class of defect issue #463 names: #272's
    * `20260827120000_template_room_archive_invariant` paused live templates
-   * with a bare `UPDATE` and left nothing behind — no notice, no audit row,
-   * and not even an `updatedAt` bump, since that column is `@updatedAt` and
-   * Prisma enforces it client-side where raw SQL never reaches. Nothing in
-   * `.github/workflows/ci.yml` inspects migration SQL for this; this is the
-   * gate, and it is the only one.
+   * with a bare `UPDATE` and left no trace an operator can query. What it did,
+   * why it cannot be repaired where it sits, and what an operator can still
+   * run are in `docs/lock-order.md`, under "The migration comments that this
+   * document owns".
    *
    * Reads files; touches no database.
    */
@@ -122,17 +146,33 @@ describe('untraced data changes in migrations', () => {
   });
 
   /**
-   * NON-VACUITY, and it is the assertion that keeps the one above honest.
+   * NON-VACUITY, and these two are what keep the one above honest.
    *
-   * No migration sorts after the cutoff today, so the sweep is green whether
-   * the rule works or not. A typo in the constant, or a future author bumping
-   * it forward to silence a red build, disables the rule while every other
-   * assertion here stays green — the cutoff naming a real directory is the
-   * cheapest thing that catches the typo, and the diff on this line is what
-   * catches the bump.
+   * Migrations do sort after the cutoff, and one of them rewrites rows and is
+   * clean only because it announces it — so the assertion above exercises both
+   * the data-change detection and the `RAISE NOTICE` exemption against real
+   * SQL rather than passing on an empty set.
+   *
+   * Two ways to lose that, and one assertion each. A cutoff naming no
+   * directory is a typo; a cutoff moved past the last migration carrying a
+   * data change is the bump a future author reaches for to silence a red
+   * build. The second test neutralises every `RAISE NOTICE` in the tree and
+   * runs the rule at the same cutoff: with the exemption withdrawn the rule
+   * must report something, which it can only do if a bound migration writes.
    */
   it('has a cutoff that names a migration in the tree', () => {
     expect(migrationSqlFiles().map((m) => m.name)).toContain(CUTOFF);
+  });
+
+  it('has a cutoff that still binds a migration carrying a data change', () => {
+    const files = migrationSqlFiles();
+    expect(files.filter((m) => m.name > CUTOFF)).not.toHaveLength(0);
+
+    const silenced = files.map(({ name, sql }) => ({
+      name,
+      sql: sql.replace(/RAISE\s+NOTICE/gi, 'RAISE_NOTHING'),
+    }));
+    expect(untracedDataChanges(silenced, CUTOFF)).not.toEqual([]);
   });
 
   /**
@@ -168,15 +208,13 @@ describe('untraced data changes in migrations', () => {
 
   /**
    * COMMENT STRIPPING ON THE NOTICE SIDE, against real SQL rather than a
-   * fixture — and the correction to this branch's own design doc, which
-   * recorded this migration as carrying a real `RAISE NOTICE`.
+   * fixture.
    *
-   * It does not. `20260825065109_schedule_rule_backfill` names `RAISE NOTICE`
-   * in a comment saying `prisma db execute` swallows one, and what it actually
-   * raises is a `RAISE EXCEPTION` pre-flight that aborts the migration — an
-   * abort, not a trace of the two `UPDATE`s further down. So the live tree's
-   * only instance of the literal text is the hazard, not the compliance, and
-   * a detector reading raw text would exempt it.
+   * `20260825065109_schedule_rule_backfill` names `RAISE NOTICE` in a comment
+   * saying `prisma db execute` swallows one, and raises none. What it does
+   * raise is a `RAISE EXCEPTION` pre-flight, which aborts the migration rather
+   * than reporting what its `UPDATE`s did — so a detector reading raw text
+   * would exempt it on the strength of the comment.
    */
   it('reports a migration whose only RAISE NOTICE sits in a comment', () => {
     expect(untracedDataChanges(migrationSqlFiles(), UNBOUNDED)).toContain(
@@ -194,6 +232,7 @@ describe('untraced data changes in migrations', () => {
    */
   it.each<[string, string, string[]]>([
     ['data change with neither notice nor marker', UNTRACED_SQL, ['20990101000000_case']],
+    ['the same data change in lowercase', UNTRACED_LOWERCASE_SQL, ['20990101000000_case']],
     ['a RAISE NOTICE that is only a comment', NOTICE_ONLY_IN_A_COMMENT_SQL, ['20990101000000_case']],
     ['the marker with no reason after the colon', MARKED_WITHOUT_A_REASON_SQL, ['20990101000000_case']],
     ['a real RAISE NOTICE', REAL_NOTICE_SQL, []],
@@ -216,5 +255,41 @@ describe('untraced data changes in migrations', () => {
 
     expect(untracedDataChanges(older, CUTOFF)).toEqual([]);
     expect(untracedDataChanges(older, UNBOUNDED)).toEqual(['20260101000000_before_the_cutoff']);
+  });
+});
+
+/**
+ * The stripper the rule reads through, tested directly because the two things
+ * its docblock calls load-bearing — the strip ORDER and what a stripped comment
+ * leaves behind — are otherwise reachable only through a sweep that a wrong
+ * answer here leaves green.
+ */
+describe('stripSqlComments', () => {
+  /**
+   * THE STRIP ORDER, PINNED. Swap the two `.replace` calls and the `--` inside
+   * the block comment swallows the block's closing delimiter and the `UPDATE`
+   * behind it, leaving text that writes nothing.
+   */
+  it('keeps a statement a block comment holding a `--` sits in front of', () => {
+    expect(stripSqlComments(DASH_DASH_IN_A_BLOCK_COMMENT_SQL)).toContain('UPDATE "ScheduleRule"');
+  });
+
+  /** And the consequence that matters: the rule still reports that write. */
+  it('leaves such a statement visible to the rule', () => {
+    const migration = [{ name: '20990101000000_case', sql: DASH_DASH_IN_A_BLOCK_COMMENT_SQL }];
+
+    expect(untracedDataChanges(migration, CUTOFF)).toEqual(['20990101000000_case']);
+  });
+
+  /**
+   * A block becomes one space rather than nothing, so a comment between two
+   * tokens cannot fuse them into a third no pattern matches; a line comment
+   * keeps its newline for the same reason.
+   */
+  it.each<[string, string, string]>([
+    ['a block comment becomes a single space', 'UPDATE/* c */"X"', 'UPDATE "X"'],
+    ['a line comment keeps its newline', '-- UPDATE "X"\nSELECT 1;', '\nSELECT 1;'],
+  ])('%s', (_case, sql, expected) => {
+    expect(stripSqlComments(sql)).toBe(expected);
   });
 });
