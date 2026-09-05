@@ -7,6 +7,60 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 
 /**
+ * The `Class` pre-lock, identified by the statement's own shape.
+ *
+ * NOT by a bound value. `values[0] === teacherId` names a SET of statements —
+ * every one whose first bind is that id — and this file keyed on exactly that
+ * until the set grew underneath it. Measured 2026-09-05: three of
+ * `deleteTeacherAccount`'s statements bind `teacherId` first, so the handshake
+ * fired on #229's `ClassTemplate` pre-lock and deleting the `Class` pre-lock
+ * passed green.
+ *
+ * `lockClassRowsOrdered`'s statement is the only one carrying BOTH fragments,
+ * and each excludes a different sibling: the template pre-locks are
+ * `FROM "ClassTemplate" ct` (which does contain `FOR UPDATE OF c`, as a prefix
+ * of `OF ct`), and the entries lock is `JOIN "Class" c … FOR UPDATE OF e`.
+ * That reasoning is argued here and ASSERTED by the firing counts below — a
+ * future statement that matches drives one past 1 and fails by name.
+ */
+const isClassPreLock = (sql: string): boolean =>
+  sql.includes('FROM "Class" c') && sql.includes('FOR UPDATE OF c');
+
+/**
+ * How long a handshake may wait before the test says which one never fired.
+ *
+ * Measured 2026-09-05 against `ethical_yoga_test`: the `Class` pre-lock is
+ * issued 5-13ms after the erasure call (13ms cold, 5-6ms warm, over five
+ * runs), so this is ~150x the cold worst case. Its whole job is to replace a
+ * 30_000ms vitest timeout that names nothing.
+ */
+const HANDSHAKE_TIMEOUT_MS = 2_000;
+
+/**
+ * Await a handshake, or fail naming the statement that never came.
+ *
+ * The bare `await` this replaces could not fail: a handshake that never fires
+ * leaves the test hanging until vitest kills it at 30s, and the message it
+ * dies with names the `it`, not the missing statement.
+ */
+async function awaitHandshake(signal: Promise<void>, label: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      signal,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} never issued within ${HANDSHAKE_TIMEOUT_MS}ms`)),
+          HANDSHAKE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
  * ITS OWN FILE BECAUSE OF ITS TIER, not because of its subject — the docblock
  * below covers that. The case here asserts a staged race ends in NEITHER
  * `40P01` NOR `55P03`, which is the second kind `LOCK_CONTENTION_TESTS`
@@ -292,6 +346,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
 
     await Promise.all([holderHighHasRows, holderLowHasRows]);
 
+    let teacherPreLockFirings = 0;
     let preLockReached!: () => void;
     const preLockReachedPromise = new Promise<void>((resolve) => {
       preLockReached = resolve;
@@ -300,14 +355,10 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     const teacherRacing = prisma.$extends({
       query: {
         async $queryRaw({ args, query }) {
-          // Keyed on the query's own bound value, not on call order — the
-          // house rule, and `template-lock-order.test.ts`'s own hooked clients
-          // are the live example of it (the citation here was
-          // `template-sync.test.ts` until #194 deleted that file with its
-          // function). `teacherId` is the one
-          // bind `deleteTeacherAccount`'s ordered pre-lock carries since
-          // #237; its other `$queryRaw` calls bind class ids.
-          if (args.values[0] === teacherId) {
+          // Keyed on the statement's shape, not on its binds — see
+          // `isClassPreLock` above for the measurement that forced that.
+          if (isClassPreLock(args.sql)) {
+            teacherPreLockFirings += 1;
             preLockReached();
           }
           return query(args);
@@ -345,6 +396,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       // the real database — same cast as the other hooks in this file.
     }) as unknown as PrismaClient;
 
+    let studentPreLockFirings = 0;
     let studentPreLockReached!: () => void;
     const studentPreLockReachedPromise = new Promise<void>((resolve) => {
       studentPreLockReached = resolve;
@@ -353,10 +405,13 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     const studentRacing = prisma.$extends({
       query: {
         async $queryRaw({ args, query }) {
-          // Same key as the teacher's hook — `studentId` is the one bind
-          // `deleteStudentAccount`'s pre-lock join carries since #237, and its
-          // other `$queryRaw` call is `setLockTimeout`, an `$executeRawUnsafe`.
-          if (args.values[0] === studentId) {
+          // Same discriminator as the teacher's hook. This side keyed on
+          // `studentId` and fired correctly, but only because
+          // `deleteStudentAccount` happens to have exactly one statement
+          // binding it — a property of today's call graph, not a guarantee,
+          // and one sibling statement away from the teacher side's failure.
+          if (isClassPreLock(args.sql)) {
+            studentPreLockFirings += 1;
             studentPreLockReached();
           }
           return query(args);
@@ -401,7 +456,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
 
     // Start the student erasure once the teacher's pre-lock is in flight, so
     // both statements are running against the holders before either releases.
-    await preLockReachedPromise;
+    await awaitHandshake(preLockReachedPromise, 'teacher Class pre-lock');
     // Time for the teacher's pre-lock to reach and block on its first row.
     await new Promise((r) => setTimeout(r, 200));
 
@@ -420,7 +475,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // With the shared `ORDER BY` both erasures ask [LOW, HIGH], park on the
     // same row, and serialise. All waits sit comfortably inside the helper's
     // shared 2s `lock_timeout`.
-    await studentPreLockReachedPromise;
+    await awaitHandshake(studentPreLockReachedPromise, 'student Class pre-lock');
     await new Promise((r) => setTimeout(r, 400));
     releaseLow();
     await holderLow;
