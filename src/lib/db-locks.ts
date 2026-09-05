@@ -309,6 +309,79 @@ export function statusInList(statuses: readonly ClassStatus[]): Prisma.Sql {
 }
 
 /**
+ * `Class` to its `CalendarEntry`, for a `ClassLockSource.join`.
+ *
+ * A constant rather than three hand-typed copies: a join condition a caller
+ * cannot mistype is one that cannot silently match zero rows and take zero
+ * locks, which is a failure the database does not report — the statement
+ * succeeds and returns `[]`.
+ */
+export const CLASS_TO_ENTRY_JOIN = Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`;
+
+/**
+ * `Class` to the waitlist entries on it, for a `ClassLockSource.join`. Same
+ * reasoning as `CLASS_TO_ENTRY_JOIN` above.
+ *
+ * `FOR UPDATE OF c` is what keeps this join from also locking the
+ * `WaitlistEntry` rows it reaches — pinned by 'locks the Class rows and NOT
+ * the WaitlistEntry rows the join reaches' in `db-locks.test.ts`.
+ */
+export const CLASS_TO_WAITLIST_JOIN = Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`;
+
+/**
+ * What `lockClassRowsOrdered` locks.
+ *
+ * Composed `Prisma.Sql` fragments rather than a union of typed selectors, and
+ * that was the decision #237 existed to make. A selector union cannot go
+ * stale — the compiler forces a member per site — but it IS this helper's
+ * caller list re-expressed as a type, and it would make this module know
+ * every one of its callers by name and carry their domain types. The
+ * predicate was never what went stale; the site list was.
+ */
+export interface ClassLockSource {
+  /**
+   * Extra tables the `where` may name, spliced between `FROM "Class" c` and
+   * the `WHERE`. Prefer `CLASS_TO_ENTRY_JOIN` / `CLASS_TO_WAITLIST_JOIN`
+   * above; compose both with `Prisma.sql`.
+   *
+   * AN INNER JOIN IS A FILTER, and the dependency runs the opposite way from
+   * how this reads. Supplying one does not merely widen the namespace the
+   * `where` may reference — it NARROWS THE LOCK SET to classes having at
+   * least one matching row. `{ join: CLASS_TO_WAITLIST_JOIN, where: c."teacherId" = … }`
+   * locks that teacher's classes THAT HAVE A WAITLIST ENTRY, not that
+   * teacher's classes. A `LEFT JOIN` would not narrow, and would widen the
+   * `ON` clause's reach past what any caller here needs; no caller uses one.
+   */
+  join?: Prisma.Sql;
+  /**
+   * The predicate, over `c` plus whatever `join` brings into scope.
+   *
+   * Parenthesised before splicing, so `OR`/`AND` precedence inside it is
+   * yours and cannot combine with anything this helper adds. Screened for the
+   * clauses this helper owns — see `ILLEGAL_IN_FRAGMENT` below.
+   *
+   * Values are BOUND: `Prisma.sql` tagged templates merge their values into
+   * this statement in source order, verified against Postgres, so nothing
+   * here is interpolated unless a caller reaches for `Prisma.raw`. In `src/`
+   * that is `statusInList` above, whose parameter type is what makes it safe.
+   */
+  where: Prisma.Sql;
+  /**
+   * Also lock each matched class's `CalendarEntry` row, in a second statement
+   * after every `Class` lock — the same order and for the same reason
+   * `lockClassRow` takes its two.
+   *
+   * OPT-IN rather than automatic, because widening every call site by reflex
+   * adds wait edges nothing needs, and because the answer is per-caller. Ask
+   * it of the whole TRANSACTION, not of this statement: does anything in it
+   * read or write the entry's `date`, `startTime`, `durationMinutes` or
+   * `cancelledAt`? Each call site records its answer as a `VERDICT (#327)`
+   * comment beside the transaction the question is about.
+   */
+  entries?: boolean;
+}
+
+/**
  * Locks many `Class` rows in one statement, ascending by id, with a bounded
  * wait — and hands back the ids it holds.
  *
@@ -361,12 +434,7 @@ export function statusInList(statuses: readonly ClassStatus[]): Prisma.Sql {
  *     Order is preserved: `Set` iterates in insertion order and the rows
  *     arrive ascending.
  *
- * The predicate is a composed `Prisma.Sql`, not a typed selector, and that was
- * the decision this issue existed to make. A union of typed selectors cannot
- * go stale — the compiler forces a member per site — but it IS the five-row
- * table re-expressed as a type, and it would make this module know every one
- * of its callers by name and carry their domain types. The predicate was never
- * what went stale; the site list was. A fragment is also not a loophole: a
+ * A fragment is also not a loophole: a
  * caller that references `w.` without supplying a `join`, or writes its own
  * `ORDER BY` or `FOR UPDATE`, gets a SQL error, not a silently wrong lock.
  * Parameters are bound — `Prisma.sql` tagged templates merge their values into
@@ -391,14 +459,6 @@ export function statusInList(statuses: readonly ClassStatus[]): Prisma.Sql {
  * (`class-template-lifecycle.ts`), and the delete it brackets is the shared
  * one in `archiveOrUnarchiveRule` (`rule-lifecycle.ts`). Callers that do
  * not need them may ignore the return value; the lock is the point.
- *
- * `entries: true` ADDS the `CalendarEntry` rows, in a second statement, after
- * every `Class` lock — the same order and for the same reason `lockClassRow`
- * above takes its two. It is OPT-IN rather than automatic because widening
- * every call site by reflex adds wait edges nothing needs, and because the
- * answer is per-caller: ask it of the whole TRANSACTION, not of this
- * statement — does anything in it read or write the entry's `date`,
- * `startTime`, `durationMinutes` or `cancelledAt`?
  *
  * NO ROSTER HERE, for the reason the register above spends a paragraph on:
  * a caller list kept in this file goes stale, and nothing that counts can
@@ -426,7 +486,7 @@ export function statusInList(statuses: readonly ClassStatus[]): Prisma.Sql {
  */
 export async function lockClassRowsOrdered(
   tx: TransactionClientOnly,
-  source: { join?: Prisma.Sql; where: Prisma.Sql; entries?: boolean },
+  source: ClassLockSource,
 ): Promise<string[]> {
   await setLockTimeout(tx);
   const rows = await tx.$queryRaw<Array<{ id: string }>>`

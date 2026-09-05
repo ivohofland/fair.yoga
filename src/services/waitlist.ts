@@ -13,7 +13,13 @@ import { classStartInstant } from '@/lib/timezone';
 import { createBulkNotifications } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
 import { linkTeacherStudent } from './roster-link';
-import { lockClassRow, lockClassRowsOrdered, type TransactionClientOnly } from '@/lib/db-locks';
+import {
+  CLASS_TO_ENTRY_JOIN,
+  CLASS_TO_WAITLIST_JOIN,
+  lockClassRow,
+  lockClassRowsOrdered,
+  type TransactionClientOnly,
+} from '@/lib/db-locks';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { readSeatCount } from './capacity';
 // pino, and server-only. Safe here and CHECKED rather than assumed: no
@@ -1084,8 +1090,7 @@ export async function withdrawWaitingEntriesForTeacher(
   // there. The join reaches `CalendarEntry` because `teacherId` lives on it
   // now, which is a predicate, not a lock.
   const classIds = await lockClassRowsOrdered(tx, {
-    join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id
-      JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
+    join: Prisma.sql`${CLASS_TO_WAITLIST_JOIN} ${CLASS_TO_ENTRY_JOIN}`,
     where: Prisma.sql`e."teacherId" = ${input.teacherId}
       AND w."studentId" = ${input.studentId}
       AND w.status = 'waiting'`,
