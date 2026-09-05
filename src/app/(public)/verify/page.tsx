@@ -428,6 +428,10 @@ export const RAIL_HEADING = 'Checking your link';
  * an outcome runs inside the caller's promise chain and a throw lands in its
  * `.catch`; held, it runs from a timer with no such backstop, and the reader
  * whose token is already spent would be left on a screen that never resolves.
+ *
+ * @param onCeiling - fires once, when the ceiling's own timer expires with the
+ * verification still unresolved. This is the hook's only unprompted exit: every
+ * other one answers a fetch, and this one answers the absence of an answer.
  */
 function useVerifyingRail(
   enabled: boolean,
@@ -440,7 +444,11 @@ function useVerifyingRail(
   const [railVisible, setRailVisible] = useState(false);
   /** True while the rail is on screen and still owed its minimum. */
   const owed = useRef(false);
-  /** True once the ceiling has taken this state's one exit. */
+  /** True once the ceiling has taken this state's one exit. Reset only in the
+   *  arming effect's cleanup, which `[enabled, run]` re-runs on presence, not
+   *  on token VALUE — so this can only be reached by unmount today, since a
+   *  magic link is always a fresh document load and nothing navigates this
+   *  page from one token to another in place. */
   const givenUp = useRef(false);
   const waiting = useRef<(() => void) | null>(null);
   const appearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -557,6 +565,12 @@ function VerifyContent() {
   const [sessionEnded, setSessionEnded] = useState(false);
   const [home, setHome] = useState<string>('/schedule');
   const [handoffCode, setHandoffCode] = useState<string>('');
+  // Holds only the LATEST controller: the verification effect below has no
+  // cleanup (abort-on-unmount is out of scope here), so React's development
+  // double-mount runs it twice and this ref is overwritten by the second run.
+  // If the ceiling fires, it aborts only that second fetch — the first's is
+  // left running unaborted, and its eventual `settle` call lands as a no-op
+  // behind `givenUp` rather than as a second, contradicting outcome.
   const inFlight = useRef<AbortController | null>(null);
   // `Boolean(token)`, matching the status initializer above and the fetch
   // guard below: `?token=` yields '', which is not a verification worth
@@ -643,6 +657,10 @@ function VerifyContent() {
             return;
           }
         } catch (err) {
+          // Our own ceiling aborted this probe; the give-up screen already
+          // says so, and logging it again would blame the probe for
+          // something we did to it.
+          if (controller.signal.aborted) return;
           // Reaching here means the probe itself misbehaved — the request
           // failed, or a 200 carried something that is not the shape this
           // reads. Worth a line, unlike the rejection that brought us into
