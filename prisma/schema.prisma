@@ -453,6 +453,35 @@ model Class {
   calendarEntryId      String          @unique
   kind                 ClassFamily
   teacherRoomId        String
+
+  /// MIRRORS. Neither column is state this row owns, and neither may disagree
+  /// with the parent it mirrors. `entryLive` mirrors `CalendarEntry.live`
+  /// (`cancelledAt IS NULL`, generated); `roomArchived` mirrors
+  /// `TeacherRoom.isArchived`.
+  ///
+  /// Neither can drift, and that is enforced rather than intended: each is one
+  /// column of a composite foreign key whose remaining columns are the
+  /// parent's key, so a row claiming a value its parent does not hold is
+  /// refused with `23503` instead of stored, and `ON UPDATE CASCADE` rewrites
+  /// every mirroring child in the same statement that changes the parent.
+  ///
+  /// They are not written the same way. `entryLive` is maintained by Postgres
+  /// alone: a class is created with a fresh, uncancelled entry, so the
+  /// column's default is the only value it can start with, and nothing writes
+  /// it afterwards. `roomArchived` is written by the two create paths, which
+  /// COPY the room's value — copy rather than assert, unlike
+  /// `ClassTemplate.roomArchived`, because a `draft` may legally sit in an
+  /// archived room. Neither is written by an update: no path moves a class
+  /// between rooms (`updateClassSchema` carries no `teacherRoomId`), and
+  /// cancellation writes the entry.
+  ///
+  /// They exist so a predicate spanning three tables can be checked against
+  /// one row. That check is `Class_live_needs_open_room`, hand-authored in the
+  /// migration because Prisma cannot express it — the constraint that makes "a
+  /// live class may not sit in an archived room" unrepresentable rather than
+  /// merely guarded (issue 339).
+  entryLive    Boolean @default(true)
+  roomArchived Boolean @default(false)
   description          String?         @db.Text
   roomCost             Decimal         @db.Decimal(10, 2)
   minRate              Decimal         @db.Decimal(10, 2)
@@ -490,8 +519,8 @@ model Class {
   /// cannot make that mistake, because a claim clears it.
   spotBroadcastAt DateTime?
 
-  calendarEntry   CalendarEntry   @relation(fields: [calendarEntryId, kind], references: [id, kind], onDelete: Cascade)
-  teacherRoom     TeacherRoom     @relation(fields: [teacherRoomId], references: [id])
+  calendarEntry   CalendarEntry   @relation(fields: [calendarEntryId, kind, entryLive], references: [id, kind, live], onDelete: Cascade)
+  teacherRoom     TeacherRoom     @relation(fields: [teacherRoomId, roomArchived], references: [id, isArchived])
   registrations   Registration[]
   waitlistEntries WaitlistEntry[]
   notifications   Notification[]
@@ -752,6 +781,25 @@ model CalendarEntry {
   /// cancel-versus-remove rule is in `studio-class-deletion.ts`.
   cancelledAt DateTime?
 
+  /// GENERATED, by Postgres, as `cancelledAt IS NULL`. It exists so a foreign
+  /// key can reference liveness — a key needs a real column, and `Class`
+  /// mirrors this one through
+  /// `Class_calendarEntryId_kind_entryLive_fkey` so that
+  /// `Class_live_needs_open_room` can ask about a cancellation without
+  /// leaving the row it is checking (issue 339).
+  ///
+  /// `StudioClass` does NOT mirror it. That family has no room and no
+  /// invariant of this shape, so its own foreign key still references
+  /// `CalendarEntry(id, kind)` unchanged.
+  ///
+  /// What Prisma cannot show here: the column is
+  /// `GENERATED ALWAYS AS (...) STORED`, so nothing may write it. It is
+  /// mapped as a plain required Boolean, which is why
+  /// `20260905120000_class_room_archive_invariant` sets NOT NULL explicitly —
+  /// without it the generated column stays nullable and CI's drift check
+  /// fails.
+  live Boolean @default(dbgenerated())
+
   /// The owning class completed. Written ONLY by `class_sync_entry_completed`
   /// — a marker synced by application code would miss a
   /// raw `UPDATE "Class" SET status='completed'`, which is the client the
@@ -868,6 +916,7 @@ model CalendarEntry {
   studioClasses StudioClass[]
 
   @@unique([id, kind])
+  @@unique([id, kind, live])
   @@unique([scheduleRuleId, date])
   @@index([teacherId, date])
 }
