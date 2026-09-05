@@ -366,25 +366,67 @@ form; a command that reads syntax cannot decide a semantic question.
 
 ---
 
-## 4.4 The decision: extract, do not move
+## 4.4 Extraction is the right end state, and it is not this branch
 
-Rather than move three large files into the serial tier at +101%, the
-lock-staging tests are **extracted** into `*-lock-order.test.ts` siblings and
-only those siblings are serialized. This is the shape this project has already
-used twice — `gdpr-lock-order.test.ts` and `class-lifecycle-tier-guard.test.ts`
-were both split out of larger files for exactly this reason — so it introduces
-no new pattern.
+Moving three large files into the serial tier is the wrong answer (§4.2.3).
+The right one is to **extract** the lock-staging tests into
+`*-lock-order.test.ts` siblings and serialize only those — the shape this
+project has already used twice, for `gdpr-lock-order.test.ts` and
+`class-lifecycle-tier-guard.test.ts`.
 
-- `src/services/gdpr.test.ts` → append to the **existing**
-  `src/services/gdpr-lock-order.test.ts`.
-- `src/services/waitlist.test.ts` → new
-  `src/services/waitlist-lock-order.test.ts`.
-- `src/services/class-template-lifecycle.test.ts` → new
-  `src/services/class-template-lifecycle-lock-order.test.ts`.
+That end state is not reached here, for the reason in §4.5: deciding *which*
+tests to extract cannot be mechanised, and the honest candidate count is about
+29 across the three files rather than the 15 first counted. That is a refactor
+with its own hazards — an inter-test ordering docblock it falsifies, three
+prose call-counts, counter-derived fixture slot spacing — and it is filed as
+its own issue rather than ridden along with a one-line assertion fix.
 
-The two new siblings join `LOCK_CONTENTION_TESTS`; the three source files stay
-in the parallel tier, and become genuinely tier-safe rather than merely
-unlisted.
+What this branch does instead is make the *existing* list unable to drift
+(§4.6), and stop the comment above it from asserting things that are not true.
+
+## 4.5 No census can decide membership — demonstrated on both axes
+
+§4.2.2 showed the shipped command reads syntax for a semantic property. The
+obvious repair is to key the census on **machinery** instead of assertion text:
+a test that stages contention must build it, and building it is visible — a raw
+row lock, an injected `lock_timeout`, a second client to hold a transaction the
+first cannot, two operations awaited together.
+
+That was built and run
+(`scratchpad/contention-census.mjs`, attached to the filed issue). **It fails
+in both directions too:**
+
+- **False positive.** `gdpr.test.ts:925` — *"teacher deletion cancels upcoming
+  classes, notifies, and anonymizes"* — flags on `new PrismaClient` alone,
+  which it constructs for ordinary setup. Nine of the nineteen it flags in that
+  file are this shape.
+- **False negative.** `gdpr.test.ts:2903` — *"waits for a concurrent studio
+  claim to release the child row before archiving the teacher templates"* — is
+  unambiguously a lock race, and matches no marker but `extra-client`, because
+  it holds through a `$transaction` and a promise gate with no raw `FOR UPDATE`
+  anywhere in it.
+
+So the property is not recoverable from the source text by either route. Two
+independent censuses, two sets of false positives and false negatives. **The
+conclusion is not "write a third regex."** It is that discovery here is a
+judgement a person makes and records, and the most a tool can do is stop the
+record from silently going stale — which is exactly what §4.6 builds.
+
+This also explains, without blame, how the original comment came to be wrong:
+whoever wrote it was doing the discoverable half of an undiscoverable job.
+
+## 4.6 What holds instead: a tether, not a promise
+
+`LOCK_CONTENTION_TESTS` gets a marker in each listed file's own header, and a
+test asserting the marked set and the configured set are equal in both
+directions, and that every configured path exists.
+
+This is the pattern CLAUDE.md's *Comment Discipline* asks for — *"where
+membership matters, tether it to the compiler"* — adapted to a membership the
+type system cannot see. It does not solve discovery, and the comment must not
+claim it does. What it removes is the failure this list has actually suffered:
+a member renamed, deleted, or drifting away from the prose that describes it,
+with nothing to notice.
 
 ---
 
@@ -395,11 +437,16 @@ unlisted.
   `src/services/*.ts` (non-test), `src/lib/*.ts` (non-test) or `prisma/`.
 - **#441 is unaffected** — same genus of "an assertion resting on something
   nothing guarantees", different mechanism, different project.
-- It does not attempt a compiler tether for `LOCK_CONTENTION_TESTS` membership.
-  That is a real option (a marker in each file's header plus a test asserting
-  the marker set equals the list) and is recorded here as a decision
-  deliberately not taken in this PR, because it is a design question of its own
-  rather than a leaf.
+- It does not extract the lock-staging tests out of `gdpr.test.ts`,
+  `waitlist.test.ts` or `class-template-lifecycle.test.ts`. That is the right
+  end state (§4.4) and is filed as its own issue, with the candidate list, the
+  census script, the `+101%` measurement and the four hazards the inventory
+  found. Those three files therefore remain in the parallel tier at the end of
+  this branch, exactly as they began it.
+- It does not claim the tether in §4.6 solves discovery. It cannot: §4.5 is the
+  demonstration that discovery is not mechanisable here. The tether stops the
+  record from drifting; a person still has to put a file on the list in the
+  first place.
 
 ## 6. Environment note (not a finding against main)
 
