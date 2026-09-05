@@ -115,7 +115,7 @@ not variables — so a `_`-prefixed unused top-level binding is still an error.
 ### Item 5 — `statusInList`: **holds**
 
 `gdpr.ts:943` and `class-template-lifecycle.ts:497` hold character-identical
-`Prisma.raw(X.map((s) => `'${s}'`).join(', '))` expressions. Each rendered
+``Prisma.raw(X.map((s) => `'${s}'`).join(', '))`` expressions. Each rendered
 constant has exactly **one** reader (`gdpr.ts:1124`,
 `class-template-lifecycle.ts:749`), and both readers are the `where` of a
 `lockClassRowsOrdered` call — which is what makes `db-locks.ts` the right home
@@ -194,7 +194,7 @@ export const CLASS_TO_ENTRY_JOIN = Prisma.sql`JOIN "CalendarEntry" e ON e.id = c
 export const CLASS_TO_WAITLIST_JOIN = Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`;
 ```
 
-`waitlist.ts` composes both: `Prisma.sql`${CLASS_TO_WAITLIST_JOIN} ${CLASS_TO_ENTRY_JOIN}``.
+`waitlist.ts` composes both: ``Prisma.sql`${CLASS_TO_WAITLIST_JOIN} ${CLASS_TO_ENTRY_JOIN}` ``.
 Verified — nested `Prisma.Sql` values are merged as text, and the composed
 fragment's `.strings` holds the flattened result as a single entry.
 
