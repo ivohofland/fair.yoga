@@ -116,13 +116,28 @@ and the survival assertion never executes. A pre-lock widening is therefore
 witnessed by the lock set and by nothing else, in all five cases.
 
 That does not make the survival assertions dead weight — it means they guard a
-DIFFERENT mutation class. Each sits beside a write that re-derives its own
-scope (`waitlistEntry.deleteMany` on `studentId`, `updateMany` on
-`input.studentId`, `deleteWhere` on `scheduleRuleId`), and it is that
-re-derivation they pin. Verified for the `waitlist` case in Task 2 by relaxing
-the lock-set assertion to `toContain` for one run: with the shadowing removed,
-both decoys' survival assertions passed under the widened predicate, confirming
-the write never reaches them. The diagnostic was reverted.
+DIFFERENT mutation class. Where the write below the pre-lock re-derives its own
+scope (`gdpr.ts`'s `waitlistEntry.deleteMany` on `studentId`, `waitlist.ts`'s
+`updateMany` on `input.studentId`, `CLASS_FAMILY.deleteWhere` on
+`scheduleRuleId`), it is that re-derivation the survival assertion pins, and a
+widened lock cannot reach the decoy at all. Where the write instead takes its
+target set FROM THE LOCK — `gdpr.ts`'s CAS cancel loop, and the
+`classId: { in: classIds }` half of `waitlist.ts`'s `updateMany` — a widened
+lock does reach the decoy, and the row really does change; the assertion still
+never runs, because the lock-set assertion above it throws first.
+
+**"Never executes" is not "would have passed."** Measured in Task 2 with a
+one-run diagnostic that relaxed the lock-set assertion to `toContain`, so the
+survival assertions could execute:
+
+- under mutation 4 (`w."studentId"` dropped) both waitlist survival assertions
+  passed — that widening writes nothing extra, so those lines are shadowed AND
+  would have held;
+- under mutation 3 (`e."teacherId"` dropped) decoy 1's assertion FAILED,
+  `expected 'removed' to be 'waiting'` — shadowed, but the write does reach the
+  row.
+
+Both diagnostics were reverted.
 
 Consequence for anyone reading a failure: a broken scoping conjunct always
 reports as an array mismatch naming the foreign id, never as "the bystander was
@@ -268,10 +283,16 @@ is not, in fact, load-bearing):
    `deleteMany` is `studentId`-scoped), and is there against a different
    regression, the `deleteMany` losing its own scope.
 2. **teacher erasure second.** `deleteTeacherAccount(prisma, victimTeacher)`;
-   assert the lock set is exactly `[classA]`, **and** that `classD`'s entry has
-   `cancelledAt === null` and the `classD` row still exists. This second
-   assertion is the data-loss witness, and it is the one that fails on the
-   mutation measured above.
+   assert the lock set is exactly `[classA]`, and that `classD`'s entry still
+   has `cancelledAt === null`. The lock set is what witnesses the mutation: the
+   widening does cancel `classD`, but the equality assertion throws first and
+   the survival line never executes (see the shadowing note above). That line
+   is there for a different reason — the CAS cancel loop below the pre-lock
+   carries no `teacherId` check of its own, so it is what fails if the loop's
+   scope ever stops coming from the pre-lock's `WHERE`. Nothing asserts the
+   `classD` **row** still exists: a teacher erasure cancels entries, it never
+   deletes `Class` rows, so such an assertion could not fail on any mutation of
+   this predicate.
 
 **The order is NOT load-bearing, and this document said it was.** The first
 draft argued the student erasure had to run first because the teacher erasure
@@ -315,12 +336,19 @@ fixture:  teacherT + classT ; studentS -> waiting on classT ; link(T,S)
 `unlinkTeacher(prisma, { teacherId: T, studentId: S, accountEmail })`, then:
 
 - the lock set is exactly `[classT]`;
-- **decoy 1 survives**: `studentS`'s entry on `classT2` is still `waiting`. This
-  is the data-loss witness for `e."teacherId"` — the `updateMany` is keyed on
-  `studentId` and the returned ids, so a widened lock reaches it;
-- decoy 2's entry (`studentS2` on `classT3`) is untouched — again labelled as
-  unable to fail on the `w."studentId"` widening, which the lock-set assertion
-  is what catches.
+- **decoy 1 survives**: `studentS`'s entry on `classT2` is still `waiting`. The
+  `updateMany` is keyed on `studentId` and on the ids the lock returned, so a
+  widened lock does reach this row and does withdraw it — measured, under
+  mutation 3. It is still the lock set that witnesses `e."teacherId"`, because
+  the equality assertion above throws first and this line never executes under
+  that mutation (see the shadowing note above); what this line guards on its
+  own is the `updateMany` keeping the `classId` set it was given;
+- decoy 2's entry (`studentS2` on `classT3`) is untouched. The ROW is what makes
+  the lock-set assertion able to fail under the `w."studentId"` widening —
+  `classT3` joins the locked ids there. The assertion on it is a consistency
+  check on that row rather than a guard: no single-fault mutation of the write
+  can flip it, since the `updateMany` re-scopes on `studentId` and dropping its
+  `classId` set reaches decoy 1 instead. Labelled as such in the code.
 
 `classT3` belongs to teacher T, so it must not collide with `classT` under
 `CalendarEntry_teacher_slot_excl`: distinct, non-overlapping start times.
@@ -393,11 +421,16 @@ whatever the assertion says.
 
 | # | Mutation | Must fail |
 |---|---|---|
-| 1 | `gdpr.ts:1135` drop `e."teacherId" = ${teacherId}` | A, test 2 (lock set **and** `classD` cancelled) |
-| 2 | `gdpr.ts:442` drop `w."studentId" = ${studentId}` | A, test 1 (lock set) |
-| 3 | `waitlist.ts:1094` drop `e."teacherId" = ${input.teacherId}` | B (lock set **and** decoy 1 withdrawn) |
+| 1 | `gdpr.ts:1135` drop `e."teacherId" = ${teacherId}` | A, test 2 (lock set — `classD` is cancelled too, but the run stops before that line) |
+| 2 | `gdpr.ts:442` replace `w."studentId" = ${studentId}` with `w."position" >= 0` | A, test 1 (lock set) |
+| 3 | `waitlist.ts:1094` drop `e."teacherId" = ${input.teacherId}` | B (lock set — decoy 1 is withdrawn too, but the run stops before that line) |
 | 4 | `waitlist.ts:1095` drop `w."studentId" = ${input.studentId}` | B (lock set) |
 | 5 | `class-template-lifecycle.ts:756` drop `e."scheduleRuleId" = ${scheduleRuleId}` | C (lock set) |
+
+Mutation 2 is a replacement rather than a deletion because `w."studentId"` is
+that predicate's only conjunct and the `where` member is required, so an empty
+fragment is not a runnable mutation. Coverage is unaffected: a wrong-owner
+variant is caught by the same equality assertion as a missing one.
 
 Mutations 1 and 3 write to rows outside their fixture, so they must be run with
 the database's other qualifying rows accounted for, and any row they damage

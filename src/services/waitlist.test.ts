@@ -2377,12 +2377,10 @@ describe('withdrawWaitingEntriesForTeacher locks only the pair it was given (#45
    * re-derived from a fixture. Calls through, so `unlinkTeacher`'s withdrawal
    * runs for real. Same idiom used at this issue's other call sites — see
    * `docs/superpowers/specs/2026-09-05-pre-lock-scope-decoys-design.md`
-   * ("B. `waitlist.ts` — `withdrawWaitingEntriesForTeacher`") — copied per
-   * file rather than shared, since each site's fixture is independent.
-   *
-   * A text pin on `source.where` could not replace this: `.strings` is the
-   * tagged template's STATIC text, so the owner id renders as `?` and a
-   * predicate scoped to the WRONG owner reads identically to the right one.
+   * ("B. `waitlist.ts` — `withdrawWaitingEntriesForTeacher`", and "Why a text
+   * assertion is not enough" for the instrument this one was chosen over) —
+   * copied per file rather than shared, since each site's fixture is
+   * independent.
    */
   const captureLockSets = (): string[][] => {
     const original = dbLocks.lockClassRowsOrdered;
@@ -2420,20 +2418,24 @@ describe('withdrawWaitingEntriesForTeacher locks only the pair it was given (#45
 
     // DECOY 1. Dropping `e."teacherId"` makes `lockSets[0]` include
     // `classT2Id`, so the strict-equality assertion above throws first and
-    // this line is not what the run reaches under that mutation. Its own job
-    // is independent of the lock set, though: the `updateMany` re-scopes on
-    // `studentId`, not on teacher, so this is what would catch a write
-    // reaching a bystander teacher's queue if the lock set were ever right
-    // while the write itself went wrong.
+    // this line is not what the run reaches under that mutation — though the
+    // row itself does flip to `removed` there, since the `updateMany` takes
+    // its `classId` set from the lock. What this line guards on its own is
+    // that write keeping the set it was given: lose `classId: { in: classIds }`
+    // and a bystander teacher's queue is withdrawn behind a correct lock set.
     const otherTeachersQueue = await prisma.waitlistEntry.findFirstOrThrow({
       where: { classId: classT2Id, studentId: studentSId },
     });
     expect(otherTeachersQueue.status).toBe('waiting');
 
-    // DECOY 2 — another student's request in T's own class. HONEST ABOUT WHAT
-    // THIS CATCHES: it cannot fail on a widened pre-lock, since the
-    // `updateMany` re-scopes on `studentId`. It guards that scope; the
-    // `w."studentId"` conjunct is witnessed by the lock set above.
+    // DECOY 2 — another student's request in T's own class. The ROW is
+    // load-bearing: drop `w."studentId"` from the pre-lock and `classT3Id`
+    // joins the array the assertion above pins. THIS LINE is a consistency
+    // check on that row, not a guard on any reachable regression — no
+    // single-fault mutation of the write can make it fail. The `updateMany`
+    // re-scopes on `studentId`, so a widened pre-lock writes nothing extra;
+    // and dropping the `updateMany`'s own `classId` set reaches decoy 1
+    // instead, since `classT3` is not in the lock set.
     const otherStudentsRequest = await prisma.waitlistEntry.findFirstOrThrow({
       where: { classId: classT3Id, studentId: studentS2Id },
     });

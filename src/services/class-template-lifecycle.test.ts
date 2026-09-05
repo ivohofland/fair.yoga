@@ -1177,23 +1177,22 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   // Closes over the block's own teacherId/teacherRoomId, like the sibling
   // block's makeTemplate does.
   //
-  // Counter-derived startTime: this block calls makeClass 38 times at runtime
-  // (37 call sites, one of them an `it.each` over 2 statuses) across many
-  // tests, and several recurring `date` values (`future()` especially) are
-  // reused across tests whose class deliberately survives the archive (a
-  // kept/registered/late_cancel class, or a forbidden request that touches
-  // nothing) — so without a counter a later test's create at the same date
-  // collides with an earlier test's still-live leftover, under whichever slot
-  // constraint is in force (`Class_teacher_slot_unique` when this was written,
+  // Counter-derived startTime: tests throughout this block create their class
+  // at the same `date` (`future()` especially), and a class that deliberately
+  // survives the archive (a kept/registered/late_cancel one, or a forbidden
+  // request that touches nothing) is still live when the next test creates its
+  // own — so without a counter that later create collides with the earlier
+  // test's leftover, under whichever slot constraint is in force
+  // (`Class_teacher_slot_unique` when this was written,
   // `CalendarEntry_teacher_slot_excl` since #327). This was masked in the
   // original baseline: those tests never even reached this call, because the
   // template-level collision fixed above threw first.
   // Routed through `slotTime` (see its docblock), like `makeTemplate`'s own
-  // counter above: the raw `09:${counter}` this replaced had only 21 minutes
-  // of headroom at this call count — the tightest margin of any counter on
-  // this branch, in the file that defines the helper. `startTime` can be
-  // overridden per call for the one test whose notification-body assertion
-  // pins the literal value.
+  // counter above: the raw `09:${counter}` it replaced could never reach past
+  // `09:59`. If a call ever does run the block out of slots, `slotTime` throws
+  // naming the counter value that did it — which is why no call count is
+  // written here. `startTime` can be overridden per call for the one test whose
+  // notification-body assertion pins the literal value.
   let makeClassCounter = 0;
   // `scheduleRuleId`, not a template id: since #327 the generated class hangs
   // off its rule through the entry. `status` still accepts `'cancelled'` and
@@ -1393,14 +1392,15 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
    * THE SAME TEACHER.
    *
    * Only the lock set can witness this one. Dropping the conjunct changes no
-   * written row: the delete re-derives its own scope through
-   * `family.deleteWhere(scheduleRuleId, today)` (`rule-lifecycle.ts`), the
-   * notification candidate read re-scopes independently, and so does
-   * `remaining` — so a rule-unscoped pre-lock deletes, cancels and notifies
-   * exactly the same rows. Its only other symptom is contention: `FOR UPDATE`
-   * on every future scheduled class in the database, colliding intermittently
-   * with whatever else the parallel tier is running and swallowed into
-   * `{ ok: false, reason: 'busy' }`. That is a flake, not a guard.
+   * written row, because the delete re-derives its own scope: it runs through
+   * `CLASS_FAMILY.deleteWhere`, defined in the module this file tests, which
+   * takes `scheduleRuleId` itself (`rule-lifecycle.ts` only calls it
+   * generically, as `family.deleteWhere(...)`). Why the reads below the delete
+   * re-scope the same way, and why the one symptom that remains is a flake
+   * rather than a guard, is in
+   * `docs/superpowers/specs/2026-09-05-pre-lock-scope-decoys-design.md`
+   * ("C. `class-template-lifecycle.ts` — the archive pre-lock", and the
+   * asymmetry table it refers back to).
    *
    * This describe leaves earlier tests' classes standing (there is no per-test
    * cleanup), so a foreign-rule class is often present here by accident. The
