@@ -489,19 +489,14 @@ describe('PATCH /api/teacher-rooms/[id]', () => {
     expect(after.isArchived).toBe(false);
   });
 
-  // The release valve, over HTTP. Un-archiving must never acquire a guard.
-  it('un-archives a link that is in use', async () => {
-    await prisma.teacherRoom.update({
-      where: { id: linkWithOpenClassId },
-      data: { isArchived: true },
-    });
-
-    const res = await send('PATCH', ownerToken, `${linkWithOpenClassId}?state=unarchived`);
-    expect(res.status).toBe(200);
-
-    const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: linkWithOpenClassId } });
-    expect(after.isArchived).toBe(false);
-  });
+  // "Archived AND still carrying an open class" cannot be constructed any
+  // more, by raw write or otherwise: `Class_live_needs_open_room` (#339)
+  // refuses the write that would create that combination — the same state
+  // `class-room-constraint.test.ts`'s "refuses archiving a room that holds a
+  // live class" pins directly at the constraint. The release valve's own
+  // unconditional behaviour is still covered above ("un-archives, and
+  // repeating it is a no-op that reports unchanged"), which needs no blocker
+  // at all to prove it.
 });
 
 // The list endpoint feeds both scheduling pickers, and both filter on

@@ -148,6 +148,25 @@ function sameWeekDayPair(): [number, number] {
 }
 
 /**
+ * Cancels every calendar entry a teacher holds, so a subsequent raw archive
+ * of their room does not trip `Class_live_needs_open_room` (issue 339).
+ *
+ * `createClassTemplate` generates its first window of instances
+ * synchronously, so a fresh template's room already holds a live `open`
+ * `Class` by the time a test pauses the template and reaches for the room —
+ * incidental to what these tests are about (a resume/move refusal, not the
+ * class side), but the room can no longer be archived by ANY write while one
+ * sits there. Each caller owns one teacher for the length of its own test, so
+ * cancelling everything that teacher holds is exact, not approximate.
+ */
+async function cancelGeneratedInstances(teacherId: string): Promise<void> {
+  await prisma.calendarEntry.updateMany({
+    where: { teacherId, cancelledAt: null },
+    data: { cancelledAt: new Date() },
+  });
+}
+
+/**
  * Creates one teacher plus the room/teacherRoom and signed-in session every
  * PUT case here needs — whether as the acting teacher or as the "someone
  * else's template/room" foil. Local, per-file, label-parameterized, per
@@ -2347,6 +2366,7 @@ describe('PUT /api/class-templates/[id]', () => {
       });
       expect(pause.status).toBe(200);
 
+      await cancelGeneratedInstances(owner.teacherId);
       await prisma.teacherRoom.update({
         where: { id: owner.teacherRoomId },
         data: { isArchived: true },
@@ -2405,6 +2425,7 @@ describe('PUT /api/class-templates/[id]', () => {
         method: 'PATCH', headers: cookie(owner.sessionToken),
       });
       expect(pause.status).toBe(200);
+      await cancelGeneratedInstances(owner.teacherId);
       await prisma.teacherRoom.update({
         where: { id: owner.teacherRoomId }, data: { isArchived: true },
       });
@@ -2574,6 +2595,7 @@ describe('PUT /api/class-templates/[id]', () => {
       });
       expect(pause.status).toBe(200);
 
+      await cancelGeneratedInstances(owner.teacherId);
       await prisma.teacherRoom.update({
         where: { id: owner.teacherRoomId },
         data: { isArchived: true },
