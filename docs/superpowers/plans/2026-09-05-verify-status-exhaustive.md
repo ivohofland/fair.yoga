@@ -83,11 +83,18 @@ recorded here rather than committed:
    Record the exact error text in the PR body.
 3. Revert the member. Re-run `npx tsc --noEmit`; it must return to exit 0.
 
-A second mutation, to prove the tether is not one-directional: temporarily
-*remove* a member (`'handoff'`) and confirm `tsc` fails on that member's `case`
-arm. Restore and re-verify.
+A second mutation, *removing* a member (`'handoff'`), was run and its result
+corrects this plan's original framing. It was written here as proving the
+tether "is not one-directional". It proves no such thing: the removal was run
+against HEAD's `if`-chain as well, and that chain catches it too —
+`TS2367: This comparison appears to be unintentional because the types
+'"verifying"' and '"handoff"' have no overlap`. Removal was never the gap,
+because an equality test against a literal is already checked against the
+union. Only ADDITION was unguarded, and only addition is what this change
+buys. The second mutation stays in the record as the measurement that
+established that, not as evidence for the switch.
 
-Both mutations are edits to the union on line 9 only. Neither is committed.
+All mutations are edits to the union on line 9 only. None is committed.
 
 ### Regression coverage
 
