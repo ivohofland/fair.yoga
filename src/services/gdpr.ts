@@ -919,8 +919,8 @@ const CLASS_STATUS_CANCELLABILITY = {
 } as const satisfies Record<ClassStatus, boolean>;
 
 /**
- * The statuses a teacher erasure cancels, DERIVED from the classification
- * above rather than restated beside it.
+ * The statuses a teacher erasure cancels, DERIVED from
+ * `CLASS_STATUS_CANCELLABILITY` above rather than restated beside it.
  *
  * Two readers in `deleteTeacherAccount` have to agree: the ordered
  * pre-lock's `WHERE` (through `CANCELLABLE_STATUSES_SQL` below) and the
@@ -933,16 +933,17 @@ const CLASS_STATUS_CANCELLABILITY = {
  * deadlock the pre-lock exists to close".
  *
  * `satisfies Record<ClassStatus, boolean>` is the tether: a fifth
- * `ClassStatus` is a compile error on that literal until someone says whether
- * an erasure cancels it, and because this array is built from the record's
- * keys, the answer reaches this list without a second edit. The previous
- * shape — a hand-written array annotated `readonly ClassStatus[]` — erased
- * the literals, so a fifth member changed nothing here and left those classes
- * uncancelled on an Article 17 path with every test green.
+ * `ClassStatus` is a compile error on `CLASS_STATUS_CANCELLABILITY` until
+ * someone says whether an erasure cancels it, and because this array is
+ * derived from that classification, the answer reaches this list without a
+ * second edit. The previous shape — a hand-written array annotated `readonly
+ * ClassStatus[]` — erased the literals, so a fifth member changed nothing
+ * here and left those classes uncancelled on an Article 17 path with every
+ * test green.
  *
- * Derived via `statusesWhere` (`db-locks.ts`), which is where the cast to
- * `ClassStatus[]` and the `Object.freeze` are justified. Prisma's `in` wants
- * a mutable array, so call sites spread.
+ * Derived via `statusesWhere` (`db-locks.ts`), which is where the
+ * `Object.freeze` is justified. Prisma's `in` wants a mutable array, so call
+ * sites spread.
  */
 const CANCELLABLE_STATUSES: readonly ClassStatus[] = statusesWhere(CLASS_STATUS_CANCELLABILITY);
 
@@ -1067,8 +1068,10 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // `known-open` here: before issue 298 this bulk write targeted
       // `ClassTemplate` directly, and a bare `updateMany` locks the rows it
       // matches, so it already serialised against
-      // `claimTemplateForGeneration`'s `FOR UPDATE OF ct`
-      // (`class-generator.ts`) for free. `isActive`/`isArchived` moved to
+      // `claimRuleForGeneration`'s `FOR UPDATE OF tpl`
+      // (`entry-generation.ts`, called through the per-family wrapper
+      // `claimTemplateForGeneration` in `class-generator.ts`) for free.
+      // `isActive`/`isArchived` moved to
       // `ScheduleRule`, so that free lock stopped covering the child.
       //
       // Not a theoretical gap — measured. `ACTIVE_TEMPLATE_WHERE`
