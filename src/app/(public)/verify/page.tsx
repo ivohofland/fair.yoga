@@ -440,6 +440,8 @@ function useVerifyingRail(
   const [railVisible, setRailVisible] = useState(false);
   /** True while the rail is on screen and still owed its minimum. */
   const owed = useRef(false);
+  /** True once the ceiling has taken this state's one exit. */
+  const givenUp = useRef(false);
   const waiting = useRef<(() => void) | null>(null);
   const appearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -481,6 +483,7 @@ function useVerifyingRail(
     // Armed here rather than from the fetch, because what it bounds is this
     // state and not one request: the exit through `.catch` sends a second one.
     ceilingTimer.current = setTimeout(() => {
+      givenUp.current = true;
       console.error('[verify] no answer within the ceiling; giving up');
       giveUp.current();
     }, VERIFY_CEILING_MS);
@@ -495,10 +498,19 @@ function useVerifyingRail(
       // stay timer that no longer exists, and the reader would hold on the
       // rail with nothing coming.
       owed.current = false;
+      givenUp.current = false;
     };
   }, [enabled, run]);
 
   const settle = useCallback((apply: () => void) => {
+    // This state's one exit is already taken, and taking it back is worse than
+    // doing nothing. On the failing branch it would replace an honest "we
+    // couldn't reach the server" with a claim about the link that nothing here
+    // can support; on the succeeding one it would run a callback that
+    // schedules `router.push`, and that timer survives unmount — so it would
+    // pull a reader off whatever page they had already moved on to.
+    if (givenUp.current) return;
+
     // Cancelled rather than merely ignored: an outcome is on its way to the
     // screen, and the rail must not appear from behind it.
     if (appearTimer.current) {
@@ -545,21 +557,28 @@ function VerifyContent() {
   const [sessionEnded, setSessionEnded] = useState(false);
   const [home, setHome] = useState<string>('/schedule');
   const [handoffCode, setHandoffCode] = useState<string>('');
+  const inFlight = useRef<AbortController | null>(null);
   // `Boolean(token)`, matching the status initializer above and the fetch
   // guard below: `?token=` yields '', which is not a verification worth
   // arming a timer for.
   const { railVisible, settle } = useVerifyingRail(
     Boolean(token),
     () => setStatus('error'),
-    () => setStatus('timeout'),
+    () => {
+      inFlight.current?.abort();
+      setStatus('timeout');
+    },
   );
 
   useEffect(() => {
     if (!token) return;
+    const controller = new AbortController();
+    inFlight.current = controller;
     fetch('/api/auth/magic-link/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
+      signal: controller.signal,
     })
       .then((res) => {
         if (!res.ok) throw new Error('Verification failed');
@@ -599,12 +618,19 @@ function VerifyContent() {
         });
       })
       .catch(async () => {
+        // The ceiling abandoned this request; the screen already says so.
+        // Probing now would spend a round trip on an answer nothing may act
+        // on, and its failure would log a fault that did not happen.
+        if (controller.signal.aborted) return;
+
         // A stale link is often re-clicked from the inbox AFTER a
         // successful sign-in. Telling a signed-in user their sign-in
         // "failed" is worse than the truth: the link is spent, the
         // session is fine.
         try {
-          const res = await fetch('/api/auth/session');
+          const res = await fetch('/api/auth/session', {
+            signal: controller.signal,
+          });
           if (res.ok) {
             const json = (await res.json()) as {
               data: { teacherId: string | null; studentId: string | null };
