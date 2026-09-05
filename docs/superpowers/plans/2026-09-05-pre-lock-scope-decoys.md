@@ -267,10 +267,14 @@ describe('the erasure pre-locks are scoped to their own owner (#453)', () => {
     return lockSets;
   };
 
-  // STUDENT ERASURE FIRST, and the order is load-bearing: the teacher erasure
-  // below cancels `classA`'s entry, and a cancelled REGULAR entry is terminal
-  // (`entry_terminal_liveness_guard`), so this test cannot be made to run
-  // after it.
+  // WRONG, AND CORRECTED IN TASK 1's FIX ROUND — kept here only so the diff
+  // that removed it makes sense. This comment claimed the order was
+  // load-bearing because the teacher erasure cancels `classA`'s entry and a
+  // cancelled REGULAR entry is terminal. Both halves are false:
+  // `deleteStudentAccount` writes no `CalendarEntry` column, and its pre-lock
+  // has no liveness filter, so a cancelled `classA` still matches. Swapping
+  // the two tests leaves the file 37/37. What to write instead is in the fix
+  // round's dispatch and in the spec's section A.
   it('locks only classes the erased student actually waits in', async () => {
     const lockSets = captureLockSets();
 
