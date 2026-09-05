@@ -147,7 +147,8 @@ driven by observed state — a promise the completion resolves once it holds its
 locks, and `pg_stat_activity` for the reschedule's backend actually waiting on
 one."*
 
-Three connections, matching that file:
+Three clients, matching that file — only `archiveDb` is a single connection;
+`a` and `probe` each hold a pool:
 
 - `a` — the resume; holds the transaction.
 - `archiveDb` — `singleConnectionClient()`, so `pg_backend_pid()` read once
@@ -160,16 +161,20 @@ Two gates replace the two sleeps:
 1. the resume signals **after** its update returns, so the `ClassTemplate` lock
    is provably held before the archive is issued;
 2. the poll loop signals the resume it may commit, once the archive's backend is
-   **observed** at `wait_event_type = 'Lock'`.
+   **observed** waiting on a lock whose blocker is the resume's own backend.
 
 ```ts
 const resume = a.$transaction(async (tx) => {
+  const [own] = await tx.$queryRaw`SELECT pg_backend_pid()::int AS pid`;
+  resumePid = own!.pid;   // read INSIDE the tx: `a` holds a pool
   await tx.scheduleRule.update({ where: { id: ruleId }, data: { isActive: true } });
   signalLockHeld();
   await resumeMayCommit;
 }, { timeout: 15_000 });
 
-await lockHeld;
+// Raced, so an update that REJECTS surfaces here rather than leaving the gate
+// unsettled and the test hanging to its timeout.
+await Promise.race([lockHeld, resume]);
 const archive = archiveDb.teacherRoom.update({ ... })
   .catch((e: unknown) => { archiveError = e; })
   .finally(() => { archiveSettled = true; });
@@ -221,10 +226,11 @@ connection of its.
   On the failing path it is the poll loop that governs, which is why that loop
   yields 5 ms between iterations: unthrottled it was measured at ~1 200
   `pg_stat_activity` queries a second against the database the whole tier
-  shares, and the passing path polls once, so the yield costs it nothing.
-  Measured on the rewritten file: `tests 76ms`–`104ms`, against the ~2 s the two
-  sleeps (500 ms + 1500 ms) previously guaranteed. The file therefore stops
-  being a kind‑1 lock holder and needs no tier move of its own.
+  shares, and the passing path polls once or twice — whether Postgres has
+  reached the lock wait by the first probe is itself a race — so the yield costs
+  it one sleep at most. The passing-path timing is the table in §3.2, against
+  the ~2 s the two sleeps (500 ms + 1500 ms) previously guaranteed. The file
+  therefore stops being a kind‑1 lock holder and needs no tier move of its own.
 
 ### 3.2 Proof that the guard bites — measured
 
@@ -233,7 +239,7 @@ review found the failure path itself misdirected the reader:
 
 | World | Failure text | verdict |
 |---|---|---|
-| GREEN — resume holds, archive races | — | passes, `tests 71–76ms` |
+| GREEN — resume holds, archive races | — | passes, `tests 69–76ms` across runs |
 | RED‑M1 — resume commits *before* the archive is issued | `notObserved: "the archive settled without ever waiting on the resume"`, reached **after** the refusal assertions passed | **only the wait assertion fails** |
 | RED‑M2 — resume touches a non-cascading column, so no lock is held | `expected undefined to be defined` at the refusal | archive slips past, as in #272 |
 | RED‑M3 — probe pointed at a pid that can never match | `notObserved: "never seen blocked by pid 401034 within 5s; archive backend: active / Lock / transactionid blocked by {401034}"`, failing at 5.06 s | the observation channel is broken, and the diagnostic says so |

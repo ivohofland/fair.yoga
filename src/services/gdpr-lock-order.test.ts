@@ -85,10 +85,11 @@ async function awaitHandshake(signal: Promise<void>, label: string): Promise<voi
  *
  * The split is INCOMPLETE, and knowingly so: `gdpr.test.ts` still stages lock
  * races of its own — a ~9s held row lock among them — and still asserts on how
- * they come out. Several of those assertions are absence-of-contention written
- * as a positive outcome (`toBe('returned')` on a promise whose `.catch` folds
- * the SQLSTATE into the value), which is one of the disguises `vitest.tiers.ts`
- * lists; tier noise can masquerade as exactly what they watch for. Finishing
+ * they come out. Some of those assertions are absence-of-contention written as
+ * a positive outcome (`toBe('returned')` on a promise whose `.catch` folds the
+ * SQLSTATE into the value), which is one of the disguises `vitest.tiers.ts`
+ * lists. Tier noise cannot fake the success they assert; it produces a FAILURE
+ * the reader cannot tell from the defect they watch for. Finishing
  * the extraction is issue #459, which carries the candidates. Nothing here
  * depends on that; this file is what was extracted, not a claim about what was
  * left.

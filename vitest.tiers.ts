@@ -48,9 +48,8 @@ export const SWEEP_TESTS = [
 //
 // Nor is the parallel tier free of files that assert on how a staged race comes
 // out while holding a lock of their own. Issue #459 owns which files those are,
-// with the candidate list and the measurement — a roster here would be a second
-// copy of it, and a second copy is how the claim above this one went wrong.
-// Until #459 lands, this list is short of the files that need it.
+// with the candidate list and the measurement; a roster here would be a second
+// copy of it. Until #459 lands, this list is short of the files that need it.
 //
 // MEMBERSHIP IS HELD BY THE MARKER, NOT BY A COMMAND. Every file below carries
 // `@serial-tier lock-contention` in its own header, with the reason that file
