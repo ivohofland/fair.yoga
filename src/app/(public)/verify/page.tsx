@@ -670,10 +670,11 @@ function VerifyContent() {
 
         // A 400 is the answer this page is built to expect — the link is
         // expired or already used, the commonest ordinary event here and no
-        // kind of fault. Every other rejection is one, and the throw above
-        // runs before `res.json()`, so the ones carrying no status could only
-        // have come from a 2xx whose body would not read or would not
-        // destructure. Silence for the first, a line for the rest.
+        // kind of fault. It is the one silent case; every other rejection is
+        // a fault and gets a line. Those carrying no status at all either
+        // never reached a response, or came from a 2xx: the throw above runs
+        // before `res.json()`, so nothing that got as far as parsing a body
+        // had a failing status to carry.
         if (!(err instanceof VerifyResponseError && err.status === 400)) {
           console.error('[verify] the verification request failed', err);
         }
