@@ -54,6 +54,14 @@ directly (a temporary hook logging each matching statement's SQL),
 The first resolves the promise. The handshake has been signalling on a
 `ClassTemplate` lock, not a `Class` lock.
 
+**One consequence beyond the missing diagnostic**: the 200 ms sleep at
+`gdpr-lock-order.test.ts:405-406`, commented "Time for the teacher's pre-lock to
+reach and block on its first row", is budgeted from the wrong statement. It has
+been buying time from the *template* lock onward. The test passes anyway —
+measured, the two template locks plus the `Class` pre-lock are reached in 5-13 ms
+total — so this is a comment that describes a budget nobody was actually
+spending, not a live flake. Re-keying the handshake makes the sentence true.
+
 **The comment asserting otherwise was true when it was written.** At `2a19ccd2`
 (2026-08-16, #237), where the handshake and its comment were introduced,
 `git show 2a19ccd2:src/services/gdpr.ts | grep -c queryRaw` returns **0** — the
@@ -180,10 +188,35 @@ is restored and re-verified green before the branch is pushed.
 
 Issue #244's first comment (2026-08-16) enumerates eight present-tense
 references to a `lockClassRow` loop `deleteStudentAccount` has not used since
-#216/#182. Re-measured 2026-09-05, **that list is stale in both directions**:
-two of its eight are gone, six survive at shifted lines, and at least two live
-locations it never named exist. This is the same failure the comment itself
-predicts ("the count rose while the list was being written").
+#216/#182. Re-measured 2026-09-05 by a read-based audit of `src/`, `tests/` and
+`docs/`, **that list is stale in both directions**. This is the same failure the
+comment itself predicts ("the count rose while the list was being written").
+
+The arithmetic, so a reader can re-derive it: of the issue's eight, **two are
+gone** (#441 removed `template-lock-order.test.ts`'s "issues exactly two" and
+"one round trip apart"), **one is not stale at all** (see below), and **five
+survive** at shifted lines. The audit found **eight further live locations** the
+list never named — including the handshake comment that is §1.3's whole subject.
+5 + 8 = **13 stale locations**, in six files — `gdpr.test.ts` (4),
+`template-lock-order.test.ts` (5), and one each in `db-locks.test.ts`,
+`gdpr-lock-order.test.ts`, `account-api.test.ts` and `waitlist.ts`. (The audit
+that produced the census reported "seven files" in its own summary and I
+repeated it; recounting its table gives 4+5+1+1+1+1 = 13 across six. Recorded
+because it is the failure this issue is about, committed while writing about
+it.) The census itself lives in the
+plan and the PR body, as a table of locations; this spec deliberately carries no
+membership roster, only the arithmetic.
+
+**One adjudication against the issue, and it corrects an error of my own.** The
+issue lists `docs/lock-order.md` (then `:701-708`, now `:1653-1668`) among the
+stale eight, and my first pass through this branch agreed. It is not stale: its
+mechanism description is right and its tense is correctly past. What the issue
+actually asks for there is what the passage genuinely lacks — a **cross-reference
+to the rebuttal**. The paragraph reproduces the "monotone all-status count →
+past the ceiling → an account that could never be erased" reasoning that PR #246
+falsified, and the rebuttal now lives at `gdpr.ts:728-745` with no pointer from
+here. So this location stays in scope as an addition, not a correction, and it
+does not count toward the 13.
 
 The census is therefore carried as a **table of locations, never a number**, and
 is reconciled against a read-based audit rather than a keyword grep — the
@@ -213,9 +246,33 @@ this paragraph does not point at it. It gets the cross-reference.
   what those tests are *for*, which is a design decision with its own
   acceptance criteria, not a fix. It is filed as its own issue, carrying those
   measurements. Its stale *comments* (§4) are corrected here; its `it`s are not.
-- **No production code changes.** `gdpr.ts` and `db-locks.ts` are read, mutated
-  for measurement, and restored. The lock-order guarantees themselves are out of
-  scope.
+- **No production BEHAVIOUR changes.** `gdpr.ts` and `db-locks.ts` are read,
+  mutated for measurement, and restored byte-for-byte. The lock-order
+  guarantees themselves are out of scope. Comment-only corrections in
+  production files ARE in scope where the comment is stale — the audit found
+  one, `waitlist.ts:1021-1024`, which names `deleteTeacherAccount`'s cancel CAS
+  as `class.updateMany` where it has been `tx.calendarEntry.updateMany` since
+  #327 (`gdpr.ts:1203`). A different drift axis from the rest of §4, in the
+  same sentence family.
+- **The 23 cross-file claims the audit catalogued are NOT corrected here.**
+  CLAUDE.md forbids a comment asserting a fact about another module, and the
+  audit found 23 such claims across 15 files — but all except the ones already
+  in §4's census are *accurate*. This change made them visible, not worse;
+  correcting them is a `docs/` migration with its own design question (what
+  moves, what is deleted, what gets a link), and it is not a leaf. Deliberately
+  let go. The 13 stale ones are narrowed or deleted as a side effect of §4,
+  since a corrected sentence that still reaches past its file is deleted rather
+  than rewritten.
+- **The two forbidden ROSTERS are filed, not fixed.** `gdpr.ts:479-489` and
+  `gdpr.ts:1042-1053` carry a four-member and a five-member prose roster of
+  call sites, which CLAUDE.md forbids outright ("Never write a count or a
+  member list in prose — name the type"), and which `db-locks.ts:381-389`
+  explicitly refuses to keep. The first is a near-verbatim duplicate of the
+  *owned* census at `docs/lock-order.md:76-84` — same count, same membership,
+  same `grep -rn 'lockClassRowsOrdered(' src/` re-derivation — so its fix is a
+  one-line pointer. Both are accurate today. They belong on #245, which is
+  already about this helper's documentation contract, rather than expanding
+  this PR into production files it otherwise only reads.
 - **#289 is unaffected** — the pre-lock-superset property over a non-UTC session
   `TimeZone` is a different missing test in the same pre-lock. **#245 is
   unaffected** — `lockClassRowsOrdered`'s docblock contract is a different
