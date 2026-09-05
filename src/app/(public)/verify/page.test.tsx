@@ -53,6 +53,48 @@ describe('VerifyPage', () => {
    * De-risks the `aria-label="Your code is ${code}"` attribute that the
    * (unrunnable-here) e2e suite reads the displayed code through.
    */
+  /**
+   * `home` decides both where the continue link goes and which family's
+   * wording it carries, and nothing at this tier held it: every mutation of
+   * that one prop left this file green. An empty `home` renders `href=""`,
+   * which sends a reader who IS signed in back to `/verify?token=…` — the
+   * spent link they just came from.
+   *
+   * The student half of `AlreadySignedInState`'s ternary had no test at any
+   * tier before this one.
+   */
+  it.each([
+    {
+      who: 'a teacher',
+      session: { teacherId: 't-1', studentId: null },
+      label: 'Continue to your schedule',
+      href: '/schedule',
+    },
+    {
+      who: 'a student',
+      session: { teacherId: null, studentId: 's-1' },
+      label: 'Continue to your bookings',
+      href: '/bookings',
+    },
+  ])('points $who re-clicking a spent link at their own landing page', async ({
+    session,
+    label,
+    href,
+  }) => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        // The verify POST: the link is spent, which is what sends the page to
+        // the session probe below.
+        .mockResolvedValueOnce({ ok: false })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ data: session }) }),
+    );
+    render(<VerifyPage />);
+
+    expect(await screen.findByRole('link', { name: label })).toHaveAttribute('href', href);
+  });
+
   it('shows the handoff code, its heading, and the escape hatch to /login', async () => {
     vi.stubGlobal(
       'fetch',
@@ -404,7 +446,7 @@ describe('VerifyPage', () => {
     });
 
     /**
-     * The other three exits, each held the same way.
+     * The exits reached straight off the verify POST, held the same way.
      *
      * The hook's contract is that EVERY exit from `verifying` goes through
      * `settle`, and the compiler cannot enforce it — so each exit needs a case
@@ -412,17 +454,14 @@ describe('VerifyPage', () => {
      * is invisible: the fast-path cases reach it with the rail down, where it
      * is a pass-through and contributes nothing observable.
      *
-     * `already-signed-in` and `error` matter most. Both run only AFTER the
-     * verify POST has already failed, and both add a second round trip to
-     * `/api/auth/session` before they can settle — so they are the exits most
-     * likely to land inside the rail's window on a real connection.
+     * The exits behind a FAILED verification are held by the `it.each` below
+     * instead, because they need the fetch mock to answer a second time.
      */
     const heldExits = [
       {
         name: 'the handoff code',
         body: () => ({ data: { handoffCode: '123456' } }),
         shown: 'Enter this where you started',
-        extraFetches: 0,
       },
     ] as const;
 
