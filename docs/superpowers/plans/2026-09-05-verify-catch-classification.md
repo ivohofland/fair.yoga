@@ -38,12 +38,12 @@ So the only silent case is `VerifyResponseError` with `status === 400`.
 
 **Which 400s that silences.** `magic-link/verify/route.ts` can answer 400 four ways: `parseBody`'s `'Invalid JSON'` and its zod message (`api-utils.ts:59, 67`), `'Invalid or expired magic link'` (route:42), and `'Account not found'` (route:79). All four go silent. That is the accepted trade — distinguishing them client-side would mean parsing a human-readable server message, which is not a contract this codebase has. The route has **no rate limiter** (`send` and `claim` import `checkRateLimit`, this route does not), so no 429 reaches here. Above 4xx, `withErrorHandler` can answer 409, 500 or 503 (`api-errors.ts:50`) — all logged.
 
-**The masking case this also fixes, which #452 does not name.** When the success path throws (a 2xx whose `json.data` is undefined), verification had already set a session cookie — so the session probe in the `.catch` answers `ok`, and the reader is shown **"Already signed in"**. A genuine backend fault, rendered as a benign screen, with nothing logged anywhere on the client. Task 1's fifth test pins this.
+**The masking case this also fixes, which #452 does not name.** When the success path throws (a 2xx whose `json.data` is undefined), verification had already set a session cookie — so the session probe in the `.catch` answers `ok`, and the reader is shown **"Already signed in"**. A genuine backend fault, rendered as a benign screen, with nothing logged anywhere on the client. Task 1's `logs the fault behind a mis-shaped success the probe then masks` pins this.
 
 ## File Structure
 
 - `src/app/(public)/verify/page.tsx` — the only source change. Adds one module-scope class near the `Status` type; changes one `throw`; adds one guarded `console.error` in the `.catch`; rewrites one comment whose claim this change falsifies.
-- `src/app/(public)/verify/page.test.tsx` — five new cases in a new `describe` block, plus a correction to five existing mocks.
+- `src/app/(public)/verify/page.test.tsx` — six new cases in a new `describe` block, plus a correction to five existing mocks.
 
 No new files. No other file in the repo makes a claim this change falsifies — verified by
 `grep -rn "expired or already-used\|already-used link\|Verification failed\|no kind of fault" src docs .github`.
@@ -58,9 +58,9 @@ The one other hit outside these two files is `docs/superpowers/plans/2026-09-05-
 
 **Interfaces:**
 - Consumes: nothing from other tasks.
-- Produces: the five assertions Task 2 must satisfy. Task 2 adds `class VerifyResponseError extends Error { constructor(readonly status: number) }` to `page.tsx`; it is **not exported** and these tests never import it — they assert only on `console.error` arguments and on the DOM.
+- Produces: the six assertions Task 2 must satisfy. Task 2 adds `class VerifyResponseError extends Error { constructor(readonly status: number) }` to `page.tsx`; it is **not exported** and these tests never import it — they assert only on `console.error` arguments and on the DOM.
 
-**Why this task comes first:** three of the five cases must be seen to fail before the implementation exists. The fourth (`a 400 stays silent`) *passes vacuously* beforehand, because nothing logs at all yet — Task 2 owns its mutation proof. Step 3 records that explicitly rather than letting a green tick be mistaken for evidence.
+**Why this task comes first:** five of the six cases must be seen to fail before the implementation exists. The sixth, `stays silent for the spent link that is the ordinary case`, *passes vacuously* beforehand, because nothing logs at all yet — Task 2 owns its mutation proof. Step 3 records that explicitly rather than letting a green tick be mistaken for evidence.
 
 - [ ] **Step 1: Correct the five verify-POST mocks that carry no status**
 
@@ -126,7 +126,30 @@ Insert immediately after the `describe('the verifying rail', …)` block closes 
       render(<VerifyPage />);
 
       expect(await screen.findByText('Verification failed')).toBeInTheDocument();
+      // Two matchers over the same call: `objectContaining` alone is duck-typed,
+      // and would accept a bare `{ status: 500 }` in place of the real error.
+      expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.any(Error));
       expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.objectContaining({ status: 500 }));
+    });
+
+    /**
+     * The boundary this design narrows on purpose. #452's wording says to
+     * silence "the expected 4xx"; this file silences 400 alone, because the
+     * route has no other reachable 4xx today and a new one appearing here
+     * should read as a fault rather than something a band absorbed before the
+     * case existed. Nothing else in this block can tell those two rules
+     * apart — an implementation silencing all of 4xx passes every other case.
+     */
+    it('logs a 4xx that is not the expected 400', async () => {
+      const errors = watchErrors();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValueOnce({ ok: false, status: 404 }).mockResolvedValueOnce(noSession),
+      );
+      render(<VerifyPage />);
+
+      expect(await screen.findByText('Verification failed')).toBeInTheDocument();
+      expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.objectContaining({ status: 404 }));
     });
 
     /**
@@ -228,18 +251,19 @@ Run: `npx vitest run --project components "src/app/(public)/verify/page.test.tsx
 
 Expected, against unmodified `page.tsx`:
 - `logs a server fault rather than blaming the link` — **FAIL**, `console.error` never called with `FAULT_LINE`.
+- `logs a 4xx that is not the expected 400` — **FAIL**, same reason.
 - `logs a success whose body cannot be read` — **FAIL**, same reason.
 - `logs a verification that never reached the server` — **FAIL**, same reason.
 - `logs the fault behind a mis-shaped success the probe then masks` — **FAIL** on the `toHaveBeenCalledWith`; its `findByText('Already signed in')` **passes**, which is the proof that the masking is real today.
 - `stays silent for the spent link that is the ordinary case` — **PASS**, vacuously. Expected. Record it as vacuous in the commit message; Task 2 Step 5 supplies its real evidence.
 
-Paste the actual failure text into the task ledger. Four failures, one vacuous pass — if the count differs, stop and report rather than proceeding.
+Paste the actual failure text into the task ledger. Every case that logs must fail, and only `stays silent` may pass — if any other case passes, stop and report rather than proceeding.
 
 - [ ] **Step 4: Run the whole file to confirm the mock corrections broke nothing**
 
 Run: `npx vitest run --project components "src/app/(public)/verify/page.test.tsx"`
 
-Expected: the 4 new failures from Step 3 and **nothing else**. Every pre-existing case still passes — adding `status: 400` to a mock is inert until Task 2 reads it.
+Expected: the failures from Step 3 and **nothing else**. Every pre-existing case still passes — adding `status: 400` to a mock is inert until Task 2 reads it.
 
 - [ ] **Step 5: Commit**
 
@@ -396,9 +420,10 @@ fix(verify): a failed verification that is not a spent link now logs (#452)
 
 `if (!res.ok) throw new Error(...)` destroyed `res.status` one line before
 the only handler that could act on it, so a 5xx, an unreadable body, a
-mis-shaped one and a network failure all reached the error screen
-indistinguishable from the expected 400 — and, when the session probe behind
-them also came back non-ok, with no client-side line at all.
+mis-shaped one and a network failure all arrived indistinguishable from the
+expected 400, none of them putting a line of their own on the console — and
+where the session probe behind them also answered non-ok, with no
+client-side line at all.
 
 `VerifyResponseError` carries the status on the rejection, so the type of
 what reaches the `.catch` is the classification: a 400 is silent, everything
@@ -424,6 +449,6 @@ EOF
 
 ## After both tasks
 
-Two tasks, so §5's whole-branch review applies: one review on the most capable model over the full branch diff, one fix wave, one scoped re-review. The cross-task blindness it exists to catch is real here — Task 1's reviewer sees assertions with no implementation, Task 2's sees an implementation whose tests were written before it, and neither is placed to judge whether the five cases actually pin the five branches.
+Two tasks, so §5's whole-branch review applies: one review on the most capable model over the full branch diff, one fix wave, one scoped re-review. The cross-task blindness it exists to catch is real here — Task 1's reviewer sees assertions with no implementation, Task 2's sees an implementation whose tests were written before it, and neither is placed to judge whether the six cases actually pin the branches they name.
 
 Then push, open the PR, and run `/pr-review-toolkit:review-pr`. Skip the type-design reviewer's usual scope question by giving it the real one: `VerifyResponseError` **is** the subject of this PR, so it belongs in the review.
