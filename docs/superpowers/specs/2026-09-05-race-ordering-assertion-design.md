@@ -167,7 +167,7 @@ const resume = a.$transaction(async (tx) => {
   await tx.scheduleRule.update({ where: { id: ruleId }, data: { isActive: true } });
   signalLockHeld();
   await resumeMayCommit;
-}, { timeout: 20_000 });
+}, { timeout: 15_000 });
 
 await lockHeld;
 const archive = archiveDb.teacherRoom.update({ ... })
@@ -428,6 +428,50 @@ claim it does. What it removes is the failure this list has actually suffered:
 a member renamed, deleted, or drifting away from the prose that describes it,
 with nothing to notice.
 
+**The lists move to `vitest.tiers.ts`**, comments and all. Exporting
+`LOCK_CONTENTION_TESTS` from `vitest.config.ts` works and is a one-word change,
+but a named export beside a default one makes Rollup print
+
+```
+[MIXED_EXPORTS] Entry module "vitest.config.ts" is using named (including
+"LOCK_CONTENTION_TESTS", "default") and default exports together.
+```
+
+three times on **every** vitest invocation, CI included. A module beside the
+config serves both consumers without that.
+
+### 4.6.1 The tether, proven to bite
+
+Per `solve-issue` §3, each failure mode was produced deliberately and the error
+text recorded, then reverted:
+
+| Mutation | Result |
+|---|---|
+| `@serial-tier lock-contention` → `@serial-tier REMOVED-BY-MUTATION` in `roster-link.test.ts` | fails, `"listedButNotMarked": ["src/services/roster-link.test.ts"]` |
+| marker added to unlisted `template-room-race.test.ts` | fails, `"markedButNotListed": ["src/services/template-room-race.test.ts"]` |
+| `roster-link.test.ts` renamed | **two** tests fail — `absent` names the vanished path, and the set comparison names both old and new |
+
+The marker string is assembled in the test (`['@serial-tier',
+'lock-contention'].join(' ')`) rather than written as one literal, or the test
+file would match its own search and report itself.
+
+## 4.7 The claim inventory
+
+Four claims about this list were false. None was discoverable from the file it
+sat in, which is the point:
+
+| # | Claim | Where | Reality |
+|---|---|---|---|
+| 1 | `invitations-lock-order.test.ts` "asserts a staged race ends in neither `40P01` nor `55P03`" | the array's own comment | `:283`, `:396` assert `toMatch(/40P01\|deadlock/i)` — that it **does** deadlock |
+| 2 | `gdpr.test.ts` "runs in ~26s and exactly one of its tests reads lock timing" | **two** copies: `vitest.config.ts:69` and `gdpr-lock-order.test.ts:76` | at least nine, four asserting an *absence* of contention |
+| 3 | "no file left in the tier reads lock timing to assert on" | the census paragraph | three do — `gdpr`, `waitlist`, `class-template-lifecycle` |
+| 4 | the `unit` tier's "none of them holds a lock long enough to disturb a neighbour" | `vitest.config.ts`'s project summary | those same three do, up to ~9 s |
+
+Claim 2 is the one worth dwelling on: it lived in two files, and the copy in
+`gdpr-lock-order.test.ts` carried a note explaining that *the other copy* had
+been de-numbered and this one missed. A comment that tracks its own twin is
+evidence the claim never belonged in either.
+
 ---
 
 ## 5. What this spec does not do
@@ -439,7 +483,7 @@ with nothing to notice.
   nothing guarantees", different mechanism, different project.
 - It does not extract the lock-staging tests out of `gdpr.test.ts`,
   `waitlist.test.ts` or `class-template-lifecycle.test.ts`. That is the right
-  end state (§4.4) and is filed as its own issue, with the candidate list, the
+  end state (§4.4) and is filed as #459, with the candidate list, the
   census script, the `+101%` measurement and the four hazards the inventory
   found. Those three files therefore remain in the parallel tier at the end of
   this branch, exactly as they began it.
