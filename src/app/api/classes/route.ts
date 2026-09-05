@@ -116,7 +116,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       SELECT "isArchived" FROM "TeacherRoom"
        WHERE "id" = ${body.teacherRoomId}
        FOR KEY SHARE`;
-    if (!room) return { ok: false as const };
+    // Discriminated from the entry's own `{ ok: false }` below: this room
+    // existed at the ownership check above but is gone by now — a race with
+    // a concurrent delete, not a slot conflict — and the caller answers it
+    // the same way the ownership check itself would have, not as a
+    // DUPLICATE_CLASS_SLOT. Reachable only for a room's very first class:
+    // once any class exists, `Class_teacherRoomId_roomArchived_fkey`
+    // RESTRICTs the delete.
+    if (!room) return { ok: false as const, reason: 'room_not_found' as const };
 
     // The ENTRY is inserted alone and first — it holds the slot constraint,
     // and `skipDuplicates` (`ON CONFLICT DO NOTHING`) makes it refuse with
@@ -141,7 +148,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       }],
       skipDuplicates: true,
     });
-    if (!entry) return { ok: false as const };
+    if (!entry) return { ok: false as const, reason: 'slot_conflict' as const };
 
     const cls = await tx.class.create({
       data: {
@@ -168,6 +175,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
 
   if (!outcome.ok) {
+    if (outcome.reason === 'room_not_found') {
+      // The room existed at the ownership check above but is gone by the
+      // time this transaction re-read it — the same failure the ownership
+      // check itself reports, just discovered later by a race with a
+      // concurrent delete. Same message and status for the same reason;
+      // this is not a slot conflict and must not be probed or logged as one.
+      return respondError('Invalid teacher room', 400);
+    }
     // WHICH entry, asked of the database, because a zero row count does not
     // say — and either family can be the answer, since both live in one
     // table now. On `prisma`, never on a transaction client: the one above
