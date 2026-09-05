@@ -309,6 +309,21 @@ export function statusInList(statuses: readonly ClassStatus[]): Prisma.Sql {
 }
 
 /**
+ * The `ClassStatus` members classified `true` in a `Record<ClassStatus, boolean>`, frozen.
+ *
+ * The cast below to `ClassStatus[]` restores only what `Object.keys` erases: its return type is
+ * `string[]` for soundness reasons that do not apply to an object whose keys `satisfies
+ * Record<ClassStatus, boolean>` has already constrained to exactly `ClassStatus`. `Object.freeze`
+ * is what makes rendering the result into SQL text by concatenation defensible at runtime
+ * (`statusInList` above).
+ */
+export function statusesWhere(classification: Record<ClassStatus, boolean>): readonly ClassStatus[] {
+  return Object.freeze(
+    (Object.keys(classification) as ClassStatus[]).filter((s) => classification[s]),
+  );
+}
+
+/**
  * `Class` to its `CalendarEntry`, for a `ClassLockSource.join`.
  *
  * A constant rather than three hand-typed copies: a join condition a caller
@@ -362,8 +377,8 @@ export interface ClassLockSource {
    *
    * Values are BOUND: `Prisma.sql` tagged templates merge their values into
    * this statement in source order, verified against Postgres, so nothing
-   * here is interpolated unless a caller reaches for `Prisma.raw`. In `src/`
-   * that is `statusInList` above, whose parameter type is what makes it safe.
+   * here is interpolated unless a caller reaches for `Prisma.raw`, which for a
+   * fragment reaching this helper is always `statusInList` above.
    */
   where: Prisma.Sql;
   /**
@@ -398,7 +413,7 @@ export interface ClassLockSource {
  * 'would otherwise let a subquery lock the WaitlistEntry rows…' in
  * `db-locks.test.ts`.
  *
- * No `g` flag: `RegExp.test` on a global regex carries `lastIndex` between
+ * No `g` flag: `RegExp.exec` on a global regex carries `lastIndex` between
  * calls and would skip every other fragment.
  */
 const ILLEGAL_IN_FRAGMENT =
@@ -482,13 +497,7 @@ function assertNoIllegalClauses(member: 'join' | 'where', fragment: Prisma.Sql):
  * splice if it somehow reaches Postgres. Each of those is pinned by its own
  * test in `db-locks.test.ts`. Before #245 the first two rested on `ORDER BY
  * c.id` happening to sit between the splice point and the locking clause,
- * and a locking clause inside a subquery was not refused at all. Grep
- * `Prisma.raw` rather than trusting a count here: an earlier version of this
- * sentence said "used once, for a frozen constant
- * (`SCHEDULED_STATUSES_SQL`)", and #237 added the second one
- * (`CANCELLABLE_STATUSES_SQL`, `gdpr.ts`) in the same commit that wrote the
- * sentence. The membership changed while the shape of the claim held, which is
- * the one error nothing that counts can catch.
+ * and a locking clause inside a subquery was not refused at all.
  *
  * Returning the ids is not a convenience. It lets a caller scope its write to
  * `id: { in: … }` so the write set is a structural SUBSET of the lock set,
@@ -507,9 +516,9 @@ function assertNoIllegalClauses(member: 'join' | 'where', fragment: Prisma.Sql):
  * catch it. Every call site instead carries its own written verdict, beside
  * the transaction the question is actually about. Re-derive the set —
  *
- *     grep -rn 'VERDICT (#327)' src
+ *     grep -rn 'VERDICT (#327)' src --exclude=db-locks.ts
  *
- * — one hit per call site, plus the line above quoting its own needle.
+ * — one hit per call site.
  *
  * The second statement is scoped to the ids the FIRST one returned — a
  * structural subset, not a predicate re-evaluated later — so its join member

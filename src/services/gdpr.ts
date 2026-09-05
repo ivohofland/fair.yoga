@@ -23,6 +23,7 @@ import {
   lockClassRowsOrdered,
   setLockTimeout,
   statusInList,
+  statusesWhere,
 } from '@/lib/db-locks';
 import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
@@ -489,7 +490,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // "Ordering WITHIN `Class`" — it owns that census; a second copy here
     // would go stale against it silently.
     //
-    // "Takes an order", deliberately, not "agree" — one of the four is not
+    // "Takes an order", deliberately, not "agree" — one of those sites is not
     // total, and the exception is a pairing with THIS function, so it must
     // not be read out of this comment. `archiveOrUnarchiveTemplate`'s
     // pre-lock covers `date > today`; `updateClass` (`class-lifecycle.ts`)
@@ -907,18 +908,8 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
 }
 
 /**
- * The statuses a teacher erasure cancels — and the ONE list they are read
- * from.
- *
- * Two readers in `deleteTeacherAccount`, and they have to agree: the ordered
- * pre-lock's `WHERE`, through `CANCELLABLE_STATUSES_SQL` below, and the
- * per-class cancel CAS's own `where` in the loop. Both derive from this
- * array rather than restating the statuses, so neither can drift from it.
- * What restating costs was measured rather than argued —
- * `SCHEDULED_STATUSES_SQL`'s own docblock (`class-template-lifecycle.ts`)
- * records dropping a status from one of two hand-written lists as having
- * "left every test covering this function green, silently re-opening the
- * deadlock the pre-lock exists to close".
+ * Whether a teacher erasure cancels a class in this status. The ONE
+ * classification `CANCELLABLE_STATUSES` below is derived from.
  */
 const CLASS_STATUS_CANCELLABILITY = {
   draft: true,
@@ -931,6 +922,16 @@ const CLASS_STATUS_CANCELLABILITY = {
  * The statuses a teacher erasure cancels, DERIVED from the classification
  * above rather than restated beside it.
  *
+ * Two readers in `deleteTeacherAccount` have to agree: the ordered
+ * pre-lock's `WHERE` (through `CANCELLABLE_STATUSES_SQL` below) and the
+ * per-class cancel CAS's own `where` in the loop — both derive from this
+ * array rather than restating the statuses, so neither can drift from it.
+ * What restating costs was measured rather than argued —
+ * `SCHEDULED_STATUSES_SQL`'s own docblock (`class-template-lifecycle.ts`)
+ * records dropping a status from one of two hand-written lists as having
+ * "left every test covering this function green, silently re-opening the
+ * deadlock the pre-lock exists to close".
+ *
  * `satisfies Record<ClassStatus, boolean>` is the tether: a fifth
  * `ClassStatus` is a compile error on that literal until someone says whether
  * an erasure cancels it, and because this array is built from the record's
@@ -939,19 +940,11 @@ const CLASS_STATUS_CANCELLABILITY = {
  * the literals, so a fifth member changed nothing here and left those classes
  * uncancelled on an Article 17 path with every test green.
  *
- * The `as ClassStatus[]` restores only what `Object.keys` erases: its return
- * type is `string[]` for soundness reasons that do not apply to a literal
- * whose keys the line above has just constrained to exactly `ClassStatus`.
- *
- * `Object.freeze` stays — it is what makes rendering this list into SQL text
- * by concatenation defensible at runtime (`statusInList`, `db-locks.ts`).
- * Prisma's `in` wants a mutable array, so call sites spread.
+ * Derived via `statusesWhere` (`db-locks.ts`), which is where the cast to
+ * `ClassStatus[]` and the `Object.freeze` are justified. Prisma's `in` wants
+ * a mutable array, so call sites spread.
  */
-const CANCELLABLE_STATUSES: readonly ClassStatus[] = Object.freeze(
-  (Object.keys(CLASS_STATUS_CANCELLABILITY) as ClassStatus[]).filter(
-    (s) => CLASS_STATUS_CANCELLABILITY[s],
-  ),
-);
+const CANCELLABLE_STATUSES: readonly ClassStatus[] = statusesWhere(CLASS_STATUS_CANCELLABILITY);
 
 /**
  * `CANCELLABLE_STATUSES` as SQL text, for the ordered pre-lock's predicate —
@@ -967,7 +960,7 @@ const CANCELLABLE_STATUSES_SQL = statusInList(CANCELLABLE_STATUSES);
  * notifications, personal/business data wiped; completed classes and
  * payments remain so students keep their payment records.
  *
- * The two constants above sit between this and `deleteStudentAccount` rather
+ * The constants above sit between this and `deleteStudentAccount` rather
  * than beside their first use for a lint reason recorded in #237 task 7 —
  * declaring them next to the student erasure tripped `no-unused-vars` until
  * the pre-lock below consumed them. They belong ABOVE this docblock, not
