@@ -566,7 +566,7 @@ export async function transitionClass(
     // given, because a teacher who lost this race and a teacher who never had
     // it need the same thing done.
     if (isCheckViolationOn(e, 'Class_live_needs_open_room')) {
-      log.info(
+      log.warn(
         { classId, targetStatus },
         'class publish refused by the constraint: the room archived mid-request',
       );
