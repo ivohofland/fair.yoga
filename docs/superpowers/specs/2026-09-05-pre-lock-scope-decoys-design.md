@@ -4,10 +4,11 @@ Issue #453, found by the test-coverage review of PR #451 (issue #244's fix).
 
 The lock-order suite proves `lockClassRowsOrdered`'s callers lock the right
 *number* of rows and the right *specific* rows for the fixture under test. No
-test proves any caller's `WHERE` is what does the narrowing. Every one of the
-five owner/parent-scoping conjuncts across the four production call sites can be
-deleted and the suite still passes — three of them deterministically, on any
-machine, in any database state.
+test proves any caller's `WHERE` is what does the narrowing. Delete any of the
+five owner/parent-scoping conjuncts across the four production call sites and
+nothing names the defect: four pass green, three of those deterministically on
+any machine in any database state, and the fifth is caught only by accident —
+see "The fifth conjunct is caught, but by accident" below.
 
 The fix is a decoy row per site: a `Class` that the correct predicate excludes
 and a widened one would wrongly reach, plus an assertion that names it absent.
@@ -127,6 +128,40 @@ scheduled class in the database and would collide intermittently with parallel
 tier neighbours, surfacing as a 2s `lock_timeout` swallowed into
 `{ ok: false, reason: 'busy' }` (`rule-lifecycle.ts:813`) — machine- and
 schedule-dependent, and therefore not a guard.
+
+### The fifth conjunct is caught, but by accident — and the catch names nothing
+
+Measured during Task 1, and it corrects this document's own first draft, which
+said all five conjuncts pass green. Dropping `e."teacherId"` and running the
+whole of `gdpr.test.ts` reddens TWO tests: the new decoy test, and the
+pre-existing `GDPR (DB) > teacher deletion cancels upcoming classes, notifies,
+and anonymizes`, which fails with `expected null not to be null` — a
+notification its own student never received.
+
+The mechanism, verified directly rather than taken from the report: the CAS
+cancel loop that follows the pre-lock (`gdpr.ts`, the `tx.calendarEntry.
+updateMany` keyed on `id: cls.calendarEntry.id`, `cancelledAt: null`,
+`classes: { some: { status: … } }`) carries **no second `teacherId` check**. The
+pre-lock's `WHERE` is the only thing scoping the cancel to the teacher being
+erased. So a widened predicate does not merely over-lock — every
+`deleteTeacherAccount` call in the run cancels every live cancellable class in
+the database, and a sibling describe's fixture is cancelled out from under it
+before that describe's own erasure runs, which is why its notification never
+appears.
+
+Two things follow, and they pull in opposite directions:
+
+- The conjunct matters more than "lock scope" suggests. It is the sole guard on
+  a destructive write, not a performance property.
+- The accidental catch is worth nothing as a guard. It fires in an unrelated
+  test, with a message (`expected null not to be null`) that names neither the
+  pre-lock, the scope, nor the bystander — a maintainer reading it would
+  reasonably start debugging the notification code. A guard that fires in the
+  wrong place with the wrong message costs more than it saves.
+
+Not measured: whether that sibling test also reddens with the new describe
+ABSENT. The run that produced this had the new fixture present, so the claim
+here is bounded to what was observed.
 
 ### Why the guard cannot live in the helper
 
