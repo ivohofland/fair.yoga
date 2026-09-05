@@ -208,9 +208,9 @@ the docblock and the value:
      *  The 401 is not decoration: it is what `/api/auth/session` answers a
      *  request carrying no usable session, and the probe's classification
      *  treats it as the ordinary case. Drop it and `res.status` is
-     *  `undefined` here, which the classification reads as a fault — so the
-     *  two call-count assertions in this block fail rather than quietly
-     *  passing on a mock that lies. */
+     *  `undefined` here, which the classification reads as a fault — so every
+     *  case below that uses this fixture AND asserts a call count fails,
+     *  rather than quietly passing on a mock that lies. */
     const noSession = { ok: false, status: 401 };
 ```
 
