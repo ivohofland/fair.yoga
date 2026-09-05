@@ -227,17 +227,31 @@ as confirmed:**
 
 ### 3.4 Reconciliation
 
+**Rebased mid-branch.** PR #461 (issue #453's pre-lock scope decoys) merged
+while this work was in flight and added four tests across all three files —
+`gdpr.test.ts` +2, `class-template-lifecycle.test.ts` +1,
+`waitlist.test.ts` +1. Each was re-adjudicated: all four are cross-owner
+decoys asserting that a pre-lock's row set is SCOPED to its owner, and none
+stages contention. **The moving lists in §3.1-3.3 are unchanged.** Only the
+counts and the line numbers move, and the line numbers in this spec are the
+pre-rebase ones — the titles are the durable reference.
+
+Counts below are on the rebased tree (branch point `9cd7fd43`):
+
 | File | Before (blocks / tests) | Moved | After (blocks / tests) |
 |---|---|---|---|
-| `gdpr.test.ts` | 31 / 35 | 9 / 13 | 22 / 22 |
-| `waitlist.test.ts` | 50 / 50 | 5 / 5 | 45 / 45 |
-| `class-template-lifecycle.test.ts` | 65 / 66 | 5 / 5 | 60 / 61 |
+| `gdpr.test.ts` | 33 / 37 | 9 / 13 | 24 / 24 |
+| `waitlist.test.ts` | 51 / 51 | 5 / 5 | 46 / 46 |
+| `class-template-lifecycle.test.ts` | 66 / 67 | 5 / 5 | 61 / 62 |
 | `gdpr-lock-order.test.ts` | 1 / 1 | +9 / +13 | 10 / 14 |
 | `waitlist-lock-order.test.ts` | — | +5 / +5 | 5 / 5 |
 | `class-template-lifecycle-lock-order.test.ts` | — | +5 / +5 | 5 / 5 |
 
-Repo-wide test count is unchanged: 35 + 50 + 66 + 1 = 152 before,
-22 + 45 + 61 + 14 + 5 + 5 = 152 after.
+Repo-wide test count is unchanged: 37 + 51 + 67 + 1 = 156 before,
+24 + 46 + 62 + 14 + 5 + 5 = 156 after.
+
+The pre-rebase numbers, kept because §1.2's argument about the two counting
+senses was derived from them: 31 / 35, 50 / 50, 65 / 66 — 152 either way.
 
 ## 4. Hazards
 
@@ -330,6 +344,14 @@ move.
 5. `vitest.tiers.ts`'s note is narrowed per §1.6 and cites the follow-up.
 6. The serial tier's new duration is measured against **49.50 s** (§1.7).
 7. Every moved test still passes, and each new file passes run alone.
+
+`npm run typecheck` in a worktree reports one error this branch does not own:
+`src/components/schedule/class-list.test.tsx(86,5)`, missing `live`. The
+generated Prisma client in the shared `node_modules` was built from another
+branch's schema (PR #462 adds `CalendarEntry.live`); this branch's
+`prisma/schema.prisma` has no such column. CI generates from the branch's own
+schema, and `origin/main` is green with the identical file. Typecheck is clean
+here iff that is the only line.
 
 ## 7. Not doing
 
