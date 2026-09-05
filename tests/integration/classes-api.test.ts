@@ -1394,6 +1394,98 @@ describe('POST /api/classes', () => {
     expect(res.status).toBe(400);
   });
 
+  /**
+   * Issue 339, PR review. The ownership check at the top of the handler and
+   * the transaction's own `FOR KEY SHARE` re-read of the room are two
+   * separate reads — a room deleted in between (only possible for a room's
+   * very first class ever, since `Class_teacherRoomId_roomArchived_fkey`
+   * RESTRICTs the delete once any class exists) must answer the same 400 the
+   * ownership check itself would have given, not the 409 DUPLICATE_CLASS_SLOT
+   * path: there is no slot holder here, so `probeConflictingEntry` would find
+   * nothing and `entryConflictMessage(null, 'regular')` would tell the
+   * teacher a false, unrelated story ("You already have a class that
+   * overlaps that time.").
+   *
+   * The deterministic lever is this suite's established one for a two-read
+   * race, copied from the sibling above ("404s when the class is deleted
+   * while the cancel is parked on its row"): a second client takes the row
+   * lock the create's own `FOR KEY SHARE` needs and holds a `DELETE`
+   * uncommitted, so the create's ownership check (an unlocked read, before
+   * the transaction) sees the room and passes, then the create parks on the
+   * transaction's own re-read until the delete commits and the row is gone.
+   */
+  it('answers 400, not a false slot conflict, when the room is deleted while the create is parked on it', async () => {
+    const raceRoom = await prisma.room.create({
+      data: {
+        venueName: 'Race Room', address: `${suffix} Race St`, city: 'Testville',
+        postcode: '1234RC', floor: '1', roomName: 'Race', maxCapacity: 10, createdById: ownerId,
+      },
+    });
+    const raceTeacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: ownerId, roomId: raceRoom.id, capacityOverride: 8, rentalRate: 15 },
+    });
+
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let locked!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const parked = new Promise<void>((r) => { locked = r; });
+    const holding = holder.$transaction(
+      async (tx) => {
+        // No class exists on this room yet, so nothing RESTRICTs this delete.
+        await tx.$executeRaw`DELETE FROM "TeacherRoom" WHERE id = ${raceTeacherRoom.id}`;
+        locked();
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+
+    let pending: ReturnType<typeof post> | undefined;
+    try {
+      await parked;
+
+      pending = post(ownerToken, {
+        ...baseBody(),
+        teacherRoomId: raceTeacherRoom.id,
+        classType: 'Room Deleted Mid-Create',
+        date: '2028-12-12',
+        startTime: '09:00',
+      });
+
+      // Asserted, not assumed — the same reason the sibling test asserts it:
+      // a request that answered without parking would prove nothing about
+      // the race.
+      let settled = false;
+      void pending.then(() => { settled = true; }).catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 1000));
+      expect(settled).toBe(false);
+
+      release();
+      await holding;
+      const res = await pending;
+
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { error: { message: string } };
+      expect(json.error.message).toBe('Invalid teacher room');
+      // The specific lie the undiscriminated `{ ok: false }` used to tell.
+      expect(json.error.message).not.toContain('overlaps that time');
+    } finally {
+      release();
+      await holding.catch(() => {});
+      if (pending) await pending.catch(() => undefined);
+      await holder.$disconnect();
+
+      // The holder's DELETE already removed `raceTeacherRoom` on the happy
+      // path; `deleteMany` rather than `delete` stays defensive against a
+      // path where the assertions above threw before it ever committed.
+      await prisma.calendarEntry.deleteMany({
+        where: { teacherId: ownerId, classType: 'Room Deleted Mid-Create' },
+      });
+      await prisma.teacherRoom.deleteMany({ where: { id: raceTeacherRoom.id } });
+      await prisma.room.deleteMany({ where: { id: raceRoom.id } });
+    }
+  }, 15_000);
+
   describe('POST /api/classes is retry-safe on the slot key (#196)', () => {
     // The parent describe's own afterAll (above) only clears `classType:
     // 'Create Route'` from `teacherRoomId`, so the 'Slot Yoga' rows this
