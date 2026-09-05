@@ -52,8 +52,11 @@ Three detections, and **which text each reads is the subtle part**:
   and over-triggering costs one comment line while under-triggering costs
   another silent remediation. Scoped to `UPDATE`/`DELETE` and not `INSERT`:
   these are the statements that rewrite data a teacher already has. Verify the
-  pattern does not match `ON UPDATE CASCADE` or `FOR UPDATE OF` — both are
-  common in this tree, and neither is followed by a quoted identifier.
+  pattern does not match `ON UPDATE CASCADE` or `FOR UPDATE OF`. (The reason
+  given here at first — "neither is followed by a quoted identifier" — was
+  wrong: `FOR UPDATE OF "Class"` is legal SQL and quoted. What keeps the pattern
+  safe is the intervening word, `CASCADE` or `OF`, which `UPDATE\s+"` cannot
+  cross.)
 - **The marker** is `-- DML WITHOUT NOTICE: <reason>` and the reason must be
   non-empty — a bare marker with nothing after the colon does not exempt.
 
@@ -67,14 +70,26 @@ Against the **live tree** — these are what prove the detector works on real SQ
 rather than only on fixtures:
 
 1. The rule, run with the real cutoff, reports nothing.
-2. The cutoff **names a migration that exists in the tree.** Non-vacuity: no
-   migration sorts after it today, so a typo'd or over-large cutoff would
-   disable the rule while every assertion above it stayed green.
+2. The cutoff **names a migration that exists in the tree.** Non-vacuity
+   against a typo'd or over-large cutoff, which would otherwise disable the rule
+   while every assertion above it stayed green. (When this was written nothing
+   sorted after the cutoff at all, so this was the sweep's *only* defence;
+   #339's two migrations landed after it mid-branch and now give the live sweep
+   real subjects.)
 3. The rule, run **unbounded**, reports
    `20260827120000_template_room_archive_invariant` — the migration this issue
    is about. Assert containment, not an exact set.
-4. The rule, run unbounded, does **not** report
-   `20260825065109_schedule_rule_backfill`, which carries a real `RAISE NOTICE`.
+4. ~~The rule, run unbounded, does **not** report
+   `20260825065109_schedule_rule_backfill`, which carries a real `RAISE NOTICE`.~~
+   **Struck: the premise is false, and the error was mine.** That migration
+   carries no `RAISE NOTICE` — its only occurrence of the text is a `--` comment,
+   and what it raises is a `RAISE EXCEPTION` pre-flight. Task 1 replaced this
+   with two live-tree assertions that are true and stronger, one per side of
+   comment-stripping: the unbounded run **does** report that migration (the
+   tree's own instance of the comment-only-notice hazard) and does **not**
+   report `20260826182710_entry_completion_marker_guard` or
+   `20260826200000_entry_marker_exclusivity`, whose only `UPDATE` sits in a
+   comment. See the spec §3.2 correction.
 
 Against **synthetic migrations**, each named so it sorts after the cutoff
 (`20990101000000_…` and on, as `api-errors.test.ts` does), one case per way of
@@ -161,3 +176,27 @@ that section's members, and give every hit a verdict.
 signal: this is a worktree with no dev server on `:3000`.
 
 No file under `prisma/migrations/` is added or edited by either task.
+
+---
+
+## Divergences from this plan, and why
+
+A plan is a record of a decision, not a live spec — but one stating something
+false *about the repository* is an error rather than history, so those are
+struck in place above.
+
+1. **Test 4 struck.** My factual error about
+   `20260825065109_schedule_rule_backfill`'s `RAISE NOTICE`.
+2. **The `FOR UPDATE OF` reasoning corrected.** Mine again: the pattern is safe,
+   the stated reason was not.
+3. **Task 1 declined the docblock wording suggested here** — "one migration has
+   a real block comment" is a prose count plus a census over another directory,
+   which CLAUDE.md's *Comment Discipline* forbids in a comment. It named the
+   instance without claiming it is the only one and shipped the re-derivation
+   command instead. Correct call.
+4. **Running the rule unbounded was underspecified**; task 1 chose `''`, the
+   comparison being a strict `>`.
+5. **`20260905120000_class_room_archive_invariant` arrived mid-branch.** PR #462
+   merged at 21:08:35Z on 2026-09-05, `main` moved to `9f1f95c3`, and this branch
+   was rebased onto it. Every census figure in the spec is post-merge; the cutoff
+   did not move, and spec §3.2 says why.
