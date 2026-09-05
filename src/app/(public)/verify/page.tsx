@@ -18,7 +18,7 @@ type RailStep = { num: string; text: string; when: string; state: StepState };
  * otherwise be discarded. Carried on the error rather than in a variable
  * beside the chain, so there is no write-then-read ordering for a later edit
  * to get wrong — a rejection that IS one of these came from a response, and
- * one that is not never got an answer worth a status.
+ * one that is not never got an answer worth carrying a status for.
  *
  * `message` deliberately avoids the words "Verification failed": that string
  * is on-screen copy in `ErrorState` below, and a diagnostic line sharing a
@@ -665,7 +665,9 @@ function VerifyContent() {
         // The ceiling abandoned this request; the screen already says so.
         // Probing now would attempt a fetch that's already doomed, for an
         // answer nothing may act on — skip it outright rather than let it
-        // fail through the probe's own guard.
+        // fail through the probe's own guard. It has to stay above the
+        // classification below, too: our own abort is not a fault, and
+        // reporting it as one would blame the server for what this page did.
         if (controller.signal.aborted) return;
 
         // A 400 is the answer this page is built to expect — the link is

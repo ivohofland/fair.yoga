@@ -880,7 +880,7 @@ describe('VerifyPage', () => {
      *  that did not happen. */
     it('does not probe the session for a verification it abandoned', async () => {
       vi.useFakeTimers();
-      silenceErrors();
+      const errors = silenceErrors();
       const fetchMock = vi.fn(
         (_url: string, init?: { signal?: AbortSignal }) =>
           new Promise((_resolve, reject) => {
@@ -895,6 +895,17 @@ describe('VerifyPage', () => {
       await advance(VERIFY_CEILING_MS);
       await advance(RAIL_STAYS_FOR_MS);
       expect(fetchMock).toHaveBeenCalledTimes(1);
+      // The abort guard runs BEFORE the classification, and that ordering is
+      // the whole of what keeps our own abort from being reported as a fault.
+      // Move the classification above it and this reader gets a fault line for
+      // a request the page abandoned on purpose, one entry behind the give-up
+      // line that already explained it. The probe's guard is pinned the same
+      // way by `gives up when the session probe is the request that never
+      // answers`, above.
+      expect(errors).not.toHaveBeenCalledWith(
+        '[verify] the verification request failed',
+        expect.anything(),
+      );
     });
   });
 
@@ -934,10 +945,17 @@ describe('VerifyPage', () => {
       render(<VerifyPage />);
 
       expect(await screen.findByText('Verification failed')).toBeInTheDocument();
-      // Two matchers over the same call: `objectContaining` alone is duck-typed,
-      // and would accept a bare `{ status: 500 }` in place of the real error.
+      // Two assertions rather than one: `objectContaining` alone is duck-typed
+      // and would accept a bare `{ status: 500 }` where the real error belongs,
+      // and the message pins the docblock's rule that this string never reuses
+      // the on-screen copy. Both range over the spy's whole call list, so they
+      // do not by themselves prove one call satisfied both — what they catch is
+      // a substituted payload, which is the realistic edit.
       expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.any(Error));
-      expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.objectContaining({ status: 500 }));
+      expect(errors).toHaveBeenCalledWith(
+        FAULT_LINE,
+        expect.objectContaining({ status: 500, message: 'verify POST answered 500' }),
+      );
     });
 
     /**
@@ -969,6 +987,12 @@ describe('VerifyPage', () => {
      * This assertion cannot fail against an implementation that logs nothing
      * at all, which is what the file did before #452 — its evidence is the
      * mutation recorded in Task 2 Step 5, not this run.
+     *
+     * The bare `not.toHaveBeenCalled()` is deliberate where the ceiling's
+     * cases use the argument-matching form: those assert that one specific
+     * line is absent among others that legitimately fire, while this case
+     * claims something stronger — that a spent link produces no console
+     * output at all.
      */
     it('stays silent for the spent link that is the ordinary case', async () => {
       const errors = watchErrors();
