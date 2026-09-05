@@ -98,19 +98,44 @@ Re-derive the call-site set with the command `db-locks.ts` ships:
 issue does not name are **worse**, because their widenings key on a per-run
 unique fixture id, so no accumulated debris can ever fail them:
 
-| Site | Conjunct | What a widening does | Instrument that can witness it |
+| Site | Conjunct | What a widening does | Witness (see the shadowing note below) |
 |---|---|---|---|
-| `gdpr.ts:1135` `deleteTeacherAccount` | `e."teacherId"` | cancels bystanders' classes, irreversibly | locked ids **+** decoy uncancelled |
-| `gdpr.ts:442` `deleteStudentAccount` | `w."studentId"` | widens lock set only | locked ids only |
-| `waitlist.ts:1094` `withdrawWaitingEntriesForTeacher` | `e."teacherId"` | withdraws the student's entries on **other teachers'** queues | locked ids **+** decoy stays `waiting` |
-| `waitlist.ts:1095` same | `w."studentId"` | widens lock set only | locked ids only |
-| `class-template-lifecycle.ts:756` archive | `e."scheduleRuleId"` | widens lock set only | locked ids only |
+| `gdpr.ts:1135` `deleteTeacherAccount` | `e."teacherId"` | cancels bystanders' classes, irreversibly | locked ids |
+| `gdpr.ts:442` `deleteStudentAccount` | `w."studentId"` | widens lock set only | locked ids |
+| `waitlist.ts:1094` `withdrawWaitingEntriesForTeacher` | `e."teacherId"` | withdraws the student's entries on **other teachers'** queues | locked ids |
+| `waitlist.ts:1095` same | `w."studentId"` | widens lock set only | locked ids |
+| `class-template-lifecycle.ts:756` archive | `e."scheduleRuleId"` | widens lock set only | locked ids |
 
-**This corrects the issue's acceptance criterion.** It offers "asserts it is NOT
-among the locked ids (or, more strongly, is never touched by the erasure at
-all)". The stronger form is *impossible* at three of the five conjuncts, because
-at those sites the write re-derives its own scope and cannot be reached by a
-widened lock:
+**The locked-id set is the witness for all five, and the survival assertions
+witness none of them.** This corrects an earlier draft of this table, which
+listed "locked ids **+** decoy survives" for the two data-loss rows as though
+both instruments fired. Measured across Tasks 1 and 2, on every mutation run:
+the `expect(lockSets[0]).toEqual([…])` assertion sits above the survival
+assertions in each test and fails FIRST, so vitest throws out of the test body
+and the survival assertion never executes. A pre-lock widening is therefore
+witnessed by the lock set and by nothing else, in all five cases.
+
+That does not make the survival assertions dead weight — it means they guard a
+DIFFERENT mutation class. Each sits beside a write that re-derives its own
+scope (`waitlistEntry.deleteMany` on `studentId`, `updateMany` on
+`input.studentId`, `deleteWhere` on `scheduleRuleId`), and it is that
+re-derivation they pin. Verified for the `waitlist` case in Task 2 by relaxing
+the lock-set assertion to `toContain` for one run: with the shadowing removed,
+both decoys' survival assertions passed under the widened predicate, confirming
+the write never reaches them. The diagnostic was reverted.
+
+Consequence for anyone reading a failure: a broken scoping conjunct always
+reports as an array mismatch naming the foreign id, never as "the bystander was
+cancelled". The comment beside each survival assertion has to say so, or the
+next reader will assume it proved something it never ran to prove.
+
+**This corrects the issue's acceptance criterion, twice over.** It offers
+"asserts it is NOT among the locked ids (or, more strongly, is never touched by
+the erasure at all)". The stronger form fails for two separate reasons, and the
+second is the more general.
+
+FIRST: at three of the five conjuncts the write re-derives its own scope, so a
+widened lock cannot reach the decoy at all and there is nothing to observe:
 
 - `waitlist.ts:1104` re-scopes its `updateMany` with
   `{ studentId: input.studentId, classId: { in: classIds }, status: 'waiting' }`
@@ -120,9 +145,16 @@ widened lock:
   `remaining` re-scopes through `standingWhere` — so dropping
   `e."scheduleRuleId"` deletes, cancels and notifies exactly the same rows.
 
-At those three, **the returned locked-id set is the only available witness**,
-which is why every site below asserts on it and only two add a survival
-assertion. The template site's sole reachable symptom otherwise is lock
+SECOND, and this covers the remaining two: even where the write DOES reach the
+decoy — the two data-loss rows — the lock-set assertion above it fails first and
+the survival assertion never executes (see the shadowing note above). So the
+stronger form is unobservable at all five, not three: at three because nothing
+happens, at two because the test stops before it could be seen.
+
+**The returned locked-id set is therefore the only witness anywhere**, which is
+why every site below asserts on it. The survival assertions stay for the write
+predicates they pin, not for the conjunct beside them.
+The template site's sole reachable symptom otherwise is lock
 contention: a rule-unscoped pre-lock takes `FOR UPDATE` on every future
 scheduled class in the database and would collide intermittently with parallel
 tier neighbours, surfacing as a 2s `lock_timeout` swallowed into
