@@ -3153,3 +3153,237 @@ describe('the cancellable-status classification reaches the pre-lock (#245)', ()
     expect(predicates[0]).toContain("c.status IN ('draft', 'open', 'in_progress')");
   });
 });
+
+/**
+ * ONE DECOY SERVES BOTH CONJUNCTS. `classD` belongs to a different teacher AND
+ * carries a different student's waiting entry, so `e."teacherId" =
+ * victimTeacher` excludes it and `w."studentId" = victimStudent` excludes it
+ * too — and either conjunct's deletion pulls it into that pre-lock's set.
+ *
+ * What this adds over `gdpr-lock-order.test.ts`'s lock-set assertion, which
+ * already pins the ids both erasures lock: that assertion proves the set's SIZE
+ * and MEMBERS for a fixture containing nothing the predicate should reject, so
+ * a widened `WHERE` fails it only if some unrelated qualifying row happens to
+ * be in the shared database. Measured on 2026-09-05: dropping
+ * `e."teacherId"` failed it while one orphaned class from another suite sat in
+ * `ethical_yoga_test`, and passed once that row left predicate scope. The decoy
+ * below is always present, so the failure is a construction rather than a
+ * coincidence.
+ */
+describe('the erasure pre-locks are scoped to their own owner (#453)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-scope-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let victimTeacherId: string;
+  let victimTeacherAccountId: string;
+  let decoyTeacherId: string;
+  let decoyTeacherAccountId: string;
+  let roomId: string;
+  let victimStudentId: string;
+  let victimStudentAccountId: string;
+  let decoyStudentId: string;
+  let classAId: string;
+  let classDId: string;
+  let classDEntryId: string;
+
+  beforeAll(async () => {
+    const victimTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Scope',
+        lastName: 'Victim',
+        email: `${suffix}-victim@test.local`,
+        account: { create: { email: `${suffix}-victim@test.local` } },
+        bio: 'Scope fixture',
+        pageSlug: `${suffix}-victim`,
+      },
+      select: { id: true, accountId: true },
+    });
+    victimTeacherId = victimTeacher.id;
+    victimTeacherAccountId = victimTeacher.accountId;
+
+    const decoyTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Scope',
+        lastName: 'Bystander',
+        email: `${suffix}-decoy@test.local`,
+        account: { create: { email: `${suffix}-decoy@test.local` } },
+        bio: 'Scope decoy',
+        pageSlug: `${suffix}-decoy`,
+      },
+      select: { id: true, accountId: true },
+    });
+    decoyTeacherId = decoyTeacher.id;
+    decoyTeacherAccountId = decoyTeacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Scope Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234SC',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: victimTeacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+
+    // A `TeacherRoom` per teacher on the one shared `Room`: the rate is
+    // per-teacher and never shared, so the decoy needs its own row.
+    const victimRoom = await prisma.teacherRoom.create({
+      data: { teacherId: victimTeacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    const decoyRoom = await prisma.teacherRoom.create({
+      data: { teacherId: decoyTeacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+
+    const base = {
+      classType: 'Scope class',
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'open' as const,
+    };
+
+    const classA = await createClassFixture(prisma, {
+      ...base,
+      teacherId: victimTeacherId,
+      teacherRoomId: victimRoom.id,
+      date: new Date('2099-06-01'),
+    });
+    classAId = classA.id;
+
+    const classD = await createClassFixture(prisma, {
+      ...base,
+      teacherId: decoyTeacherId,
+      teacherRoomId: decoyRoom.id,
+      date: new Date('2099-06-01'),
+    });
+    classDId = classD.id;
+    classDEntryId = classD.calendarEntry.id;
+
+    // WITH an account: `deleteStudentAccount` erases sessions and the account
+    // row, so a student without one is not the shape under test.
+    const victimStudent = await prisma.student.create({
+      data: {
+        firstName: 'Scope',
+        lastName: 'Student',
+        email: `${suffix}-student@test.local`,
+        incomeTier: 2,
+        claimedAt: new Date(),
+        account: { create: { email: `${suffix}-student@test.local` } },
+      },
+      select: { id: true, accountId: true },
+    });
+    victimStudentId = victimStudent.id;
+    victimStudentAccountId = victimStudent.accountId!;
+
+    // No account: nothing erases this one.
+    const decoyStudent = await prisma.student.create({
+      data: {
+        firstName: 'Scope',
+        lastName: 'Waiter',
+        email: `${suffix}-waiter@test.local`,
+        incomeTier: 2,
+      },
+      select: { id: true },
+    });
+    decoyStudentId = decoyStudent.id;
+
+    await prisma.waitlistEntry.create({
+      data: { classId: classAId, studentId: victimStudentId, position: 1, status: 'waiting' },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId: classDId, studentId: decoyStudentId, position: 1, status: 'waiting' },
+    });
+  });
+
+  afterAll(async () => {
+    const studentIds = [victimStudentId, decoyStudentId];
+    const teacherIds = [victimTeacherId, decoyTeacherId];
+    await prisma.notification.deleteMany({ where: { recipientId: { in: [...studentIds, ...teacherIds] } } });
+    await prisma.waitlistEntry.deleteMany({ where: { studentId: { in: studentIds } } });
+    await prisma.studentPrivacy.deleteMany({ where: { studentId: { in: studentIds } } });
+    await prisma.teacherStudent.deleteMany({ where: { studentId: { in: studentIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [victimTeacherAccountId, decoyTeacherAccountId, victimStudentAccountId] } },
+    });
+    await prisma.$disconnect();
+  });
+
+  /**
+   * The ids the pre-lock ACTUALLY held, read off the helper rather than
+   * re-derived from a fixture. Calls through, so the erasure runs for real —
+   * the same shape as the fragment-reading spy in the describe above, which
+   * reads `source.where` where this reads the return value.
+   *
+   * A text pin on `source.where` could not replace this: `.strings` is the
+   * tagged template's STATIC text, so the owner id renders as `?` and a
+   * predicate scoped to the WRONG owner reads identically to the right one.
+   */
+  const captureLockSets = (): string[][] => {
+    const original = dbLocks.lockClassRowsOrdered;
+    const lockSets: string[][] = [];
+    const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
+      const ids = await original(tx, source);
+      lockSets.push(ids);
+      return ids;
+    });
+    onTestFinished(() => spy.mockRestore());
+    return lockSets;
+  };
+
+  // STUDENT ERASURE FIRST, and the order is load-bearing: the teacher erasure
+  // below cancels `classA`'s entry, and a cancelled REGULAR entry is terminal
+  // (`entry_terminal_liveness_guard`), so this test cannot be made to run
+  // after it.
+  it('locks only classes the erased student actually waits in', async () => {
+    const lockSets = captureLockSets();
+
+    await deleteStudentAccount(prisma, victimStudentId);
+
+    expect(lockSets).toHaveLength(1);
+    // `classD` carries a waiting entry too — just not this student's. Drop
+    // `w."studentId"` from the pre-lock and it appears here.
+    expect(lockSets[0]).toEqual([classAId]);
+
+    // The decoy's entry is untouched. HONEST ABOUT WHAT THIS CATCHES: it
+    // cannot fail on a widened pre-lock, because the `waitlistEntry.deleteMany`
+    // re-scopes on `studentId` independently. It guards that `deleteMany`'s own
+    // scope, which is a different regression.
+    const decoyEntry = await prisma.waitlistEntry.findFirstOrThrow({
+      where: { classId: classDId, studentId: decoyStudentId },
+    });
+    expect(decoyEntry.status).toBe('waiting');
+  });
+
+  it('locks only the erased teacher’s own classes, and cancels no one else’s', async () => {
+    const lockSets = captureLockSets();
+
+    await deleteTeacherAccount(prisma, victimTeacherId);
+
+    expect(lockSets).toHaveLength(1);
+    expect(lockSets[0]).toEqual([classAId]);
+
+    // THE DATA-LOSS WITNESS, and the one assertion here that a widening
+    // actually destroys: a pre-lock that reaches `classD` cancels it, because
+    // the cancel loop reads exactly the ids the lock returned. Measured
+    // 2026-09-05 against the mutation — the bystander's entry came back
+    // cancelled, and the database then refused to restore it.
+    const decoyEntry = await prisma.calendarEntry.findUniqueOrThrow({ where: { id: classDEntryId } });
+    expect(decoyEntry.cancelledAt).toBeNull();
+    expect(await prisma.class.count({ where: { id: classDId } })).toBe(1);
+  });
+});
