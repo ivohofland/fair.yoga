@@ -514,91 +514,6 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     await prisma.waitlistEntry.deleteMany({ where: { classId: staleClassId } });
     await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: staleClassId } } } });
   });
-
-  /**
-   * #104. `addToWaitlist` took an unbounded inline `FOR UPDATE` until this
-   * change; it now goes through `lockClassRow`, which issues the shared 2s
-   * `SET LOCAL lock_timeout` first.
-   *
-   * The 3.5s hold is the guard, not scenery: it sits above the 2s bound and
-   * below Prisma's 5s default transaction budget, so WITHOUT the bound this
-   * call acquires the lock at 3.5s and succeeds. Reverting the site to its
-   * inline statement therefore fails `expect(outcome.ok).toBe(false)` rather
-   * than hanging the suite.
-   *
-   * `outcome.ok === false` is what distinguishes "gave up at 2s" from "waited
-   * the holder out", and it is the only thing that can: waiting the holder out
-   * does not fail slowly, it SUCCEEDS at 3.5s. `/55P03/` then names the
-   * mechanism as Postgres's `lock_timeout` rather than some other refusal, and
-   * `waited > 1_000` excludes an instant failure that never reached the lock.
-   *
-   * There is deliberately NO upper bound on `waited`, and this paragraph is
-   * the reference for the two sibling guards below (`promoteNext (DB)` and
-   * `claimSpot (DB)`) and for the HTTP one in
-   * `tests/integration/registrations-api.test.ts`. All four carried
-   * `toBeLessThan(3_400)`. It was not dead weight for every value, though: a
-   * `lock_timeout` configured between 3.4s and 3.5s — say 3.45s — still sits
-   * below the 3.5s hold, so the call still raises `55P03` and `ok === false`
-   * and `/55P03/` both stay green while `waited` lands past the 3_400 ceiling.
-   * That was its one sliver of unique coverage. Everywhere else it was
-   * redundant with the other two assertions: at a 3.0s or 3.3s bound the call
-   * raises `55P03` and passes the ceiling anyway; at 3.6s it acquires when the
-   * holder releases and succeeds, which `ok === false` catches on its own.
-   * And that one sliver is already pinned directly — `db-locks.test.ts`
-   * asserts the literal `LOCK_TIMEOUT_SQL` value and observes the effect via
-   * `SHOW lock_timeout` — so the ceiling was never the only thing standing
-   * between a misconfigured bound and a green suite. What it cost instead was
-   * a ~1400ms overhead budget, against a holder-acquisition latency this same
-   * file measured at 486ms under load and 428ms idle on a 10-core machine —
-   * so on a 2-4 core CI box running three vitest projects it was the one
-   * flake surface in these guards, reddening at random under a label that
-   * sent the reader looking for a bound which had in fact fired correctly.
-   * The timeout's VALUE is pinned by `db-locks.test.ts`, never by a
-   * wall-clock threshold here.
-   */
-  it('gives up on the 2s bound when another transaction holds the class row', async () => {
-    // Its own full class: max 1, one registration. Not the block's shared
-    // `classId`, whose waitlist other tests mutate.
-    const lockedClassId = await makeClass('open', 1);
-    await prisma.registration.create({
-      data: {
-        classId: lockedClassId,
-        studentId: fillerIds[0]!,
-        status: 'registered',
-        tierAtBooking: 3,
-      },
-    });
-
-    const holderClient = new PrismaClient();
-    let signalHeld!: () => void;
-    const held = new Promise<void>((r) => {
-      signalHeld = r;
-    });
-
-    const holder = holderClient.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${lockedClassId} FOR UPDATE`;
-        signalHeld();
-        await new Promise((r) => setTimeout(r, 3_500));
-      },
-      { timeout: 30_000 },
-    );
-    await held;
-
-    const startedAt = Date.now();
-    const outcome = await addToWaitlist(prisma, lockedClassId, studentIds[0]!).then(
-      () => ({ ok: true as const }),
-      (err: unknown) => ({ ok: false as const, err: String(err) }),
-    );
-    const waited = Date.now() - startedAt;
-
-    await holder;
-    await holderClient.$disconnect();
-
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.err).toMatch(/55P03/);
-    expect(waited).toBeGreaterThan(1_000);
-  }, 20_000);
 });
 
 describe('promoteNext (DB)', () => {
@@ -848,132 +763,6 @@ describe('promoteNext (DB)', () => {
       await prisma.student.delete({ where: { id: extra.id } });
     }
   });
-
-  /**
-   * #104. `promoteNext` is the one converted site that is NOT a route. It is
-   * called only by `handleSpotFreed`, which `reconcileWaitlists` re-invokes
-   * every minute — `waitlist-reconciliation.ts`'s own docblock puts it as
-   * "this module detects; `handleSpotFreed` decides". So its failure surface
-   * is the reconciliation sweep repairing it later, not a 503 a student reads.
-   *
-   * The bound is a TRADE here, not a free improvement, and the trade is worth
-   * stating because both directions are real. What it buys: a contended
-   * promotion used to wait out the WHOLE hold and then blow Prisma's 5s budget
-   * (`P2028`, measured at 7014ms against a 7s hold — it cannot cancel a
-   * statement already blocked inside Postgres), occupying a pool connection
-   * the whole time; now it aborts at 2s with `55P03` and the sweep retries
-   * sooner. What it costs: before the conversion a promotion still SUCCEEDED
-   * against a competing hold of up to roughly 4.5s (the 5s budget less the
-   * 8-12 statements that still have to run after the lock is won — spec §3.3).
-   * `2s < h ≲ 4.5s` is therefore a band where a promotion that used to happen
-   * no longer does on the live path.
-   *
-   * That band is not invisible. `reconcileWaitlists` catches per class and
-   * logs the loss at `warn` (`waitlist-reconciliation.ts`) on every tick, and
-   * escalates to `error` if the same class stays stuck for
-   * `MAX_CONSECUTIVE_CONTENDED_TICKS` in a row. Neither level delivers
-   * anywhere on its own today — `lib/log.ts` is pino to stdout with no
-   * transport, so nothing pages anyone off either one (#157); the lines sit in
-   * the server log for whoever reads it. What surfaces is `report`'s
-   * `ReconciliationFailedError`, which `scheduler.ts` stores as the
-   * job's `lastError` and `/api/health` surfaces as `degraded`, only under
-   * `decideEscalation`'s two conditions: immediately for a tick with any
-   * non-transient failure, or after `MAX_CONSECUTIVE_CONTENDED_TICKS`
-   * consecutive all-transient ticks. The sweep INVOKES a class only in the
-   * rare state it exists for — a free seat and a live queue at the same
-   * moment — and skips every other candidate, so one invoked class per tick is
-   * the ordinary case however many teachers share the deployment. A single
-   * benign lock race on an otherwise-idle sweep therefore no longer reddens
-   * the job by itself — that false alarm is exactly what issue #269 (and this
-   * branch) fixed.
-   *
-   * The 3.5s hold sits above the 2s bound and below the 5s budget, so without
-   * the bound this call acquires at 3.5s and succeeds. `outcome.ok === false`
-   * is therefore the discriminator, `/55P03/` names the mechanism, and
-   * `waited > 1_000` excludes an instant unrelated failure — see the sibling
-   * guard in `addToWaitlist + removeFromWaitlist (DB)` above for why there is
-   * no upper bound on `waited`, and for why the ceiling that used to be here
-   * was worth deleting even though it had one sliver of coverage: that sliver
-   * is already pinned directly by `db-locks.test.ts`.
-   */
-  it('gives up on the 2s bound when another transaction holds the class row', async () => {
-    // Its own full class: max 1, one filler registered (making it full,
-    // which `addToWaitlist` requires), a second filler waitlisted, then that
-    // registration cancelled to free the seat. Not the block's shared
-    // `classId` — its queue is consumed in a fixed order by `beforeAll` and
-    // the tests above, so a guard appended there would depend on that order.
-    // `cancelRegistration` above closes over the shared `classId` and can't
-    // target this class, so its update is inlined below.
-    const lockedClass = await createClassFixture(prisma, {
-        teacherId,
-        teacherRoomId,
-        classType: 'Yin',
-        // A day of its own, not an hour: the sibling fixture above runs
-        // 18:00–19:15 on 2099-07-01, and since #327 the slot constraint
-        // refuses an OVERLAP rather than an identical start time.
-        date: new Date('2099-07-02'),
-        startTime: hhmmToTime('19:00'),
-        durationMinutes: 75,
-        roomCost: 40,
-        minRate: 10,
-        targetRate: 20,
-        minStudents: 1,
-        maxStudents: 1,
-        status: 'open',
-        settingsLocked: true,
-      });
-    const lockedClassId = lockedClass.id;
-
-    try {
-      await prisma.registration.create({
-        data: {
-          classId: lockedClassId,
-          studentId: fillerIds[0]!,
-          status: 'registered',
-          tierAtBooking: 3,
-        },
-      });
-      await addToWaitlist(prisma, lockedClassId, fillerIds[1]!);
-      await prisma.registration.update({
-        where: { classId_studentId: { classId: lockedClassId, studentId: fillerIds[0]! } },
-        data: { status: 'cancelled', cancelledAt: new Date() },
-      });
-
-      const holderClient = new PrismaClient();
-      let signalHeld!: () => void;
-      const held = new Promise<void>((r) => {
-        signalHeld = r;
-      });
-
-      const holder = holderClient.$transaction(
-        async (tx) => {
-          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${lockedClassId} FOR UPDATE`;
-          signalHeld();
-          await new Promise((r) => setTimeout(r, 3_500));
-        },
-        { timeout: 30_000 },
-      );
-      await held;
-
-      const startedAt = Date.now();
-      const outcome = await promoteNext(prisma, lockedClassId).then(
-        () => ({ ok: true as const }),
-        (err: unknown) => ({ ok: false as const, err: String(err) }),
-      );
-      const waited = Date.now() - startedAt;
-
-      await holder;
-      await holderClient.$disconnect();
-
-      expect(outcome.ok).toBe(false);
-      if (!outcome.ok) expect(outcome.err).toMatch(/55P03/);
-      expect(waited).toBeGreaterThan(1_000);
-    } finally {
-      await prisma.waitlistEntry.deleteMany({ where: { classId: lockedClassId } });
-      await prisma.registration.deleteMany({ where: { classId: lockedClassId } });
-      await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: lockedClassId } } } });
-    }
-  }, 20_000);
 });
 
 // ===========================================================================
@@ -1021,9 +810,9 @@ describe('claimSpot (DB)', () => {
    * date/startTime are load-bearing for the deadline-window comment above
    * (BEFORE_CUTOFF/IN_CLAIM_WINDOW/AT_DEADLINE are all computed against this
    * exact 2026-06-01 09:00 UTC start) — moving either to dodge
-   * `CalendarEntry_teacher_slot_excl` across this describe's 6 calls would
-   * shift every boundary those constants were pinned against. So every call
-   * after the first gets its own teacher (defaultTimezone UTC, matching the
+   * `CalendarEntry_teacher_slot_excl` across this describe's repeated calls
+   * would shift every boundary those constants were pinned against. So every
+   * call after the first gets its own teacher (defaultTimezone UTC, matching the
    * fixture teacher below, since claimSpot reads the deadline off
    * `cls.teacher.defaultTimezone`) instead — the constraint is scoped per
    * teacher, so a different owner keeps the same slot legal.
@@ -1247,70 +1036,6 @@ describe('claimSpot (DB)', () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0]!.type).toBe('booking_confirmed');
   });
-
-  /**
-   * #104. `claimSpot` took an unbounded inline `FOR UPDATE` until this change;
-   * it now goes through `lockClassRow` and its shared 2s bound.
-   *
-   * This is the site where contention is by DESIGN: the final-hour broadcast
-   * tells every waiting student at once, so N claims land on one `Class` row
-   * and serialize. That is not what the bound is for — each claim holds the
-   * row only for its own short transaction, so 2s covers a deep queue
-   * comfortably. What the bound stops is a claim arriving while an UNRELATED
-   * long holder has the row: a GDPR erasure holds, for up to 20s, every class
-   * the erased student was QUEUED in — `deleteStudentAccount` pre-locks on a
-   * join over `WaitlistEntry` (`gdpr.ts`), across every entry status, not on
-   * registrations. A class the student was registered in but never queued in
-   * is written UNLOCKED by that same erasure, a distinction `handleSpotFreed`
-   * makes deliberately in `waitlist.ts` — so "every class a student touched"
-   * would name a wider lock set than the one that actually exists.
-   *
-   * The 3.5s hold is the guard. It sits above the 2s bound and below Prisma's
-   * 5s default budget, so WITHOUT the bound this call acquires at 3.5s and
-   * succeeds — reverting the site fails `expect(outcome.ok).toBe(false)`
-   * rather than hanging the suite. That failure IS what separates "gave up at
-   * 2s" from "waited it out"; see the sibling guard in
-   * `addToWaitlist + removeFromWaitlist (DB)` above for why there is no upper
-   * bound on `waited`, and for why the ceiling that used to be here was worth
-   * deleting even though it had one sliver of coverage: that sliver is
-   * already pinned directly by `db-locks.test.ts`.
-   */
-  it('gives up on the 2s bound when another transaction holds the class row', async () => {
-    // Same state the passing test above builds: in the claim window, one
-    // free spot, this student `waiting`.
-    const lockedClassId = await makeFullClass();
-    await freeTheSpot(lockedClassId);
-
-    const holderClient = new PrismaClient();
-    let signalHeld!: () => void;
-    const held = new Promise<void>((r) => {
-      signalHeld = r;
-    });
-
-    const holder = holderClient.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${lockedClassId} FOR UPDATE`;
-        signalHeld();
-        await new Promise((r) => setTimeout(r, 3_500));
-      },
-      { timeout: 30_000 },
-    );
-    await held;
-
-    const startedAt = Date.now();
-    const outcome = await claimSpot(prisma, lockedClassId, waiterId, IN_CLAIM_WINDOW).then(
-      () => ({ ok: true as const }),
-      (err: unknown) => ({ ok: false as const, err: String(err) }),
-    );
-    const waited = Date.now() - startedAt;
-
-    await holder;
-    await holderClient.$disconnect();
-
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.err).toMatch(/55P03/);
-    expect(waited).toBeGreaterThan(1_000);
-  }, 20_000);
 });
 
 // ===========================================================================
@@ -1668,10 +1393,10 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
 });
 
 // ===========================================================================
-// removeFromWaitlist takes the class lock — #174
+// removeFromWaitlist survives the entry vanishing mid-lock — #174
 // ===========================================================================
 
-describe('removeFromWaitlist takes the class lock (DB)', () => {
+describe('removeFromWaitlist when the entry vanishes mid-lock (DB)', () => {
   let teacherId: string;
   let roomId: string;
   let teacherRoomId: string;
@@ -1744,23 +1469,21 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
       data: { classId, studentId: fillerId, status: 'registered', tierAtBooking: 3 },
     });
 
-    // Three waiting students — position 2 gets removed mid-lock below, so
-    // the reorder that follows has real work to do: position 3 moves to 2.
-    // (An earlier version of this comment said "2 → 1", which describes no
-    // move this fixture makes — position 1 is untouched, and 2 is the entry
-    // being removed rather than one being renumbered.)
-    for (let i = 1; i <= 3; i++) {
-      const student = await prisma.student.create({
-        data: {
-          firstName: `LockStudent${i}`,
-          lastName: 'Test',
-          email: `lock-student-${i}-${uniqueSuffix}@test.local`,
-          incomeTier: i + 1,
-        },
-      });
-      studentIds.push(student.id);
-      await addToWaitlist(prisma, classId, student.id);
-    }
+    // One waiting student — the interposed-delete race below only needs an
+    // entry it can make vanish. This block used to also cover renumbering a
+    // multi-student queue mid-lock, which needed three; that test
+    // (`waits for a class row another transaction holds before
+    // renumbering`) moved to `waitlist-lock-order.test.ts` (#459).
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'LockStudent',
+        lastName: 'Test',
+        email: `lock-student-${uniqueSuffix}@test.local`,
+        incomeTier: 2,
+      },
+    });
+    studentIds.push(student.id);
+    await addToWaitlist(prisma, classId, student.id);
   });
 
   afterAll(async () => {
@@ -1771,50 +1494,6 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.teacher.delete({ where: { id: teacherId } });
-  });
-
-  /**
-   * Held for under the 2s `lock_timeout` this site now sets, so what this
-   * observes is the wait and not the timeout.
-   */
-  it('waits for a class row another transaction holds before renumbering', async () => {
-    let holderReleased = false;
-
-    const holder = prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
-        await new Promise((r) => setTimeout(r, 900));
-        holderReleased = true;
-      },
-      { timeout: 10_000 },
-    );
-    await new Promise((r) => setTimeout(r, 150));
-
-    const removing = removeFromWaitlist(prisma, classId, studentIds[1]!).then(
-      () => 'returned' as const,
-    );
-    const outcome = await Promise.race([
-      removing,
-      new Promise<'waiting'>((r) => setTimeout(() => r('waiting'), 400)),
-    ]);
-
-    expect(outcome).toBe('waiting');
-    expect(holderReleased).toBe(false);
-
-    await holder;
-    expect(await removing).toBe('returned');
-
-    // Not a lock-discriminating assertion on its own — nothing else is
-    // renumbering this queue concurrently, so it would pass with the lock
-    // removed too (confirmed: it still passes with `lockClassRow` commented
-    // out and the two wait assertions above deleted). What the wait
-    // assertions above prove is the serialization; this only confirms
-    // `removeFromWaitlist` left the queue correctly renumbered once it ran.
-    const remaining = await prisma.waitlistEntry.findMany({
-      where: { classId, status: 'waiting' },
-      orderBy: { position: 'asc' },
-    });
-    expect(remaining.map((e) => e.position)).toEqual([1, 2]);
   });
 
   /**
@@ -1838,7 +1517,7 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
    * unfixed code.
    */
   it('reports NOT_FOUND when the entry is deleted after the lock but before the write', async () => {
-    const victimId = studentIds[2]!;
+    const victimId = studentIds[0]!;
     let hookCalls = 0;
 
     const racing = prisma.$extends({
@@ -2025,13 +1704,11 @@ describe('handleSpotFreed (DB)', () => {
    * told a seat is free. Before this the three callers logged one message that
    * was true on either branch and specific to neither.
    *
-   * Runs here, between the two tests above and below, because it needs what
-   * `stays silent when the class is already full, and broadcasts when it is
-   * not` leaves behind — a free seat and both waiters still `waiting` — and
-   * `takes the class row lock before it counts` re-fills the seat right after
-   * this. Every assertion here rejects, so `handleSpotFreed`'s own
-   * transaction rolls back with no side effect: the re-fill below still finds
-   * exactly what its own comment says it does.
+   * Runs here, right after `stays silent when the class is already full, and
+   * broadcasts when it is not`, because it needs what that test leaves behind
+   * — a free seat and both waiters still `waiting`. Every assertion here
+   * rejects, so `handleSpotFreed`'s own transaction rolls back with no side
+   * effect, and nothing later in this file re-fills the seat.
    */
   it('wraps an auto-promote failure with its branch', async () => {
     const boom = new Error('injected: promotion failed');
@@ -2093,98 +1770,6 @@ describe('handleSpotFreed (DB)', () => {
     const err = await handleSpotFreed(failing, classId, IN_CLAIM_WINDOW).catch((e) => e);
 
     expect(isTransientDbError(err)).toBe(true);
-  });
-
-  /**
-   * #212. The capacity guard above is proved by M4; the lock that makes it
-   * MEAN anything was proved by nothing — deleting `lockClassRow` left every
-   * test in `waitlist`/`capacity`/`gdpr` green. That is the branch's whole
-   * argument (spec §2: an unlocked count moves the race rather than closing
-   * it) sitting untested.
-   *
-   * **Two traps, and the second one caught the first version of this test.**
-   *
-   * 1. *The notification write blocks anyway.* Holding the row and calling the
-   *    hook on a class with a FREE seat passes with `lockClassRow` deleted: a
-   *    broadcast that reaches its `createMany` takes `FOR KEY SHARE` on the
-   *    same `Class` row via `relatedClassId` (`docs/lock-order.md`, "the
-   *    fourth path"), which conflicts with the holder's `FOR UPDATE`. It
-   *    blocks either way and the wait proves only that Postgres works. So the
-   *    class is re-filled first: the hook counts, returns, and writes nothing,
-   *    leaving the lock as the only thing that can block it.
-   *
-   * 2. *A wall-clock verdict is not a proposition about locks.* The first
-   *    version raced the hook against a 400 ms timer and asserted "did not
-   *    finish". Under CPU load, with `lockClassRow` deleted, it reported a
-   *    PASS in 4 of 5 runs — instrumented, the hook had not yet reached its
-   *    `FOR UPDATE` when the verdict fired at 552 ms. Slowness manufactured
-   *    the evidence. CI is 2-4 cores against the 10-core machine that measured
-   *    that, so it is likelier there, not less.
-   *
-   * The fix for trap 2 is to assert an outcome slowness cannot produce. The
-   * holder keeps the row for longer than `lockClassRow`'s own 2 s
-   * `SET LOCAL lock_timeout`, so the hook must abort with **55P03** — a
-   * SQLSTATE a busy machine does not invent, and that only asking for a held
-   * lock can produce. Measured 5/5 detection under the same load that broke
-   * the timer version.
-   *
-   * `released` guards the converse: had the holder finished early, the hook
-   * would have taken the lock cleanly and this would be testing nothing.
-   */
-  it('takes the class row lock before it counts', async () => {
-    // Re-fill the class the previous test emptied, so the hook short-circuits
-    // on capacity and writes nothing — trap 1 above. This also restores the
-    // fixture's own starting state, so the test passes run alone or in order.
-    await prisma.registration.update({
-      where: { classId_studentId: { classId, studentId: fillerId } },
-      data: { status: 'registered', cancelledAt: null },
-    });
-    const broadcastsBefore = await countBroadcasts();
-
-    let released = false;
-    // A handshake, not a sleep: the previous version waited 150 ms and hoped
-    // the holder had the row by then. Measured holder-acquisition latency
-    // reached 486 ms under load and 428 ms even idle, so that assumption
-    // failed loudly and at random.
-    let signalHeld!: () => void;
-    const lockHeld = new Promise<void>((resolve) => {
-      signalHeld = resolve;
-    });
-    const holder = prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
-        signalHeld();
-        // Longer than the 2 s `lock_timeout` inside `lockClassRow`, so the
-        // hook is guaranteed to hit the bound rather than eventually succeed.
-        await new Promise((r) => setTimeout(r, 3_500));
-        released = true;
-      },
-      { timeout: 20_000 },
-    );
-    await lockHeld;
-
-    const outcome = await handleSpotFreed(prisma, classId, IN_CLAIM_WINDOW).then(
-      (result) => ({ ok: true as const, result }),
-      // `handleSpotFreed` now wraps every throw in `SpotFreedError` — the
-      // Postgres error this guard is about (see the docblock above) lives on
-      // `.cause`, not the wrapper's own message.
-      (err: unknown) => ({
-        ok: false as const,
-        err: err instanceof Error ? String(err.cause) : String(err),
-      }),
-    );
-
-    // Without `lockClassRow` the hook never asks for the row, counts a full
-    // class, and returns `{ action: 'none' }` — `ok: true`, and this fails.
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.err).toMatch(/55P03|lock timeout/i);
-    expect(released).toBe(false);
-
-    await holder;
-
-    // It wrote nothing on the way out, so the aborted broadcast cost the
-    // waiting students nothing except the notice they never got.
-    expect(await countBroadcasts()).toBe(broadcastsBefore);
   });
 });
 

@@ -93,6 +93,8 @@ export const LOCK_CONTENTION_TESTS = [
   // the length of a staged race (~1s), the same shape as
   // `room-archive-lock-order.test.ts` (issue 339).
   'src/services/class-room-race.test.ts',
+  // #459: split out of `waitlist.test.ts` for the same reason.
+  'src/services/waitlist-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither
