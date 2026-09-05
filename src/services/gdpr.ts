@@ -483,17 +483,11 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // `withdrawWaitingEntriesForTeacher`, `POST /api/registrations`).
     //
     // Ascending by id is this project's intended order for taking more than
-    // one `Class` row. All four such sites take it, through the shared helper
-    // `lockClassRowsOrdered` (`db-locks.ts`) — this function's pre-lock above,
-    // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`),
-    // `deleteTeacherAccount` below, and `archiveOrUnarchiveTemplate`
-    // (`class-template-lifecycle.ts`), which used to lock in heap order and
-    // cycled against THIS function for real until it gained an ordered
-    // pre-lock ahead of its multi-row write (issue 180, atomic-template-update).
-    // Five until #194, whose deleted template sync was the fifth and carried
-    // the same issue-180 pre-lock. Re-derived from `lockClassRowsOrdered(` in
-    // `src/` rather than decremented — this project has been wrong about the
-    // membership of this list while its total stayed plausible.
+    // one `Class` row, and every site that does goes through the shared
+    // helper `lockClassRowsOrdered` (`db-locks.ts`). Which sites those are,
+    // and how to re-derive the set, is `docs/lock-order.md`'s
+    // "Ordering WITHIN `Class`" — it owns that census; a second copy here
+    // would go stale against it silently.
     //
     // "Takes an order", deliberately, not "agree" — one of the four is not
     // total, and the exception is a pairing with THIS function, so it must
@@ -1065,16 +1059,13 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // `freedClassIds` above.
       const skipped: string[] = [];
 
-      // Template child rows locked first, ordered by id (#229). This is the
-      // transaction's FIRST lock acquisition. Five other sites —
-      // `claimTemplateForGeneration` (`entry-generation.ts`),
-      // `pauseOrResumeTemplate`, `archiveOrUnarchiveTemplate`,
-      // `POST /api/class-templates`, `updateClassTemplate`
-      // (`class-template-lifecycle.ts`) — all take `ClassTemplate` before
-      // `Class`. Before #229 this function was the sole site taking the
-      // opposite order, documented in `docs/lock-order.md` as a known
-      // violation. Moving these locks ahead of `lockClassRowsOrdered` below
-      // standardises on the majority's `ClassTemplate → Class` direction.
+      // Template child rows locked first, ordered by id (#229) — this
+      // transaction's FIRST lock acquisition. `ClassTemplate` before `Class`
+      // is the canonical direction, and this function was the sole site
+      // taking the opposite one until #229 moved these locks ahead of
+      // `lockClassRowsOrdered` below. Which sites take that order is
+      // `docs/lock-order.md`'s "Resolved: `{Class, ClassTemplate}` order
+      // standardised (#229)".
       //
       // Mirrors `lockClassRowsOrdered`'s discipline (`db-locks.ts`): two
       // transactions locking an overlapping set of `ClassTemplate` rows in
