@@ -934,6 +934,8 @@ describe('VerifyPage', () => {
       render(<VerifyPage />);
 
       expect(await screen.findByText('Verification failed')).toBeInTheDocument();
+      // Two matchers over the same call: `objectContaining` alone is duck-typed,
+      // and would accept a bare `{ status: 500 }` in place of the real error.
       expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.any(Error));
       expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.objectContaining({ status: 500 }));
     });
