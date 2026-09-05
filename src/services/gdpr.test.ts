@@ -2946,3 +2946,61 @@ describe('deleteTeacherAccount cancels future studio classes (#280)', () => {
     expect(rule.isActive).toBe(false);
   });
 });
+
+describe('the cancellable-status classification reaches the pre-lock (#245)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-cancellable-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Cancellable',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Status-partition fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+  });
+
+  afterAll(async () => {
+    await prisma.session.deleteMany({ where: { accountId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  // The compiler holds MEMBERSHIP — `satisfies Record<ClassStatus, boolean>`
+  // makes a fifth `ClassStatus` an error until someone classifies it. This
+  // holds the DERIVATION: that the classification reaches the SQL the
+  // pre-lock actually issues, so flipping a `true` cannot stay a local edit
+  // that no test can see. The two together are the pin; neither alone is.
+  //
+  // Read off the fragment rather than a fixture's outcome because the
+  // rendered `IN (…)` list is the thing that would go stale — a per-status
+  // class fixture would assert the same fact through four times the setup,
+  // and would still pass if the list and the record disagreed about a status
+  // no fixture happened to cover.
+  it('renders exactly the statuses classified cancellable', async () => {
+    const original = dbLocks.lockClassRowsOrdered;
+    const predicates: string[] = [];
+    const spy = vi
+      .spyOn(dbLocks, 'lockClassRowsOrdered')
+      .mockImplementation(async (tx, source) => {
+        predicates.push(source.where.strings.join(' ? '));
+        return original(tx, source);
+      });
+    onTestFinished(() => spy.mockRestore());
+
+    await deleteTeacherAccount(prisma, teacherId);
+
+    expect(predicates).toHaveLength(1);
+    expect(predicates[0]).toContain("c.status IN ('draft', 'open', 'in_progress')");
+  });
+});

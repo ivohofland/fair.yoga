@@ -920,11 +920,38 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
  * "left every test covering this function green, silently re-opening the
  * deadlock the pre-lock exists to close".
  */
-const CANCELLABLE_STATUSES: readonly ClassStatus[] = Object.freeze([
-  'draft',
-  'open',
-  'in_progress',
-]);
+const CLASS_STATUS_CANCELLABILITY = {
+  draft: true,
+  open: true,
+  in_progress: true,
+  completed: false,
+} as const satisfies Record<ClassStatus, boolean>;
+
+/**
+ * The statuses a teacher erasure cancels, DERIVED from the classification
+ * above rather than restated beside it.
+ *
+ * `satisfies Record<ClassStatus, boolean>` is the tether: a fifth
+ * `ClassStatus` is a compile error on that literal until someone says whether
+ * an erasure cancels it, and because this array is built from the record's
+ * keys, the answer reaches this list without a second edit. The previous
+ * shape — a hand-written array annotated `readonly ClassStatus[]` — erased
+ * the literals, so a fifth member changed nothing here and left those classes
+ * uncancelled on an Article 17 path with every test green.
+ *
+ * The `as ClassStatus[]` restores only what `Object.keys` erases: its return
+ * type is `string[]` for soundness reasons that do not apply to a literal
+ * whose keys the line above has just constrained to exactly `ClassStatus`.
+ *
+ * `Object.freeze` stays — it is what makes rendering this list into SQL text
+ * by concatenation defensible at runtime (`statusInList`, `db-locks.ts`).
+ * Prisma's `in` wants a mutable array, so call sites spread.
+ */
+const CANCELLABLE_STATUSES: readonly ClassStatus[] = Object.freeze(
+  (Object.keys(CLASS_STATUS_CANCELLABILITY) as ClassStatus[]).filter(
+    (s) => CLASS_STATUS_CANCELLABILITY[s],
+  ),
+);
 
 /**
  * `CANCELLABLE_STATUSES` as SQL text, for the ordered pre-lock's predicate —
