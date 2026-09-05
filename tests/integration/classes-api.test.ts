@@ -1557,4 +1557,65 @@ describe('POST /api/classes', () => {
       expect(saved.calendarEntry.classType).toBe('Padded Hatha');
     });
   });
+
+  // Issue 339. A draft is a parked intention with no registrations — door 1
+  // lets a draft-only room be archived, and door 2 (the publish transition)
+  // is where the room's availability actually starts to matter. Creating one
+  // here must succeed, and the created row must carry the room's REAL
+  // `isArchived` (copied), not the Prisma default `false` the FK would then
+  // refuse against an archived room's actual key.
+  describe('creating a class in an archived room (#339)', () => {
+    let archivedRoomId: string;
+    let archivedTeacherRoomId: string;
+
+    beforeAll(async () => {
+      const room = await prisma.room.create({
+        data: {
+          venueName: 'Archived Studio',
+          address: `${suffix} Archived St`,
+          city: 'Testville',
+          postcode: '1234AR',
+          floor: '1',
+          roomName: 'Shelved',
+          maxCapacity: 10,
+          createdById: ownerId,
+        },
+      });
+      archivedRoomId = room.id;
+      const teacherRoom = await prisma.teacherRoom.create({
+        data: {
+          teacherId: ownerId, roomId: archivedRoomId,
+          capacityOverride: 8, rentalRate: 15, isArchived: true,
+        },
+      });
+      archivedTeacherRoomId = teacherRoom.id;
+    });
+
+    afterAll(async () => {
+      await prisma.calendarEntry.deleteMany({
+        where: { teacherId: ownerId, classes: { some: { teacherRoomId: archivedTeacherRoomId } } },
+      });
+      await prisma.teacherRoom.deleteMany({ where: { id: archivedTeacherRoomId } });
+      await prisma.room.deleteMany({ where: { id: archivedRoomId } });
+    });
+
+    it('creates a draft in an archived room', async () => {
+      const res = await post(ownerToken, {
+        ...baseBody(),
+        teacherRoomId: archivedTeacherRoomId,
+        classType: 'Archived Room Draft',
+        date: '2028-11-11',
+        startTime: '09:00',
+      });
+      expect(res.status).toBe(201);
+
+      const { data } = (await res.json()) as { data: { id: string } };
+      const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id } });
+      expect(created.status).toBe('draft');
+      // The mirror, COPIED from the room's actual state rather than the
+      // Prisma default (`false`) — the value this route's fix exists to get
+      // right (`src/app/api/classes/route.ts`).
+      expect(created.roomArchived).toBe(true);
+    });
+  });
 });
