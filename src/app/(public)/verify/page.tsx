@@ -6,7 +6,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Icon } from '@/components/ui/icon';
 import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
 
-type Status = 'verifying' | 'success' | 'error' | 'already-signed-in' | 'handoff';
+type Status = 'verifying' | 'success' | 'error' | 'already-signed-in' | 'handoff' | 'timeout';
 type StepState = 'done' | 'now' | 'pending';
 type RailStep = { num: string; text: string; when: string; state: StepState };
 
@@ -247,6 +247,48 @@ function ErrorState() {
   );
 }
 
+/**
+ * The one screen here that cannot say whether the link worked.
+ *
+ * The request was abandoned, not answered: the token may be spent or
+ * untouched, and a session may or may not exist. `ErrorState`'s "this link
+ * can't be used" would be a guess presented as a finding, and it is wrong
+ * exactly when the reader's sign-in did land. So this names the uncertainty
+ * instead, and offers the one recovery that is safe under both readings —
+ * asking for a fresh link costs an email round trip and is correct whether or
+ * not the old one was consumed. Retrying the same token is not: it is
+ * single-use, and nothing on this side can tell whether it was already spent.
+ */
+function TimedOutState() {
+  return (
+    <div className="flex-1 flex flex-col justify-center py-4">
+      <p className="type-label text-danger mb-[10px]">Connection problem</p>
+      <h1 className="type-display mb-4">
+        We couldn&apos;t reach
+        <br />
+        the server.
+      </h1>
+      <p className="type-body max-w-[360px] mb-6">
+        Your link may have worked anyway &mdash; we just never got an answer.
+        If it did, that link is spent now, so use a fresh one.
+      </p>
+      <Link
+        href="/login"
+        className="inline-flex items-center justify-center w-full text-center bg-teal text-cream hover:bg-teal-hover rounded-pill px-6 min-h-12 font-semibold text-base no-underline"
+      >
+        Send a new link
+      </Link>
+      <StatusLine variant="error">
+        If this keeps happening, write to{' '}
+        <a href="mailto:hello@fair.yoga" className="text-teal">
+          hello@fair.yoga
+        </a>{' '}
+        &mdash; a real person will read it.
+      </StatusLine>
+    </div>
+  );
+}
+
 function AlreadySignedInState({ home }: { home: string }) {
   return (
     <div className="flex-1 flex flex-col justify-center py-4">
@@ -333,6 +375,33 @@ export const RAIL_APPEARS_AFTER_MS = 300;
  */
 export const RAIL_STAYS_FOR_MS = 600;
 
+/**
+ * How long the whole verification may take before this page stops waiting.
+ *
+ * The far end of the lifetime `RAIL_APPEARS_AFTER_MS` and `RAIL_STAYS_FOR_MS`
+ * bound the near end of. It is armed against the `verifying` STATE, not
+ * against either request that can occupy it — so it covers the session probe
+ * behind a failed verification as well as the verification itself, with one
+ * threshold instead of two.
+ *
+ * Must exceed `RAIL_APPEARS_AFTER_MS + RAIL_STAYS_FOR_MS`, and a test asserts
+ * it: a held outcome runs from the stay timer rather than from `settle`, so a
+ * ceiling inside the rail's own window could fire with an outcome already
+ * parked behind it, where nothing guards it.
+ *
+ * Deliberately provisional. This is not measured against a real network, and
+ * cannot be — so it is sized to make being WRONG cheap rather than to be
+ * right. A ceiling that fires on a verification which would still have
+ * succeeded costs that reader one re-sent email, which is what
+ * `TimedOutState` offers and why its copy refuses to say the link failed.
+ * Revise it against latency seen on a deployed instance; if the copy ever
+ * stops making an early fire survivable, revise the copy first.
+ *
+ * Reasoning and arithmetic:
+ * docs/superpowers/specs/2026-09-05-verify-ceiling-design.md
+ */
+export const VERIFY_CEILING_MS = 20_000;
+
 /** The rail's heading. Exported so a test asserting its absence cannot be
  *  quietly retired by a copy edit here. */
 export const RAIL_HEADING = 'Checking your link';
@@ -363,6 +432,7 @@ export const RAIL_HEADING = 'Checking your link';
 function useVerifyingRail(
   enabled: boolean,
   onApplyThrew: () => void,
+  onCeiling: () => void,
 ): {
   railVisible: boolean;
   settle: (apply: () => void) => void;
@@ -373,13 +443,16 @@ function useVerifyingRail(
   const waiting = useRef<(() => void) | null>(null);
   const appearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ceilingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Held in a ref, not closed over: `settle` has to keep one identity for the
   // life of the mount, because the caller's verification effect depends on it
   // and re-running that effect re-sends a single-use token.
   const recover = useRef(onApplyThrew);
+  const giveUp = useRef(onCeiling);
   useEffect(() => {
     recover.current = onApplyThrew;
+    giveUp.current = onCeiling;
   });
 
   /** The one place an outcome is invoked, from either side of the hold. */
@@ -405,9 +478,17 @@ function useVerifyingRail(
       }, RAIL_STAYS_FOR_MS);
     }, RAIL_APPEARS_AFTER_MS);
 
+    // Armed here rather than from the fetch, because what it bounds is this
+    // state and not one request: the exit through `.catch` sends a second one.
+    ceilingTimer.current = setTimeout(() => {
+      console.error('[verify] no answer within the ceiling; giving up');
+      giveUp.current();
+    }, VERIFY_CEILING_MS);
+
     return () => {
       if (appearTimer.current) clearTimeout(appearTimer.current);
       if (stayTimer.current) clearTimeout(stayTimer.current);
+      if (ceilingTimer.current) clearTimeout(ceilingTimer.current);
       waiting.current = null;
       // Cleared with the timer that would otherwise have cleared it. Leaving
       // it set would strand a later `settle`: it would park a callback for a
@@ -423,6 +504,13 @@ function useVerifyingRail(
     if (appearTimer.current) {
       clearTimeout(appearTimer.current);
       appearTimer.current = null;
+    }
+    // Same reason, other end. This verification answered, so the ceiling has
+    // nothing left to bound — including across the hold below, which can
+    // still be running when it would otherwise fire.
+    if (ceilingTimer.current) {
+      clearTimeout(ceilingTimer.current);
+      ceilingTimer.current = null;
     }
     if (!owed.current) {
       run(apply);
@@ -460,8 +548,10 @@ function VerifyContent() {
   // `Boolean(token)`, matching the status initializer above and the fetch
   // guard below: `?token=` yields '', which is not a verification worth
   // arming a timer for.
-  const { railVisible, settle } = useVerifyingRail(Boolean(token), () =>
-    setStatus('error'),
+  const { railVisible, settle } = useVerifyingRail(
+    Boolean(token),
+    () => setStatus('error'),
+    () => setStatus('timeout'),
   );
 
   useEffect(() => {
@@ -539,6 +629,7 @@ function VerifyContent() {
   }, [token, router, settle]);
 
   if (status === 'error') return <ErrorState />;
+  if (status === 'timeout') return <TimedOutState />;
   if (status === 'already-signed-in') return <AlreadySignedInState home={home} />;
   if (status === 'success')
     return (
