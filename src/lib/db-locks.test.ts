@@ -9,6 +9,7 @@ import {
   lockClassRow,
   lockClassRowsOrdered,
   setLockTimeout,
+  statusInList,
 } from './db-locks';
 import { claimTemplateForGeneration } from '@/services/class-generator';
 import { claimStudioTemplateForGeneration } from '@/services/studio-class-generator';
@@ -141,6 +142,30 @@ describe('the shared lock timeout', () => {
 
   it('is the literal both template-claim sites share', () => {
     expect(LOCK_TIMEOUT_SQL).toBe("SET LOCAL lock_timeout = '2s'");
+  });
+});
+
+describe('statusInList', () => {
+  it('renders a status list as the literal SQL text of an IN (…) list', () => {
+    expect(statusInList(['draft', 'open', 'in_progress']).sql).toBe(
+      "'draft', 'open', 'in_progress'",
+    );
+  });
+
+  it('renders a single status without a separator', () => {
+    expect(statusInList(['completed']).sql).toBe("'completed'");
+  });
+
+  // The `Prisma.raw`-not-`Prisma.join` decision, asserted rather than
+  // described: `Prisma.join` would produce one bound parameter per status,
+  // and a bound text parameter compared against the `status` column's enum
+  // type needs a `::text` cast to resolve, which costs the index both
+  // pre-locks' predicates rely on. A `Prisma.raw` fragment carries its text
+  // in `.strings` and binds nothing.
+  it('binds no parameters, so the enum comparison keeps its index', () => {
+    const rendered = statusInList(['draft', 'open']);
+    expect(rendered.values).toEqual([]);
+    expect(rendered.strings).toEqual(["'draft', 'open'"]);
   });
 });
 

@@ -36,7 +36,7 @@ import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { isTransientDbError } from '@/lib/api-errors';
-import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
+import { lockClassRowsOrdered, setLockTimeout, statusInList } from '@/lib/db-locks';
 // Server-only (pino). Safe here: this module's sole importer is
 // `api/class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
 // transitively through `class-generator`. No `'use client'` component
@@ -468,33 +468,19 @@ export type PauseTemplateResult = PauseRuleResult<ClassTemplate>;
 const SCHEDULED_STATUSES: readonly ClassStatus[] = Object.freeze(['draft', 'open']);
 
 /**
- * `SCHEDULED_STATUSES`, pre-rendered as a raw SQL `IN (...)` list, for the
- * ordered pre-lock's `$queryRaw` further down — the one caller of this
- * constant that cannot go through `scheduledWhere`'s Prisma `{ in: [...] }`
- * filter, because `FOR UPDATE OF c` and `ORDER BY` have no Prisma
- * query-builder equivalent.
+ * `SCHEDULED_STATUSES` as SQL text, for the ordered pre-lock's `$queryRaw`
+ * further down — the one reader of that list which cannot go through
+ * `scheduledWhere`'s Prisma `{ in: [...] }` filter, because `FOR UPDATE OF c`
+ * and `ORDER BY` have no query-builder equivalent. Why the rendering is
+ * `Prisma.raw` and why that is safe: `statusInList` (`db-locks.ts`).
  *
- * Derived, not retyped: this was a second hand-written `'draft', 'open'`
- * literal in the raw SQL, with nothing tying the two lists together —
- * dropping a status from `SCHEDULED_STATUSES` above left this one stale, and
- * measurement during issue 180 task 4's review showed exactly that: dropping
- * `'draft'` from the raw list left every test covering this function green,
- * silently re-opening the deadlock the pre-lock exists to close. Deriving this
- * from the same array makes the desync un-representable — there is only one
- * list to edit now, not two to keep in sync.
- *
- * `Prisma.raw`, not `Prisma.join`: `Prisma.join` would bind each status as a
- * separate parameter, and a bound text parameter compared against the
- * `status` column's enum type needs an explicit `::text` cast to resolve —
- * measured to cost the index the pre-lock's `WHERE` relies on. `Prisma.raw`
- * instead embeds the values as literal SQL text, identical to what was
- * hand-typed before, so the query plan is unchanged. Safe here specifically
- * because `SCHEDULED_STATUSES` is a frozen, hard-coded constant — never user
- * input, never touched by anything outside this module — which is the one
- * precondition that makes building SQL text by string concatenation
- * defensible at all.
+ * Derived, not retyped. This was a second hand-written `'draft', 'open'`
+ * literal in the raw SQL with nothing tying the two lists together, and
+ * issue 180 task 4's review measured what that cost: dropping `'draft'` from
+ * the raw list left every test covering this function green, silently
+ * re-opening the deadlock the pre-lock exists to close.
  */
-const SCHEDULED_STATUSES_SQL = Prisma.raw(SCHEDULED_STATUSES.map((s) => `'${s}'`).join(', '));
+const SCHEDULED_STATUSES_SQL = statusInList(SCHEDULED_STATUSES);
 
 /**
  * Classes still on the schedule for a template, from the given calendar-date

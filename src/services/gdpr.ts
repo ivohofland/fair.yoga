@@ -17,7 +17,7 @@ import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { completeClass } from './class-lifecycle';
 import { handleSpotFreed, reorderWaitingEntries, SpotFreedError, spotFreedLoss } from './waitlist';
-import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
+import { lockClassRowsOrdered, setLockTimeout, statusInList } from '@/lib/db-locks';
 import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import { startOfLocalDay } from '@/lib/timezone';
@@ -915,7 +915,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
  * per-class cancel CAS's own `where` in the loop. Both derive from this
  * array rather than restating the statuses, so neither can drift from it.
  * What restating costs was measured rather than argued —
- * `SCHEDULED_STATUSES_SQL`'s docblock (`class-template-lifecycle.ts:480-482`)
+ * `SCHEDULED_STATUSES`'s own docblock (`class-template-lifecycle.ts`)
  * records dropping a status from one of two hand-written lists as having
  * "left every test covering this function green, silently re-opening the
  * deadlock the pre-lock exists to close".
@@ -927,20 +927,13 @@ const CANCELLABLE_STATUSES: readonly ClassStatus[] = Object.freeze([
 ]);
 
 /**
- * `CANCELLABLE_STATUSES`, pre-rendered as a raw SQL `IN (…)` list for the
- * ordered pre-lock's predicate — the one reader of it that cannot go through a
- * Prisma `{ in: [...] }` filter, because `FOR UPDATE OF c` and `ORDER BY` have
- * no query-builder equivalent.
- *
- * `Prisma.raw`, not `Prisma.join`, following `SCHEDULED_STATUSES_SQL`
- * (`class-template-lifecycle.ts`) and for the reason measured there:
- * `Prisma.join` binds each status as a separate parameter, and a bound text
- * parameter compared against the `status` column's enum type needs an explicit
- * `::text` cast to resolve, which costs the index. Safe here for the same one
- * precondition as there — `CANCELLABLE_STATUSES` is a frozen, hard-coded
- * constant, never input.
+ * `CANCELLABLE_STATUSES` as SQL text, for the ordered pre-lock's predicate —
+ * the one reader of that list which cannot go through a Prisma
+ * `{ in: [...] }` filter, because `FOR UPDATE OF c` and `ORDER BY` have no
+ * query-builder equivalent. Why the rendering is `Prisma.raw` and why that is
+ * safe: `statusInList` (`db-locks.ts`).
  */
-const CANCELLABLE_STATUSES_SQL = Prisma.raw(CANCELLABLE_STATUSES.map((s) => `'${s}'`).join(', '));
+const CANCELLABLE_STATUSES_SQL = statusInList(CANCELLABLE_STATUSES);
 
 /**
  * Deletes a teacher account: upcoming classes are cancelled with student

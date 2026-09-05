@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
+import type { ClassStatus } from '@prisma/client';
 
 /**
  * A Prisma client that must be an interactive transaction client, never the
@@ -284,6 +285,27 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
     JOIN "Class" c ON c."calendarEntryId" = e.id
     WHERE c.id = ${classId}
     FOR UPDATE OF e`;
+}
+
+/**
+ * A frozen `ClassStatus` list, rendered as the literal SQL text of an
+ * `IN (…)` list — `'draft', 'open'` — for a `ClassLockSource.where`.
+ *
+ * `Prisma.raw`, not `Prisma.join`. `Prisma.join` binds each status as its own
+ * parameter, and a bound text parameter compared against the `status` column's
+ * enum type needs an explicit `::text` cast to resolve, which costs the index
+ * the pre-locks' predicates rely on — measured during issue 180 task 4.
+ * `Prisma.raw` embeds the values as literal SQL text instead, so the plan is
+ * the one the hand-written lists produced.
+ *
+ * Building SQL text by concatenation is defensible here for exactly one
+ * reason, and the PARAMETER TYPE is what carries it: `ClassStatus` is a
+ * generated enum union, so a caller cannot reach this with input. That used to
+ * be an annotation repeated beside each of the two call sites; now it is the
+ * signature.
+ */
+export function statusInList(statuses: readonly ClassStatus[]): Prisma.Sql {
+  return Prisma.raw(statuses.map((s) => `'${s}'`).join(', '));
 }
 
 /**
