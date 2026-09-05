@@ -319,9 +319,11 @@ stays: it is about the code it sits on and has no other owner.
   live on `:3000`.
 - Each new guard mutation-tested: break it, record the exact error text,
   restore, re-verify. Recorded per guard in the PR body.
-- The `pg_locks` readings above re-run as an automated test for the subquery
-  case, with the no-`FOR UPDATE` control alongside it, so the assertion cannot
-  pass vacuously.
+- The subquery case gets two tests, because once the guard is in the helper
+  refuses that fragment and never reaches Postgres: one that the guard refuses
+  it, and one on a RAW statement — the guard's own justification — re-running
+  the `pg_locks` readings above with the no-`FOR UPDATE` control beside them,
+  so neither can pass vacuously.
 
 ## Sequencing
 

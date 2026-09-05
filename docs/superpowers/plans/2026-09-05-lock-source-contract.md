@@ -224,42 +224,77 @@ The issue's proposed fix — a `const _partitionIsTotal: never = …` binding �
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `src/services/gdpr.test.ts`, at the end of the file, in its own `describe`:
+Add to `src/services/gdpr.test.ts`, at the end of the file, in its own `describe`. Every symbol it uses (`vi`, `onTestFinished`, `beforeAll`, `afterAll`, `crypto`, `dbLocks`, `deleteTeacherAccount`) is already imported by that file; add nothing.
 
 ```ts
-describe('the cancellable-status partition', () => {
-  // The compiler holds membership; this holds the DERIVATION — that the array
-  // the SQL is rendered from is the record's `true` keys and nothing else.
-  // Together they are the pin: `satisfies Record<ClassStatus, boolean>` makes
-  // a fifth `ClassStatus` a compile error until it is classified, and this
-  // makes the classification reach the list.
-  it('cancels exactly the statuses that are not terminal', async () => {
-    const teacherId = /* create a teacher fixture */ '';
-    const statuses: ClassStatus[] = ['draft', 'open', 'in_progress', 'completed'];
-    // one class per status, all for this teacher, all with a live entry
-    // …fixture setup…
-    await deleteTeacherAccount(prisma, teacherId);
-    const after = await prisma.calendarEntry.findMany({
-      where: { teacherId },
-      select: { cancelledAt: true, classes: { select: { status: true } } },
+describe('the cancellable-status classification reaches the pre-lock (#245)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-cancellable-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Cancellable',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Status-partition fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
     });
-    for (const entry of after) {
-      const status = entry.classes[0]?.status;
-      expect(entry.cancelledAt === null).toBe(status === 'completed');
-    }
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+  });
+
+  afterAll(async () => {
+    await prisma.session.deleteMany({ where: { accountId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  // The compiler holds MEMBERSHIP — `satisfies Record<ClassStatus, boolean>`
+  // makes a fifth `ClassStatus` an error until someone classifies it. This
+  // holds the DERIVATION: that the classification reaches the SQL the
+  // pre-lock actually issues, so flipping a `true` cannot stay a local edit
+  // that no test can see. The two together are the pin; neither alone is.
+  //
+  // Read off the fragment rather than a fixture's outcome because the
+  // rendered `IN (…)` list is the thing that would go stale — a per-status
+  // class fixture would assert the same fact through four times the setup,
+  // and would still pass if the list and the record disagreed about a status
+  // no fixture happened to cover.
+  it('renders exactly the statuses classified cancellable', async () => {
+    const original = dbLocks.lockClassRowsOrdered;
+    const predicates: string[] = [];
+    const spy = vi
+      .spyOn(dbLocks, 'lockClassRowsOrdered')
+      .mockImplementation(async (tx, source) => {
+        predicates.push(source.where.strings.join(' ? '));
+        return original(tx, source);
+      });
+    onTestFinished(() => spy.mockRestore());
+
+    await deleteTeacherAccount(prisma, teacherId);
+
+    expect(predicates).toHaveLength(1);
+    expect(predicates[0]).toContain("c.status IN ('draft', 'open', 'in_progress')");
   });
 });
 ```
 
-The implementer writes the fixture setup using this file's existing helpers — read the neighbouring `deleteTeacherAccount` tests in `gdpr.test.ts` (the block at :1280 documents the `CANCELLABLE_STATUSES` conjunct) and follow their pattern rather than inventing one. The assertion above is the part this task pins: *cancelled iff not `completed`*, derived from the enum rather than restated.
+`CANCELLABLE_STATUSES_SQL` is a `Prisma.raw` fragment spliced into that template, and a nested fragment's text is flattened into the outer fragment's `.strings` — so `.strings.join(' ? ')` is where the rendered list appears, not `.values`.
 
 - [ ] **Step 2: Run the test and watch it fail or pass, and say which**
 
 ```bash
-npx vitest run --project unit src/services/gdpr.test.ts -t 'cancellable-status partition'
+npx vitest run --project unit src/services/gdpr.test.ts -t 'classification reaches the pre-lock'
 ```
 
-This test is expected to **PASS against the current code** — today's hand-written list is correct; what is missing is the tether that keeps it correct. Record that in the ledger. It is a characterisation test: it must be green before and after, and Step 6's mutation is what proves it can fail.
+Expected: **PASS against the current code** — today's hand-written list renders the same three statuses; what is missing is the tether that keeps it correct. Record that in the ledger. This is a characterisation test, so it must be green before and after, and Step 6's mutations are what prove it can fail at all.
 
 - [ ] **Step 3: Re-shape `CANCELLABLE_STATUSES`**
 
@@ -345,7 +380,7 @@ Expected: PASS. `lint` matters here specifically — it is the check the issue's
 Two mutations, each applied alone, error text recorded verbatim in the ledger, then reverted:
 
 1. **Delete `completed: false` from `CLASS_STATUS_CANCELLABILITY`.** Run `npm run typecheck`. Expected: an error on the `satisfies` clause naming `completed` as missing. This is the fifth-member regression in the only form testable without a migration — the record must name every `ClassStatus`.
-2. **Flip `in_progress` to `false` in `CLASS_STATUS_CANCELLABILITY`.** Run `npx vitest run --project unit src/services/gdpr.test.ts -t 'cancellable-status partition'`. Expected: FAIL — the derivation carries the classification into the array, and Step 1's test sees it. This is what stops Step 1's test being a characterisation test that could never fail.
+2. **Flip `in_progress` to `false` in `CLASS_STATUS_CANCELLABILITY`.** Run `npx vitest run --project unit src/services/gdpr.test.ts -t 'classification reaches the pre-lock'`. Expected: FAIL, with the rendered list read back as `'draft', 'open'`. The derivation carries the classification all the way into the issued SQL, and this is what stops Step 1's test being a characterisation test that could never fail.
 
 Restore both, re-run Step 5, confirm green.
 
@@ -508,6 +543,8 @@ Leave the "A fragment is also not a loophole…" sentence in place for now — T
 
 Extend each file's `@/lib/db-locks` import (`gdpr.ts:20`, `class-template-lifecycle.ts:39`, `waitlist.ts:16`) with the constants it now uses. Change no `where` fragment and no `entries` flag.
 
+`gdpr.test.ts` spies on this function twice (around lines 1838 and in the `#367` snapshot block) with a `mockImplementation(async (tx, source) => …)` that reads `source.entries`. Naming the parameter object does not change its shape, so those keep compiling — but check them rather than assuming, since a spy whose types drift fails as a confusing `mockImplementation` overload error rather than as a signature mismatch.
+
 - [ ] **Step 6: Run the suites**
 
 ```bash
@@ -552,7 +589,7 @@ Two of the docblock's loudness guarantees hold only because `ORDER BY c.id` sits
 
 - [ ] **Step 1: Write the failing tests**
 
-Add inside the existing `describe('lockClassRowsOrdered', …)` block in `src/lib/db-locks.test.ts`.
+Add inside the existing `describe('lockClassRowsOrdered', …)` block in `src/lib/db-locks.test.ts`. Add `type TransactionClientOnly` to that file's existing `./db-locks` import list — the capture helper below annotates with it, and nothing in the file imports it today.
 
 ```ts
 // A client that records the statement text instead of running it. The
