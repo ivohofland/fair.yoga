@@ -4,6 +4,8 @@ import crypto from 'crypto';
 import { hhmmToTime } from '@/lib/time-of-day';
 import {
   ANNOUNCEMENT_DEDUPE_WINDOW_MS,
+  CLASS_TO_ENTRY_JOIN,
+  CLASS_TO_WAITLIST_JOIN,
   LOCK_TIMEOUT_SQL,
   lockAnnouncementSlot,
   lockClassRow,
@@ -583,5 +585,24 @@ describe('lockClassRowsOrdered', () => {
           where: Prisma.sql`e."teacherId" = ${'no-such-teacher'}` }),
     );
     expect(locked).toEqual([]);
+  });
+
+  it('exports the join literals its callers used to hand-type', () => {
+    expect(CLASS_TO_ENTRY_JOIN.sql).toBe(
+      'JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"',
+    );
+    expect(CLASS_TO_WAITLIST_JOIN.sql).toBe(
+      'JOIN "WaitlistEntry" w ON w."classId" = c.id',
+    );
+  });
+
+  // `waitlist.ts` needs both. Composition has to flatten to plain text rather
+  // than binding either fragment as a parameter, or the statement is not SQL.
+  it('composes into one join clause, as withdrawWaitingEntriesForTeacher needs', () => {
+    const both = Prisma.sql`${CLASS_TO_WAITLIST_JOIN} ${CLASS_TO_ENTRY_JOIN}`;
+    expect(both.sql).toBe(
+      'JOIN "WaitlistEntry" w ON w."classId" = c.id JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"',
+    );
+    expect(both.values).toEqual([]);
   });
 });

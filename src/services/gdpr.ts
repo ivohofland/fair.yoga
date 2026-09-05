@@ -17,7 +17,13 @@ import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { completeClass } from './class-lifecycle';
 import { handleSpotFreed, reorderWaitingEntries, SpotFreedError, spotFreedLoss } from './waitlist';
-import { lockClassRowsOrdered, setLockTimeout, statusInList } from '@/lib/db-locks';
+import {
+  CLASS_TO_ENTRY_JOIN,
+  CLASS_TO_WAITLIST_JOIN,
+  lockClassRowsOrdered,
+  setLockTimeout,
+  statusInList,
+} from '@/lib/db-locks';
 import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import { startOfLocalDay } from '@/lib/timezone';
@@ -431,7 +437,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // the same shape `status: { in: ['draft', 'open'] }` had, unlocked,
     // before #327.
     await lockClassRowsOrdered(tx, {
-      join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`,
+      join: CLASS_TO_WAITLIST_JOIN,
       where: Prisma.sql`w."studentId" = ${studentId}`,
     });
 
@@ -1138,7 +1144,7 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // pre-lock in `deleteStudentAccount` above does NOT take
       // them: it never reads or writes an entry column.
       const lockedIds = await lockClassRowsOrdered(tx, {
-        join: Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
+        join: CLASS_TO_ENTRY_JOIN,
         where: Prisma.sql`e."teacherId" = ${teacherId}
           AND e."cancelledAt" IS NULL
           AND c.status IN (${CANCELLABLE_STATUSES_SQL})`,

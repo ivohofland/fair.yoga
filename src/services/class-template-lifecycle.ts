@@ -36,7 +36,7 @@ import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { isTransientDbError } from '@/lib/api-errors';
-import { lockClassRowsOrdered, setLockTimeout, statusInList } from '@/lib/db-locks';
+import { CLASS_TO_ENTRY_JOIN, lockClassRowsOrdered, setLockTimeout, statusInList } from '@/lib/db-locks';
 // Server-only (pino). Safe here: this module's sole importer is
 // `api/class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
 // transitively through `class-generator`. No `'use client'` component
@@ -744,7 +744,7 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
       // over the entry's `date`, and the row it deletes IS the entry — so
       // the entry rows are locked here too.
       await lockClassRowsOrdered(tx, {
-        join: Prisma.sql`JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"`,
+        join: CLASS_TO_ENTRY_JOIN,
         where: Prisma.sql`e."scheduleRuleId" = ${scheduleRuleId}
           AND e."cancelledAt" IS NULL
           AND e.date > ${today}
