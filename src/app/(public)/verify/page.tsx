@@ -384,10 +384,13 @@ export const RAIL_STAYS_FOR_MS = 600;
  * behind a failed verification as well as the verification itself, with one
  * threshold instead of two.
  *
- * Must exceed `RAIL_APPEARS_AFTER_MS + RAIL_STAYS_FOR_MS`, and a test asserts
- * it: a held outcome runs from the stay timer rather than from `settle`, so a
- * ceiling inside the rail's own window could fire with an outcome already
- * parked behind it, where nothing guards it.
+ * Must exceed `RAIL_APPEARS_AFTER_MS + RAIL_STAYS_FOR_MS` — a ceiling meant to
+ * bound the far end of a lifetime whose near end is those two constants would
+ * be incoherent inside that same window. Both the relationship (`is armed
+ * beyond the rail's own window`) and the mechanism that makes it safe
+ * regardless (`settle` clears the ceiling before parking any outcome — see
+ * `does not give up on a verification that answered while the rail held it`)
+ * are pinned by tests.
  *
  * Deliberately provisional. This is not measured against a real network, and
  * cannot be — so it is sized to make being WRONG cheap rather than to be
@@ -424,6 +427,12 @@ export const RAIL_HEADING = 'Checking your link';
  * against a clock read, so no part of this depends on `Date` being faked
  * alongside the timers.
  *
+ * @param attemptKey - not a gate (that's still `enabled`) but a dependency
+ * only: included in the arming effect's array purely so a genuine new
+ * verification attempt re-runs that effect's cleanup and gets a fresh
+ * `givenUp`, rather than inheriting a stale give-up left behind by a prior
+ * attempt on the same mount.
+ *
  * @param onApplyThrew - recovery for a callback that throws. On the fast path
  * an outcome runs inside the caller's promise chain and a throw lands in its
  * `.catch`; held, it runs from a timer with no such backstop, and the reader
@@ -435,6 +444,7 @@ export const RAIL_HEADING = 'Checking your link';
  */
 function useVerifyingRail(
   enabled: boolean,
+  attemptKey: string,
   onApplyThrew: () => void,
   onCeiling: () => void,
 ): {
@@ -444,11 +454,10 @@ function useVerifyingRail(
   const [railVisible, setRailVisible] = useState(false);
   /** True while the rail is on screen and still owed its minimum. */
   const owed = useRef(false);
-  /** True once the ceiling has taken this state's one exit. Reset only in the
-   *  arming effect's cleanup, which `[enabled, run]` re-runs on presence, not
-   *  on token VALUE — so this can only be reached by unmount today, since a
-   *  magic link is always a fresh document load and nothing navigates this
-   *  page from one token to another in place. */
+  /** True once the ceiling has taken this state's one exit. Reset in the
+   *  arming effect's cleanup, which now re-runs whenever `attemptKey`
+   *  changes, so a fresh verification attempt never inherits a stale
+   *  give-up from a prior one on the same mount. */
   const givenUp = useRef(false);
   const waiting = useRef<(() => void) | null>(null);
   const appearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -508,7 +517,7 @@ function useVerifyingRail(
       owed.current = false;
       givenUp.current = false;
     };
-  }, [enabled, run]);
+  }, [enabled, attemptKey, run]);
 
   const settle = useCallback((apply: () => void) => {
     // This state's one exit is already taken, and taking it back is worse than
@@ -577,6 +586,7 @@ function VerifyContent() {
   // arming a timer for.
   const { railVisible, settle } = useVerifyingRail(
     Boolean(token),
+    token ?? '',
     () => setStatus('error'),
     () => {
       inFlight.current?.abort();
@@ -633,8 +643,9 @@ function VerifyContent() {
       })
       .catch(async () => {
         // The ceiling abandoned this request; the screen already says so.
-        // Probing now would spend a round trip on an answer nothing may act
-        // on, and its failure would log a fault that did not happen.
+        // Probing now would attempt a fetch that's already doomed, for an
+        // answer nothing may act on — skip it outright rather than let it
+        // fail through the probe's own guard.
         if (controller.signal.aborted) return;
 
         // A stale link is often re-clicked from the inbox AFTER a
