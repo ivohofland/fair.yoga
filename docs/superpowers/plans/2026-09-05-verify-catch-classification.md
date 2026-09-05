@@ -91,9 +91,12 @@ Insert immediately after the `describe('the verifying rail', …)` block closes 
 
 ```tsx
   /**
-   * #452. The outer `.catch` used to treat every rejection as a spent link,
-   * so a 5xx, an unreadable body and a mis-shaped one all reached the error
-   * screen with nothing logged anywhere on the client.
+   * #452. The outer `.catch` used to treat every rejection as a spent link:
+   * a 5xx, an unreadable body, a mis-shaped one and a network failure all
+   * arrived indistinguishable from an expired link, and none of them put a
+   * line of their own on the console. Where they landed on screen varied —
+   * the error screen usually, but "Already signed in" when the session probe
+   * behind them answered ok, which is the last case below.
    *
    * The 400 is the one silent case, and it is the commonest event on this
    * page — a link clicked twice. Everything else is a fault, and the last
