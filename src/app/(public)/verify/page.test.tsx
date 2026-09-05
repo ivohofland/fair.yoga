@@ -956,15 +956,14 @@ describe('VerifyPage', () => {
         FAULT_LINE,
         expect.objectContaining({ status: 500, message: 'verify POST answered 500' }),
       );
+      expect(errors).toHaveBeenCalledTimes(1);
     });
 
     /**
      * The boundary this design narrows on purpose. #452's wording says to
-     * silence "the expected 4xx"; this file silences 400 alone, because the
-     * route has no other reachable 4xx today and a new one appearing here
-     * should read as a fault rather than something a band absorbed before the
-     * case existed. Nothing else in this block can tell those two rules
-     * apart — an implementation silencing all of 4xx passes every other case.
+     * silence "the expected 4xx"; this file silences 400 alone. Nothing else
+     * in this block can tell those two rules apart — an implementation
+     * silencing all of 4xx passes every other case here.
      */
     it('logs a 4xx that is not the expected 400', async () => {
       const errors = watchErrors();
@@ -985,8 +984,11 @@ describe('VerifyPage', () => {
      * and below in noise.
      *
      * This assertion cannot fail against an implementation that logs nothing
-     * at all, which is what the file did before #452 — its evidence is the
-     * mutation recorded in Task 2 Step 5, not this run.
+     * at all, which is what this file did before #452. Its evidence is the
+     * mutation described under "Prove the guard bites — mutate, record,
+     * restore" in
+     * docs/superpowers/plans/2026-09-05-verify-catch-classification.md, not
+     * this run.
      *
      * The bare `not.toHaveBeenCalled()` is deliberate where the ceiling's
      * cases use the argument-matching form: those assert that one specific
@@ -1031,7 +1033,7 @@ describe('VerifyPage', () => {
     });
 
     /** No response at all. The rejection carries no status because none
-     *  exists, and `instanceof` is what tells it from the 400. */
+     *  exists, so it cannot be the silent case however the guard is written. */
     it('logs a verification that never reached the server', async () => {
       const errors = watchErrors();
       vi.stubGlobal(
@@ -1073,6 +1075,41 @@ describe('VerifyPage', () => {
 
       expect(await screen.findByText('Already signed in')).toBeInTheDocument();
       expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.any(TypeError));
+    });
+
+    /**
+     * Both log sites, in the one scenario that reaches them together: the
+     * backend is unreachable, so the verification fails and the probe sent to
+     * recover from it throws too. Every other case in this block answers the
+     * probe with `noSession` — not ok, but it does not throw, so the probe's
+     * own `catch` never runs and the two lines are otherwise only ever
+     * exercised apart.
+     *
+     * This is what holds the classification's position from BELOW. The
+     * ordering assertion in the ceiling block holds it from above; move the
+     * classification down into the `try` and it stops running for exactly
+     * this case, while every other case here stays green.
+     */
+    it('logs the verification and the probe separately when both fail', async () => {
+      const errors = watchErrors();
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce({ ok: false, status: 503 })
+          .mockRejectedValueOnce(new TypeError('Failed to fetch')),
+      );
+      render(<VerifyPage />);
+
+      expect(await screen.findByText('Verification failed')).toBeInTheDocument();
+      // Distinct payloads on purpose: an edit that logs the wrong error in
+      // either place fails here rather than passing on a coincidence.
+      expect(errors).toHaveBeenCalledWith(FAULT_LINE, expect.objectContaining({ status: 503 }));
+      expect(errors).toHaveBeenCalledWith(
+        '[verify] the session probe failed after a failed verification',
+        expect.any(TypeError),
+      );
+      expect(errors).toHaveBeenCalledTimes(2);
     });
   });
 });
