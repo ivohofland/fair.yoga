@@ -1094,7 +1094,8 @@ describe('VerifyPage', () => {
       // does. This is the only case in the file with an ok probe and a watched
       // console: move the classification above the `if (res.ok)` block and this
       // ok response is classified too, making it two lines instead of one.
-      // Every other case in this block answers the probe not-ok and stays green
+      // No other case in this block reaches the guard with an ok response —
+      // they answer the probe not-ok, or reject it — so all of them stay green
       // under that move.
       expect(errors).toHaveBeenCalledTimes(1);
     });
@@ -1113,8 +1114,9 @@ describe('VerifyPage', () => {
      * rather than counting two classifications together.
      *
      * 404 is here for the reason `logs a 4xx that is not the expected 400`
-     * exists one level up: it is the only case that can tell this rule apart
-     * from `status >= 500`, which the 503 alone would pass.
+     * exists for the verification's own classification: it is the only case
+     * that can tell this rule apart from `status >= 500`, which the 503 alone
+     * would pass.
      */
     it.each([
       { status: 503, why: 'a backend fault' },
@@ -1136,8 +1138,7 @@ describe('VerifyPage', () => {
     });
 
     /**
-     * The silent branch, and the only test in this file that names 401 in its
-     * own body.
+     * The silent branch.
      *
      * Three deliberate choices separate it from `stays silent for the spent
      * link that is the ordinary case`, which pins a different rule that today
@@ -1162,8 +1163,10 @@ describe('VerifyPage', () => {
      *   correct form rather than merely the safer one.
      *
      * It remains vacuous with respect to the guard's EXISTENCE — delete the
-     * classification entirely and this still passes. Only mutation M2 in Task 2
-     * (`401` → `418`) turns it red, which is why that mutation is not optional.
+     * classification entirely and this still passes. Only the `401` → `418`
+     * mutation recorded in
+     * docs/superpowers/plans/2026-09-05-verify-probe-classification.md turns it
+     * red, which is why that mutation is not optional.
      */
     it('stays silent for the 401 that is the probe being told "no session"', async () => {
       const errors = watchErrors();

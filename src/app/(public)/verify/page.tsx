@@ -710,12 +710,11 @@ function VerifyContent() {
             return;
           }
 
-          // The probe asked whether this reader has a session, and 401 is that
-          // question answered "no" — the ordinary case behind a spent link,
-          // and the commonest path through here. Anything else means the probe
-          // could not answer at all, and the fall-through below is about to
-          // tell the reader their link failed on the strength of a response
-          // nobody read.
+          // This page treats a 401 as the probe's question answered "no" — the
+          // ordinary case behind a spent link, and the commonest path through
+          // here. Every other status it treats as an answer it cannot act on,
+          // and the fall-through below shows the error screen without consulting
+          // the status at all — so without this line it leaves no trace.
           //
           // Below the ok check on purpose, not merely by convention: an ok
           // probe is not an unexpected answer, and classifying one would put a
