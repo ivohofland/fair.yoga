@@ -43,7 +43,12 @@ One does not:
 > path — a `DO $$ … GET DIAGNOSTICS … RAISE NOTICE … END $$` block wrapping the
 > existing pause logic.
 
-**Such a migration can never report a non-zero count, on any database, ever.**
+**Such a migration can never report a non-zero count, on any database Prisma
+actually ran `20260827120000` against.** (The one exception is a database where
+that migration was marked applied without running — `prisma migrate resolve
+--applied`, Prisma's baselining path — which has neither the CHECK nor the
+mirror columns, and so can hold violating rows. Not a deployment shape this
+project has.)
 
 `20260827120000` ends by adding
 

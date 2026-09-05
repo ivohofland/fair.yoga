@@ -1171,8 +1171,9 @@ other files narrating what the deleted predicate used to do, no import or
 call site among them.
 
 **The migration comments that this document owns.** Each entry below is prose
-stranded in an APPLIED migration — immutable, comments included — which is why
-the live copy lives here rather than where it was written.
+about an APPLIED migration — immutable, comments included — that cannot live
+where it belongs: either it was written into the migration and is wrong or stale
+there, or it is what should have been written there and now never can be.
 
 The first was briefly added as a comment inside
 `20260821120000_cross_family_slot_guard/migration.sql`. A comment-only edit
@@ -1269,9 +1270,6 @@ SELECT sr."id" AS rule, sr."teacherId" AS teacher, ct."id" AS template,
   JOIN "ClassTemplate" ct ON ct."scheduleRuleId" = sr."id"
   JOIN "TeacherRoom"   tr ON tr."id" = ct."teacherRoomId"
  WHERE NOT sr."isActive" AND NOT sr."isArchived" AND tr."isArchived"
-   AND sr."updatedAt" < (SELECT finished_at FROM "_prisma_migrations"
-                          WHERE migration_name
-                              = '20260827120000_template_room_archive_invariant')
  ORDER BY sr."updatedAt";
 ```
 
@@ -1280,22 +1278,36 @@ measured 2026-09-05. **Those are candidates, not a roster, and an empty result
 is not an all-clear.** A rule the migration paused and one the teacher paused
 before archiving the room are indistinguishable in the stored state: door 1
 refuses archiving a room a live template sits on, so pausing first is what a
-teacher doing this by hand also does. One discriminator survives, in ONE
-DIRECTION ONLY — the raw `UPDATE` never touched `updatedAt`, so a remediated
-row's `updatedAt` necessarily PREDATES the migration. That rules a later row
-OUT; an earlier one is neither ruled in nor out. Nor does 0 rows mean the
-remediation never fired: a rule it paused that was later resumed, or whose room
-was later un-archived, leaves exactly the same nothing behind.
+teacher doing this by hand also does.
 
-**That subquery reads `_prisma_migrations.finished_at` rather than the
-timestamp in the migration's name**, and that is not fastidiousness. The name
-encodes `2026-08-27 12:00`; the two databases on one machine finished that
-migration at `2026-08-27 20:09:42.939666+00` (`ethical_yoga`) and
-`2026-09-05 20:31:22.513938+00` (`ethical_yoga_test`, which the test setup
-rebuilds from migrations) — nine days apart. A query hard-coding the name's
-instant is wrong on at least one of any two databases; the subquery above reads
-what each database actually recorded. Those two figures are re-derivable rather
-than remembered:
+**`updatedAt` is evidence for the operator to weigh, not a filter** — which is
+why it is selected and not tested in the `WHERE`. The raw `UPDATE` never touched
+it, so a row the migration paused and nothing has written since still carries a
+value predating the migration. But writing that row does not require resuming
+it: `updateTemplate` (`src/services/rule-lifecycle.ts`) sends `classType`,
+`dayOfWeek`, `startTime` and `durationMinutes` to `ScheduleRule` through the
+Prisma client, which bumps `@updatedAt`, and touches neither `isActive` nor
+`isArchived`. A teacher who edits the schedule of a template that is still
+paused therefore pushes `updatedAt` past the migration without changing anything
+about its pausedness. So a later value rules out only *"still sitting as the
+migration left it"*, never *"was never remediated"*, and a `WHERE` clause
+excluding those rows would hide genuine candidates rather than sharpen the list.
+
+Nor does 0 rows mean the remediation never fired: a rule it paused that was
+later resumed, or one whose room was later un-archived, leaves exactly the same
+nothing behind. A third case does not empty the list but does corrupt it — a
+rule that stayed paused and had its day, time or duration edited afterwards
+still appears, carrying an `updatedAt` later than the migration, which an
+operator reading that column as an alibi would wrongly strike off.
+
+**Where that comparison needs the migration's instant, take it from
+`_prisma_migrations.finished_at` and never from the timestamp in the migration's
+name** — and that is not fastidiousness. The name encodes `2026-08-27 12:00`;
+both databases on this machine recorded an instant LATER than that, and a
+different one from each other, because `ethical_yoga_test` is rebuilt from
+migrations every time the test setup runs. Anything hard-coding the name's
+instant is wrong on at least one of any two databases. What each database
+actually recorded, re-derived rather than remembered:
 
 ```sql
 SELECT migration_name, finished_at FROM "_prisma_migrations"
@@ -1303,20 +1315,44 @@ SELECT migration_name, finished_at FROM "_prisma_migrations"
 ```
 
 **Since #463 a migration landing after `20260903195051_student_signup_purposes`
-cannot do this silently.** `untracedDataChanges` (`tests/migration-sql.ts`,
-pinned by `src/lib/migration-remediation-trace.test.ts`) reports any migration
-sorting after that cutoff whose comment-stripped SQL contains `UPDATE "…"` or
-`DELETE FROM "…"` without a real `RAISE NOTICE`, unless the raw text carries
-`-- DML WITHOUT NOTICE: <reason>` with a non-empty reason. The same census
-without vitest — and it strips comments on both sides, because a command that
-did not would disagree with the rule in both directions:
+must announce or explain a data change, for the two shapes the rule reads.**
+`untracedDataChanges` (`tests/migration-sql.ts`, pinned by
+`src/lib/migration-remediation-trace.test.ts`) reports any migration sorting
+after that cutoff whose comment-stripped SQL contains `UPDATE "…"` or
+`DELETE FROM "…"` in any case, upper or lower, without a real
+`RAISE NOTICE`, unless the raw text carries `-- DML WITHOUT NOTICE: <reason>`
+with a non-empty reason. Those two shapes are the whole of it: a
+schema-qualified, `TRUNCATE`, `MERGE` or `ON CONFLICT DO UPDATE` write is not
+seen.
+
+**The exemption is per FILE, not per statement**, which is the rule's other
+boundary. One real `RAISE NOTICE` anywhere in a migration exempts every data
+change in it, so a silent remediation added beside an announced one passes.
+That shape is precedented rather than hypothetical — the tree's one compliant
+example already carries more than one data change under a single notice:
+
+```sh
+perl -0777 -ne '
+  my $s = $_; $s =~ s{/\*.*?\*/}{ }gs; $s =~ s{--[^\n]*}{}g;
+  my $d = () = $s =~ /\bUPDATE\s+"|\bDELETE\s+FROM\s+"/gi;
+  my $n = () = $s =~ /\bRAISE\s+NOTICE\b/gi;
+  print "$ARGV: $d data change(s), $n notice(s)\n";
+' prisma/migrations/20260905120000_class_room_archive_invariant/migration.sql
+```
+
+It prints **3 data changes and 1 notice** — measured 2026-09-05. Pairing each
+write with its own notice needs a plpgsql-aware statement splitter, a larger
+design than this rule, and is deliberately not built.
+
+The same census without vitest — and it strips comments on both sides, because
+a command that did not would disagree with the rule in both directions:
 
 ```sh
 perl -0777 -ne '
   my $s = $_; $s =~ s{/\*.*?\*/}{ }gs; $s =~ s{--[^\n]*}{}g;
   print "$ARGV\n"
-    if $s =~ /\bUPDATE\s+"|\bDELETE\s+FROM\s+"/
-    && $s !~ /\bRAISE\s+NOTICE\b/
+    if $s =~ /\bUPDATE\s+"|\bDELETE\s+FROM\s+"/i
+    && $s !~ /\bRAISE\s+NOTICE\b/i
     && $_ !~ /--[ \t]*DML WITHOUT NOTICE:[ \t]*\S/;
 ' prisma/migrations/*/migration.sql
 ```
@@ -1329,8 +1365,9 @@ and it prints 8, wrong in both directions at once: it gains
 `20260826200000_entry_marker_exclusivity`, which only *discuss* an `UPDATE`,
 and it loses `20260825065109_schedule_rule_backfill`, exempted by a comment
 that merely names `RAISE NOTICE` while the migration raises none. Flip
-`!~ /\bRAISE\s+NOTICE\b/` to `=~` on the stripped text and it lists the
-migrations that do announce: one,
+`!~ /\bRAISE\s+NOTICE\b/i` to `=~` on the stripped text and it lists the
+migrations that carry a data change AND announce it — a migration with a notice
+and no data change never reaches that test: one,
 `20260905120000_class_room_archive_invariant` (#339), which landed the day this
 entry was written and is the first this tree has ever had.
 
