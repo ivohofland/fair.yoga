@@ -51,6 +51,11 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
         calendarEntryId: entry.id,
         kind: 'regular' as const,
         teacherRoomId: template.teacherRoomId,
+        // The template's own mirror, not a fresh read. Accurate by the lock
+        // this path already holds: `claimTemplateForGeneration` keeps this
+        // row `FOR UPDATE` across this insert, and archiving the room
+        // cascades into it — so the archive cannot commit in between.
+        roomArchived: template.roomArchived,
         description: template.description,
         roomCost: template.roomCost,
         minRate: template.minRate,

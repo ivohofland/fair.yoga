@@ -122,6 +122,11 @@ describe('generateClassInstances (DB)', () => {
     for (const cls of classes) {
       expect(cls.calendarEntry.classType).toBe('Vinyasa');
       expect(cls.status).toBe('open');
+      // Copied from the room's own state (issue 339), not the Prisma
+      // default — this fixture's room is never archived, so the copy and
+      // the default agree here; `roomArchived on generated classes (#339)`
+      // below is what actually distinguishes the two.
+      expect(cls.roomArchived).toBe(false);
       expect(Number(cls.roomCost)).toBe(40);
       expect(Number(cls.minRate)).toBe(15);
       expect(Number(cls.targetRate)).toBe(30);
@@ -2226,6 +2231,155 @@ describe('generateClassInstances (DB)', () => {
       },
       20_000,
     );
+  });
+
+  describe('roomArchived on generated classes (#339)', () => {
+    /**
+     * The safe half of the pairing (issue 339): a PAUSED template's `ruleLive`
+     * is `false`, so `ACTIVE_TEMPLATE_WHERE` never selects it regardless of
+     * what its room does. Archiving that room is legal precisely because no
+     * live template sits on it (`ClassTemplate_live_needs_open_room`), and
+     * this pins that the sweep still runs clean afterward rather than, say,
+     * throwing on a template it was never going to touch.
+     *
+     * A dedicated teacher, room and rule rather than the file's shared
+     * fixture: the point is a room genuinely archived with nothing but a
+     * paused template on it, and the shared `teacherRoomId` is never
+     * archived anywhere else in this file.
+     */
+    it('archiving a room holding a PAUSED template does not disturb the sweep', async () => {
+      const other = await prisma.teacher.create({
+        data: {
+          firstName: 'PausedRoom',
+          lastName: 'Teacher',
+          email: `paused-room-${uniqueSuffix}@test.local`,
+          account: { create: { email: `paused-room-${uniqueSuffix}@test.local` } },
+          bio: 'archived-room paused-template fixture (#339)',
+          pageSlug: `paused-room-${uniqueSuffix}`,
+        },
+      });
+      try {
+        const room = await prisma.room.create({
+          data: {
+            venueName: 'Paused Studio',
+            address: `${uniqueSuffix} Paused St`,
+            city: 'Amsterdam',
+            postcode: '1234PR',
+            floor: '1',
+            roomName: 'Paused',
+            maxCapacity: 10,
+            createdById: other.id,
+          },
+        });
+        const teacherRoom = await prisma.teacherRoom.create({
+          data: { teacherId: other.id, roomId: room.id, capacityOverride: 5, rentalRate: 10 },
+        });
+        const rule = await prisma.scheduleRule.create({
+          data: {
+            teacherId: other.id, kind: 'regular', classType: 'Paused',
+            dayOfWeek: 1, startTime: hhmmToTime('06:00'), durationMinutes: 30, isActive: false,
+          },
+        });
+        const template = await prisma.classTemplate.create({
+          data: {
+            scheduleRuleId: rule.id, kind: 'regular', teacherRoomId: teacherRoom.id,
+            ruleLive: false, roomCost: 5, minRate: 5, targetRate: 10, minStudents: 1, maxStudents: 5,
+            cancelDeadline: 'HOURS_24', autoCancelCheck: 'HOURS_2',
+          },
+        });
+
+        // Legal: only a paused template sits on this room.
+        const archived = await prisma.teacherRoom.update({
+          where: { id: teacherRoom.id },
+          data: { isArchived: true },
+        });
+        expect(archived.isArchived).toBe(true);
+
+        const count = await generateClassInstances(prisma, new Date('2026-04-06T00:00:00.000Z'), other.id);
+        expect(count).toBe(0);
+        expect(
+          await prisma.class.count({
+            where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: template.id } } } } },
+          }),
+        ).toBe(0);
+      } finally {
+        await prisma.calendarEntry.deleteMany({ where: { teacherId: other.id } });
+        await prisma.scheduleRule.deleteMany({ where: { teacherId: other.id } });
+        await prisma.teacherRoom.deleteMany({ where: { teacherId: other.id } });
+        await prisma.room.deleteMany({ where: { createdById: other.id } });
+        await prisma.teacher.delete({ where: { id: other.id } });
+        await prisma.account.deleteMany({ where: { email: `paused-room-${uniqueSuffix}@test.local` } });
+      }
+    });
+
+    /**
+     * The case the mutation actually reddens. `template.roomArchived` is
+     * `false` for every template `ACTIVE_TEMPLATE_WHERE` can ever select —
+     * `ClassTemplate_live_needs_open_room` forbids a live template from
+     * carrying `roomArchived: true`, so no real row can ever hand
+     * `createChildren` anything but `false`, and a test built on a real live
+     * template cannot tell "copied" apart from "hardcoded false".
+     *
+     * So this inspects the value `createChildren` passes to `class.createMany`
+     * directly, on a fabricated template object whose `roomArchived: true` is
+     * a lie no real row can tell — the same technique the empty-window guard
+     * test above uses for an unreadable `startTime`: the argument is the
+     * whole reachable surface, and no write path can produce this exact row,
+     * so the DB is bypassed rather than asked to hold an impossible one.
+     * `Class.createMany` is intercepted rather than left to run for real,
+     * because a genuinely archived room paired with the `status: 'open'`
+     * `createChildren` always writes would trip `Class_live_needs_open_room`
+     * regardless of which value this test is trying to tell apart.
+     *
+     * Mutating `roomArchived: template.roomArchived` to `roomArchived: false`
+     * in `class-generator.ts` turns every captured value `false` and reddens
+     * this test alone — the sibling above is unaffected either way, because
+     * its template never reaches `createChildren` at all.
+     */
+    it('copies roomArchived from the template rather than assuming it is false', async () => {
+      await prisma.calendarEntry.deleteMany({
+        where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+      });
+
+      const base = await freshTemplate();
+      const fabricated = { ...base, roomArchived: true };
+
+      const captured: boolean[] = [];
+      const spyingDb = new Proxy(prisma, {
+        get(target, prop, receiver) {
+          if (prop === 'class') {
+            return new Proxy(target.class, {
+              get(classTarget, classProp, classReceiver) {
+                if (classProp === 'createMany') {
+                  return (args: { data: { roomArchived: boolean }[] }) => {
+                    captured.push(...args.data.map((d) => d.roomArchived));
+                    return Promise.resolve({ count: args.data.length });
+                  };
+                }
+                return Reflect.get(classTarget, classProp, classReceiver);
+              },
+            });
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as unknown as PrismaClient;
+
+      try {
+        const now = new Date('2026-04-06T00:00:00.000Z');
+        const result = await generateInstancesForTemplate(spyingDb, fabricated, now);
+        expect(result.created).toBe(4);
+      } finally {
+        // The Proxy intercepted `Class`, so only `CalendarEntry` rows
+        // actually landed — cleaned up directly rather than through the
+        // `Class` relation the mock never populated.
+        await prisma.calendarEntry.deleteMany({
+          where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+        });
+      }
+
+      expect(captured).toHaveLength(4);
+      expect(captured.every((v) => v === true)).toBe(true);
+    });
   });
 });
 

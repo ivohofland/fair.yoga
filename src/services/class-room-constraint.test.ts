@@ -173,6 +173,40 @@ describe('Class_live_needs_open_room', () => {
       prisma.class.update({ where: { id }, data: { entryLive: false } }),
     ).rejects.toSatisfy((e: unknown) => isRestrictViolationOn(e, [ENTRY_FK]));
   });
+
+  it('a create that ASSERTS the room is open fails on the FK, not the CHECK (issue 339)', async () => {
+    // This is the bug the two create paths (`api/classes/route.ts`,
+    // `class-generator.ts`) exist to avoid: writing `roomArchived: false`
+    // rather than copying the room's actual value. A `draft` never trips
+    // `Class_live_needs_open_room` regardless of `roomArchived` (see "permits
+    // a draft in an archived room" above), so an assertion like this can only
+    // fail on the FK — which is exactly how a route that copied issue 272's
+    // `ClassTemplate` pattern (assert `false`) instead of `Class`'s own (copy
+    // the room) would be caught: a legal draft-in-an-archived-room create
+    // would be refused rather than allowed.
+    const entry = await prisma.calendarEntry.create({
+      data: {
+        teacherId,
+        kind: 'regular',
+        classType: `c-${suffix}`,
+        date: new Date(Date.UTC(2027, 0, 4 + slotOffset++)),
+        startTime: new Date('1970-01-01T10:00:00Z'),
+        durationMinutes: 60,
+      },
+    });
+    await expect(
+      prisma.class.create({
+        data: {
+          calendarEntryId: entry.id,
+          kind: 'regular',
+          teacherRoomId: shelvedRoomId,
+          roomArchived: false, // asserted, not copied — the bug this pins
+          roomCost: 0, minRate: 0, targetRate: 0, minStudents: 1, maxStudents: 10,
+          status: 'draft',
+        },
+      }),
+    ).rejects.toSatisfy((e: unknown) => isRestrictViolationOn(e, [ROOM_FK]));
+  });
 });
 
 describe('the CHECK and BLOCKING_CLASS_STATUSES agree', () => {

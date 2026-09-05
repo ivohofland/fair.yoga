@@ -99,6 +99,25 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // carry, so contention here can already surface that same generic,
   // code-less 503 before any `setLockTimeout` is added.
   const outcome = await prisma.$transaction(async (tx) => {
+    // The room's CURRENT `isArchived`, read inside the transaction and held.
+    // `Class.roomArchived` is one column of a composite foreign key, so a
+    // value that disagrees with the room is refused with `23503` rather than
+    // stored — and the ownership read above is outside this transaction, so
+    // its value can be stale by now. A draft in an archived room is LEGAL
+    // (that is the asymmetry with `ClassTemplate`, which asserts `false`
+    // instead), so the value has to be accurate rather than assumed.
+    //
+    // `FOR KEY SHARE` is the weakest lock that conflicts with the archive:
+    // `isArchived` became part of an FK-referenced unique key in issue 272,
+    // so flipping it is a KEY update and takes `FOR UPDATE`. It does not
+    // conflict with the `KEY SHARE` the insert below takes on the same row,
+    // nor with the generator's.
+    const [room] = await tx.$queryRaw<{ isArchived: boolean }[]>`
+      SELECT "isArchived" FROM "TeacherRoom"
+       WHERE "id" = ${body.teacherRoomId}
+       FOR KEY SHARE`;
+    if (!room) return { ok: false as const };
+
     // The ENTRY is inserted alone and first — it holds the slot constraint,
     // and `skipDuplicates` (`ON CONFLICT DO NOTHING`) makes it refuse with
     // zero rows rather than deadlock against a concurrent conflicting insert
@@ -129,6 +148,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         calendarEntryId: entry.id,
         kind: 'regular',
         teacherRoomId: body.teacherRoomId,
+        // COPIED, not asserted: see the transaction's opening comment. A
+        // draft may legally sit in an archived room, so the value has to be
+        // the room's actual current one rather than the Prisma default
+        // (`false`).
+        roomArchived: room.isArchived,
         description: body.description ?? null,
         roomCost: body.roomCost,
         minRate: body.minRate,
