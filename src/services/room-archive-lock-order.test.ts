@@ -1,4 +1,7 @@
 /**
+ * @serial-tier lock-contention — holds a real row lock for seconds at a time,
+ * which is noise every other file in a parallel tier would have to survive.
+ *
  * `setTeacherRoomArchived`'s lock discipline (issue 272): the bound on its
  * pre-lock, and the order that pre-lock exists to impose.
  *
