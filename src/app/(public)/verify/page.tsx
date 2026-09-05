@@ -683,24 +683,57 @@ function VerifyContent() {
       });
   }, [token, router, settle]);
 
-  if (status === 'error') return <ErrorState />;
-  if (status === 'timeout') return <TimedOutState />;
-  if (status === 'already-signed-in') return <AlreadySignedInState home={home} />;
-  if (status === 'success')
-    return (
-      <SuccessState
-        redirectTo={redirectTo}
-        isNewSignup={isNewSignup}
-        signupCancelled={signupCancelled}
-        sessionEnded={sessionEnded}
-      />
-    );
-  if (status === 'handoff') return <HandoffState code={handoffCode} />;
   // `railVisible` only ever goes up, and must keep doing so. It is what holds
   // the screen when the stay timer expires with nothing to run — a verify POST
   // that failed at 400ms, say, whose session probe answers at 1500ms. Reset it
   // there and that reader gets 600ms of blank instead.
-  return railVisible ? <VerifyingState /> : null;
+  //
+  // Bound here rather than inline because two arms below return it, and they
+  // cannot be merged: `case 'verifying': default:` narrows `status` to
+  // `'verifying'` instead of `never`, which is the one thing the default is
+  // for.
+  const verifyingRail = railVisible ? <VerifyingState /> : null;
+
+  switch (status) {
+    case 'error':
+      return <ErrorState />;
+    case 'timeout':
+      return <TimedOutState />;
+    case 'already-signed-in':
+      return <AlreadySignedInState home={home} />;
+    case 'success':
+      return (
+        <SuccessState
+          redirectTo={redirectTo}
+          isNewSignup={isNewSignup}
+          signupCancelled={signupCancelled}
+          sessionEnded={sessionEnded}
+        />
+      );
+    case 'handoff':
+      return <HandoffState code={handoffCode} />;
+    case 'verifying':
+      return verifyingRail;
+    default: {
+      // Unreachable, and the `never` is what keeps it so: a member added to
+      // `Status` without an arm above fails the build here instead of
+      // rendering as an indefinite "Checking your link". That tether is the
+      // whole point of this branch.
+      //
+      // Unreachable at runtime too, not merely unhandled: `status` is local
+      // state, written only by the `setStatus` literals in this file. What
+      // this does when reached is therefore undramatic by design, and
+      // deliberately not a throw — this is the page a reader signs in
+      // through, and a throw during render trades a working rail for a blank
+      // screen.
+      //
+      // `console.error`, not `@/lib/log`: that module is pino and
+      // server-only, and this file is `'use client'`.
+      const unhandled: never = status;
+      console.error('[verify] unhandled status', { status: String(unhandled) });
+      return verifyingRail;
+    }
+  }
 }
 
 export default function VerifyPage() {
