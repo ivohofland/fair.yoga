@@ -51,8 +51,16 @@ export function ArchiveStudioTemplateButton({ templateId, isArchived }: ArchiveS
         }
 
         if (rawJson !== undefined) {
-          const { data } = rawJson as { data: StudioTemplateToggleResponse };
-          setMessage(resolveStudioConfirmation(data) ?? '');
+          try {
+            const { data } = rawJson as { data: StudioTemplateToggleResponse };
+            setMessage(resolveStudioConfirmation(data) ?? '');
+          } catch (err) {
+            console.error('[archive-studio-template] updated, but the confirmation could not be resolved', {
+              templateId,
+              err,
+            });
+            setMessage(UNREADABLE_CONFIRMATION_MESSAGE);
+          }
         }
         router.refresh();
       } else {

@@ -53,8 +53,16 @@ export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateBut
         }
 
         if (rawJson !== undefined) {
-          const { data } = rawJson as { data: TemplateToggleResponse };
-          setMessage(resolveTemplateConfirmation(data) ?? '');
+          try {
+            const { data } = rawJson as { data: TemplateToggleResponse };
+            setMessage(resolveTemplateConfirmation(data) ?? '');
+          } catch (err) {
+            console.error('[toggle-template] updated, but the confirmation could not be resolved', {
+              templateId,
+              err,
+            });
+            setMessage(UNREADABLE_CONFIRMATION_MESSAGE);
+          }
         }
         router.refresh();
       } else {

@@ -171,6 +171,26 @@ describe('ArchiveTemplateButton', () => {
     );
   });
 
+  it('does not report a network error and still refreshes when the parsed body has no data field', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubFetch({
+      ok: true,
+      json: async () => ({}),
+    });
+    render(<ArchiveTemplateButton templateId="tpl-1" isArchived={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(
+      await screen.findByText('Updated, but could not read confirmation details.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Network error. Please try again.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(routerRefresh).toHaveBeenCalled();
+    expect(screen.getByRole('button')).toBeEnabled();
+    expect(consoleError).toHaveBeenCalled();
+  });
+
   it('reports a network error when fetch itself throws', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     rejectFetch(new TypeError('Failed to fetch'));
