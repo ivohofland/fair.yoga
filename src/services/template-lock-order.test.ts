@@ -333,7 +333,8 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * unreachable rather than switched off; `enable_tidscan` is not among the
    * four.) Index-driven would not be enough, because a bitmap heap scan is fed
    * by a bitmap index scan and still hands back the heap's order (#470;
-   * `docs/lock-order.md` §"Scan path inventory").
+   * `docs/lock-order.md`, "Postgres's scan paths over a plain table are
+   * sequential, index, index-only, bitmap heap, and TID").
    *
    * BTREE order, and this statement's reach was measured rather than assumed.
    * A GiST index has no key order at all, and every one this schema has is
