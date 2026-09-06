@@ -207,3 +207,39 @@ describe('DELETE /api/registrations/[id] — the loss its spot-freed hook record
     );
   });
 });
+
+/**
+ * `notifyCancellation`'s own swallow-and-log (#434), the same shape as
+ * `promoteAfterCancel` above and for the same reason: the cancel has already
+ * committed, so a failed notification write must not turn into a 500.
+ *
+ * Stubbing `notification.create` to succeed everywhere else in this file
+ * (`beforeEach` above) means `notifyCancellation` is otherwise silent for
+ * every test in the describe block above — this is the one place that
+ * deliberately makes it fail, so the swallow is exercised on purpose rather
+ * than only by accident of an unstubbed mock.
+ */
+describe('DELETE /api/registrations/[id] — the loss its cancellation-notice write records', () => {
+  it('still answers 200, logging the failure, when the notification write fails', async () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+
+    handleSpotFreed.mockResolvedValue(undefined);
+    notificationCreate.mockRejectedValueOnce(new Error('notification write failed'));
+
+    const res = await cancel();
+
+    // The cancel and the waitlist promotion both committed; a lost
+    // notification must not rewrite that into a failure the caller can act on.
+    expect(res.status).toBe(200);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]?.[0]).toMatchObject({
+      recipientId: 'student-1',
+      type: 'booking_removed',
+      classId: CLASS_ID,
+    });
+    expect(error.mock.calls[0]?.[1]).toBe(
+      'cancellation notice not sent — the student was not told their booking ended',
+    );
+  });
+});
