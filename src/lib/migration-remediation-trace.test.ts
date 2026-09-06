@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { migrationSqlFiles, stripSqlComments, untracedDataChanges } from '../../tests/migration-sql';
 
 /**
- * The last migration on `main` when this rule landed, and the only thing
- * standing between the rule and every migration that came before it.
+ * The line this rule starts at: everything sorting at or before it is exempt,
+ * everything after it is bound. It does not advance — `docs/lock-order.md`
+ * says why, and the silencing assertion below reddens if it is moved.
  *
  * A CUTOFF RATHER THAN A ROSTER OF GRANDFATHERED NAMES. Everything sorting at
  * or before this is frozen by policy — an applied migration is immutable here,
@@ -18,6 +19,48 @@ const CUTOFF = '20260903195051_student_signup_purposes';
 
 /** Runs the rule over every migration, no matter when it landed. */
 const UNBOUNDED = '';
+
+/**
+ * The `DELETE` half of the rule, which no live migration exercises on its own:
+ * the one migration in the tree holding a `DELETE FROM "…"` also holds an
+ * `UPDATE "…"`, so deleting that whole alternative from the pattern left every
+ * test green. These two rows are the only thing standing behind it.
+ */
+const UNTRACED_DELETE_SQL = `
+DELETE FROM "Registration" r
+ WHERE r."classId" IN (SELECT c."id" FROM "Class" c WHERE c."status" = 'draft');
+`;
+
+/** The same write in the case a hand-authored migration may well use. */
+const UNTRACED_DELETE_LOWERCASE_SQL = `
+delete from "Registration" r
+ where r."classId" in (select c."id" from "Class" c where c."status" = 'draft');
+`;
+
+/**
+ * `ONLY` between the verb and its table — legal, single-table, and invisible to
+ * a pattern demanding the quote immediately after the verb.
+ */
+const UPDATE_ONLY_SQL = `
+UPDATE ONLY "Class" SET "status" = 'draft' WHERE "status" = 'open';
+`;
+
+/** A real notice, in lowercase — the `/i` on the notice side, pinned. */
+const LOWERCASE_NOTICE_SQL = `
+DO $$ BEGIN
+  UPDATE "TeacherRoom" SET "isArchived" = false WHERE "isArchived";
+  raise notice 'un-archived the rooms';
+END $$;
+`;
+
+/**
+ * The marker in lowercase. It is this rule's own spelling rather than SQL's, so
+ * unlike the two patterns it is case-SENSITIVE and this exempts nothing.
+ */
+const MARKER_IN_LOWERCASE_SQL = `
+-- dml without notice: backfills a column added two lines above.
+UPDATE "ClassTemplate" SET "kind" = 'regular';
+`;
 
 /**
  * A remediation of the shape this issue is about: it rewrites rows and says
@@ -235,7 +278,12 @@ describe('untraced data changes in migrations', () => {
     ['the same data change in lowercase', UNTRACED_LOWERCASE_SQL, ['20990101000000_case']],
     ['a RAISE NOTICE that is only a comment', NOTICE_ONLY_IN_A_COMMENT_SQL, ['20990101000000_case']],
     ['the marker with no reason after the colon', MARKED_WITHOUT_A_REASON_SQL, ['20990101000000_case']],
+    ['the marker spelled in lowercase', MARKER_IN_LOWERCASE_SQL, ['20990101000000_case']],
+    ['a DELETE with neither notice nor marker', UNTRACED_DELETE_SQL, ['20990101000000_case']],
+    ['the same DELETE in lowercase', UNTRACED_DELETE_LOWERCASE_SQL, ['20990101000000_case']],
+    ['a write hidden behind UPDATE ONLY', UPDATE_ONLY_SQL, ['20990101000000_case']],
     ['a real RAISE NOTICE', REAL_NOTICE_SQL, []],
+    ['a real RAISE NOTICE in lowercase', LOWERCASE_NOTICE_SQL, []],
     ['the marker and a reason', MARKED_SQL, []],
     ['ON UPDATE CASCADE and FOR UPDATE OF, and no data change', NO_DATA_CHANGE_SQL, []],
   ])('%s', (_case, sql, expected) => {
@@ -255,6 +303,16 @@ describe('untraced data changes in migrations', () => {
 
     expect(untracedDataChanges(older, CUTOFF)).toEqual([]);
     expect(untracedDataChanges(older, UNBOUNDED)).toEqual(['20260101000000_before_the_cutoff']);
+  });
+
+  /**
+   * STRICTLY after, which is the half the case above cannot see: relaxing the
+   * comparison to `<` would bind the named migration itself and still pass
+   * every other assertion here, because the migration `CUTOFF` names carries no
+   * data change of its own.
+   */
+  it('does not report the migration the cutoff itself names', () => {
+    expect(untracedDataChanges([{ name: CUTOFF, sql: UNTRACED_SQL }], CUTOFF)).toEqual([]);
   });
 });
 
@@ -288,6 +346,9 @@ describe('stripSqlComments', () => {
    */
   it.each<[string, string, string]>([
     ['a block comment becomes a single space', 'UPDATE/* c */"X"', 'UPDATE "X"'],
+    // Non-greedy, pinned: one greedy match would run from the first `/*` to the
+    // last `*/` and take the statement between them with it.
+    ['two block comments do not swallow the statement between them', '/* a */UPDATE "X"/* b */', ' UPDATE "X" '],
     ['a line comment keeps its newline', '-- UPDATE "X"\nSELECT 1;', '\nSELECT 1;'],
   ])('%s', (_case, sql, expected) => {
     expect(stripSqlComments(sql)).toBe(expected);

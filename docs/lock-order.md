@@ -1284,10 +1284,12 @@ teacher doing this by hand also does.
 why it is selected and not tested in the `WHERE`. The raw `UPDATE` never touched
 it, so a row the migration paused and nothing has written since still carries a
 value predating the migration. But writing that row does not require resuming
-it: `updateTemplate` (`src/services/rule-lifecycle.ts`) sends `classType`,
-`dayOfWeek`, `startTime` and `durationMinutes` to `ScheduleRule` through the
-Prisma client, which bumps `@updatedAt`, and touches neither `isActive` nor
-`isArchived`. A teacher who edits the schedule of a template that is still
+it: `updateRule` (`src/services/rule-lifecycle.ts`) sends the teacher-editable
+schedule fields — the compiler's own roster, `TeacherEditableScheduleRuleField`
+(`src/services/class-template-lifecycle.ts`) — to `ScheduleRule` through the
+Prisma client, which bumps `@updatedAt`. It cannot touch `isActive` or
+`isArchived`: both sit in `PlainUpdateForbiddenScheduleRuleField`, and that
+statement's payload types every member of it as `never`. A teacher who edits the schedule of a template that is still
 paused therefore pushes `updatedAt` past the migration without changing anything
 about its pausedness. So a later value rules out only *"still sitting as the
 migration left it"*, never *"was never remediated"*, and a `WHERE` clause
@@ -1319,9 +1321,9 @@ must announce or explain a data change, for the two shapes the rule reads.**
 `untracedDataChanges` (`tests/migration-sql.ts`, pinned by
 `src/lib/migration-remediation-trace.test.ts`) reports any migration sorting
 after that cutoff whose comment-stripped SQL contains `UPDATE "…"` or
-`DELETE FROM "…"` in any case, upper or lower, without a real
-`RAISE NOTICE`, unless the raw text carries `-- DML WITHOUT NOTICE: <reason>`
-with a non-empty reason. Those two shapes are the whole of it: a
+`DELETE FROM "…"` — in any case, upper or lower, and with an optional `ONLY`
+between the verb and the table — without a real `RAISE NOTICE`, unless the raw
+text carries `-- DML WITHOUT NOTICE: <reason>` with a non-empty reason. Those two shapes are the whole of it: a
 schema-qualified, `TRUNCATE`, `MERGE` or `ON CONFLICT DO UPDATE` write is not
 seen.
 
@@ -1334,7 +1336,7 @@ example already carries more than one data change under a single notice:
 ```sh
 perl -0777 -ne '
   my $s = $_; $s =~ s{/\*.*?\*/}{ }gs; $s =~ s{--[^\n]*}{}g;
-  my $d = () = $s =~ /\bUPDATE\s+"|\bDELETE\s+FROM\s+"/gi;
+  my $d = () = $s =~ /\bUPDATE\s+(?:ONLY\s+)?"|\bDELETE\s+FROM\s+(?:ONLY\s+)?"/gi;
   my $n = () = $s =~ /\bRAISE\s+NOTICE\b/gi;
   print "$ARGV: $d data change(s), $n notice(s)\n";
 ' prisma/migrations/20260905120000_class_room_archive_invariant/migration.sql
@@ -1351,7 +1353,7 @@ a command that did not would disagree with the rule in both directions:
 perl -0777 -ne '
   my $s = $_; $s =~ s{/\*.*?\*/}{ }gs; $s =~ s{--[^\n]*}{}g;
   print "$ARGV\n"
-    if $s =~ /\bUPDATE\s+"|\bDELETE\s+FROM\s+"/i
+    if $s =~ /\bUPDATE\s+(?:ONLY\s+)?"|\bDELETE\s+FROM\s+(?:ONLY\s+)?"/i
     && $s !~ /\bRAISE\s+NOTICE\b/i
     && $_ !~ /--[ \t]*DML WITHOUT NOTICE:[ \t]*\S/;
 ' prisma/migrations/*/migration.sql

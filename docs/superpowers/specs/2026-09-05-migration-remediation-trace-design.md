@@ -115,11 +115,16 @@ A third entry records:
 The query lists *candidates*, not a roster. A rule the migration paused and a
 rule the teacher paused before archiving the room are indistinguishable in the
 stored state — door 1 requires pausing every live template before a room can be
-archived, so the teacher-caused shape is identical. One discriminator survives,
-in one direction only: the migration's raw `UPDATE` did not bump `updatedAt`,
-so a remediated row's `updatedAt` necessarily **predates** the migration.
-`updatedAt >= '2026-08-27 12:00'` therefore *rules out* remediation; an earlier
-value does not rule it in.
+archived, so the teacher-caused shape is identical.
+
+~~One discriminator survives, in one direction only: `updatedAt >= '2026-08-27
+12:00'` rules out remediation.~~ **Struck, twice over.** The instant is wrong to
+hard-code — the name's timestamp is not the applied instant, which
+`_prisma_migrations.finished_at` holds — and the inference is unsound anyway:
+`updateRule` writes `ScheduleRule`'s schedule fields without resuming the rule,
+bumping `@updatedAt` on a row that stays paused. `updatedAt` is evidence to
+weigh, never a filter, and it is selected rather than tested in the `WHERE`.
+`docs/lock-order.md`'s third entry is the live copy of this reasoning.
 
 The section opens "Two of them" — a prose count this entry falsifies. It is
 corrected in the same change (CLAUDE.md, *Counts*).

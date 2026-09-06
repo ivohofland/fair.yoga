@@ -149,11 +149,12 @@ It must carry:
   whose template sits on an archived room, which are **candidates, not a
   roster** — door 1 forces a teacher to pause every live template before
   archiving a room, so the teacher-caused shape is identical in the stored
-  state. One discriminator survives, in one direction only: a remediated row's
-  `updatedAt` necessarily predates the migration, so
-  `updatedAt >= '2026-08-27 12:00'` rules remediation **out**; an earlier value
-  does not rule it in. Say that, rather than implying the query identifies
-  affected rows.
+  state. ~~One discriminator survives, in one direction only:
+  `updatedAt >= '2026-08-27 12:00'` rules remediation out.~~ **Struck: the
+  instant is wrong to hard-code and the inference is unsound** — see the spec's
+  correction and `docs/lock-order.md`'s third entry. `updatedAt` ships as
+  evidence in the `SELECT`, never as a `WHERE` filter. Say what the query does
+  and does not prove, rather than implying it identifies affected rows.
 - **The rule task 1 now enforces**, and its re-derivation command — the shell
   equivalent of the sweep, so a reader can reproduce the census without running
   vitest. Ship the command, per this document's existing habit of shipping the
