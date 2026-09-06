@@ -314,19 +314,26 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * makes the race adversarial. Called once per `it`, because each builds its
    * own fixture with fresh ids.
    *
-   * Read under a forced index-nested-loop plan, because which side an unforced
+   * Read under a forced index-ORDERED plan, because which side an unforced
    * plan drives from is a cost decision that moves with table statistics, and
-   * the driving side is what fixes the output order. The three settings are
+   * the driving side is what fixes the output order. The four settings are
    * `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan`, mirrored rather
-   * than imported so the two files' fixtures stay independent. That file also
-   * records a driving side that moves non-monotonically with table size, and
-   * that measurement belongs to ITS join, whose driving condition sits on a
-   * column no index leads with; this read's only condition is on `ct.id`, a
-   * primary key, and nobody has measured it for the same behaviour.
+   * than imported so the two files' fixtures stay independent. What they buy
+   * is stated there: sequential and bitmap heap scans are Postgres's two
+   * paths that return physical heap order, both are off, and what remains —
+   * index and index-only scans — returns index order. Index-driven would not
+   * be enough, because a bitmap heap scan is fed by a bitmap index scan and
+   * still hands back the heap's order (#470).
    *
-   * `SET LOCAL` is transaction-scoped and `enable_seqscan = off` discourages
-   * rather than forbids, so neither reaches production nor can make this
-   * statement fail.
+   * That file also records a driving side that moves non-monotonically with
+   * table size, and that measurement belongs to ITS join, whose driving
+   * condition sits on a column no index leads with; this read's only condition
+   * is on `ct.id`, a primary key, and nobody has measured it for the same
+   * behaviour.
+   *
+   * `SET LOCAL` is transaction-scoped, and `enable_seqscan = off` and
+   * `enable_bitmapscan = off` discourage rather than forbid, so none of them
+   * reaches production nor can make this statement fail.
    */
   async function expectPremiseOrder(ids: {
     templateId: string;
@@ -337,6 +344,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
       await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
       await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
+      await tx.$executeRaw`SET LOCAL enable_bitmapscan = off`;
       return tx.$queryRaw<Array<{ id: string }>>`
         SELECT c.id FROM "Class" c
         JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"

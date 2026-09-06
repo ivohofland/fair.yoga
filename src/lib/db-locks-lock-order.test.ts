@@ -13,24 +13,25 @@ import { createClassFixture } from '../../tests/class-fixtures';
 const prisma = new PrismaClient();
 
 /**
- * Forces both callers off sequential scans, so each one's row order comes
- * from index structure rather than from `Class`'s heap.
+ * Forces both callers off every scan path that returns physical order, so each
+ * one's row order comes from index structure rather than from `Class`'s heap.
  *
- * That is the property this whole file rests on, and it is why the same three
- * settings serve both sides. A seq-scanned `Class` hands back physical order,
- * and physical order is not this test's to own: `Class` is one 8 KB page
- * shared with every other file in the parallel tier, so a neighbour's `DELETE`
- * plus autovacuum frees a low line pointer and the next insert takes it —
- * measured 2026-08-28, and the mechanism behind the CI failure at
- * `db-locks.test.ts:414` on 2026-08-27. Under these settings the join side is
- * ordered by `WaitlistEntry_classId_position_idx` (so by `classId`) and the
- * scan side by `Class_calendarEntryId_key` (so by `calendarEntryId`), both of
- * which this file's fixture ASSIGNS.
+ * That is the property this whole file rests on, and it is why the same four
+ * settings serve both sides. A heap-ordered scan of `Class` hands back
+ * physical order, and physical order is not this test's to own: `Class` is one
+ * 8 KB page shared with every other file in the parallel tier, so a
+ * neighbour's `DELETE` plus autovacuum frees a low line pointer and the next
+ * insert takes it — measured 2026-08-28, and the mechanism behind the CI
+ * failure at `db-locks.test.ts:414` on 2026-08-27. Under these settings the
+ * join side is ordered by `WaitlistEntry_classId_position_idx` (so by
+ * `classId`) and the scan side by whichever index its plan is driven from —
+ * this file's fixture ASSIGNS every key those plans can order by, so no index
+ * has to be named as the one.
  *
  * The join side additionally needs the nested loop driven from
  * `WaitlistEntry`, which is what the measurements below are about.
  *
- * All three settings are required, and `enable_hashjoin = off` alone is what
+ * All four settings are required, and `enable_hashjoin = off` alone is what
  * CI proved insufficient (#239 review). It removes a join ALGORITHM, not a
  * join DIRECTION: with hash joins gone the planner can still pick a nested
  * loop with `Class` as the outer relation and a `Materialize`d `WaitlistEntry`
@@ -44,21 +45,33 @@ const prisma = new PrismaClient();
  * Measured across background-row counts on 2026-08-16 it is NON-MONOTONIC —
  * 0 rows and 2 rows and 50 rows pick `Class`-outer, 10 rows picks
  * `WaitlistEntry`-outer — so no amount of seeding makes a cost-chosen plan
- * safe. Adding `enable_mergejoin` and `enable_seqscan` leaves an index-driven
- * nested loop as the only cheap shape, which takes its order from index
- * structure rather than from a cost comparison; verified stable at 0, 2, 10,
- * 50, 100, 200, 1_000, 5_000, 10_000 and 50_000 background rows.
+ * safe. Adding `enable_mergejoin` leaves the nested loop as the only cheap
+ * join shape, which takes its direction from index structure rather than from
+ * a cost comparison; verified stable at 0, 2, 10, 50, 100, 200, 1_000, 5_000,
+ * 10_000 and 50_000 background rows.
  *
- * `enable_seqscan = off` discourages rather than forbids — Postgres still
- * seq-scans when no index path exists — so this cannot make a statement fail,
- * only bias the planner. `SET LOCAL` is transaction-scoped, so all three live
- * entirely inside the caller's transaction and reach neither the other caller
- * nor production.
+ * INDEX-DRIVEN IS NOT INDEX-ORDERED, and that gap is what the seq-scan setting
+ * alone left open. Postgres has exactly two scan paths over a plain table that
+ * return PHYSICAL heap order — a sequential scan and a bitmap heap scan — and
+ * a bitmap heap scan is fed by a bitmap INDEX scan, so a nested loop built
+ * from two of those is index-DRIVEN and still hands back heap order. Turning
+ * both off is what this helper buys: the remaining paths are index and
+ * index-only scans, and both return index order. Measured in
+ * `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md` (#470),
+ * including the adversarial case where every path carries `disable_cost` and
+ * Postgres still declines to read the heap in physical order.
+ *
+ * `enable_seqscan = off` and `enable_bitmapscan = off` discourage rather than
+ * forbid — Postgres still takes those paths when nothing else can answer the
+ * statement — so these cannot make a statement fail, only bias the planner.
+ * `SET LOCAL` is transaction-scoped, so all four live entirely inside the
+ * caller's transaction and reach neither the other caller nor production.
  */
 async function forceIndexOrderedPlan(tx: Prisma.TransactionClient): Promise<void> {
   await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
   await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
   await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
+  await tx.$executeRaw`SET LOCAL enable_bitmapscan = off`;
 }
 
 /**
@@ -75,9 +88,11 @@ async function forceIndexOrderedPlan(tx: Prisma.TransactionClient): Promise<void
  * serialise whether or not the clause is there — such a test passes against
  * the bug and proves nothing. `ORDER BY c.id` is load-bearing only where two
  * sites reach the same rows by DIFFERENT plans: the join below is driven by
- * `WaitlistEntry` and returns classes in `classId` order, while the scan
- * reaches `Class` through `Class_calendarEntryId_key` and returns them in
- * `calendarEntryId` order. The fixture ASSIGNS both of those keys, so the two
+ * `WaitlistEntry` and returns classes in `classId` order, while the scan is
+ * driven from an index over this teacher's entries and returns them in that
+ * index's key order — `Class.calendarEntryId`, `CalendarEntry.date` or
+ * `CalendarEntry.id`, depending on which index its plan takes. The fixture
+ * ASSIGNS `classId` and every one of those three, so the two
  * natural orders are opposite by construction, and both premises are asserted
  * before the race rather than assumed — an index or plan change that makes
  * them agree fails loudly here instead of leaving the test green for an
@@ -149,9 +164,10 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     highClassId = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
     // Entry ids ANTI-correlated with the class ids they carry: the LOW class
     // gets the HIGH entry and vice versa. That inversion is what gives the
-    // scan side a natural order of [HIGH, LOW] under the forced plan, which
-    // reaches `Class` through `Class_calendarEntryId_key` and so returns rows
-    // in `calendarEntryId` order. Assigned rather than defaulted, because a
+    // scan side a natural order of [HIGH, LOW] under the forced plan, whose
+    // driving index keys on `Class.calendarEntryId` or on `CalendarEntry.id`
+    // — the same pair of values either way, so which one wins does not change
+    // the order these ids produce. Assigned rather than defaulted, because a
     // `uuid()` default would leave that order to chance — measured 20/20
     // tracking the random entry id, 12 of 20 in the direction this test needs.
     lowEntryId = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
@@ -256,12 +272,13 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
 
   it('serialises two callers whose natural orders disagree, instead of deadlocking', async () => {
     // Premise 1: the scan's natural order, under the SAME forced plan the
-    // scan caller gets below. Unforced this read is a seq scan on `Class` and
-    // hands back heap order, which this test cannot own — see
-    // `forceIndexOrderedPlan`. Forced, it is an index scan on
-    // `Class_calendarEntryId_key`, so the order is the one `beforeAll`
-    // ASSIGNED: verified 24/24, including 12 runs against a heap deliberately
-    // inverted to [LOW, HIGH].
+    // scan caller gets below. Unforced this read can reach `Class` by a
+    // heap-ordered path — a sequential or a bitmap heap scan — and hand back
+    // physical order, which this test cannot own; see `forceIndexOrderedPlan`.
+    // Forced, every remaining path returns index order and this fixture
+    // assigns every key those plans order by, so the order is the one
+    // `beforeAll` ASSIGNED: verified 24/24, including 12 runs against a heap
+    // deliberately inverted to [LOW, HIGH].
     const scanOrder = await prisma.$transaction(async (tx) => {
       await forceIndexOrderedPlan(tx);
       return tx.$queryRaw<Array<{ id: string }>>`
