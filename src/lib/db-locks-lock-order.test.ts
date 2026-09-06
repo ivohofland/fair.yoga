@@ -127,7 +127,10 @@ async function probeUnderForcedPlan(
     );
     const rows = await tx.$queryRaw<Array<{ id: string }>>(statement);
     const lines = explained.map((row) => row['QUERY PLAN']);
-    if (lines.length === 0 || lines.some((line) => typeof line !== 'string' || line.trim() === '')) {
+    if (
+      lines.length === 0 ||
+      lines.some((line) => typeof line !== 'string' || line.trim() === '')
+    ) {
       throw new Error(
         `probeUnderForcedPlan: EXPLAIN returned no usable plan text (${explained.length} ` +
           `row(s), keys ${JSON.stringify(Object.keys(explained[0] ?? {}))}). The row-order ` +
@@ -362,7 +365,8 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // "every key those plans order by" would be untrue if a `Class_pkey`-driven
     // plan were among them. It is not one, and that is a property of the
     // statement rather than a cost accident — see Premise 1's comment below,
-    // which measures it.
+    // which argues it from this statement's clauses and names where it was
+    // measured.
     //
     // Three separate `expect`s so a failure names WHICH half moved. The third
     // looks backwards and is not: the join side's natural order is
@@ -402,8 +406,8 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // deliberately inverted to [LOW, HIGH].
     //
     // NOT `Class.id`, which this fixture assigns the OTHER way and which would
-    // therefore falsify the scan-order claim above if a `Class_pkey`-driven plan were
-    // reachable. It is not: this statement joins `c."calendarEntryId"` and
+    // therefore falsify Premise 1's ASSIGNED claim above if a `Class_pkey`-driven
+    // plan were reachable. It is not: this statement joins `c."calendarEntryId"` and
     // mentions `c.id` in no clause, so Postgres generates no `Class_pkey` path
     // for it at all. `gdpr-lock-order.test.ts`'s teacher probe carries the
     // measurement, including how "not generated" was told apart from "generated

@@ -413,7 +413,10 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       );
       const rows = await tx.$queryRaw<Array<{ id: string }>>(statement);
       const lines = explained.map((row) => row['QUERY PLAN']);
-      if (lines.length === 0 || lines.some((line) => typeof line !== 'string' || line.trim() === '')) {
+      if (
+        lines.length === 0 ||
+        lines.some((line) => typeof line !== 'string' || line.trim() === '')
+      ) {
         throw new Error(
           `expectPremiseOrder: EXPLAIN returned no usable plan text (${explained.length} ` +
             `row(s), keys ${JSON.stringify(Object.keys(explained[0] ?? {}))}). The row-order ` +
