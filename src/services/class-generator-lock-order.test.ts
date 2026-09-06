@@ -269,11 +269,22 @@ describe('the class generator under staged lock contention (DB)', () => {
       });
 
       await new Promise((r) => setTimeout(r, 300));
-      // Without FOR UPDATE the archive's UPDATE is unobstructed and this is true.
-      expect(archiveSettled).toBe(false);
+      try {
+        // Without FOR UPDATE the archive's UPDATE is unobstructed and this is true.
+        expect(archiveSettled).toBe(false);
+      } finally {
+        // Releases the claim's `FOR UPDATE` on this template's `ClassTemplate`
+        // row. In a `finally`, so a failure above fails this test alone
+        // instead of parking that row for the claim's full
+        // `{ timeout: 15_000 }` budget. `archiving` is joined here rather than
+        // below because it writes the `isActive`/`isArchived` columns this
+        // block's `afterEach` restores — unjoined it commits after the
+        // restore and hands whatever runs next an archived fixture.
+        release();
+        await claiming;
+        await archiving;
+      }
 
-      release();
-      await claiming;
       const result = await archiving;
       expect(result.ok).toBe(true);
     });
@@ -583,14 +594,26 @@ describe('the class generator under staged lock contention (DB)', () => {
       });
 
       await new Promise((r) => setTimeout(r, 300));
-      // Without the child lock above, the sweep sails past the claim and has
-      // already created the window by now.
-      expect(sweepSettled).toBe(false);
-
-      // 3. Commit the archive; the claim unblocks and sees isArchived: true.
-      commit();
-      await archiving;
-      await sweeping;
+      try {
+        // Without the child lock above, the sweep sails past the claim and has
+        // already created the window by now.
+        expect(sweepSettled).toBe(false);
+      } finally {
+        // Releases the staged archive, which holds this template's
+        // `ClassTemplate` row lock and the uncommitted `ScheduleRule` write
+        // above it. In a `finally`, so a failure above fails this test alone
+        // instead of holding both for the transaction's full
+        // `{ timeout: 15_000 }` budget: this block's `afterEach` updates that
+        // same `ScheduleRule` row and would block behind it. `sweeping` is
+        // joined here rather than below because it runs on the shared `prisma`
+        // client and is still creating the `CalendarEntry` rows that same
+        // `afterEach` deletes.
+        //
+        // 3. Commit the archive; the claim unblocks and sees isArchived: true.
+        commit();
+        await archiving;
+        await sweeping;
+      }
 
       // 4. Nothing was materialised for a template the teacher shelved.
       expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(0);
@@ -670,12 +693,24 @@ describe('the class generator under staged lock contention (DB)', () => {
       });
 
       await new Promise((r) => setTimeout(r, 300));
-      expect(sweepSettled).toBe(false);
-
-      // 3. Commit. The claim unblocks and re-reads under its own lock.
-      commit();
-      await editing;
-      await sweeping;
+      try {
+        expect(sweepSettled).toBe(false);
+      } finally {
+        // Releases the staged edit, which holds this template's
+        // `ClassTemplate` row lock and the uncommitted `ScheduleRule` write
+        // above it. In a `finally`, so a failure above fails this test alone
+        // instead of holding both for the transaction's full
+        // `{ timeout: 15_000 }` budget: this block's `afterEach` restores
+        // `dayOfWeek` and `startTime` on that same `ScheduleRule` row and
+        // would block behind it. `sweeping` is joined here rather than below
+        // because it runs on the shared `prisma` client and is still creating
+        // the `CalendarEntry` rows that same `afterEach` deletes.
+        //
+        // 3. Commit. The claim unblocks and re-reads under its own lock.
+        commit();
+        await editing;
+        await sweeping;
+      }
 
       // 4. Everything it created carries the post-edit values.
       const created = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, select: { calendarEntry: { select: { date: true, startTime: true } } } });
@@ -771,19 +806,41 @@ describe('the class generator under staged lock contention (DB)', () => {
         { timeout: 20_000 },
       );
 
-      // The generator starts with the holder's row in flight, so its occupancy
-      // read cannot see the colliding date and its insert parks on the pending
-      // entry; the other three dates insert cleanly.
-      await parked;
-      const generating = generateInstancesForTemplate(prisma, await freshTemplate(), now);
-      await new Promise((r) => setTimeout(r, 400));
-      release();
-      await holding;
-      const result = await generating;
-      await holder.$disconnect();
+      let generating: ReturnType<typeof generateInstancesForTemplate> | undefined;
+      try {
+        // The generator starts with the holder's row in flight, so its occupancy
+        // read cannot see the colliding date and its insert parks on the pending
+        // entry; the other three dates insert cleanly.
+        await parked;
+        generating = generateInstancesForTemplate(prisma, await freshTemplate(), now);
+        await new Promise((r) => setTimeout(r, 400));
+        release();
+        await holding;
+        const result = await generating;
 
-      expect(result.created).toBe(3);
-      expect(result.skipped).toEqual([{ date: collide, reason: 'blocked_by_overlap' }]);
+        expect(result.created).toBe(3);
+        expect(result.skipped).toEqual([{ date: collide, reason: 'blocked_by_overlap' }]);
+      } finally {
+        // The span starts where the holder is in flight, because everything
+        // below that point can reject before `release()` runs —
+        // `freshTemplate()` is a database read sitting in an argument list —
+        // and the generator's insert is already parked on the holder's
+        // uncommitted `CalendarEntry`, so an unreleased holder pins both for
+        // its full `{ timeout: 20_000 }` budget. `generating` is joined here
+        // rather than left running because it writes `CalendarEntry` rows for
+        // this `teacherId` on the shared `prisma` client, which is exactly
+        // what this block's `afterEach` deletes between cases.
+        release();
+        try {
+          await holding;
+          await generating;
+        } finally {
+          // Nested, so a rejecting join above cannot skip the disconnect: this
+          // holder owns a `PrismaClient` of its own, and an undisconnected one
+          // leaks its pool for the rest of the run.
+          await holder.$disconnect();
+        }
+      }
     });
 
     /**
@@ -839,16 +896,39 @@ describe('the class generator under staged lock contention (DB)', () => {
         { timeout: 20_000 },
       );
 
-      await parked;
-      const generating = generateInstancesForTemplate(prisma, await freshTemplate(), now);
-      await new Promise((r) => setTimeout(r, 400));
-      release();
-      await holding;
-      const result = await generating;
-      await holder.$disconnect();
+      let generating: ReturnType<typeof generateInstancesForTemplate> | undefined;
+      try {
+        await parked;
+        generating = generateInstancesForTemplate(prisma, await freshTemplate(), now);
+        await new Promise((r) => setTimeout(r, 400));
+        release();
+        await holding;
+        const result = await generating;
 
-      expect(result.created).toBe(3);
-      expect(result.skipped).toEqual([{ date: collide, reason: 'raced' }]);
+        expect(result.created).toBe(3);
+        expect(result.skipped).toEqual([{ date: collide, reason: 'raced' }]);
+      } finally {
+        // The span starts where the holder is in flight, because everything
+        // below that point can reject before `release()` runs —
+        // `freshTemplate()` is a database read sitting in an argument list —
+        // and the generator's insert is already parked on the holder's
+        // uncommitted `(scheduleRuleId, date)` entry, so an unreleased holder
+        // pins both for its full `{ timeout: 20_000 }` budget. `generating` is
+        // joined here rather than left running because it writes
+        // `CalendarEntry` rows for this `teacherId` on the shared `prisma`
+        // client, which is exactly what this block's `afterEach` deletes
+        // between cases.
+        release();
+        try {
+          await holding;
+          await generating;
+        } finally {
+          // Nested, so a rejecting join above cannot skip the disconnect: this
+          // holder owns a `PrismaClient` of its own, and an undisconnected one
+          // leaks its pool for the rest of the run.
+          await holder.$disconnect();
+        }
+      }
     });
   });
 
