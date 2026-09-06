@@ -12,8 +12,9 @@
  * of a `$transaction(…)`. It does NOT ask a call site to have a transaction of
  * its own beside it. A caller whose refused transaction lives one layer down —
  * inside the service it awaited, already committed or rolled back by the time
- * the result comes back — is correct, and the stronger rule "sit after its own
- * transaction's closing `)`" reads as would flag it; that shape ships today, and
+ * the result comes back — is correct, and would be flagged by the stronger rule
+ * that "sits after its own transaction's closing `)`" reads as. That shape ships
+ * today, and
  * `docs/superpowers/specs/2026-09-06-probe-placement-tether-design.md` §4 is
  * where it is named. Nor does this decide whether the transaction a call probes
  * after is the RIGHT one. That is a judgement about a whole function, and
