@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { lockClassRowsOrdered } from './db-locks';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { FORCED_PLAN_SETTINGS } from '../../tests/forced-plan-settings';
 
 const prisma = new PrismaClient();
 
@@ -92,10 +93,9 @@ const prisma = new PrismaClient();
  * caller's transaction and reach neither the other caller nor production.
  */
 async function forceIndexOrderedPlan(tx: Prisma.TransactionClient): Promise<void> {
-  await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
-  await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
-  await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
-  await tx.$executeRaw`SET LOCAL enable_bitmapscan = off`;
+  for (const setting of FORCED_PLAN_SETTINGS) {
+    await tx.$executeRawUnsafe(`SET LOCAL ${setting} = off`);
+  }
 }
 
 /**

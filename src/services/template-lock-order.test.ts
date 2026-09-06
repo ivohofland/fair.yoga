@@ -11,6 +11,7 @@ import { deleteStudentAccount } from './gdpr';
 import { log } from '@/lib/log';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { FORCED_PLAN_SETTINGS } from '../../tests/forced-plan-settings';
 
 /**
  * Issue 180 had two halves, and this file covers the one that still has code
@@ -404,10 +405,9 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       WHERE ct."id" = ${ids.templateId}
     `;
     const premiseOrder = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
-      await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
-      await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
-      await tx.$executeRaw`SET LOCAL enable_bitmapscan = off`;
+      for (const setting of FORCED_PLAN_SETTINGS) {
+        await tx.$executeRawUnsafe(`SET LOCAL ${setting} = off`);
+      }
       const explained = await tx.$queryRaw<Array<{ 'QUERY PLAN': string }>>(
         Prisma.sql`EXPLAIN ${statement}`,
       );
