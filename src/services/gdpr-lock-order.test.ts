@@ -29,6 +29,7 @@ import { claimTemplateForGeneration } from './class-generator';
 import { claimStudioTemplateForGeneration } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { FORCED_PLAN_SETTINGS } from '../../tests/forced-plan-settings';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
 
 /**
@@ -322,10 +323,9 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       // to eliminate. With the bound, that becomes a `55P03` the assertion
       // below reports with the plan attached.
       await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);
-      await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
-      await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
-      await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
-      await tx.$executeRaw`SET LOCAL enable_bitmapscan = off`;
+      for (const setting of FORCED_PLAN_SETTINGS) {
+        await tx.$executeRawUnsafe(`SET LOCAL ${setting} = off`);
+      }
       const explained = await tx.$queryRaw<Array<{ 'QUERY PLAN': string }>>(
         Prisma.sql`EXPLAIN ${statement}`,
       );
@@ -688,10 +688,9 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // planned differently and cannot fail on them.
           if (args[0] === LOCK_TIMEOUT_SQL) {
             const first = await query(args);
-            await query([`SET LOCAL enable_hashjoin = off`]);
-            await query([`SET LOCAL enable_mergejoin = off`]);
-            await query([`SET LOCAL enable_seqscan = off`]);
-            await query([`SET LOCAL enable_bitmapscan = off`]);
+            for (const setting of FORCED_PLAN_SETTINGS) {
+              await query([`SET LOCAL ${setting} = off`]);
+            }
             return first;
           }
           return query(args);
@@ -758,10 +757,9 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // a repeated `SET LOCAL` overwrites rather than stacks.
           if (args[0] === LOCK_TIMEOUT_SQL) {
             const first = await query(args);
-            await query([`SET LOCAL enable_hashjoin = off`]);
-            await query([`SET LOCAL enable_mergejoin = off`]);
-            await query([`SET LOCAL enable_seqscan = off`]);
-            await query([`SET LOCAL enable_bitmapscan = off`]);
+            for (const setting of FORCED_PLAN_SETTINGS) {
+              await query([`SET LOCAL ${setting} = off`]);
+            }
             return first;
           }
           return query(args);
