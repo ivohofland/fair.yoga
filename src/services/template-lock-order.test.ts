@@ -4,7 +4,7 @@
  * tell from the defect it watches for.
  */
 import { describe, it, expect, afterAll, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { archiveOrUnarchiveTemplate } from './class-template-lifecycle';
 import { deleteStudentAccount } from './gdpr';
@@ -258,11 +258,12 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
     // both rows in ONE statement ordered `ORDER BY c.id`, asking for
     // [LOW, HIGH] in a single acquisition — no JS sort, no loop. Only the
     // last two are load-bearing; insertion order is not a property this table
-    // can carry, because `Class`
-    // shares a page with every other file in this tier (the reasoning is
-    // `db-locks-lock-order.test.ts`'s, in the docblock above
-    // `forceIndexOrderedPlan`). Each `it` asserts that these assignments held,
-    // which is the part it can see; the visiting order follows from them.
+    // can carry, because `Class` shares a page with every other file in this
+    // tier (the reasoning is `db-locks-lock-order.test.ts`'s, in the docblock
+    // above `forceIndexOrderedPlan`). Each `it` asserts both halves through
+    // `expectPremiseOrder`: Premise 0 reads the stored rows back to assert the
+    // key assignments as data, and Premise 1 asserts the visiting order under
+    // the forced plan with the query plan attached.
     await createClassFixture(prisma, {
       ...classBase,
       id: highClassId,
@@ -310,23 +311,29 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
   }
 
   /**
-   * The premise, asserted rather than assumed: HIGH comes first, which is what
-   * makes the race adversarial. Called once per `it`, because each builds its
-   * own fixture with fresh ids.
+   * The premises, asserted rather than assumed: called once per `it`, because
+   * each builds its own fixture with fresh ids.
    *
-   * Read under a forced index-ORDERED plan, because which side an unforced
-   * plan drives from is a cost decision that moves with table statistics, and
-   * the driving side is what fixes the output order. The four settings are
-   * `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan`, mirrored rather
-   * than imported so the two files' fixtures stay independent. What they buy
-   * is stated there: of Postgres's scan paths over a plain table — sequential,
-   * index, index-only, bitmap heap and TID — the sequential and bitmap heap
-   * ones are what return physical heap order for a statement like this, both
-   * are off, and what remains is index and index-only scans. (A TID scan needs
-   * a `ctid` qual this statement does not have, so it is unreachable rather
-   * than switched off; `enable_tidscan` is not among the four.) Index-driven
-   * would not be enough, because a bitmap heap scan is fed by a bitmap index
-   * scan and still hands back the heap's order (#470).
+   * PREMISE 0 (DATA READ-BACK): what `makeTemplateWithTwoWaitedInstances`
+   * ASSIGNED, read back off the stored rows and compared in TypeScript — no
+   * query whose order a planner gets to choose. Asserts the fixture's key
+   * assignments as data first so a failure names WHICH half moved — the fixture
+   * or the plan.
+   *
+   * PREMISE 1 (ORDER UNDER FORCED PLAN): read under a forced index-ORDERED plan,
+   * because which side an unforced plan drives from is a cost decision that
+   * moves with table statistics, and the driving side is what fixes the output
+   * order. The four settings are `db-locks-lock-order.test.ts`'s
+   * `forceIndexOrderedPlan`, mirrored rather than imported so the two files'
+   * fixtures stay independent. What they buy is stated there: of Postgres's
+   * scan paths over a plain table — sequential, index, index-only, bitmap heap
+   * and TID — the sequential and bitmap heap ones are what return physical
+   * heap order for a statement like this, both are off, and what remains is
+   * index and index-only scans. (A TID scan needs a `ctid` qual this statement
+   * does not have, so it is unreachable rather than switched off;
+   * `enable_tidscan` is not among the four.) Index-driven would not be enough,
+   * because a bitmap heap scan is fed by a bitmap index scan and still hands
+   * back the heap's order (#470).
    *
    * BTREE order, and this statement's reach was measured rather than assumed.
    * A GiST index has no key order at all, and every one this schema has is
@@ -346,25 +353,71 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * `SET LOCAL` is transaction-scoped, and `enable_seqscan = off` and
    * `enable_bitmapscan = off` discourage rather than forbid, so none of them
    * reaches production nor can make this statement fail.
+   *
+   * THE PLAN COMES BACK WITH THE ROWS: `EXPLAIN` runs inside the same
+   * transaction, validated per-line against empty or blank text, and is passed
+   * as the assertion's message argument so a failure reports why the order moved.
    */
   async function expectPremiseOrder(ids: {
     templateId: string;
     highClassId: string;
     lowClassId: string;
   }): Promise<void> {
+    // Premise 0: what `makeTemplateWithTwoWaitedInstances` ASSIGNED, read back
+    // off the stored rows and compared in TypeScript — no query whose order a
+    // planner gets to choose. Asserts the fixture's key assignments as data
+    // first so a failure names WHICH half moved — the fixture or the plan.
+    const readAssignedKeys = (id: string) =>
+      prisma.class.findUniqueOrThrow({
+        where: { id },
+        select: { id: true, calendarEntryId: true, calendarEntry: { select: { date: true } } },
+      });
+    const [highRow, lowRow] = await Promise.all([
+      readAssignedKeys(ids.highClassId),
+      readAssignedKeys(ids.lowClassId),
+    ]);
+    expect(
+      highRow.calendarEntryId < lowRow.calendarEntryId,
+      `HIGH must hold the lower calendarEntryId: HIGH ${highRow.calendarEntryId}, LOW ${lowRow.calendarEntryId}`,
+    ).toBe(true);
+    expect(
+      highRow.calendarEntry.date < lowRow.calendarEntry.date,
+      `HIGH's entry must hold the earlier date: HIGH ${highRow.calendarEntry.date.toISOString()}, LOW ${lowRow.calendarEntry.date.toISOString()}`,
+    ).toBe(true);
+    expect(
+      highRow.id > lowRow.id,
+      `HIGH must hold the higher Class.id: HIGH ${highRow.id}, LOW ${lowRow.id}`,
+    ).toBe(true);
+
+    // Premise 1: the query order produced by the planner under the forced plan.
+    // The query plan text is attached to the assertion's message argument so
+    // any failure reports the plan.
+    const statement = Prisma.sql`
+      SELECT c.id FROM "Class" c
+      JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+      JOIN "ClassTemplate" ct ON ct."scheduleRuleId" = e."scheduleRuleId"
+      WHERE ct."id" = ${ids.templateId}
+    `;
     const premiseOrder = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
       await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
       await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
       await tx.$executeRaw`SET LOCAL enable_bitmapscan = off`;
-      return tx.$queryRaw<Array<{ id: string }>>`
-        SELECT c.id FROM "Class" c
-        JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
-        JOIN "ClassTemplate" ct ON ct."scheduleRuleId" = e."scheduleRuleId"
-        WHERE ct."id" = ${ids.templateId}
-      `;
+      const explained = await tx.$queryRaw<Array<{ 'QUERY PLAN': string }>>(
+        Prisma.sql`EXPLAIN ${statement}`,
+      );
+      const rows = await tx.$queryRaw<Array<{ id: string }>>(statement);
+      const lines = explained.map((row) => row['QUERY PLAN']);
+      if (lines.length === 0 || lines.some((line) => typeof line !== 'string' || line === '')) {
+        throw new Error(
+          `expectPremiseOrder: EXPLAIN returned no usable plan text (${explained.length} ` +
+            `row(s), keys ${JSON.stringify(Object.keys(explained[0] ?? {}))}). The row-order ` +
+            'assertion message would have been empty or blank. Check the "QUERY PLAN" column name.',
+        );
+      }
+      return { ids: rows.map((r) => r.id), plan: lines.join('\n') };
     });
-    expect(premiseOrder.map((r) => r.id)).toEqual([ids.highClassId, ids.lowClassId]);
+    expect(premiseOrder.ids, premiseOrder.plan).toEqual([ids.highClassId, ids.lowClassId]);
   }
 
   /**

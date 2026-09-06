@@ -99,6 +99,41 @@ async function forceIndexOrderedPlan(tx: Prisma.TransactionClient): Promise<void
 }
 
 /**
+ * Runs one probe statement under the forced plan and hands back both the
+ * order it produced and the plan that produced it.
+ *
+ * THE PLAN COMES BACK WITH THE ROWS because a bare
+ * `expected [ …(2) ] to deeply equal [ …(2) ]` says nothing about WHY the
+ * order moved, and both occurrences of that failure (2026-08-27 and #470)
+ * cost an archaeology session to answer it. Callers pass it as the row-order
+ * assertion's message.
+ *
+ * Re-plans the statement text under the four forced settings in the same
+ * transaction before running it. Guarded against unusable plan text: zero rows,
+ * a renamed column, or a blank line all fail by name before reaching the caller.
+ */
+async function probeUnderForcedPlan(
+  statement: Prisma.Sql,
+): Promise<{ ids: string[]; plan: string }> {
+  return prisma.$transaction(async (tx) => {
+    await forceIndexOrderedPlan(tx);
+    const explained = await tx.$queryRaw<Array<{ 'QUERY PLAN': string }>>(
+      Prisma.sql`EXPLAIN ${statement}`,
+    );
+    const rows = await tx.$queryRaw<Array<{ id: string }>>(statement);
+    const lines = explained.map((row) => row['QUERY PLAN']);
+    if (lines.length === 0 || lines.some((line) => typeof line !== 'string' || line === '')) {
+      throw new Error(
+        `probeUnderForcedPlan: EXPLAIN returned no usable plan text (${explained.length} ` +
+          `row(s), keys ${JSON.stringify(Object.keys(explained[0] ?? {}))}). The row-order ` +
+          'assertion message would have been empty or blank. Check the "QUERY PLAN" column name.',
+      );
+    }
+    return { ids: rows.map((row) => row.id), plan: lines.join('\n') };
+  });
+}
+
+/**
  * The guard `lockClassRowsOrdered`'s `ORDER BY c.id` exists to be, and the
  * one this project owed after #216/#182: with both sides of a pairing taking
  * every lock in a single ordered statement, the per-pairing reproductions in
@@ -255,9 +290,10 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // plan can order by (see the roster above), so HIGH must take the EARLIER
     // date for that plan to give [HIGH, LOW] like the other two. 2099-06-01
     // against 2099-06-02 below, in that direction, for that reason — not
-    // arbitrary far-future values. `gdpr-lock-order.test.ts` pins its
-    // equivalents by reading them back in Premise 0; this file asserts only the
-    // resulting order, which is issue #482.
+    // arbitrary far-future values. `gdpr-lock-order.test.ts` and Premise 0
+    // below pin their equivalents by reading them back off the stored rows;
+    // this file asserts both the assignments as data and the resulting order
+    // under the forced plan.
     await createClassFixture(prisma, {
       ...base,
       id: highClassId,
@@ -307,6 +343,42 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
   });
 
   it('serialises two callers whose natural orders disagree, instead of deadlocking', async () => {
+    // Premise 0: what `beforeAll` ASSIGNED, read back off the stored rows and
+    // compared in TypeScript — no query whose order a planner gets to choose.
+    // The premises below are only as good as these three, and this is what
+    // makes them a construction rather than an observation: given these
+    // assignments, and given that every path the scan statement can reach
+    // is a btree index scan keyed on `CalendarEntry.date`, `CalendarEntry.id`
+    // or `Class.calendarEntryId`, [HIGH, LOW] follows for every key those
+    // plans order by.
+    //
+    // Three separate `expect`s so a failure names WHICH half moved. The third
+    // looks backwards and is not: the join side's natural order is
+    // `Class.id` ascending, and the whole premise is that the two sides
+    // disagree, so HIGH — high in the scan-side order — has to hold the
+    // higher `Class.id`. That opposition is what the third `expect` pins.
+    const readAssignedKeys = (id: string) =>
+      prisma.class.findUniqueOrThrow({
+        where: { id },
+        select: { id: true, calendarEntryId: true, calendarEntry: { select: { date: true } } },
+      });
+    const [highRow, lowRow] = await Promise.all([
+      readAssignedKeys(highClassId),
+      readAssignedKeys(lowClassId),
+    ]);
+    expect(
+      highRow.calendarEntryId < lowRow.calendarEntryId,
+      `HIGH must hold the lower calendarEntryId: HIGH ${highRow.calendarEntryId}, LOW ${lowRow.calendarEntryId}`,
+    ).toBe(true);
+    expect(
+      highRow.calendarEntry.date < lowRow.calendarEntry.date,
+      `HIGH's entry must hold the earlier date: HIGH ${highRow.calendarEntry.date.toISOString()}, LOW ${lowRow.calendarEntry.date.toISOString()}`,
+    ).toBe(true);
+    expect(
+      highRow.id > lowRow.id,
+      `HIGH must hold the higher Class.id: HIGH ${highRow.id}, LOW ${lowRow.id}`,
+    ).toBe(true);
+
     // Premise 1: the scan's natural order, under the SAME forced plan the
     // scan caller gets below. Unforced this read can reach `Class` by a
     // heap-ordered path — a sequential or a bitmap heap scan — and hand back
@@ -325,15 +397,12 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // measurement, including how "not generated" was told apart from "generated
     // and outbid", and the caveat that it is a fact about this statement's
     // clauses rather than a law.
-    const scanOrder = await prisma.$transaction(async (tx) => {
-      await forceIndexOrderedPlan(tx);
-      return tx.$queryRaw<Array<{ id: string }>>`
-        SELECT c.id FROM "Class" c
-          JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
-         WHERE e."teacherId" = ${teacherId}
-      `;
-    });
-    expect(scanOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
+    const scanOrder = await probeUnderForcedPlan(Prisma.sql`
+      SELECT c.id FROM "Class" c
+        JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+       WHERE e."teacherId" = ${teacherId}
+    `);
+    expect(scanOrder.ids, scanOrder.plan).toEqual([highClassId, lowClassId]);
 
     // Premise 2: the join's natural order — the REVERSE. Asserting premise 1
     // proves nothing about this: different tables, different physical layouts.
@@ -343,15 +412,12 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // side the planner drives this join from is NOT among what they fix, and
     // does not need to be: `w."classId"` IS `c.id`, so both directions return
     // `classId` order.
-    const joinOrder = await prisma.$transaction(async (tx) => {
-      await forceIndexOrderedPlan(tx);
-      return tx.$queryRaw<Array<{ id: string }>>`
-        SELECT c.id FROM "Class" c
-        JOIN "WaitlistEntry" w ON w."classId" = c.id
-        WHERE w."studentId" = ${studentId}
-      `;
-    });
-    expect(joinOrder.map((r) => r.id)).toEqual([lowClassId, highClassId]);
+    const joinOrder = await probeUnderForcedPlan(Prisma.sql`
+      SELECT c.id FROM "Class" c
+      JOIN "WaitlistEntry" w ON w."classId" = c.id
+      WHERE w."studentId" = ${studentId}
+    `);
+    expect(joinOrder.ids, joinOrder.plan).toEqual([lowClassId, highClassId]);
 
     // The third transaction: holds BOTH rows so each caller below parks on
     // the first row ITS plan reaches, rather than racing for the same one.
