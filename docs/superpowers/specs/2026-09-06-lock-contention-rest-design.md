@@ -264,10 +264,24 @@ describes it as *the sibling file's* case. See H2.
 | `two concurrent archives: the loser records nothing over the winner` | `StudioClassTemplate … FOR UPDATE` held ~500 ms; two archives queue; asserts both unsettled |
 | `a concurrent archive mid-resume is reported as archived, not thrown` | same lever, archive + resume |
 | `a concurrent archive mid-pause is reported as unchanged, not archived` | same lever, archive + pause |
-| `returns busy when another transaction holds the row past the lock timeout, and logs it` | hold outlives the bound; asserts a lower **and an upper** bound on `waited` |
+| `returns busy when another transaction holds the row past the lock timeout, and logs it` | hold outlives the bound; asserts `waited >= 1_800` and the `busy` answer |
 
-The fourth is the most tier-fragile test in this whole set: its upper bound is
-what makes it fail if anything makes the answer late.
+**A correction to this spec, made during the build.** This section first said
+the fourth case asserts "a lower **and an upper** bound" and called it the most
+tier-fragile test in the set. It has no upper bound: `#323` (`6cb4c0e0`,
+2026-08-30) removed the wall-clock ceilings from six files, and its own
+docblock kept describing the deleted one for a week. The fragility ranking is
+therefore the reverse — the first three sit INSIDE the 2 s bound with roughly
+1.5 s of slack and two of them additionally depend on a 100 ms FIFO gap, while
+the fourth has a floor and a shape assertion and cannot be broken by lateness.
+
+A second correction, to the conclusion drawn from the first: raising
+`LOCK_TIMEOUT_SQL` to `'6s'` does clear that floor and pass this case — but it
+is **not** an uncaught mutation. `db-locks.test.ts` pins the literal
+(`expect(LOCK_TIMEOUT_SQL).toBe("SET LOCAL lock_timeout = '2s'")`), which is
+where the value lives and where all ten `waited >= 1_800` docblocks in this
+repo already send it. A mutation scoped to one file proves something about that
+file, not about the suite.
 
 **Staying, and worth naming because it looks like a candidate:** `the residual
 CAS miss answers busy rather than throwing` interposes through `$extends` and

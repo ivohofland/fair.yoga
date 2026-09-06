@@ -42,10 +42,8 @@ const uniqueSuffix = Date.now();
  * proof of that invariant rather than a defence this formula can actually
  * fail — mirrors `class-template-lifecycle.test.ts`'s `slotTime`, added by
  * the same Task 6d review finding: a fixed-width literal
- * (`` `09:${30 + counter}` ``) has no such guarantee, and both describes
- * below were closer to that ceiling than a quick read suggests (14 and 17
- * minutes of headroom, not the 20+ the review's spot check assumed for
- * every counter it didn't individually verify).
+ * (`` `09:${30 + counter}` ``) has no such guarantee, and the describes below
+ * run their counters closer to that ceiling than a quick read suggests.
  */
 function slotTime(totalMinutesFrom9am: number): string {
   const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
@@ -540,90 +538,6 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     expect(second.template.archivedAt).not.toBeNull();
     expect(second.template.archivedAt!.getTime()).toBeGreaterThanOrEqual(before);
     expect(second.template.archivedAt!.getTime()).toBeLessThanOrEqual(Date.now());
-  });
-
-  /**
-   * The studio half of the same race — see the class family's version of this
-   * test for the full account of what the compare-and-swap fixes and why a
-   * third lock-holding transaction is what makes it deterministic rather than
-   * timing-dependent. The two functions are deliberately parallel, and a race
-   * fixed in one and not the other is exactly the drift #92 found.
-   */
-  it('two concurrent archives: the loser records nothing over the winner', async () => {
-    const t = await makeTemplate('Concurrent Archive');
-    await makeClass(t.scheduleRuleId, { date: futureOn(5) });
-    await makeClass(t.scheduleRuleId, { date: futureOn(6) });
-
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-
-    // Holds the row lock and nothing else — no write, so neither archive can
-    // observe it, only wait for it.
-    const blocking = prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${t.id} FOR UPDATE`;
-        await held;
-      },
-      { timeout: 15_000 },
-    );
-
-    await new Promise((r) => setTimeout(r, 100));
-
-    let firstSettled = false;
-    const first = archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived').then(
-      (r) => {
-        firstSettled = true;
-        return r;
-      },
-    );
-
-    await new Promise((r) => setTimeout(r, 100));
-
-    let secondSettled = false;
-    const second = archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived').then(
-      (r) => {
-        secondSettled = true;
-        return r;
-      },
-    );
-
-    await new Promise((r) => setTimeout(r, 300));
-    // Both are blocked in their first write. If either had settled here, the
-    // two never contended and the rest of this test would prove nothing.
-    expect(firstSettled).toBe(false);
-    expect(secondSettled).toBe(false);
-
-    release();
-    await blocking;
-
-    const settled = await Promise.all([first, second]);
-    const won = settled.find((r) => r.ok && r.action === 'archived');
-    const lost = settled.find((r) => r.ok && r.action === 'unchanged');
-    if (!won || !lost) {
-      throw new Error(
-        `expected one archived and one unchanged, got ${settled
-          .map((r) => (r.ok ? r.action : r.reason))
-          .join(' + ')}`,
-      );
-    }
-
-    const winner = expectArchived(won);
-    expect(winner.deleted).toBe(2);
-    expect(winner.template.withdrawnCount).toBe(2);
-
-    if (!lost.ok) throw new Error('expected ok');
-    // The loser reports the state the winner left, not the pre-race snapshot
-    // it read at the top of its own call.
-    expect(lost.template.isArchived).toBe(true);
-    expect(lost.template.withdrawnCount).toBe(2);
-
-    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
-    expect(after.scheduleRule.withdrawnCount).toBe(2);
-    expect(after.scheduleRule.archivedAt).not.toBeNull();
-    expect(after.scheduleRule.archivedAt!.getTime()).toBe(winner.template.archivedAt!.getTime());
-    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: t.id } } } } } })).toBe(0);
   });
 
   /**
@@ -1249,168 +1163,6 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   });
 
   /**
-   * The race a reviewer of this fix reproduced against a "provably
-   * unreachable" claim. `pauseOrResumeStudioTemplate`'s body is a single
-   * `return` that parameterises `pauseOrResumeRule` (`rule-lifecycle.ts`) with
-   * `STUDIO_FAMILY`; the guards are in that shared body, where both fast paths
-   * are read outside any lock and before the transaction opens, so a
-   * concurrent archive can commit in the gap between those reads and the CAS.
-   * Constructed the same way as this file's
-   * `archiveOrUnarchiveStudioTemplate` concurrent-archive test — a third
-   * transaction holds the row lock so both requests queue behind it — except
-   * archive is started and confirmed queued first, so Postgres's FIFO lock
-   * grant hands it the row before resume's CAS gets a turn. Resume must then
-   * see the row already archived and answer `{ reason: 'archived' }`, which is
-   * what the CAS-miss branch's `isArchived` check is there to produce.
-   */
-  it('a concurrent archive mid-resume is reported as archived, not thrown', async () => {
-    const t = await makeTemplate('Resume Vs Archive Race');
-    await prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { isActive: false } });
-
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-
-    // Holds the row lock and nothing else — neither racer can observe it,
-    // only queue behind it.
-    const blocking = prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${t.id} FOR UPDATE`;
-        await held;
-      },
-      { timeout: 15_000 },
-    );
-
-    await new Promise((r) => setTimeout(r, 100));
-
-    let archiveSettled = false;
-    const archive = archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived').then(
-      (r) => {
-        archiveSettled = true;
-        return r;
-      },
-    );
-
-    await new Promise((r) => setTimeout(r, 100));
-
-    let resumeSettled = false;
-    const resume = pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active').then((r) => {
-      resumeSettled = true;
-      return r;
-    });
-
-    await new Promise((r) => setTimeout(r, 300));
-    // Both blocked in their own transaction's first statement. If either had
-    // settled here, it never queued behind the held lock and the rest of
-    // this test proves nothing about the race it targets.
-    expect(archiveSettled).toBe(false);
-    expect(resumeSettled).toBe(false);
-
-    release();
-    await blocking;
-
-    const [archiveResult, resumeResult] = await Promise.all([archive, resume]);
-
-    // Archive's own CAS only ever checks `isArchived`, which resume never
-    // touches, so archive succeeds regardless of arrival order — asserting
-    // its success alone would pin nothing about which one actually won the
-    // queued lock. What pins that is the resume assertion below: it would
-    // read `active` instead of `archived` had resume's CAS run first.
-    expect(archiveResult.ok).toBe(true);
-    if (!archiveResult.ok) throw new Error('expected ok');
-    expect(archiveResult.action).toBe('archived');
-
-    expect(resumeResult).toEqual({ ok: false, reason: 'archived' });
-
-    // And generated nothing — the half the result value alone cannot show.
-    // The winning archive's own `deleteMany` has already run by the time
-    // resume's CAS misses, so a window generated on the way out of the
-    // `archived` branch is one nothing would ever withdraw: four classes
-    // standing on a template the teacher just archived. Its non-racing twin
-    // ("refuses to resume an archived template, and generates nothing")
-    // asserts this too; the racing case is where getting it wrong is easier.
-    expect(await prisma.studioClass.count({ where: { calendarEntry: { scheduleRule: { studioClassTemplates: { some: { id: t.id } } } } } })).toBe(0);
-  });
-
-  /**
-   * The other half of the same race, and the one the guard-order fix above
-   * exists for: a *pause* racing an archive must answer `unchanged`, not the
-   * `archived` a racing *resume* gets — archiving forces `isActive: false`,
-   * so a paused-or-pausing template is already in the state a pause wants.
-   * Built the same way as the resume-vs-archive race above (third
-   * transaction holds the row lock, both requests queue behind it, archive
-   * queued first so it wins the FIFO grant); the fixture also differs, since
-   * a pause acts on an active template rather than a paused one, so there is
-   * no `isActive: false` seed here.
-   */
-  it('a concurrent archive mid-pause is reported as unchanged, not archived', async () => {
-    const t = await makeTemplate('Pause Vs Archive Race');
-    // Left active (a fresh template's default) — the state a pause acts on.
-
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-
-    const blocking = prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${t.id} FOR UPDATE`;
-        await held;
-      },
-      { timeout: 15_000 },
-    );
-
-    await new Promise((r) => setTimeout(r, 100));
-
-    let archiveSettled = false;
-    const archive = archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived').then(
-      (r) => {
-        archiveSettled = true;
-        return r;
-      },
-    );
-
-    await new Promise((r) => setTimeout(r, 100));
-
-    let pauseSettled = false;
-    const pause = pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused').then((r) => {
-      pauseSettled = true;
-      return r;
-    });
-
-    await new Promise((r) => setTimeout(r, 300));
-    expect(archiveSettled).toBe(false);
-    expect(pauseSettled).toBe(false);
-
-    release();
-    await blocking;
-
-    const [archiveResult, pauseResult] = await Promise.all([archive, pause]);
-
-    expect(archiveResult.ok).toBe(true);
-    if (!archiveResult.ok) throw new Error('expected ok');
-    expect(archiveResult.action).toBe('archived');
-
-    // Not `{ ok: false, reason: 'archived' }` — the guard order the fix
-    // above restores.
-    expect(pauseResult.ok).toBe(true);
-    if (!pauseResult.ok) throw new Error('expected ok');
-    expect(pauseResult.action).toBe('unchanged');
-
-    // The template it carries must be the row the winning archive left, not
-    // the snapshot this call read before its own transaction opened. The
-    // route spreads `...result.template` straight into its 200 body, so
-    // returning that snapshot would describe the template to the teacher as
-    // live and unarchived when it is neither. This is the arm
-    // `PauseRuleOutcome`'s docblock (`rule-lifecycle.ts`) singles out when it
-    // claims none of its arms ever carries the stale pre-transaction snapshot;
-    // without these two lines that claim has nothing holding it.
-    expect(pauseResult.template.isArchived).toBe(true);
-    expect(pauseResult.template.isActive).toBe(false);
-  });
-
-  /**
    * The CAS's `where` is `isArchived: false AND isActive: !desiredActive`. A
    * miss means one of those held when the CAS ran, and the branch checks both
    * against a SECOND, later read — so a row that changes back in between
@@ -1608,8 +1360,8 @@ describe('updateStudioClassTemplate (DB)', () => {
   // `ScheduleRule_teacher_slot_excl` (issue 298) excludes on RANGE overlap,
   // so each slot below is spaced a full `durationMinutes` (60) from the
   // last (`counter * 60 - 30`) rather than a minute: counter 1 is `'09:30'`
-  // and every call after it climbs an hour. Two calls of headroom are left —
-  // counter 16 computes `'24:30'`, which `slotTime` refuses.
+  // and every call after it climbs an hour, until counter 16 computes
+  // `'24:30'` and `slotTime` refuses it by name.
   //
   // This describe's deliberate collisions are written as explicit literals
   // rather than derived from the counter, and `'21:45'` in the cross-family
@@ -1851,75 +1603,6 @@ describe('updateStudioClassTemplate (DB)', () => {
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: mover.id }, include: { scheduleRule: true } });
     expect(timeToHHmm(after.scheduleRule.startTime)).toBe(timeToHHmm(mover.scheduleRule.startTime));
   });
-
-  /**
-   * The bound, proved the way `studio-class-generator.test.ts`'s twin proves
-   * the archive's: a second transaction holds the row — that twin holds it
-   * through the generation claim, this one with a raw `SELECT … FOR UPDATE`,
-   * so the shared part is the shape, not the locking call. The edit queues
-   * behind it and the timing assertions carry the claim.
-   *
-   * The lower bound proves it actually waited. The upper bound guards a
-   * *raised* `LOCK_TIMEOUT_SQL` — measured: `'2s'` → `'6s'` fails it at 6032 ms
-   * and `'2s'` → `'1s'` fails the lower bound at 1024 ms, against an unmutated
-   * 2025-2030 ms. It does **not** guard "answered at the 2s bound rather than
-   * the 10s budget", as this used to say: mutation 10 established the budget
-   * can never be what answers, because Prisma cannot roll back a statement
-   * already blocked inside Postgres. Deleting `setLockTimeout` produces a
-   * hang, not a late answer, so that outcome was never reachable.
-   *
-   * Removing `setLockTimeout` does not slide the answer later — it stops the
-   * edit settling at all, so the test dies on its own 20s timeout. That is the
-   * mutation record, not a prediction.
-   */
-  it(
-    'returns busy when another transaction holds the row past the lock timeout, and logs it',
-    async () => {
-      const t = await makeTemplate(teacherId, 'Busy Edit');
-
-      let release!: () => void;
-      const held = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const blocking = prisma.$transaction(
-        async (tx) => {
-          await tx.$queryRaw`SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${t.id} FOR UPDATE`;
-          await held;
-        },
-        { timeout: 15_000 },
-      );
-
-      await new Promise((r) => setTimeout(r, 100));
-
-      const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
-      try {
-        const startedAt = Date.now();
-        const result = await updateStudioClassTemplate(prisma, t.id, teacherId, {
-          classType: 'Blocked',
-        });
-        const waited = Date.now() - startedAt;
-
-        expect(result).toEqual({ ok: false, reason: 'busy' });
-        // Lower bound proves it waited on the lock. Pinned by db-locks.test.ts (#323,
-        // `waitlist-lock-order.test.ts`'s "gives up on the 2s bound when another
-        // transaction holds the class row" docblock).
-        expect(waited).toBeGreaterThanOrEqual(1_800);
-
-        expect(warn).toHaveBeenCalledWith(
-          expect.objectContaining({ templateId: t.id, teacherId }),
-          'studio template edit lost a lock race — nothing committed',
-        );
-      } finally {
-        warn.mockRestore();
-        release();
-        await blocking.catch(() => {});
-      }
-
-      const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id }, include: { scheduleRule: true } });
-      expect(after.scheduleRule.classType).toBe('Busy Edit');
-    },
-    20_000,
-  );
 
   /**
    * The read at the top of `updateStudioClassTemplate` and the `update` inside

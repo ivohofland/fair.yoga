@@ -105,6 +105,9 @@ export const LOCK_CONTENTION_TESTS = [
   // #468: split out of `class-lifecycle.test.ts`, which already had a serial
   // sibling for a different mechanism — each file's header carries its own.
   'src/services/class-lifecycle-lock-order.test.ts',
+  // #468: split out of `studio-class-template-lifecycle.test.ts` for the same
+  // reason — the sibling's own header carries it, case by case.
+  'src/services/studio-class-template-lifecycle-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither
