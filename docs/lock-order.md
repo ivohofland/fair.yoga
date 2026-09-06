@@ -1289,9 +1289,18 @@ about its pausedness. So a later value rules out only *"still sitting as the
 migration left it"*, never *"was never remediated"*, and a `WHERE` clause
 excluding those rows would hide genuine candidates rather than sharpen the list.
 
-Nor does 0 rows mean the remediation never fired: a rule it paused that was
+Nor does 0 rows mean the remediation never fired. A rule it paused that was
 later resumed, or one whose room was later un-archived, leaves exactly the same
-nothing behind. A third case does not empty the list but does corrupt it — a
+nothing behind — and so does a rule that was later ARCHIVED, which
+`NOT sr."isArchived"` drops. That third one is the likeliest of the three and
+the worst, because the incident and its erasure share a cause: a teacher whose
+template silently stopped generating classes is exactly the person who then
+archives it as dead. Two doors reach it — `archiveOrUnarchiveRule`
+(`src/services/rule-lifecycle.ts`), archiving being legal from paused, and
+`deleteTeacherAccount` (`src/services/gdpr.ts`), which writes
+`{ isActive: false, isArchived: true }` across every rule the teacher has. To
+see those too, drop `AND NOT sr."isArchived"` from the query and select the
+column instead of testing it. A third case does not empty the list but does corrupt it — a
 rule that stayed paused and had its day, time or duration edited afterwards
 still appears, carrying an `updatedAt` later than the migration, which an
 operator reading that column as an alibi would wrongly strike off.
@@ -1317,9 +1326,11 @@ must announce or explain a data change, for the two shapes the rule reads.**
 after that cutoff whose comment-stripped SQL contains `UPDATE "…"` or
 `DELETE FROM "…"` — in any case, upper or lower, and with an optional `ONLY`
 between the verb and the table — without a real `RAISE NOTICE`, unless the raw
-text carries `-- DML WITHOUT NOTICE: <reason>` with a non-empty reason. Those two shapes are the whole of it: a
-schema-qualified, `TRUNCATE`, `MERGE` or `ON CONFLICT DO UPDATE` write is not
-seen.
+text carries `-- DML WITHOUT NOTICE: <reason>` with a non-empty reason. Those two shapes are the whole of it:
+`UPDATE "public"."X"` IS seen, since the quote follows the verb, but the
+unquoted `UPDATE public."X"` is not, nor are `TRUNCATE`, `MERGE`,
+`ON CONFLICT DO UPDATE`, or an `ALTER TABLE … ALTER COLUMN … USING <expr>` that
+rewrites every row.
 
 **The exemption is per FILE, not per statement**, which is the rule's other
 boundary. One real `RAISE NOTICE` anywhere in a migration exempts every data
@@ -1330,7 +1341,7 @@ example already carries more than one data change under a single notice:
 ```sh
 perl -0777 -ne '
   my $s = $_; $s =~ s{/\*.*?\*/}{ }gs; $s =~ s{--[^\n]*}{}g;
-  my $d = () = $s =~ /\bUPDATE\s+(?:ONLY\s+)?"|\bDELETE\s+FROM\s+(?:ONLY\s+)?"/gi;
+  my $d = () = $s =~ /\bUPDATE\s*(?:ONLY\s+)?"|\bDELETE\s+FROM\s*(?:ONLY\s+)?"/gi;
   my $n = () = $s =~ /\bRAISE\s+NOTICE\b/gi;
   print "$ARGV: $d data change(s), $n notice(s)\n";
 ' prisma/migrations/20260905120000_class_room_archive_invariant/migration.sql
@@ -1341,15 +1352,20 @@ write with its own notice needs a plpgsql-aware statement splitter, a larger
 design than this rule, and is deliberately not built.
 
 The same census without vitest — and it strips comments on both sides, because
-a command that did not would disagree with the rule in both directions:
+a command that did not would disagree with the rule in both directions. It is a
+close approximation and not the rule itself: it does not subtract
+`CREATE OR REPLACE FUNCTION` bodies, so a migration whose only notice sits in a
+trigger body would be exempted here and reported by
+`untracedDataChanges`. No migration in the tree has that shape today — the one
+real notice sits in a `DO $$` block, which both read alike:
 
 ```sh
 perl -0777 -ne '
   my $s = $_; $s =~ s{/\*.*?\*/}{ }gs; $s =~ s{--[^\n]*}{}g;
   print "$ARGV\n"
-    if $s =~ /\bUPDATE\s+(?:ONLY\s+)?"|\bDELETE\s+FROM\s+(?:ONLY\s+)?"/i
+    if $s =~ /\bUPDATE\s*(?:ONLY\s+)?"|\bDELETE\s+FROM\s*(?:ONLY\s+)?"/i
     && $s !~ /\bRAISE\s+NOTICE\b/i
-    && $_ !~ /--[ \t]*DML WITHOUT NOTICE:[ \t]*\S/;
+    && $_ !~ /^[ \t]*--[ \t]*DML WITHOUT NOTICE:[ \t]*\S/m;
 ' prisma/migrations/*/migration.sql
 ```
 

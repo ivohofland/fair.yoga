@@ -91,8 +91,52 @@ const DASH_DASH_IN_A_BLOCK_COMMENT_SQL =
   '/* -- */ UPDATE "ScheduleRule" SET "isActive" = false;';
 
 /**
+ * The mirror of the fixture above, and the reason the stripper makes ONE pass.
+ * Blocks-before-lines reads the `/*` inside this line comment as opening a
+ * block and runs to the closing delimiter three lines down, swallowing the
+ * write in between and leaving text that appears to change nothing.
+ */
+const SLASH_STAR_IN_A_LINE_COMMENT_SQL =
+  '-- a /* b\nUPDATE "ScheduleRule" SET "isActive" = false;\n-- c */';
+
+/**
+ * The marker's spelling QUOTED IN PROSE rather than claimed. `docs/lock-order.md`
+ * ships that spelling, so this is a shape a future author can paste in without
+ * ever meaning to exempt anything.
+ */
+const MARKER_ONLY_IN_PROSE_SQL = `
+-- This statement needs no \`-- DML WITHOUT NOTICE: reason\` marker, because the
+-- column it writes was added by this same migration.
+UPDATE "ScheduleRule" SET "isActive" = false;
+`;
+
+/** And the same mention wearing a block comment. */
+const MARKER_IN_A_BLOCK_COMMENT_SQL =
+  '/* -- DML WITHOUT NOTICE: x */ UPDATE "ScheduleRule" SET "isActive" = false;';
+
+/**
+ * A notice that never fires at migration time: `CREATE OR REPLACE FUNCTION`
+ * installs behaviour for later, so this announces nothing about the write
+ * beneath it. These migrations are largely trigger bodies, which is what makes
+ * this the reachable one of the three dead-notice shapes.
+ */
+const NOTICE_IN_A_FUNCTION_BODY_SQL = `
+CREATE OR REPLACE FUNCTION entry_shout() RETURNS TRIGGER AS $$
+BEGIN
+  RAISE NOTICE 'a row changed';
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+UPDATE "ScheduleRule" SET "isActive" = false;
+`;
+
+/** Legal Postgres, and nobody writes it — but silence here would be a real write. */
+const NO_SPACE_BEFORE_THE_TABLE_SQL = 'UPDATE"ScheduleRule" SET "isActive" = false;';
+
+/**
  * The hazard the `RAISE NOTICE` detection has to survive, transcribed from the
- * real shape rather than invented: PR #462's
+ * real shape rather than invented:
  * `20260905120000_class_room_archive_invariant` carries this comment ABOVE a
  * real notice, so the literal text appears twice and only one of them
  * announces anything. Here the real one is removed and the comment left, which
@@ -282,6 +326,11 @@ describe('untraced data changes in migrations', () => {
     ['a DELETE with neither notice nor marker', UNTRACED_DELETE_SQL, ['20990101000000_case']],
     ['the same DELETE in lowercase', UNTRACED_DELETE_LOWERCASE_SQL, ['20990101000000_case']],
     ['a write hidden behind UPDATE ONLY', UPDATE_ONLY_SQL, ['20990101000000_case']],
+    ['no space between the verb and its table', NO_SPACE_BEFORE_THE_TABLE_SQL, ['20990101000000_case']],
+    ['the marker quoted in prose rather than claimed', MARKER_ONLY_IN_PROSE_SQL, ['20990101000000_case']],
+    ['the marker inside a block comment', MARKER_IN_A_BLOCK_COMMENT_SQL, ['20990101000000_case']],
+    ['a RAISE NOTICE that only a trigger will ever fire', NOTICE_IN_A_FUNCTION_BODY_SQL, ['20990101000000_case']],
+    ['a `/*` inside a line comment, which must not eat the write', SLASH_STAR_IN_A_LINE_COMMENT_SQL, ['20990101000000_case']],
     ['a real RAISE NOTICE', REAL_NOTICE_SQL, []],
     ['a real RAISE NOTICE in lowercase', LOWERCASE_NOTICE_SQL, []],
     ['the marker and a reason', MARKED_SQL, []],
@@ -330,6 +379,41 @@ describe('stripSqlComments', () => {
    */
   it('keeps a statement a block comment holding a `--` sits in front of', () => {
     expect(stripSqlComments(DASH_DASH_IN_A_BLOCK_COMMENT_SQL)).toContain('UPDATE "ScheduleRule"');
+  });
+
+  /**
+   * THE STRIPPER'S UNSTATED PRECONDITION, ENFORCED RATHER THAN DATED.
+   *
+   * `stripSqlComments` is a comment stripper and not a SQL parser, so a `--`
+   * inside a string literal or a dollar-quoted body reads as opening a comment
+   * and everything after it on that line is lost — which for the rule above
+   * means a real write going unreported. Its docblock ships the grep that
+   * re-derives whether the tree contains such a `--`; this runs it, so the
+   * precondition is checked on every migration that lands rather than on the
+   * day somebody last thought to look.
+   *
+   * A migration that legitimately needs one will redden this. That is the
+   * point: read the hit, then decide whether the helper can still be trusted
+   * on that file.
+   */
+  it('holds its precondition: every `--` in the tree opens its own line', () => {
+    const offenders = migrationSqlFiles().flatMap(({ name, sql }) =>
+      sql
+        .split('\n')
+        .map((line, i) => ({ line, at: `${name}:${i + 1}` }))
+        .filter(({ line }) => line.includes('--') && !/^[ \t]*--/.test(line))
+        .map(({ at, line }) => `${at}  ${line.trim()}`),
+    );
+
+    expect(offenders).toEqual([]);
+  });
+
+  /**
+   * The other direction, which two sequential passes cannot have both ways: a
+   * `/*` inside a LINE comment must not open a block that runs past the write.
+   */
+  it('keeps a statement a line comment holding a `/*` sits in front of', () => {
+    expect(stripSqlComments(SLASH_STAR_IN_A_LINE_COMMENT_SQL)).toContain('UPDATE "ScheduleRule"');
   });
 
   /** And the consequence that matters: the rule still reports that write. */
