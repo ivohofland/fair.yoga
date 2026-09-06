@@ -352,7 +352,14 @@ move.
 3. The §3.4 reconciliation holds, re-derived with `vitest list`.
 4. H1-H6 each addressed.
 5. `vitest.tiers.ts`'s note is narrowed per §1.6 and cites the follow-up.
-6. The serial tier's new duration is measured against **49.50 s** (§1.7).
+6. The serial tier's new duration is measured. Final, on `ab9f734f`
+   (the branch was rebased twice mid-flight, so the baseline moved with it):
+   `unit-sweeps` 55.19 s → 98.74 s (+79 %), `unit` 24.84 s → 16.28 s (−34 %),
+   combined 80.03 s → 115.02 s (**+44 %**). Both tiers are measured because
+   `.github/workflows/ci.yml`'s `test-unit` job runs both on one critical
+   path — the serial number alone would be a half-truth. The earlier
+   measurement against `9cd7fd43` gave −34 % / +90 % / +48 %, so the shape
+   holds across two bases.
 7. Every moved test still passes, and each new file passes run alone.
 
 `npm run typecheck` in a worktree reports one error this branch does not own:
