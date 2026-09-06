@@ -1,13 +1,13 @@
 /**
- * @serial-tier lock-contention — all five tests below stage real Postgres
+ * @serial-tier lock-contention — every test below stages real Postgres
  * lock contention on a `ClassTemplate` or `ScheduleRule` row (a held
  * `FOR UPDATE`/`FOR KEY SHARE` spanning hundreds of milliseconds to several
- * seconds, or an injected `SET LOCAL lock_timeout = 1500`) and assert on how
+ * seconds, or an injected `SET LOCAL lock_timeout = 1500`) and asserts on how
  * that contention resolves: real lock noise sharing a parallel tier with
  * them would land as a false failure or a false pass in either direction.
  *
  * Split out of `class-template-lifecycle.test.ts` (#459) for exactly that
- * reason. The five guards below prove `updateClassTemplate`,
+ * reason. The guards below prove `updateClassTemplate`,
  * `archiveOrUnarchiveTemplate` and `pauseOrResumeTemplate` each genuinely
  * serialize against a concurrent writer through the row lock they claim to
  * hold — a lock outcome, not an update/archive/pause outcome.

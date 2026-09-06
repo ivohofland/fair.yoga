@@ -1470,10 +1470,8 @@ describe('removeFromWaitlist when the entry vanishes mid-lock (DB)', () => {
     });
 
     // One waiting student — the interposed-delete race below only needs an
-    // entry it can make vanish. This block used to also cover renumbering a
-    // multi-student queue mid-lock, which needed three; that test
-    // (`waits for a class row another transaction holds before
-    // renumbering`) moved to `waitlist-lock-order.test.ts` (#459).
+    // entry it can make vanish. The multi-student renumbering case lives in
+    // `waitlist-lock-order.test.ts` (#459).
     const student = await prisma.student.create({
       data: {
         firstName: 'LockStudent',

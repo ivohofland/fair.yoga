@@ -1,11 +1,11 @@
 /**
- * @serial-tier lock-contention — three of this file's five tests hold a
- * `Class` row for 3 500 ms on a second connection and assert `55P03`: that is
- * real lock noise for anything sharing a parallel tier with them, and real
- * lock noise landing on them in return is what would turn their own `55P03`
- * assertion into a false positive from the wrong cause.
+ * @serial-tier lock-contention — every test below holds a `Class` row across
+ * a staged wait and asserts on how it resolves: real lock noise for anything
+ * sharing a parallel tier with them, and real lock noise landing on them in
+ * return is what would turn one of these assertions into a false positive
+ * from the wrong cause.
  *
- * Split out of `waitlist.test.ts` (#459) for exactly that reason. The five
+ * Split out of `waitlist.test.ts` (#459) for exactly that reason. The
  * guards below prove `addToWaitlist`, `promoteNext` and `claimSpot` each give
  * up on `lockClassRow`'s shared 2s `SET LOCAL lock_timeout` under contention,
  * and that `removeFromWaitlist` and `handleSpotFreed` genuinely wait on (and,
@@ -51,6 +51,7 @@ function slotTime(totalMinutesFrom9am: number): string {
 }
 
 let teacherId: string;
+let accountId: string;
 let roomId: string;
 let teacherRoomId: string;
 // Two "filler" students — registered occupants that make a class full — and
@@ -76,6 +77,7 @@ beforeAll(async () => {
     },
   });
   teacherId = teacher.id;
+  accountId = teacher.accountId;
 
   const room = await prisma.room.create({
     data: {
@@ -135,6 +137,7 @@ afterAll(async () => {
   await prisma.teacherRoom.deleteMany({ where: { teacherId } });
   await prisma.room.delete({ where: { id: roomId } });
   await prisma.teacher.delete({ where: { id: teacherId } });
+  await prisma.account.delete({ where: { id: accountId } });
   await prisma.$disconnect();
 });
 
@@ -526,9 +529,10 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
 
     // Not a lock-discriminating assertion on its own — nothing else is
     // renumbering this queue concurrently, so it would pass with the lock
-    // removed too. What the wait assertions above prove is the
-    // serialization; this only confirms `removeFromWaitlist` left the queue
-    // correctly renumbered once it ran.
+    // removed too (confirmed: it still passes with `lockClassRow` commented
+    // out and the two wait assertions above deleted). What the wait
+    // assertions above prove is the serialization; this only confirms
+    // `removeFromWaitlist` left the queue correctly renumbered once it ran.
     const remaining = await prisma.waitlistEntry.findMany({
       where: { classId, status: 'waiting' },
       orderBy: { position: 'asc' },
@@ -551,11 +555,12 @@ describe('handleSpotFreed (DB)', () => {
   const IN_CLAIM_WINDOW = new Date('2026-06-02T08:30:00Z');
 
   /**
-   * #212. The capacity guard above is proved by M4; the lock that makes it
-   * MEAN anything was proved by nothing — deleting `lockClassRow` left every
-   * test in `waitlist`/`capacity`/`gdpr` green. That is the branch's whole
-   * argument (spec §2: an unlocked count moves the race rather than closing
-   * it) sitting untested.
+   * #212. The capacity guard (`waitlist.test.ts`'s "stays silent when the
+   * class is already full, and broadcasts when it is not") is proved by M4;
+   * the lock that makes it MEAN anything was proved by nothing — deleting
+   * `lockClassRow` left every test in `waitlist`/`capacity`/`gdpr` green.
+   * That is the branch's whole argument (spec §2: an unlocked count moves the
+   * race rather than closing it) sitting untested.
    *
    * **Two traps, and the second one caught the first version of this test.**
    *
