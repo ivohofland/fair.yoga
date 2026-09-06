@@ -1245,7 +1245,7 @@ groups that answer differently because the two layers can say different things:
 
 | Layer | How it reaches the 409 | Endpoints |
 |---|---|---|
-| entry, `CalendarEntry_teacher_slot_excl` | `probeConflictingEntry` for WHICH entry, once a write is refused — four call sites, `grep -rn "probeConflictingEntry(" src/services/ src/app/api/` | `POST /api/classes`, `POST /api/studio-classes`: a zero-row `skipDuplicates` outcome (issue 331); `PUT /api/studio-classes/[id]`: a `catch` on `isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')`; `PUT /api/classes/[id]`: its service returns `slot_conflict` and the route runs the same probe |
+| entry, `CalendarEntry_teacher_slot_excl` | `probeConflictingEntry` for WHICH entry, once a write is refused — four call sites, `grep -rn "probeConflictingEntry(" src/services/ src/app/api/` | `POST /api/classes`, `POST /api/studio-classes`: a zero-row `skipDuplicates` outcome (issue 331); `PUT /api/studio-classes/[id]`: a `catch` on `isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')`; `PUT /api/classes/[id]`: its service returns `slot_conflict` and the route runs the same probe — four, `grep -rn 'entryConflictMessage(conflict' src/app/api/` |
 | rule, `ScheduleRule_teacher_slot_excl` | `SLOT_TAKEN[heldBy]`, keyed on `ruleSlotHolder`'s `RuleSlotHolder` — four call sites, `grep -rn "ruleSlotHolder(" src/services/ src/app/api/` | `POST /api/class-templates`, `POST /api/studio-class-templates`, `PUT /api/class-templates/[id]`, `PUT /api/studio-class-templates/[id]`, `PATCH /api/class-templates/[id]?state=unarchived`, `PATCH /api/studio-class-templates/[id]?state=unarchived` — six, `grep -rn 'SLOT_TAKEN\[result.heldBy\]' src/` |
 
 Four ENDPOINTS and six — the ten above, split by layer, and the third column is
@@ -1258,10 +1258,11 @@ ENDPOINTS on the other, and so undercounted the reason-based side by the two
 `PATCH` unarchive arms. It closed by saying "named rather than counted", which
 is the right instinct and was defeated by naming an incomplete set — so the
 table above is the naming, and each row ships the grep that re-derives its call
-sites. The rule row's endpoints are re-derivable too, on the lookup every one of
-them performs, so that command ships beside them; the entry row's four reach
-their 409 by four different routes and share no such line, which is why that
-row spells each route out beside the endpoint it belongs to instead.
+sites. Each row's ENDPOINTS are re-derivable too, on the line every endpoint in
+that row runs to build its 409 — the rule row's slot-taken lookup, the entry
+row's message call — so both third columns ship that command beside the names.
+The entry row's is scoped to `src/app/api/`, where its endpoints live, because
+the same call appears in a test file as well.
 
 **The two layers name different things, and that is a deliberate asymmetry.**
 The rule layer can only say which FAMILY holds the weekday slot, because a
