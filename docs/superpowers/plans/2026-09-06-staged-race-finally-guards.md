@@ -266,8 +266,9 @@ and by the numbered `// 3.` comment above the release, which stays.
       } finally {
         // <the comment specified in the next step>
         release();
-        await claiming;
-        await archiving;
+        const joined = await Promise.allSettled([claiming, archiving]);
+        const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+        if (failed) throw failed.reason;
       }
 
       const result = await archiving;
@@ -277,6 +278,10 @@ and by the numbered `// 3.` comment above the release, which stays.
       The existing comment above the assertion moves *with* the assertion,
       into the `try`. The numbered step comments (`// 3. Commit the archive; …`)
       move with the release, into the `finally`.
+
+      **`allSettled`, not sequential `await`s** — this is the shape every
+      snippet in this plan uses, for the reason recorded once under
+      *Corrections to this document* at the end.
 
 - [ ] Write each `finally`'s comment to say, for that site: which hold is
       released, the budget it would otherwise run to (read from the site's own
@@ -322,16 +327,10 @@ and by the numbered `// 3.` comment above the release, which stays.
       }
       ```
 
-      **`allSettled`, not sequential `await`s.** This snippet originally read
-      `release(); try { await holding; await generating } finally { await
-      holder.$disconnect() }`, which contradicts the property stated one
-      paragraph above it: sequential `await`s in a `finally` mean a rejecting
-      `holding` propagates immediately and `generating` is never joined at all
-      — the exact leak the comment beside it promises to prevent. The
-      whole-branch review caught it after the code had already followed the
-      snippet; the shape above joins both unconditionally, disconnects
-      unconditionally, and rethrows the first rejection so nothing is
-      swallowed.
+      **`allSettled`, not sequential `await`s**, and `$disconnect()` after the
+      join rather than in a nested `finally` — so both promises are joined and
+      the client is closed whichever of them rejects. Same reason as every
+      other snippet here; recorded once under *Corrections to this document*.
 
 - [ ] Give each of those two `finally` blocks a comment covering: that the
       span starts where the holder is in flight, that `freshTemplate()` reads
@@ -394,12 +393,8 @@ is already guarded — do not touch it.
       const settled = await Promise.all([first, second]);
       ```
 
-      **`allSettled`, for the reason Task 1's snippet gives.** Sequential
-      `await`s in a `finally` join whichever rejects first and skip everything
-      after it, which is the unjoined-writer leak the comment above the block
-      promises to prevent. Both snippets in this plan originally had that
-      defect and both implementations copied it; correcting only the narrative
-      would have left the example teaching the error.
+      **`allSettled`, for the reason recorded under *Corrections to this
+      document*.**
 
       The second and third sites' racers are named `archive`/`resume` and
       `archive`/`pause`, not `first`/`second`, and the third has no comment
@@ -478,6 +473,36 @@ destroyed.
 - [ ] Write the findings to
       `docs/superpowers/plans/2026-09-06-staged-race-finally-guards-evidence.md`
       so the PR body can quote exact strings rather than paraphrase them.
+
+---
+
+## Corrections to this document
+
+**All three fenced `finally` snippets originally prescribed sequential
+`await`s** — `release(); await holderPromise; await racerPromise;` — and all
+three implementations copied them. Sequential `await`s in a `finally` join
+whichever promise rejects first and skip everything after it, including the
+`$disconnect()` at the two `PrismaClient` sites. That is precisely the
+unjoined-writer leak the comment above each block promises to prevent, so the
+snippet contradicted the property this plan's *Global Constraints* states.
+
+It took three rounds to get all three, because each round corrected the prose
+and one example: the whole-branch review caught the `PrismaClient` snippet, the
+scoped re-review caught the studio snippet and the six code sites still on the
+old shape, and the PR review caught this document's first snippet — the only
+one never touched while its two siblings were fixed twice. **Re-derive with**
+`grep -n 'await claiming;$\|await holding;$\|await blocking;$\|allSettled' docs/superpowers/plans/2026-09-06-staged-race-finally-guards.md`:
+every join in this document should be an `allSettled`.
+
+The pattern, not the sentence, is the finding: a correction lands on the
+narrative and leaves the fenced example teaching the error, and a reader
+copying code copies the example. Where a plan states a property, the snippet
+below it is the thing to check first.
+
+**One other count in this document was wrong and is fixed above**: *Global
+Constraints* claimed two pre-existing swallow sites each carrying a written
+reason. There are six, and one carries a reason — the command that re-derives
+it is in that section.
 
 ---
 
