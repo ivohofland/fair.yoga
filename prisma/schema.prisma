@@ -84,6 +84,8 @@ enum RecipientType {
 
 enum NotificationType {
   booking_confirmed
+  booking_cancelled
+  booking_removed
   class_cancelled
   payment_received
   payment_request

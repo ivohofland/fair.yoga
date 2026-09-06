@@ -15,6 +15,13 @@ import type { NotificationType } from '@prisma/client';
 
 export const ESSENTIAL_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new Set([
   'class_cancelled',
+  // Someone else ended the booking, so the student may otherwise turn up to a
+  // class they believe they are in — the same reason `class_cancelled` is
+  // here. Its sibling `booking_cancelled` is deliberately absent: that one is
+  // the student's own cancellation coming back to them, and a receipt should
+  // not be louder than the `booking_confirmed` it undoes, which is also
+  // absent.
+  'booking_removed',
   'waitlist_promoted',
   'spot_available',
   'payment_request',
