@@ -1051,10 +1051,13 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     expect(res.status).toBe(200);
 
     const { data } = (await res.json()) as {
-      data: { lastScheduled: { startTime: string } | null };
+      data: { lastScheduled: { date: string; startTime: string } | null };
     };
     // `toBeNull()` alone also passes on `undefined` — assert the seeded value.
     expect(data.lastScheduled?.startTime).toBe('19:00');
+    // `later.date` is a literal this test controls, unlike the class-family
+    // twin's relative-to-today date — assert the exact wire value.
+    expect(data.lastScheduled?.date).toBe(new Date('2099-09-01').toISOString());
     expect(await prisma.studioClass.count({ where: { id: later.id } })).toBe(1);
   });
 

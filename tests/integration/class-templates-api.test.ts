@@ -796,12 +796,18 @@ describe('PATCH /api/class-templates/[id]', () => {
     expect(res.status).toBe(200);
 
     const { data } = (await res.json()) as {
-      data: { lastScheduled: { startTime: string } | null };
+      data: { lastScheduled: { date: string; startTime: string } | null };
     };
     // `toBeNull()` alone also passes on `undefined` — assert the real value
     // the template's own `startTime` (passed to `newTemplate` above) would
     // produce.
     expect(data.lastScheduled?.startTime).toBe('06:00');
+    // `date` is generated relative to today, not a literal this test controls
+    // — assert the wire shape (a parseable ISO string) and the one thing that
+    // is fixed regardless of when the suite runs: ALT_DAY_3's weekday, via the
+    // same dayOfWeek→getUTCDay() mapping this file's header documents.
+    expect(typeof data.lastScheduled?.date).toBe('string');
+    expect(new Date(data.lastScheduled?.date as string).getUTCDay()).toBe((ALT_DAY_3 + 1) % 7);
     expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: id } } } } } })).toBe(before);
   });
 
