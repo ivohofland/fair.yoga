@@ -19,8 +19,8 @@
  * mirror foreign keys take row locks no application code asks for, and that is
  * enough to turn an occasional loss into a certain one. Splitting the file is
  * what lets `LOCK_CONTENTION_TESTS` (`vitest.tiers.ts`) hold it without
- * serialising the other 81 cases in `class-lifecycle.test.ts`, which have no
- * DDL in them and are fine in parallel.
+ * serialising the rest of `class-lifecycle.test.ts`, which has no DDL in it
+ * and is fine in parallel.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
@@ -29,7 +29,7 @@ import { createClassFixture } from '../../tests/class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 
 // Its own client, as `class-lifecycle.test.ts` has its own: this file was split
-// out of that one and the module-level declaration stayed behind with the 81
+// out of that one and the module-level declaration stayed behind with the
 // cases that remain there.
 const prisma = new PrismaClient();
 // PREFIXED, not just timestamped. This file and `class-lifecycle.test.ts` share
