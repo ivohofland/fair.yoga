@@ -1288,6 +1288,15 @@ it('does not deadlock against a transaction that locks the class first and then 
   }
 }, 15_000);
 
+// The bare `it`/`it.each` tests above this line share the module-scope
+// `prisma` declared near the top of this section; every describe below opens
+// and disconnects its own `PrismaClient` instead. Declared at the top level
+// rather than nested in a `describe`, so it runs once, after every test in
+// this file finishes.
+afterAll(async () => {
+  await prisma.$disconnect();
+});
+
 /**
  * Whole-branch review of #174, Important, closed further by #367.
  * Originally: `deleteTeacherAccount` read its classes — and, eager-loaded
@@ -1455,10 +1464,14 @@ describe('deleteTeacherAccount blocks concurrent registrations on classes it loc
       // not that the reorder created it -- see the describe docblock.
       expect(registrationLanded).toBe(false);
     } finally {
+      // In a `finally`, so a failed assertion above still releases the
+      // erasure's held lock AND joins both racing operations, rather than
+      // leaving them running unjoined against the describe's shared `prisma`
+      // while its `afterAll` may already be deleting the rows they touch.
       releaseLock();
+      await Promise.all([erasing, registering]);
     }
 
-    await Promise.all([erasing, registering]);
     expect(registrationLanded).toBe(true);
 
     // The registration that finally landed, after the class was already
@@ -1790,13 +1803,19 @@ describe('deleteTeacherAccount serialises against a claim in progress (#315)', (
     });
 
     await new Promise((r) => setTimeout(r, 300));
-    // Without the ordered child-row pre-lock this fixed, the erasure's
-    // `ScheduleRule` write is unobstructed and this is true.
-    expect(erasureSettled).toBe(false);
-
-    release();
-    await claiming;
-    await erasing;
+    try {
+      // Without the ordered child-row pre-lock this fixed, the erasure's
+      // `ScheduleRule` write is unobstructed and this is true.
+      expect(erasureSettled).toBe(false);
+    } finally {
+      // In a `finally`, so a failed assertion above still releases the
+      // claim's `FOR UPDATE` hold rather than parking it — until its own
+      // 15s `timeout` — on the very row the describe's `afterAll` deletes
+      // next.
+      release();
+      await claiming;
+      await erasing;
+    }
 
     const rule = await prisma.scheduleRule.findUniqueOrThrow({
       where: { id: (await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } })).scheduleRuleId },
@@ -1893,13 +1912,19 @@ describe('deleteTeacherAccount serialises against a studio claim in progress (#3
     });
 
     await new Promise((r) => setTimeout(r, 300));
-    // Without the ordered child-row pre-lock this fixed, the erasure's
-    // `ScheduleRule` write is unobstructed and this is true.
-    expect(erasureSettled).toBe(false);
-
-    release();
-    await claiming;
-    await erasing;
+    try {
+      // Without the ordered child-row pre-lock this fixed, the erasure's
+      // `ScheduleRule` write is unobstructed and this is true.
+      expect(erasureSettled).toBe(false);
+    } finally {
+      // In a `finally`, so a failed assertion above still releases the
+      // claim's `FOR UPDATE` hold rather than parking it — until its own
+      // 15s `timeout` — on the very row the describe's `afterAll` deletes
+      // next.
+      release();
+      await claiming;
+      await erasing;
+    }
 
     const rule = await prisma.scheduleRule.findUniqueOrThrow({
       where: {
