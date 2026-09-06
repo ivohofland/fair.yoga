@@ -193,19 +193,42 @@ export async function probeOverlappingCandidates(
  * happened to reach first.
  *
  * Called on the failure path once the refused statement's transaction has
- * closed, always against `db`, never `tx`: a statement that fails inside a
- * Postgres transaction aborts it, so a probe issued on the aborted `tx`
- * answers `25P02` rather than answering at all. Most call sites reach this
- * probe from exactly that failure path; two of the four are the exception —
- * `classes/route.ts` and `studio-classes/route.ts` probe on their normal
- * return path after a zero-row `ON CONFLICT DO NOTHING` refusal that never
- * threw in the first place, so the transaction they probe after committed
- * normally rather than aborting — the requirement to sit after its close is
- * the same either way. Every call site must therefore sit after its own
- * transaction's closing `)`. The current set of them is whatever this
- * returns:
+ * closed, always against `db`, never `tx` — two requirements, held by two
+ * different things.
+ *
+ * THE ARGUMENT is held by the signature. A statement that fails inside a
+ * Postgres transaction aborts it, so a probe issued on the aborted `tx` would
+ * answer `25P02` rather than naming a holder; that is why the parameter is
+ * `PrismaClient`, which `Prisma.TransactionClient` — `Omit<PrismaClient,
+ * ITXClientDenyList>`, missing `$transaction` — cannot satisfy. Passing `tx`
+ * therefore does not compile, and `entry-conflict.test.ts` keeps a never-called
+ * `@ts-expect-error` over that call so a parameter widened to accept a
+ * transaction client fails `tsc` rather than shipping.
+ *
+ * THE PLACEMENT is the other requirement, and the failure it is about is not
+ * `25P02`. What compiles is a call sitting INSIDE a `$transaction(…)` callback
+ * and passing the outer client: it takes a second pooled connection while the
+ * caller's own transaction still holds the first — under exactly the contention
+ * that produces slot conflicts — and reads a committed snapshot blind to the
+ * very transaction it is being asked about. Every call site therefore sits
+ * after its own transaction's closing `)`. Most reach this probe from the
+ * failure path above; the entry creates are the exception, probing on their
+ * normal return path after a zero-row `ON CONFLICT DO NOTHING` refusal that
+ * never threw in the first place, so the transaction they probe after committed
+ * normally rather than aborting. The requirement is the same either way, and
+ * the current set of call sites is whatever this returns:
  *
  *   grep -rn "probeConflictingEntry(" src/services/ src/app/api/
+ *
+ * THAT PLACEMENT IS ENFORCED, and by something other than that command:
+ * `src/lib/probe-placement-census.test.ts` reads the calls out of the syntax
+ * tree and asserts that none of them — this probe's or `ruleSlotHolder`'s —
+ * sits lexically inside a `$transaction(…)` callback. A call site that moves
+ * inside one reddens the suite, so the command above is a convenience for a
+ * reader rather than the thing holding the rule up. It asserts only that
+ * negative: a caller whose refused transaction lives one layer down, inside the
+ * service it awaited, has no transaction of its own beside the probe and is
+ * right to have none. What else it does not see is in its own docblock.
  *
  * NEVER THROWS, and that is a guarantee about the refusal rather than about
  * this query. Every caller has already been refused by the database and has

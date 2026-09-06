@@ -12,14 +12,14 @@
  * of a `$transaction(…)`. It does NOT ask a call site to have a transaction of
  * its own beside it. A caller whose refused transaction lives one layer down —
  * inside the service it awaited, already committed or rolled back by the time
- * the result comes back — is correct, and the stronger rule the docblocks'
- * wording suggests would flag it; that shape ships today, and
+ * the result comes back — is correct, and the stronger rule "sit after its own
+ * transaction's closing `)`" reads as would flag it; that shape ships today, and
  * `docs/superpowers/specs/2026-09-06-probe-placement-tether-design.md` §4 is
  * where it is named. Nor does this decide whether the transaction a call probes
  * after is the RIGHT one. That is a judgement about a whole function, and
  * nothing mechanical can make it.
  *
- * THE OTHER HALF OF THE SAME PARAGRAPH IS NOT THIS FILE'S. "Always against
+ * THE OTHER HALF OF EACH DOCBLOCK'S RULE IS NOT THIS FILE'S. "Always against
  * `db`, never `tx`" is about the ARGUMENT, and it is held by the type
  * signature: `Prisma.TransactionClient` is `Omit<PrismaClient,
  * ITXClientDenyList>`, which lacks `$transaction` and so is not assignable to a
