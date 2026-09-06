@@ -319,11 +319,14 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * the driving side is what fixes the output order. The four settings are
    * `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan`, mirrored rather
    * than imported so the two files' fixtures stay independent. What they buy
-   * is stated there: sequential and bitmap heap scans are Postgres's two
-   * paths that return physical heap order, both are off, and what remains is
-   * index and index-only scans. Index-driven would not be enough, because a
-   * bitmap heap scan is fed by a bitmap index scan and still hands back the
-   * heap's order (#470).
+   * is stated there: of Postgres's scan paths over a plain table — sequential,
+   * index, index-only, bitmap heap and TID — the sequential and bitmap heap
+   * ones are what return physical heap order for a statement like this, both
+   * are off, and what remains is index and index-only scans. (A TID scan needs
+   * a `ctid` qual this statement does not have, so it is unreachable rather
+   * than switched off; `enable_tidscan` is not among the four.) Index-driven
+   * would not be enough, because a bitmap heap scan is fed by a bitmap index
+   * scan and still hands back the heap's order (#470).
    *
    * BTREE order, and this statement's reach was measured rather than assumed.
    * A GiST index has no key order at all, and every one this schema has is
