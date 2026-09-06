@@ -647,18 +647,41 @@ cost-chosen plan safe. The fix is to leave the planner no choice —
 leaves a nested loop whose order comes from index structure rather than from a
 cost comparison. If you write another lock-order reproduction, force the plan;
 do not hope for it.
+`archiveOrUnarchiveTemplate` does not even pass ids — its `deleteMany` takes a
+predicate, so it has no array to sort in the first place.
 
 All four, and the fourth is the one #470 came back for. Index-DRIVEN is not
 index-ORDERED: a bitmap heap scan is fed by a bitmap index scan and still
 returns physical heap order — the same warning this section opens with, two
 paragraphs up — so the three settings above left one heap-ordered path open,
-reachable rather than excluded, on a merge gate that flaked twice. Postgres has
-exactly two scan paths over a plain table that return physical order,
-sequential and bitmap heap; turn both off and what remains, index and
-index-only scans, returns index order. Measured (including with every path
-carrying `disable_cost`) in
+reachable rather than excluded. Postgres has exactly two scan paths over a
+plain table that return physical order, sequential and bitmap heap; turn both
+off and what remains is index and index-only scans. Measured (including with
+every path carrying `disable_cost`) in
 `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md`. Both
 settings discourage rather than forbid, so neither can make a statement fail.
+(The premise assertion #470 came from had flaked before, on 2026-08-27, in a
+copy of the test that carried none of these settings — a different gap, closed
+by adding them.)
+
+**Forcing the plan buys BTREE order, and only where no GiST index is
+eligible.** `pg_indexam_has_property(gist,'can_order')` is false: a GiST
+`Index Scan` returns tree-traversal order, which no fixture can assign. The
+schema has exactly two GiST indexes, `CalendarEntry_teacher_slot_excl` and
+`ScheduleRule_teacher_slot_excl` (#296/#327's exclusion constraints), and both
+are PARTIAL — on `cancelledAt IS NULL` and `isArchived = false`. A statement
+reaches one only by carrying its predicate, so a probe written to mirror
+production faithfully can put ITSELF on an unordered index by copying a qual
+across. Copy the join and the locking clause; leave those two quals out, and
+say in the comment that you did.
+
+The consequence for `CalendarEntry` is worth stating plainly, because it bounds
+what a probe can prove: production's own pre-lock in `deleteTeacherAccount`
+DOES carry `cancelledAt IS NULL`, so the mutated form of that statement — the
+one with `ORDER BY c.id` removed, which is what an ordering reproduction's
+premise is a counterfactual about — can plan onto an index with no key order at
+all. No probe on this schema establishes that counterfactual. Deleting the
+`ORDER BY` and watching the test redden does.
 
 Forcing the plan is a NARROWING, not a pin, and a reproduction that needs one
 should say so in its own comments. Index order is not one order: it is whichever
@@ -668,8 +691,6 @@ same table, some shapes cannot be reconciled by any fixture at all. Attach the
 statement's `EXPLAIN` to the assertion's failure message; a bare
 `expected [ …(2) ] to deeply equal [ …(2) ]` costs an archaeology session every
 time.
-`archiveOrUnarchiveTemplate` does not even pass ids — its `deleteMany` takes a
-predicate, so it has no array to sort in the first place.
 
 Ordering a multi-row write means locking the rows first, explicitly: an
 `ORDER BY … FOR UPDATE` ahead of the write itself. In `src/` that is always

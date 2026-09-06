@@ -24,9 +24,10 @@ const prisma = new PrismaClient();
  * insert takes it — measured 2026-08-28, and the mechanism behind the CI
  * failure at `db-locks.test.ts:414` on 2026-08-27. Under these settings the
  * join side is ordered by `WaitlistEntry_classId_position_idx` (so by
- * `classId`) and the scan side by whichever index its plan is driven from —
+ * `classId`) and the scan side by whichever btree its plan is driven from —
  * this file's fixture ASSIGNS every key those plans can order by, so no index
- * has to be named as the one.
+ * has to be named as the one. Btree specifically; see INDEX ORDER STILL MEANS
+ * BTREE below.
  *
  * The join side additionally needs the nested loop driven from
  * `WaitlistEntry`, which is what the measurements below are about.
@@ -45,10 +46,14 @@ const prisma = new PrismaClient();
  * Measured across background-row counts on 2026-08-16 it is NON-MONOTONIC —
  * 0 rows and 2 rows and 50 rows pick `Class`-outer, 10 rows picks
  * `WaitlistEntry`-outer — so no amount of seeding makes a cost-chosen plan
- * safe. Adding `enable_mergejoin` leaves the nested loop as the only cheap
- * join shape, which takes its direction from index structure rather than from
- * a cost comparison; verified stable at 0, 2, 10, 50, 100, 200, 1_000, 5_000,
- * 10_000 and 50_000 background rows.
+ * safe. Adding `enable_mergejoin` leaves a nested loop as the only cheap join
+ * shape, but NOT one direction of it: both directions stay index-supported
+ * (`Class_pkey` inner one way, `WaitlistEntry_classId_position_idx` inner the
+ * other), so which side drives is still a cost decision. What carries this
+ * paragraph is therefore an empirical result and not a mechanism: with the two
+ * join settings and `enable_seqscan = off` in force — the configuration the
+ * 2026-08-16 sweep ran under — the direction held at 0, 2, 10, 50, 100, 200,
+ * 1_000, 5_000, 10_000 and 50_000 background rows.
  *
  * INDEX-DRIVEN IS NOT INDEX-ORDERED, and that gap is what the seq-scan setting
  * alone left open. Postgres has exactly two scan paths over a plain table that
@@ -56,10 +61,22 @@ const prisma = new PrismaClient();
  * a bitmap heap scan is fed by a bitmap INDEX scan, so a nested loop built
  * from two of those is index-DRIVEN and still hands back heap order. Turning
  * both off is what this helper buys: the remaining paths are index and
- * index-only scans, and both return index order. Measured in
+ * index-only scans. Measured in
  * `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md` (#470),
  * including the adversarial case where every path carries `disable_cost` and
  * Postgres still declines to read the heap in physical order.
+ *
+ * INDEX ORDER STILL MEANS BTREE. The schema carries two GiST indexes —
+ * `CalendarEntry_teacher_slot_excl` and `ScheduleRule_teacher_slot_excl`, the
+ * #296/#327 exclusion constraints — and a GiST `Index Scan` returns
+ * tree-traversal order, not a key order any fixture can assign
+ * (`pg_indexam_has_property(gist,'can_order')` is false). Both are PARTIAL, on
+ * `cancelledAt IS NULL` and `isArchived = false` respectively, so a statement
+ * reaches one only by carrying its predicate. Neither statement in this file
+ * does, which is a property to preserve rather than a coincidence: adding one
+ * of those quals to a probe here would put it on an unordered index. The same
+ * trap, measured, is written up beside the teacher probe in
+ * `gdpr-lock-order.test.ts`.
  *
  * `enable_seqscan = off` and `enable_bitmapscan = off` discourage rather than
  * forbid — Postgres still takes those paths when nothing else can answer the
@@ -119,7 +136,7 @@ async function forceIndexOrderedPlan(tx: Prisma.TransactionClient): Promise<void
  * WHY BOTH SIDES FORCE THEIR PLAN. The plans this construction models are
  * production ones — a `WaitlistEntry` join driven by that table, and a
  * `Class` scan reached through an index. Left to the planner neither is
- * reliably that: see `forceIndexOrderedPlan` below, which owns the three
+ * reliably that: see `forceIndexOrderedPlan` below, which owns the planner
  * settings and the measurements behind them. The short version is that the
  * join side is a cost knife-edge on an unindexed column and non-monotonic in
  * table size, and that an unforced scan side falls back to the heap, which

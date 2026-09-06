@@ -325,6 +325,14 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * be enough, because a bitmap heap scan is fed by a bitmap index scan and
    * still hands back the heap's order (#470).
    *
+   * BTREE order, and this statement's reach was measured rather than assumed.
+   * The schema's two GiST indexes have no key order at all, and both are
+   * partial: `CalendarEntry_teacher_slot_excl` on `cancelledAt IS NULL`, which
+   * this statement does not carry, and `ScheduleRule_teacher_slot_excl` on a
+   * table this statement never names — it reaches `ClassTemplate` through
+   * `ct."scheduleRuleId" = e."scheduleRuleId"`, so `ScheduleRule` is not in the
+   * plan at all. Both therefore unreachable here, the second by construction.
+   *
    * That file also records a driving side that moves non-monotonically with
    * table size, and that measurement belongs to ITS join, whose driving
    * condition sits on a column no index leads with; this read's only condition
