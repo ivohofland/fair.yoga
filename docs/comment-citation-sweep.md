@@ -55,39 +55,74 @@ that names a test by its title, which is the form this project asks for
 therefore the form most of its cross-file citations now take. When a test moves
 to another file — the `*-lock-order.test.ts` extractions of #459 and #468 — the
 citations that break are exactly those, and a fixed-string sweep for the moved
-titles is the pass that finds them.
+titles is the pass that finds most of them — with a second sweep, below, for
+the ones that name only the file the test left.
 
 **A whole title is the wrong needle.** Comment prose is wrapped, so a cited
 title is usually split across two `*` lines, and `grep -F` on the whole string
-matches neither. Measured on #468: sweeping nineteen moved titles whole found
-**one** of the nine live sites; sweeping every overlapping four-word window of
-the same nineteen titles (155 fragments) found all nine. The whole-title pass
-is not a weaker version of the fragment pass — it is a pass that silently
-returns almost nothing.
+matches neither. Measured on #468 at `701fd4e3` — after the extractions, with
+the titles read off the four destination files — against the nine live sites
+the spec predicted:
+
+- The WHOLE-title pass over the nineteen moved test titles hit **one** of them,
+  the single citation short enough to sit on one line. It is not a weaker
+  version of the fragment pass; it is a pass that silently returns almost
+  nothing.
+- The FRAGMENT pass over every overlapping four-word window of those titles
+  (155 fragments) hit **five**, and one of the five was luck: it matched
+  `answers busy when a` inside a citation reading `answers busy when an
+  ordinary booking holds a class row` — a title no test in this repo carries.
+
+The four it missed are two distinct blind spots, and neither miss looks like a
+miss.
+
+**Read `describe(` titles too, not just `it(` ones.** A citation can name the
+BLOCK rather than the case: `rule-lifecycle.ts` cites "the bound reaches its
+pre-lock", which is the tail of a moving `describe` title. Adding the
+destination blocks' `describe(` titles to `titles.txt` (31 titles, 189
+fragments on #468) makes the same pass hit it. That blind spot accounts for one
+of the four.
+
+**A title pass cannot reach a citation that names only the FILE.** The other
+three miss for that reason — "`class-generator.test.ts`'s own use of this spy",
+or the moved file listed among others in `docs/lock-order.md`. No needle built
+out of titles can match them; what finds those is a fixed-string sweep for the
+moved file's own name, which is a second run rather than an optional extra.
+
+**The auditor's trap.** Two of those three name-only sites do have a hit within
+a few lines — one on the `it(` line directly below the docblock that cites it,
+one on a second citation further down the same test body — and both of those
+hits are the kind an auditor skips, because an `it(` line reads as a test
+definition rather than as drift. The third (`docs/lock-order.md`) produced no
+hit anywhere in the file. So read AROUND every hit that lands in a file the
+moved tests did not move to.
 
 ```sh
-# titles.txt: one moved test title per line, read off the destination's `it(` lines
+# titles.txt: one title per line — every moved test's `it(` title, plus the
+# `describe(` title of each block they landed in
 awk '{for (i = 1; i + 3 <= NF; i++) print $i, $(i+1), $(i+2), $(i+3)}' titles.txt \
   | sort -u > fragments.txt
 /usr/bin/grep -rnF -f fragments.txt . \
   --include='*.ts' --include='*.tsx' --include='*.md' \
   --exclude-dir=node_modules --exclude-dir=.git \
   | /usr/bin/grep -v '^\./docs/superpowers/'
+
+# second run, for the citations that name only the file:
+/usr/bin/grep -rnF 'old-file.test.ts' src tests docs \
+  --include='*.ts' --include='*.tsx' --include='*.md'
 ```
 
 `/usr/bin/grep` explicitly, for the reason the parenthesis above gives.
 
 **Expect false positives, and do not re-point them.** A title sweep cannot tell
-a citation from a test that simply shares the title, and in this repo several
-do: the studio family mirrors the class family case for case, and
-`waitlist-lock-order.test.ts` carries three tests under one title. Of #468's
-nineteen moved titles, **seven are also carried by tests elsewhere, in three
-files** — `studio-class-generator.test.ts` (five titles),
-`waitlist-lock-order.test.ts` (one title, on three tests) and
-`class-template-lifecycle-lock-order.test.ts` (one) — **nine colliding test
-sites in all**. Re-derived with the same `titles.txt`, matching the quoted
-literal so a citation in prose does not count, and excluding the four files the
-tests moved to:
+a citation from a block or a test that simply shares the title, and in this repo
+several do: the studio family mirrors the class family case for case,
+`waitlist-lock-order.test.ts` carries three tests under one title, and an
+extraction leaves the SOURCE file's `describe` standing under the same name the
+destination's new one took. Of #468's thirty-one moved titles, **ten are also
+carried elsewhere, across five files — twelve colliding sites in all**.
+Re-derived with the same `titles.txt`, matching the quoted literal so a citation
+in prose does not count, and excluding the four files the tests moved to:
 
 ```sh
 while IFS= read -r t; do

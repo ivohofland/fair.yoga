@@ -314,10 +314,11 @@ says. Nothing is held for a duration and nothing queues. Same verdict #459 gave
 Its single test holds a `Class` row through `lockClassRow` while
 `transitionClass` parks on it, and releases on a `pg_stat_activity` observation
 rather than a timer. Its own docblock states the failure mode a tier-mate
-causes: "A `55P03` lock timeout would also make `ok` false" — the transition is
-itself under the 2 s bound, so noise that delays the busy-poll loop past it
-turns `reason: 'CANCELLED'` into a timeout and the assertion fails for the
-wrong reason.
+causes: the transition is itself under the 2 s bound, so noise that delays the
+busy-poll loop past it replaces `reason: 'CANCELLED'` with a `55P03` — which
+`transitionClass` does not map to a result either (its `catch` handles only
+`Class_live_needs_open_room` and rethrows), so the call rejects and the
+assertion fails from the wrong cause.
 
 It gets `@serial-tier lock-contention` in its own header and an entry on
 `LOCK_CONTENTION_TESTS`. No extraction: the file is already the sibling.
@@ -356,9 +357,9 @@ anything the completion decides from — while `updateClass` parks on those rows
 under `lockClassRow`'s own 2 s `lock_timeout`. The completion is released on a
 `pg_stat_activity` observation of the reschedule's backend, not on a timer.
 
-Its own docblock already states the failure mode a tier-mate causes: "A `55P03`
-lock timeout would also make `ok` false", so `reason: 'frozen'` is the only
-outcome that means what the test means. Everything between the reschedule
+Its own docblock already states the failure mode a tier-mate causes. `ok:
+false` is the answer to every refusal `UpdateClassResult` names, so
+`reason: 'frozen'` is the only outcome that means what the test means. Everything between the reschedule
 issuing and the holder committing has to fit inside the 2 s bound; tier noise
 that pushes it past there replaces the freeze with a `55P03`, which
 `updateClass` does not map to a result — its `catch` handles

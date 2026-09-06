@@ -3,14 +3,13 @@
  * then asserts how it came out, and the staging is built out of wall-clock
  * intervals: a 100ms handshake before the second party starts, a 300-400ms
  * hold, a 300ms look at whether the queued party has settled. Those intervals
- * are what a parallel tier-mate stretches. The cases fall into three shapes
- * and each breaks in its own direction.
+ * are what a parallel tier-mate stretches. Which way a case breaks when they
+ * stretch depends on what it does with the hold, and the shapes below are told
+ * apart by that rather than by name — a case added here belongs to whichever
+ * one its own staging matches.
  *
- * THE ONES THAT HOLD BRIEFLY AND ASSERT THE OUTCOME AFTER THE RELEASE —
- * `makes a concurrent archive wait until the claim transaction commits`, both
- * mid-sweep cases, `leaves isActive committed when the clash lands on the last
- * free date` and `still fills the other free date when the clash lands on the
- * first`. Their unsettled flags
+ * THE ONES THAT RELEASE BEFORE THE QUEUED VERB'S BOUND EXPIRES, and assert the
+ * answer it gives once it finally takes the row. Their unsettled flags
  * (`archiveSettled`, `sweepSettled`) and their `waitedMs` floor cannot be
  * broken by lateness; a slower tier only keeps the queued party queued
  * longer. The margin at risk is the one AFTER the release: the queued
@@ -18,46 +17,41 @@
  * `lock_timeout` `setLockTimeout` (`db-locks.ts`) puts on it, and staging the
  * race already spends 400-500ms of that on purpose. Stretch the release path
  * — the sleep resolving, `release()`/`commit()`, the holder's `COMMIT` — past
- * what is left and the queued party answers `busy` where these cases assert
- * an `ok`.
+ * what is left and the queued party answers `busy` where a case of this shape
+ * asserts an `ok`.
  *
- * `does not generate for a template archived after the list was read` is the
- * one that goes wrong QUIETLY, and it is the sharpest reason this file is not
- * in the parallel tier. Its closing assertion is that nothing was
- * materialised — and a sweep whose claim gave up at the bound materialises
- * nothing either, because `generateClassInstances` swallows a per-template
- * `55P03` as a warn and carries on to the next template. Lateness therefore
- * leaves it GREEN while proving nothing about the archive it exists to prove
- * is seen. Its twin, `writes the values committed while the sweep was
- * waiting, not the ones it read`, goes red in the same circumstance, because
- * it asserts that something WAS created. One pair, two directions, one of
- * them silent.
+ * Within that shape, a case whose closing assertion is that nothing was
+ * MATERIALISED goes wrong QUIETLY, and that is the sharpest reason this file
+ * is not in the parallel tier: a sweep whose claim gave up at the bound
+ * materialises nothing either, because `generateClassInstances` swallows a
+ * per-template `55P03` as a warn and carries on to the next template. Lateness
+ * therefore leaves such a case GREEN while proving nothing about the mid-sweep
+ * write it exists to prove is seen. A case asserting that something WAS
+ * created goes red in the same circumstance. Same shape, opposite directions,
+ * and the silent one is why an assertion of ABSENCE here cannot live in a
+ * parallel tier even where its loud counterpart could.
  *
- * THE ONES THAT HOLD PAST THE BOUND ON PURPOSE — the `busy` cases under
- * `claimTemplateForGeneration`, `answers busy when the clash outlives the
- * lock timeout, instead of reporting it raced`, and `answers busy when a held
- * class row outlives the lock timeout`. Each asserts `waited >= 1_800`, a
- * floor lateness can only raise, so what they stand to lose is the SHAPE of
- * the answer against an OUTER ceiling: the holder's own `{ timeout: 15_000 }`
- * or `{ timeout: 20_000 }` budget, and a 20s budget on the case itself.
- * Stretch the span from opening the holder to releasing it past the holder's
- * budget and Prisma aborts the holder — which frees the row, lets the queued
- * verb commit, and returns the `ok` that reads as a missing guard. None of
- * them asserts a CEILING on `waited` (#323 took the wall-clock ceilings off
- * this repo's lock-timeout cases), so a widened bound is not something they
- * can catch; `db-locks.test.ts` is where that value is pinned.
+ * THE ONES THAT HOLD PAST THE BOUND ON PURPOSE, asserting the `busy` the
+ * queued verb gives up with and a `waited >= 1_800` floor lateness can only
+ * raise. What such a case stands to lose is the SHAPE of the answer against an
+ * OUTER ceiling: the Prisma `{ timeout: … }` budget on the holder itself, tens
+ * of seconds here, and the vitest budget on the case. Stretch the span from
+ * opening the holder to releasing it past the holder's budget and Prisma
+ * aborts the holder — which frees the row, lets the queued verb commit, and
+ * returns the `ok` that reads as a missing guard. No CEILING on `waited` is
+ * asserted anywhere here (#323 took the wall-clock ceilings off this repo's
+ * lock-timeout cases), so a widened bound is not something this shape can
+ * catch; `db-locks.test.ts` is where that value is pinned.
  *
- * THE ONES THAT RACE AN INDEX ENTRY RATHER THAN A ROW — `names a date lost to
- * a concurrent insert by what still holds it` and `names a short date nothing
- * live overlaps as raced`. A second client holds an uncommitted colliding
- * INSERT, so the generator's occupancy pre-check (a plain read under READ
- * COMMITTED) cannot see it and the generator's own insert parks on the
- * holder's pending index entry. Nothing here waits on a bound at all —
- * `generateInstancesForTemplate` issues no `SET LOCAL lock_timeout` — so
- * lateness cannot time anything out. What it can do is invert the ORDER these
- * cases need: both assert the reason a LOST race produces
- * (`blocked_by_overlap`, `raced`), and a pre-check that runs after the
- * holder's release instead sees a committed neighbour and answers
+ * THE ONES THAT RACE AN INDEX ENTRY RATHER THAN A ROW. A second client holds
+ * an uncommitted colliding INSERT, so the generator's occupancy pre-check (a
+ * plain read under READ COMMITTED) cannot see it and the generator's own
+ * insert parks on the holder's pending index entry. Nothing in this shape
+ * waits on a bound at all — `generateInstancesForTemplate` issues no
+ * `SET LOCAL lock_timeout` — so lateness cannot time anything out. What it can
+ * do is invert the ORDER such a case needs: each asserts the reason a LOST
+ * race produces (`blocked_by_overlap`, `raced`), and a pre-check that runs
+ * after the holder's release instead sees a committed neighbour and answers
  * `slot_taken` or `already_generated`. The reason is the whole assertion, so
  * such a case fails having never staged its race.
  *
@@ -101,12 +95,13 @@ import {
 import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
-// PREFIXED rather than left as a bare clock read: `class-generator.test.ts`
-// mints its own fixture from `Date.now()` under `gen-` against this same test
-// database, and two clock reads are not a namespace. With the prefix neither
-// file can take the other's teacher email or page slug however the tiers
-// interleave, and the `afterAll` below deletes by this file's own `teacherId`
-// and nothing wider.
+// PREFIXED rather than left as a bare clock read: this file shares one test
+// database with `class-generator.test.ts`, which it was split from, and with
+// its serial tier-mates, and they all mint their fixtures from a clock value,
+// so two clock reads are not a namespace. The prefix is spelled from this
+// file's own name rather than from the shared subject, which makes the
+// namespaces disjoint by construction rather than by luck, and the `afterAll`
+// below deletes by this file's own `teacherId` and nothing wider.
 const uniqueSuffix = `genlock-${Date.now()}`;
 
 describe('the class generator under staged lock contention (DB)', () => {
@@ -189,18 +184,23 @@ describe('the class generator under staged lock contention (DB)', () => {
     // child with it), then the rules (each takes its `ClassTemplate`,
     // `onDelete: Cascade` since #298), then the room link, the room, the
     // teacher and the account that owns its identity.
-    const { accountId } = await prisma.teacher.findUniqueOrThrow({
-      where: { id: teacherId },
-      select: { accountId: true },
-    });
-    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
-    await prisma.scheduleRule.deleteMany({ where: { teacherId } });
-    await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
-    await prisma.room.delete({ where: { id: roomId } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
-    await prisma.account.delete({ where: { id: accountId } });
-
-    await prisma.$disconnect();
+    //
+    // In a `finally`, so a failed delete cannot also leak the connection pool
+    // — the convention `0c0f43b7` set for these files.
+    try {
+      const { accountId } = await prisma.teacher.findUniqueOrThrow({
+        where: { id: teacherId },
+        select: { accountId: true },
+      });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId } });
+      await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
+      await prisma.room.delete({ where: { id: roomId } });
+      await prisma.teacher.delete({ where: { id: teacherId } });
+      await prisma.account.delete({ where: { id: accountId } });
+    } finally {
+      await prisma.$disconnect();
+    }
   });
 
   /** The template with the `teacher.defaultTimezone` join the generator requires. */
@@ -525,8 +525,8 @@ describe('the class generator under staged lock contention (DB)', () => {
   describe('generateClassInstances — archive mid-sweep', () => {
     afterEach(async () => {
       await prisma.calendarEntry.deleteMany({
-      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
-    });
+        where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+      });
       await prisma.scheduleRule.update({
         where: { id: templateScheduleRuleId },
         data: { isActive: true, isArchived: false },
@@ -547,8 +547,8 @@ describe('the class generator under staged lock contention (DB)', () => {
       // behind by anything else would read as a generation this test never
       // triggered.
       await prisma.calendarEntry.deleteMany({
-      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
-    });
+        where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+      });
       expect(await prisma.class.count({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } } })).toBe(0);
 
       let commit!: () => void;
@@ -611,8 +611,8 @@ describe('the class generator under staged lock contention (DB)', () => {
 
     afterEach(async () => {
       await prisma.calendarEntry.deleteMany({
-      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
-    });
+        where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+      });
       await prisma.scheduleRule.update({
         where: { id: templateScheduleRuleId },
         data: {
@@ -635,8 +635,8 @@ describe('the class generator under staged lock contention (DB)', () => {
      */
     it('writes the values committed while the sweep was waiting, not the ones it read', async () => {
       await prisma.calendarEntry.deleteMany({
-      where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
-    });
+        where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
+      });
 
       let commit!: () => void;
       const held = new Promise<void>((resolve) => {
@@ -1282,6 +1282,14 @@ describe('the class generator under staged lock contention (DB)', () => {
         // this same fixture successfully, and their `afterEach` restores
         // `isArchived` without clearing the stamp. "Nothing changed" is a claim
         // about this transaction, so it is measured against what was there.
+        //
+        // For `archivedAt` that is defensive — it is genuinely non-null by the
+        // time this runs. For `withdrawnCount` it is LOAD-BEARING: no earlier
+        // case here archives a template that has classes to withdraw, so the
+        // captured count is zero, while a rollback that still recorded what it
+        // would have withdrawn writes `generated.created` over it. The equality
+        // discriminates on this fixture, which it would not against a count an
+        // earlier case had already left non-zero.
         const before = await prisma.classTemplate.findUniqueOrThrow({
           where: { id: templateId },
           include: { scheduleRule: true },
@@ -1314,7 +1322,7 @@ describe('the class generator under staged lock contention (DB)', () => {
 
           // The CAS had already succeeded when the pre-lock blocked (issue
           // 180 task 4 — the `deleteMany` never runs; see this describe's own
-          // updated docblock), so this also pins that the rollback took the
+          // docblock), so this also pins that the rollback took the
           // flag back with it — otherwise the teacher is told nothing changed
           // while the template sits archived.
           const after = await prisma.classTemplate.findUniqueOrThrow({

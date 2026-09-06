@@ -48,9 +48,14 @@
  * its locks, and `pg_stat_activity` for the reschedule's backend actually
  * waiting on one.
  *
- * WHY THE REASON, NEVER THE BOOLEAN. A `55P03` lock timeout would also make
- * `ok` false. `reason: 'frozen'` is the only outcome that says the reschedule
- * waited, saw the completion, and refused on the entry's own freeze.
+ * WHY THE REASON, NEVER THE BOOLEAN. `ok: false` is the answer to every
+ * refusal `UpdateClassResult` names, so the boolean alone says only that
+ * something refused — not that this reschedule waited for this completion.
+ * `reason: 'frozen'` is the only outcome that says it waited, saw the
+ * completion, and refused on the entry's own freeze. A lock timeout is not
+ * one of the alternatives it has to be told apart from: `55P03` is unmapped,
+ * so the call REJECTS and there is no `ok` of either value to read — the
+ * failure this header opens with.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -254,10 +259,11 @@ describe('updateClass against a completion that already holds the class', () => 
     expect(completionResult).toMatchObject({ ok: true, newStatus: 'completed' });
 
     expect(outcome.ok).toBe(false);
-    // The REASON, never the boolean: a `55P03` lock timeout would also make
-    // `ok` false, and so would `terminal` — which is the class row's refusal,
-    // not the entry's, and would mean the reschedule had been answered by the
-    // half of the freeze that never moved.
+    // The REASON, never the boolean: `terminal` is `ok: false` too — the class
+    // row's refusal rather than the entry's, which would mean the reschedule
+    // had been answered by the half of the freeze that never moved. A lock
+    // timeout is not one of the alternatives: `55P03` is unmapped, so it
+    // rejects rather than returning any result at all (file header).
     expect(outcome).toMatchObject({ reason: 'frozen' });
 
     // And the entry kept its start. The refusal is only worth anything if the

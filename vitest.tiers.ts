@@ -47,10 +47,14 @@ export const SWEEP_TESTS = [
 // locks are all on rows and keys it minted itself, whose parked transactions
 // wait for a release rather than for a clock, and none of whose assertions is
 // a bound or an elapsed time can hold real locks in `unit` — tier noise cannot
-// make any assertion in it wrong. It can still make such a file SLOWER, and a
-// file with no per-test timeout of its own runs under vitest's 5s default, so
-// enough noise could in principle end one as a test timeout; what rules that
-// out is margin, measured per file in the verdict that kept it here.
+// make any assertion in it wrong. It can still make such a file SLOWER, and
+// slowness runs into TWO clocks, not one. Vitest's per-test timeout (the 5s
+// default where a file sets none) is the harmless one: it ends the run as a
+// timeout, visibly. The dangerous one is the Prisma `{ timeout: N }` budget
+// the parked transaction itself runs under — when that expires Prisma aborts
+// the HOLDER, which frees the row, lets the queued verb commit, and returns
+// the answer that reads as a missing guard. What rules both out is margin,
+// measured per file in the verdict that kept it here.
 //
 // MEMBERSHIP IS HELD BY THE MARKER, NOT BY A COMMAND. Every file below carries
 // `@serial-tier lock-contention` in its own header, with the reason that file

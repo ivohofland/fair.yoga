@@ -279,12 +279,13 @@ that this change falsifies:
   the measurement — a roster here would be a second copy of it."
 
 Replace both with what is true afterwards. Spec §5 states it: after this change
-the sweep's nineteen hits are eleven serial members plus three adjudicated
-parallel-tier files, two of them comment-only and one (`db-locks.test.ts`) a
+the sweep's nineteen hits are fifteen serial members — eleven on
+`LOCK_CONTENTION_TESTS` plus four on `SWEEP_TESTS` — and four adjudicated
+parallel-tier files, three of them comment-only and one (`db-locks.test.ts`) a
 real lock-holder that was measured and kept. State that the property is
-finished and where the adjudication lives; do **not** roster the three by name
-here (CLAUDE.md — a roster of other files has no owner in this file), and do
-not leave the note pointing at an open issue.
+finished and where the adjudication lives; do **not** roster the parallel-tier
+four by name here (CLAUDE.md — a roster of other files has no owner in this
+file), and do not leave the note pointing at an open issue.
 
 `vitest.config.ts`'s `unit` project comment says "Not every file here is free
 of long lock holds, though — `vitest.tiers.ts` says so beside the list, and
