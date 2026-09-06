@@ -258,15 +258,16 @@ export function stripSqlComments(sql: string): string {
   return sql.replace(BLOCK_COMMENT, ' ').replace(LINE_COMMENT, '');
 }
 
-// `UPDATE` / `DELETE FROM` immediately followed by a quoted identifier. The
-// quote is what keeps `ON UPDATE CASCADE`, `FOR UPDATE OF c` and
-// `FOR UPDATE OF "Class"` out: in each of those a word stands between the verb
-// and any quoted name, whichever case it is written in.
+// `UPDATE` / `DELETE FROM` followed by a quoted identifier, with only the
+// optional `ONLY` allowed in between. The quote is what keeps
+// `ON UPDATE CASCADE`, `FOR UPDATE OF c` and `FOR UPDATE OF "Class"` out: in
+// each of those a word stands between the verb and any quoted name, whichever
+// case it is written in, and `ONLY` is the one such word that is still a write.
 //
 // CASE-INSENSITIVE ON BOTH, because lowercase keywords are legal SQL and a
 // case-sensitive pattern reads `update "X" set …` as no write at all — silence
 // on a real data change, which is the expensive direction.
-const DATA_CHANGE = /\bUPDATE\s+"|\bDELETE\s+FROM\s+"/i;
+const DATA_CHANGE = /\bUPDATE\s+(?:ONLY\s+)?"|\bDELETE\s+FROM\s+(?:ONLY\s+)?"/i;
 const RAISE_NOTICE = /\bRAISE\s+NOTICE\b/i;
 // A colon, then something that is not whitespace, on the same line — a bare
 // marker with an empty reason exempts nothing. Case-sensitive, unlike the two
@@ -301,8 +302,9 @@ const NO_NOTICE_MARKER = /--[ \t]*DML WITHOUT NOTICE:[ \t]*\S/;
  *
  *   - the data change and the `RAISE NOTICE`, STRIPPED, because a migration
  *     that merely discusses either in a comment has done neither. Both shapes
- *     are live: `20260826080100_calendar_entry_rewire` writes
- *     `UPDATE "Class" SET status='completed'` inside a comment, and
+ *     are live: `20260826182710_entry_completion_marker_guard` writes
+ *     `UPDATE "CalendarEntry" SET …` inside a comment and runs no such
+ *     statement — reading raw text would report it — and
  *     `20260825065109_schedule_rule_backfill` names `RAISE NOTICE` in one
  *     while raising nothing of the sort.
  *   - the marker, RAW, because it *is* a comment and stripping erases it.
