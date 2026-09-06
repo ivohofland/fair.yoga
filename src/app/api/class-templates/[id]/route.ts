@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
+  respondTyped,
   respondError,
   requireTeacher,
   parseBody,
@@ -21,7 +22,13 @@ import {
   archiveOrUnarchiveTemplate,
   withSlot,
 } from '@/services/class-template-lifecycle';
+import type { WithSlot } from '@/services/rule-lifecycle';
 import type { RuleSlotHolder } from '@/lib/rule-slot-holder';
+import type { TemplateToggleResponse, TemplateEditResponse } from '@/lib/api-types';
+import type { ClassTemplate } from '@prisma/client';
+
+type PatchResponse = WithSlot<ClassTemplate> & TemplateToggleResponse;
+type PutResponse = WithSlot<ClassTemplate> & TemplateEditResponse;
 
 /**
  * The one `slot_conflict` reason (`class-template-lifecycle.ts`) carries a
@@ -238,9 +245,9 @@ export const PUT = withErrorHandler(async (
   // form must not re-derive the sweep's eligibility gate — see
   // `templateGenerationState` (`@/lib/template-selection`).
   if (result.ok) {
-    return respondOk({
+    return respondTyped<PutResponse>({
       ...result.template,
-      firstEffective: result.firstEffective,
+      firstEffective: result.firstEffective ? result.firstEffective.toISOString() : null,
       generationState: result.generationState,
     });
   }
@@ -308,7 +315,7 @@ export const PATCH = withErrorHandler(async (
     if (result.ok) {
       switch (result.action) {
         case 'archived':
-          return respondOk({
+          return respondTyped<PatchResponse>({
             ...result.template,
             action: result.action,
             deleted: result.deleted,
@@ -316,7 +323,7 @@ export const PATCH = withErrorHandler(async (
           });
         case 'unarchived':
         case 'unchanged':
-          return respondOk({ ...result.template, action: result.action });
+          return respondTyped<PatchResponse>({ ...result.template, action: result.action });
         default: {
           const unhandled: never = result;
           return unhandled;
@@ -410,16 +417,21 @@ export const PATCH = withErrorHandler(async (
     // where a new arm compiled clean and was answered with the wrong action.
     switch (result.action) {
       case 'paused':
-        return respondOk({
+        return respondTyped<PatchResponse>({
           ...result.template,
           action: result.action,
-          lastScheduled: result.lastScheduled,
+          lastScheduled: result.lastScheduled
+            ? {
+                date: result.lastScheduled.date.toISOString(),
+                startTime: result.lastScheduled.startTime,
+              }
+            : null,
         });
       case 'active':
-        return respondOk({
+        return respondTyped<PatchResponse>({
           ...result.template,
           action: result.action,
-          templateKind: 'class' as const,
+          templateKind: 'class',
           scheduled: result.scheduled,
           added: result.added,
           // Passed whole, not mapped member by member (#296). This hop is where
@@ -432,7 +444,7 @@ export const PATCH = withErrorHandler(async (
           counts: result.counts,
         });
       case 'unchanged':
-        return respondOk({ ...result.template, action: result.action });
+        return respondTyped<PatchResponse>({ ...result.template, action: result.action });
       default: {
         const unhandled: never = result;
         return unhandled;

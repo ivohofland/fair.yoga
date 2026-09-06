@@ -20,6 +20,7 @@ import {
 import type { TemplateGenerationState } from '@/lib/template-selection';
 import { anyBlocked } from '@/lib/generation';
 import { hasIntegerCounts } from '@/components/settings/template-action-messages';
+import type { TemplateCreateResponse, TemplateEditResponse } from '@/lib/api-types';
 
 interface TeacherRoomOption {
   id: string;
@@ -354,7 +355,9 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // `counts` is optional in this parse shape even though the route always
         // sends it — see `studio-template-form.tsx`'s twin for why nesting makes
         // that distinction load-bearing rather than pedantic.
-        const json: { data?: { added: number; counts?: unknown } } = await res.json();
+        const json: {
+          data?: { added: TemplateCreateResponse['added']; counts?: unknown };
+        } = await res.json();
         const result = json.data;
         setCreated(true);
         // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
@@ -423,7 +426,10 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // would hand an unknown string to an exhaustive `switch` that throws
         // on it — an unhandled error where a teacher expects a confirmation.
         const json: {
-          data?: { firstEffective?: string | null; generationState?: string };
+          data?: {
+            firstEffective?: TemplateEditResponse['firstEffective'];
+            generationState?: string;
+          };
         } = await res.json();
         const firstEffective = json.data?.firstEffective ?? null;
         const wireState = json.data?.generationState;

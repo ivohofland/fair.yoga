@@ -36,6 +36,7 @@ vi.mock('./api-errors', async (importOriginal) => {
 
 import {
   respondOk,
+  respondTyped,
   respondError,
   requireSession,
   requireTeacher,
@@ -77,6 +78,31 @@ describe('respondOk', () => {
 
     const body = await response.json();
     expect(body).toEqual({ data: { items: [1, 2, 3] } });
+  });
+});
+
+describe('respondTyped', () => {
+  it('returns NextResponse with typed { data } body and correct status', async () => {
+    interface SampleContract {
+      id: string;
+      count: number;
+    }
+    const response = respondTyped<SampleContract>({ id: 'abc', count: 42 }, 201);
+
+    expect(response).toBeInstanceOf(NextResponse);
+    expect(response.status).toBe(201);
+
+    const body = await response.json();
+    expect(body).toEqual({ data: { id: 'abc', count: 42 } });
+  });
+
+  it('defaults to status 200', async () => {
+    const response = respondTyped<{ ok: boolean }>({ ok: true });
+
+    expect(response.status).toBe(200);
+
+    const body = await response.json();
+    expect(body).toEqual({ data: { ok: true } });
   });
 });
 
