@@ -29,6 +29,7 @@ import { claimTemplateForGeneration } from './class-generator';
 import { claimStudioTemplateForGeneration } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { joinOrThrow } from '../../tests/lock-order-teardown';
 
 /**
  * The `Class` pre-lock, identified by the statement's own shape.
@@ -1755,8 +1756,10 @@ describe('deleteTeacherAccount blocks concurrent registrations on classes it loc
       // erasure's held lock AND joins both racing operations, rather than
       // leaving them running unjoined against the describe's shared `prisma`
       // while its `afterAll` may already be deleting the rows they touch.
+      //
+      // `allSettled`, so neither join can skip the other if one rejects.
       releaseLock();
-      await Promise.all([erasing, registering]);
+      await joinOrThrow(erasing, registering);
     }
 
     expect(registrationLanded).toBe(true);
@@ -2099,9 +2102,10 @@ describe('deleteTeacherAccount serialises against a claim in progress (#315)', (
       // claim's `FOR UPDATE` hold rather than parking it — until its own
       // 15s `timeout` — on the very row the describe's `afterAll` deletes
       // next.
+      //
+      // `allSettled`, so a rejecting `claiming` cannot skip joining `erasing`.
       release();
-      await claiming;
-      await erasing;
+      await joinOrThrow(claiming, erasing);
     }
 
     const rule = await prisma.scheduleRule.findUniqueOrThrow({
@@ -2208,9 +2212,10 @@ describe('deleteTeacherAccount serialises against a studio claim in progress (#3
       // claim's `FOR UPDATE` hold rather than parking it — until its own
       // 15s `timeout` — on the very row the describe's `afterAll` deletes
       // next.
+      //
+      // `allSettled`, so a rejecting `claiming` cannot skip joining `erasing`.
       release();
-      await claiming;
-      await erasing;
+      await joinOrThrow(claiming, erasing);
     }
 
     const rule = await prisma.scheduleRule.findUniqueOrThrow({

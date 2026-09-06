@@ -32,6 +32,7 @@ import { setLockTimeout } from '@/lib/db-locks';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { joinOrThrow } from '../../tests/lock-order-teardown';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -455,8 +456,12 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       // blocking transaction's `FOR UPDATE` hold rather than parking it —
       // until its own 15s `timeout` — on the very row the describe's
       // `afterAll` deletes next.
+      //
+      // The two archives are joined here rather than below so a failure cannot
+      // leave them writing this template against the shared `prisma` while
+      // that sweep is already deleting it.
       release();
-      await blocking;
+      await joinOrThrow(blocking, first, second);
     }
 
     const settled = await Promise.all([first, second]);
