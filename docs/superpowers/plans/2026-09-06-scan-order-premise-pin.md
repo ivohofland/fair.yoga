@@ -286,11 +286,15 @@ git commit -m "test(lock-order): record what the closed path buys and what it do
 
 ## Finishing
 
-- PR body carries: the §2.1 bitmap plan with its cost against the chosen plan's,
-  the §2.2 two-run table, the §2.4 plan mismatch, the Step 1 verbatim mutation
-  failure, the Step 4 run count, the Step 5 shapes, and spec §4's residual
-  verbatim. Name by path which `integration` files this branch touched (none)
-  and cite the CI run for `integration` and `e2e`.
+- PR body carries: the §2.1 bitmap plan, cited as ONE measurement at one
+  database state alongside §2.1's four-state table showing the gap's sign
+  flipping twice — never as "not preferred" or "27% dearer", which is the
+  property framing §2.1 now disowns; the §2.2 two-run table, the §2.4 plan
+  mismatch, the Step 1 verbatim mutation failure, the Step 4 run count, the
+  Step 5 shapes, and spec §4's residual verbatim. What the fourth setting buys
+  is stated as eligibility (the `disable_cost` probe in §2.1's closing
+  paragraph), not as a cost advantage. Name by path which `integration` files
+  this branch touched (none) and cite the CI run for `integration` and `e2e`.
 - Correct issue #470's body: it states that `enable_seqscan = off` "forces an
   index path". It does not — it removes one of two heap-ordered paths. Correct
   it in place rather than appending a comment that contradicts the body.
