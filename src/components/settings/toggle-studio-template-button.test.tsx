@@ -204,7 +204,10 @@ describe('ToggleStudioTemplateButton', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(routerRefresh).toHaveBeenCalled();
     expect(screen.getByRole('button')).toBeEnabled();
-    expect(consoleError).toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[toggle-studio-template] updated, but the confirmation could not be resolved',
+      expect.objectContaining({ templateId: 'tpl-1' }),
+    );
   });
 
   it('reports a network error when fetch itself throws', async () => {
