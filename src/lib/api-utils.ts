@@ -13,13 +13,17 @@ export function respondOk<T>(data: T, status = 200): NextResponse {
 /**
  * #206. A response helper whose payload literal is strictly checked against `T`.
  *
- * `NoInfer<T>` prevents TypeScript from inferring `T` from `data`. A caller
- * cannot omit the type argument (`respondTyped({...})` fails with "Expected 1
- * type arguments, but got 0"), and the object literal passed to `data` is
- * contextually typed and checked against `T`. Dropping a field or passing
- * an incorrect shape becomes an immediate compile error.
+ * `T = never` ensures that omitting the type parameter (`respondTyped({...})`)
+ * causes `data` to default to `never`, failing compilation with "Argument of
+ * type ... is not assignable to parameter of type 'never'".
+ *
+ * When `<T>` is explicitly provided, `NoInfer<T>` prevents TypeScript from
+ * inferring `T` from `data`, contextually typing and strictly checking the
+ * object literal passed to `data` against `T`. Dropping a required field,
+ * passing an incorrect type, or adding an excess property on an inline literal
+ * becomes an immediate compile error.
  */
-export function respondTyped<T>(data: NoInfer<T>, status = 200): NextResponse {
+export function respondTyped<T = never>(data: NoInfer<T>, status = 200): NextResponse {
   return NextResponse.json({ data }, { status });
 }
 

@@ -82,11 +82,12 @@ describe('respondOk', () => {
 });
 
 describe('respondTyped', () => {
+  interface SampleContract {
+    id: string;
+    count: number;
+  }
+
   it('returns NextResponse with typed { data } body and correct status', async () => {
-    interface SampleContract {
-      id: string;
-      count: number;
-    }
     const response = respondTyped<SampleContract>({ id: 'abc', count: 42 }, 201);
 
     expect(response).toBeInstanceOf(NextResponse);
@@ -103,6 +104,24 @@ describe('respondTyped', () => {
 
     const body = await response.json();
     expect(body).toEqual({ data: { ok: true } });
+  });
+
+  it('enforces compile-time type requirements', () => {
+    // Valid explicit call compiles clean
+    const res = respondTyped<SampleContract>({ id: 'valid', count: 1 });
+    expect(res.status).toBe(200);
+
+    // @ts-expect-error — omitting <T> causes T to default to never, rejecting any payload
+    respondTyped({ id: 'omitted-type-parameter' });
+
+    // @ts-expect-error — missing required property 'count'
+    respondTyped<SampleContract>({ id: 'missing-count' });
+
+    // @ts-expect-error — 'count' must be number, not string
+    respondTyped<SampleContract>({ id: 'wrong-type', count: '42' });
+
+    // @ts-expect-error — fresh inline literal rejects excess property
+    respondTyped<SampleContract>({ id: 'excess', count: 1, extra: true });
   });
 });
 
