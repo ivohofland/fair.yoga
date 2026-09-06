@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 import { ruleSlotHolder } from './rule-slot-holder';
 
 const prisma = new PrismaClient();
@@ -155,3 +155,26 @@ describe('ruleSlotHolder', () => {
     }
   });
 });
+
+/**
+ * `ruleSlotHolder`'s first parameter is typed `PrismaClient`, not
+ * `Prisma.TransactionClient`, and that exclusion is doing real work: the
+ * docblock's "always against `db`, never `tx`" holds today only because
+ * `Prisma.TransactionClient` happens to be `Omit<PrismaClient,
+ * ITXClientDenyList>`, which is missing `$transaction` and so fails to satisfy
+ * the parameter — an accident of how Prisma derives that type, not a check
+ * anyone wrote. Nothing stops a future edit from widening the parameter to
+ * `PrismaClient | Prisma.TransactionClient`, which would compile every call
+ * site unchanged and only misbehave in production, under the contention that
+ * makes a slot conflict happen in the first place. This device turns that
+ * silent widening into a `tsc` failure: it fails only if the parameter no
+ * longer excludes `Prisma.TransactionClient`.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _theProbeRejectsATransactionClient(tx: Prisma.TransactionClient): Promise<void> {
+  // @ts-expect-error A transaction client must never satisfy this parameter:
+  // this probe runs after its caller's transaction has already closed.
+  await ruleSlotHolder(tx, {
+    teacherId: 'never-called', dayOfWeek: 1, startMinutes: 0, durationMinutes: 60,
+  });
+}
