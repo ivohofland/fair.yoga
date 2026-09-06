@@ -61,26 +61,28 @@ export function minutesSinceMidnight(t: Date): number {
  * Call sites reach this probe two ways: from a `catch`, where the refused
  * statement aborted the transaction, and from a normal return path, where a
  * zero-row `ON CONFLICT DO NOTHING` refusal never threw and the transaction
- * committed. The requirement is identical either way, and it is the only thing
- * this docblock asserts about them.
+ * committed. Both requirements above hold identically either way, and they are
+ * all this docblock asserts about call sites.
  *
  * NO ROSTER HERE, for the reason `db-locks.ts` spends a paragraph on: a caller
  * list kept in this file goes stale and nothing that counts can catch it. A
  * further caller of either shape falsifies a name; it does not falsify either
- * requirement above. Re-derive the set:
+ * requirement above. Re-derive the set — on the bare name rather than on a
+ * receiver, so a call made through a client named something else is still in
+ * it:
  *
- *   grep -rn "ruleSlotHolder(db\|ruleSlotHolder(prisma" src/services/ src/app/api/
+ *   grep -rn "ruleSlotHolder(" src/services/ src/app/api/
  *
  * THE PLACEMENT IS ENFORCED, and by something other than that command:
  * `src/lib/probe-placement-census.test.ts` reads the calls out of the syntax
- * tree and asserts that none of them — this probe's calls or
- * `probeConflictingEntry`'s — sits lexically inside a `$transaction(…)`
- * callback. A call site that moves inside one reddens the suite, so the command
- * above is a convenience for a reader rather than the thing holding the rule up.
+ * tree and asserts that no call to a probe it censuses — this one among them —
+ * sits lexically inside a `$transaction(…)` callback. A call site that moves
+ * inside one reddens the suite, so the command above is a convenience for a
+ * reader rather than the thing holding the rule up.
  *
  * IT DOES NOT ASK FOR A TRANSACTION BESIDE THE CALL, only that there is none
- * around it. A caller whose refused transaction lives one layer down, inside
- * the service it awaited, is correct and ships. Nor does anything mechanical
+ * around it. A caller whose refused transaction lived one layer down, inside
+ * the service it awaited, would be correct. Nor does anything mechanical
  * decide whether the transaction a call probes after is the RIGHT one. The
  * census's own docblock carries the rest of what it does not see.
  *

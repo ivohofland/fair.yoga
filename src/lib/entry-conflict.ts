@@ -192,9 +192,8 @@ export async function probeOverlappingCandidates(
  * two holders gets the earlier one every run instead of whichever the index
  * happened to reach first.
  *
- * Called on the failure path once the refused statement's transaction has
- * closed, always against `db`, never `tx` — two requirements, held by two
- * different things.
+ * Called once the refused statement's transaction has closed, always against
+ * `db`, never `tx` — two requirements, held by two different things.
  *
  * THE ARGUMENT is held by the signature. A statement that fails inside a
  * Postgres transaction aborts it, so a probe issued on the aborted `tx` would
@@ -211,18 +210,20 @@ export async function probeOverlappingCandidates(
  * caller's own transaction still holds the first — under exactly the contention
  * that produces slot conflicts — and reads a committed snapshot blind to the
  * very transaction it is being asked about. Every call site therefore sits
- * after its own transaction's closing `)`. Most reach this probe from the
- * failure path above; the entry creates are the exception, probing on their
- * normal return path after a zero-row `ON CONFLICT DO NOTHING` refusal that
- * never threw in the first place, so the transaction they probe after committed
- * normally rather than aborting. The requirement is the same either way, and
- * the current set of call sites is whatever this returns:
+ * after its own transaction's closing `)`.
+ *
+ * Call sites reach this probe two ways: from a failure path, where the refused
+ * statement aborted the transaction — caught at the call site, or by a service
+ * that returned the refusal as a reason — and from the entry creates' normal
+ * return path, where a zero-row `ON CONFLICT DO NOTHING` refusal never threw
+ * and the transaction committed. Both requirements above hold identically
+ * either way, and the current set of call sites is whatever this returns:
  *
  *   grep -rn "probeConflictingEntry(" src/services/ src/app/api/
  *
  * THAT PLACEMENT IS ENFORCED, and by something other than that command:
  * `src/lib/probe-placement-census.test.ts` reads the calls out of the syntax
- * tree and asserts that none of them — this probe's or `ruleSlotHolder`'s —
+ * tree and asserts that no call to a probe it censuses — this one among them —
  * sits lexically inside a `$transaction(…)` callback. A call site that moves
  * inside one reddens the suite, so the command above is a convenience for a
  * reader rather than the thing holding the rule up. It asserts only that
