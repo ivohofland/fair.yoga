@@ -286,9 +286,11 @@ describe('the class generator under staged lock contention (DB)', () => {
         // unjoined writer the sentence above says this block prevents. Not
         // swallowed either: the first rejection is rethrown, so a claim that
         // failed on its own budget still says so instead of being replaced by
-        // silence. It replaces the staging assertion's message when it fires,
-        // which is the accepted trade — the busy tests below take the other
-        // side and say why beside their own `catch`.
+        // silence. When it fires it replaces the staging assertion's message,
+        // which is the accepted trade here. The array order is what picks it,
+        // and it puts `claiming` first deliberately: the archive can only lose
+        // this row because the claim held it, so the claim's own failure is
+        // the root cause and the archive's would be downstream of it.
         release();
         const joined = await Promise.allSettled([claiming, archiving]);
         const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
