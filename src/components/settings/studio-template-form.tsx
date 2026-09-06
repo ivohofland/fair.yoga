@@ -9,9 +9,11 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
+import { readErrorMessage } from '@/lib/client-errors';
 import {
   resumeStudioMessage,
   templateUpdatedMessage,
+  UNREADABLE_CONFIRMATION_MESSAGE,
 } from '@/components/settings/template-action-messages';
 import type { TemplateGenerationState } from '@/lib/template-selection';
 import { anyBlocked } from '@/lib/generation';
@@ -158,15 +160,21 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         hourlyRate: rate,
       };
 
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (err) {
+        console.error('[studio-template-form] request failed', { mode, err });
+        setError('Network error. Please try again.');
+        return;
+      }
 
       if (!res.ok) {
-        const json: { error?: { message?: string } } = await res.json();
-        setError(json.error?.message ?? 'Failed to save');
+        setError(await readErrorMessage(res, 'Failed to save'));
         return;
       }
 
@@ -220,11 +228,25 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // the object would THROW on the first member read rather than compare
         // `undefined > 0` and fall through. The same distinction
         // `hasIntegerCounts` (`template-action-messages.ts`) exists for.
-        const json: {
-          data?: { added: StudioTemplateCreateResponse['added']; counts?: unknown };
-        } = await res.json();
-        const result = json.data;
+        let rawJson: unknown;
+        try {
+          rawJson = await res.json();
+        } catch (err) {
+          console.error('[studio-template-form] created, but response body was unreadable', { err });
+        }
+
         setCreated(true);
+
+        if (rawJson === undefined) {
+          router.push(STUDIO_CLASSES_PATH);
+          return;
+        }
+
+        const json = rawJson as {
+          data?: { added: StudioTemplateCreateResponse['added']; counts?: unknown };
+        };
+        const result = json.data;
+
         // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
         // gate enumerated its terms until #296 added `blockedByOverlap` —
         // the first such reason THE GATE DID NOT ALREADY LIST (`slotTaken` has
@@ -248,13 +270,8 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
           // #296 failure at the one boundary its type cannot reach.
           //
           // WHICH payload that is: one that parses cleanly into the wrong shape
-          // — a tab holding this bundle against a rolled-back server. NOT a
-          // truncated body, which this comment named until PR #300's fourth
-          // pass: `res.json()` sits inside the `try`, so a body that will not
-          // parse throws to the outer `catch` and the teacher reads "Network
-          // error" (`class-edit-form.tsx` records the same route) without ever
-          // reaching this arm. A test pins the difference, because the first
-          // version of this sentence was wrong and nothing could tell.
+          // — a tab holding this bundle against a rolled-back server (#477: an
+          // unparseable or truncated body is caught above and logged separately).
           //
           // `console.warn` rather than `log`: this is a `'use client'` file and
           // `lib/log.ts` says so.
@@ -295,27 +312,46 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // teacher-facing copy uses throughout, `UNARCHIVE_STUDIO_MESSAGE`
         // included. That type's docblock owns why the copy vocabulary is kept
         // apart from the log ones.
-        const json: {
-          data?: {
-            firstEffective?: TemplateEditResponse['firstEffective'];
-            generationState?: string;
-          };
-        } = await res.json();
-        const firstEffective = json.data?.firstEffective ?? null;
-        const wireState = json.data?.generationState;
-        const generationState: TemplateGenerationState =
-          wireState === 'paused' || wireState === 'archived' ? wireState : 'active';
-        setSuccess(
-          templateUpdatedMessage(
-            firstEffective ? new Date(firstEffective) : null,
-            generationState,
-            'template',
-          ),
-        );
+        let rawJson: unknown;
+        try {
+          rawJson = await res.json();
+        } catch (err) {
+          console.error('[studio-template-form] updated, but response body was unreadable', {
+            templateId,
+            err,
+          });
+          setSuccess(UNREADABLE_CONFIRMATION_MESSAGE);
+        }
+
+        if (rawJson !== undefined) {
+          try {
+            const json = rawJson as {
+              data?: {
+                firstEffective?: TemplateEditResponse['firstEffective'];
+                generationState?: string;
+              };
+            };
+            const firstEffective = json.data?.firstEffective ?? null;
+            const wireState = json.data?.generationState;
+            const generationState: TemplateGenerationState =
+              wireState === 'paused' || wireState === 'archived' ? wireState : 'active';
+            setSuccess(
+              templateUpdatedMessage(
+                firstEffective ? new Date(firstEffective) : null,
+                generationState,
+                'template',
+              ),
+            );
+          } catch (err) {
+            console.error('[studio-template-form] updated, but the confirmation could not be resolved', {
+              templateId,
+              err,
+            });
+            setSuccess(UNREADABLE_CONFIRMATION_MESSAGE);
+          }
+        }
         router.refresh();
       }
-    } catch {
-      setError('Network error. Please try again.');
     } finally {
       setSubmitting(false);
     }

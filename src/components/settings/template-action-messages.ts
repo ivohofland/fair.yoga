@@ -320,10 +320,9 @@ export const UNARCHIVE_MESSAGE =
   'Un-archived. This recurring class is paused — resume it to put classes back on your schedule.';
 
 /**
- * Shown when a template toggle or archive mutation succeeded (2xx) but its
- * confirmation text could not be produced (#193) — either the response body
- * would not parse, or it parsed but `resolveTemplateConfirmation` /
- * `resolveStudioConfirmation` could not read the shape it expected from it.
+ * Shown when a template toggle, archive, or edit mutation succeeded (2xx) but its
+ * confirmation text could not be produced (#193, #477) — either the response body
+ * would not parse, or it parsed but confirmation could not be resolved from it.
  *
  * Past res.ok, the server mutation has already committed. Neither failure must
  * claim a network transport failure ("Network error. Please try again."),
@@ -505,10 +504,10 @@ const COUNT_KEYS = {
  *
  * NOT a truncated payload, and that distinction is the whole of what this
  * guard defends against. A body that will not parse reaches it from nowhere:
- * the create forms (`template-form.tsx`, `studio-template-form.tsx`) wrap
- * `res.json()` inside a `try` whose catch sets "Network error", while the
- * toggle/archive buttons catch unparseable 2xx bodies before calling the resolvers
- * below (#193) and set `UNREADABLE_CONFIRMATION_MESSAGE`.
+ * all callers — the create and edit forms (`template-form.tsx`,
+ * `studio-template-form.tsx`, #477) and the toggle/archive buttons (#193) —
+ * catch unparseable 2xx bodies separately before reaching resolvers or the
+ * counts gate.
  * Re-derive the callers rather than trust a roster here:
  *
  *   grep -rln "hasIntegerCounts\|resolveTemplateConfirmation\|resolveStudioConfirmation" \
