@@ -35,6 +35,7 @@ const handleSpotFreed = vi.fn();
 const findUnique = vi.fn();
 const updateMany = vi.fn();
 const waitlistCount = vi.fn();
+const notificationCreate = vi.fn();
 
 vi.mock('@/services/waitlist', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/services/waitlist')>();
@@ -56,8 +57,14 @@ vi.mock('@/lib/api-utils', async (importOriginal) => {
     }),
   };
 });
-// The three calls the DELETE path makes. A teacher session skips the
-// cancel-deadline branch, so this is the whole surface.
+// The four calls the DELETE path makes. A teacher session skips the
+// cancel-deadline branch, so this is the whole surface — including the
+// cancellation-notice write (#434), which this file's fixture is a teacher
+// cancelling on a student's behalf, so it lands as `booking_removed`. None of
+// these tests assert on that notification; it is stubbed only so the write
+// succeeds and `notifyCancellation` stays silent, the same reason
+// `handleSpotFreed`'s success path never appears in a `mockRejectedValue`
+// call below.
 vi.mock('@/lib/db', () => ({
   prisma: {
     registration: {
@@ -65,6 +72,7 @@ vi.mock('@/lib/db', () => ({
       updateMany: (...args: unknown[]) => updateMany(...args),
     },
     waitlistEntry: { count: (...args: unknown[]) => waitlistCount(...args) },
+    notification: { create: (...args: unknown[]) => notificationCreate(...args) },
   },
 }));
 
@@ -93,6 +101,7 @@ function registrationRow() {
       cancelDeadline: 'HOURS_24',
       calendarEntry: {
         teacherId: 'teacher-1',
+        classType: 'Vinyasa',
         date: new Date('2099-06-01T00:00:00Z'),
         startTime: new Date('1970-01-01T10:00:00Z'),
         cancelledAt: null,
@@ -115,6 +124,7 @@ beforeEach(() => {
   updateMany.mockReset().mockResolvedValue({ count: 1 });
   waitlistCount.mockReset().mockResolvedValue(3);
   handleSpotFreed.mockReset();
+  notificationCreate.mockReset().mockResolvedValue({ id: 'note-1' });
 });
 
 describe('DELETE /api/registrations/[id] — the loss its spot-freed hook records', () => {

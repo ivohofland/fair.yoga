@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
-import { hhmmToTime } from '@/lib/time-of-day';
+import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
+import { formatDayHeader } from '@/lib/format';
+import { isEssential } from '@/services/notification-policy';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -1585,5 +1587,128 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
       method: 'DELETE', headers: cookie(cancellerToken),
     });
     expect(second.status).toBe(409);
+  });
+});
+
+describe('DELETE /api/registrations/[id] — the student is told their booking ended (#434)', () => {
+  /**
+   * Every assertion on a body derives its expected strings from the STORED
+   * row rather than restating the fixture's literals — the idiom
+   * `classes-api.test.ts`'s cancellation-notice test documents. Hard-coded
+   * copies fail on a fixture change while the route is perfectly correct, and
+   * only a value rendered from what the column actually returned can catch
+   * the route drifting off UTC midnight.
+   */
+  async function storedEntry(classId: string) {
+    const cls = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      select: { calendarEntry: { select: { classType: true, date: true, startTime: true } } },
+    });
+    return cls.calendarEntry;
+  }
+
+  function expectNamesTheClass(body: string, entry: { classType: string; date: Date; startTime: Date }) {
+    expect(body).toContain(entry.classType);
+    expect(body).toContain(formatDayHeader(entry.date));
+    expect(body).toContain(timeToHHmm(entry.startTime));
+  }
+
+  it('tells a student who cancelled before the deadline, without claiming a charge', async () => {
+    const classId = await makeClass(5);
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    const res = await fetch(`${BASE_URL}/api/registrations/${data.id}`, {
+      method: 'DELETE',
+      headers: cookie(studentTokens[0]!),
+    });
+    expect(res.status).toBe(200);
+
+    const note = await prisma.notification.findFirstOrThrow({
+      where: {
+        recipientType: 'student',
+        recipientId: studentIds[0]!,
+        relatedClassId: classId,
+        type: 'booking_cancelled',
+      },
+    });
+    expectNamesTheClass(note.body, await storedEntry(classId));
+    expect(note.body).toContain("won't be charged");
+    expect(note.body).not.toContain('still charged');
+  });
+
+  it('tells a student who cancelled late that the class is still charged', async () => {
+    // Offset 60: `makeLateCancelClass` callers must not overlap, and 0, 20
+    // and 40 are taken by tests above.
+    const classId = await makeLateCancelClass(5, 60);
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    const res = await fetch(`${BASE_URL}/api/registrations/${data.id}`, {
+      method: 'DELETE',
+      headers: cookie(studentTokens[0]!),
+    });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { data: { status: string } }).data.status).toBe('late_cancel');
+
+    const note = await prisma.notification.findFirstOrThrow({
+      where: {
+        recipientType: 'student',
+        recipientId: studentIds[0]!,
+        relatedClassId: classId,
+        type: 'booking_cancelled',
+      },
+    });
+    expectNamesTheClass(note.body, await storedEntry(classId));
+    expect(note.body).toContain('still charged');
+  });
+
+  it('tells a student their teacher ended it, as the louder of the two types', async () => {
+    const classId = await makeClass(5);
+    const created = await post(studentTokens[1]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    const res = await fetch(`${BASE_URL}/api/registrations/${data.id}`, {
+      method: 'DELETE',
+      headers: cookie(ownerToken),
+    });
+    expect(res.status).toBe(200);
+
+    const note = await prisma.notification.findFirstOrThrow({
+      where: {
+        recipientType: 'student',
+        recipientId: studentIds[1]!,
+        relatedClassId: classId,
+        type: 'booking_removed',
+      },
+    });
+    expectNamesTheClass(note.body, await storedEntry(classId));
+    expect(note.body).toContain('Your teacher cancelled');
+    expect(note.body).toContain("won't be charged");
+    // The route's type choice and the delivery policy are decided in different
+    // files; this is the one assertion that holds them together, so a removal
+    // demoted to the opt-out-able type fails here rather than in silence.
+    expect(isEssential(note.type)).toBe(true);
+  });
+
+  it('tells only the student — a cancellation notifies no teacher', async () => {
+    const classId = await makeClass(5);
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    const res = await fetch(`${BASE_URL}/api/registrations/${data.id}`, {
+      method: 'DELETE',
+      headers: cookie(studentTokens[0]!),
+    });
+    expect(res.status).toBe(200);
+
+    // Not an empty list: booking the seat DID notify the teacher
+    // (`booking_confirmed`, sent by POST /api/registrations). Asserting the
+    // exact set is what distinguishes "cancellation adds none" from "this
+    // fixture never notified the teacher at all".
+    const teacherNotes = await prisma.notification.findMany({
+      where: { recipientType: 'teacher', recipientId: ownerId, relatedClassId: classId },
+    });
+    expect(teacherNotes.map((n) => n.type)).toEqual(['booking_confirmed']);
   });
 });

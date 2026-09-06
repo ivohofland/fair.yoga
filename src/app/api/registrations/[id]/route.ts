@@ -14,6 +14,9 @@ import { DEADLINE_HOURS, handleSpotFreed, SpotFreedError, spotFreedLoss } from '
 import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
+import { formatDayHeader } from '@/lib/format';
+import { timeToHHmm } from '@/lib/time-of-day';
+import { createNotification, type CreateNotificationInput } from '@/services/notifications';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -205,6 +208,7 @@ export const DELETE = withErrorHandler(async (
           calendarEntry: {
             select: {
               teacherId: true,
+              classType: true,
               date: true,
               startTime: true,
               cancelledAt: true,
@@ -273,6 +277,14 @@ export const DELETE = withErrorHandler(async (
       }
       // The seat is free even though the canceller is still charged.
       await promoteAfterCancel(registration.classId);
+      await notifyCancellation({
+        recipientType: 'student',
+        recipientId: registration.studentId,
+        relatedClassId: registration.classId,
+        type: 'booking_cancelled',
+        title: 'Booking cancelled',
+        body: `Your booking for ${classPhrase(registration.class.calendarEntry)} is cancelled. It was past the cancellation deadline, so this class is still charged.`,
+      });
       return respondOk({ id, status: 'late_cancel' });
     }
   }
@@ -291,6 +303,36 @@ export const DELETE = withErrorHandler(async (
   // Hybrid waitlist promotion: auto-promote, broadcast, or stay frozen
   // depending on how close to the deadline we are.
   await promoteAfterCancel(registration.classId);
+
+  // Layer 1+2 of the comms model, the pair booking sends inverted — except
+  // that this direction tells only the student, deliberately. TWO types
+  // because the delivery policy differs on them: a removal the student did
+  // not ask for is essential, their own cancellation is not
+  // (`services/notification-policy.ts` carries that reasoning).
+  //
+  // Branched on `isStudent`, not `isTeacher`: a dual-role account cancelling
+  // its own booking is self-initiated even when it also teaches, the same
+  // precedence the GET handler above applies for the same reason.
+  const phrase = classPhrase(registration.class.calendarEntry);
+  await notifyCancellation(
+    isStudent
+      ? {
+          recipientType: 'student',
+          recipientId: registration.studentId,
+          relatedClassId: registration.classId,
+          type: 'booking_cancelled',
+          title: 'Booking cancelled',
+          body: `Your booking for ${phrase} is cancelled. You won't be charged for it.`,
+        }
+      : {
+          recipientType: 'student',
+          recipientId: registration.studentId,
+          relatedClassId: registration.classId,
+          type: 'booking_removed',
+          title: 'Booking cancelled by your teacher',
+          body: `Your teacher cancelled your booking for ${phrase}. You won't be charged for it.`,
+        },
+  );
 
   return respondOk({ id, status: 'cancelled' });
 });
@@ -347,6 +389,38 @@ export const DELETE = withErrorHandler(async (
  * after an earlier one succeeded IS repaired, because `Class.spotBroadcastAt`
  * is cleared by the claim that consumed the earlier seat.
  */
+/**
+ * The class a cancellation notice is about, named the way every cancellation
+ * notice names one: type, day, time. `startTime` is a `@db.Time` column, so
+ * it arrives as a `Date` and needs rendering rather than interpolating.
+ */
+function classPhrase(entry: { classType: string; date: Date; startTime: Date }): string {
+  return `${entry.classType} on ${formatDayHeader(entry.date)} at ${timeToHHmm(entry.startTime)}`;
+}
+
+/**
+ * Sends the student their cancellation notice, after the cancel has committed.
+ *
+ * Swallowed for the same reason `promoteAfterCancel` swallows: the status
+ * write has already landed, and a throw from here would answer 500 for a
+ * cancellation that fully succeeded — the student would see an error, retry,
+ * and be told their booking is already cancelled.
+ *
+ * `error` rather than `warn`, even for a transient failure, and unlike the
+ * waitlist hook next door: nothing sweeps for missing notifications, so a loss
+ * here is permanent. The student is simply never told.
+ */
+async function notifyCancellation(input: CreateNotificationInput): Promise<void> {
+  try {
+    await createNotification(prisma, input);
+  } catch (err) {
+    log.error(
+      { err, recipientId: input.recipientId, type: input.type, classId: input.relatedClassId },
+      'cancellation notice not sent — the student was not told their booking ended',
+    );
+  }
+}
+
 async function promoteAfterCancel(classId: string): Promise<void> {
   try {
     await handleSpotFreed(prisma, classId);
