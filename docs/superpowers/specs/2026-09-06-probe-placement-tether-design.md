@@ -27,7 +27,7 @@ Both shapes the docblock names, one pair each. 15 mentions of the bare name
 across non-test `src/`, so the `(db|prisma` anchor is doing real work. Nothing
 here is wrong.
 
-### 2. The stated mechanism — `25P02` — is not reachable today
+### 2. The stated mechanism — `25P02` — is not reachable through these probes
 
 #467's account of the defect:
 
@@ -100,7 +100,14 @@ has to pass on.
 
 ### 4. The receiver is not `db`, and a stronger rule is falsified by a shipping call site
 
-**The receiver.** #467 names `db.$transaction`. Across non-test `src/`:
+**The receiver.** #467 names `db.$transaction`. Two measurements, because an
+earlier draft of this section printed the first under the label of the second —
+the eleven-name figure below is over all of `src/`, test files included, and the
+census's actual scope is the smaller set. The conclusion is unchanged; the
+arithmetic was measured over the wrong set, so both sets are shown with the
+command that produces each.
+
+Across **all of `src/`**, test files included — eleven receiver names:
 
 ```
 $ grep -rhoE "[A-Za-z_$][A-Za-z0-9_$]*\.\$transaction" src/ --include="*.ts" --include="*.tsx" | sort | uniq -c | sort -rn
@@ -110,9 +117,25 @@ $ grep -rhoE "[A-Za-z_$][A-Za-z0-9_$]*\.\$transaction" src/ --include="*.ts" --i
                                                                                     1 a.$transaction
 ```
 
-Eleven receiver names. All four `probeConflictingEntry` sites sit under
-`prisma.$transaction`, so a detector keyed on `db` would see none of them. The
-detector anchors on the **member name** `$transaction`, whatever it is read off.
+Per-name tallies as at `db443df3`; this branch's own fixture sources move
+several of them, and the number of distinct names does not change.
+
+Across **non-test `src/`**, which is the scope the census walks — two:
+
+```
+$ grep -rhoE "[A-Za-z_$][A-Za-z0-9_$]*\.\$transaction" src/ --include="*.ts" --include="*.tsx" --exclude="*.test.ts" --exclude="*.test.tsx" | sort | uniq -c | sort -rn
+  30 db.$transaction
+   7 prisma.$transaction
+```
+
+The design's argument rests on this second figure, and survives it. Every
+`$transaction` a `probeConflictingEntry` call site sits beside is opened on
+`prisma` — `classes/route.ts:101`, `studio-classes/route.ts:73`,
+`studio-classes/[id]/route.ts:239`, with the fourth call site's file holding no
+`$transaction` at all (below) — so a detector anchored on `db` would recognise
+none of them, while still ignoring all seven `prisma` openings in the scope it
+does search. The detector anchors on the **member name** `$transaction`,
+whatever it is read off.
 
 **The stronger rule that does not hold.** The docblock says "every call site must
 sit after **its own** transaction's closing `)`", which reads as a checkable
@@ -140,10 +163,21 @@ needed rather than redundant:
 > site unchanged and break only in production, under contention.
 
 `rule-slot-holder.test.ts` has **no** such device — measured, zero
-`@ts-expect-error` in the file, against ten in `db-locks.test.ts` and one in
-`entry-conflict.test.ts`. So `ruleSlotHolder`'s argument rule rests on an
-accident of `Omit`'s shape that nothing pins, one file over from the paragraph
-explaining why that is not enough.
+`@ts-expect-error` directives in the file, against nine in `db-locks.test.ts`
+and one in `entry-conflict.test.ts`. Counted on the directive rather than on the
+string: `db-locks.test.ts` also names `@ts-expect-error` in prose inside a
+docblock, so a bare `grep -c` answers ten and overstates the device by one.
+
+```
+$ grep -cE '^\s*//\s*@ts-expect-error' src/lib/db-locks.test.ts
+9
+$ grep -cE '^\s*//\s*@ts-expect-error' src/lib/entry-conflict.test.ts
+1
+```
+
+So `ruleSlotHolder`'s argument rule rests on an accident of `Omit`'s shape that
+nothing pins, one file over from the paragraph explaining why that is not
+enough.
 
 ## The design: two rules, two mechanisms
 

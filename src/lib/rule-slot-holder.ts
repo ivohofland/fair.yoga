@@ -58,11 +58,11 @@ export function minutesSinceMidnight(t: Date): number {
  * sits after its own transaction's closing `)`, where Prisma has already
  * committed or rolled back and `db` is a clean connection.
  *
- * Call sites reach this probe two ways: from a `catch`, where the refused
- * statement aborted the transaction, and from a normal return path, where a
- * zero-row `ON CONFLICT DO NOTHING` refusal never threw and the transaction
- * committed. Both requirements above hold identically either way, and they are
- * all this docblock asserts about call sites.
+ * Call sites reach this probe from a `catch`, where the refused statement
+ * aborted the transaction, and from a normal return path, where a zero-row
+ * `ON CONFLICT DO NOTHING` refusal never threw and the transaction committed.
+ * Both requirements above hold identically either way, and they are all this
+ * docblock asserts about call sites.
  *
  * NO ROSTER HERE, for the reason `db-locks.ts` spends a paragraph on: a caller
  * list kept in this file goes stale and nothing that counts can catch it. A
@@ -78,7 +78,10 @@ export function minutesSinceMidnight(t: Date): number {
  * tree and asserts that no call to a probe it censuses — this one among them —
  * sits lexically inside a `$transaction(…)` callback. A call site that moves
  * inside one reddens the suite, so the command above is a convenience for a
- * reader rather than the thing holding the rule up.
+ * reader rather than the thing holding the rule up — and a narrower net than
+ * what is enforced, since the census walks every non-test `.ts`/`.tsx` under
+ * `src/` and follows import aliases, so a call site the two directories above
+ * miss is held all the same.
  *
  * IT DOES NOT ASK FOR A TRANSACTION BESIDE THE CALL, only that there is none
  * around it. A caller whose refused transaction lived one layer down, inside

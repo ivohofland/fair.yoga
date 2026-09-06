@@ -209,15 +209,18 @@ export async function probeOverlappingCandidates(
  * and passing the outer client: it takes a second pooled connection while the
  * caller's own transaction still holds the first — under exactly the contention
  * that produces slot conflicts — and reads a committed snapshot blind to the
- * very transaction it is being asked about. Every call site therefore sits
- * after its own transaction's closing `)`.
+ * very transaction it is being asked about. So no call site sits inside one:
+ * either after its own transaction's closing `)`, or — where the refused
+ * transaction lives one layer down, inside a service the caller awaited and
+ * already closed by the time the result came back — with no `)` of its own to
+ * sit after.
  *
- * Call sites reach this probe two ways: from a failure path, where the refused
- * statement aborted the transaction — caught at the call site, or by a service
- * that returned the refusal as a reason — and from the entry creates' normal
- * return path, where a zero-row `ON CONFLICT DO NOTHING` refusal never threw
- * and the transaction committed. Both requirements above hold identically
- * either way, and the current set of call sites is whatever this returns:
+ * Call sites reach this probe from a failure path, where the refused statement
+ * aborted the transaction — caught at the call site, or by a service that
+ * returned the refusal as a reason — and from the entry creates' normal return
+ * path, where a zero-row `ON CONFLICT DO NOTHING` refusal never threw and the
+ * transaction committed. Both requirements above hold identically either way,
+ * and the current set of call sites is whatever this returns:
  *
  *   grep -rn "probeConflictingEntry(" src/services/ src/app/api/
  *
@@ -226,10 +229,11 @@ export async function probeOverlappingCandidates(
  * tree and asserts that no call to a probe it censuses — this one among them —
  * sits lexically inside a `$transaction(…)` callback. A call site that moves
  * inside one reddens the suite, so the command above is a convenience for a
- * reader rather than the thing holding the rule up. It asserts only that
- * negative: a caller whose refused transaction lives one layer down, inside the
- * service it awaited, has no transaction of its own beside the probe and is
- * right to have none. What else it does not see is in its own docblock.
+ * reader rather than the thing holding the rule up — and a narrower net than
+ * what is enforced, since the census walks every non-test `.ts`/`.tsx` under
+ * `src/` and follows import aliases, so a call site the two directories above
+ * miss is held all the same. It asserts only the negative just stated. What
+ * else it does not see is in its own docblock.
  *
  * NEVER THROWS, and that is a guarantee about the refusal rather than about
  * this query. Every caller has already been refused by the database and has
