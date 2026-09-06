@@ -300,9 +300,9 @@ export type ErasureHalf = 'student' | 'teacher';
  * erasure — `deleteStudentAccount` runs `handleSpotFreed` per freed class
  * AFTER its transaction commits, so a second commit would broadcast a second
  * `spot_available` set to every waiting student. Scoping the write alone does
- * not prevent that; only refusing to commit does. `gdpr.test.ts` ("erases
- * once when the same student erasure runs twice concurrently") fails on the
- * doubled broadcast if the scope stays and this throw goes.
+ * not prevent that; only refusing to commit does. `gdpr-lock-order.test.ts`
+ * ("erases once when the same student erasure runs twice concurrently")
+ * fails on the doubled broadcast if the scope stays and this throw goes.
  *
  * `DELETE /api/account` maps this to the same 200 a first erasure returns —
  * see that route for why it must not reach `erasureFailure`.

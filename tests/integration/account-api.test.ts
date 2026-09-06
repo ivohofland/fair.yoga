@@ -645,10 +645,11 @@ describe('DELETE /api/account', () => {
   /**
    * #196 branch 2, Task 3, route half. The service now aborts a redundant
    * erasure with `AlreadyErasedError` so its post-commit `handleSpotFreed`
-   * loop cannot broadcast twice (`gdpr.test.ts` owns that assertion). This
-   * pins the other half of that decision: the loser's abort is a SUCCESS, and
-   * must not fall into `erasureFailure` — which would answer a 500 and tell a
-   * user their account could not be removed, about an account that is gone.
+   * loop cannot broadcast twice (`gdpr-lock-order.test.ts` owns that
+   * assertion). This pins the other half of that decision: the loser's abort
+   * is a SUCCESS, and must not fall into `erasureFailure` — which would
+   * answer a 500 and tell a user their account could not be removed, about an
+   * account that is gone.
    *
    * The lever is the one Tasks 1 and 2 established, for the reason they
    * recorded: two plain fetches serialise, and a serialised second request

@@ -138,7 +138,8 @@ describe('setTeacherRoomArchived — lock discipline (issue 272)', () => {
   // The assertion is that it gave up on the lock rather than waiting out
   // the holder. Bounded, it fails at the shared bound with `55P03`; unbounded,
   // it waits out the holder and SUCCEEDS, failing the `55P03` assertion.
-  // There is deliberately no wall-clock upper bound (#323, waitlist.test.ts:525-555).
+  // There is deliberately no wall-clock upper bound (#323, `waitlist-lock-order.test.ts`'s
+  // "gives up on the 2s bound when another transaction holds the class row" docblock).
   it('gives up on the shared bound rather than waiting out the holder', async () => {
     const f = await makeFixture();
     const tpl = await addTemplate(f, { isActive: false, isArchived: false });
