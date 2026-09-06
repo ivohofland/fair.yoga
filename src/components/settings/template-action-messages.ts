@@ -320,17 +320,19 @@ export const UNARCHIVE_MESSAGE =
   'Un-archived. This recurring class is paused — resume it to put classes back on your schedule.';
 
 /**
- * Shown when a template toggle or archive mutation succeeded (2xx) but the
- * response body could not be parsed (#193).
+ * Shown when a template toggle or archive mutation succeeded (2xx) but its
+ * confirmation text could not be produced (#193) — either the response body
+ * would not parse, or it parsed but `resolveTemplateConfirmation` /
+ * `resolveStudioConfirmation` could not read the shape it expected from it.
  *
- * Past res.ok, the server mutation has already committed. An unreadable body
- * (such as proxy truncation or malformed JSON) must not claim a network transport
- * failure ("Network error. Please try again."), which would falsely report that the
- * mutation failed. Nor must it skip router.refresh(), which would leave the UI
- * stale; on retry, the server-side no-op path (`pauseOrResumeRule` /
- * `archiveOrUnarchiveRule` in `services/rule-lifecycle.ts`) returns 200 unchanged,
- * which resolves to silence and leaves the user believing both clicks failed.
- * Callers surface this message and still invoke router.refresh().
+ * Past res.ok, the server mutation has already committed. Neither failure must
+ * claim a network transport failure ("Network error. Please try again."),
+ * which would falsely report that the mutation failed. Nor must either skip
+ * router.refresh(), which would leave the UI stale; on retry, the server-side
+ * no-op path (`pauseOrResumeRule` / `archiveOrUnarchiveRule` in
+ * `services/rule-lifecycle.ts`) returns 200 unchanged, which resolves to
+ * silence and leaves the user believing both clicks failed.
+ * Callers surface this message and still invoke router.refresh() either way.
  */
 export const UNREADABLE_CONFIRMATION_MESSAGE =
   'Updated, but could not read confirmation details.';
