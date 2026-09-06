@@ -102,6 +102,9 @@ export const LOCK_CONTENTION_TESTS = [
   // #468: no extraction — the file was already the sibling, so it needed only
   // the marker and this entry.
   'src/services/transition-class-lock-order.test.ts',
+  // #468: split out of `class-lifecycle.test.ts`, which already had a serial
+  // sibling for a different mechanism — each file's header carries its own.
+  'src/services/class-lifecycle-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

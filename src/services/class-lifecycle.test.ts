@@ -748,11 +748,11 @@ describe('completeClass (DB)', () => {
   let classId: string;
   const studentIds: string[] = [];
 
-  // For the lock tests below, which each need their own class rather than
-  // sharing the fixture `classId` the other tests in this block mutate to
-  // 'completed'. Mirrors `updateClass (DB)`'s `makeClass` closure — reuses
-  // the shared teacher/room fixture from `beforeAll` instead of standing up
-  // a fresh one per test.
+  // For the tests below that need a class of their own rather than the
+  // fixture `classId` this block's first case mutates to 'completed'.
+  // Mirrors `updateClass (DB)`'s `makeClass` closure — reuses the shared
+  // teacher/room fixture from `beforeAll` instead of standing up a fresh one
+  // per test.
   // Counter-derived DATE: the beforeAll below plants a class at 18:00 for this
   // same teacher, and every call here needs a slot of its own too. No test in
   // this block reads or asserts the literal startTime, only the id, so the
@@ -879,7 +879,7 @@ describe('completeClass (DB)', () => {
   afterAll(async () => {
     // Clean up in dependency order: waitlist entries → payments → registrations → class → students → teacherRoom → room → teacher.
     // Filtered by teacherId, not just the fixed `classId`, so this also
-    // catches the extra classes `makeClass` creates in the lock tests below.
+    // catches the extra classes `makeClass` creates below.
     // Not because it blocks the delete below: `WaitlistEntry.class` is
     // `onDelete: Cascade` (`prisma/schema.prisma`), so a waitlist row
     // disappears with its class whether or not this line ever runs. What
@@ -974,117 +974,22 @@ describe('completeClass (DB)', () => {
   });
 
   /**
-   * The lock cannot be seen in the rows afterwards — it is the timing that
-   * differs. But timing alone does not falsify this: `completeClass` always
-   * ends with a `class.update`, and that statement blocks behind another
-   * transaction's `FOR UPDATE` whether or not the read above it was taken
-   * under a lock — a holder that only sleeps produces the same
-   * wait-then-return shape either way (confirmed: this was tried first, and
-   * it passed against the unlocked implementation, which is why it was
-   * rewritten). So the holder here also commits a status change — while
-   * `completeClass` is blocked, not before it starts — and the assertion
-   * is on what the eventual decision was made from, not just on the wait:
-   * a read taken under the lock (after the holder's commit) sees the
-   * cancellation and refuses; a read taken before the wait is stale, and
-   * the unconditional `class.update` that follows — once the lock frees —
-   * clobbers the holder's cancellation with 'completed'. Held well under
-   * the 2s `lock_timeout` the new site sets, so this observes the wait and
-   * not the timeout.
-   *
-   * One charged registration is attached rather than none: the lock's
-   * stated purpose covers the registration set the pricing engine consumes
-   * and the `payment.create` it feeds, not just the status field, and a
-   * class with zero registrations only ever exercises `completeClass`'s
-   * zero-charged short-circuit — proving nothing about that half of the
-   * rationale beyond inference.
-   */
-  it('decides from the class row the holder left behind, not from a read taken before the wait', async () => {
-    const cls = await makeClass({ status: 'in_progress' });
-    const student = await prisma.student.create({
-      data: {
-        firstName: 'Lock',
-        lastName: 'Test',
-        email: `lock-test-${uniqueSuffix}@test.local`,
-        incomeTier: 3,
-      },
-    });
-    studentIds.push(student.id);
-    await prisma.registration.create({
-      data: { classId: cls.id, studentId: student.id, status: 'registered', tierAtBooking: 3 },
-    });
-
-    // Set when the holder's own work — the sleep and its status update — is
-    // done, which happens before its transaction callback returns and
-    // therefore before Prisma issues `COMMIT` and before Postgres actually
-    // releases the row lock. Named for what it observes: not "released",
-    // which happens later, on both counts.
-    let holderFinishedWork = false;
-
-    const holder = prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
-        await new Promise((r) => setTimeout(r, 900));
-        await tx.calendarEntry.update({
-          where: { id: cls.calendarEntryId },
-          data: { cancelledAt: new Date() },
-        });
-        holderFinishedWork = true;
-      },
-      { timeout: 10_000 },
-    );
-    await new Promise((r) => setTimeout(r, 150));
-
-    const completingResult = completeClass(prisma, cls.id, { finishedEarly: true });
-    const completing = completingResult.then(() => 'returned' as const);
-    const outcome = await Promise.race([
-      completing,
-      new Promise<'waiting'>((r) => setTimeout(() => r('waiting'), 400)),
-    ]);
-
-    expect(outcome).toBe('waiting');
-    expect(holderFinishedWork).toBe(false);
-
-    await holder;
-    const result = await completingResult;
-
-    // Without the lock, this reads an uncancelled entry — the state that was
-    // current before the wait began — and reports success, having already
-    // clobbered the holder's cancellation on the way out.
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('CANCELLED');
-
-    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
-    expect(after.status).toBe('in_progress');
-    expect(after.calendarEntry.cancelledAt).not.toBeNull();
-
-    // The registration was never priced and no Payment exists — the
-    // pricing engine never ran, because the refusal happened before
-    // `completeClass` got past its own status gate.
-    const reg = await prisma.registration.findFirstOrThrow({ where: { classId: cls.id } });
-    expect(reg.price).toBeNull();
-    expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(0);
-  });
-
-  /**
    * The refusal's SHAPE is the assertion, not the absence of Payment rows.
    * After the terminality trigger lands (Task 8), "no Payment rows" is
    * satisfied by the trigger alone and would no longer prove this lock.
    *
-   * Renamed from 'refuses cleanly when the class was cancelled while it
-   * waited' — nothing here waits or races; the cancel is a plain,
-   * already-committed update issued before `completeClass` is even called.
-   * What this actually pins is `completeClass`'s own status gate (the
-   * `validateTransition` call, not the lock this file is otherwise about).
-   * Mutating that gate to a no-op fails this test — and, an earlier version
-   * of this comment claimed, ONLY this test in the whole suite. That was
-   * wrong: re-measured across all 592 unit tests, two fail, both in this
-   * file. The other is "decides from the class row the holder left behind,
-   * not from a read taken before the wait" immediately above, whose own
-   * refusal also comes from this gate — it asserts the refusal's shape
-   * precisely because "no Payment rows" would be satisfied by the terminality
-   * trigger alone. So the gate is not uniquely pinned here; what IS unique
-   * here is that this is the only one of the two that reaches it without any
-   * concurrency at all.
+   * Nothing here waits or races: the cancel is a plain, already-committed
+   * update issued before `completeClass` is even called. What this pins is
+   * `completeClass`'s own status gate — the `validateTransition` call, not
+   * the lock this file is otherwise about.
+   *
+   * That gate is NOT uniquely pinned here, and the mutation says so: reducing
+   * it to a no-op also fails "decides from the class row the holder left
+   * behind, not from a read taken before the wait", which now lives in
+   * `class-lifecycle-lock-order.test.ts` and whose own refusal comes from the
+   * same gate. What is unique here is that this case reaches the gate with no
+   * concurrency at all — and, since #468, from the parallel tier, where that
+   * one no longer runs.
    */
   it('refuses to complete a class that is already cancelled', async () => {
     const cls = await makeClass({ status: 'in_progress' });
@@ -1210,59 +1115,6 @@ describe('completeClass (DB)', () => {
     const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
     expect(updated.status).toBe('completed');
   });
-
-  /**
-   * `setLockTimeout` in `transitionClass`, which was the entire subject of the
-   * commit that added it and which nothing pinned — deleting the call passed
-   * 1172 unit and integration tests.
-   *
-   * `transitionClass` takes its `Class` row lock through the CAS rather than
-   * through `lockClassRow`, so it inherited no per-statement bound. Once the
-   * CAS moved inside an interactive transaction that mattered: an unbounded
-   * wait becomes Prisma's 5s budget expiring mid-transaction (`P2028`, which
-   * `classifyApiError` answers with a 503 the caller cannot act on) instead of
-   * the 2s `55P03` every sibling gets and which maps to retry advice.
-   *
-   * The bounds are deliberately loose, as this repo's sibling lock-timeout
-   * tests are (`class-generator.test.ts`): the lower one proves it really
-   * waited on the row rather than sailing through, the upper that it gave up on
-   * the 2s bound rather than Prisma's 5s. Neither pins the bound's VALUE, which
-   * belongs to `db-locks.ts`.
-   */
-  it('gives up on the 2s bound when another transaction holds the class row', async () => {
-    const cls = await makeClass({ status: 'open' });
-    let release!: () => void;
-    const held = new Promise<void>((r) => {
-      release = r;
-    });
-
-    const holder = prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
-        await held;
-      },
-      { timeout: 20_000 },
-    );
-    await new Promise((r) => setTimeout(r, 150));
-
-    try {
-      const startedAt = Date.now();
-      await expect(transitionClass(prisma, cls.id, 'in_progress')).rejects.toThrow(/55P03|lock timeout/i);
-      const waited = Date.now() - startedAt;
-
-      // Lower bound proves it waited rather than failing instantly. The 2s
-      // value is pinned by `db-locks.test.ts`, and there is deliberately no
-      // wall-clock upper bound (#323, `waitlist-lock-order.test.ts`'s "gives up
-      // on the 2s bound when another transaction holds the class row" docblock).
-      expect(waited).toBeGreaterThanOrEqual(1_800);
-
-      const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
-      expect(unchanged.status).toBe('open');
-    } finally {
-      release();
-      await holder;
-    }
-  }, 20_000);
 
   it('still completes early for a teacher, who passes no requireEndedBy', async () => {
     // The option is what makes the sweep strict; omitting it must NOT become
