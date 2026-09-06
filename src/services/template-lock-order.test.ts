@@ -324,16 +324,16 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * because which side an unforced plan drives from is a cost decision that
    * moves with table statistics, and the driving side is what fixes the output
    * order. The four settings are `db-locks-lock-order.test.ts`'s
-   * `forceIndexOrderedPlan`, mirrored rather than imported so the two files'
-   * fixtures stay independent. What they buy is stated there: of Postgres's
-   * scan paths over a plain table — sequential, index, index-only, bitmap heap
-   * and TID — the sequential and bitmap heap ones are what return physical
-   * heap order for a statement like this, both are off, and what remains is
-   * index and index-only scans. (A TID scan needs a `ctid` qual this statement
-   * does not have, so it is unreachable rather than switched off;
-   * `enable_tidscan` is not among the four.) Index-driven would not be enough,
-   * because a bitmap heap scan is fed by a bitmap index scan and still hands
-   * back the heap's order (#470).
+   * `forceIndexOrderedPlan`, mirrored rather than imported so their suites
+   * stay independent. What they buy is stated there: of Postgres's scan paths over a plain
+   * table — sequential, index, index-only, bitmap heap and TID — the sequential
+   * and bitmap heap ones are what return physical heap order for a statement
+   * like this, both are off, and what remains is index and index-only scans.
+   * (A TID scan needs a `ctid` qual this statement does not have, so it is
+   * unreachable rather than switched off; `enable_tidscan` is not among the
+   * four.) Index-driven would not be enough, because a bitmap heap scan is fed
+   * by a bitmap index scan and still hands back the heap's order (#470;
+   * `docs/lock-order.md` §"Scan path inventory").
    *
    * BTREE order, and this statement's reach was measured rather than assumed.
    * A GiST index has no key order at all, and every one this schema has is
@@ -356,7 +356,11 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    *
    * THE PLAN COMES BACK WITH THE ROWS: `EXPLAIN` runs inside the same
    * transaction, validated per-line against empty or blank text, and is passed
-   * as the assertion's message argument so a failure reports why the order moved.
+   * as the assertion's message argument so a failure reports the query plan.
+   * It is a re-plan of the same text under the same settings in the same
+   * transaction — not a record of the execution that follows, which Postgres
+   * does not hand back. Mirrored from `gdpr-lock-order.test.ts`'s pattern
+   * rather than shared across suites.
    */
   async function expectPremiseOrder(ids: {
     templateId: string;
@@ -408,7 +412,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       );
       const rows = await tx.$queryRaw<Array<{ id: string }>>(statement);
       const lines = explained.map((row) => row['QUERY PLAN']);
-      if (lines.length === 0 || lines.some((line) => typeof line !== 'string' || line === '')) {
+      if (lines.length === 0 || lines.some((line) => typeof line !== 'string' || line.trim() === '')) {
         throw new Error(
           `expectPremiseOrder: EXPLAIN returned no usable plan text (${explained.length} ` +
             `row(s), keys ${JSON.stringify(Object.keys(explained[0] ?? {}))}). The row-order ` +

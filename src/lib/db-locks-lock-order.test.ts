@@ -108,9 +108,14 @@ async function forceIndexOrderedPlan(tx: Prisma.TransactionClient): Promise<void
  * cost an archaeology session to answer it. Callers pass it as the row-order
  * assertion's message.
  *
- * Re-plans the statement text under the four forced settings in the same
- * transaction before running it. Guarded against unusable plan text: zero rows,
- * a renamed column, or a blank line all fail by name before reaching the caller.
+ * It is a re-plan of the same text under the same settings in the same
+ * transaction — not a record of the execution that follows, which Postgres
+ * does not hand back.
+ *
+ * Mirrored from `gdpr-lock-order.test.ts`'s `probeUnderForcedPlan` rather than
+ * imported, preserving suite fixture independence. Guarded per-line against
+ * unusable plan text: zero rows, a renamed column, or a blank line all fail by
+ * name before reaching the caller.
  */
 async function probeUnderForcedPlan(
   statement: Prisma.Sql,
@@ -122,7 +127,7 @@ async function probeUnderForcedPlan(
     );
     const rows = await tx.$queryRaw<Array<{ id: string }>>(statement);
     const lines = explained.map((row) => row['QUERY PLAN']);
-    if (lines.length === 0 || lines.some((line) => typeof line !== 'string' || line === '')) {
+    if (lines.length === 0 || lines.some((line) => typeof line !== 'string' || line.trim() === '')) {
       throw new Error(
         `probeUnderForcedPlan: EXPLAIN returned no usable plan text (${explained.length} ` +
           `row(s), keys ${JSON.stringify(Object.keys(explained[0] ?? {}))}). The row-order ` +
@@ -226,8 +231,8 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // gets the HIGH entry and vice versa. That inversion is what gives the
     // scan side a natural order of [HIGH, LOW] under the forced plan, whose
     // driving index keys on `Class.calendarEntryId`, on `CalendarEntry.id` or
-    // on `CalendarEntry.date` — the same THREE this file names at its two
-    // other rosters, and all three reachable: the `date` one drives once the
+    // on `CalendarEntry.date` — the same three keys this file's other rosters
+    // name, and all three reachable: the `date` one drives once the
     // tables are large enough, measured with forged `pg_class` rows. The ids
     // here settle the first two, the dates below settle the third, and every
     // one of the three yields the same [HIGH, LOW]. Assigned rather than
@@ -352,6 +357,13 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // or `Class.calendarEntryId`, [HIGH, LOW] follows for every key those
     // plans order by.
     //
+    // THE ELIGIBILITY CLAUSE IS LOAD-BEARING and the derivation is false
+    // without it. `Class.id` is a key this fixture assigns the OTHER way, so
+    // "every key those plans order by" would be untrue if a `Class_pkey`-driven
+    // plan were among them. It is not one, and that is a property of the
+    // statement rather than a cost accident — see Premise 1's comment below,
+    // which measures it.
+    //
     // Three separate `expect`s so a failure names WHICH half moved. The third
     // looks backwards and is not: the join side's natural order is
     // `Class.id` ascending, and the whole premise is that the two sides
@@ -390,7 +402,7 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // deliberately inverted to [LOW, HIGH].
     //
     // NOT `Class.id`, which this fixture assigns the OTHER way and which would
-    // therefore falsify the sentence above if a `Class_pkey`-driven plan were
+    // therefore falsify the scan-order claim above if a `Class_pkey`-driven plan were
     // reachable. It is not: this statement joins `c."calendarEntryId"` and
     // mentions `c.id` in no clause, so Postgres generates no `Class_pkey` path
     // for it at all. `gdpr-lock-order.test.ts`'s teacher probe carries the
