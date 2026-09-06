@@ -409,15 +409,23 @@ function classPhrase(entry: { classType: string; date: Date; startTime: Date }):
  * `error` rather than `warn`, even for a transient failure, and unlike the
  * waitlist hook next door: nothing sweeps for missing notifications, so a loss
  * here is permanent. The student is simply never told.
+ *
+ * The inner `try`/`catch` around the `log.error` call is the same backstop
+ * `promoteAfterCancel` below nests for its own diagnostic log, and for the
+ * same reason — see that function's docblock.
  */
 async function notifyCancellation(input: CreateNotificationInput): Promise<void> {
   try {
     await createNotification(prisma, input);
   } catch (err) {
-    log.error(
-      { err, recipientId: input.recipientId, type: input.type, classId: input.relatedClassId },
-      'cancellation notice not sent — the student was not told their booking ended',
-    );
+    try {
+      log.error(
+        { err, recipientId: input.recipientId, type: input.type, classId: input.relatedClassId },
+        'cancellation notice not sent — the student was not told their booking ended',
+      );
+    } catch (loggingErr) {
+      log.error({ err: loggingErr }, 'cancellation-notice diagnostic failed unexpectedly');
+    }
   }
 }
 
