@@ -44,10 +44,13 @@
  * MEMBER NAME `$transaction` carrying a function-like first argument, whatever
  * receiver it is read off — anchoring on a receiver name would blind the
  * detector to every call site using a different one, and the design record
- * measures how many receiver names there are. A call is inside iff walking up
- * its ancestors reaches a function node that is such a call's first argument.
- * The array form (`$transaction([…])`) has no function argument and therefore
- * contains nothing.
+ * measures the receiver names, inside this census's scope and across the wider
+ * tree. A call is inside iff walking up its ancestors reaches a function node
+ * that is such a call's first argument, and that walk does not stop at a
+ * function boundary: a probe batched into an inline callback is still inside
+ * the transaction the outer callback opened. The array form
+ * (`$transaction([…])`) has no function argument and therefore contains
+ * nothing.
  *
  * NON-VACUITY IS WHERE A CENSUS LIKE THIS DIES, so every guard below carries
  * its own reason beside it rather than a bare boolean. The one this census
@@ -59,10 +62,15 @@
  * Test files are excluded: a test may place a probe wrongly on purpose to
  * demonstrate what happens, and this rule is about production call sites. The
  * defining modules are NOT excluded — neither calls its own probe, so searching
- * them costs nothing and catches a self-call added later. A call reaching a
- * probe through a local binding (`const f = ruleSlotHolder; f(db, …)`) is
- * invisible, as are `(0, ruleSlotHolder)(…)` and `(cond ? a : b)(…)`; resolving
- * those needs a full type-checker program this test does not build. An import
+ * them costs nothing and catches a self-call added later — though
+ * `probeOverlappingCandidates`, exported beside `probeConflictingEntry`, is
+ * absent from `PROBES` deliberately rather than by oversight: it takes
+ * `PrismaClient | Prisma.TransactionClient` because it is MEANT to run on the
+ * caller's still-healthy transaction, so censusing it would redden this suite
+ * against correct code. A call reaching a probe through a local binding
+ * (`const f = ruleSlotHolder; f(db, …)`) is invisible, as are
+ * `(0, ruleSlotHolder)(…)` and `(cond ? a : b)(…)`; resolving those needs a
+ * full type-checker program this test does not build. An import
  * alias is followed only from a specifier whose last segment is the defining
  * module's own basename, so a probe reached through a re-exporting barrel is
  * not followed either. A callback passed by name (`db.$transaction(handler)`)
@@ -538,9 +546,10 @@ describe('the placement rule, against sources this repository does not contain',
   });
 
   it('reports a call under a receiver the detector was never told about', () => {
-    // Anchored on the member name, so the receiver is free. A detector keyed on
-    // the receivers the repository happens to use today would report nothing
-    // here, and nothing at whichever call site adopts the next one.
+    // Anchored on the member name, so the receiver is free. These names are not
+    // a roster of anything — they are spellings the detector must not be able to
+    // tell apart, because one keyed on whatever a scan of the tree turned up
+    // would report nothing at the call site that adopts the next one.
     for (const receiver of ['db', 'prisma', 'holderClient', 'cancelDb']) {
       const source = [
         `async function f(${receiver}: unknown) {`,
@@ -602,6 +611,26 @@ describe('the placement rule, against sources this repository does not contain',
     ].join('\n');
     expect(censusOf(source)).toEqual({
       callsInsideATransaction: [reported(6, RULE_SLOT_HOLDER, 2)],
+    });
+  });
+
+  it('reports a call inside a nested function within the callback', () => {
+    // The ancestor walk crosses function boundaries on purpose. A probe batched
+    // into an inline `.map(async …)` runs on the outer client while the
+    // callback's transaction is still open, exactly as an unbatched one would,
+    // so a walk that stopped at the nearest arrow would report this clean — and
+    // this is the shape a batching refactor of the two entry creates produces.
+    const source = [
+      'async function f(prisma: unknown, items: unknown[]) {',
+      '  await prisma.$transaction(async (tx: unknown) => {',
+      '    await Promise.all(items.map(async (item: unknown) => {',
+      `      await ${PROBE_CONFLICTING_ENTRY}(prisma, 't', { item });`,
+      '    }));',
+      '  });',
+      '}',
+    ].join('\n');
+    expect(censusOf(source)).toEqual({
+      callsInsideATransaction: [reported(4, PROBE_CONFLICTING_ENTRY, 2)],
     });
   });
 
@@ -844,5 +873,34 @@ describe('the placement rule, against sources this repository does not contain',
       callsInsideATransaction: [reported(4, RULE_SLOT_HOLDER, 3)],
     });
     expect(callbacksAt(source)).toEqual([`${FIXTURE}:2`, `${FIXTURE}:3`]);
+  });
+
+  it('orders a report across files by path before line', () => {
+    // The only fixture holding more than one file, and the only thing that
+    // exercises the cross-file arm of the sort. Every other fixture is a single
+    // path, and the real tree reports nothing, so without this the arm could be
+    // replaced by identity and the suite would stay green — leaving a
+    // multi-file failure list in whatever order the walk reached the files.
+    // Passed later-first, so a report in path order is the sort's doing.
+    const inside = (helper: string): string =>
+      [
+        'async function f(db: unknown) {',
+        '  await db.$transaction(async (tx: unknown) => {',
+        `    await ${helper}(db, {});`,
+        '  });',
+        '}',
+      ].join('\n');
+    const later = 'src/services/z-later.ts';
+    const earlier = 'src/app/api/a-earlier.ts';
+    const census = takeCensus([
+      { file: later, text: inside(RULE_SLOT_HOLDER) },
+      { file: earlier, text: inside(PROBE_CONFLICTING_ENTRY) },
+    ]);
+    expect(findings(census)).toEqual({
+      callsInsideATransaction: [
+        `${earlier}:3 (${PROBE_CONFLICTING_ENTRY}, inside the ${TRANSACTION} callback opened at line 2)`,
+        `${later}:3 (${RULE_SLOT_HOLDER}, inside the ${TRANSACTION} callback opened at line 2)`,
+      ],
+    });
   });
 });

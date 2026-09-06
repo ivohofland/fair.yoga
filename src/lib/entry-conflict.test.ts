@@ -251,7 +251,7 @@ describe('probeConflictingEntry', () => {
  * `Prisma.TransactionClient`, and that is a contract rather than a preference:
  * a statement that fails inside a Postgres transaction aborts it, so a probe
  * issued on the caller's aborted `tx` answers `25P02` rather than answering.
- * Every call site has to sit after its own transaction's closing `)`.
+ * That is why the parameter is what it is, and this device is what pins it.
  *
  * It is true today only by the shape of `Omit`: `Prisma.TransactionClient` is
  * `Omit<PrismaClient, ITXClientDenyList>`, so it is MISSING `$transaction` and
@@ -260,7 +260,13 @@ describe('probeConflictingEntry', () => {
  * (which `probeOverlappingCandidates` beside it deliberately IS) would compile
  * every call site unchanged and break only in production, under contention.
  *
- * The same device `db-locks.test.ts` keeps eight of, and for the same reason:
+ * WHERE A CALL SITE SITS is a separate claim, and out of this device's reach.
+ * A call placed inside a `$transaction(…)` callback and passing the OUTER
+ * client compiles: it fails on a second pooled connection and a snapshot blind
+ * to the transaction it is asked about, not on `25P02`.
+ * `src/lib/probe-placement-census.test.ts` is what holds that one.
+ *
+ * The same device `db-locks.test.ts` keeps, and for the same reason:
  * `tsconfig.json` includes every `.ts` file in the repo, so weakening the
  * parameter makes `tsc --noEmit` fail on an unused `@ts-expect-error` rather
  * than leaving a green suite. Never called, so it costs nothing at runtime.
