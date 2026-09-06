@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { StudioTemplateForm } from './studio-template-form';
-import { routerPush } from '../../../tests/setup/components';
+import { routerPush, routerRefresh } from '../../../tests/setup/components';
+import { UNREADABLE_CONFIRMATION_MESSAGE } from './template-action-messages';
 
 /**
  * #136. This form enumerated its six fields four times — the `initial` prop's
@@ -512,12 +513,17 @@ describe('StudioTemplateForm', () => {
    * about which code path a failure takes is exactly the kind that was wrong
    * here in the first place.
    */
-  it('reports a network error, not an unreadable payload, when the body will not parse', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  /**
+   * #477: A 201 response with unreadable body (proxy truncation, malformed JSON)
+   * must not report a network transport error. The studio template has already been
+   * created in PostgreSQL, so the form marks `created: true` (disabling double
+   * submission) and navigates to the studio classes list.
+   */
+  it('does not report a network error and navigates when the 201 body cannot be parsed', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     fetchMock.mockResolvedValue({
       ok: true,
-      // What a 201 with a truncated body does at this seam: `res.json()`
-      // rejects. Real `Response.json()` throws a `SyntaxError`.
       json: async () => {
         throw new SyntaxError('Unexpected end of JSON input');
       },
@@ -529,10 +535,82 @@ describe('StudioTemplateForm', () => {
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
 
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/studio-classes'));
+    expect(screen.queryByText('Network error. Please try again.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText('Created')).toBeInTheDocument();
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[studio-template-form] created, but response body was unreadable',
+      expect.objectContaining({ err: expect.any(SyntaxError) }),
+    );
+  });
+
+  /** #477: Genuine transport error when creating reports Network error. */
+  it('reports a network error when create fetch itself rejects', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    const createBtn = await screen.findByRole('button', { name: /create/i });
+    fireEvent.click(createBtn);
+
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
-    expect(warn).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toBeInTheDocument();
     expect(routerPush).not.toHaveBeenCalled();
-    warn.mockRestore();
+    expect(screen.queryByText('Created')).not.toBeInTheDocument();
+    expect(createBtn).toBeEnabled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[studio-template-form] request failed',
+      expect.objectContaining({ mode: 'create', err: expect.any(TypeError) }),
+    );
+  });
+
+  /** #477: Edit mode unreadable 200 body confirms update and refreshes without network error. */
+  it('does not report a network error and refreshes when PUT succeeds but body is unreadable (#477)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => {
+        throw new SyntaxError('Unexpected end of JSON input');
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+    expect(await screen.findByText(UNREADABLE_CONFIRMATION_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText('Network error. Please try again.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(routerRefresh).toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[studio-template-form] updated, but response body was unreadable',
+      expect.objectContaining({ templateId: 'tpl-1', err: expect.any(SyntaxError) }),
+    );
+  });
+
+  /** #477: Genuine transport error when editing reports Network error. */
+  it('reports a network error when edit fetch itself rejects', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    const saveBtn = await screen.findByRole('button', { name: /save/i });
+    fireEvent.click(saveBtn);
+
+    expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(routerRefresh).not.toHaveBeenCalled();
+    expect(saveBtn).toBeEnabled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[studio-template-form] request failed',
+      expect.objectContaining({ mode: 'edit', err: expect.any(TypeError) }),
+    );
   });
 
   /**
