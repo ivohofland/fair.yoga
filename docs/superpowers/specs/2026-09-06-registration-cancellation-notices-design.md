@@ -155,10 +155,11 @@ uncancelled â€” which all three of these are, since the *class* is unaffected â€
 so the row lands on the booking page, where a student who changed their mind
 can rebook. That is the desired destination and needs no change to the helper.
 
-**Placement.** Each `createBulkNotifications` call goes after its own
-`updateMany` has been confirmed to have written (`updated.count === 0` returns
-409 first), and before the response. The late-cancel branch returns at `:276`,
-so it takes its own call rather than sharing one after the second branch.
+**Placement.** Each `createNotification`/`notifyCancellation` call goes after
+its own `updateMany` has been confirmed to have written (`updated.count === 0`
+returns 409 first), and before the response. The late-cancel branch returns at
+`:276`, so it takes its own call rather than sharing one after the second
+branch.
 
 **Branch selector is `isStudent`**, already computed at `:222` for
 authorization. A dual-role account cancelling its own booking is

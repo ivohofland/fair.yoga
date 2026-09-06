@@ -49,7 +49,7 @@ function slotTime(totalMinutesFrom9am: number): string {
 // it is just "a class far enough out that cancel-deadline logic never
 // triggers". `CalendarEntry_teacher_slot_excl` excludes overlapping spans per
 // teacher (WHERE "cancelledAt" IS NULL), though, and this file calls makeClass
-// 23 times, so a shared literal startTime would let only the first through.
+// many times over, so a shared literal startTime would let only the first through.
 // A counter-derived minute keeps every call on its own slot — the fixtures it
 // builds are one minute long, so a minute of separation is genuinely disjoint
 // under a range overlap — without any caller needing to know or care what time
