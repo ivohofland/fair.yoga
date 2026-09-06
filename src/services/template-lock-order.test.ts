@@ -324,15 +324,18 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * PREMISE 1 (ORDER UNDER FORCED PLAN): read under a forced index-ORDERED plan,
    * because which side an unforced plan drives from is a cost decision that
    * moves with table statistics, and the driving side is what fixes the output
-   * order. The four settings are `db-locks-lock-order.test.ts`'s
-   * `forceIndexOrderedPlan`, mirrored rather than imported so their suites
-   * stay independent. What they buy is stated there: of Postgres's scan paths over a plain
+   * order. The settings are `tests/forced-plan-settings.ts`'s
+   * `FORCED_PLAN_SETTINGS`. This transaction sets them itself, in its own
+   * `tx.$executeRawUnsafe` loop below, rather than calling
+   * `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan` — sharing the
+   * names does not share the execution path, so the two suites' fixtures stay
+   * independent. What they buy is stated there: of Postgres's scan paths over a plain
    * table — sequential, index, index-only, bitmap heap and TID — the sequential
    * and bitmap heap ones are what return physical heap order for a statement
    * like this, both are off, and what remains is index and index-only scans.
    * (A TID scan needs a `ctid` qual this statement does not have, so it is
-   * unreachable rather than switched off; `enable_tidscan` is not among the
-   * four.) Index-driven would not be enough, because a bitmap heap scan is fed
+   * unreachable rather than switched off; `enable_tidscan` is not one of
+   * `FORCED_PLAN_SETTINGS`.) Index-driven would not be enough, because a bitmap heap scan is fed
    * by a bitmap index scan and still hands back the heap's order (#470;
    * `docs/lock-order.md`, "Postgres's scan paths over a plain table are
    * sequential, index, index-only, bitmap heap, and TID").

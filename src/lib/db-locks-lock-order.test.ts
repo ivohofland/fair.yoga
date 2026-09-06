@@ -17,9 +17,10 @@ const prisma = new PrismaClient();
  * Forces both callers off every scan path that returns physical order, so each
  * one's row order comes from index structure rather than from `Class`'s heap.
  *
- * That is the property this whole file rests on, and it is why the same four
- * settings serve both sides. A heap-ordered scan of `Class` hands back
- * physical order, and physical order is not this test's to own: `Class` is one
+ * That is the property this whole file rests on, and it is why the same
+ * settings in `FORCED_PLAN_SETTINGS` serve both sides. A heap-ordered scan of
+ * `Class` hands back physical order, and physical order is not this test's to
+ * own: `Class` is one
  * 8 KB page shared with every other file in the parallel tier, so a
  * neighbour's `DELETE` plus autovacuum frees a low line pointer and the next
  * insert takes it — measured 2026-08-28, and the mechanism behind the CI
@@ -34,7 +35,7 @@ const prisma = new PrismaClient();
  * `WaitlistEntry`, which is what the measurements below are about — and which
  * those measurements conclude the settings do not actually guarantee.
  *
- * All four settings are required, and `enable_hashjoin = off` alone is what
+ * All of `FORCED_PLAN_SETTINGS` are required, and `enable_hashjoin = off` alone is what
  * CI proved insufficient (#239 review). It removes a join ALGORITHM, not a
  * join DIRECTION: with hash joins gone the planner can still pick a nested
  * loop with `Class` as the outer relation and a `Materialize`d `WaitlistEntry`
@@ -52,7 +53,7 @@ const prisma = new PrismaClient();
  * shape, but NOT one direction of it: both directions stay index-supported —
  * a btree on `Class.id` inner one way, one of `WaitlistEntry`'s
  * `classId`-leading composites inner the other — so which side drives is still
- * a cost decision. (Measured today under the four settings it drives from
+ * a cost decision. (Measured today under `FORCED_PLAN_SETTINGS` it drives from
  * `Class`, with `c.id = w."classId"` as a Join Filter rather than an Index
  * Cond; inflated statistics flip it. Benign for the ORDER either way, since
  * `w."classId"` IS `c.id`.) What carries this
@@ -70,7 +71,7 @@ const prisma = new PrismaClient();
  * Turning both off is what this helper buys: the remaining reachable paths are
  * index and index-only scans. A TID scan needs a `ctid` qual that neither
  * statement in this file has — unreachable rather than switched off, and
- * `enable_tidscan` is not among the four. Measured in
+ * `enable_tidscan` is not one of `FORCED_PLAN_SETTINGS`. Measured in
  * `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md` (#470),
  * including the adversarial case where every path carries `disable_cost` and
  * Postgres still declines to read the heap in physical order.
@@ -89,7 +90,7 @@ const prisma = new PrismaClient();
  * `enable_seqscan = off` and `enable_bitmapscan = off` discourage rather than
  * forbid — Postgres still takes those paths when nothing else can answer the
  * statement — so these cannot make a statement fail, only bias the planner.
- * `SET LOCAL` is transaction-scoped, so all four live entirely inside the
+ * `SET LOCAL` is transaction-scoped, so all of `FORCED_PLAN_SETTINGS` live entirely inside the
  * caller's transaction and reach neither the other caller nor production.
  */
 async function forceIndexOrderedPlan(tx: Prisma.TransactionClient): Promise<void> {
@@ -423,8 +424,9 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // Premise 2: the join's natural order — the REVERSE. Asserting premise 1
     // proves nothing about this: different tables, different physical layouts.
     // Runs under the same forced plan the caller below gets — see
-    // `forceIndexOrderedPlan` for what the four settings buy, why a cost-chosen
-    // plan cannot be relied on here, and why one setting was not enough. Which
+    // `forceIndexOrderedPlan` for what the settings in `FORCED_PLAN_SETTINGS`
+    // buy, why a cost-chosen plan cannot be relied on here, and why one
+    // setting was not enough. Which
     // side the planner drives this join from is NOT among what they fix, and
     // does not need to be: `w."classId"` IS `c.id`, so both directions return
     // `classId` order.
