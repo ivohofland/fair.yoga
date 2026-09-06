@@ -6,6 +6,11 @@ import { classifyApiError } from './api-errors';
 import type { SessionUser, TeacherSession, StudentSession } from './types';
 import { log } from '@/lib/log';
 
+/**
+ * Checks nothing: `T` is inferred from whatever literal `data` happens to be,
+ * so a dropped, extra, or mistyped field compiles clean. Prefer `respondTyped<T>`
+ * below for a new response literal — it checks `data` against an explicit `T`.
+ */
 export function respondOk<T>(data: T, status = 200): NextResponse {
   return NextResponse.json({ data }, { status });
 }
