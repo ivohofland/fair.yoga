@@ -544,6 +544,36 @@ describe('StudioTemplateForm', () => {
       '[studio-template-form] created, but response body was unreadable',
       expect.objectContaining({ err: expect.any(SyntaxError) }),
     );
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  /** #477: A 201 response with null body does not crash, marks created, warns, and navigates. */
+  it('does not crash and navigates when the 201 body parses to null (#477)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => null,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/studio-classes'));
+    expect(screen.queryByText('Network error. Please try again.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText('Created')).toBeInTheDocument();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      'recurring studio class create: unreadable counts on a 201, short-window check skipped',
+      null,
+    );
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 
   /** #477: Genuine transport error when creating reports Network error. */
@@ -567,6 +597,7 @@ describe('StudioTemplateForm', () => {
       '[studio-template-form] request failed',
       expect.objectContaining({ mode: 'create', err: expect.any(TypeError) }),
     );
+    errorSpy.mockRestore();
   });
 
   /** #477: Edit mode unreadable 200 body confirms update and refreshes without network error. */
@@ -591,6 +622,30 @@ describe('StudioTemplateForm', () => {
       '[studio-template-form] updated, but response body was unreadable',
       expect.objectContaining({ templateId: 'tpl-1', err: expect.any(SyntaxError) }),
     );
+    errorSpy.mockRestore();
+  });
+
+  /** #477: Edit mode inner catch fires when confirmation cannot be resolved from 200 body. */
+  it('does not report a network error and refreshes when the 200 body has no data field (#477)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<StudioTemplateForm mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+    expect(await screen.findByText(UNREADABLE_CONFIRMATION_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText('Network error. Please try again.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(routerRefresh).toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[studio-template-form] updated, but the confirmation could not be resolved',
+      expect.objectContaining({ templateId: 'tpl-1' }),
+    );
+    errorSpy.mockRestore();
   });
 
   /** #477: Genuine transport error when editing reports Network error. */
@@ -611,6 +666,7 @@ describe('StudioTemplateForm', () => {
       '[studio-template-form] request failed',
       expect.objectContaining({ mode: 'edit', err: expect.any(TypeError) }),
     );
+    errorSpy.mockRestore();
   });
 
   /**

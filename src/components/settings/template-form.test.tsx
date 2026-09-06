@@ -760,6 +760,57 @@ describe('TemplateForm', () => {
       '[template-form] created, but response body was unreadable',
       expect.objectContaining({ err: expect.any(SyntaxError) }),
     );
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  /** #477: A 201 response with null body does not crash, marks created, warns, and navigates. */
+  it('does not crash and navigates when the 201 body parses to null (#477)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates' && init?.method === 'POST') {
+        return {
+          ok: true,
+          json: async () => null,
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="create" />);
+    fireEvent.change(await screen.findByLabelText('Room'), {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/recurring'));
+    expect(screen.queryByText('Network error. Please try again.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText('Created')).toBeInTheDocument();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      'recurring class create: unreadable counts on a 201, short-window check skipped',
+      null,
+    );
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 
   /** #477: Genuine transport error when creating reports Network error. */
@@ -804,6 +855,7 @@ describe('TemplateForm', () => {
       '[template-form] request failed',
       expect.objectContaining({ mode: 'create', err: expect.any(TypeError) }),
     );
+    errorSpy.mockRestore();
   });
 
   /** #477: Edit mode unreadable 200 body confirms update and refreshes without network error. */
@@ -847,6 +899,49 @@ describe('TemplateForm', () => {
       '[template-form] updated, but response body was unreadable',
       expect.objectContaining({ templateId: 'tpl-1', err: expect.any(SyntaxError) }),
     );
+    errorSpy.mockRestore();
+  });
+
+  /** #477: Edit mode inner catch fires when confirmation cannot be resolved from 200 body. */
+  it('does not report a network error and refreshes when the 200 body has no data field (#477)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates/tpl-1' && init?.method === 'PUT') {
+        return {
+          ok: true,
+          json: async () => ({}),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+    expect(await screen.findByText(UNREADABLE_CONFIRMATION_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText('Network error. Please try again.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(routerRefresh).toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[template-form] updated, but the confirmation could not be resolved',
+      expect.objectContaining({ templateId: 'tpl-1' }),
+    );
+    errorSpy.mockRestore();
   });
 
   /** #477: Genuine transport error when editing reports Network error. */
@@ -886,6 +981,7 @@ describe('TemplateForm', () => {
       '[template-form] request failed',
       expect.objectContaining({ mode: 'edit', err: expect.any(TypeError) }),
     );
+    errorSpy.mockRestore();
   });
 
   /**

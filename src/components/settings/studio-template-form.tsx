@@ -242,24 +242,32 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
           return;
         }
 
-        const json = rawJson as {
-          data?: { added: StudioTemplateCreateResponse['added']; counts?: unknown };
-        };
-        const result = json.data;
+        let handled = false;
+        try {
+          const json = rawJson as {
+            data?: { added: StudioTemplateCreateResponse['added']; counts?: unknown };
+          };
+          const result = json.data;
 
-        // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
-        // gate enumerated its terms until #296 added `blockedByOverlap` —
-        // the first such reason THE GATE DID NOT ALREADY LIST (`slotTaken` has
-        // been reachable on create since #196, and the gate listed it) — and
-        // then navigated away from a short window in silence. See that
-        // function's docblock; the paragraph ABOVE is the rule it broke.
-        if (result && Number.isInteger(result.added) && hasIntegerCounts(result.counts)) {
-          if (anyBlocked(result.counts)) {
-            setSuccess(resumeStudioMessage(result.added, result.added, result.counts));
-          } else {
-            router.push(STUDIO_CLASSES_PATH);
+          // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
+          // gate enumerated its terms until #296 added `blockedByOverlap` —
+          // the first such reason THE GATE DID NOT ALREADY LIST (`slotTaken` has
+          // been reachable on create since #196, and the gate listed it) — and
+          // then navigated away from a short window in silence. See that
+          // function's docblock; the paragraph ABOVE is the rule it broke.
+          if (result && Number.isInteger(result.added) && hasIntegerCounts(result.counts)) {
+            if (anyBlocked(result.counts)) {
+              setSuccess(resumeStudioMessage(result.added, result.added, result.counts));
+            } else {
+              router.push(STUDIO_CLASSES_PATH);
+            }
+            handled = true;
           }
-        } else {
+        } catch {
+          // Payload was not an object or reading properties threw
+        }
+
+        if (!handled) {
           // The payload did not survive the guard, so nothing here is known: not
           // whether the window is short, not what to say about it. Navigating is
           // the same thing this branch always did — what changes is that it is
@@ -275,7 +283,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
           //
           // `console.warn` rather than `log`: this is a `'use client'` file and
           // `lib/log.ts` says so.
-          console.warn('recurring studio class create: unreadable counts on a 201, short-window check skipped', json);
+          console.warn('recurring studio class create: unreadable counts on a 201, short-window check skipped', rawJson);
           router.push(STUDIO_CLASSES_PATH);
         }
       } else {
@@ -325,14 +333,14 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
 
         if (rawJson !== undefined) {
           try {
-            const json = rawJson as {
-              data?: {
+            const { data } = rawJson as {
+              data: {
                 firstEffective?: TemplateEditResponse['firstEffective'];
                 generationState?: string;
               };
             };
-            const firstEffective = json.data?.firstEffective ?? null;
-            const wireState = json.data?.generationState;
+            const firstEffective = data.firstEffective ?? null;
+            const wireState = data.generationState;
             const generationState: TemplateGenerationState =
               wireState === 'paused' || wireState === 'archived' ? wireState : 'active';
             setSuccess(
