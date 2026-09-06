@@ -1564,11 +1564,13 @@ one `lockClassRowsOrdered` has for `Class`. The grep is the two censuses one
 and two sections up, re-run together; a new writer of a rule's lifecycle or
 calendar columns that skips the child lock is invisible to both until it is
 added to the table above. The test is the load-bearing half: every row in the
-table above is independently proven necessary in `class-generator.test.ts`,
-`studio-class-generator.test.ts`, `class-template-lifecycle-lock-order.test.ts`,
-`studio-class-template-lifecycle.test.ts` and `gdpr-lock-order.test.ts` — each
-site's lock was removed in isolation and the specific case it protects was confirmed
-to redden, then restored (Task 3c report, `.superpowers/sdd/`).
+table above is independently proven necessary in
+`class-generator-lock-order.test.ts`, `studio-class-generator.test.ts`,
+`class-template-lifecycle-lock-order.test.ts`,
+`studio-class-template-lifecycle-lock-order.test.ts` and
+`gdpr-lock-order.test.ts` — each site's lock was removed in isolation and the
+specific case it protects was confirmed to redden, then restored (Task 3c
+report, `.superpowers/sdd/`).
 
 **The claim's own `FOR UPDATE OF tpl` is not, by itself, sufficient — and this
 was measured, not assumed.** `FOR UPDATE OF tpl` locks only `tpl`, deliberately

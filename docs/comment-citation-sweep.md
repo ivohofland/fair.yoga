@@ -47,6 +47,43 @@ It still requires an explicit `src/` or `tests/` root; #397's version rooted
 at `src/` only and missed `tests/` entirely, which is why this one lists
 both.
 
+## Sweeping by TITLE, when a test moves between files
+
+The command above finds a citation written as `file.ts:NNN`. It cannot find one
+that names a test by its title, which is the form this project asks for
+(`docs/superpowers/specs/2026-09-01-name-based-citations-design.md`) and
+therefore the form most of its cross-file citations now take. When a test moves
+to another file — the `*-lock-order.test.ts` extractions of #459 and #468 — the
+citations that break are exactly those, and a fixed-string sweep for the moved
+titles is the pass that finds them.
+
+**A whole title is the wrong needle.** Comment prose is wrapped, so a cited
+title is usually split across two `*` lines, and `grep -F` on the whole string
+matches neither. Measured on #468: sweeping nineteen moved titles whole found
+**one** of the nine live sites; sweeping every overlapping four-word window of
+the same nineteen titles (155 fragments) found all nine. The whole-title pass
+is not a weaker version of the fragment pass — it is a pass that silently
+returns almost nothing.
+
+```sh
+# titles.txt: one moved test title per line, read off the destination's `it(` lines
+awk '{for (i = 1; i + 3 <= NF; i++) print $i, $(i+1), $(i+2), $(i+3)}' titles.txt \
+  | sort -u > fragments.txt
+/usr/bin/grep -rnF -f fragments.txt . \
+  --include='*.ts' --include='*.tsx' --include='*.md' \
+  --exclude-dir=node_modules --exclude-dir=.git \
+  | /usr/bin/grep -v '^\./docs/superpowers/'
+```
+
+`/usr/bin/grep` explicitly, for the reason the parenthesis above gives.
+
+**Expect false positives, and do not re-point them.** A title sweep cannot tell
+a citation from a test that simply shares the title, and in this repo several
+do: the studio family mirrors the class family case for case, and
+`waitlist-lock-order.test.ts` carries three tests under one title. #468 hit six
+such collisions across four files. Each hit needs the same per-site read every
+other pass here needs.
+
 ## Snapshot: 60 raw hits (2026-09-01)
 
 Run against `main` at this doc's commit. **Not individually verified** — a

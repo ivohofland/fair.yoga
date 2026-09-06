@@ -404,10 +404,10 @@ export async function archiveOrUnarchiveRule<TChild>(
         // incidental: a hook may take locks of its own that this transaction
         // knows nothing about, and the 2s bound is what keeps those waits from
         // being unbounded. Pinned wherever such a hook exists —
-        // `class-generator.test.ts`, "the bound reaches its pre-lock", which
-        // drives this bound through a wait no hookless family can reach. What
-        // any one hook's locks buy is argued where that hook is written — for
-        // the class family, in `CLASS_FAMILY.withdraw`
+        // `class-generator-lock-order.test.ts`, "the bound reaches its
+        // pre-lock", which drives this bound through a wait no hookless family
+        // can reach. What any one hook's locks buy is argued where that hook
+        // is written — for the class family, in `CLASS_FAMILY.withdraw`
         // (`class-template-lifecycle.ts`).
         //
         // The `deleteMany` below can wait even behind a family that pre-locks,
@@ -943,9 +943,9 @@ export type PauseRuleResult<TChild> =
    * A resume contending with a concurrent writer therefore rolls the whole
    * transaction back and answers `busy`, rather than running on and reporting
    * that date as `raced`. Which statement gives up first is measured rather
-   * than reasoned, and lives with its measurement — `class-generator.test.ts`,
-   * "answers busy when the clash outlives the lock timeout, instead of
-   * reporting it raced".
+   * than reasoned, and lives with its measurement —
+   * `class-generator-lock-order.test.ts`, "answers busy when the clash
+   * outlives the lock timeout, instead of reporting it raced".
    */
   | { ok: false; reason: 'busy' };
 

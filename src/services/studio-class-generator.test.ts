@@ -379,11 +379,11 @@ describe('generateStudioClassInstances (DB)', () => {
 
     /**
      * The studio half of the bound. The class family's equivalent
-     * (`class-generator.test.ts`'s `answers busy when the generation claim
-     * holds the row past the lock timeout`) proves the same mechanism, but
-     * this is not a duplicate of it: the two functions have separate
-     * transactions, separate catches and separate result unions, so a bound
-     * dropped from one leaves the other's test green.
+     * (`class-generator-lock-order.test.ts`'s `answers busy when the
+     * generation claim holds the row past the lock timeout`) proves the same
+     * mechanism, but this is not a duplicate of it: the two functions have
+     * separate transactions, separate catches and separate result unions, so a
+     * bound dropped from one leaves the other's test green.
      *
      * The timing assertions carry it, the same way the twin's docblock
      * explains in full: the lower bound proves the archive waited, the upper

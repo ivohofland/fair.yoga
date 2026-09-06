@@ -390,9 +390,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
    * classes) and it wrote `withdrawnCount: 0` over the winner's correct 2.
    * Display-only, but #97 makes that display the durable record.
    *
-   * Deterministic by the same lever `class-generator.test.ts` uses for the
-   * #95 races: a third transaction holds the template's row lock without
-   * changing anything, and uncommitted work is invisible under READ
+   * Deterministic by the same lever `class-generator-lock-order.test.ts` uses
+   * for the #95 races: a third transaction holds the template's row lock
+   * without changing anything, and uncommitted work is invisible under READ
    * COMMITTED. That fixes both halves of the ordering the race needs — the
    * second call's pre-transaction read genuinely sees `isArchived: false`
    * (nothing has committed), and both calls' first write genuinely queue on

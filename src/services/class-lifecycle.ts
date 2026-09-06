@@ -1373,15 +1373,14 @@ export async function updateClass(
   // field-level one.
   //
   // GATED ON THE FIELDS SENT **AND** ON THE START ACTUALLY MOVING. Both
-  // conjuncts are load-bearing, but not equally, and an earlier revision of
-  // this comment claimed a parity that did not exist: for every row with a
-  // READABLE `startTime` the field gate decides nothing at all, because with
-  // neither field sent both `classStartInstant` calls receive identical
-  // arguments and `movesStart` is already false. Delete it and 77 of the 78
-  // tests in `class-lifecycle.test.ts` stay green.
+  // conjuncts are load-bearing, but not equally: for every row with a READABLE
+  // `startTime` the field gate decides nothing at all, because with neither
+  // field sent both `classStartInstant` calls receive identical arguments and
+  // `movesStart` is already false. Exactly one test fails when it is deleted,
+  // and it is the one named at the foot of this comment.
   //
-  // The 78th is what it is for. An unparseable stored `startTime` makes both
-  // instants `NaN`, `NaN !== NaN` is true, and `movesStart` alone would then
+  // That test is what the gate is for. An unparseable stored `startTime` makes
+  // both instants `NaN`, `NaN !== NaN` is true, and `movesStart` alone would then
   // read a description-only edit as a start-moving one — refusing, since
   // `startsInPast` fails closed on exactly that input. The field gate is what
   // stops the scheduling guard from refusing a write that schedules nothing.
