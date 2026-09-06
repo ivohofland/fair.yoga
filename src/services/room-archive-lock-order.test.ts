@@ -7,13 +7,14 @@
  *
  * SEPARATE FROM `room-archive.test.ts` FOR A REASON THE FILENAME CANNOT CARRY.
  * The races below are staged with real row locks held for seconds at a time,
- * and this tier runs its files in parallel. `template-lock-order.test.ts`
- * asserts its own race ends in neither `40P01` nor `55P03`, and a concurrent
- * multi-second hold pushes it into the second — measured: it passes alone,
- * passes run beside this file alone, and fails in the full tier. That is why
- * this file is on `LOCK_CONTENTION_TESTS` in `vitest.tiers.ts`. Both files are on it, so both
- * left the parallel tier; what protects the assertion is `unit-sweeps` running
- * its files one at a time, not the two being separated.
+ * and the `unit` tier those cases came from runs its files in parallel.
+ * `template-lock-order.test.ts` asserts its own race ends in neither `40P01`
+ * nor `55P03`, and a concurrent multi-second hold pushes it into the second —
+ * measured: it passes alone, passes run beside this file alone, and fails in
+ * the full tier. That is why this file is on `LOCK_CONTENTION_TESTS` in
+ * `vitest.tiers.ts`. Both files are on it, so both left the parallel tier;
+ * what protects the assertion is `unit-sweeps` running its files one at a
+ * time, not the two being separated.
  *
  * WHAT THE RESUME-RACE CASE DOES NOT COVER, AND WHY IT IS HERE ANYWAY.
  * "answers busy when the archive already holds the child row" holds the child
@@ -82,11 +83,11 @@ describe('setTeacherRoomArchived — lock discipline (issue 272)', () => {
    * holds for the length of a generation sweep — the archive under test
    * contends with exactly it.
    *
-   * The hold is released by the body finishing rather than by a fixed sleep:
-   * these cases run inside the full suite, and a lock held for a flat five
-   * seconds is load every other file pays for. It also removes a race the
-   * fixed-sleep version had — `body` now cannot start until the `FOR UPDATE`
-   * has actually landed.
+   * The hold is released by the body finishing rather than by a fixed sleep: a
+   * lock held for a flat five seconds is wall clock every run pays for whether
+   * or not the assertion needed it, so it lasts exactly as long as the
+   * assertion does. It also removes a race the fixed-sleep version had —
+   * `body` now cannot start until the `FOR UPDATE` has actually landed.
    */
   async function withHeldChild<T>(templateId: string, body: () => Promise<T>): Promise<T> {
     const holder = new PrismaClient();
@@ -327,13 +328,13 @@ describe('CalendarEntry → Class cascade — lock discipline (issue 339)', () =
    * hypothetical `cancelledAt` writer that skipped `lockClassRow` can be shown
    * blocking on it.
    *
-   * Same acquire-signal / release-signal / ceiling shape as `withHeldChild`
-   * in the describe above, parameterized on a `Class` row (via `lockClassRow`)
-   * instead of a raw `ClassTemplate` `FOR UPDATE`. Kept local to this describe
-   * rather than merged with `withHeldChild`: the two hold different rows via
-   * different statements, and a shared abstraction over "which row" would
-   * have to reach back into the sibling describe's `ClassTemplate`-specific
-   * literal SQL for no reader's benefit.
+   * Same acquire-signal / release-signal / ceiling shape as `withHeldChild` in
+   * `setTeacherRoomArchived — lock discipline (issue 272)`, parameterized on a
+   * `Class` row (via `lockClassRow`) instead of a raw `ClassTemplate`
+   * `FOR UPDATE`. Kept local to this describe rather than merged with
+   * `withHeldChild`: the two hold different rows via different statements, and
+   * a shared abstraction over "which row" would have to reach back into that
+   * describe's `ClassTemplate`-specific literal SQL for no reader's benefit.
    */
   async function withHeldClassRow<T>(classId: string, body: () => Promise<T>): Promise<T> {
     const holder = new PrismaClient();

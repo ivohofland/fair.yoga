@@ -72,13 +72,14 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { createStudioClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
-// PREFIXED, not just timestamped: this file and
-// `studio-class-template-lifecycle.test.ts` share one test database and both
-// mint their fixtures from a clock value, so a bare `Date.now()` in each
-// could collide on a unique email or slug. The prefix makes the two
-// namespaces disjoint by construction rather than by luck, and every
+// PREFIXED, not just timestamped: this file shares one test database with
+// `studio-class-template-lifecycle.test.ts`, which it was split from, and with
+// its serial tier-mates, and they all mint their fixtures from a clock value,
+// so a bare `Date.now()` could collide on a unique email or slug. The prefix
+// is this file's alone — no other file in the repo mints from it — which makes
+// the namespaces disjoint by construction rather than by luck, and every
 // `afterAll` below sweeps its own describe's teacher only.
-const uniqueSuffix = `lockorder-${Date.now()}`;
+const uniqueSuffix = `studiotpllock-${Date.now()}`;
 
 /**
  * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into

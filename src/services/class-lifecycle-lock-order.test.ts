@@ -53,12 +53,14 @@ import { createClassFixture, slotDate } from '../../tests/class-fixtures';
 const prisma = new PrismaClient();
 // PREFIXED, not just timestamped — the convention
 // `class-lifecycle-tier-guard.test.ts` states in its own header, and for the
-// same reason: this file and `class-lifecycle.test.ts` share one test database
-// and both mint fixtures from a clock value, so a bare `Date.now()` in each
-// could collide on a unique email or slug. The prefix makes the namespaces
-// disjoint by construction rather than by luck, and the `afterAll` below
-// sweeps this file's teacher only.
-const uniqueSuffix = `lockorder-${Date.now()}`;
+// same reason: every file on `LOCK_CONTENTION_TESTS` shares one test database
+// with the file it was split from and with its serial tier-mates, and they all
+// mint fixtures from a clock value, so a bare `Date.now()` could collide on a
+// unique email or slug. The prefix is this file's alone — no other file in the
+// repo mints from it — which makes the namespaces disjoint by construction
+// rather than by luck, and the `afterAll` below sweeps this file's teacher
+// only.
+const uniqueSuffix = `clslock-${Date.now()}`;
 
 describe('the Class row lock under real contention (DB)', () => {
   let teacherId: string;
@@ -247,21 +249,24 @@ describe('the Class row lock under real contention (DB)', () => {
   });
 
   /**
-   * `setLockTimeout` in `transitionClass`, which was the entire subject of the
-   * commit that added it and which nothing pinned — deleting the call passed
-   * 1172 unit and integration tests.
+   * The 2s bound on `transitionClass`'s row lock, which was the entire subject
+   * of the commit that added it and which, until this case existed, no test in
+   * the repo could fail on.
    *
-   * `transitionClass` takes its `Class` row lock through the CAS rather than
-   * through `lockClassRow`, so it inherited no per-statement bound. Once the
-   * CAS moved inside an interactive transaction that mattered: an unbounded
-   * wait becomes Prisma's 5s budget expiring mid-transaction (`P2028`, which
-   * `classifyApiError` answers with a 503 the caller cannot act on) instead of
-   * the 2s `55P03` every sibling gets and which maps to retry advice.
+   * `transitionClass` takes that lock through `lockClassRow`, which issues
+   * `setLockTimeout` itself, so the bound arrives as a side effect of taking
+   * the lock rather than as a statement of its own. What it buys is the
+   * failure MODE. The CAS runs inside an interactive transaction; unbounded,
+   * its wait ends as Prisma's 5s budget expiring mid-transaction (`P2028`,
+   * which `classifyApiError` answers with a 503 the caller cannot act on)
+   * rather than as the 2s `55P03` every sibling gets and which maps to retry
+   * advice.
    *
-   * The bounds are deliberately loose, as this repo's sibling lock-timeout
-   * tests are (`class-generator-lock-order.test.ts`): the lower one proves it
-   * really waited on the row rather than sailing through, the upper that it
-   * gave up on the 2s bound rather than Prisma's 5s. Neither pins the bound's
+   * ONE BOUND, AND IT IS A FLOOR — the convention this repo's sibling
+   * lock-timeout tests follow (`class-generator-lock-order.test.ts`, whose own
+   * docblock puts it the same way). It proves the transition really waited on
+   * the row rather than sailing through. There is no wall-clock upper bound;
+   * the body's own comment gives the reason. Neither does it pin the bound's
    * VALUE, which belongs to `db-locks.ts`.
    */
   it('gives up on the 2s bound when another transaction holds the class row', async () => {

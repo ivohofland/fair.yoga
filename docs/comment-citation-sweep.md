@@ -80,9 +80,23 @@ awk '{for (i = 1; i + 3 <= NF; i++) print $i, $(i+1), $(i+2), $(i+3)}' titles.tx
 **Expect false positives, and do not re-point them.** A title sweep cannot tell
 a citation from a test that simply shares the title, and in this repo several
 do: the studio family mirrors the class family case for case, and
-`waitlist-lock-order.test.ts` carries three tests under one title. #468 hit six
-such collisions across four files. Each hit needs the same per-site read every
-other pass here needs.
+`waitlist-lock-order.test.ts` carries three tests under one title. Of #468's
+nineteen moved titles, **seven are also carried by tests elsewhere, in three
+files** — `studio-class-generator.test.ts` (five titles),
+`waitlist-lock-order.test.ts` (one title, on three tests) and
+`class-template-lifecycle-lock-order.test.ts` (one) — **nine colliding test
+sites in all**. Re-derived with the same `titles.txt`, matching the quoted
+literal so a citation in prose does not count, and excluding the four files the
+tests moved to:
+
+```sh
+while IFS= read -r t; do
+  /usr/bin/grep -rnF "'$t'" src tests --include='*.test.ts'
+done < titles.txt \
+  | /usr/bin/grep -vE 'class-generator-lock-order|class-lifecycle-lock-order|room-archive-lock-order|studio-class-template-lifecycle-lock-order'
+```
+
+Each hit needs the same per-site read every other pass here needs.
 
 ## Snapshot: 60 raw hits (2026-09-01)
 

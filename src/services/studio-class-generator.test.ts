@@ -385,11 +385,12 @@ describe('generateStudioClassInstances (DB)', () => {
      * separate transactions, separate catches and separate result unions, so a
      * bound dropped from one leaves the other's test green.
      *
-     * The timing assertions carry it, the same way the twin's docblock
-     * explains in full: the lower bound proves the archive waited, the upper
-     * proves it answered near the 2s bound. Removing the bound does not slide
-     * that answer later — it stops the archive settling at all, so the test
-     * dies on its own 20s timeout (mutation record, Task 2).
+     * One timing assertion carries it, and it is a floor — the same shape the
+     * twin's docblock explains in full. The lower bound proves the archive
+     * waited on the row rather than sailing through; nothing here asserts a
+     * wall-clock ceiling. Removing the bound does not slide the answer later
+     * — it stops the archive settling at all, so the test dies on its own 20s
+     * timeout (mutation record, Task 2).
      */
     it(
       'answers busy when the generation claim holds the row past the lock timeout',

@@ -1376,17 +1376,16 @@ export async function updateClass(
   // conjuncts are load-bearing, but not equally: for every row with a READABLE
   // `startTime` the field gate decides nothing at all, because with neither
   // field sent both `classStartInstant` calls receive identical arguments and
-  // `movesStart` is already false. Exactly one test fails when it is deleted,
-  // and it is the one named at the foot of this comment.
+  // `movesStart` is already false. What deleting the field gate reddens is
+  // `class-lifecycle.test.ts`'s `'lets a non-scheduling edit through even when
+  // the stored startTime is unreadable'`.
   //
   // That test is what the gate is for. An unparseable stored `startTime` makes
   // both instants `NaN`, `NaN !== NaN` is true, and `movesStart` alone would then
   // read a description-only edit as a start-moving one — refusing, since
   // `startsInPast` fails closed on exactly that input. The field gate is what
   // stops the scheduling guard from refusing a write that schedules nothing.
-  // Pinned by `'lets a non-scheduling edit through even when the stored
-  // startTime is unreadable'`, which is a stub test because no validated row
-  // can reach this state.
+  // It is a stub test because no validated row can reach this state.
   //
   // An `open` class whose
   // start has already passed is a state the system produces legitimately —

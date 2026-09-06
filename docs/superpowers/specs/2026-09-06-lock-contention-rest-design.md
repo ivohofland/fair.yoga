@@ -1,4 +1,4 @@
-# The seven parallel-tier files that still stage lock contention
+# The parallel-tier files that still stage lock contention
 
 Issue #468. Design spec. Continues #459, whose method
 (`docs/superpowers/specs/2026-09-05-lock-contention-extraction-design.md`)
@@ -94,7 +94,7 @@ before the wait` holds a `Class … FOR UPDATE` for 900 ms and races
 
 ## 2. Direction
 
-Five files change tier; two stay. Four extractions, one marker.
+Seven files change tier; two stay. Four extractions, three markers.
 
 | Source | Destination | New file? |
 |---|---|---|
@@ -105,6 +105,13 @@ Five files change tier; two stay. Four extractions, one marker.
 | `src/services/room-archive.test.ts` | `room-archive-lock-order.test.ts` | no — **appends** |
 | `src/services/studio-class-template-lifecycle.test.ts` | `studio-class-template-lifecycle-lock-order.test.ts` | yes |
 | `src/services/transition-class-lock-order.test.ts` | itself | marker + list entry only |
+| `src/services/update-class-lock-order.test.ts` | itself | marker + list entry only (§3.9) |
+| `src/services/template-room-race.test.ts` | itself | marker + list entry only (§3.10) |
+
+The last two are not among the seven the issue named. §1.1's sweep cannot see
+them, because they take their locks through service calls rather than through
+raw `FOR UPDATE` — the false negative §1.1 itself warns about, biting. §5
+records how they were found and why the sweep's re-run still returns 19.
 
 `room-archive-lock-order.test.ts` already exists, already carries the marker and
 is already listed — the same append `gdpr-lock-order.test.ts` took in #459, and
@@ -186,7 +193,14 @@ would have to survive.** Three properties together:
    transaction waits for the release rather than for a bound, and the row
    probes are `NOWAIT` — they answer in one round trip instead of spending
    `lockClassRowsOrdered`'s 2 s discovering the same thing. A slipped
-   `setTimeout` under load therefore delays this file; it cannot fail it.
+   `setTimeout` under load therefore delays this file; it cannot make any
+   assertion in it wrong. **It is not literally unfailable, and the claim is
+   scoped rather than absolute:** the file declares no per-test timeout and
+   `vitest.config.ts` sets no `testTimeout`, so every test in it runs under
+   vitest's 5 000 ms default, and enough delay would end one as a test timeout.
+   What rules that out is margin, not mechanism — 496 ms of test time for all
+   38 tests, and the file's single `setTimeout` is 300 ms against that 5 s
+   ceiling.
 3. No assertion in it is a bound or an elapsed time. Its `lock_timeout` tests
    read `SHOW lock_timeout`, and the two `waited >= 1_800` assertions this
    project has live in other files, which cite *this* one for the bound's value.
@@ -322,11 +336,57 @@ Counts are vitest's, re-derived with
 | `studio-class-template-lifecycle.test.ts` | 50 | −4 | 46 |
 | `studio-class-template-lifecycle-lock-order.test.ts` | — | +4 | 4 |
 | `transition-class-lock-order.test.ts` | 1 | 0 | 1 |
+| `update-class-lock-order.test.ts` | 1 | 0 | 1 |
+| `template-room-race.test.ts` | 1 | 0 | 1 |
 
 Repo-wide total across the touched files is unchanged:
 `46 + 81 + 19 + 4 + 50 = 200` before, `34 + 12 + 79 + 2 + 18 + 5 + 46 + 4 =
 200` after. `api-errors.test.ts` (59) and `db-locks.test.ts` (38) are untouched
 and excluded from both sides.
+
+### 3.9 `src/services/update-class-lock-order.test.ts` — 1 test — MARKER ONLY
+
+Its single test holds the `Class` and `CalendarEntry` rows through
+`completeClass` — the completion is parked inside a `$extends` hook on
+`class.findUnique`, which fires immediately after `lockClassRow` and before
+anything the completion decides from — while `updateClass` parks on those rows
+under `lockClassRow`'s own 2 s `lock_timeout`. The completion is released on a
+`pg_stat_activity` observation of the reschedule's backend, not on a timer.
+
+Its own docblock already states the failure mode a tier-mate causes: "A `55P03`
+lock timeout would also make `ok` false", so `reason: 'frozen'` is the only
+outcome that means what the test means. Everything between the reschedule
+issuing and the holder committing has to fit inside the 2 s bound; tier noise
+that pushes it past there turns the freeze into a timeout and the assertion
+fails from the wrong cause. It joins on the assertion side rather than the
+noise side — the hold ends on the handshake, so it is short by design. That is
+the same sentence, the same device and the same consequence as §3.7 — the two
+files are near-identical twins, and `transition-class-lock-order.test.ts` cites
+this one BY NAME as using "the same device … and for the same reason". Both are
+now on `LOCK_CONTENTION_TESTS`.
+
+No extraction: one test, 70 ms, and the whole file is the staged race.
+
+### 3.10 `src/services/template-room-race.test.ts` — 1 test — MARKER ONLY
+
+Its single test holds a `ScheduleRule` row lock open on a resume's transaction
+under `{ timeout: 15_000 }` while a second client's `teacherRoom.update` blocks
+on the cascade that has to rewrite the held row. The two are joined by
+`Promise.race`, and the block itself is caught by busy-polling
+`pg_stat_activity` against an explicit `Date.now() + 5_000` deadline.
+
+**That deadline is the reason, and it is stronger than a hold.** Its expiry IS
+the failure — "the assertion at the foot is what fails", as its own comment
+says — so a tier-mate that delays the poll past five seconds reddens the case
+without touching anything it asserts about. A parked transaction waiting on a
+wall clock is exactly the shape `vitest.tiers.ts`'s criterion says cannot stay
+parallel. The hold is short on the passing path, since the poll is what
+releases it; the failing path is where it holds a `ScheduleRule` row for the
+whole five seconds, so the two halves of the criterion arrive together — the
+run that breaks the assertion is also the run that makes the noise.
+
+No extraction: one test, 18 ms, and the whole file is the staged race.
+
 
 ## 4. Hazards
 
@@ -399,13 +459,18 @@ Citations that survive untouched and must NOT be rewritten: everything naming
 cited from `room-archive.ts`, `template-selection.ts` and `time-of-day.test.ts`
 — all of which stay.
 
-**H4 — the title collisions are real and are not citations.**
-`studio-class-generator.test.ts` (already serial, on `SWEEP_TESTS`) holds
-same-titled studio twins of five of the moving class-family tests, and
-`waitlist-lock-order.test.ts` holds three tests titled `gives up on the 2s bound
-when another transaction holds the class row`. A fixed-string sweep matches all
-of them. They are the sweep's own false positives, not drift, and re-pointing
-any of them would be the error.
+**H4 — the title collisions are real and are not citations.** Seven of the
+nineteen moving titles are also carried by tests in three other files, nine
+colliding sites in all. `studio-class-generator.test.ts` (already serial, on
+`SWEEP_TESTS`) holds same-titled studio twins of five of the moving
+class-family tests; `waitlist-lock-order.test.ts` holds three tests titled
+`gives up on the 2s bound when another transaction holds the class row`; and
+`class-template-lifecycle-lock-order.test.ts` holds `two concurrent archives:
+the loser records nothing over the winner`, the class-template twin of the
+`studio-class-template-lifecycle.test.ts` case moving here. A fixed-string
+sweep matches all of them. They are the sweep's own false positives, not drift,
+and re-pointing any of them would be the error. `docs/comment-citation-sweep.md`
+carries these numbers with the command that re-derives them.
 
 **H5 — fixture spacing and counters.** `class-generator.test.ts`'s moving
 describes allocate dates from `getNextOccurrences` filtered by
@@ -447,22 +512,44 @@ has a verdict:
   `db-locks.test.ts`, a real lock-holder adjudicated in §3.2 and deliberately
   kept.
 
-`15 + 4 = 19`, and `11 + 4 = 15`. `vitest.tiers.ts`'s note therefore stops
-pointing at an open issue; it states the CRITERION that separates those two
-groups rather than rostering either, since a roster of other files has no
-owner in that file.
+`15 + 4 = 19`, and `11 + 4 = 15`.
+
+**But the serial side gained two files the sweep never returned, and that is
+the finding this branch's whole-branch review produced.**
+`src/services/update-class-lock-order.test.ts` and
+`src/services/template-room-race.test.ts` each hold real row locks across a
+staged two-party wait, and each takes those locks through a SERVICE CALL —
+`completeClass` and `lockClassRow` in one, `scheduleRule.update`'s cascade in
+the other — rather than through raw `FOR UPDATE` or `setLockTimeout(`. §1.1's
+regex reaches only source text, so it walks past both. This is the
+false-negative §1.1 already names — "a floor for finding candidates rather than
+a census" — biting on this very branch: both files had NO verdict anywhere
+until they were found by READING, and §3.9 and §3.10 give them one. Both are
+now serial, so `LOCK_CONTENTION_TESTS` holds **17** members where the sweep can
+account for eleven of them.
+
+That is why `vitest.tiers.ts`'s note does not rest on a command. It says what
+actually holds membership — the `@serial-tier lock-contention` marker in each
+file's own header, tethered to the array by
+`src/lib/serial-tier-membership.test.ts`, which fails in both directions — and
+says that the command beside it is a floor for FINDING candidates and never a
+census. It states the CRITERION that separates the two groups rather than
+rostering either, since a roster of other files has no owner in that file.
 
 ## 6. Acceptance
 
-1. Each of the seven files has a written verdict, above, and the four
-   extractions leave no moving test behind. Re-derived with the §1.1 sweep:
-   `class-lifecycle.test.ts`, `room-archive.test.ts` and
-   `studio-class-template-lifecycle.test.ts` drop out of it entirely, and
-   `class-generator.test.ts` keeps exactly one hit, a comment (§5).
+1. Each of the seven files has a written verdict, above, and so do the two the
+   sweep could not reach (§3.9, §3.10). The four extractions leave no moving
+   test behind. Re-derived with the §1.1 sweep: `class-lifecycle.test.ts`,
+   `room-archive.test.ts` and `studio-class-template-lifecycle.test.ts` drop
+   out of it entirely, and `class-generator.test.ts` keeps exactly one hit, a
+   comment (§5).
 2. Each new sibling carries `@serial-tier lock-contention` in its own header
    with its own reason, and is on `LOCK_CONTENTION_TESTS`;
-   `src/lib/serial-tier-membership.test.ts` passes.
-   `transition-class-lock-order.test.ts` likewise.
+   `src/lib/serial-tier-membership.test.ts` passes. The three marker-only files
+   — `transition-class-lock-order.test.ts`,
+   `update-class-lock-order.test.ts` and `template-room-race.test.ts` —
+   likewise.
 3. The §3.8 reconciliation holds, re-derived with `vitest list`.
 4. H1–H7 each addressed.
 5. `vitest.tiers.ts`'s two paragraphs — the `room-archive.test.ts` sentence and
@@ -485,30 +572,40 @@ in the baseline run) for each of five new members — about **+24 s**, or +24 %.
 The parallel tier loses its longest file's bulk (`class-generator.test.ts` is
 16.05 s solo against a 17.48 s whole-tier wall clock) and should shrink.
 
-**Measured on the finished branch, same machine, same day:**
+**Measured on the finished branch, after the review that found §3.9 and §3.10:**
 
 | Tier | Before | After | Change |
 |---|---|---|---|
-| `unit` | 17.48 s, 86 files, 1363 tests | **7.21 s**, 85 files, 1343 tests | **−59 %** |
-| `unit-sweeps` | 100.24 s, 21 files, 195 tests | **122.97 s**, 25 files, 215 tests | **+23 %** |
-| combined | 117.72 s | **130.18 s** | **+11 %** |
+| `unit` | 17.48 s, 86 files, 1363 tests | **6.45 s**, 83 files, 1341 tests | **−63 %** |
+| `unit-sweeps` | 100.24 s, 21 files, 195 tests | **123.62 s**, 27 files, 217 tests | **+23 %** |
+| combined | 117.72 s | **130.07 s** | **+10 %** |
 
-The serial prediction held: +22.73 s against +24 s predicted. The parallel one
-was understated — "should shrink" turned out to be −10.27 s, more than the
-serial tier gained in test time, because `class-generator.test.ts` at 16.05 s
-solo *was* that tier's critical path and 96 % of it left. Sixty-six of the 85
-remaining files now finish inside a 7.21 s wall clock.
+The baseline above was taken on 2026-09-06 and this measurement two runs later,
+so `0c0f43b7` was re-measured alongside it as the comparability check the
+baseline paragraph asks for: **16.33 s / 98.98 s / 115.31 s**, the same numbers
+within noise. The comparison therefore holds without rebasing the table on the
+re-measurement.
 
-The combined +11 % is what the CI `test-unit` job actually pays, and it is the
+The serial prediction held: +23.38 s against +24 s predicted, and it absorbed
+two more files than the prediction covered — §3.9 and §3.10 together are 88 ms
+of test time, which is why finding two unadjudicated lock-stagers moved this
+row by less than a rounding error. The parallel prediction was understated —
+"should shrink" turned out to be −11.03 s, more than the serial tier gained in
+test time, because `class-generator.test.ts` at 16.05 s solo *was* that tier's
+critical path and 96 % of it left.
+
+The combined +10 % is what the CI `test-unit` job actually pays, and it is the
 number to compare against #459's +44 % — not because this branch was cheaper to
 build, but because #459 moved time out of a tier whose critical path did not
 move, and this one collapsed a critical path.
 
 Counts reconcile in both directions. Files: 107 → 110 = three new siblings
-(`room-archive-lock-order.test.ts` already existed and was appended to). Tests:
-1363 + 195 = 1558 before, 1343 + 215 = 1558 after — `unit` loses the 19 moved
-tests plus `transition-class-lock-order.test.ts`'s one, and `unit-sweeps` gains
-exactly those 20.
+(`room-archive-lock-order.test.ts` already existed and was appended to);
+`unit` 86 → 83 as the three marker-only files leave it, `unit-sweeps` 21 → 27
+as those three plus the three new siblings arrive. Tests: 1363 + 195 = 1558
+before, 1341 + 217 = 1558 after — `unit` loses the 19 moved tests plus one each
+from `transition-class-lock-order.test.ts`, `update-class-lock-order.test.ts`
+and `template-room-race.test.ts`, and `unit-sweeps` gains exactly those 22.
 
 ## 7. Not doing
 

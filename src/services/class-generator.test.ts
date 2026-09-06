@@ -555,11 +555,12 @@ describe('generateClassInstances (DB)', () => {
     }
 
     afterEach(async () => {
-      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
-      // #296: the cross-family cases create `StudioClass` rows, and the
-      // generator now READS that table — so a leftover one occupies the next
-      // test's slot exactly the way a leftover `Class` does. Unswept, their
-      // leftovers turn the cases after them in this block red.
+      // One statement sweeps both families: since #327 a `StudioClass` hangs
+      // off a `CalendarEntry` exactly as a `Class` does, and this describe's
+      // cross-family cases (#296) create rows the generator now READS — so a
+      // leftover studio entry occupies the next test's slot the way a leftover
+      // class one does. Unswept, their leftovers turn the cases after them in
+      // this block red.
       await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     });
 
@@ -1366,9 +1367,10 @@ describe('generateClassInstances (per-template isolation)', () => {
         createMany: async () => ({ count: 0 }),
       },
       // The sweep now claims each template inside its own transaction before
-      // generating. This stub has no real lock semantics to exercise (the DB
-      // tests above cover that) — it only needs the claim to always succeed
-      // so error isolation between templates is still what's under test.
+      // generating. This stub has no real lock semantics to exercise
+      // (`class-generator-lock-order.test.ts` stages those against the real
+      // database) — it only needs the claim to always succeed so error
+      // isolation between templates is still what's under test.
       $executeRawUnsafe: async () => 0,
       $queryRaw: async () => [{ id: 'stub' }],
       $transaction: async (fn: (tx: unknown) => Promise<number>) => fn(stub),

@@ -3,6 +3,21 @@ import { PrismaClient } from '@prisma/client';
 import { isCheckViolationOn } from '@/lib/check-violation';
 
 /**
+ * @serial-tier lock-contention — the case below parks a transaction on a real
+ * `ScheduleRule` row lock and then waits on a WALL CLOCK for that park to be
+ * observed. The resume holds the row open under `{ timeout: 15_000 }` while a
+ * second client's `teacherRoom.update` blocks on the cascade, and the
+ * `pg_stat_activity` busy-poll that has to catch the block runs against an
+ * explicit `Date.now() + 5_000` deadline whose expiry is itself the failure
+ * (see the deadline's own comment: "the assertion at the foot is what fails").
+ * A tier-mate that delays this file's poll past five seconds therefore reddens
+ * it without touching anything it asserts about — a parked transaction waiting
+ * on a clock is exactly what `vitest.tiers.ts`'s criterion names as unable to
+ * stay in the parallel tier. The hold itself is short on the passing path,
+ * because the poll releases it; it is only on the failing path that this file
+ * holds a row for the whole five seconds, and that is a hold every tier-mate
+ * would then have queued behind.
+ *
  * Three clients, each with a job the others cannot do:
  *
  *   `a`         holds the resume's transaction open. One connection cannot
@@ -21,8 +36,8 @@ const probe = new PrismaClient();
  * A client with exactly one connection, so `pg_backend_pid()` read from it once
  * identifies the backend every later statement runs on. That is what lets the
  * handshake below watch for THIS archive waiting on a lock rather than for any
- * backend anywhere — `pg_stat_activity` is database-wide, and the `unit`
- * project runs its files in parallel.
+ * backend anywhere — `pg_stat_activity` is database-wide, and this file alone
+ * puts three clients on it.
  */
 function singleConnectionClient(): PrismaClient {
   const configured = process.env.DATABASE_URL;
@@ -181,10 +196,11 @@ describe('the room archive that used to slip past door 3', () => {
             `archive backend was: ${seen?.detail ?? 'absent from pg_stat_activity'}`;
           break;
         }
-        // Yielding, so a failing run does not put ~1200 queries a second on the
-        // database the rest of the parallel tier is sharing. The passing path
-        // polls once or twice — whether Postgres has reached the lock wait by
-        // the first probe is itself a race — so this costs it one sleep at most.
+        // Yielding, so a failing run does not put ~1200 queries a second on
+        // the database this file's other two clients are working against. The
+        // passing path polls once or twice — whether Postgres has reached the
+        // lock wait by the first probe is itself a race — so this costs it one
+        // sleep at most.
         await new Promise((r) => setTimeout(r, 5));
       }
       if (!observedWaiting && !notObserved) {
