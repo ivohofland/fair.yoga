@@ -1029,6 +1029,7 @@ describe('teacher-facing registration reads honour StudentPrivacy', () => {
     });
 
     afterAll(async () => {
+      await prisma.notification.deleteMany({ where: { recipientId: dualStudentId } });
       await prisma.registration.deleteMany({ where: { classId: dualClassId } });
       await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: dualClassId } } } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: dualTeacherId } });
@@ -1048,6 +1049,39 @@ describe('teacher-facing registration reads honour StudentPrivacy', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as { data: { tierAtBooking: number } };
       expect(body.data.tierAtBooking).toBeDefined();
+    });
+
+    /**
+     * The DELETE handler's own dual-role precedence, mirroring the GET test
+     * above: it branches on `isStudent`, not `isTeacher`, so this account
+     * cancelling its own booking must land as `booking_cancelled` even though
+     * it also teaches the class. Every other DELETE test in this file has
+     * `isTeacher === !isStudent`, so a regression that computed the branch off
+     * `!isTeacher` instead would pass all of them and only show up here. Runs
+     * after the GET test above, deliberately — it cancels the shared
+     * `dualRegistrationId`.
+     */
+    it('cancelling its own booking is self-initiated, even though the account also teaches the class', async () => {
+      const res = await fetch(`${BASE_URL}/api/registrations/${dualRegistrationId}`, {
+        method: 'DELETE',
+        headers: cookie(dualToken),
+      });
+      expect(res.status).toBe(200);
+
+      // Not filtered by type: booking the seat (the fixture's own `beforeAll`)
+      // already sent this student a `booking_confirmed` notification, so the
+      // cancellation notice is picked out as the most recent one rather than
+      // named in the WHERE — naming it there would make the assertion below
+      // vacuous against exactly the regression this test exists to catch.
+      const note = await prisma.notification.findFirstOrThrow({
+        where: {
+          recipientType: 'student',
+          recipientId: dualStudentId,
+          relatedClassId: dualClassId,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(note.type).toBe('booking_cancelled');
     });
   });
 });
