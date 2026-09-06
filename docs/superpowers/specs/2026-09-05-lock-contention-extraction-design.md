@@ -335,7 +335,17 @@ move.
 
 1. Neither `gdpr.test.ts`, `waitlist.test.ts` nor
    `class-template-lifecycle.test.ts` stages lock contention or asserts on a
-   contention outcome. Re-derived by the §1.6 sweep returning none of the three.
+   contention outcome. Re-derived by the §1.6 sweep, which must return no
+   **code** hit in any of the three.
+
+   Measured after the extraction: `gdpr.test.ts` and `waitlist.test.ts` drop
+   out of that sweep entirely; `class-template-lifecycle.test.ts` keeps exactly
+   one hit, and it is a **comment** — a docblock on a test that stayed,
+   describing the bound belonging to the test that left, and pointing at it by
+   name. The sweep greps source text and cannot tell a mention from a
+   statement. That is the same limitation §1.1 records in the other direction,
+   and it is why the marker plus `src/lib/serial-tier-membership.test.ts`
+   holds membership rather than any command.
 2. Each new sibling carries `@serial-tier lock-contention` in its header with
    its own reason and is on `LOCK_CONTENTION_TESTS`;
    `src/lib/serial-tier-membership.test.ts` passes.
