@@ -445,13 +445,19 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     });
 
     await new Promise((r) => setTimeout(r, 300));
-    // Both are blocked in their first write. If either had settled here, the
-    // two never contended and the rest of this test would prove nothing.
-    expect(firstSettled).toBe(false);
-    expect(secondSettled).toBe(false);
-
-    release();
-    await blocking;
+    try {
+      // Both are blocked in their first write. If either had settled here, the
+      // two never contended and the rest of this test would prove nothing.
+      expect(firstSettled).toBe(false);
+      expect(secondSettled).toBe(false);
+    } finally {
+      // In a `finally`, so a failed assertion above still releases the
+      // blocking transaction's `FOR UPDATE` hold rather than parking it —
+      // until its own 15s `timeout` — on the very row the describe's
+      // `afterAll` deletes next.
+      release();
+      await blocking;
+    }
 
     const settled = await Promise.all([first, second]);
     const won = settled.find((r) => r.ok && r.action === 'archived');
