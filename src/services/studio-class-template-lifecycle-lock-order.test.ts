@@ -317,10 +317,7 @@ describe('archiveOrUnarchiveStudioTemplate — queued behind a held template row
       //
       // The two archives are joined here rather than below so a failure cannot
       // leave them writing this template against the shared `prisma` while
-      // that sweep is already deleting it — and by `allSettled` rather than
-      // sequential `await`s, which would join whichever rejects first and skip
-      // the rest, leaving exactly that. The first rejection is rethrown, not
-      // swallowed.
+      // that sweep is already deleting it.
       release();
       await joinOrThrow(blocking, first, second);
     }
@@ -475,10 +472,7 @@ describe('pauseOrResumeStudioTemplate — queued behind a held template row (DB)
       //
       // The archive and the resume are joined here rather than below so a
       // failure cannot leave them writing this template against the shared
-      // `prisma` while that sweep is already deleting it — and by `allSettled`
-      // rather than sequential `await`s, which would join whichever rejects
-      // first and skip the rest, leaving exactly that. The first rejection is
-      // rethrown, not swallowed.
+      // `prisma` while that sweep is already deleting it.
       release();
       await joinOrThrow(blocking, archive, resume);
     }
@@ -571,10 +565,7 @@ describe('pauseOrResumeStudioTemplate — queued behind a held template row (DB)
       //
       // The archive and the pause are joined here rather than below so a
       // failure cannot leave them writing this template against the shared
-      // `prisma` while that sweep is already deleting it — and by `allSettled`
-      // rather than sequential `await`s, which would join whichever rejects
-      // first and skip the rest, leaving exactly that. The first rejection is
-      // rethrown, not swallowed.
+      // `prisma` while that sweep is already deleting it.
       release();
       await joinOrThrow(blocking, archive, pause);
     }

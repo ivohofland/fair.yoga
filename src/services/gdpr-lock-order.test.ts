@@ -1757,7 +1757,9 @@ describe('deleteTeacherAccount blocks concurrent registrations on classes it loc
       // leaving them running unjoined against the describe's shared `prisma`
       // while its `afterAll` may already be deleting the rows they touch.
       //
-      // `allSettled`, so neither join can skip the other if one rejects.
+      // Joined via `joinOrThrow` (see its docblock) so a rejection in either
+      // cannot leave the other unresolved. Reports `erasing`'s reason first
+      // if both reject, per the argument order below.
       releaseLock();
       await joinOrThrow(erasing, registering);
     }
@@ -2103,7 +2105,8 @@ describe('deleteTeacherAccount serialises against a claim in progress (#315)', (
       // 15s `timeout` — on the very row the describe's `afterAll` deletes
       // next.
       //
-      // `allSettled`, so a rejecting `claiming` cannot skip joining `erasing`.
+      // Joined via `joinOrThrow` (see its docblock) so a rejecting `claiming`
+      // cannot skip joining `erasing`.
       release();
       await joinOrThrow(claiming, erasing);
     }
@@ -2213,7 +2216,8 @@ describe('deleteTeacherAccount serialises against a studio claim in progress (#3
       // 15s `timeout` — on the very row the describe's `afterAll` deletes
       // next.
       //
-      // `allSettled`, so a rejecting `claiming` cannot skip joining `erasing`.
+      // Joined via `joinOrThrow` (see its docblock) so a rejecting `claiming`
+      // cannot skip joining `erasing`.
       release();
       await joinOrThrow(claiming, erasing);
     }
