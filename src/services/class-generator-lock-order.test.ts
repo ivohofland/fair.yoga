@@ -374,9 +374,15 @@ describe('the class generator under staged lock contention (DB)', () => {
           );
         } finally {
           // In a `finally`, so a failure above fails this test alone. Without
-          // it the claim holds the row for its full 15s, this block's
-          // `afterEach` queues behind it, and one broken guard reports as a
-          // test timeout plus a hook timeout with the real cause buried.
+          // it the claim keeps its `FOR UPDATE` on the `ClassTemplate` row for
+          // its full 15s budget, and what pays is every later test in this
+          // describe that claims that same row: each waits out its own
+          // `lock_timeout` and surfaces an unhandled `55P03`, so the run
+          // blames them for a guard that broke here. Not this block's
+          // `afterEach` — it writes `ScheduleRule`, which the claim never
+          // locked, so it does not queue behind anything (measured under
+          // #474, both by breaking this test and by breaking the
+          // concurrent-archive one above).
           release();
           // Swallowed deliberately: if the claim itself failed, the assertions
           // above have already said so more precisely, and a throwing

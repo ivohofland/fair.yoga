@@ -181,20 +181,26 @@ The fix is the same `try`/`finally`; only the span and the contents of the
 
 ## Background the implementer needs
 
-**The reference shape**, from `class-generator-lock-order.test.ts:352-361`,
-the file's own already-correct site:
+**The reference shape**, from `class-generator-lock-order.test.ts`'s own
+already-correct site — the *structure* is what to copy, not the prose:
 
 ```ts
       } finally {
-        // In a `finally`, so a failure above fails this test alone. Without
-        // it the claim holds the row for its full 15s, this block's
-        // `afterEach` queues behind it, and one broken guard reports as a
-        // test timeout plus a hook timeout with the real cause buried.
         release();
         await claiming.catch(() => {});
         warn.mockRestore();
       }
 ```
+
+That site's comment originally explained itself as "one broken guard reports
+as a test timeout plus a hook timeout with the real cause buried", and this
+plan quoted it verbatim as canonical. **Both were wrong**, and the PR review
+measured it: breaking that test parks the claim's `ClassTemplate` lock, and
+the cost lands as unhandled `55P03` rejections attributed to the *later tests
+in its describe* — not as a hook timeout, because that block's `afterEach`
+writes `ScheduleRule`, which the claim never locked. The comment is corrected
+in the shipped file. Quoted here without its prose so this document stops
+endorsing the sentence.
 
 **Why the blast radius changed** (background, not something to write into a
 comment): both files joined `LOCK_CONTENTION_TESTS` in #468, and `unit-sweeps`
