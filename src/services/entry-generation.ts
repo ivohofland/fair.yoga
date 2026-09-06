@@ -491,10 +491,10 @@ export async function claimRuleForGeneration<TChild>(
  *     makes a clash cost only its own date, inside a transaction that then
  *     goes on to run another statement and commit. Pinned once per family, by
  *     "names a date lost to a concurrent insert by what still holds it" in
- *     `class-generator.test.ts` and in `studio-class-generator.test.ts` — a
- *     holder entry with `scheduleRuleId: null`, so the collision is isolated
- *     to the slot constraint rather than riding along on the rule-date key
- *     too.
+ *     `class-generator-lock-order.test.ts` and in
+ *     `studio-class-generator.test.ts` — a holder entry with
+ *     `scheduleRuleId: null`, so the collision is isolated to the slot
+ *     constraint rather than riding along on the rule-date key too.
  *
  * NOT idempotent by a caught `P2002`, and the constraint above rather than a
  * `catch` is the whole shape of this function for one reason: Prisma does not

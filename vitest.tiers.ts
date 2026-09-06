@@ -42,15 +42,18 @@ export const SWEEP_TESTS = [
 // Issue 272's mirror foreign keys take row locks no application code asks for,
 // which is that budget getting tighter.
 //
-// NOT a complete census of files that hold locks. `room-archive.test.ts` still
-// holds one in `unit` — a `ClassTemplate` `FOR UPDATE` kept until the resume
-// answers, under a 6s ceiling.
+// NOT a complete census of files that take locks, and it never was one.
+// Taking one is not the trigger; being unable to share a tier is. A file whose
+// locks are all on rows and keys it minted itself, whose parked transactions
+// wait for a release rather than for a clock, and none of whose assertions is
+// a bound or an elapsed time can hold real locks in `unit` — tier noise delays
+// it and cannot fail it.
 //
-// Nor is the parallel tier free of files that assert on how a staged race comes
-// out while holding a lock of their own. #459 closed the files it
-// targets into the siblings below; issue #468 owns what remains, with the
-// candidate list and the measurement — a roster here would be a second copy
-// of it.
+// Which files those are is settled rather than open. #459 closed the files it
+// targeted into the siblings below and #468 the rest, giving every remaining
+// candidate a written verdict — moved here, or measured and kept in the
+// parallel tier. Those two issues carry the verdicts with their measurements;
+// a roster here would be a second copy of them.
 //
 // MEMBERSHIP IS HELD BY THE MARKER, NOT BY A COMMAND. Every file below carries
 // `@serial-tier lock-contention` in its own header, with the reason that file

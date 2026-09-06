@@ -533,9 +533,9 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
 
       // Spied so an unexpected transient-error `catch` is visible rather than
       // silently swallowed — see point 2 above. `mockImplementation` matches
-      // `class-generator.test.ts`'s own use of this spy on the same log line,
-      // so the real warning is suppressed from the test's console output
-      // rather than merely observed.
+      // `class-generator-lock-order.test.ts`'s own use of this spy on the same
+      // log line, so the real warning is suppressed from the test's console
+      // output rather than merely observed.
       const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
       try {
         const b = deleteStudentAccount(erasureDb, studentId);
@@ -543,8 +543,9 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         await lowLockedPromise;
 
         // Fourth argument is the target state string, not a boolean —
-        // verified against `class-generator.test.ts`'s own archive call in
-        // "answers busy when an ordinary booking holds a class row".
+        // verified against `class-generator-lock-order.test.ts`'s own archive
+        // call in "answers busy when a held class row outlives the lock
+        // timeout".
         //
         // Called directly, not wrapped in an outer `prisma.$transaction` —
         // this function opens and manages its own transaction internally

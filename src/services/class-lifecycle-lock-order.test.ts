@@ -259,10 +259,10 @@ describe('the Class row lock under real contention (DB)', () => {
    * the 2s `55P03` every sibling gets and which maps to retry advice.
    *
    * The bounds are deliberately loose, as this repo's sibling lock-timeout
-   * tests are (`class-generator.test.ts`): the lower one proves it really
-   * waited on the row rather than sailing through, the upper that it gave up on
-   * the 2s bound rather than Prisma's 5s. Neither pins the bound's VALUE, which
-   * belongs to `db-locks.ts`.
+   * tests are (`class-generator-lock-order.test.ts`): the lower one proves it
+   * really waited on the row rather than sailing through, the upper that it
+   * gave up on the 2s bound rather than Prisma's 5s. Neither pins the bound's
+   * VALUE, which belongs to `db-locks.ts`.
    */
   it('gives up on the 2s bound when another transaction holds the class row', async () => {
     const cls = await makeClass({ status: 'open' });
