@@ -643,10 +643,31 @@ index leads with, and it is NON-MONOTONIC in table size: measured on
 2026-08-16, background-row counts of 0, 2, 50 and 200 drive from `Class` while
 10, 1 000 and 50 000 drive from `WaitlistEntry`. No amount of seeding makes a
 cost-chosen plan safe. The fix is to leave the planner no choice —
-`enable_mergejoin` and `enable_seqscan` off as well, which leaves an
-index-driven nested loop whose order comes from index structure rather than
-from a cost comparison. If you write another lock-order reproduction, force the
-plan; do not hope for it.
+`enable_mergejoin`, `enable_seqscan` AND `enable_bitmapscan` off as well, which
+leaves a nested loop whose order comes from index structure rather than from a
+cost comparison. If you write another lock-order reproduction, force the plan;
+do not hope for it.
+
+All four, and the fourth is the one #470 came back for. Index-DRIVEN is not
+index-ORDERED: a bitmap heap scan is fed by a bitmap index scan and still
+returns physical heap order — the same warning this section opens with, two
+paragraphs up — so the three settings above left one heap-ordered path open,
+reachable rather than excluded, on a merge gate that flaked twice. Postgres has
+exactly two scan paths over a plain table that return physical order,
+sequential and bitmap heap; turn both off and what remains, index and
+index-only scans, returns index order. Measured (including with every path
+carrying `disable_cost`) in
+`docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md`. Both
+settings discourage rather than forbid, so neither can make a statement fail.
+
+Forcing the plan is a NARROWING, not a pin, and a reproduction that needs one
+should say so in its own comments. Index order is not one order: it is whichever
+key the chosen index leads with, so the fixture has to assign every key an
+eligible plan could order by — and where two callers must disagree about the
+same table, some shapes cannot be reconciled by any fixture at all. Attach the
+statement's `EXPLAIN` to the assertion's failure message; a bare
+`expected [ …(2) ] to deeply equal [ …(2) ]` costs an archaeology session every
+time.
 `archiveOrUnarchiveTemplate` does not even pass ids — its `deleteMany` takes a
 predicate, so it has no array to sort in the first place.
 
