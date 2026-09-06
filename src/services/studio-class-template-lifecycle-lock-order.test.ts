@@ -310,8 +310,9 @@ describe('archiveOrUnarchiveStudioTemplate — queued behind a held template row
       // In a `finally`, so a failure above fails this test alone. Without it
       // the `FOR UPDATE` on this template row stands for the holder's full 15s
       // Prisma budget, this describe's `afterAll` (`sweepTeacher`) queues
-      // behind it to delete that same template, and one broken guard reports
-      // as a test timeout plus a hook timeout with the real cause buried. The
+      // behind it to delete that same template, and the broken guard reports
+      // as its own assertion failure plus an `afterAll` hook timeout that
+      // names nothing about the guard. The
       // two archives are joined here rather than below so a failure cannot
       // leave them writing this template against the shared `prisma` while
       // that sweep is already deleting it.
@@ -464,8 +465,9 @@ describe('pauseOrResumeStudioTemplate — queued behind a held template row (DB)
       // In a `finally`, so a failure above fails this test alone. Without it
       // the `FOR UPDATE` on this template row stands for the holder's full 15s
       // Prisma budget, this describe's `afterAll` (`sweepTeacher`) queues
-      // behind it to delete that same template, and one broken guard reports
-      // as a test timeout plus a hook timeout with the real cause buried. The
+      // behind it to delete that same template, and the broken guard reports
+      // as its own assertion failure plus an `afterAll` hook timeout that
+      // names nothing about the guard. The
       // archive and the resume are joined here rather than below so a failure
       // cannot leave them writing this template against the shared `prisma`
       // while that sweep is already deleting it.
@@ -556,8 +558,9 @@ describe('pauseOrResumeStudioTemplate — queued behind a held template row (DB)
       // In a `finally`, so a failure above fails this test alone. Without it
       // the `FOR UPDATE` on this template row stands for the holder's full 15s
       // Prisma budget, this describe's `afterAll` (`sweepTeacher`) queues
-      // behind it to delete that same template, and one broken guard reports
-      // as a test timeout plus a hook timeout with the real cause buried. The
+      // behind it to delete that same template, and the broken guard reports
+      // as its own assertion failure plus an `afterAll` hook timeout that
+      // names nothing about the guard. The
       // archive and the pause are joined here rather than below so a failure
       // cannot leave them writing this template against the shared `prisma`
       // while that sweep is already deleting it.

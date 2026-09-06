@@ -280,6 +280,11 @@ describe('the class generator under staged lock contention (DB)', () => {
         // below because it writes the `isActive`/`isArchived` columns this
         // block's `afterEach` restores — unjoined it commits after the
         // restore and hands whatever runs next an archived fixture.
+        //
+        // Not swallowed, unlike the busy tests below: `claiming` rejects only
+        // when its own `expect` failed, and that same failure is what frees
+        // the row and lets the archive settle — so the message this `finally`
+        // would replace the staging one with is the root cause of both.
         release();
         await claiming;
         await archiving;
@@ -822,24 +827,25 @@ describe('the class generator under staged lock contention (DB)', () => {
         expect(result.skipped).toEqual([{ date: collide, reason: 'blocked_by_overlap' }]);
       } finally {
         // The span starts where the holder is in flight, because everything
-        // below that point can reject before `release()` runs —
-        // `freshTemplate()` is a database read sitting in an argument list —
-        // and the generator's insert is already parked on the holder's
-        // uncommitted `CalendarEntry`, so an unreleased holder pins both for
-        // its full `{ timeout: 20_000 }` budget. `generating` is joined here
-        // rather than left running because it writes `CalendarEntry` rows for
-        // this `teacherId` on the shared `prisma` client, which is exactly
-        // what this block's `afterEach` deletes between cases.
+        // below that point can reject before `release()` runs. Two moments,
+        // not one: `freshTemplate()` is a database read sitting in an argument
+        // list, and a rejection there leaves only the holder's uncommitted
+        // `CalendarEntry` insert holding its row; once the generator is
+        // running, its own insert is parked on that same row as well. Either
+        // way an unreleased holder keeps it for the full `{ timeout: 20_000 }`
+        // budget.
+        //
+        // `allSettled`, so neither join can skip the other or the disconnect:
+        // `generating` writes `CalendarEntry` rows for this `teacherId` on the
+        // shared `prisma` client, which is exactly what this block's
+        // `afterEach` deletes between cases, and this holder owns a
+        // `PrismaClient` whose pool leaks if it is never disconnected.
+        // Rethrown rather than swallowed, so a join that fails still says so.
         release();
-        try {
-          await holding;
-          await generating;
-        } finally {
-          // Nested, so a rejecting join above cannot skip the disconnect: this
-          // holder owns a `PrismaClient` of its own, and an undisconnected one
-          // leaks its pool for the rest of the run.
-          await holder.$disconnect();
-        }
+        const joined = await Promise.allSettled([holding, generating]);
+        await holder.$disconnect();
+        const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+        if (failed) throw failed.reason;
       }
     });
 
@@ -909,25 +915,25 @@ describe('the class generator under staged lock contention (DB)', () => {
         expect(result.skipped).toEqual([{ date: collide, reason: 'raced' }]);
       } finally {
         // The span starts where the holder is in flight, because everything
-        // below that point can reject before `release()` runs —
-        // `freshTemplate()` is a database read sitting in an argument list —
-        // and the generator's insert is already parked on the holder's
-        // uncommitted `(scheduleRuleId, date)` entry, so an unreleased holder
-        // pins both for its full `{ timeout: 20_000 }` budget. `generating` is
-        // joined here rather than left running because it writes
-        // `CalendarEntry` rows for this `teacherId` on the shared `prisma`
-        // client, which is exactly what this block's `afterEach` deletes
-        // between cases.
+        // below that point can reject before `release()` runs. Two moments,
+        // not one: `freshTemplate()` is a database read sitting in an argument
+        // list, and a rejection there leaves only the holder's uncommitted
+        // `(scheduleRuleId, date)` entry holding its key; once the generator is
+        // running, its own insert is parked on that same key as well. Either
+        // way an unreleased holder keeps it for the full `{ timeout: 20_000 }`
+        // budget.
+        //
+        // `allSettled`, so neither join can skip the other or the disconnect:
+        // `generating` writes `CalendarEntry` rows for this `teacherId` on the
+        // shared `prisma` client, which is exactly what this block's
+        // `afterEach` deletes between cases, and this holder owns a
+        // `PrismaClient` whose pool leaks if it is never disconnected.
+        // Rethrown rather than swallowed, so a join that fails still says so.
         release();
-        try {
-          await holding;
-          await generating;
-        } finally {
-          // Nested, so a rejecting join above cannot skip the disconnect: this
-          // holder owns a `PrismaClient` of its own, and an undisconnected one
-          // leaks its pool for the rest of the run.
-          await holder.$disconnect();
-        }
+        const joined = await Promise.allSettled([holding, generating]);
+        await holder.$disconnect();
+        const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+        if (failed) throw failed.reason;
       }
     });
   });
