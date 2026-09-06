@@ -99,6 +99,9 @@ export const LOCK_CONTENTION_TESTS = [
   'src/services/waitlist-lock-order.test.ts',
   // #459: split out of `class-template-lifecycle.test.ts` for the same reason.
   'src/services/class-template-lifecycle-lock-order.test.ts',
+  // #468: no extraction — the file was already the sibling, so it needed only
+  // the marker and this entry.
+  'src/services/transition-class-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither
