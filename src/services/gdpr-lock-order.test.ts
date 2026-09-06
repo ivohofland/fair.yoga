@@ -373,20 +373,24 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     //   `Class_pkey`-driven with the clause present and does not without it.
     //   Measured, not guaranteed — the same hedge as above.
     //
-    //   `e."cancelledAt" IS NULL` — `CalendarEntry_teacher_slot_excl`
-    //   (#296/#327's exclusion constraint) is a GiST index PARTIAL on exactly
-    //   that predicate, and GiST has no key order at all
+    //   `e."cancelledAt" IS NULL` — `CalendarEntry` carries a GiST index
+    //   PARTIAL on exactly that predicate, and GiST has no key order at all
     //   (`pg_indexam_has_property(gist,'can_order')` is false). Carrying the
     //   qual makes that index eligible; dropping it makes it unreachable, and
-    //   drops NO ROW here, since both of this fixture's entries are live.
+    //   drops NO ROW here, since both of this fixture's entries are live. What
+    //   this line owns is that THIS statement stays clear of that path; which
+    //   index it is, and how many the schema has, belong to the migrations that
+    //   created them — `docs/lock-order.md` owns that account and ships the
+    //   query that re-derives it.
     //
     // THE RESIDUAL THAT EXPOSES, and it is larger than the spec's §4. The
     // production statement carries `cancelledAt IS NULL`, so the MUTATED
     // statement — the one with `ORDER BY c.id` deleted, which is what the
     // counterfactual below is about — can plan onto an index with no key order
-    // whatsoever. No probe on this schema can establish that counterfactual.
-    // Deleting the clause and watching this test redden is what establishes
-    // it, and that is Task 2's job, not this statement's.
+    // whatsoever. No probe on this schema can establish that counterfactual —
+    // not this one, and not one written later. What establishes it is deleting
+    // the clause from `lockClassRowsOrdered` and watching this test redden, and
+    // the run that did so is on the #470 PR.
     //
     // WHY THIS IS ASSERTABLE AT ALL, since the caller is production code: the
     // test does not need to reach inside it. `deleteTeacherAccount` issues
