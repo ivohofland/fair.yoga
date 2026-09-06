@@ -283,7 +283,8 @@ export const DELETE = withErrorHandler(async (
         relatedClassId: registration.classId,
         type: 'booking_cancelled',
         title: 'Booking cancelled',
-        body: `Your booking for ${classPhrase(registration.class.calendarEntry)} is cancelled. It was past the cancellation deadline, so this class is still charged.`,
+        buildBody: (phrase) =>
+          `Your booking for ${phrase} is cancelled. It was past the cancellation deadline, so this class is still charged.`,
       });
       return respondOk({ id, status: 'late_cancel' });
     }
@@ -313,7 +314,6 @@ export const DELETE = withErrorHandler(async (
   // Branched on `isStudent`, not `isTeacher`: a dual-role account cancelling
   // its own booking is self-initiated even when it also teaches, the same
   // precedence the GET handler above applies for the same reason.
-  const phrase = classPhrase(registration.class.calendarEntry);
   await notifyCancellation(
     isStudent
       ? {
@@ -322,7 +322,7 @@ export const DELETE = withErrorHandler(async (
           relatedClassId: registration.classId,
           type: 'booking_cancelled',
           title: 'Booking cancelled',
-          body: `Your booking for ${phrase} is cancelled. You won't be charged for it.`,
+          buildBody: (phrase) => `Your booking for ${phrase} is cancelled. You won't be charged for it.`,
         }
       : {
           recipientType: 'student',
@@ -330,7 +330,8 @@ export const DELETE = withErrorHandler(async (
           relatedClassId: registration.classId,
           type: 'booking_removed',
           title: 'Booking cancelled by your teacher',
-          body: `Your teacher cancelled your booking for ${phrase}. You won't be charged for it.`,
+          buildBody: (phrase) =>
+            `Your teacher cancelled your booking for ${phrase}. You won't be charged for it.`,
         },
   );
 
@@ -346,13 +347,30 @@ function classPhrase(entry: { classType: string; date: Date; startTime: Date }):
   return `${entry.classType} on ${formatDayHeader(entry.date)} at ${timeToHHmm(entry.startTime)}`;
 }
 
+/** What `notifyCancellation` needs from a call site: everything static about
+ *  the notice, plus a way to phrase it once the fresh class read below is in
+ *  hand. `body` is deliberately absent — `notifyCancellation` builds it, not
+ *  the caller. */
+type CancellationNoticeInput = Omit<CreateNotificationInput, 'body' | 'relatedClassId'> & {
+  relatedClassId: string;
+  buildBody: (phrase: string) => string;
+};
+
 /**
  * Sends the student their cancellation notice, after the cancel has committed.
  *
  * Swallowed for the same reason `promoteAfterCancel` swallows: the status
  * write has already landed, and a throw from here would answer 500 for a
  * cancellation that fully succeeded — the student would see an error, retry,
- * and be told their booking is already cancelled.
+ * and be told their booking is already cancelled. That is also why the class
+ * is re-read and the body is built HERE, inside this `try`, rather than by the
+ * caller before calling in: `registration.class.calendarEntry` is read at the
+ * top of the DELETE handler, before `promoteAfterCancel` can spend up to a 2s
+ * lock timeout under contention, so a concurrent reschedule could make the
+ * notice name the class's old day or time — and building the phrase outside
+ * this `try` would let a throw from formatting it escape uncaught. Re-reading
+ * here shrinks that window to this function's own runtime and keeps both the
+ * read and the phrasing behind the swallow.
  *
  * `error` rather than `warn`, even for a transient failure, and unlike the
  * waitlist hook next door: nothing sweeps for missing notifications, so a loss
@@ -362,9 +380,20 @@ function classPhrase(entry: { classType: string; date: Date; startTime: Date }):
  * `promoteAfterCancel` below nests for its own diagnostic log, and for the
  * same reason — see the comment inside its inner `catch`.
  */
-async function notifyCancellation(input: CreateNotificationInput): Promise<void> {
+async function notifyCancellation(input: CancellationNoticeInput): Promise<void> {
   try {
-    await createNotification(prisma, input);
+    const cls = await prisma.class.findUniqueOrThrow({
+      where: { id: input.relatedClassId },
+      select: { calendarEntry: { select: { classType: true, date: true, startTime: true } } },
+    });
+    await createNotification(prisma, {
+      recipientType: input.recipientType,
+      recipientId: input.recipientId,
+      relatedClassId: input.relatedClassId,
+      type: input.type,
+      title: input.title,
+      body: input.buildBody(classPhrase(cls.calendarEntry)),
+    });
   } catch (err) {
     try {
       log.error(

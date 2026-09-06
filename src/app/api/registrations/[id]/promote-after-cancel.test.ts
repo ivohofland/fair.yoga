@@ -38,6 +38,7 @@ const findUnique = vi.fn();
 const updateMany = vi.fn();
 const waitlistCount = vi.fn();
 const notificationCreate = vi.fn();
+const classFindUniqueOrThrow = vi.fn();
 
 vi.mock('@/services/waitlist', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/services/waitlist')>();
@@ -59,12 +60,14 @@ vi.mock('@/lib/api-utils', async (importOriginal) => {
     }),
   };
 });
-// The four calls the DELETE path makes. A teacher session skips the
+// The five calls the DELETE path makes. A teacher session skips the
 // cancel-deadline branch, so this is the whole surface — including the
 // cancellation-notice write (#434), which this file's fixture is a teacher
-// cancelling on a student's behalf, so it lands as `booking_removed`. None of
-// these tests assert on that notification; it is stubbed only so the write
-// succeeds and `notifyCancellation` stays silent, the same reason
+// cancelling on a student's behalf, so it lands as `booking_removed`.
+// `class.findUniqueOrThrow` is `notifyCancellation`'s own fresh re-read of the
+// class (PR #486, closing the stale-schedule gap): none of these tests assert
+// on it, it is stubbed only so that read and the notification write both
+// succeed and `notifyCancellation` stays silent, the same reason
 // `handleSpotFreed`'s success path never appears in a `mockRejectedValue`
 // call below.
 vi.mock('@/lib/db', () => ({
@@ -73,6 +76,7 @@ vi.mock('@/lib/db', () => ({
       findUnique: (...args: unknown[]) => findUnique(...args),
       updateMany: (...args: unknown[]) => updateMany(...args),
     },
+    class: { findUniqueOrThrow: (...args: unknown[]) => classFindUniqueOrThrow(...args) },
     waitlistEntry: { count: (...args: unknown[]) => waitlistCount(...args) },
     notification: { create: (...args: unknown[]) => notificationCreate(...args) },
   },
@@ -127,6 +131,9 @@ beforeEach(() => {
   waitlistCount.mockReset().mockResolvedValue(3);
   handleSpotFreed.mockReset();
   notificationCreate.mockReset().mockResolvedValue({ id: 'note-1' });
+  classFindUniqueOrThrow
+    .mockReset()
+    .mockResolvedValue({ calendarEntry: registrationRow().class.calendarEntry });
 });
 
 describe('DELETE /api/registrations/[id] — the loss its spot-freed hook records', () => {

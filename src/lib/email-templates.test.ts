@@ -30,6 +30,31 @@ describe('email templates', () => {
     expect(html).toContain('€12.50');
   });
 
+  // #434's two new types read almost identically ("Your booking was
+  // cancelled." vs "Your teacher cancelled your booking.") and both key the
+  // same `Record<NotificationType, string>` — a copy-paste swap of the two
+  // values would still type-check and pass every other test here, so each
+  // assertion also checks the OTHER type's intro is absent.
+  it("frames a self-cancellation as the student's own action, not an alert", () => {
+    const { html } = renderNotificationEmail({
+      type: 'booking_cancelled',
+      title: 'Booking cancelled',
+      body: 'Your booking for Vinyasa on Mon 12 at 09:00 is cancelled.',
+    });
+    expect(html).toContain('Your booking was cancelled.');
+    expect(html).not.toContain('Your teacher cancelled your booking.');
+  });
+
+  it("frames a teacher-removed booking as their action, not the student's own", () => {
+    const { html } = renderNotificationEmail({
+      type: 'booking_removed',
+      title: 'Booking cancelled by your teacher',
+      body: 'Your teacher cancelled your booking for Vinyasa on Mon 12 at 09:00.',
+    });
+    expect(html).toContain('Your teacher cancelled your booking.');
+    expect(html).not.toContain('Your booking was cancelled.');
+  });
+
   it('frames the same type for the teacher audience', () => {
     const teacher = renderNotificationEmail({
       type: 'booking_confirmed',
