@@ -221,8 +221,13 @@ function probeNames(source: ts.SourceFile, probe: Probe): ReadonlySet<string> {
   return names;
 }
 
-/** Wrappers that leave a callee's identity unchanged: `(f)(…)` and `f!(…)`. */
-function unwrapCallee(expression: ts.Expression): ts.Expression {
+/**
+ * Wrappers that leave an expression's identity unchanged: `(f)` and `f!`.
+ * Used on a callee (`(f)(…)`, `f!(…)`) and, for the same reason, on a
+ * `$transaction(…)` call's first argument (`((tx) => {…})`) — a shape check
+ * on the unwrapped node, past redundant parentheses it would otherwise fail.
+ */
+function unwrapExpression(expression: ts.Expression): ts.Expression {
   let current = expression;
   while (ts.isParenthesizedExpression(current) || ts.isNonNullExpression(current)) {
     current = current.expression;
@@ -257,7 +262,7 @@ function probeCalled(
   names: ReadonlyMap<string, ReadonlySet<string>>,
 ): string | undefined {
   if (!ts.isCallExpression(node)) return undefined;
-  const callee = unwrapCallee(node.expression);
+  const callee = unwrapExpression(node.expression);
   return PROBES.find((probe) =>
     ts.isIdentifier(callee)
       ? (names.get(probe.helper)?.has(callee.text) ?? false)
@@ -266,16 +271,20 @@ function probeCalled(
 }
 
 /**
- * The function a `$transaction(…)` call runs as its callback, or `undefined`
- * when the call is not one — the array form passes a list rather than a
- * function, and so has no body anything could sit inside.
+ * The `$transaction(…)` call's first argument, or `undefined` when the call
+ * is not one — the array form passes a list rather than a function, and so
+ * has no body anything could sit inside. Returned un-unwrapped: the shape
+ * check looks past redundant parentheses (`((tx) => {…})`), but the value
+ * returned is the actual argument node, so `enclosingTransaction`'s identity
+ * comparison against a tree ancestor still matches it.
  */
 function transactionCallbackOf(node: ts.Node): ts.Node | undefined {
   if (!ts.isCallExpression(node)) return undefined;
-  if (!readsMember(unwrapCallee(node.expression), TRANSACTION)) return undefined;
+  if (!readsMember(unwrapExpression(node.expression), TRANSACTION)) return undefined;
   const first = node.arguments[0];
   if (first === undefined) return undefined;
-  return ts.isArrowFunction(first) || ts.isFunctionExpression(first) ? first : undefined;
+  const callback = unwrapExpression(first);
+  return ts.isArrowFunction(callback) || ts.isFunctionExpression(callback) ? first : undefined;
 }
 
 /**
@@ -535,6 +544,22 @@ describe('the placement rule, against sources this repository does not contain',
     });
   });
 
+  it('reports a call inside a callback wrapped in redundant parentheses', () => {
+    // `db.$transaction((async (tx) => {…}))` — the extra `(…)` around the
+    // callback makes it a `ParenthesizedExpression` rather than directly an
+    // arrow function, so the shape check has to see past it.
+    const source = [
+      'async function f(db: unknown) {',
+      '  await db.$transaction((async (tx: unknown) => {',
+      `    await ${RULE_SLOT_HOLDER}(db, {});`,
+      '  }));',
+      '}',
+    ].join('\n');
+    expect(censusOf(source)).toEqual({
+      callsInsideATransaction: [reported(3, RULE_SLOT_HOLDER, 2)],
+    });
+  });
+
   it('reports a call inside a function-expression callback', () => {
     const source = [
       'async function f(db: unknown) {',
@@ -661,20 +686,27 @@ describe('the placement rule, against sources this repository does not contain',
       '}',
     ].join('\n');
     expect(censusOf(source)).toEqual(CLEAN);
+    expect(callbacksAt(source)).toEqual([`${FIXTURE}:3`]);
   });
 
-  it('reports a call reached as a namespace member inside the callback', () => {
-    const source = [
-      `import * as probes from '@/lib/entry-conflict';`,
-      'async function f(prisma: unknown) {',
-      '  await prisma.$transaction(async (tx: unknown) => {',
-      `    await probes.${PROBE_CONFLICTING_ENTRY}(prisma, 't', {});`,
-      '  });',
-      '}',
-    ].join('\n');
-    expect(censusOf(source)).toEqual({
-      callsInsideATransaction: [reported(4, PROBE_CONFLICTING_ENTRY, 3)],
-    });
+  it('reports a call reached as a namespace member, by property access, optional chaining or string key', () => {
+    for (const callee of [
+      `probes.${PROBE_CONFLICTING_ENTRY}`,
+      `probes?.${PROBE_CONFLICTING_ENTRY}`,
+      `probes['${PROBE_CONFLICTING_ENTRY}']`,
+    ]) {
+      const source = [
+        `import * as probes from '@/lib/entry-conflict';`,
+        'async function f(prisma: unknown) {',
+        '  await prisma.$transaction(async (tx: unknown) => {',
+        `    await ${callee}(prisma, 't', {});`,
+        '  });',
+        '}',
+      ].join('\n');
+      expect(censusOf(source)).toEqual({
+        callsInsideATransaction: [reported(4, PROBE_CONFLICTING_ENTRY, 3)],
+      });
+    }
   });
 
   it('sees through the wrappers that leave a callee unchanged', () => {

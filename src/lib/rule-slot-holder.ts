@@ -63,8 +63,8 @@ export function minutesSinceMidnight(t: Date): number {
  * Call sites reach this probe from a `catch`, where the refused statement
  * aborted the transaction, and from a normal return path, where a zero-row
  * `ON CONFLICT DO NOTHING` refusal never threw and the transaction committed.
- * Both requirements above hold identically either way, and they are all this
- * docblock asserts about call sites.
+ * Both requirements above hold identically either way, and that is all this
+ * docblock asserts about HOW a call site reaches this probe.
  *
  * NO ROSTER HERE, for the reason `db-locks.ts` spends a paragraph on: a caller
  * list kept in this file goes stale and nothing that counts can catch it. A

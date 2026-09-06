@@ -169,6 +169,9 @@ describe('ruleSlotHolder', () => {
  * makes a slot conflict happen in the first place. This device turns that
  * silent widening into a `tsc` failure: it fails only if the parameter no
  * longer excludes `Prisma.TransactionClient`.
+ *
+ * WHERE A CALL SITE SITS is a separate claim, out of this device's reach —
+ * `src/lib/probe-placement-census.test.ts` is what holds that one.
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _theProbeRejectsATransactionClient(tx: Prisma.TransactionClient): Promise<void> {
