@@ -414,8 +414,16 @@ export interface ClassLockSource {
    * adds wait edges nothing needs, and because the answer is per-caller. Ask
    * it of the whole TRANSACTION, not of this statement: does anything in it
    * read or write the entry's `date`, `startTime`, `durationMinutes` or
-   * `cancelledAt`? Each call site records its answer as a `VERDICT (#327)`
-   * comment beside the transaction the question is about.
+   * `cancelledAt`?
+   *
+   * Each call site records its answer as a `VERDICT (#327)` comment
+   * IMMEDIATELY ABOVE THE CALL — above the statement or the object/class member
+   * holding it, with nothing but comments in between. The question is about the
+   * transaction, but the comment goes on the call, and the two are not the same
+   * place: a verdict written above the enclosing `if`, `try`,
+   * `db.$transaction(…)` or function docblock pairs with nothing and is
+   * reported twice. `db-locks-verdict-census.test.ts` is what enforces that,
+   * and its docblock is where the rule is stated in full.
    */
   entries?: boolean;
 }
@@ -565,13 +573,14 @@ function assertNoIllegalClauses(member: 'join' | 'where', fragment: Prisma.Sql):
  * docblock.
  *
  * IT DOES NOT DECIDE WHETHER A VERDICT IS RIGHT. Whether the transaction
- * really does read or write the entry's `date`, `startTime`,
- * `durationMinutes` or `cancelledAt` is a judgement about a whole transaction
- * that a person makes by reading it. Nor does it ask a site for a cross-owner
- * decoy — a row the correct predicate excludes and a widened one would reach —
- * proving that site's `where` is what narrows the lock set; those live in the
- * call sites' own tests (#453). A new call site inherits the requirement to
- * write a verdict, not the decoy.
+ * really does read or write the entry columns `entries` asks about above is a
+ * judgement about a whole transaction that a person makes by reading it. Nor
+ * does it ask a site for a cross-owner decoy — a row the correct predicate
+ * excludes and a widened one would reach — proving that site's `where` is what
+ * narrows the lock set. That is a separate discipline with its own record,
+ * `docs/superpowers/specs/2026-09-05-pre-lock-scope-decoys-design.md` (#453),
+ * which the suites that carry it all cite. A new call site inherits the
+ * requirement to write a verdict, not the decoy.
  *
  * The second statement is scoped to the ids the FIRST one returned — a
  * structural subset, not a predicate re-evaluated later — so its join member

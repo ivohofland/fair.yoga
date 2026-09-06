@@ -32,18 +32,25 @@ and excluding `src/lib/db-locks.ts`, using the TypeScript compiler API
 Per file:
 
 1. **Calls** — every call expression reaching `lockClassRowsOrdered`: by that
-   name, by a local name an import specifier binds to it, or as a member of an
-   imported namespace. Read from the syntax tree, not from text, so a mention
-   inside a comment or a string is not a call and a call without `await` still
-   is one.
-2. **Pairing, one for one** — group each call by its nearest enclosing statement
-   and read that statement's leading comment ranges. A group must hold **exactly
-   one** call and **exactly one** marker. Zero markers is an unverdicted call;
-   two or more is a verdict standing over nothing; two calls under one marker is
-   one verdict asked to answer for two transactions. A call with no enclosing
-   statement counts as unverdicted rather than being skipped.
+   name, by a local name an import specifier binds to it, as a member of an
+   imported namespace (property access or string key), or through a wrapper that
+   leaves the callee unchanged (`(f)(…)`, `f!(…)`). Read from the syntax tree,
+   not from text, so a mention inside a comment or a string is not a call and a
+   call without `await` still is one.
+2. **Pairing, one for one** — group each call by its nearest enclosing **comment
+   anchor** (a statement, or an object-literal or class member) and read that
+   anchor's leading comment ranges. A group must hold **exactly one** call and
+   **exactly one** marker. Zero markers is an unverdicted call; two or more is a
+   verdict standing over nothing; two calls under one marker leaves one comment
+   answering for two lock scopes with nothing saying which. A call with no
+   anchor counts as unverdicted rather than being skipped.
 3. **Orphans** — every raw occurrence of the marker text in the file must fall
    inside one of the comment ranges paired in step 2.
+4. **Fixtures** — `takeCensus` takes its sources as an argument so every rule
+   above can be exercised against shapes the repository does not contain. The
+   live tree holds exactly one call shape, so without these the alias arm, the
+   namespace arm, the grouping and the whole orphan direction are each
+   deletable with the suite still green.
 
 Report both directions in a single assertion whose failure names which way it
 broke, modelled on `serial-tier-membership.test.ts`'s
@@ -67,7 +74,16 @@ is without opening the test.
   otherwise surface as two unexplained orphans. Say so in the comment, the way
   `serial-tier-membership.test.ts` says it of its cwd guard.
 - Both censuses are non-empty: at least one call found, at least one verdict
-  found. A broken file walk empties both sides and would otherwise pass.
+  found. A broken file walk empties both sides and would otherwise pass. Take
+  the census ONCE and share it, so this guard and the pairing cannot disagree
+  about what the tree held.
+- Every area under `src/` holding production TypeScript is reached, compared
+  against a walk written independently of `searchScope`'s filter. Non-emptiness
+  is two totals and all four call sites sit in one directory, so a *partial*
+  collapse leaves both totals healthy — measured: narrowing the scope to one
+  file left every other assertion green.
+- The two exclusions bite and neither is vacuous: no test file and not the
+  defining module in scope, and both kinds present on disk.
 
 Do **not** assert a count, a file list, or the four known paths. A roster here is
 the thing `db-locks.ts:547` refuses and the thing this design exists to avoid;

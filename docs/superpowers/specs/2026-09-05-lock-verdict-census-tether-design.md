@@ -113,18 +113,17 @@ verdict placed anywhere in the file.
 The test therefore pairs each call to a specific comment, one for one:
 
 - For each `lockClassRowsOrdered` call expression, walk to the nearest enclosing
-  statement and require **exactly one** marker in that statement's **leading
-  comment trivia** — that is, above the call with nothing but comments between.
-  None is an unverdicted call; two or more is a verdict standing over nothing,
-  which is what a deleted neighbour's orphan comment looks like once its trivia
-  has merged into the survivor's run.
-- Require that same statement to enclose **exactly one** such call. Two of them
-  in one statement — `[...(await lock(A)), ...(await lock(B))]` — is one verdict
-  asked to answer for two transactions' worth of lock scope, which it cannot
-  honestly do.
+  **comment anchor** and require **exactly one** marker in that anchor's
+  **leading comment trivia**. None is an unverdicted call; two or more is a
+  verdict standing over nothing, which is what a deleted neighbour's orphan
+  comment looks like once its trivia has merged into the survivor's run.
+- Require that same anchor to enclose **exactly one** such call. Two of them
+  under one anchor — `[...(await lock(A)), ...(await lock(B))]` — leave one
+  comment to be read as the answer for two lock scopes with nothing saying
+  which; splitting them is cheap and makes the author look at the second.
 - For each raw occurrence of the marker text in the file, require it to fall
   inside one of the comment ranges just paired. A marker in a comment attached
-  to no such statement is a verdict that outlived its call; a marker inside a
+  to no such anchor is a verdict that outlived its call; a marker inside a
   string literal is not in a comment range at all.
 
 Both directions are reported in one assertion so a failure names which way it
@@ -132,13 +131,31 @@ broke, and the two counts ride inside the reported location — `path:line (2
 calls, 1 verdict)` — so a reader knows which shape it is without opening the
 test.
 
-**The looseness is bounded and is the convention.** "Leading trivia" can span a
-long comment block — in `class-template-lifecycle.ts` the run before the call is
-162 comment lines — so a verdict far above the call still pairs. That is correct:
-the only thing it permits is a verdict separated from its call by comments only,
-which is what the convention asks for. What the counts above rule out is the
-looseness turning into a pool: one marker serving two calls, or two markers
-hanging over one.
+**The anchor is not simply the nearest statement, and that was a defect for one
+review round.** It is the nearest statement *or* the nearest object-literal or
+class member — the unit a person actually writes a comment above. Anchoring on
+the statement alone was wrong in both directions, each proven by a run: a call in
+a concise-body member (`withdraw: (tx) => lock(tx, …)`) **rejected** the verdict
+written directly above it, reporting the call as unverdicted and the verdict as
+an orphan; and a verdict above the enclosing `export const` **paired** with a
+call twenty members deep among unrelated code. `class-template-lifecycle.ts:754`,
+the repo's only `entries: true` site, sits inside a ~330-line
+`export const CLASS_FAMILY = {…}` and passed only because `around:` has a block
+body.
+
+**The remaining looseness is bounded and is the convention.** Leading trivia can
+span a long comment run — in `class-template-lifecycle.ts` the run before the
+call is 162 comment lines — so a verdict at the top of one still pairs. All that
+permits is a verdict separated from its anchor by comments. What the counts rule
+out is the looseness turning into a pool: one marker serving two calls, or two
+markers hanging over one.
+
+**A consequence, documented rather than desired:** a verdict above an enclosing
+`if`, `try`, `$transaction(…)` call or function docblock does not pair, because
+the anchor is the call's own. `db-locks.ts`'s `entries` docblock is where the
+placement rule is stated for authors, and it now says so precisely — it
+previously read "beside the transaction the question is about", which a review
+showed rejects four natural placements.
 
 ### Non-vacuity
 
@@ -165,16 +182,34 @@ minus `src/lib/db-locks.ts`. So:
 
 - a call site added inside `db-locks.ts` itself is not seen (it is the defining
   module; a call there would be self-referential);
-- a call site added under `tests/` is not seen (none exists, and test callers
-  carry no verdict by design);
+- nothing outside `src/` is searched — not `tests/` (test callers carry no
+  verdict by design), not `prisma/seed.ts`, not `scripts/`, not the root configs;
+  nor is a source `tsconfig` compiles but the walk does not match, since
+  `allowJs` is on and `*.mts` is included;
 - a call reaching the helper through a local binding — `const f =
-  lockClassRowsOrdered; f(tx, …)` — is not seen. Following one needs a full
-  type-checker program, which this test does not build. An import alias
-  (`import { lockClassRowsOrdered as X }`, from a module specifier naming
-  `db-locks`) and a namespace member (`ns.lockClassRowsOrdered`) both are;
+  lockClassRowsOrdered; f(tx, …)` — is not seen, nor are the two shapes hiding
+  the name behind an expression, `(0, lockClassRowsOrdered)(…)` and
+  `(cond ? lockClassRowsOrdered : other)(…)`. Following any of them needs a full
+  type-checker program, which this test does not build. An import alias (from a
+  specifier naming `db-locks`), a namespace member by property access or string
+  key, and the identity-preserving wrappers `(f)(…)` and `f!(…)` all are;
+- the census assumes its files parse. `ts.createSourceFile` throws nothing and
+  reports no diagnostics here, so a syntax error swallowing a call censuses zero
+  calls quietly; `npm run typecheck` in CI's `checks` job is what holds that;
+- **the marker is a reserved token.** Any occurrence in a searched file counts as
+  a verdict, prose merely referring to somebody else's included — so a
+  cross-reference must name the convention without spelling the marker;
 - the tether forces a **verdict**, never a **decoy**. A fifth call site still
   ships with its scoping conjunct unproven. What changes is that its author must
   write down what the transaction reads and writes before the suite goes green.
+
+**What is no longer a blind spot: the scope itself.** Narrowing `searchScope` to
+a single file left every assertion green — all four call sites live under
+`src/services`, 1.3% of the tree, and the non-vacuity guard checks only two
+totals. Since this design created the scope, that degradation path is one it
+introduced; an assertion now compares the areas `searchScope` reaches against an
+independently written walk, so a directory-level exclusion fails by name
+(`expected [ 'app' ] to deeply equal []`).
 
 ## The `db-locks.ts:547` amendment
 

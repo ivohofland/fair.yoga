@@ -80,10 +80,10 @@ the fifth site. Re-derived by `grep -rn 'lockClassRowsOrdered(' src --include='*
 helper's definition plus four callers — rather than decremented, because this
 document's own history is of counts that stayed plausible while their
 membership moved. Since #464 a test holds the other half:
-`src/lib/db-locks-verdict-census.test.ts` requires every production call site —
-the four callers, not the definition, which it excludes — to carry a
-`VERDICT (#327)` comment above it, and every such comment to have a call under
-it. **It does not watch this count.** A site that arrives or leaves together
+`src/lib/db-locks-verdict-census.test.ts` requires every production call site
+(not the defining module, which it excludes) to carry a `VERDICT (#327)` comment
+immediately above it, and every such comment to have a call under it. **It does
+not watch this count.** A site that arrives or leaves together
 with its verdict passes it, so the drift this paragraph is about is still the
 command's job; what the test removes is a call and its verdict moving apart.
 
