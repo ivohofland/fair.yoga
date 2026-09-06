@@ -24,10 +24,11 @@ thing the three settings were added to eliminate. §2.1 measures that path as
 reachable, and measures four times over that whether it is also *preferred*
 moves with the database state rather than being a fact about the statement.
 
-**Which plan CI actually got is deducible from the failure, and it is one of
-two.** The reported order was `[LOW, HIGH]`. Enumerate what each reachable plan
+**Which plan CI actually got is deducible from the failure, and it is exactly
+one.** The reported order was `[LOW, HIGH]`. Enumerate what each reachable plan
 orders by, against what the fixture assigns (§2.3): every index key the fixture
-assigns yields `[HIGH, LOW]`. Exactly two things yield `[LOW, HIGH]`.
+assigns yields `[HIGH, LOW]`. Two things could in principle yield `[LOW, HIGH]`
+— and only one of them was ever reachable by that statement.
 
 That enumeration is closed only because of what the statement CI ran did not
 carry, and the clause is load-bearing enough to state: the pre-#470 probe
@@ -38,13 +39,63 @@ exhaustive, because a GiST index scan orders by nothing a fixture assigns and
 so yields either. §4 owns that case. For the statement measured here:
 
 - a plan driven by **`Class_pkey`**, ordering by `Class.id` — which the fixture
-  assigns the *opposite* way on purpose, because the student side's natural
-  order is `Class.id` ascending and the whole premise is that the two sides
-  disagree; or
+  assigns the *opposite* way on purpose. **Not reachable**, and §1.1 below is
+  the measurement; or
 - **heap order**, from a bitmap heap scan, landing that way by page layout.
+  Reachable under the three settings, and closed by the fourth (§2.5, §3.1).
 
-This work closes the second and makes the first report itself. It does not,
-and cannot, prevent the first — §4.
+So the second is not merely the one this work closes — it is **the only one
+that could have produced the observed failure**, and it is closed.
+
+### 1.1 The two sides disagree by CONSTRUCTION, not by fixture luck
+
+Each statement's own join column decides which index on `Class` Postgres will
+generate a path for at all, and the two statements join on different columns:
+
+| statement | joins `Class` on | eligible index on `Class` | orders by | fixture assigns |
+|---|---|---|---|---|
+| teacher | `c."calendarEntryId"` | `Class_calendarEntryId_key`; **`Class_pkey` not generated** | `calendarEntryId` | `[HIGH, LOW]` |
+| student | `c.id` | `Class_pkey`; **`Class_calendarEntryId_key` not generated** | `Class.id` | `[LOW, HIGH]` |
+
+`beforeAll` assigns those two columns in opposite directions, so the two sides'
+natural orders differ for a reason the planner has no say in. **That is the
+derivation issue #470 asked for** — "pinning it to something a planner cannot
+reverse" — and it is this spec's eligibility-not-cost method applied to its own
+largest stated residual.
+
+**Cost is not what does it.** With every scan type disabled so `disable_cost`
+removes cost from the decision, the teacher statement with and without
+`ORDER BY c.id` costs *identically* and differs only in the index:
+
+```
+-- teacher statement, NO ORDER BY (the probe, and the mutated statement)
+->  Index Scan using "Class_calendarEntryId_key" on "Class" c  (cost=10000000000.12..10000000008.14 …)
+-- SAME statement WITH ORDER BY c.id (production)
+->  Index Scan using "Class_pkey" on "Class" c                 (cost=10000000000.12..10000000008.14 …)
+```
+
+**And "not generated" was told apart from "generated but outbid", because a
+chosen plan is evidence only about the winner.** Hiding the winner settles it:
+with `Class_calendarEntryId_key` made invisible (`pg_index.indisvalid = false`,
+inside `BEGIN … ROLLBACK`), the no-`ORDER BY` teacher statement falls back to a
+`Seq Scan on "Class"` — **not** to `Class_pkey`. The control confirms the
+instrument: the same statement *with* `ORDER BY c.id`, under the same hiding,
+does reach `Class_pkey`. The student side mirrors it — hide `Class_pkey` and it
+falls back to a `Seq Scan`, not to `Class_calendarEntryId_key`.
+
+The mechanism is `build_index_paths` (`indxpath.c`): a path is built when the
+index has usable clauses, useful pathkeys, a useful predicate, or supports an
+index-only scan. For `Class_pkey` against the teacher statement, none holds —
+`c.id` appears in no clause, `ORDER BY c.id` is absent so there are no pathkeys,
+the index is not partial, and `FOR UPDATE` rules out index-only.
+
+**This is an argument about two specific statements on today's schema, not a
+law.** It turns on which clauses each statement carries, so a new index on
+`Class`, or a predicate mentioning `c.id` added to the teacher statement, can
+make the path exist again — measured: adding a bare `c.id > …` to its `WHERE`
+is enough to generate it (there it lost on cost, which is exactly the weaker
+kind of protection this section is replacing). Re-measure before relying on it
+after either statement changes.
 
 Two further claims in the tree turned out false, both load-bearing:
 
@@ -285,17 +336,22 @@ by the statement's own predicates, and that this project controls.
 
 ### 3.1 Add the fourth setting, at every site that has the three
 
-`SET LOCAL enable_bitmapscan = off`, alongside the existing three. Six code
+`SET LOCAL enable_bitmapscan = off`, alongside the existing three. **Five** code
 sites across three files:
 
 | file | sites |
 |---|---|
 | `src/lib/db-locks-lock-order.test.ts` | 1 — `forceIndexOrderedPlan` |
 | `src/services/template-lock-order.test.ts` | 1 — `expectPremiseOrder` |
-| `src/services/gdpr-lock-order.test.ts` | 4 — two probes, two `$executeRawUnsafe` hooks |
+| `src/services/gdpr-lock-order.test.ts` | 3 — `probeUnderForcedPlan`, two `$executeRawUnsafe` hooks |
 
 Re-derive with `grep -rn 'enable_seqscan = off' src` and count the lines that
-are code rather than prose.
+are code rather than prose: 9 lines, 4 prose, 5 code.
+
+This said "six, and four in `gdpr`" until the build landed, and the build itself
+is why: Step 3 consolidated that file's *two* probes onto one shared helper,
+`probeUnderForcedPlan`, so the two probe sites became one. A count written
+before the edit it describes.
 
 All three files rest on the same property ("order comes from index structure,
 not from the heap") and all three state it in prose. Fixing one and leaving two
@@ -349,10 +405,22 @@ the earlier `CalendarEntry.date`, and the **higher** `Class.id` — evaluated by
 comparison in TypeScript, not by any query whose order a planner chooses.
 
 This is what makes the premise *derived* rather than *observed* (the issue's
-option 2). Given (a) these assignments and (b) §2.5 as corrected — the probe's
-reachable shapes are btree index scans, because §3.2 keeps it clear of the two
-GiST indexes — `[HIGH, LOW]` follows for every key those plans order by. When it
-stops following, these assertions say which of the two halves moved.
+option 2). Given
+
+- (a) these assignments;
+- (b) §2.5 as corrected — the probe's reachable shapes are btree index scans,
+  because §3.2 keeps it clear of the GiST indexes; and
+- (c) §1.1 — `Class_pkey` is not among the teacher statement's reachable paths
+  at all,
+
+`[HIGH, LOW]` follows for every key those plans order by. When it stops
+following, these assertions say which of the two halves moved.
+
+**(c) is not optional and the derivation is false without it.** The third
+assertion above deliberately assigns `Class.id` the OTHER way, so a
+`Class_pkey`-driven plan would order `[LOW, HIGH]` and "every key those plans
+order by" would be untrue. What makes the sentence sound is that the teacher
+statement cannot reach that plan — not that the fixture got lucky.
 
 ### 3.4 Attach the plan to the failure
 
@@ -373,35 +441,56 @@ list.
 
 ## 4. The residual, stated plainly
 
-**The pin is narrowed, not closed, and issue #470's AC 4 applies: say so.**
+**The pin is narrowed, and narrower than earlier drafts of this section
+believed. Issue #470's AC 4 still applies to what is left: say so.**
 
-Index order is not one order. A `Class_pkey`-driven plan orders by `Class.id`,
-and the fixture assigns `Class.id` the *opposite* way on purpose — the student
-side's natural order is `Class.id` ascending, and the premise is that the two
-sides disagree. **No fixture can reconcile that shape**, because both sides read
-the same table through the same indexes and need opposite answers from it. Nor
-should it be reconciled: under that plan the reproduction really is vacuous, and
-red is the correct verdict.
+### 4.1 The residual this section used to lead with, and no longer has
 
-The exposure is symmetric and worth naming: the *student* probe is vulnerable to
-a `Class_calendarEntryId_key`-driven plan for the same reason, which would make
-it agree with the teacher side.
+This section said: a `Class_pkey`-driven plan orders by `Class.id`, the fixture
+assigns `Class.id` the opposite way on purpose, **no fixture can reconcile that
+shape** — and named a symmetric exposure on the student side to a
+`Class_calendarEntryId_key`-driven plan. Both are **withdrawn**.
 
-`Class_pkey` was not observed driving in any of the ~100 `EXPLAIN`s in §2 —
-Postgres preferred `Class_calendarEntryId_key` for a `Class`-driven scan in every
-configuration tried, including ones that made `Class_pkey` artificially cheap by
-faking its `relpages`. That is an observation, not a guarantee, and §1 shows it
-is one of only two shapes that could have produced the reported CI failure.
+§1.1 has the measurement. Neither plan is reachable by the statement it would
+break, and for the same structural reason in both directions: each statement
+joins `Class` on one column, and that is the only thing making an index on
+`Class` worth generating a path for. The teacher statement mentions `c.id`
+nowhere, so `Class_pkey` is not generated for it; the student statement mentions
+`calendarEntryId` nowhere, so `Class_calendarEntryId_key` is not generated for
+it. `Class_pkey` *does* drive the student probe and is benign there, because
+`w."classId"` **is** `c.id` — it orders by the same column the `WaitlistEntry`
+indexes lead with, and both give `[LOW, HIGH]`.
 
-**A second residual, and it is larger than the first.** §2.5 has the mechanism —
-a GiST index scan is an index scan that does not order, and this schema's two are
-reachable only by a statement carrying their partial predicate. What §4 owns is
-where that leaves the premise: the *production* pre-lock carries
-`cancelledAt IS NULL`, so its MUTATED form — `ORDER BY c.id` removed, which is
-exactly what the premise is a counterfactual about — can plan onto an index with
-no key order at all. **No probe on this schema can establish that
-counterfactual.** What establishes it is deleting the clause and watching the
-test redden: Task 2's mutation, load-bearing now rather than confirmatory.
+The earlier draft rested on ~100 `EXPLAIN`s in which `Class_pkey` was never
+observed driving the teacher statement, and correctly called that an
+observation rather than a guarantee. It was the right caution about the wrong
+question: the guarantee was available, and it comes from eligibility rather
+than from cost.
+
+**What replaces it is narrower and must not be overstated.** This is an argument
+about two specific statements against today's schema. A new index on `Class`, or
+a clause mentioning `c.id` added to the teacher statement, can put the path back
+— measured, in §1.1. It is not a property of the tables, and it needs
+re-measuring whenever either statement changes.
+
+### 4.2 The residual that survives, and it is now the only one
+
+§2.5 has the mechanism — a GiST index scan is an index scan that does not order,
+and this schema's are reachable only by a statement carrying their partial
+predicate. What §4 owns is where that leaves the premise: the *production*
+pre-lock carries `cancelledAt IS NULL`, so its MUTATED form — `ORDER BY c.id`
+removed, which is exactly what the premise is a counterfactual about — can plan
+onto an index with no key order at all. **No probe on this schema can establish
+that counterfactual.** What establishes it is deleting the clause and watching
+the test redden: Task 2's mutation, load-bearing now rather than confirmatory,
+and it reddened 3/3 on the `40P01` negation with all three premise assertions
+still passing.
+
+Note what this residual is *not* about, since §4.1 changed the neighbourhood:
+the mutated production statement's `Class` side is still
+`Class_calendarEntryId_key`, not `Class_pkey` — measured the same way. The
+exposure is on the `CalendarEntry` side, where the qual makes an unordered index
+eligible.
 
 So, plainly: **this work does not make the premise unfalsifiable by the
 planner.** Postgres offers no plan pinning, and the two remaining levers were
@@ -414,12 +503,20 @@ weighed and rejected —
   that can go quietly vacuous, which is the failure mode #470 says must not be
   reached.
 
-What this work does buy, and it is not nothing: heap order — the only
-*unbounded* source of disorder, and the one shared with every other file in the
-tier — leaves the reachable set; the remaining set is a handful of index keys
-the fixture assigns; and when a plan outside that set is chosen, the failure
+What this work does buy, and it is more than earlier drafts claimed: heap order
+— the only *unbounded* source of disorder, and the one shared with every other
+file in the tier — leaves the reachable set; the remaining set is a handful of
+index keys the fixture assigns, and §1.1 shows that set excludes the one key
+assigned the other way; and when a plan outside that set is chosen, the failure
 prints the plan instead of two opaque uuids, so the next occurrence is one read
-rather than an archaeology session. Both of the last two are §3.
+rather than an archaeology session. The last two are §3.
+
+**Which makes the headline claim sharper than "narrowed".** Of the two shapes
+§1 identifies as capable of producing CI's `[LOW, HIGH]`, one was never
+reachable by that statement and the other is heap order — and heap order is what
+the fourth setting closes. So for the probe as it stands, the observed failure
+mode is closed, not merely made less likely. §4.2 is what remains, and it is
+about the mutated production statement rather than about the probe.
 
 ## 5. Acceptance criteria, mapped
 
@@ -427,10 +524,16 @@ rather than an archaeology session. Both of the last two are §3.
 |---|---|
 | premise stays asserted; prove by mutation, record exact output | plan Task 2 |
 | assertion no longer depends on a **physical** scan order | met — §2.5 + §3.1 |
-| …nor on any order "the planner may reverse" | **not met, and cannot be** — §4 |
-| state what makes it stable | §2.5 for what is now closed; §4 for what is not |
+| …nor on any order "the planner may reverse" | **met for the probe** — §1.1: the one reversing plan is not generated for this statement, measured by eligibility rather than cost. **Not met for the mutated production statement** — §4.2 |
+| state what makes it stable | §1.1 and §2.5 for what is closed; §4.2 for what is not |
 | honest residual flake rate, N runs, CI-shaped database | plan Task 2 |
 | if it cannot be made stable, say so | §4, and the PR body |
+
+The middle row was "**not met, and cannot be**" until §1.1 was measured. The
+"cannot be" was the part that turned out wrong: it assumed index-order stability
+had to come from out-costing the alternative, when the alternative was never
+generated. The row is split rather than flipped, because the residual §4.2 owns
+is real and is a different statement.
 
 ## 6. Not in scope
 

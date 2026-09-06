@@ -19,14 +19,19 @@ PostgreSQL 16 in `fairyoga-db-1`.
 
 **Task order is load-bearing.** Task 2 measures Task 1's tree.
 
-**Amended during execution.** Task 1's review overturned one instruction below:
-Step 2 says to add `e."cancelledAt" IS NULL` to the teacher probe, and the
-shipped probe does not carry it — that qual is what makes the partial GiST index
-`CalendarEntry_teacher_slot_excl` an eligible path, and GiST returns no key
-order. The reasoning and what replaced it are spec §3.2 and §2.5; the steps
-below are left as they were written, since a plan is the record of what was
-instructed. Where a step states a fact about Postgres that turned out false, the
-fact is corrected in place.
+**Amended during execution, and the amendment reaches this whole document — the
+Architecture paragraph above included, not only the steps below.** Task 1's
+review overturned one instruction: Step 2 says to add `e."cancelledAt" IS NULL`
+to the teacher probe, and the shipped probe does not carry it — that qual is
+what makes a partial GiST index an eligible path, and GiST returns no key order.
+So the Architecture line "make the probe plan like the statement it models" is
+the goal that was *abandoned*: the probe is a fixture check, not a model, and
+spec §3.2 records why no probe can be one. The reasoning and what replaced it
+are spec §3.2 and §2.5.
+
+The prose is left as it was written, here and in the steps, since a plan is the
+record of what was instructed rather than of what shipped. Where a step states a
+fact about Postgres that turned out false, the fact is corrected in place.
 
 ## Global Constraints
 
