@@ -433,20 +433,32 @@ only its own teacher.
 
 ## 5. Also true, and deliberately out of scope
 
-Nothing is deferred to a follow-up. After this change the sweep's 19 hits are:
-eleven serial members plus `class-template-lifecycle.test.ts` (comment-only),
-`api-errors.test.ts` (comment-only, §3.1) and `db-locks.test.ts` (adjudicated,
-stays, §3.2) — plus the four new siblings and `transition-class-lock-order`,
-which are serial. `vitest.tiers.ts`'s note therefore stops pointing at an open
-issue and states the finished position instead.
+Nothing is deferred to a follow-up. Re-running §1.1's sweep on the finished
+branch still returns **19 files** — a different 19, and every one of them now
+has a verdict:
+
+- **15 are serial.** Eleven on `LOCK_CONTENTION_TESTS` (the seven from §1.1
+  plus the four this branch put there) and the same four on `SWEEP_TESTS`.
+- **4 stay in the parallel tier**, and three of those are comment-only hits:
+  `class-template-lifecycle.test.ts` (#459's, §1.1), `api-errors.test.ts`
+  (§1.3, and it opens no database at all) and now `class-generator.test.ts`,
+  whose one surviving hit is a docblock sentence about `SET LOCAL lock_timeout`
+  being a no-op in a transaction kept for another reason. The fourth is
+  `db-locks.test.ts`, a real lock-holder adjudicated in §3.2 and deliberately
+  kept.
+
+`15 + 4 = 19`, and `11 + 4 = 15`. `vitest.tiers.ts`'s note therefore stops
+pointing at an open issue; it states the CRITERION that separates those two
+groups rather than rostering either, since a roster of other files has no
+owner in that file.
 
 ## 6. Acceptance
 
 1. Each of the seven files has a written verdict, above, and the four
-   extractions leave no moving test behind. Re-derived per file with the §1.1
-   sweep: after the change `class-generator.test.ts`, `class-lifecycle.test.ts`,
-   `room-archive.test.ts` and `studio-class-template-lifecycle.test.ts` keep
-   only comment hits or none.
+   extractions leave no moving test behind. Re-derived with the §1.1 sweep:
+   `class-lifecycle.test.ts`, `room-archive.test.ts` and
+   `studio-class-template-lifecycle.test.ts` drop out of it entirely, and
+   `class-generator.test.ts` keeps exactly one hit, a comment (§5).
 2. Each new sibling carries `@serial-tier lock-contention` in its own header
    with its own reason, and is on `LOCK_CONTENTION_TESTS`;
    `src/lib/serial-tier-membership.test.ts` passes.
@@ -472,6 +484,31 @@ per-file marginal cost of roughly 0.3 s (6.8 s of non-test time across 21 files
 in the baseline run) for each of five new members — about **+24 s**, or +24 %.
 The parallel tier loses its longest file's bulk (`class-generator.test.ts` is
 16.05 s solo against a 17.48 s whole-tier wall clock) and should shrink.
+
+**Measured on the finished branch, same machine, same day:**
+
+| Tier | Before | After | Change |
+|---|---|---|---|
+| `unit` | 17.48 s, 86 files, 1363 tests | **7.21 s**, 85 files, 1343 tests | **−59 %** |
+| `unit-sweeps` | 100.24 s, 21 files, 195 tests | **122.97 s**, 25 files, 215 tests | **+23 %** |
+| combined | 117.72 s | **130.18 s** | **+11 %** |
+
+The serial prediction held: +22.73 s against +24 s predicted. The parallel one
+was understated — "should shrink" turned out to be −10.27 s, more than the
+serial tier gained in test time, because `class-generator.test.ts` at 16.05 s
+solo *was* that tier's critical path and 96 % of it left. Sixty-six of the 85
+remaining files now finish inside a 7.21 s wall clock.
+
+The combined +11 % is what the CI `test-unit` job actually pays, and it is the
+number to compare against #459's +44 % — not because this branch was cheaper to
+build, but because #459 moved time out of a tier whose critical path did not
+move, and this one collapsed a critical path.
+
+Counts reconcile in both directions. Files: 107 → 110 = three new siblings
+(`room-archive-lock-order.test.ts` already existed and was appended to). Tests:
+1363 + 195 = 1558 before, 1343 + 215 = 1558 after — `unit` loses the 19 moved
+tests plus `transition-class-lock-order.test.ts`'s one, and `unit-sweeps` gains
+exactly those 20.
 
 ## 7. Not doing
 
