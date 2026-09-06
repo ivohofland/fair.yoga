@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ToggleTemplateButton } from './toggle-template-button';
-import { UNREADABLE_CONFIRMATION_MESSAGE } from './template-action-messages';
 import { routerRefresh } from '../../../tests/setup/components';
 // Importing the mock fns from the setup file relies on Vitest giving the test
 // and the setup file the same module instance. If that does not hold in
@@ -30,6 +29,11 @@ describe('ToggleTemplateButton', () => {
     json?: () => Promise<unknown>;
   }): void {
     fetchMock.mockResolvedValue(response);
+    vi.stubGlobal('fetch', fetchMock);
+  }
+
+  function rejectFetch(error: Error): void {
+    fetchMock.mockRejectedValue(error);
     vi.stubGlobal('fetch', fetchMock);
   }
 
@@ -156,13 +160,9 @@ describe('ToggleTemplateButton', () => {
     await waitFor(() => expect(button).toBeEnabled());
   });
 
-  /**
-   * #193. A body-read failure after a 2xx (proxy truncation, malformed JSON)
-   * must not claim a network error or leave the UI stale. The mutation
-   * committed server-side, so the button produces a distinguishable message
-   * that does not claim failure, and calls router.refresh().
-   */
+  /** #193: unreadable 2xx body confirms the update and refreshes without reporting network error. */
   it('does not report a network error when the update succeeds but the body cannot be read', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     stubFetch({
       ok: true,
       json: async () => {
@@ -173,19 +173,36 @@ describe('ToggleTemplateButton', () => {
 
     fireEvent.click(screen.getByRole('button'));
 
+    expect(
+      await screen.findByText('Updated, but could not read confirmation details.'),
+    ).toBeInTheDocument();
     expect(screen.queryByText('Network error. Please try again.')).not.toBeInTheDocument();
-    expect(await screen.findByText(UNREADABLE_CONFIRMATION_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(routerRefresh).toHaveBeenCalled();
+    expect(screen.getByRole('button')).toBeEnabled();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[toggle-template] updated, but response body was unreadable',
+      expect.objectContaining({ templateId: 'tpl-1' }),
+    );
   });
 
   it('reports a network error when fetch itself throws', async () => {
-    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
-    vi.stubGlobal('fetch', fetchMock);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    rejectFetch(new TypeError('Failed to fetch'));
     render(<ToggleTemplateButton templateId="tpl-1" isActive={false} />);
 
     fireEvent.click(screen.getByRole('button'));
 
     expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Updated, but could not read confirmation details.'),
+    ).not.toBeInTheDocument();
     expect(routerRefresh).not.toHaveBeenCalled();
+    expect(screen.getByRole('button')).toBeEnabled();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[toggle-template] request failed',
+      expect.objectContaining({ templateId: 'tpl-1' }),
+    );
   });
 });

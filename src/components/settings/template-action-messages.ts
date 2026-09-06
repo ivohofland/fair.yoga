@@ -321,8 +321,16 @@ export const UNARCHIVE_MESSAGE =
 
 /**
  * Shown when a template toggle or archive mutation succeeded (2xx) but the
- * response body could not be parsed (#193). Confirms that the mutation was
- * applied without falsely claiming a network failure.
+ * response body could not be parsed (#193).
+ *
+ * Past res.ok, the server mutation has already committed. An unreadable body
+ * (such as proxy truncation or malformed JSON) must not claim a network transport
+ * failure ("Network error. Please try again."), which would falsely report that the
+ * mutation failed. Nor must it skip router.refresh(), which would leave the UI
+ * stale; on retry, the server-side no-op path (`pauseOrResumeRule` /
+ * `archiveOrUnarchiveRule` in `services/rule-lifecycle.ts`) returns 200 unchanged,
+ * which resolves to silence and leaves the user believing both clicks failed.
+ * Callers surface this message and still invoke router.refresh().
  */
 export const UNREADABLE_CONFIRMATION_MESSAGE =
   'Updated, but could not read confirmation details.';
@@ -566,11 +574,11 @@ const COUNT_KEYS = {
  *
  * NOT a truncated payload, and that distinction is the whole of what this
  * guard defends against. A body that will not parse reaches it from nowhere:
- * every component on a path here — the create forms, which call this directly,
- * and the toggle/archive buttons, which reach it through the two resolvers
- * below — puts `res.json()` inside a `try` whose catch sets "Network error".
- * That is a property of the CALLERS, so re-derive them rather than trust a
- * roster here:
+ * the create forms (`template-form.tsx`, `studio-template-form.tsx`) wrap
+ * `res.json()` inside a `try` whose catch sets "Network error", while the
+ * toggle/archive buttons catch unparseable 2xx bodies before calling the resolvers
+ * below (#193) and set `UNREADABLE_CONFIRMATION_MESSAGE`.
+ * Re-derive the callers rather than trust a roster here:
  *
  *   grep -rln "hasIntegerCounts\|resolveTemplateConfirmation\|resolveStudioConfirmation" \
  *     src/components/ | grep -v "template-action-messages"
