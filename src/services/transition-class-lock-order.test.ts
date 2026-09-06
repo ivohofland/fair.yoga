@@ -1,11 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { hhmmToTime } from '@/lib/time-of-day';
-import { lockClassRow } from '@/lib/db-locks';
-import { transitionClass } from './class-lifecycle';
-
 /**
+ * @serial-tier lock-contention — the case below both holds a real `Class` row
+ * lock for the length of a staged race and is bounded by one: the transition
+ * parks under `lockClassRow`'s 2s `lock_timeout` while the handshake below
+ * decides when the holder lets go. A tier-mate's lock noise delaying that
+ * handshake past the bound turns the expected `reason: 'CANCELLED'` into a
+ * `55P03`, and the assertion then fails from the wrong cause instead of from
+ * the defect it watches — see WHY THE REASON, NEVER THE BOOLEAN below.
+ *
  * `transitionClass` must not walk a class forward past a cancel that is
  * already holding it (#327, PR review).
  *
@@ -42,6 +43,14 @@ import { transitionClass } from './class-lifecycle';
  * the only outcome that says the transition waited, re-read, and refused
  * because the class is off.
  */
+
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { PrismaClient } from '@prisma/client';
+import crypto from 'crypto';
+import { hhmmToTime } from '@/lib/time-of-day';
+import { lockClassRow } from '@/lib/db-locks';
+import { transitionClass } from './class-lifecycle';
+
 const prisma = new PrismaClient();
 
 /**
