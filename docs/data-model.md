@@ -492,7 +492,7 @@ Level 1: teacher marks payment as received manually (cash, bank transfer). Level
 | created_at | datetime | |
 | updated_at | datetime | |
 
-Notification types: booking_confirmed, class_cancelled, payment_received, waitlist_promoted, spot_available, reminder, missed_you, announcement.
+Notification types: booking_confirmed, booking_cancelled, booking_removed, class_cancelled, payment_received, payment_request, waitlist_promoted, spot_available, reminder, missed_you, announcement, teacher_invitation.
 
 Three-layer delivery: in-app notification (real-time) → in-app inbox (persistent) → email (fallback for unread).
 

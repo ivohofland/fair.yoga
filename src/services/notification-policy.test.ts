@@ -12,6 +12,7 @@ const minutes = (n: number) => new Date(now.getTime() + n * 60 * 1000);
 describe('essential types', () => {
   it('covers exactly the booking-critical types', () => {
     expect([...ESSENTIAL_NOTIFICATION_TYPES].sort()).toEqual([
+      'booking_removed',
       'class_cancelled',
       'payment_request',
       'spot_available',
@@ -23,6 +24,14 @@ describe('essential types', () => {
     expect(isEssential('announcement')).toBe(false);
     expect(isEssential('reminder')).toBe(false);
     expect(isEssential('class_cancelled')).toBe(true);
+  });
+
+  // The two cancellation types differ on exactly this, and nothing else
+  // distinguishes them at the policy layer. A future edit that "tidies" the
+  // pair into agreement has to delete this test to do it.
+  it('splits the cancellation pair: a removal is essential, a self-cancel is not', () => {
+    expect(isEssential('booking_removed')).toBe(true);
+    expect(isEssential('booking_cancelled')).toBe(false);
   });
 });
 
@@ -72,5 +81,10 @@ describe('shouldEmailStudent', () => {
   it('optional types honor the opt-out', () => {
     expect(shouldEmailStudent('announcement', false)).toBe(false);
     expect(shouldEmailStudent('announcement', true)).toBe(true);
+  });
+
+  it('mails a teacher-removed booking past the opt-out, but not a self-cancel', () => {
+    expect(shouldEmailStudent('booking_removed', false)).toBe(true);
+    expect(shouldEmailStudent('booking_cancelled', false)).toBe(false);
   });
 });

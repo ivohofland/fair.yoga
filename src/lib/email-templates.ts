@@ -46,6 +46,8 @@ export function wrapEmail(heading: string, bodyHtml: string): string {
  */
 const STUDENT_INTROS: Record<NotificationType, string> = {
   booking_confirmed: 'Your booking is confirmed.',
+  booking_cancelled: 'Your booking was cancelled.',
+  booking_removed: 'Your teacher cancelled your booking.',
   class_cancelled: 'A class was cancelled.',
   payment_received: 'A payment was received.',
   payment_request: 'A class has been priced — here is your share.',
