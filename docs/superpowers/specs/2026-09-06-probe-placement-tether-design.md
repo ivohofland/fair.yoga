@@ -110,7 +110,7 @@ command that produces each.
 Across **all of `src/`**, test files included — eleven receiver names:
 
 ```
-$ grep -rhoE "[A-Za-z_$][A-Za-z0-9_$]*\.\$transaction" src/ --include="*.ts" --include="*.tsx" | sort | uniq -c | sort -rn
+$ grep -rhoE '[A-Za-z_$][A-Za-z0-9_$]*\.\$transaction' src/ --include="*.ts" --include="*.tsx" | sort | uniq -c | sort -rn
   98 prisma.$transaction     12 holder.$transaction      3 holderDb.$transaction    1 prober.$transaction
   33 db.$transaction          6 holderClient.$transaction 2 other.$transaction      1 hookedPrisma.$transaction
                               4 target.$transaction                                 1 cancelDb.$transaction
@@ -123,7 +123,7 @@ several of them, and the number of distinct names does not change.
 Across **non-test `src/`**, which is the scope the census walks — two:
 
 ```
-$ grep -rhoE "[A-Za-z_$][A-Za-z0-9_$]*\.\$transaction" src/ --include="*.ts" --include="*.tsx" --exclude="*.test.ts" --exclude="*.test.tsx" | sort | uniq -c | sort -rn
+$ grep -rhoE '[A-Za-z_$][A-Za-z0-9_$]*\.\$transaction' src/ --include="*.ts" --include="*.tsx" --exclude="*.test.ts" --exclude="*.test.tsx" | sort | uniq -c | sort -rn
   30 db.$transaction
    7 prisma.$transaction
 ```
@@ -312,3 +312,18 @@ rule that a comment states what is true now rather than what it used to say.
 - It does not catch a dynamically-nested probe. Lexical only, stated above.
 - **#464 is unaffected**; its census stands as merged. This reuses its shape and
   adds the transaction-detector guard it had no need of.
+- **`docs/lock-order.md` gets no sibling paragraph for this census**, and that
+  is a decision rather than an oversight. Its lines 78-88 describe the #464
+  verdict census because that census bears on a count the document itself
+  owns — the call-site tally `lockClassRowsOrdered` re-derives — and says so
+  explicitly: "It does not watch this count." This branch's census owns no
+  count of `docs/lock-order.md`'s: the table at lines 1248-1249 counts
+  `ruleSlotHolder`/`probeConflictingEntry` call sites and the endpoints they
+  answer for, not lexical placement, and nothing here changes or falsifies
+  either tally. A paragraph describing this census would therefore be a
+  second copy of a rule already stated in full where it is enforced — this
+  file and `src/lib/probe-placement-census.test.ts`'s own docblock. Nor is the
+  document's topic the reason: the section around line 1521 ("A diagnostic
+  read inside an interactive transaction cannot be guarded") is already about
+  probe placement and `25P02`, so "this is off-topic for `lock-order.md`" is
+  not the argument being made here.
