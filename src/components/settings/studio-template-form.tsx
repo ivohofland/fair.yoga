@@ -16,6 +16,7 @@ import {
 import type { TemplateGenerationState } from '@/lib/template-selection';
 import { anyBlocked } from '@/lib/generation';
 import { hasIntegerCounts } from '@/components/settings/template-action-messages';
+import type { StudioTemplateCreateResponse, TemplateEditResponse } from '@/lib/api-types';
 
 /**
  * #136. The one enumeration of this form's fields. It replaced three that
@@ -219,7 +220,9 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // the object would THROW on the first member read rather than compare
         // `undefined > 0` and fall through. The same distinction
         // `hasIntegerCounts` (`template-action-messages.ts`) exists for.
-        const json: { data?: { added: number; counts?: unknown } } = await res.json();
+        const json: {
+          data?: { added: StudioTemplateCreateResponse['added']; counts?: unknown };
+        } = await res.json();
         const result = json.data;
         setCreated(true);
         // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
@@ -293,7 +296,10 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // included. That type's docblock owns why the copy vocabulary is kept
         // apart from the log ones.
         const json: {
-          data?: { firstEffective?: string | null; generationState?: string };
+          data?: {
+            firstEffective?: TemplateEditResponse['firstEffective'];
+            generationState?: string;
+          };
         } = await res.json();
         const firstEffective = json.data?.firstEffective ?? null;
         const wireState = json.data?.generationState;

@@ -453,69 +453,12 @@ export function templateUpdatedMessage(
  * fails on `templateKind`'s literal rather than compiling clean the way the
  * phantom let it (#119, #93).
  */
-export type TemplateToggleResponse =
-  | { action: 'paused'; lastScheduled: { date: string; startTime: string } | null }
-  | { action: 'archived'; deleted: number; remaining: number }
-  | {
-      action: 'active';
-      templateKind: 'class';
-      scheduled: number;
-      added: number;
-      /**
-       * One field rather than three re-listed `number`s, and the difference is
-       * the same guarantee `PauseRuleResult` (`services/rule-lifecycle.ts`)
-       * documents at its own
-       * `counts`: a fourth `SkipCounts` member reaches this payload with no
-       * edit here, at the route that builds it, or at the form that reads it.
-       * `alreadyThisWeek` (#194) is the count that arrived after this arm was
-       * first written, and it had to be threaded through by hand at every hop —
-       * which is how it came to stop at the route for a while.
-       */
-      counts: SkipCounts;
-    }
-  | { action: 'unarchived' | 'unchanged' };
+import type {
+  TemplateToggleResponse,
+  StudioTemplateToggleResponse,
+} from '@/lib/api-types';
 
-/**
- * The `data` payload of a successful PATCH on a *studio* class template (#119).
- *
- * Split from `TemplateToggleResponse` rather than adding optional fields to its
- * shared `active` arm. The optional-field version is the smaller diff and
- * certifies nothing: the class family would carry `scheduled?`/`added?` it
- * never sets, and nothing would notice if the studio route stopped setting
- * them. That is the failure `resolveTemplateConfirmation` records below — #93's
- * wrong-shape bug, where `archiveStudioMessage` had the wrong signature and the
- * button silently discarded `remaining` — and the one #136's pins exist to
- * prevent.
- *
- * `scheduled`, `added` and `counts` are required, not optional. The route
- * sends all three on every `active` response; a type that allowed their
- * absence would be describing a payload the server cannot produce. (It was
- * five fields until the counts became one — the count members themselves are
- * required by `SkipCounts`, unchanged.) `templateKind: 'studio'` is the literal that keeps this type
- * and `TemplateToggleResponse` non-interchangeable — see that type's docblock.
- */
-export type StudioTemplateToggleResponse =
-  | { action: 'paused'; lastScheduled: { date: string; startTime: string } | null }
-  | { action: 'archived'; deleted: number; remaining: number }
-  | {
-      action: 'active';
-      templateKind: 'studio';
-      scheduled: number;
-      added: number;
-      /**
-       * The whole `SkipCounts`, carried rather than mapped member by member.
-       * `countSkipReasons` returns every member for both families, and since
-       * #284 both families PRODUCE every member too — one generator, one week
-       * key — so this arm needs no per-family branch and no field the studio
-       * route leaves at a constant.
-       *
-       * Carrying the object rather than its members one by one is what made
-       * `alreadyThisWeek`'s arrival free when it landed on this side, and is
-       * what makes the next count's arrival free in turn.
-       */
-      counts: SkipCounts;
-    }
-  | { action: 'unarchived' | 'unchanged' };
+export type { TemplateToggleResponse, StudioTemplateToggleResponse };
 
 /**
  * The `SkipCounts` members, tethered so a new one cannot be forgotten here.

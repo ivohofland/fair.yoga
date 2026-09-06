@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
+  respondTyped,
   respondError,
   requireTeacher,
   parseBody,
@@ -16,9 +17,14 @@ import {
   createClassTemplate,
   type CreateTemplateResult,
 } from '@/services/class-template-lifecycle';
+import type { WithSlot } from '@/services/rule-lifecycle';
 import type { RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { countSkipReasons } from '@/lib/generation';
 import { log } from '@/lib/log';
+import type { TemplateCreateResponse } from '@/lib/api-types';
+import type { ClassTemplate } from '@prisma/client';
+
+type CreateResponse = WithSlot<ClassTemplate> & TemplateCreateResponse;
 
 /**
  * Mirrors `class-templates/[id]/route.ts`'s `SLOT_TAKEN` — see that file for
@@ -157,7 +163,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   //
   // The create form reads these and stays on the page to say so when the
   // window isn't full (`template-form.tsx`); see the note at that read.
-  return respondOk(
+  return respondTyped<CreateResponse>(
     {
       ...result.template,
       added: result.generation.created,

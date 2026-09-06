@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
+  respondTyped,
   respondError,
   requireTeacher,
   parseBody,
@@ -10,9 +11,14 @@ import {
 } from '@/lib/api-utils';
 import { createStudioClassTemplateSchema } from '@/lib/schemas';
 import { withSlot, createStudioClassTemplate } from '@/services/studio-class-template-lifecycle';
+import type { WithSlot } from '@/services/rule-lifecycle';
 import type { RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { log } from '@/lib/log';
 import { countSkipReasons } from '@/lib/generation';
+import type { StudioTemplateCreateResponse } from '@/lib/api-types';
+import type { StudioClassTemplate } from '@prisma/client';
+
+type CreateResponse = WithSlot<StudioClassTemplate> & StudioTemplateCreateResponse;
 
 /**
  * Mirrors `class-templates/route.ts`'s `SLOT_TAKEN` — see that file for why
@@ -90,7 +96,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // `countSkipReasons` (`@/lib/generation`), the one place both reductions
   // live. The create form reads these and stays on the page to say so when
   // the window isn't full (`studio-template-form.tsx`).
-  return respondOk(
+  return respondTyped<CreateResponse>(
     {
       ...result.template,
       added: result.generation.created,
