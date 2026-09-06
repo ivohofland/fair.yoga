@@ -217,22 +217,26 @@ export function migrationSqlFiles(): Array<{ name: string; sql: string }> {
 }
 
 
-// Block comments first, then line comments — see `stripSqlComments`.
-const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
-const LINE_COMMENT = /--[^\n]*/g;
+// One alternation, scanned once — see `stripSqlComments`. Whichever delimiter
+// the scanner reaches first wins the text after it, which is what a comment
+// stripper has to do and what two sequential passes cannot.
+const COMMENT = /\/\*[\s\S]*?\*\/|--[^\n]*/g;
 
 /**
- * `sql` with its comments removed, blocks before lines.
+ * `sql` with its comments removed, in ONE pass over the text.
  *
- * THE ORDER IS THE WHOLE POINT, and it is not a style choice. A block comment
- * may contain a `--`; strip line comments first and that `--` swallows the
- * block's closing delimiter along with the rest of its line, leaving the
- * opening delimiter dangling and — for a detector reading the result — erasing
- * whatever statement followed it. The tether is a fixture rather than a live
- * migration: `src/lib/migration-remediation-trace.test.ts` strips a block
- * comment holding a `--` in front of an `UPDATE` and asserts the `UPDATE`
- * survives, so swapping the two `.replace` calls below fails a test rather than
- * passing quietly.
+ * ONE PASS, NOT TWO, and that is the whole design. Each comment kind can
+ * contain the other's opening delimiter, so any sequential pair of passes
+ * destroys real SQL in one direction or the other: strip line comments first
+ * and a `--` inside a block comment swallows that block's closing delimiter
+ * along with the rest of its line; strip block comments first and a `/*`
+ * inside a line comment opens a block that runs on, unbounded and across
+ * lines, to the next closing delimiter — taking every statement in between
+ * with it. (This sentence cannot show you that delimiter: writing it here would
+ * end the docblock, which is the same hazard one layer up.) A
+ * single alternation has neither failure, because the scanner reaches one
+ * delimiter first and the other is then just text inside a comment. Both
+ * directions are pinned in `src/lib/migration-remediation-trace.test.ts`.
  *
  * A comment stripper, NOT a SQL parser. A `--` inside a string literal or a
  * dollar-quoted body is treated as opening a comment, and everything after it
@@ -255,7 +259,7 @@ const LINE_COMMENT = /--[^\n]*/g;
  * watch a sweep built on this go red.
  */
 export function stripSqlComments(sql: string): string {
-  return sql.replace(BLOCK_COMMENT, ' ').replace(LINE_COMMENT, '');
+  return sql.replace(COMMENT, (match) => (match.startsWith('/*') ? ' ' : ''));
 }
 
 // `UPDATE` / `DELETE FROM` followed by a quoted identifier, with only the
@@ -267,12 +271,18 @@ export function stripSqlComments(sql: string): string {
 // CASE-INSENSITIVE ON BOTH, because lowercase keywords are legal SQL and a
 // case-sensitive pattern reads `update "X" set …` as no write at all — silence
 // on a real data change, which is the expensive direction.
-const DATA_CHANGE = /\bUPDATE\s+(?:ONLY\s+)?"|\bDELETE\s+FROM\s+(?:ONLY\s+)?"/i;
+const DATA_CHANGE = /\bUPDATE\s*(?:ONLY\s+)?"|\bDELETE\s+FROM\s*(?:ONLY\s+)?"/i;
 const RAISE_NOTICE = /\bRAISE\s+NOTICE\b/i;
 // A colon, then something that is not whitespace, on the same line — a bare
 // marker with an empty reason exempts nothing. Case-sensitive, unlike the two
 // above: the marker is this rule's own spelling, not SQL's.
-const NO_NOTICE_MARKER = /--[ \t]*DML WITHOUT NOTICE:[ \t]*\S/;
+//
+// ANCHORED TO THE START OF A LINE, which is the difference between a marker and
+// a mention. Unanchored, prose merely quoting the spelling — a header comment
+// saying a statement needs no such marker, say — exempted the whole file, and
+// `docs/lock-order.md` now ships that spelling in exactly such prose. This is
+// the same hazard the notice side already guards, and it belongs on both.
+const NO_NOTICE_MARKER = /^[ \t]*--[ \t]*DML WITHOUT NOTICE:[ \t]*\S/m;
 
 /**
  * The migrations sorting strictly after `cutoff` that rewrite existing rows
@@ -290,13 +300,27 @@ const NO_NOTICE_MARKER = /--[ \t]*DML WITHOUT NOTICE:[ \t]*\S/;
  * discover afterwards, which is the whole reason the rule exists.
  *
  * THE EXEMPTION IS PER FILE, NOT PER STATEMENT, and that bounds the guarantee.
- * One real `RAISE NOTICE` anywhere in a migration exempts every data change in
- * it, so a silent remediation added beside an announced one passes this rule.
- * Pairing each write with its own notice needs a plpgsql-aware statement
- * splitter — a much larger thing than this — and is deliberately not built.
- * The recognised shapes bound it too: `UPDATE "…"` and `DELETE FROM "…"`, so a
- * schema-qualified, `TRUNCATE`, `MERGE` or `ON CONFLICT DO UPDATE` write is not
- * seen.
+ * One qualifying `RAISE NOTICE` anywhere in a migration exempts every data
+ * change in it, so a silent remediation added beside an announced one passes
+ * this rule. Pairing each write with its own notice needs a plpgsql-aware
+ * statement splitter — a much larger thing than this — and is deliberately not
+ * built.
+ *
+ * A NOTICE INSIDE A FUNCTION BODY DOES NOT QUALIFY, and that exclusion is the
+ * one shape worth spending code on: `CREATE OR REPLACE FUNCTION` declares
+ * behaviour for later, so a notice in a trigger body announces nothing about
+ * the migration that installs it, and these migrations are largely trigger
+ * bodies. `liveFunctionBodies` below subtracts them. Two cousins survive and
+ * are not worth a parser: a notice under `IF false THEN`, and one inside a
+ * string literal (`RAISE EXCEPTION 'use RAISE NOTICE instead'`). A `DO $$`
+ * block is deliberately NOT subtracted — it runs during the migration, which
+ * is exactly when a remediation announces itself.
+ *
+ * The recognised WRITE shapes bound it too: `UPDATE "…"` and
+ * `DELETE FROM "…"`, optionally `ONLY`, in either case. `UPDATE "public"."X"`
+ * IS seen — the quote follows the verb — but the unquoted `UPDATE public."X"`
+ * is not, nor are `TRUNCATE`, `MERGE`, `ON CONFLICT DO UPDATE`, or an
+ * `ALTER TABLE … ALTER COLUMN … USING <expr>` that rewrites every row.
  *
  * WHICH TEXT EACH OF THE THREE READS IS THE SUBTLE PART:
  *
@@ -332,8 +356,29 @@ export function untracedDataChanges(
       if (name <= cutoff) return false;
       const stripped = stripSqlComments(sql);
       if (!DATA_CHANGE.test(stripped)) return false;
-      if (RAISE_NOTICE.test(stripped)) return false;
+      if (RAISE_NOTICE.test(withoutFunctionBodies(name, stripped))) return false;
       return !NO_NOTICE_MARKER.test(sql);
     })
     .map(({ name }) => name);
+}
+
+/**
+ * `sql` with every `CREATE OR REPLACE FUNCTION` body blanked out.
+ *
+ * Reuses `functionEvents`, which already knows where each body starts and ends,
+ * rather than teaching a second thing to find them. Bodies are replaced by a
+ * space rather than removed so that nothing either side of one is fused, the
+ * same reason `stripSqlComments` spends a space on a block comment.
+ *
+ * Takes the migration's name only to name it in the error `functionEvents`
+ * throws on a body with no `$$ LANGUAGE` terminator. Letting that throw is the
+ * right direction: a shape this cannot parse becomes a loud failure rather than
+ * a file that quietly exempts itself.
+ */
+function withoutFunctionBodies(migration: string, sql: string): string {
+  let out = sql;
+  for (const event of functionEvents(migration, sql)) {
+    if (event.type === 'create') out = out.replace(event.fn.body, ' ');
+  }
+  return out;
 }
