@@ -266,13 +266,12 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
    * deciding anything (#470,
    * `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md`).
    * What remains is index and index-only scans — but only a BTREE index scan
-   * returns a key order a fixture can assign. The schema's two GiST indexes
-   * (`CalendarEntry_teacher_slot_excl`, `ScheduleRule_teacher_slot_excl`)
-   * return tree-traversal order: `pg_indexam_has_property(gist,'can_order')` is
-   * false. Both are PARTIAL, so a statement reaches one only by carrying its
-   * predicate — which is why neither statement below carries
-   * `cancelledAt IS NULL`, and why the teacher probe's comment says so out
-   * loud. `enable_hashjoin`/`enable_mergejoin` are about join DIRECTION rather
+   * returns a key order a fixture can assign, and a GiST one does not. Every
+   * GiST index this schema has is PARTIAL, so a statement reaches one only by
+   * carrying its predicate: neither statement below carries one, which is why
+   * the teacher probe drops the clause its comment names. `docs/lock-order.md`
+   * owns the schema-wide account and the query that re-derives it.
+   * `enable_hashjoin`/`enable_mergejoin` are about join DIRECTION rather
    * than scan order, and the measurements behind those two live in
    * `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan` — mirrored here
    * rather than imported, because a test helper crossing suites would couple
@@ -370,12 +369,13 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     //
     //   `ORDER BY c.id` — the probe exists to read the UNORDERED order, so it
     //   can never carry the clause whose absence it is characterising. That
-    //   omission is itself plan-relevant: with the clause present the
-    //   statement plans `Class_pkey`-driven, which this one does not.
+    //   omission is itself plan-relevant: measured, the statement plans
+    //   `Class_pkey`-driven with the clause present and does not without it.
+    //   Measured, not guaranteed — the same hedge as above.
     //
-    //   `e."cancelledAt" IS NULL` — `CalendarEntry_teacher_slot_excl` (#296's
-    //   exclusion constraint) is a GiST index PARTIAL on exactly that
-    //   predicate, and GiST has no key order at all
+    //   `e."cancelledAt" IS NULL` — `CalendarEntry_teacher_slot_excl`
+    //   (#296/#327's exclusion constraint) is a GiST index PARTIAL on exactly
+    //   that predicate, and GiST has no key order at all
     //   (`pg_indexam_has_property(gist,'can_order')` is false). Carrying the
     //   qual makes that index eligible; dropping it makes it unreachable, and
     //   drops NO ROW here, since both of this fixture's entries are live.

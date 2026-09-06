@@ -66,16 +66,15 @@ const prisma = new PrismaClient();
  * including the adversarial case where every path carries `disable_cost` and
  * Postgres still declines to read the heap in physical order.
  *
- * INDEX ORDER STILL MEANS BTREE. The schema carries two GiST indexes —
- * `CalendarEntry_teacher_slot_excl` and `ScheduleRule_teacher_slot_excl`, the
- * #296/#327 exclusion constraints — and a GiST `Index Scan` returns
- * tree-traversal order, not a key order any fixture can assign
- * (`pg_indexam_has_property(gist,'can_order')` is false). Both are PARTIAL, on
- * `cancelledAt IS NULL` and `isArchived = false` respectively, so a statement
- * reaches one only by carrying its predicate. Neither statement in this file
- * does, which is a property to preserve rather than a coincidence: adding one
- * of those quals to a probe here would put it on an unordered index. The same
- * trap, measured, is written up beside the teacher probe in
+ * INDEX ORDER STILL MEANS BTREE, and whether that holds is a property of the
+ * two STATEMENTS below rather than of the settings above. A GiST `Index Scan`
+ * returns tree-traversal order, not a key order any fixture can assign, and
+ * every GiST index this schema has is PARTIAL — reachable only by a statement
+ * carrying its predicate. Neither statement in this file carries one, which is
+ * a property to preserve rather than a coincidence: adding such a qual to a
+ * probe here would put it on an unordered index. Which indexes those are, and
+ * the query that re-derives them, are in `docs/lock-order.md`; the same trap,
+ * measured, is written up beside the teacher probe in
  * `gdpr-lock-order.test.ts`.
  *
  * `enable_seqscan = off` and `enable_bitmapscan = off` discourage rather than
@@ -292,7 +291,7 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // scan caller gets below. Unforced this read can reach `Class` by a
     // heap-ordered path — a sequential or a bitmap heap scan — and hand back
     // physical order, which this test cannot own; see `forceIndexOrderedPlan`.
-    // Forced, every remaining path returns index order and this fixture
+    // Forced, every remaining path returns btree index order and this fixture
     // assigns every key those plans order by, so the order is the one
     // `beforeAll` ASSIGNED: verified 24/24, including 12 runs against a heap
     // deliberately inverted to [LOW, HIGH].

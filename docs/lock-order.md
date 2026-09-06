@@ -673,7 +673,26 @@ are PARTIAL — on `cancelledAt IS NULL` and `isArchived = false`. A statement
 reaches one only by carrying its predicate, so a probe written to mirror
 production faithfully can put ITSELF on an unordered index by copying a qual
 across. Copy the join and the locking clause; leave those two quals out, and
-say in the comment that you did.
+say in the comment that you did. This count and both members are owned here
+rather than in the three test files that depend on them, because a migration
+adding a third GiST index would falsify a comment its author never opens.
+Re-derive the set, and the `can_order` property that makes it matter, with:
+
+    SELECT t.relname AS "table", c.relname AS index,
+           pg_get_expr(i.indpred, i.indrelid) AS partial_on
+      FROM pg_index i
+      JOIN pg_class c ON c.oid = i.indexrelid
+      JOIN pg_class t ON t.oid = i.indrelid
+      JOIN pg_am am   ON am.oid = c.relam
+     WHERE am.amname = 'gist'
+     ORDER BY 1, 2;
+
+    SELECT amname, pg_indexam_has_property(oid, 'can_order') AS can_order
+      FROM pg_am WHERE amtype = 'i' ORDER BY amname;
+
+A row in the first query with a NULL `partial_on` would be worse than a third
+partial one: an unconditional GiST index is reachable by any statement touching
+its table, with no qual to leave out.
 
 The consequence for `CalendarEntry` is worth stating plainly, because it bounds
 what a probe can prove: production's own pre-lock in `deleteTeacherAccount`
