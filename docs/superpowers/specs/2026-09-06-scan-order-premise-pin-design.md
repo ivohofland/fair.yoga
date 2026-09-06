@@ -21,7 +21,8 @@ index path.** It removes one of the *two* heap-ordered scan paths Postgres has
 for a plain table. The other — a **Bitmap Heap Scan** — survives all three
 settings, and it returns rows in **physical heap order**, which is exactly the
 thing the three settings were added to eliminate. §2.1 measures that path as
-reachable but, under the statistics available here, not preferred.
+reachable, and measures four times over that whether it is also *preferred*
+moves with the database state rather than being a fact about the statement.
 
 **Which plan CI actually got is deducible from the failure, and it is one of
 two.** The reported order was `[LOW, HIGH]`. Enumerate what each reachable plan
@@ -87,16 +88,43 @@ ROLLBACK;
 ```
 
 Total cost **20.45**, against **16.12** for the index-nested-loop plan the
-planner chooses under the *same* statistics. So the bitmap path is **reachable
-but not currently preferred** — roughly 27% dearer here.
+planner chooses under the *same* statistics. The method is sound: `disable_cost`
+is 1e10 and attaches only to the scan type actually disabled, so the bitmap
+plan `enable_indexscan = off` reveals carries no penalty term and 20.45 is a
+genuine number. **One observation, at one database state: the bitmap path was
+reachable and, there, 4.33 dearer.**
 
-That is weaker than this spec first claimed. The first draft put 20.45 against
-20.46 and called it a fuzzy tie; those two numbers came from **different
-statistics states** (the 20.46 from a sweep with faked `pg_class` rows, the
-20.45 from the unfaked table), so the comparison was not one. Measured fairly,
-there is no tie. What survives is narrower and still worth acting on: **the
-three settings do not exclude a heap-ordered plan**, and the cost gap that keeps
-it unchosen is a function of statistics this project does not control on CI.
+**That is as far as the figure goes, and an earlier draft of this section went
+two steps further.** The first draft put 20.45 against 20.46 and called it a
+fuzzy tie; those two numbers came from **different statistics states** (the
+20.46 from a sweep with faked `pg_class` rows, the 20.45 from the unfaked
+table), so the comparison was not one. The draft after it read the corrected
+pairing as a property — "reachable but not currently preferred", "roughly 27%
+dearer" — and that does not hold either. Re-measured during Task 2 on the actual
+`FOR UPDATE` probe, **the sign of the gap flips twice** across four database
+states:
+
+| measurement | chosen plan, three settings | bitmap plan, undisabled | bitmap is |
+|---|---|---|---|
+| this section, above (no `FOR UPDATE`) | 16.12 | 20.45 | dearer by 4.33 |
+| Task 2, 1st (`Class` 1 row / 1 page) | 28.59 | 26.59 | **cheaper** by 2.00 |
+| Task 2, 2nd (minutes later, no write between) | 21.41 | 20.95 | **cheaper** by 0.46 |
+| Task 2, 3rd (after a full suite run and autovacuum) | 23.15 | 28.46 | dearer by 5.31 |
+
+Neither "preferred" nor "not preferred" is a property of this statement; each is
+a reading of one state, and this table is §2.6's lesson arriving a second time by
+a different route. The middle two rows also mean the planner declined a plan
+whose revealed cost was lower than the one it chose — unexplained here, and
+nothing in this spec rests on it, because the ruling is on eligibility.
+
+What survives is narrower and is the thing worth acting on: **the three settings
+do not exclude a heap-ordered plan**, and whatever cost gap keeps it unchosen at
+any given moment is a function of statistics this project does not control on
+CI. §3.1 is the setting that removes the path instead of out-pricing it, and
+Task 2 measured that removal the only way that does not depend on a cost: with
+`enable_indexscan` and `enable_indexonlyscan` off as well, the three settings
+still yield a Bitmap Heap Scan carrying no penalty term, while the four yield
+`Index Scan`s at 1e10 apiece — no heap-ordered node exists at any price.
 
 `enable_indexscan = off` appears only to make the alternative visible; it is not
 part of the fix and not part of the test.
