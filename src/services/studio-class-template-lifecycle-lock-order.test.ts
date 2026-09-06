@@ -70,6 +70,7 @@ import {
 import { log } from '@/lib/log';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createStudioClassFixture } from '../../tests/class-fixtures';
+import { joinOrThrow } from '../../tests/lock-order-teardown';
 
 const prisma = new PrismaClient();
 // PREFIXED, not just timestamped: this file shares one test database with
@@ -321,9 +322,7 @@ describe('archiveOrUnarchiveStudioTemplate — queued behind a held template row
       // the rest, leaving exactly that. The first rejection is rethrown, not
       // swallowed.
       release();
-      const joined = await Promise.allSettled([blocking, first, second]);
-      const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-      if (failed) throw failed.reason;
+      await joinOrThrow(blocking, first, second);
     }
 
     const settled = await Promise.all([first, second]);
@@ -481,9 +480,7 @@ describe('pauseOrResumeStudioTemplate — queued behind a held template row (DB)
       // first and skip the rest, leaving exactly that. The first rejection is
       // rethrown, not swallowed.
       release();
-      const joined = await Promise.allSettled([blocking, archive, resume]);
-      const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-      if (failed) throw failed.reason;
+      await joinOrThrow(blocking, archive, resume);
     }
 
     const [archiveResult, resumeResult] = await Promise.all([archive, resume]);
@@ -579,9 +576,7 @@ describe('pauseOrResumeStudioTemplate — queued behind a held template row (DB)
       // first and skip the rest, leaving exactly that. The first rejection is
       // rethrown, not swallowed.
       release();
-      const joined = await Promise.allSettled([blocking, archive, pause]);
-      const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-      if (failed) throw failed.reason;
+      await joinOrThrow(blocking, archive, pause);
     }
 
     const [archiveResult, pauseResult] = await Promise.all([archive, pause]);

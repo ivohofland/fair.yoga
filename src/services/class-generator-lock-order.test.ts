@@ -93,6 +93,7 @@ import {
   updateClassTemplate,
 } from './class-template-lifecycle';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { joinOrThrow } from '../../tests/lock-order-teardown';
 
 const prisma = new PrismaClient();
 // PREFIXED rather than left as a bare clock read: this file shares one test
@@ -292,9 +293,7 @@ describe('the class generator under staged lock contention (DB)', () => {
         // this row because the claim held it, so the claim's own failure is
         // the root cause and the archive's would be downstream of it.
         release();
-        const joined = await Promise.allSettled([claiming, archiving]);
-        const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-        if (failed) throw failed.reason;
+        await joinOrThrow(claiming, archiving);
       }
 
       const result = await archiving;
@@ -632,9 +631,7 @@ describe('the class generator under staged lock contention (DB)', () => {
         //
         // 3. Commit the archive; the claim unblocks and sees isArchived: true.
         commit();
-        const joined = await Promise.allSettled([archiving, sweeping]);
-        const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-        if (failed) throw failed.reason;
+        await joinOrThrow(archiving, sweeping);
       }
 
       // 4. Nothing was materialised for a template the teacher shelved.
@@ -734,9 +731,7 @@ describe('the class generator under staged lock contention (DB)', () => {
         //
         // 3. Commit. The claim unblocks and re-reads under its own lock.
         commit();
-        const joined = await Promise.allSettled([editing, sweeping]);
-        const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-        if (failed) throw failed.reason;
+        await joinOrThrow(editing, sweeping);
       }
 
       // 4. Everything it created carries the post-edit values.
@@ -864,10 +859,11 @@ describe('the class generator under staged lock contention (DB)', () => {
         // `PrismaClient` whose pool leaks if it is never disconnected.
         // Rethrown rather than swallowed, so a join that fails still says so.
         release();
-        const joined = await Promise.allSettled([holding, generating]);
-        await holder.$disconnect();
-        const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-        if (failed) throw failed.reason;
+        try {
+          await joinOrThrow(holding, generating);
+        } finally {
+          await holder.$disconnect();
+        }
       }
     });
 
@@ -952,10 +948,11 @@ describe('the class generator under staged lock contention (DB)', () => {
         // `PrismaClient` whose pool leaks if it is never disconnected.
         // Rethrown rather than swallowed, so a join that fails still says so.
         release();
-        const joined = await Promise.allSettled([holding, generating]);
-        await holder.$disconnect();
-        const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-        if (failed) throw failed.reason;
+        try {
+          await joinOrThrow(holding, generating);
+        } finally {
+          await holder.$disconnect();
+        }
       }
     });
   });
