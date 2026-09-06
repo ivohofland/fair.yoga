@@ -755,12 +755,31 @@ no cost comparison involved, and nothing for a planner to revisit.
 
 Establish it by hiding the winner, not by reading the chosen plan: a chosen plan
 tells you which path won, never whether the other was generated. Set
-`indisvalid = false` on the winning index inside `BEGIN … ROLLBACK` and re-plan.
-Falling back to a `Seq Scan` means the alternative was never generated; the
-alternative appearing means it was there all along and merely lost. Run the
-positive control too — the same statement with the clause that *should* make the
-path eligible — or a broken instrument reads as a proof. Worked through for the
-two `Class` pre-locks in
+`indisvalid = false` on the winning index inside `BEGIN … ROLLBACK` and re-plan,
+**with `enable_seqscan = off` in force**. Then a `Seq Scan` fallback means the
+alternative was never generated; the alternative appearing instead means it was
+there all along and merely lost.
+
+**That setting is not optional, and without it the recipe's normal case is its
+failure case.** On single-page test tables an undiscouraged sequential scan
+costs about 1.02 and wins against almost anything, so a `Seq Scan` fallback
+would be the answer whether or not an index path exists. With
+`enable_seqscan = off` the fallback carries `disable_cost`, so any generated
+index path must beat 1e10 to stay hidden — which none does. Measured on this
+schema, hiding `Class_calendarEntryId_key` for the teacher pre-lock plus a
+`c.id > …` predicate:
+
+    seqscan allowed  ->  Seq Scan on "Class"  (cost=0.00..1.02)
+    enable_seqscan=off -> Index Scan using "Class_pkey"  (cost=0.12..8.15)
+                          Index Cond: (id > …)
+
+Same statement, same hiding, opposite conclusions — and the second is the true
+one, since `Class_pkey` plainly is generated for a statement with a `c.id`
+clause.
+
+Run the positive control too — the same statement with the clause that *should*
+make the path eligible — or a broken instrument reads as a proof. Worked through
+for the two `Class` pre-locks in
 `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md` §1.1.
 
 It stays an argument about specific statements against a specific schema: a new
