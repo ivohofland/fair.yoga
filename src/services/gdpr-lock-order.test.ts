@@ -42,14 +42,18 @@ import { createClassFixture } from '../../tests/class-fixtures';
  * PR/issue that added the sibling belong in the commit history, not here —
  * a number in this comment would rot the next time the set changes size.
  *
- * `lockClassRowsOrdered`'s statement is the only one carrying BOTH
- * fragments, and together they exclude every sibling: the template
- * pre-locks are `FROM "ClassTemplate" ct` (which does contain
+ * Among the statements PRODUCTION issues, `lockClassRowsOrdered`'s is the only
+ * one carrying BOTH fragments, and together they exclude every sibling: the
+ * template pre-locks are `FROM "ClassTemplate" ct` (which does contain
  * `FOR UPDATE OF c`, as a prefix of `OF ct`, so that fragment alone would
  * not exclude them), and the entries lock is `JOIN "Class" c … FOR UPDATE OF
  * e` (fails both). That reasoning is argued here and ASSERTED by the firing
  * counts below — a future statement that matches drives one past 1 and
  * fails by name.
+ *
+ * The two premise probes in the `#174` `it` match this predicate too, and are
+ * not counterexamples: they run on the bare `prisma` client rather than on
+ * either `$extends` client, so no hook ever sees them.
  */
 const isClassPreLock = (sql: string): boolean =>
   sql.includes('FROM "Class" c') && sql.includes('FOR UPDATE OF c');
@@ -127,9 +131,9 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
   const HIGH_CLASS_ID = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
   // Entry ids ANTI-correlated with the class ids they carry: the LOW class
   // gets the HIGH entry and vice versa. Both erasures run under a forced
-  // plan, and under it every path the teacher's scan can take returns index
-  // order — keyed on `Class.calendarEntryId`, on `CalendarEntry.id` or on
-  // `CalendarEntry.date`, all three of which this fixture assigns, so the
+  // plan, and under it every path the teacher's scan can take returns BTREE
+  // index order — keyed on `Class.calendarEntryId`, on `CalendarEntry.id` or
+  // on `CalendarEntry.date`, all three of which this fixture assigns, so the
   // order is this fixture's to choose rather than the heap's. Assigned rather
   // than defaulted, because a `uuid()` default would leave it to chance. The
   // `it` below asserts all three assignments before it reads anything under a
@@ -256,13 +260,20 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
    * Runs one probe statement under the forced plan and hands back both the
    * order it produced and the plan that produced it.
    *
-   * WHAT THE SETTINGS BUY. Sequential and bitmap heap scans are Postgres's two
-   * scan paths over a plain table that return PHYSICAL heap order; both are
-   * off here, so what remains — index and index-only scans — returns index
-   * order, and the heap this file cannot own stops deciding anything (#470,
+   * WHAT THE SETTINGS BUY, AND WHAT THEY DO NOT. Sequential and bitmap heap
+   * scans are Postgres's two scan paths over a plain table that return PHYSICAL
+   * heap order; both are off here, so the heap this file cannot own stops
+   * deciding anything (#470,
    * `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md`).
-   * `enable_hashjoin`/`enable_mergejoin` are about join DIRECTION rather than
-   * scan order, and the measurements behind those two live in
+   * What remains is index and index-only scans — but only a BTREE index scan
+   * returns a key order a fixture can assign. The schema's two GiST indexes
+   * (`CalendarEntry_teacher_slot_excl`, `ScheduleRule_teacher_slot_excl`)
+   * return tree-traversal order: `pg_indexam_has_property(gist,'can_order')` is
+   * false. Both are PARTIAL, so a statement reaches one only by carrying its
+   * predicate — which is why neither statement below carries
+   * `cancelledAt IS NULL`, and why the teacher probe's comment says so out
+   * loud. `enable_hashjoin`/`enable_mergejoin` are about join DIRECTION rather
+   * than scan order, and the measurements behind those two live in
    * `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan` — mirrored here
    * rather than imported, because a test helper crossing suites would couple
    * two files whose fixtures are independent.
@@ -274,9 +285,9 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
    * assertion's message.
    *
    * `EXPLAIN` plans without executing, so it takes no locks; the row-returning
-   * statement after it is what takes them. Both run in the one transaction
-   * under the one set of settings, so the plan reported is the plan the rows
-   * came from.
+   * statement after it is what takes them. It is a re-plan of the same text
+   * under the same settings in the same transaction — not a record of the
+   * execution that follows, which Postgres does not hand back.
    */
   async function probeUnderForcedPlan(
     statement: Prisma.Sql,
@@ -302,8 +313,8 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // compared in TypeScript — no query whose order a planner gets to choose.
     // The premises below are only as good as these three, and this is what
     // makes them a construction rather than an observation: given these
-    // assignments and a plan space where every remaining path returns index
-    // order, [HIGH, LOW] follows for every key those plans order by.
+    // assignments and a plan space where every remaining path returns BTREE
+    // index order, [HIGH, LOW] follows for every key those plans order by.
     //
     // Three separate `expect`s so a failure names WHICH half moved. The third
     // looks backwards and is not: the student side's natural order is
@@ -332,32 +343,50 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       `HIGH must hold the higher Class.id: HIGH ${highRow.id}, LOW ${lowRow.id}`,
     ).toBe(true);
 
-    // Premise 1: the teacher scan's natural order, under the SAME forced plan
-    // `teacherRacing` gives `deleteTeacherAccount` below. Unforced this read
-    // can reach `Class` by a heap-ordered path and hand back physical order,
-    // which this file cannot own — that is what failed on CI (2026-08-27, the
-    // sibling copy in `db-locks.test.ts`). Forced, every remaining scan path
-    // is index-ordered and premise 0 above assigns every key those plans order
-    // by, so the order is the one `beforeAll` ASSIGNED. Which index drives it
-    // is the planner's to move and this comment's not to name; the plan that
-    // actually ran comes back with the rows and rides the assertion's message.
+    // Premise 1: THE FIXTURE IS ADVERSARIAL — read through an ordered index,
+    // this teacher's two classes come back HIGH first. That is what this
+    // statement checks, and it is deliberately NOT a prediction of the plan
+    // `deleteTeacherAccount` gets: see WHY THIS IS NOT A MODEL below. Unforced
+    // the read can reach `Class` by a heap-ordered path and hand back physical
+    // order, which this file cannot own — that is what failed on CI
+    // (2026-08-27, the sibling copy in `db-locks.test.ts`). Forced, every
+    // remaining path is a BTREE index scan and premise 0 above assigns every
+    // key those plans order by, so the order is the one `beforeAll` ASSIGNED.
+    // Which btree drives it is the planner's to move and this comment's not to
+    // name; the plan that ran rides the assertion's message.
     //
     // COMPOSED FROM `CLASS_TO_ENTRY_JOIN`, the same fragment
-    // `deleteTeacherAccount`'s pre-lock passes to `lockClassRowsOrdered`, and
-    // carrying that call site's other two plan-relevant clauses:
-    // `e."cancelledAt" IS NULL` and `FOR UPDATE OF c`. Both are here because
-    // the version of this probe without them was MEASURED, under identical
-    // statistics, to plan from a different driving side than the statement it
-    // models (#470's spec, §2.4) — and a probe that plans differently can be
-    // green while that statement's order is wrong, and red while it is right.
-    // The status list stays a literal because
+    // `deleteTeacherAccount`'s pre-lock passes to `lockClassRowsOrdered`, so a
+    // change to that fragment moves this statement with it. `FOR UPDATE OF c`
+    // comes from the same call site; its row locks here are uncontended,
+    // because this transaction runs and commits before either holder
+    // transaction below starts. The status list stays a literal because
     // `CANCELLABLE_STATUSES_SQL` is module-private to `gdpr.ts`, and it is a
     // filter on `c` under every plan shape observed, so it is not the part
     // that decides order.
     //
-    // The row locks `FOR UPDATE OF c` takes here are uncontended: this
-    // transaction runs and commits before either holder transaction below
-    // starts.
+    // WHY THIS IS NOT A MODEL OF THE PRODUCTION STATEMENT, and cannot be. Two
+    // of that statement's clauses are absent, each for a measured reason:
+    //
+    //   `ORDER BY c.id` — the probe exists to read the UNORDERED order, so it
+    //   can never carry the clause whose absence it is characterising. That
+    //   omission is itself plan-relevant: with the clause present the
+    //   statement plans `Class_pkey`-driven, which this one does not.
+    //
+    //   `e."cancelledAt" IS NULL` — `CalendarEntry_teacher_slot_excl` (#296's
+    //   exclusion constraint) is a GiST index PARTIAL on exactly that
+    //   predicate, and GiST has no key order at all
+    //   (`pg_indexam_has_property(gist,'can_order')` is false). Carrying the
+    //   qual makes that index eligible; dropping it makes it unreachable, and
+    //   drops NO ROW here, since both of this fixture's entries are live.
+    //
+    // THE RESIDUAL THAT EXPOSES, and it is larger than the spec's §4. The
+    // production statement carries `cancelledAt IS NULL`, so the MUTATED
+    // statement — the one with `ORDER BY c.id` deleted, which is what the
+    // counterfactual below is about — can plan onto an index with no key order
+    // whatsoever. No probe on this schema can establish that counterfactual.
+    // Deleting the clause and watching this test redden is what establishes
+    // it, and that is Task 2's job, not this statement's.
     //
     // WHY THIS IS ASSERTABLE AT ALL, since the caller is production code: the
     // test does not need to reach inside it. `deleteTeacherAccount` issues
@@ -378,7 +407,6 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       SELECT c.id FROM "Class" c
       ${CLASS_TO_ENTRY_JOIN}
       WHERE e."teacherId" = ${teacherId}
-        AND e."cancelledAt" IS NULL
         AND c.status IN ('draft', 'open', 'in_progress')
       FOR UPDATE OF c
     `);
@@ -394,7 +422,15 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // Composed from `CLASS_TO_WAITLIST_JOIN` for the same reason as above.
     // That call site (`gdpr.ts`) passes no extra predicate, so `FOR UPDATE OF
     // c` is the only clause this statement gains over it — and its locks are
-    // uncontended too, for the same reason.
+    // uncontended too, for the same reason. `WaitlistEntry` carries btree
+    // indexes only, so this side has no counterpart to the GiST hazard the
+    // teacher probe above has to route around.
+    //
+    // BOTH PROBES MATCH `isClassPreLock` (`FROM "Class" c` plus
+    // `FOR UPDATE OF c`), and that is deliberate but harmless: they run on the
+    // bare `prisma` client, not on `teacherRacing`/`studentRacing`, so neither
+    // reaches a hook and neither can move the firing counts asserted at the
+    // end of this test.
     //
     // Left to the planner this join is not reliably driven by `WaitlistEntry`:
     // the choice is a cost knife-edge on `w."studentId"`, which no index leads
@@ -493,9 +529,11 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // sequential one or a bitmap heap one — and the heap belongs to
           // whichever neighbour in this parallel tier last churned the page,
           // so the premise asserted above would be an assertion on a
-          // non-guarantee. Forced, every remaining path returns index order
+          // non-guarantee. Forced, every remaining path is a btree index scan
           // and the fixture assigns every key those plans order by, so the
-          // scan returns the order `beforeAll` ASSIGNED.
+          // scan returns the order `beforeAll` ASSIGNED. Only BTREE, and only
+          // because no statement here carries `cancelledAt IS NULL` — the
+          // teacher probe's comment above has the GiST reason in full.
           //
           // THE SAME FOUR THE PROBE RUNS UNDER, and that is the point rather
           // than a coincidence: the probe above measures the plan space the
@@ -567,8 +605,10 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // ALL FOUR, not just `enable_hashjoin` — that was the #239 CI
           // failure, and `enable_bitmapscan` is the one #470 added: without it
           // a bitmap heap scan survives, and a bitmap heap scan returns
-          // physical heap order, which is the one thing the other three exist
-          // to eliminate. Transaction-wide scope is acceptable here because
+          // physical heap order, which is what `enable_seqscan = off` was
+          // added to rule out and did not. (The two join settings are about
+          // join DIRECTION, a separate job — `probeUnderForcedPlan`'s docblock
+          // splits the four.) Transaction-wide scope is acceptable here because
           // the two scan settings discourage rather than forbid: Postgres
           // still takes those paths where no alternative exists, so the
           // erasure's remaining statements cannot fail on them, only be

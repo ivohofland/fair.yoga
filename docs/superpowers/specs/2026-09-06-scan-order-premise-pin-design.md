@@ -270,6 +270,28 @@ configuration tried, including ones that made `Class_pkey` artificially cheap by
 faking its `relpages`. That is an observation, not a guarantee, and §1 shows it
 is one of only two shapes that could have produced the reported CI failure.
 
+**A second residual, found in Task 1's review and larger than the first: index
+order does not mean orderable.** `pg_indexam_has_property(gist,'can_order')` is
+false — a GiST `Index Scan` returns tree-traversal order, which no fixture can
+assign. The schema has exactly two GiST indexes,
+`CalendarEntry_teacher_slot_excl` and `ScheduleRule_teacher_slot_excl`
+(#296/#327's exclusion constraints), and both are PARTIAL, on
+`cancelledAt IS NULL` and `isArchived = false`. §3.2's "make the probe model the
+statement" instruction therefore has a limit that this spec did not see: copying
+production's `cancelledAt IS NULL` into the teacher probe makes the GiST index
+eligible, and §2.5's guarantee — every remaining path returns index ORDER — does
+not cover it. Task 1 ships the probe without that qual, and says so in the
+comment; the qual excludes no row of that fixture, both of whose entries are
+live.
+
+The consequence reaches further than the probe. The *production* statement does
+carry `cancelledAt IS NULL`, so its MUTATED form — `ORDER BY c.id` removed,
+which is exactly what the premise is a counterfactual about — can plan onto an
+index with no key order at all. **No probe on this schema can establish that
+counterfactual.** What establishes it is deleting the clause and watching the
+test redden, which is Task 2's mutation, and it is now load-bearing rather than
+confirmatory.
+
 So, plainly: **this work does not make the premise unfalsifiable by the
 planner.** Postgres offers no plan pinning, and the two remaining levers were
 weighed and rejected —
