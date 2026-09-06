@@ -320,18 +320,19 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan`, mirrored rather
    * than imported so the two files' fixtures stay independent. What they buy
    * is stated there: sequential and bitmap heap scans are Postgres's two
-   * paths that return physical heap order, both are off, and what remains —
-   * index and index-only scans — returns index order. Index-driven would not
-   * be enough, because a bitmap heap scan is fed by a bitmap index scan and
-   * still hands back the heap's order (#470).
+   * paths that return physical heap order, both are off, and what remains is
+   * index and index-only scans. Index-driven would not be enough, because a
+   * bitmap heap scan is fed by a bitmap index scan and still hands back the
+   * heap's order (#470).
    *
    * BTREE order, and this statement's reach was measured rather than assumed.
-   * The schema's two GiST indexes have no key order at all, and both are
-   * partial: `CalendarEntry_teacher_slot_excl` on `cancelledAt IS NULL`, which
-   * this statement does not carry, and `ScheduleRule_teacher_slot_excl` on a
-   * table this statement never names — it reaches `ClassTemplate` through
+   * A GiST index has no key order at all, and every one this schema has is
+   * partial. This statement carries no such predicate; and the one GiST index
+   * whose table it could otherwise have come near sits on `ScheduleRule`,
+   * which this statement never names — it reaches `ClassTemplate` through
    * `ct."scheduleRuleId" = e."scheduleRuleId"`, so `ScheduleRule` is not in the
-   * plan at all. Both therefore unreachable here, the second by construction.
+   * plan at all. Unreachable here either way, the second by construction.
+   * `docs/lock-order.md` owns the schema-wide account and the query behind it.
    *
    * That file also records a driving side that moves non-monotonically with
    * table size, and that measurement belongs to ITS join, whose driving
