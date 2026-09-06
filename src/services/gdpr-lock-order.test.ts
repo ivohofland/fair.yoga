@@ -195,10 +195,11 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       status: 'open' as const,
     };
     // Insertion order is not load-bearing — the entry ids above are. Under an
-    // unforced plan this would be a seq scan handing back heap order, and heap
-    // order is not this file's to own: `Class` is one 8 KB page shared with
-    // every other file in this tier, so a neighbour's `DELETE` plus autovacuum
-    // frees a low line pointer for the next insert to take.
+    // unforced plan this would be a heap-ordered path — a sequential scan or a
+    // bitmap heap one — handing back physical order, and heap order is not this
+    // file's to own: `Class` is one 8 KB page shared with every other file in
+    // this tier, so a neighbour's `DELETE` plus autovacuum frees a low line
+    // pointer for the next insert to take.
     await createClassFixture(prisma, {
       ...base,
       id: HIGH_CLASS_ID,
@@ -312,14 +313,25 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // compared in TypeScript — no query whose order a planner gets to choose.
     // The premises below are only as good as these three, and this is what
     // makes them a construction rather than an observation: given these
-    // assignments and a plan space where every remaining path returns BTREE
-    // index order, [HIGH, LOW] follows for every key those plans order by.
+    // assignments, and given that every path the TEACHER statement can reach
+    // is a btree index scan keyed on `CalendarEntry.date`, `CalendarEntry.id`
+    // or `Class.calendarEntryId`, [HIGH, LOW] follows for every key those
+    // plans order by.
+    //
+    // THE ELIGIBILITY CLAUSE IS LOAD-BEARING and the derivation is false
+    // without it. `Class.id` is a key this fixture assigns the OTHER way, so
+    // "every key those plans order by" would be untrue if a `Class_pkey`-driven
+    // plan were among them. It is not one, and that is a property of the
+    // statement rather than a cost accident — see the probe's own comment
+    // below, which measures it.
     //
     // Three separate `expect`s so a failure names WHICH half moved. The third
     // looks backwards and is not: the student side's natural order is
     // `Class.id` ascending, and the whole premise is that the two sides
     // disagree, so HIGH — high in the TEACHER-side order — has to hold the
-    // higher `Class.id`.
+    // higher `Class.id`. That opposition is what the third `expect` pins, and
+    // the probe comment below is where it stops being a fixture choice and
+    // becomes a consequence of the two statements' join columns.
     const readAssignedKeys = (id: string) =>
       prisma.class.findUniqueOrThrow({
         where: { id },
@@ -354,6 +366,40 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // Which btree drives it is the planner's to move and this comment's not to
     // name; the plan that ran rides the assertion's message.
     //
+    // WHY THE TWO SIDES DISAGREE BY CONSTRUCTION, and not by luck. Each
+    // statement's own join column decides which index on `Class` Postgres will
+    // even BUILD A PATH FOR, and the two statements join on different columns:
+    //
+    //   this one joins `c."calendarEntryId"` — so `Class_calendarEntryId_key`
+    //   is eligible and `Class_pkey` is NOT, because `c.id` appears in no
+    //   clause of it and nothing else makes that path worth generating;
+    //
+    //   the student statement below joins `c.id` — so the eligibility is
+    //   exactly inverted: `Class_pkey` yes, `Class_calendarEntryId_key` no.
+    //
+    // `beforeAll` assigns those two columns in OPPOSITE directions, so the two
+    // sides' natural orders differ for a reason no planner can revisit. That is
+    // what makes premise 0 a derivation rather than a hopeful fixture.
+    //
+    // MEASURED, and by hiding the winner rather than by reading it. A chosen
+    // plan says only which path won, so it cannot tell "never generated" from
+    // "generated, tied, lost". With every scan type carrying `disable_cost` the
+    // two variants cost the SAME (8.14) and differ only in the index, which
+    // already rules cost out; and with `Class_calendarEntryId_key` made
+    // invisible (`pg_index.indisvalid = false`, inside a rolled-back
+    // transaction) this statement falls back to a `Seq Scan`, NOT to
+    // `Class_pkey` — while the same statement carrying `ORDER BY c.id` reaches
+    // `Class_pkey` under that identical treatment. The student statement is the
+    // mirror: hide `Class_pkey` and it too falls back to a `Seq Scan` rather
+    // than to `Class_calendarEntryId_key`.
+    //
+    // AN ARGUMENT ABOUT TODAY'S TWO STATEMENTS ON TODAY'S SCHEMA, not a law. It
+    // turns on which clauses each statement carries, so a new index on `Class`,
+    // or a predicate mentioning `c.id` added to this one, can make the path
+    // exist again — measured: adding a bare `c.id > …` to this statement's
+    // WHERE is enough to generate it. Re-measure before relying on this after
+    // either statement changes.
+    //
     // COMPOSED FROM `CLASS_TO_ENTRY_JOIN`, the same fragment
     // `deleteTeacherAccount`'s pre-lock passes to `lockClassRowsOrdered`, so a
     // change to that fragment moves this statement with it. `FOR UPDATE OF c`
@@ -369,9 +415,11 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     //
     //   `ORDER BY c.id` — the probe exists to read the UNORDERED order, so it
     //   can never carry the clause whose absence it is characterising. That
-    //   omission is itself plan-relevant: measured, the statement plans
-    //   `Class_pkey`-driven with the clause present and does not without it.
-    //   Measured, not guaranteed — the same hedge as above.
+    //   omission is what makes `Class_pkey` ineligible here: the clause is the
+    //   only thing in the production statement that mentions `c.id`, so it is
+    //   the only thing that makes that path worth generating. Its presence
+    //   selects `Class_pkey`; its absence removes the path. See WHY THE TWO
+    //   SIDES DISAGREE above for the measurement.
     //
     //   `e."cancelledAt" IS NULL` — `CalendarEntry` carries a GiST index
     //   PARTIAL on exactly that predicate, and GiST has no key order at all
@@ -429,6 +477,17 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // uncontended too, for the same reason. `WaitlistEntry` carries btree
     // indexes only, so this side has no counterpart to the GiST hazard the
     // teacher probe above has to route around.
+    //
+    // AND IT IS THE OTHER HALF OF THE TEACHER PROBE'S ELIGIBILITY ARGUMENT.
+    // This join is on `c.id`, so on `Class` the eligibility is the mirror of
+    // the teacher statement's: `Class_pkey` yes, `Class_calendarEntryId_key`
+    // no. A `Class_pkey`-driven plan here is BENIGN — `w."classId"` IS `c.id`,
+    // so it orders by the same column the `WaitlistEntry` indexes lead with,
+    // and both give [LOW, HIGH]. What would break this side is a
+    // `Class_calendarEntryId_key`-driven plan, and that path is not generated
+    // for a statement mentioning `calendarEntryId` nowhere. Measured the same
+    // way as above: hide `Class_pkey` and this statement falls back to a
+    // `Seq Scan`, not to `Class_calendarEntryId_key`.
     //
     // BOTH PROBES MATCH `isClassPreLock` (`FROM "Class" c` plus
     // `FOR UPDATE OF c`), and that is deliberate but harmless: they run on the
@@ -533,11 +592,24 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // sequential one or a bitmap heap one — and the heap belongs to
           // whichever neighbour in this parallel tier last churned the page,
           // so the premise asserted above would be an assertion on a
-          // non-guarantee. Forced, every remaining path is a btree index scan
-          // and the fixture assigns every key those plans order by, so the
-          // scan returns the order `beforeAll` ASSIGNED. Only BTREE, and only
-          // because no statement here carries `cancelledAt IS NULL` — the
-          // teacher probe's comment above has the GiST reason in full.
+          // non-guarantee.
+          //
+          // WHAT THIS BUYS IS NARROWER THAN WHAT THE PROBE ABOVE GETS, and the
+          // difference is the whole of `THE RESIDUAL THAT EXPOSES` up there.
+          // The statement this hook plans for is `deleteTeacherAccount`'s own
+          // pre-lock, and unlike the probe it DOES carry
+          // `e."cancelledAt" IS NULL` (`gdpr.ts`) — so a GiST path, which
+          // orders by nothing, is genuinely eligible to it. What these four
+          // settings close here is only the HEAP-ordered paths; "every
+          // remaining path is btree" is true of the probe above and NOT of
+          // this statement.
+          //
+          // That costs the unmutated erasure nothing, because its order does
+          // not come from the scan at all: `lockClassRowsOrdered` ends the
+          // statement `ORDER BY c.id`, which fixes the acquisition order under
+          // every plan. The residual is about the MUTATED form — the one with
+          // that clause deleted — and no probe can reach it, which is why the
+          // mutation run rather than a `SELECT` is what settles it.
           //
           // THE SAME FOUR THE PROBE RUNS UNDER, and that is the point rather
           // than a coincidence: the probe above measures the plan space the

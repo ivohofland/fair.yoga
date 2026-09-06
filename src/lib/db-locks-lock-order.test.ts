@@ -291,10 +291,20 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // scan caller gets below. Unforced this read can reach `Class` by a
     // heap-ordered path — a sequential or a bitmap heap scan — and hand back
     // physical order, which this test cannot own; see `forceIndexOrderedPlan`.
-    // Forced, every remaining path returns btree index order and this fixture
-    // assigns every key those plans order by, so the order is the one
-    // `beforeAll` ASSIGNED: verified 24/24, including 12 runs against a heap
+    // Forced, every remaining path returns btree index order, and every key
+    // those plans can order by — `CalendarEntry.date`, `CalendarEntry.id`,
+    // `Class.calendarEntryId` — is one `beforeAll` assigns, so the order is the
+    // one it ASSIGNED: verified 24/24, including 12 runs against a heap
     // deliberately inverted to [LOW, HIGH].
+    //
+    // NOT `Class.id`, which this fixture assigns the OTHER way and which would
+    // therefore falsify the sentence above if a `Class_pkey`-driven plan were
+    // reachable. It is not: this statement joins `c."calendarEntryId"` and
+    // mentions `c.id` in no clause, so Postgres generates no `Class_pkey` path
+    // for it at all. `gdpr-lock-order.test.ts`'s teacher probe carries the
+    // measurement, including how "not generated" was told apart from "generated
+    // and outbid", and the caveat that it is a fact about this statement's
+    // clauses rather than a law.
     const scanOrder = await prisma.$transaction(async (tx) => {
       await forceIndexOrderedPlan(tx);
       return tx.$queryRaw<Array<{ id: string }>>`

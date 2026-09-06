@@ -694,6 +694,38 @@ A row in the first query with a NULL `partial_on` would be worse than a third
 partial one: an unconditional GiST index is reachable by any statement touching
 its table, with no qual to leave out.
 
+**"A btree index scan returns key order" carries two conditions, and neither is
+live in today's three files — which is exactly why they are written here rather
+than discovered later.**
+
+- **Equal keys fall back to physical order.** A btree scan returns *key* order;
+  rows whose keys tie come back in heap TID order. Every eligible driving index
+  in these reproductions leads with a key that distinguishes the two fixture
+  rows, and the fixture assigns it — but a future fixture whose rows tie on the
+  driving key gets heap order back *through* a btree `Index Scan`, with none of
+  the settings above able to prevent it. Assign the leading key, not just some
+  key.
+- **A parallel plan interleaves.** A `Gather` above a btree index scan returns
+  neither key order nor heap order, and none of the four settings forbids one.
+  `gdpr-lock-order.test.ts`'s two probes are immune **by construction**, and
+  that is a second thing `FOR UPDATE OF c` earns its place with: a locking
+  clause makes a query parallel-unsafe, so no parallel path is generated at
+  any size. The other two files' probes carry no locking clause and are **not**
+  structurally immune. Do not reach for the size threshold to excuse that —
+  measured here, `CalendarEntry_teacherId_date_idx` is already 832 kB against a
+  512 kB `min_parallel_index_scan_size`, so the threshold is behind us, not
+  ahead. What keeps those two serial is cost: `parallel_setup_cost` is 1000
+  against single-row estimates, so a `Gather` cannot pay for itself. That is a
+  cost argument, which is the weak kind — if either probe ever drives off a
+  large estimate, add a locking clause or `SET LOCAL
+  max_parallel_workers_per_gather = 0` and make it structural.
+
+  Re-derive both numbers:
+
+      SHOW min_parallel_index_scan_size; SHOW parallel_setup_cost;
+      SELECT relname, pg_size_pretty(pg_relation_size(oid))
+        FROM pg_class WHERE relkind = 'i' ORDER BY pg_relation_size(oid) DESC LIMIT 5;
+
 The consequence for `CalendarEntry` is worth stating plainly, because it bounds
 what a probe can prove: production's own pre-lock in `deleteTeacherAccount`
 DOES carry `cancelledAt IS NULL`, so the mutated form of that statement — the
@@ -705,11 +737,35 @@ all. No probe on this schema establishes that counterfactual. Deleting the
 Forcing the plan is a NARROWING, not a pin, and a reproduction that needs one
 should say so in its own comments. Index order is not one order: it is whichever
 key the chosen index leads with, so the fixture has to assign every key an
-eligible plan could order by — and where two callers must disagree about the
-same table, some shapes cannot be reconciled by any fixture at all. Attach the
-statement's `EXPLAIN` to the assertion's failure message; a bare
+eligible plan could order by. Attach the statement's `EXPLAIN` to the
+assertion's failure message; a bare
 `expected [ …(2) ] to deeply equal [ …(2) ]` costs an archaeology session every
 time.
+
+**Where two callers must disagree about the same table, ask which indexes each
+statement makes ELIGIBLE before concluding the shapes cannot be reconciled.**
+This paragraph used to end "some shapes cannot be reconciled by any fixture at
+all", and for the pair that motivated it that turned out to be false. Postgres
+builds an index path only where the index has usable clauses, useful pathkeys, a
+useful predicate, or supports an index-only scan (`build_index_paths`,
+`indxpath.c`). Two statements that join the same table on *different* columns
+therefore reach *different* indexes on it, and a fixture assigning those two
+columns in opposite directions makes the two callers disagree by construction —
+no cost comparison involved, and nothing for a planner to revisit.
+
+Establish it by hiding the winner, not by reading the chosen plan: a chosen plan
+tells you which path won, never whether the other was generated. Set
+`indisvalid = false` on the winning index inside `BEGIN … ROLLBACK` and re-plan.
+Falling back to a `Seq Scan` means the alternative was never generated; the
+alternative appearing means it was there all along and merely lost. Run the
+positive control too — the same statement with the clause that *should* make the
+path eligible — or a broken instrument reads as a proof. Worked through for the
+two `Class` pre-locks in
+`docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md` §1.1.
+
+It stays an argument about specific statements against a specific schema: a new
+index, or one added clause, can put the path back. Re-measure when either
+changes.
 
 Ordering a multi-row write means locking the rows first, explicitly: an
 `ORDER BY … FOR UPDATE` ahead of the write itself. In `src/` that is always
