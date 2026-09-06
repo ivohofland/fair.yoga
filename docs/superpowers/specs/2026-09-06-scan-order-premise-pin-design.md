@@ -20,11 +20,22 @@ the first half of that is false: **`enable_seqscan = off` does not force an
 index path.** It removes one of the *two* heap-ordered scan paths Postgres has
 for a plain table. The other — a **Bitmap Heap Scan** — survives all three
 settings, and it returns rows in **physical heap order**, which is exactly the
-thing the three settings were added to eliminate.
+thing the three settings were added to eliminate. §2.1 measures that path as
+reachable but, under the statistics available here, not preferred.
 
-So the defect is not "the planner may pick a different index". It is "the
-planner may pick a plan that reads the heap directly", and the fix is one more
-setting rather than a redesign of the assertion.
+**Which plan CI actually got is deducible from the failure, and it is one of
+two.** The reported order was `[LOW, HIGH]`. Enumerate what each reachable plan
+orders by, against what the fixture assigns (§2.3): every index key the fixture
+assigns yields `[HIGH, LOW]`. Exactly two things yield `[LOW, HIGH]`:
+
+- a plan driven by **`Class_pkey`**, ordering by `Class.id` — which the fixture
+  assigns the *opposite* way on purpose, because the student side's natural
+  order is `Class.id` ascending and the whole premise is that the two sides
+  disagree; or
+- **heap order**, from a bitmap heap scan, landing that way by page layout.
+
+This work closes the second and makes the first report itself. It does not,
+and cannot, prevent the first — §4.
 
 Two further claims in the tree turned out false, both load-bearing:
 
@@ -67,29 +78,56 @@ ROLLBACK;
          ->  Bitmap Index Scan on "Class_calendarEntryId_key"  (cost=0.00..4.13 rows=1 width=0)
 ```
 
-Total cost **20.45**. The index-nested-loop plan the planner actually chose in
-the same session's sweep costs **20.46**. That is inside the planner's 1% fuzzy
-tie band (`compare_path_costs_fuzzily`), so which of the two wins is decided by
-noise in the statistics — and one of the two hands back heap order.
+Total cost **20.45**, against **16.12** for the index-nested-loop plan the
+planner chooses under the *same* statistics. So the bitmap path is **reachable
+but not currently preferred** — roughly 27% dearer here.
+
+That is weaker than this spec first claimed. The first draft put 20.45 against
+20.46 and called it a fuzzy tie; those two numbers came from **different
+statistics states** (the 20.46 from a sweep with faked `pg_class` rows, the
+20.45 from the unfaked table), so the comparison was not one. Measured fairly,
+there is no tie. What survives is narrower and still worth acting on: **the
+three settings do not exclude a heap-ordered plan**, and the cost gap that keeps
+it unchosen is a function of statistics this project does not control on CI.
 
 `enable_indexscan = off` appears only to make the alternative visible; it is not
 part of the fix and not part of the test.
 
-### 2.2 The plan is not stable on one unchanged database
+### 2.2 The plan moves with table churn, not with the statement
 
 `plan-sweep2.sql` — 54 `EXPLAIN`s of the probe statement across
 `Class` ∈ {(0,0), (-1,0), (1,1), (2,1), (3,1), (5,1), (8,1), (20,1), (100,2)}
 and `CalendarEntry` ∈ {(0,0), (-1,0), (2,1), (48,12), (200,3), (5000,50)} as
-`(reltuples, relpages)` — was run twice, ten minutes apart, with **no schema
-change, no data change and no `ANALYZE` between them**:
+`(reltuples, relpages)`. Faking `pg_class` is only half a fake: `estimate_rel_size`
+(`plancat.c`) reads the relation's **real** block count off disk and uses
+`reltuples/relpages` as a density against it. So the same script re-run after the
+table has grown or been truncated estimates differently.
 
-| run | `CalendarEntry`-driven | `Class`-driven |
+Run five times back to back, with nothing in between:
+
+| runs 1-5 | `CalendarEntry`-driven | `Class`-driven |
 |---|---|---|
-| first | 54 | 0 |
-| second | 6 | 48 |
+| all five identical | 6 | 48 |
 
-Same statement, same faked statistics, opposite driving side. This is the flake
-reproduced, on a laptop, without CI.
+**Deterministic given the database state.** Now the same script across a session
+in which `gdpr-lock-order.test.ts` was executed once (it inserts and deletes in
+both tables) and background autovacuum then ran:
+
+| when | `CalendarEntry`-driven | `Class`-driven |
+|---|---|---|
+| before the test run | 54 | 0 |
+| after the test run | 6 | 48 |
+| ~20 min later, no statement run in between | 42 | 12 |
+
+Same statement, same faked `pg_class` numbers, three different answers — moved
+by row churn in the two tables and by autovacuum acting on it. That is precisely
+what CI supplies: `--project unit` runs first, in parallel, against the same
+`ethical_yoga_test` database (`ci.yml:176-183`), and `--project unit-sweeps`
+reaches this file afterwards with whatever heap and statistics that left.
+
+The third row is weaker evidence than the first two: no statement of mine ran
+between rows two and three, so autovacuum is inferred from the timing rather
+than observed. Rows one and two are the load-bearing ones.
 
 ### 2.3 Every plan observed under the three settings still orders by an
 assigned key
@@ -212,34 +250,54 @@ list.
 
 ## 4. The residual, stated plainly
 
-**The pin is narrowed, not closed.** Index order is not one order. A
-`Class_pkey`-driven plan would order by `Class.id` — and the fixture assigns
-`Class.id` the *opposite* way on purpose, because the student side's natural
-order is `Class.id` ascending and the whole premise is that the two sides
-disagree. That one shape therefore cannot be reconciled by any fixture, and it
-should not be: under it the reproduction really would be vacuous, and a red test
-is the correct answer.
+**The pin is narrowed, not closed, and issue #470's AC 4 applies: say so.**
 
-It was not observed in any of the ~100 `EXPLAIN`s in §2. Postgres preferred
-`Class_calendarEntryId_key` for a `Class`-driven full index scan in every
-configuration tried, including ones that made `Class_pkey` artificially cheap.
-That is an observation, not a guarantee.
+Index order is not one order. A `Class_pkey`-driven plan orders by `Class.id`,
+and the fixture assigns `Class.id` the *opposite* way on purpose — the student
+side's natural order is `Class.id` ascending, and the premise is that the two
+sides disagree. **No fixture can reconcile that shape**, because both sides read
+the same table through the same indexes and need opposite answers from it. Nor
+should it be reconciled: under that plan the reproduction really is vacuous, and
+red is the correct verdict.
 
-What changes with this work: physical heap order — the only *unbounded* source
-of disorder, and the one shared with every other file in the tier — becomes
-unreachable, and the remaining space is a small set of index keys the fixture
-assigns. What does not change: Postgres has no plan pinning, so this is a
-narrowing, and §3.4 exists because a further narrowing may one day be needed.
+The exposure is symmetric and worth naming: the *student* probe is vulnerable to
+a `Class_calendarEntryId_key`-driven plan for the same reason, which would make
+it agree with the teacher side.
+
+`Class_pkey` was not observed driving in any of the ~100 `EXPLAIN`s in §2 —
+Postgres preferred `Class_calendarEntryId_key` for a `Class`-driven scan in every
+configuration tried, including ones that made `Class_pkey` artificially cheap by
+faking its `relpages`. That is an observation, not a guarantee, and §1 shows it
+is one of only two shapes that could have produced the reported CI failure.
+
+So, plainly: **this work does not make the premise unfalsifiable by the
+planner.** Postgres offers no plan pinning, and the two remaining levers were
+weighed and rejected —
+
+- *installing `pg_hint_plan`* — a database extension added to every developer's
+  container and to CI, to pin one assertion in one test file;
+- *skipping the test when the plan is unfavourable* (`ctx.skip()` with the plan
+  in the message) — it stops the gate reddening, at the price of a merge gate
+  that can go quietly vacuous, which is the failure mode #470 says must not be
+  reached.
+
+What this work does buy, and it is not nothing: heap order — the only
+*unbounded* source of disorder, and the one shared with every other file in the
+tier — leaves the reachable set; the remaining set is a handful of index keys
+the fixture assigns; and when a plan outside that set is chosen, the failure
+prints the plan instead of two opaque uuids, so the next occurrence is one read
+rather than an archaeology session. Both of the last two are §3.
 
 ## 5. Acceptance criteria, mapped
 
 | issue AC | where |
 |---|---|
 | premise stays asserted; prove by mutation, record exact output | plan Task 2 |
-| assertion no longer depends on a physical scan order | §2.5 + §3.1 |
-| state what makes it stable | §2.5, and §4 for what does not |
+| assertion no longer depends on a **physical** scan order | met — §2.5 + §3.1 |
+| …nor on any order "the planner may reverse" | **not met, and cannot be** — §4 |
+| state what makes it stable | §2.5 for what is now closed; §4 for what is not |
 | honest residual flake rate, N runs, CI-shaped database | plan Task 2 |
-| if it cannot be made stable, say so | §4 |
+| if it cannot be made stable, say so | §4, and the PR body |
 
 ## 6. Not in scope
 
