@@ -51,8 +51,16 @@ export function ArchiveTemplateButton({ templateId, isArchived }: ArchiveTemplat
         }
 
         if (rawJson !== undefined) {
-          const { data } = rawJson as { data: TemplateToggleResponse };
-          setMessage(resolveTemplateConfirmation(data) ?? '');
+          try {
+            const { data } = rawJson as { data: TemplateToggleResponse };
+            setMessage(resolveTemplateConfirmation(data) ?? '');
+          } catch (err) {
+            console.error('[archive-template] updated, but the confirmation could not be resolved', {
+              templateId,
+              err,
+            });
+            setMessage(UNREADABLE_CONFIRMATION_MESSAGE);
+          }
         }
         router.refresh();
       } else {
