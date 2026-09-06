@@ -1,10 +1,19 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { hhmmToTime } from '@/lib/time-of-day';
-import { completeClass, updateClass } from './class-lifecycle';
-
 /**
+ * @serial-tier lock-contention — the case below holds the `Class` and
+ * `CalendarEntry` rows through `completeClass` while `updateClass` parks on
+ * them under `lockClassRow`'s 2s `lock_timeout`, and the hold lasts until a
+ * `pg_stat_activity` handshake sees that park. The hold is short by design,
+ * so what puts this file here is the OTHER kind: an assertion a tier-mate's
+ * lock noise falsifies. Everything between the reschedule issuing and the
+ * holder committing has to fit inside that 2s bound, and delaying it past
+ * there turns the expected `reason: 'frozen'` into a `55P03` — which makes
+ * `ok` false for a cause that has nothing to do with the freeze. See WHY THE
+ * REASON, NEVER THE BOOLEAN below.
+ *
+ * The near-identical twin of `transition-class-lock-order.test.ts`, which
+ * stages the same shape against the same bound; both are on
+ * `LOCK_CONTENTION_TESTS` (`vitest.tiers.ts`).
+ *
  * `updateClass` must not slip a reschedule past a completion that is already
  * holding the class (#327, stage B spec §2.2).
  *
@@ -21,8 +30,8 @@ import { completeClass, updateClass } from './class-lifecycle';
  * free lock started covering the wrong table.
  *
  * TWO CHANGES CLOSE IT, AND THIS CASE FAILS ONLY WHEN BOTH ARE ABSENT —
- * measured, and stated that way rather than as "it catches each of them",
- * which is what the first draft of this paragraph claimed. `lockClassRow`
+ * measured, and the mutation table below is what says so rather than
+ * inference: `lockClassRow`
  * taking the entry row as well as the class row, and `updateClass` calling it
  * rather than relying on Prisma's statement order. Either ONE of them alone
  * still parks the reschedule behind the completion — the wide helper because
@@ -42,14 +51,21 @@ import { completeClass, updateClass } from './class-lifecycle';
  * `ok` false. `reason: 'frozen'` is the only outcome that says the reschedule
  * waited, saw the completion, and refused on the entry's own freeze.
  */
+
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { PrismaClient } from '@prisma/client';
+import crypto from 'crypto';
+import { hhmmToTime } from '@/lib/time-of-day';
+import { completeClass, updateClass } from './class-lifecycle';
+
 const prisma = new PrismaClient();
 
 /**
  * A client with exactly one connection, so `pg_backend_pid()` read from it once
  * identifies the backend every later statement runs on. That is what lets the
  * handshake below watch for THIS reschedule waiting on a lock rather than for
- * any backend anywhere — `pg_stat_activity` is database-wide, and the `unit`
- * project runs its files in parallel.
+ * any backend anywhere — `pg_stat_activity` is database-wide, and this file
+ * alone puts three clients on it.
  */
 function singleConnectionClient(): PrismaClient {
   const url = new URL(process.env.DATABASE_URL ?? '');

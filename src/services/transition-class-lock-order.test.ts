@@ -57,8 +57,8 @@ const prisma = new PrismaClient();
  * A client with exactly one connection, so `pg_backend_pid()` read from it once
  * identifies the backend every later statement runs on — the same device
  * `update-class-lock-order.test.ts` uses, and for the same reason:
- * `pg_stat_activity` is database-wide and the `unit` project runs its files in
- * parallel.
+ * `pg_stat_activity` is database-wide and this file alone puts three clients
+ * on it.
  */
 function singleConnectionClient(): PrismaClient {
   const url = new URL(process.env.DATABASE_URL ?? '');

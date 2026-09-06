@@ -46,20 +46,25 @@ export const SWEEP_TESTS = [
 // Taking one is not the trigger; being unable to share a tier is. A file whose
 // locks are all on rows and keys it minted itself, whose parked transactions
 // wait for a release rather than for a clock, and none of whose assertions is
-// a bound or an elapsed time can hold real locks in `unit` — tier noise delays
-// it and cannot fail it.
-//
-// Which files those are is settled rather than open. #459 closed the files it
-// targeted into the siblings below and #468 the rest, giving every remaining
-// candidate a written verdict — moved here, or measured and kept in the
-// parallel tier. Those two issues carry the verdicts with their measurements;
-// a roster here would be a second copy of them.
+// a bound or an elapsed time can hold real locks in `unit` — tier noise cannot
+// make any assertion in it wrong. It can still make such a file SLOWER, and a
+// file with no per-test timeout of its own runs under vitest's 5s default, so
+// enough noise could in principle end one as a test timeout; what rules that
+// out is margin, measured per file in the verdict that kept it here.
 //
 // MEMBERSHIP IS HELD BY THE MARKER, NOT BY A COMMAND. Every file below carries
 // `@serial-tier lock-contention` in its own header, with the reason that file
 // cannot share a parallel tier, and `src/lib/serial-tier-membership.test.ts`
 // fails if the markers and this array disagree in either direction, or if a
-// listed path stops existing.
+// listed path stops existing. That pair is the whole membership rule: no
+// command decides it, and a file whose machinery no command can see joins the
+// same way every other one does — #468 added `update-class-lock-order.test.ts`
+// and `template-room-race.test.ts`, both of which take their locks through
+// service calls and appear in no lock-shaped search.
+//
+// #459 and #468 carry the written verdicts, each with its measurement — moved
+// here, or measured and kept in the parallel tier. A roster here would be a
+// second copy of them.
 //
 // For FINDING a file that belongs here, the command below reaches the
 // SQLSTATE-shaped ones, asserted in either direction:
@@ -114,6 +119,12 @@ export const LOCK_CONTENTION_TESTS = [
   // #468: split out of `class-generator.test.ts`, which keeps every case that
   // stages nothing — the sibling's header gives the reason, shape by shape.
   'src/services/class-generator-lock-order.test.ts',
+  // #468, and found by reading rather than by any command: both take their
+  // locks through service calls instead of raw SQL, so every text search for
+  // lock machinery walks past them. No extraction — each is one test and the
+  // whole file is the staged race.
+  'src/services/update-class-lock-order.test.ts',
+  'src/services/template-room-race.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

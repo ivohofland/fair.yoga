@@ -284,16 +284,13 @@ describe('the class generator under staged lock contention (DB)', () => {
      * 5s default. That proof is now unwritable: the archive takes a 2s
      * `lock_timeout`, so it can no longer wait 5.5s for a row under any
      * budget. The 10s budget still matters — it now covers the archive's own
-     * work rather than its wait — and the two `opens the … transaction with
-     * { timeout: 10_000 }` tests in `class-generator.test.ts` pin that it is
-     * still passed.
-     *
-     * Those two exist because an earlier draft of this docblock pointed at
-     * `studio-class-generator.test.ts`'s spy instead, which proxies
+     * work rather than its wait — and what pins that it is still passed is
+     * `class-generator.test.ts`'s `opens the … transaction with
+     * { timeout: 10_000 }` tests — one beside each template mutation that has
+     * to beat the claim, each spying on this family's own client.
+     * Not `studio-class-generator.test.ts`'s spy, which proxies
      * `archiveOrUnarchiveStudioTemplate` — a different function in a different
-     * module. For the interval between the re-point and those tests, this
-     * family's budget was pinned by nothing at all while a comment said
-     * otherwise.
+     * module, and no evidence about this one.
      *
      * What this pins instead is the bound itself, and the timing assertions
      * are how. Without the `lock_timeout` the archive does not fail later —
@@ -374,16 +371,13 @@ describe('the class generator under staged lock contention (DB)', () => {
      * wait. Its own union carries `busy` separately, and a bound dropped
      * here would leave the archive's test green.
      *
-     * The PAUSE arm, not the resume. The plan's first draft called the resume
-     * with the template paused first; that cannot work, because the claim
-     * refuses paused templates (`WHERE "isActive" = true`), so the claim
-     * returned null and the test died at its own setup assertion — the
-     * plan's predicted failure ("the resume waits the claim out and resolves
-     * `ok: true`") was unreachable. A resume can never lose this race: the
-     * claim only locks active templates, and a resume only runs on a paused
-     * one. The arm that genuinely contends with the sweep is the pause —
-     * active template, claim holds the row, the pause's update blocks on it.
-     * Recorded in the mutations file under Task 3.
+     * The PAUSE arm, not the resume, and the asymmetry is structural: a resume
+     * can never lose this race, because the claim only locks ACTIVE templates
+     * (`WHERE "isActive" = true`) and a resume only ever runs on a paused one,
+     * so there is no row for the two to contend over. The arm that genuinely
+     * contends with the sweep is the pause — active template, claim holds the
+     * row, the pause's update blocks on it. Recorded in the mutations file
+     * under Task 3.
      */
     it(
       'answers busy when a pause loses the row to the generation claim',
@@ -468,10 +462,11 @@ describe('the class generator under staged lock contention (DB)', () => {
      * { timeout: 10_000 }` counts one waitable statement in that transaction
      * and not two.
      *
-     * Named for the edit specifically. Its two siblings in this `describe`
-     * cover the archive and the pause/resume, and an unqualified name here
-     * made the failure header ambiguous between them under mutation and made
-     * `vitest -t` unable to select one.
+     * Named for the edit specifically. `answers busy when the generation claim
+     * holds the row past the lock timeout`, in this same `describe`, is the
+     * archive's version of it — so without the suffix the two carried one
+     * title, the failure header was ambiguous between them under mutation, and
+     * `vitest -t` could select neither.
      */
     it(
       'answers busy when the generation claim holds the row past the lock timeout (template edit)',
@@ -726,7 +721,7 @@ describe('the class generator under staged lock contention (DB)', () => {
      * this holder `slot_taken` — same family, same minute — and the probe does
      * not distinguish. It cannot arise except from a race, because the
      * pre-check sees every committed same-minute neighbour; see the note above
-     * `landed` in `class-generator.ts`.
+     * `landed` in `entry-generation.ts`.
      */
     it('names a date lost to a concurrent insert by what still holds it', async () => {
       const now = new Date();
@@ -1154,7 +1149,7 @@ describe('the class generator under staged lock contention (DB)', () => {
      *
      * The two tests above hold for 400ms and cannot see this. Written because
      * nothing in the branch that added the bound acknowledged it reached this
-     * far — the four contention tests all stop at the CAS.
+     * far — every contention test that branch shipped stops at the CAS.
      */
     it(
       'answers busy when the clash outlives the lock timeout, instead of reporting it raced',
@@ -1192,8 +1187,8 @@ describe('the class generator under staged lock contention (DB)', () => {
           // `updateMany`, whose `FOR UPDATE` (upgrade for the FK-referenced
           // `live` key, #272) now conflicts with the holder's hold — not at
           // the claim or at the resume's own insert. Measured with
-          // `pg_stat_activity` on the four-contention block above: the resume
-          // sat in `Lock:transactionid` on `UPDATE "ScheduleRule" SET
+          // `pg_stat_activity` on the `raceResumeAgainst` cases above: the
+          // resume sat in `Lock:transactionid` on `UPDATE "ScheduleRule" SET
           // "isActive" = $1 …` for the whole hold. Same 2s bound, same
           // `busy`, one statement earlier than #116's claim. Under #327 the
           // wait sat at the insert instead; without #272 that is where this
