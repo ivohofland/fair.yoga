@@ -6,27 +6,30 @@
  * pre-lock, and the order that pre-lock exists to impose.
  *
  * SEPARATE FROM `room-archive.test.ts` FOR A REASON THE FILENAME CANNOT CARRY.
- * Both cases below hold a real row lock for about two seconds, and this tier
- * runs its files in parallel. `template-lock-order.test.ts` asserts its own
- * race ends in neither `40P01` nor `55P03`, and a concurrent multi-second hold
- * pushes it into the second — measured: it passes alone, passes run beside
- * this file alone, and fails in the full tier. That is why this file is on
- * `LOCK_CONTENTION_TESTS` in `vitest.tiers.ts`. Both files are on it, so both
+ * The races below are staged with real row locks held for seconds at a time,
+ * and this tier runs its files in parallel. `template-lock-order.test.ts`
+ * asserts its own race ends in neither `40P01` nor `55P03`, and a concurrent
+ * multi-second hold pushes it into the second — measured: it passes alone,
+ * passes run beside this file alone, and fails in the full tier. That is why
+ * this file is on `LOCK_CONTENTION_TESTS` in `vitest.tiers.ts`. Both files are on it, so both
  * left the parallel tier; what protects the assertion is `unit-sweeps` running
  * its files one at a time, not the two being separated.
  *
- * WHAT THE SIBLING FILE'S RACE CASE DOES NOT COVER. Its
+ * WHAT THE RESUME-RACE CASE DOES NOT COVER, AND WHY IT IS HERE ANYWAY.
  * "answers busy when the archive already holds the child row" holds the child
  * by hand and watches a RESUME lose, which says nothing about what the archive
  * itself does — it passes with the pre-lock deleted outright, measured on the
- * full suite. These two put the archive on the waiting side, where the guard
- * is what decides the outcome.
+ * full suite. Its hold is what puts it in this file, not a guard it certifies.
+ * The cases under `setTeacherRoomArchived — lock discipline (issue 272)` put
+ * the archive on the waiting side instead, where the guard is what decides the
+ * outcome.
  *
- * Both assert on elapsed time, which is unusual here and is the point: what is
- * being pinned is a BOUND and an ORDER, neither of which leaves a trace in a
- * row afterwards. The margins are wide enough that only the guard's absence
- * fits between them, and each case was verified to fail when its own guard is
- * removed.
+ * Those cases assert on the clock rather than on a row, which is unusual here
+ * and is the point: what they pin is a BOUND and an ORDER, neither of which
+ * leaves a trace in a row afterwards. The margins are wide enough that only
+ * the guard's absence fits between them, and each was verified to fail when
+ * its own guard is removed. The resume race is the other shape — its assertion
+ * is the answer the loser gets, `busy`, and nothing about how long it took.
  *
  * ISSUE 339 ADDED A SECOND FILE-RESIDENT EDGE, for the same reason as the
  * first: `CalendarEntry → Class` runs backward against this repo's fixed
@@ -41,6 +44,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { setTeacherRoomArchived } from './room-archive';
+import { pauseOrResumeTemplate } from './class-template-lifecycle';
 import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
 
 const prisma = new PrismaClient();
@@ -225,6 +229,81 @@ describe('setTeacherRoomArchived — lock discipline (issue 272)', () => {
     const clsAfter = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
     expect(clsAfter.roomArchived).toBe(false);
   }, HELD_CASE_TIMEOUT_MS);
+});
+
+describe('setTeacherRoomArchived — the mid-request resume race (issue 272)', () => {
+  // The flip side of the same race, and which transaction loses changed with
+  // the guard: the archive transaction pre-locks the room's child templates
+  // BEFORE it row-locks the room, so a resume arriving mid-request finds the
+  // child already held, its `scheduleRule` CAS cascade waits on the hold,
+  // hits the shared `LOCK_TIMEOUT_SQL` bound (`db-locks.ts`, named rather than
+  // restated so a change to it cannot leave this sentence stale), and answers
+  // `busy` — a refusal, clean, on
+  // the tab that clicked resume, never a deadlock and never a throw. Before
+  // the pre-lock the loser was the archive; afterward it is the resume. The
+  // archive-loses shape is still staged, by `room-archive.test.ts`'s "answers
+  // in_use rather than throwing when the constraint refuses the archive" —
+  // which reaches it through a constraint rather than a lock, and is why that
+  // case stayed in the parallel tier while this one did not. Both orders keep
+  // the invariant; the guard chose the one that cannot deadlock.
+  it('answers busy when the archive already holds the child row', async () => {
+    const f = await makeFixture();
+    const tpl = await addTemplate(f, { isActive: false, isArchived: false });
+    const holder = new PrismaClient();
+    await holder.$connect();
+    let acquired!: () => void;
+    let release!: () => void;
+    const acquiredSignal = new Promise<void>((r) => { acquired = r; });
+    const releaseSignal = new Promise<void>((r) => { release = r; });
+    let ceiling: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      // THE BARRIER IS THE TEST. Without it this raced the wrong way: the
+      // holder's transaction was started and the resume called immediately,
+      // so on a machine where the resume reached the row first it took the
+      // lock, succeeded, and answered `{ ok: true, action: 'active' }`. That
+      // is not a flake to retry — it is this case asserting nothing about
+      // contention on the run where it passed. Measured red on CI, green
+      // locally, which is the shape of a missing happens-before.
+      const held = holder.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "ClassTemplate" WHERE id = ${tpl.id} FOR UPDATE`;
+          acquired();
+          // Held until the resume has answered, rather than a flat sleep: a
+          // lock held for a flat six seconds is wall clock every run pays for
+          // whether or not the assertion needed it, so it lasts exactly as
+          // long as the assertion does. The ceiling exists only for the path
+          // where the resume never gives up, so that failure surfaces as this
+          // case's own assertion rather than a vitest timeout.
+          await Promise.race([
+            releaseSignal,
+            new Promise<void>((r) => { ceiling = setTimeout(r, 6_000); }),
+          ]);
+          return 'released';
+        },
+        { timeout: 20_000 },
+      );
+      held.catch(() => {});
+      await acquiredSignal;
+
+      const resumed = await pauseOrResumeTemplate(prisma, tpl.id, f.teacherId, 'active');
+      release();
+      expect(resumed).toEqual({ ok: false, reason: 'busy' });
+      expect(await held).toBe('released');
+
+      const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: f.linkId } });
+      expect(after.isArchived).toBe(false);
+    } finally {
+      if (ceiling) clearTimeout(ceiling);
+      release();
+      await holder.$disconnect();
+    }
+    // Explicit, because vitest's 5s default is not comfortably above what this
+    // case legitimately costs: fixture setup, then a resume that waits out the
+    // shared `lock_timeout` before answering. A loaded CI runner fits inside
+    // 5s only just, and a timeout here would read as a defect rather than as
+    // the machine being busy.
+  }, 20_000);
 });
 
 /**
