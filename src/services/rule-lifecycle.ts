@@ -65,10 +65,11 @@ export type WithSlot<T> = T & {
  * `startTime` is HH:mm — the wire spelling, not the `Date` the column holds
  * — because this crosses into a response body unchanged.
  *
- * `TemplateToggleResponse.lastScheduled` in `template-action-messages.ts` is
- * NOT this type and must not be folded into it — it carries `date: string`,
- * the post-`JSON.parse` wire form, converted back inside that file's two
- * `resolve*Confirmation` functions.
+ * `TemplateToggleResponse.lastScheduled` (canonical in `@/lib/api-types`,
+ * re-exported in `template-action-messages.ts`) is NOT this type and must
+ * not be folded into it — it carries `date: string`, the post-`JSON.parse`
+ * wire form, converted back inside that file's two `resolve*Confirmation`
+ * functions.
  */
 export type LastScheduledClass = { date: Date; startTime: string };
 

@@ -420,21 +420,7 @@ export function templateUpdatedMessage(
   }
 }
 
-/**
- * The `data` payload of a successful PATCH on a class template.
- *
- * The `scheduled?: never; added?: never` phantom on the old collapsed `active`
- * arm did this job until the class family's resume gained counts of its own —
- * the case this file's own text predicted (below). No phantom can separate two
- * structurally identical arms, so `templateKind` is the discriminator instead:
- * it is a literal on the `active` arm of each family's type, checkable at
- * runtime (which the phantom was not), and both resolvers already distrust the
- * wire. A union is assignable only if every arm is, so one non-assignable arm
- * still protects the whole type in both directions — that is what the
- * "not interchangeable" test pins, and swapping a resolver for its sibling
- * fails on `templateKind`'s literal rather than compiling clean the way the
- * phantom let it (#119, #93).
- */
+// Re-exported canonical wire response types (#206); defined in '@/lib/api-types'.
 import type {
   TemplateToggleResponse,
   StudioTemplateToggleResponse,

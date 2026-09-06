@@ -107,9 +107,9 @@ export const PUT = withErrorHandler(async (
   // these two are PREDICTIONS about a sweep that has not run — this PUT
   // generates nothing and moves no existing studio class (#194/#284). They are
   // what let `studio-template-form.tsx` say WHEN the edit reaches the
-  // calendar. `firstEffective` is serialized as an ISO string by `respondOk`'s
-  // JSON encoding and the form converts it back; `generationState` is already
-  // a string.
+  // calendar. `firstEffective` is serialized as an ISO string (converted
+  // explicitly above for `respondTyped`) and the form converts it back;
+  // `generationState` is already a string.
   //
   // `generationState` is not redundant with the `isActive`/`isArchived`
   // columns `withSlot` flattens onto the same body. Those two are the rule's
