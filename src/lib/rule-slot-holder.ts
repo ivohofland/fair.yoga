@@ -37,23 +37,52 @@ export function minutesSinceMidnight(t: Date): number {
  * is ever redefined with a different bound — `rule-slot-holder.test.ts`'s
  * boundary case and its mutation are what hold it.
  *
- * Called after its transaction has closed, always against `db`, never `tx`:
- * a statement that fails inside a Postgres transaction aborts it, so a probe
- * issued on the aborted `tx` would answer `25P02` rather than an answer, not
- * a `RuleSlotHolder`. Call sites reach this probe two ways: from a `catch`,
- * where the refused statement aborted the transaction, and from a normal
- * return path, where a zero-row `ON CONFLICT DO NOTHING` refusal never threw
- * and the transaction committed. The requirement is identical either way, and
- * it is the only thing this docblock asserts about them — every call site must
- * sit after its own transaction's closing `)`, where Prisma has already
+ * Called after its transaction has closed, always against `db`, never `tx` —
+ * two requirements, held by two different things.
+ *
+ * THE ARGUMENT is held by the signature. A statement that fails inside a
+ * Postgres transaction aborts it, so a probe issued on the aborted `tx` would
+ * answer `25P02` rather than a `RuleSlotHolder`; that is why the parameter is
+ * `PrismaClient`, which `Prisma.TransactionClient` — `Omit<PrismaClient,
+ * ITXClientDenyList>`, missing `$transaction` — cannot satisfy. Passing `tx`
+ * therefore does not compile, and `rule-slot-holder.test.ts` keeps a
+ * never-called `@ts-expect-error` over that call so a parameter widened to
+ * accept a transaction client fails `tsc` rather than shipping.
+ *
+ * THE PLACEMENT is the other requirement, and the failure it is about is not
+ * `25P02`. What compiles is a call sitting INSIDE a `$transaction(…)` callback
+ * and passing the outer `db`: it asks the pool for a second connection while
+ * the caller's own transaction still holds the first — under exactly the
+ * contention that produces slot conflicts — and reads a committed snapshot
+ * blind to the very transaction it is being asked about. So every call site
+ * sits after its own transaction's closing `)`, where Prisma has already
  * committed or rolled back and `db` is a clean connection.
+ *
+ * Call sites reach this probe two ways: from a `catch`, where the refused
+ * statement aborted the transaction, and from a normal return path, where a
+ * zero-row `ON CONFLICT DO NOTHING` refusal never threw and the transaction
+ * committed. The requirement is identical either way, and it is the only thing
+ * this docblock asserts about them.
  *
  * NO ROSTER HERE, for the reason `db-locks.ts` spends a paragraph on: a caller
  * list kept in this file goes stale and nothing that counts can catch it. A
- * further caller of either shape falsifies a name; it does not falsify the
- * rule above. Re-derive the set:
+ * further caller of either shape falsifies a name; it does not falsify either
+ * requirement above. Re-derive the set:
  *
  *   grep -rn "ruleSlotHolder(db\|ruleSlotHolder(prisma" src/services/ src/app/api/
+ *
+ * THE PLACEMENT IS ENFORCED, and by something other than that command:
+ * `src/lib/probe-placement-census.test.ts` reads the calls out of the syntax
+ * tree and asserts that none of them — this probe's calls or
+ * `probeConflictingEntry`'s — sits lexically inside a `$transaction(…)`
+ * callback. A call site that moves inside one reddens the suite, so the command
+ * above is a convenience for a reader rather than the thing holding the rule up.
+ *
+ * IT DOES NOT ASK FOR A TRANSACTION BESIDE THE CALL, only that there is none
+ * around it. A caller whose refused transaction lives one layer down, inside
+ * the service it awaited, is correct and ships. Nor does anything mechanical
+ * decide whether the transaction a call probes after is the RIGHT one. The
+ * census's own docblock carries the rest of what it does not see.
  *
  * NEVER THROWS, and that is a guarantee about the refusal rather than about
  * this query — the same contract `probeConflictingEntry` (`./entry-conflict`)
