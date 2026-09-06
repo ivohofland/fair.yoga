@@ -109,8 +109,11 @@ Seven files change tier; two stay. Four extractions, three markers.
 | `src/services/template-room-race.test.ts` | itself | marker + list entry only (§3.10) |
 
 The last two are not among the seven the issue named. §1.1's sweep cannot see
-them, because they take their locks through service calls rather than through
-raw `FOR UPDATE` — the false negative §1.1 itself warns about, biting. §5
+them, because neither writes lock machinery in its own source text: one takes
+its locks inside `completeClass`/`lockClassRow`, the other through a Prisma
+`scheduleRule.update` whose foreign-key cascade does the locking. Either way
+the regex has nothing to match — the false negative §1.1 itself warns about,
+biting. §5
 records how they were found and why the sweep's re-run still returns 19.
 
 `room-archive-lock-order.test.ts` already exists, already carries the marker and
@@ -357,8 +360,12 @@ Its own docblock already states the failure mode a tier-mate causes: "A `55P03`
 lock timeout would also make `ok` false", so `reason: 'frozen'` is the only
 outcome that means what the test means. Everything between the reschedule
 issuing and the holder committing has to fit inside the 2 s bound; tier noise
-that pushes it past there turns the freeze into a timeout and the assertion
-fails from the wrong cause. It joins on the assertion side rather than the
+that pushes it past there replaces the freeze with a `55P03`, which
+`updateClass` does not map to a result — its `catch` handles
+`UpdateClassRefusal`, the slot exclusion and the rule-date conflict, and
+rethrows everything else. So the call REJECTS and the case dies before its own
+assertion, reporting a lock timeout where the defect it watches for is a stale
+read. It joins on the assertion side rather than the
 noise side — the hold ends on the handshake, so it is short by design. That is
 the same sentence, the same device and the same consequence as §3.7 — the two
 files are near-identical twins, and `transition-class-lock-order.test.ts` cites
@@ -369,9 +376,15 @@ No extraction: one test, 70 ms, and the whole file is the staged race.
 
 ### 3.10 `src/services/template-room-race.test.ts` — 1 test — MARKER ONLY
 
-Its single test holds a `ScheduleRule` row lock open on a resume's transaction
-under `{ timeout: 15_000 }` while a second client's `teacherRoom.update` blocks
-on the cascade that has to rewrite the held row. The two are joined by
+Its single test holds a **`ClassTemplate`** row lock open on a resume's
+transaction under `{ timeout: 15_000 }` while a second client's
+`teacherRoom.update` blocks on the cascade that has to rewrite the held row.
+`ClassTemplate` carries both mirrors — `ruleLive`, referencing
+`ScheduleRule(id, kind, live)`, and `roomArchived`, referencing
+`TeacherRoom(id, isArchived)` — so the resume's `scheduleRule.update` and the
+archive's `teacherRoom.update` cascade into the SAME child row, which is what
+puts them in each other's way. (This section first said `ScheduleRule`; the
+test's own body says otherwise twice, and the schema settles it.) The two are joined by
 `Promise.race`, and the block itself is caught by busy-polling
 `pg_stat_activity` against an explicit `Date.now() + 5_000` deadline.
 
@@ -381,8 +394,8 @@ says — so a tier-mate that delays the poll past five seconds reddens the case
 without touching anything it asserts about. A parked transaction waiting on a
 wall clock is exactly the shape `vitest.tiers.ts`'s criterion says cannot stay
 parallel. The hold is short on the passing path, since the poll is what
-releases it; the failing path is where it holds a `ScheduleRule` row for the
-whole five seconds, so the two halves of the criterion arrive together — the
+releases it; the failing path is where it holds that `ClassTemplate` row for
+the whole five seconds, so the two halves of the criterion arrive together — the
 run that breaks the assertion is also the run that makes the noise.
 
 No extraction: one test, 18 ms, and the whole file is the staged race.
@@ -518,10 +531,14 @@ has a verdict:
 the finding this branch's whole-branch review produced.**
 `src/services/update-class-lock-order.test.ts` and
 `src/services/template-room-race.test.ts` each hold real row locks across a
-staged two-party wait, and each takes those locks through a SERVICE CALL —
-`completeClass` and `lockClassRow` in one, `scheduleRule.update`'s cascade in
-the other — rather than through raw `FOR UPDATE` or `setLockTimeout(`. §1.1's
-regex reaches only source text, so it walks past both. This is the
+staged two-party wait, and NEITHER WRITES LOCK MACHINERY IN ITS OWN SOURCE
+TEXT — one locks inside `completeClass`/`lockClassRow`, the other through the
+foreign-key cascade a Prisma `scheduleRule.update` sets off — so neither has a
+raw `FOR UPDATE` or `setLockTimeout(` to match on. §1.1's regex reaches only
+source text, so it walks past both. Note the two mechanisms are different: only
+one of them is a service call, and describing both that way (as an earlier
+draft of this branch's tier note did) understates how many shapes hide from a
+text search. This is the
 false-negative §1.1 already names — "a floor for finding candidates rather than
 a census" — biting on this very branch: both files had NO verdict anywhere
 until they were found by READING, and §3.9 and §3.10 give them one. Both are
@@ -552,10 +569,12 @@ rostering either, since a roster of other files has no owner in that file.
    likewise.
 3. The §3.8 reconciliation holds, re-derived with `vitest list`.
 4. H1–H7 each addressed.
-5. `vitest.tiers.ts`'s two paragraphs — the `room-archive.test.ts` sentence and
-   the "#468 owns what remains" one — state what is true afterwards.
-   `vitest.config.ts`'s own `unit` comment says the same thing and moves with
-   it.
+5. `vitest.tiers.ts`'s two stale paragraphs are gone — the one naming
+   `room-archive.test.ts` as a known parallel-tier lock holder (that file now
+   takes no lock at all) and the one pointing at #468 as the open owner of the
+   rest. What replaces them states the CRITERION and rests membership on the
+   marker plus `src/lib/serial-tier-membership.test.ts`, not on a command.
+   `vitest.config.ts`'s own `unit` comment moves with it.
 6. Both tiers measured against the baseline below. Both, because
    `.github/workflows/ci.yml`'s `test-unit` job runs them on one critical path.
 7. Every moved test still passes, and each new file passes run alone.

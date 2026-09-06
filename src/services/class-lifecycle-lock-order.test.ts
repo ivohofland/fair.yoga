@@ -56,8 +56,8 @@ const prisma = new PrismaClient();
 // same reason: every file on `LOCK_CONTENTION_TESTS` shares one test database
 // with the file it was split from and with its serial tier-mates, and they all
 // mint fixtures from a clock value, so a bare `Date.now()` could collide on a
-// unique email or slug. The prefix is this file's alone — no other file in the
-// repo mints from it — which makes the namespaces disjoint by construction
+// unique email or slug. The prefix is spelled from this file's own
+// name rather than from the shared subject, which makes the namespaces disjoint by construction
 // rather than by luck, and the `afterAll` below sweeps this file's teacher
 // only.
 const uniqueSuffix = `clslock-${Date.now()}`;

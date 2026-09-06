@@ -6,9 +6,10 @@
  * so what puts this file here is the OTHER kind: an assertion a tier-mate's
  * lock noise falsifies. Everything between the reschedule issuing and the
  * holder committing has to fit inside that 2s bound, and delaying it past
- * there turns the expected `reason: 'frozen'` into a `55P03` — which makes
- * `ok` false for a cause that has nothing to do with the freeze. See WHY THE
- * REASON, NEVER THE BOOLEAN below.
+ * there replaces the expected `reason: 'frozen'` with a `55P03` — which
+ * `updateClass` does not map, so the call rejects and the case dies before it
+ * reaches its own assertion, reporting a lock timeout where the defect it
+ * watches for is a stale read.
  *
  * The near-identical twin of `transition-class-lock-order.test.ts`, which
  * stages the same shape against the same bound; both are on
