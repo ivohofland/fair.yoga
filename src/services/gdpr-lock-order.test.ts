@@ -20,11 +20,11 @@
  * scoped to that one probe — nothing added by #459 uses either.
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { AlreadyErasedError, deleteStudentAccount, deleteTeacherAccount } from './gdpr';
 import * as dbLocks from '@/lib/db-locks';
-import { LOCK_TIMEOUT_SQL } from '@/lib/db-locks';
+import { CLASS_TO_ENTRY_JOIN, CLASS_TO_WAITLIST_JOIN, LOCK_TIMEOUT_SQL } from '@/lib/db-locks';
 import { claimTemplateForGeneration } from './class-generator';
 import { claimStudioTemplateForGeneration } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -127,11 +127,13 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
   const HIGH_CLASS_ID = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
   // Entry ids ANTI-correlated with the class ids they carry: the LOW class
   // gets the HIGH entry and vice versa. Both erasures run under a forced
-  // plan, and under it the teacher's scan reaches `Class` through
-  // `Class_calendarEntryId_key` — so it returns rows in `calendarEntryId`
-  // order, which makes that order this fixture's to choose rather than the
-  // heap's. Assigned rather than defaulted, because a `uuid()` default would
-  // leave it to chance.
+  // plan, and under it every path the teacher's scan can take returns index
+  // order — keyed on `Class.calendarEntryId`, on `CalendarEntry.id` or on
+  // `CalendarEntry.date`, all three of which this fixture assigns, so the
+  // order is this fixture's to choose rather than the heap's. Assigned rather
+  // than defaulted, because a `uuid()` default would leave it to chance. The
+  // `it` below asserts all three assignments before it reads anything under a
+  // plan.
   const LOW_ENTRY_ID = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
   const HIGH_ENTRY_ID = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
   let teacherId: string;
@@ -250,14 +252,112 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     await prisma.$disconnect();
   });
 
+  /**
+   * Runs one probe statement under the forced plan and hands back both the
+   * order it produced and the plan that produced it.
+   *
+   * WHAT THE SETTINGS BUY. Sequential and bitmap heap scans are Postgres's two
+   * scan paths over a plain table that return PHYSICAL heap order; both are
+   * off here, so what remains — index and index-only scans — returns index
+   * order, and the heap this file cannot own stops deciding anything (#470,
+   * `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md`).
+   * `enable_hashjoin`/`enable_mergejoin` are about join DIRECTION rather than
+   * scan order, and the measurements behind those two live in
+   * `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan` — mirrored here
+   * rather than imported, because a test helper crossing suites would couple
+   * two files whose fixtures are independent.
+   *
+   * THE PLAN COMES BACK WITH THE ROWS because a bare
+   * `expected [ …(2) ] to deeply equal [ …(2) ]` says nothing about WHY the
+   * order moved, and both occurrences of that failure (2026-08-27 and #470)
+   * cost an archaeology session to answer it. Callers pass it as the row-order
+   * assertion's message.
+   *
+   * `EXPLAIN` plans without executing, so it takes no locks; the row-returning
+   * statement after it is what takes them. Both run in the one transaction
+   * under the one set of settings, so the plan reported is the plan the rows
+   * came from.
+   */
+  async function probeUnderForcedPlan(
+    statement: Prisma.Sql,
+  ): Promise<{ ids: string[]; plan: string }> {
+    return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
+      await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
+      await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
+      await tx.$executeRaw`SET LOCAL enable_bitmapscan = off`;
+      const explained = await tx.$queryRaw<Array<{ 'QUERY PLAN': string }>>(
+        Prisma.sql`EXPLAIN ${statement}`,
+      );
+      const rows = await tx.$queryRaw<Array<{ id: string }>>(statement);
+      return {
+        ids: rows.map((row) => row.id),
+        plan: explained.map((row) => row['QUERY PLAN']).join('\n'),
+      };
+    });
+  }
+
   it('does not deadlock when a teacher erasure and a student erasure overlap on two classes', async () => {
+    // Premise 0: what `beforeAll` ASSIGNED, read back off the stored rows and
+    // compared in TypeScript — no query whose order a planner gets to choose.
+    // The premises below are only as good as these three, and this is what
+    // makes them a construction rather than an observation: given these
+    // assignments and a plan space where every remaining path returns index
+    // order, [HIGH, LOW] follows for every key those plans order by.
+    //
+    // Three separate `expect`s so a failure names WHICH half moved. The third
+    // looks backwards and is not: the student side's natural order is
+    // `Class.id` ascending, and the whole premise is that the two sides
+    // disagree, so HIGH — high in the TEACHER-side order — has to hold the
+    // higher `Class.id`.
+    const readAssignedKeys = (id: string) =>
+      prisma.class.findUniqueOrThrow({
+        where: { id },
+        select: { id: true, calendarEntryId: true, calendarEntry: { select: { date: true } } },
+      });
+    const [highRow, lowRow] = await Promise.all([
+      readAssignedKeys(HIGH_CLASS_ID),
+      readAssignedKeys(LOW_CLASS_ID),
+    ]);
+    expect(
+      highRow.calendarEntryId < lowRow.calendarEntryId,
+      `HIGH must hold the lower calendarEntryId: HIGH ${highRow.calendarEntryId}, LOW ${lowRow.calendarEntryId}`,
+    ).toBe(true);
+    expect(
+      highRow.calendarEntry.date < lowRow.calendarEntry.date,
+      `HIGH's entry must hold the earlier date: HIGH ${highRow.calendarEntry.date.toISOString()}, LOW ${lowRow.calendarEntry.date.toISOString()}`,
+    ).toBe(true);
+    expect(
+      highRow.id > lowRow.id,
+      `HIGH must hold the higher Class.id: HIGH ${highRow.id}, LOW ${lowRow.id}`,
+    ).toBe(true);
+
     // Premise 1: the teacher scan's natural order, under the SAME forced plan
     // `teacherRacing` gives `deleteTeacherAccount` below. Unforced this read
-    // is a seq scan on `Class` and hands back heap order, which this file
-    // cannot own — that is what failed on CI (2026-08-27, the sibling copy in
-    // `db-locks.test.ts`). Forced, it is an index scan on
-    // `Class_calendarEntryId_key`, so the order is the one `beforeAll`
-    // ASSIGNED and the premise is a construction rather than an observation.
+    // can reach `Class` by a heap-ordered path and hand back physical order,
+    // which this file cannot own — that is what failed on CI (2026-08-27, the
+    // sibling copy in `db-locks.test.ts`). Forced, every remaining scan path
+    // is index-ordered and premise 0 above assigns every key those plans order
+    // by, so the order is the one `beforeAll` ASSIGNED. Which index drives it
+    // is the planner's to move and this comment's not to name; the plan that
+    // actually ran comes back with the rows and rides the assertion's message.
+    //
+    // COMPOSED FROM `CLASS_TO_ENTRY_JOIN`, the same fragment
+    // `deleteTeacherAccount`'s pre-lock passes to `lockClassRowsOrdered`, and
+    // carrying that call site's other two plan-relevant clauses:
+    // `e."cancelledAt" IS NULL` and `FOR UPDATE OF c`. Both are here because
+    // the version of this probe without them was MEASURED, under identical
+    // statistics, to plan from a different driving side than the statement it
+    // models (#470's spec, §2.4) — and a probe that plans differently can be
+    // green while that statement's order is wrong, and red while it is right.
+    // The status list stays a literal because
+    // `CANCELLABLE_STATUSES_SQL` is module-private to `gdpr.ts`, and it is a
+    // filter on `c` under every plan shape observed, so it is not the part
+    // that decides order.
+    //
+    // The row locks `FOR UPDATE OF c` takes here are uncontended: this
+    // transaction runs and commits before either holder transaction below
+    // starts.
     //
     // WHY THIS IS ASSERTABLE AT ALL, since the caller is production code: the
     // test does not need to reach inside it. `deleteTeacherAccount` issues
@@ -274,48 +374,43 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // 3/3. Not "vacuity in some weaker sense": a green run on broken code.
     // That is what asserting the premise buys, and why it is asserted rather
     // than assumed.
-    const scanOrder = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
-      await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
-      await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
-      return tx.$queryRaw<Array<{ id: string }>>`
-        SELECT c.id FROM "Class" c
-        JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
-        WHERE e."teacherId" = ${teacherId}
-          AND c.status IN ('draft', 'open', 'in_progress')
-      `;
-    });
-    expect(scanOrder.map((r) => r.id)).toEqual([HIGH_CLASS_ID, LOW_CLASS_ID]);
+    const scanOrder = await probeUnderForcedPlan(Prisma.sql`
+      SELECT c.id FROM "Class" c
+      ${CLASS_TO_ENTRY_JOIN}
+      WHERE e."teacherId" = ${teacherId}
+        AND e."cancelledAt" IS NULL
+        AND c.status IN ('draft', 'open', 'in_progress')
+      FOR UPDATE OF c
+    `);
+    expect(scanOrder.ids, scanOrder.plan).toEqual([HIGH_CLASS_ID, LOW_CLASS_ID]);
 
     // Premise 2: the student side, which was always assertable and always
     // asserted. Asserting the scan proves nothing about it — different
     // tables, different plans.
     // `deleteStudentAccount` pre-locks via a `WaitlistEntry` join, and under
-    // the forced plan below the order comes from
-    // `WaitlistEntry_classId_position_idx` — so from `classId`, which
-    // `beforeAll` assigns — rather than from a heap nobody owns.
+    // the forced plan the order comes from `classId`, which `beforeAll`
+    // assigns, rather than from a heap nobody owns.
+    //
+    // Composed from `CLASS_TO_WAITLIST_JOIN` for the same reason as above.
+    // That call site (`gdpr.ts`) passes no extra predicate, so `FOR UPDATE OF
+    // c` is the only clause this statement gains over it — and its locks are
+    // uncontended too, for the same reason.
     //
     // Left to the planner this join is not reliably driven by `WaitlistEntry`:
     // the choice is a cost knife-edge on `w."studentId"`, which no index leads
     // with, and it is non-monotonic in table size. CI proved it — this
     // assertion is what failed on 2026-08-16 with [HIGH, LOW], because
     // `enable_hashjoin = off` alone removes a join ALGORITHM, not a join
-    // DIRECTION. All three settings are needed; the reasoning and the
+    // DIRECTION. All four settings are needed; the reasoning and the
     // measurements live in `db-locks-lock-order.test.ts`'s
-    // `forceIndexOrderedPlan`, which this mirrors deliberately rather than
-    // importing — a test helper crossing suites would couple two files whose
-    // fixtures are independent.
-    const joinOrder = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
-      await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
-      await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
-      return tx.$queryRaw<Array<{ id: string }>>`
-        SELECT c.id FROM "Class" c
-        JOIN "WaitlistEntry" w ON w."classId" = c.id
-        WHERE w."studentId" = ${studentId}
-      `;
-    });
-    expect(joinOrder.map((r) => r.id)).toEqual([LOW_CLASS_ID, HIGH_CLASS_ID]);
+    // `forceIndexOrderedPlan`, mirrored by `probeUnderForcedPlan` above.
+    const joinOrder = await probeUnderForcedPlan(Prisma.sql`
+      SELECT c.id FROM "Class" c
+      ${CLASS_TO_WAITLIST_JOIN}
+      WHERE w."studentId" = ${studentId}
+      FOR UPDATE OF c
+    `);
+    expect(joinOrder.ids, joinOrder.plan).toEqual([LOW_CLASS_ID, HIGH_CLASS_ID]);
 
     // TWO third-party holder transactions, one per row — so each can be
     // released separately, which is what makes the collision deterministic.
@@ -323,9 +418,10 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // erasure queued on a row first is guaranteed to get it on release. The
     // choreography below exploits that to force the exact AB-BA state:
     //
-    //   the teacher's scan asks [HIGH, LOW] — usually, see above; the
-    //   student's join [LOW, HIGH], which is asserted — so the two park on
-    //   DIFFERENT rows: the teacher on HIGH, the student on LOW.
+    //   the teacher's scan asks [HIGH, LOW] and the student's join
+    //   [LOW, HIGH] — both asserted above, and both under the same forced
+    //   plan the erasures themselves get — so the two park on DIFFERENT
+    //   rows: the teacher on HIGH, the student on LOW.
     //   Release LOW first: the student takes it and re-queues on HIGH,
     //   BEHIND the teacher parked there. Release HIGH: the teacher takes it,
     //   reaches for LOW — held by the student — and the two form the cycle.
@@ -391,27 +487,34 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           return query(args);
         },
         async $executeRawUnsafe({ args, query }) {
-          // Force `deleteTeacherAccount`'s pre-lock scan onto an index-driven
+          // Force `deleteTeacherAccount`'s pre-lock scan onto an index-ORDERED
           // plan, the mirror of the student hook below and for the same
-          // reason. Unforced this is a seq scan on `Class`, which returns heap
-          // order — and the heap belongs to whichever neighbour in this
-          // parallel tier last churned the page, so the premise asserted below
-          // would be an assertion on a non-guarantee. Forced, the scan reaches
-          // `Class` through `Class_calendarEntryId_key` and returns the order
-          // `beforeAll` ASSIGNED.
+          // reason. Unforced this can be a heap-ordered scan of `Class` — a
+          // sequential one or a bitmap heap one — and the heap belongs to
+          // whichever neighbour in this parallel tier last churned the page,
+          // so the premise asserted above would be an assertion on a
+          // non-guarantee. Forced, every remaining path returns index order
+          // and the fixture assigns every key those plans order by, so the
+          // scan returns the order `beforeAll` ASSIGNED.
+          //
+          // THE SAME FOUR THE PROBE RUNS UNDER, and that is the point rather
+          // than a coincidence: the probe above measures the plan space the
+          // PROBE runs in, so a hook that restricted a different space would
+          // put the two statements back on different plans.
           //
           // Hookable at all because `deleteTeacherAccount` calls
           // `setLockTimeout` (`gdpr.ts`), which is one
           // `$executeRawUnsafe(LOCK_TIMEOUT_SQL)` — the same statement the
           // student hook keys on. Same `SET LOCAL` scope argument as that
-          // hook: transaction-only, and `enable_seqscan = off` discourages
-          // rather than forbids, so the erasure's remaining statements are
-          // planned differently and cannot fail on it.
+          // hook: transaction-only, and the two scan settings discourage
+          // rather than forbid, so the erasure's remaining statements are
+          // planned differently and cannot fail on them.
           if (args[0] === LOCK_TIMEOUT_SQL) {
             const first = await query(args);
             await query([`SET LOCAL enable_hashjoin = off`]);
             await query([`SET LOCAL enable_mergejoin = off`]);
             await query([`SET LOCAL enable_seqscan = off`]);
+            await query([`SET LOCAL enable_bitmapscan = off`]);
             return first;
           }
           return query(args);
@@ -461,19 +564,23 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // (index 0), not a bare string, and separate calls on the session
           // work where one multi-statement string fails with `42601`.
           //
-          // ALL THREE, not just `enable_hashjoin` — that was the #239 CI
-          // failure. Transaction-wide scope is acceptable here because
-          // `enable_seqscan = off` discourages rather than forbids: Postgres
-          // still seq-scans where no index path exists, so the erasure's
-          // remaining statements cannot fail on it, only be planned
-          // differently. `deleteStudentAccount` calls `setLockTimeout` twice
-          // (once itself, once inside the helper), so this fires twice; a
-          // repeated `SET LOCAL` overwrites rather than stacks.
+          // ALL FOUR, not just `enable_hashjoin` — that was the #239 CI
+          // failure, and `enable_bitmapscan` is the one #470 added: without it
+          // a bitmap heap scan survives, and a bitmap heap scan returns
+          // physical heap order, which is the one thing the other three exist
+          // to eliminate. Transaction-wide scope is acceptable here because
+          // the two scan settings discourage rather than forbid: Postgres
+          // still takes those paths where no alternative exists, so the
+          // erasure's remaining statements cannot fail on them, only be
+          // planned differently. `deleteStudentAccount` calls `setLockTimeout`
+          // twice (once itself, once inside the helper), so this fires twice;
+          // a repeated `SET LOCAL` overwrites rather than stacks.
           if (args[0] === LOCK_TIMEOUT_SQL) {
             const first = await query(args);
             await query([`SET LOCAL enable_hashjoin = off`]);
             await query([`SET LOCAL enable_mergejoin = off`]);
             await query([`SET LOCAL enable_seqscan = off`]);
+            await query([`SET LOCAL enable_bitmapscan = off`]);
             return first;
           }
           return query(args);
