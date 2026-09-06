@@ -301,13 +301,24 @@ describe('archiveOrUnarchiveStudioTemplate — queued behind a held template row
     );
 
     await new Promise((r) => setTimeout(r, 300));
-    // Both are blocked in their first write. If either had settled here, the
-    // two never contended and the rest of this test would prove nothing.
-    expect(firstSettled).toBe(false);
-    expect(secondSettled).toBe(false);
-
-    release();
-    await blocking;
+    try {
+      // Both are blocked in their first write. If either had settled here, the
+      // two never contended and the rest of this test would prove nothing.
+      expect(firstSettled).toBe(false);
+      expect(secondSettled).toBe(false);
+    } finally {
+      // In a `finally`, so a failure above fails this test alone. Without it
+      // the `FOR UPDATE` on this template row stands for the holder's full 15s
+      // Prisma budget, this describe's `afterAll` (`sweepTeacher`) queues
+      // behind it to delete that same template, and one broken guard reports
+      // as a test timeout plus a hook timeout with the real cause buried. The
+      // two archives are joined here rather than below so a failure cannot
+      // leave them writing this template against the shared `prisma` while
+      // that sweep is already deleting it.
+      release();
+      await blocking;
+      await Promise.all([first, second]);
+    }
 
     const settled = await Promise.all([first, second]);
     const won = settled.find((r) => r.ok && r.action === 'archived');
@@ -443,14 +454,25 @@ describe('pauseOrResumeStudioTemplate — queued behind a held template row (DB)
     });
 
     await new Promise((r) => setTimeout(r, 300));
-    // Both blocked in their own transaction's first statement. If either had
-    // settled here, it never queued behind the held lock and the rest of
-    // this test proves nothing about the race it targets.
-    expect(archiveSettled).toBe(false);
-    expect(resumeSettled).toBe(false);
-
-    release();
-    await blocking;
+    try {
+      // Both blocked in their own transaction's first statement. If either had
+      // settled here, it never queued behind the held lock and the rest of
+      // this test proves nothing about the race it targets.
+      expect(archiveSettled).toBe(false);
+      expect(resumeSettled).toBe(false);
+    } finally {
+      // In a `finally`, so a failure above fails this test alone. Without it
+      // the `FOR UPDATE` on this template row stands for the holder's full 15s
+      // Prisma budget, this describe's `afterAll` (`sweepTeacher`) queues
+      // behind it to delete that same template, and one broken guard reports
+      // as a test timeout plus a hook timeout with the real cause buried. The
+      // archive and the resume are joined here rather than below so a failure
+      // cannot leave them writing this template against the shared `prisma`
+      // while that sweep is already deleting it.
+      release();
+      await blocking;
+      await Promise.all([archive, resume]);
+    }
 
     const [archiveResult, resumeResult] = await Promise.all([archive, resume]);
 
@@ -527,11 +549,22 @@ describe('pauseOrResumeStudioTemplate — queued behind a held template row (DB)
     });
 
     await new Promise((r) => setTimeout(r, 300));
-    expect(archiveSettled).toBe(false);
-    expect(pauseSettled).toBe(false);
-
-    release();
-    await blocking;
+    try {
+      expect(archiveSettled).toBe(false);
+      expect(pauseSettled).toBe(false);
+    } finally {
+      // In a `finally`, so a failure above fails this test alone. Without it
+      // the `FOR UPDATE` on this template row stands for the holder's full 15s
+      // Prisma budget, this describe's `afterAll` (`sweepTeacher`) queues
+      // behind it to delete that same template, and one broken guard reports
+      // as a test timeout plus a hook timeout with the real cause buried. The
+      // archive and the pause are joined here rather than below so a failure
+      // cannot leave them writing this template against the shared `prisma`
+      // while that sweep is already deleting it.
+      release();
+      await blocking;
+      await Promise.all([archive, pause]);
+    }
 
     const [archiveResult, pauseResult] = await Promise.all([archive, pause]);
 
