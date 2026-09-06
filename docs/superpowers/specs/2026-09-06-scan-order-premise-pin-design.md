@@ -26,7 +26,15 @@ reachable but, under the statistics available here, not preferred.
 **Which plan CI actually got is deducible from the failure, and it is one of
 two.** The reported order was `[LOW, HIGH]`. Enumerate what each reachable plan
 orders by, against what the fixture assigns (§2.3): every index key the fixture
-assigns yields `[HIGH, LOW]`. Exactly two things yield `[LOW, HIGH]`:
+assigns yields `[HIGH, LOW]`. Exactly two things yield `[LOW, HIGH]`.
+
+That enumeration is closed only because of what the statement CI ran did not
+carry, and the clause is load-bearing enough to state: the pre-#470 probe
+carried no partial-index predicate, so no GiST path was eligible to it (§2.5),
+and an ineligible index has no order to contribute. Against a statement that
+DID carry one — production's own pre-lock does — the list below is not
+exhaustive, because a GiST index scan orders by nothing a fixture assigns and
+so yields either. §4 owns that case. For the statement measured here:
 
 - a plan driven by **`Class_pkey`**, ordering by `Class.id` — which the fixture
   assigns the *opposite* way on purpose, because the student side's natural
@@ -141,6 +149,21 @@ assigned key
 
 So the fixture's assignment work (#441's shape, applied here) is sound. The one
 row that breaks it is the bitmap path, and only that row.
+
+**This table is a census of what was OBSERVED, not a closed enumeration of what
+is possible.** It has no GiST row because no statement swept here could reach a
+GiST index — every one of this schema's is partial, and none of these carried
+the matching predicate (§2.5). A statement that carries one earns a breaking row
+of its own, alongside the bitmap one and for a different reason — an index scan
+that orders by nothing a fixture can assign. §3.2 is the decision that keeps the
+probes clear of it, and §4 is what it costs the premise anyway.
+
+Nor is the non-breaking half closed. Task 2 swept both probes under all four
+settings and observed a driving index this table does not list —
+`WaitlistEntry_classId_position_idx`, whose leading column is `classId` and
+which the fixture therefore also assigns. Harmless, and the point: read the rows
+above as "these were seen and each is sound", never as "these are the only ones
+there are".
 
 ### 2.4 The probe is not the statement it models
 
