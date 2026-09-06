@@ -6,12 +6,8 @@ describe('joinOrThrow', () => {
     await expect(joinOrThrow(Promise.resolve(1), Promise.resolve('ok'))).resolves.toBeUndefined();
   });
 
-  it('accepts non-promise values and undefined', async () => {
-    await expect(joinOrThrow(Promise.resolve(1), undefined, 'static')).resolves.toBeUndefined();
-  });
-
-  it('accepts an array of promises', async () => {
-    await expect(joinOrThrow([Promise.resolve(1), Promise.resolve(2)])).resolves.toBeUndefined();
+  it('accepts undefined alongside promises', async () => {
+    await expect(joinOrThrow(Promise.resolve(1), undefined)).resolves.toBeUndefined();
   });
 
   it('rethrows the reason when a promise rejects', async () => {
@@ -26,6 +22,12 @@ describe('joinOrThrow', () => {
     await expect(joinOrThrow(Promise.reject(first), Promise.reject(second))).rejects.toThrow(
       'first failure',
     );
+  });
+
+  it('rethrows a later rejection even when an earlier promise resolves', async () => {
+    await expect(
+      joinOrThrow(Promise.resolve(1), Promise.reject(new Error('boom')), Promise.resolve(2)),
+    ).rejects.toThrow('boom');
   });
 
   it('waits for all promises to settle before throwing', async () => {

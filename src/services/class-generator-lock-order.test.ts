@@ -282,12 +282,10 @@ describe('the class generator under staged lock contention (DB)', () => {
         // block's `afterEach` restores — unjoined it commits after the
         // restore and hands whatever runs next an archived fixture.
         //
-        // `allSettled` rather than two sequential `await`s, which would join
-        // whichever rejects first and skip the other — leaving exactly the
-        // unjoined writer the sentence above says this block prevents. Not
-        // swallowed either: the first rejection is rethrown, so a claim that
-        // failed on its own budget still says so instead of being replaced by
-        // silence. When it fires it replaces the staging assertion's message,
+        // Joined via `joinOrThrow` (see its docblock) so a rejection in
+        // either promise cannot leave the other — the unjoined writer the
+        // sentence above says this block prevents — unresolved. When it
+        // fires it replaces the staging assertion's message,
         // which is the accepted trade here. The array order is what picks it,
         // and it puts `claiming` first deliberately: the archive can only lose
         // this row because the claim held it, so the claim's own failure is
@@ -624,10 +622,9 @@ describe('the class generator under staged lock contention (DB)', () => {
         // same `ScheduleRule` row and would block behind it. `sweeping` is
         // joined here rather than below because it runs on the shared `prisma`
         // client and is still creating the `CalendarEntry` rows that same
-        // `afterEach` deletes. `allSettled` rather than two sequential
-        // `await`s, which would join whichever rejects first and skip the
-        // other — leaving exactly the unjoined sweep this comment says it
-        // prevents. The first rejection is rethrown, not swallowed.
+        // `afterEach` deletes, joined via `joinOrThrow` (see its docblock) so
+        // a rejection in either cannot leave the other — the unjoined sweep
+        // this comment says it prevents — unresolved.
         //
         // 3. Commit the archive; the claim unblocks and sees isArchived: true.
         commit();
@@ -723,11 +720,10 @@ describe('the class generator under staged lock contention (DB)', () => {
         // `dayOfWeek` and `startTime` on that same `ScheduleRule` row and
         // would block behind it. `sweeping` is joined here rather than below
         // because it runs on the shared `prisma` client and is still creating
-        // the `CalendarEntry` rows that same `afterEach` deletes. `allSettled`
-        // rather than two sequential `await`s, which would join whichever
-        // rejects first and skip the other — leaving exactly the unjoined
-        // sweep this comment says it prevents. The first rejection is
-        // rethrown, not swallowed.
+        // the `CalendarEntry` rows that same `afterEach` deletes, joined via
+        // `joinOrThrow` (see its docblock) so a rejection in either cannot
+        // leave the other — the unjoined sweep this comment says it
+        // prevents — unresolved.
         //
         // 3. Commit. The claim unblocks and re-reads under its own lock.
         commit();
@@ -852,17 +848,22 @@ describe('the class generator under staged lock contention (DB)', () => {
         // way an unreleased holder keeps it for the full `{ timeout: 20_000 }`
         // budget.
         //
-        // `allSettled`, so neither join can skip the other or the disconnect:
-        // `generating` writes `CalendarEntry` rows for this `teacherId` on the
-        // shared `prisma` client, which is exactly what this block's
-        // `afterEach` deletes between cases, and this holder owns a
-        // `PrismaClient` whose pool leaks if it is never disconnected.
-        // Rethrown rather than swallowed, so a join that fails still says so.
+        // `holder.$disconnect()` runs in a `finally` around `joinOrThrow` so
+        // it fires even when the join rethrows: `generating` writes
+        // `CalendarEntry` rows for this `teacherId` on the shared `prisma`
+        // client, which is exactly what this block's `afterEach` deletes
+        // between cases, and this holder owns a `PrismaClient` whose pool
+        // leaks if it is never disconnected. `joinOrThrow` rethrows rather
+        // than swallows, so a join that fails still says so — and a
+        // disconnect failure is logged, not thrown, so it can never replace
+        // that more important failure.
         release();
         try {
           await joinOrThrow(holding, generating);
         } finally {
-          await holder.$disconnect();
+          await holder.$disconnect().catch((err) => {
+            log.error({ err }, 'holder.$disconnect() failed during lock-order test teardown');
+          });
         }
       }
     });
@@ -941,17 +942,22 @@ describe('the class generator under staged lock contention (DB)', () => {
         // way an unreleased holder keeps it for the full `{ timeout: 20_000 }`
         // budget.
         //
-        // `allSettled`, so neither join can skip the other or the disconnect:
-        // `generating` writes `CalendarEntry` rows for this `teacherId` on the
-        // shared `prisma` client, which is exactly what this block's
-        // `afterEach` deletes between cases, and this holder owns a
-        // `PrismaClient` whose pool leaks if it is never disconnected.
-        // Rethrown rather than swallowed, so a join that fails still says so.
+        // `holder.$disconnect()` runs in a `finally` around `joinOrThrow` so
+        // it fires even when the join rethrows: `generating` writes
+        // `CalendarEntry` rows for this `teacherId` on the shared `prisma`
+        // client, which is exactly what this block's `afterEach` deletes
+        // between cases, and this holder owns a `PrismaClient` whose pool
+        // leaks if it is never disconnected. `joinOrThrow` rethrows rather
+        // than swallows, so a join that fails still says so — and a
+        // disconnect failure is logged, not thrown, so it can never replace
+        // that more important failure.
         release();
         try {
           await joinOrThrow(holding, generating);
         } finally {
-          await holder.$disconnect();
+          await holder.$disconnect().catch((err) => {
+            log.error({ err }, 'holder.$disconnect() failed during lock-order test teardown');
+          });
         }
       }
     });
