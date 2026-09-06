@@ -554,7 +554,8 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * window between the booking's insert and the accept's is one round trip
    * wide, so unforced this is a race rather than a reproduction: with the
    * reorder reverted and the handshake removed, 1 of 6 runs deadlocked. The
-   * same widen-the-window device the erasure lock tests in `gdpr.test.ts` use.
+   * same widen-the-window device the erasure lock tests in
+   * `gdpr-lock-order.test.ts` use.
    *
    * What this test owns now is a specific success, not just the absence of
    * `40P01`: on a lost `INSERT` race, the accept still succeeds, because the

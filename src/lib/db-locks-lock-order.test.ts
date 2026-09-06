@@ -98,8 +98,8 @@ async function forceIndexOrderedPlan(tx: Prisma.TransactionClient): Promise<void
  * before either can start, which is what a bare `Promise.all` cannot
  * guarantee. It does not decide what happens next — see the catch rates
  * below — but without it the two callers can miss each other entirely. Same
- * technique as `gdpr.test.ts`'s "a third transaction takes the `Student` row
- * `FOR UPDATE` before either".
+ * technique as `gdpr-lock-order.test.ts`'s "a third transaction takes the
+ * `Student` row `FOR UPDATE` before either".
  *
  * WHY BOTH SIDES FORCE THEIR PLAN. The plans this construction models are
  * production ones — a `WaitlistEntry` join driven by that table, and a

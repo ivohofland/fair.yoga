@@ -85,9 +85,11 @@ A meaningful fraction of the 58 real hits are already known-accurate from
 #397/#398's own investigation (their sweep just couldn't see them due to
 the blind spots above) — re-verifying those is redundant. The rest is
 genuinely new territory (first appearances include, among others,
-`rooms-api.test.ts`, `invitations-api.test.ts`, `room-archive.test.ts`,
-and 9 citations of `waitlist.test.ts:525` spread across 5 files — only 2
-of them, `studio-class-generator.test.ts` and `class-generator.test.ts`,
-are generator tests; the other 3 are `class-lifecycle.test.ts`,
+`rooms-api.test.ts`, `invitations-api.test.ts`, and `room-archive.test.ts`)
+that this pass did not investigate. It also surfaced 9 citations of
+`waitlist.test.ts:525` spread across 5 files — `studio-class-generator.test.ts`,
+`class-generator.test.ts`, `class-lifecycle.test.ts`,
 `studio-class-template-lifecycle.test.ts`, and
-`room-archive-lock-order.test.ts`) that this pass did not investigate.
+`room-archive-lock-order.test.ts` — which are no longer open: #459 moved the
+cited docblock to `waitlist-lock-order.test.ts`, and all 9 now name that file
+and the docblock's test title instead of a line number.

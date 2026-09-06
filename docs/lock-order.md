@@ -1565,9 +1565,9 @@ and two sections up, re-run together; a new writer of a rule's lifecycle or
 calendar columns that skips the child lock is invisible to both until it is
 added to the table above. The test is the load-bearing half: every row in the
 table above is independently proven necessary in `class-generator.test.ts`,
-`studio-class-generator.test.ts`, `class-template-lifecycle.test.ts`,
-`studio-class-template-lifecycle.test.ts` and `gdpr.test.ts` — each site's
-lock was removed in isolation and the specific case it protects was confirmed
+`studio-class-generator.test.ts`, `class-template-lifecycle-lock-order.test.ts`,
+`studio-class-template-lifecycle.test.ts` and `gdpr-lock-order.test.ts` — each
+site's lock was removed in isolation and the specific case it protects was confirmed
 to redden, then restored (Task 3c report, `.superpowers/sdd/`).
 
 **The claim's own `FOR UPDATE OF tpl` is not, by itself, sufficient — and this
@@ -1615,7 +1615,7 @@ mirroring `lockClassRowsOrdered`'s discipline, over EVERY `ClassTemplate` /
 `StudioClassTemplate` row the erased teacher owns (joined through
 `ScheduleRule`, since neither child table carries `teacherId` any more) —
 two ordered statements, one per family, both before either `ScheduleRule`
-`updateMany`. Pinned by `gdpr.test.ts`, "waits for a concurrent claim to
+`updateMany`. Pinned by `gdpr-lock-order.test.ts`, "waits for a concurrent claim to
 release the child row before archiving the teacher templates"
 (describe block `deleteTeacherAccount serialises against a claim in progress
 (#315)`), mutation-proven the same way
@@ -1662,7 +1662,7 @@ behaviour and pinned it. One live pin covers the branch today — "the residual
 CAS miss answers busy rather than throwing"
 (`studio-class-template-lifecycle.test.ts`); the class family's equivalent was
 retired when #272 closed the window that could stage it, and
-`class-template-lifecycle.test.ts` records that where its test stood.
+`class-template-lifecycle-lock-order.test.ts` records that where its test stood.
 Re-derive both halves:
 
 ```sh
@@ -1858,8 +1858,8 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   the read-then-lock window, since the lock is taken BY the statement that
   chooses the rows.
 
-  Pinned by "waits for a class row another transaction holds even when the
-  erased entry is closed" (`gdpr.test.ts`), which resolves the erasure to the
+  Pinned by "waits for a class row another transaction holds when the erased
+  entry is %s" (`gdpr-lock-order.test.ts`), which resolves the erasure to the
   holder's own release flag — a causal assertion rather than a wall-clock
   threshold — and reads `false` if the lock set narrows again.
 

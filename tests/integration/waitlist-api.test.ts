@@ -509,7 +509,8 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
  * already the discriminator for every regression that matters here; the one
  * sliver a ceiling would still catch — a `lock_timeout` configured between
  * 3.4s and 3.5s — is already pinned directly by `db-locks.test.ts`.
- * `waitlist.test.ts`'s `addToWaitlist` guard carries that argument in full.
+ * `waitlist-lock-order.test.ts`'s `addToWaitlist` guard carries that argument
+ * in full.
  */
 describe('#104 — the waitlist routes answer 503 while another transaction holds the class row', () => {
   let fillerStudentId: string;
@@ -529,7 +530,7 @@ describe('#104 — the waitlist routes answer 503 while another transaction hold
    * Takes `classId`'s row `FOR UPDATE` and keeps it for 3.5s. Resolves as soon
    * as the row is actually held — a handshake rather than a sleep, because
    * measured holder-acquisition latency reaches ~500ms under load
-   * (`waitlist.test.ts`). Await `done` after the request under test.
+   * (`waitlist-lock-order.test.ts`). Await `done` after the request under test.
    *
    * `done` is WRAPPED in an object, and that is not a style choice: an `async`
    * function that `return`s a promise adopts it, so a `Promise<Promise<void>>`

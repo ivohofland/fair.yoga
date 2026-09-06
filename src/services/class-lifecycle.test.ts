@@ -1252,7 +1252,8 @@ describe('completeClass (DB)', () => {
 
       // Lower bound proves it waited rather than failing instantly. The 2s
       // value is pinned by `db-locks.test.ts`, and there is deliberately no
-      // wall-clock upper bound (#323, waitlist.test.ts:525-555).
+      // wall-clock upper bound (#323, `waitlist-lock-order.test.ts`'s "gives up
+      // on the 2s bound when another transaction holds the class row" docblock).
       expect(waited).toBeGreaterThanOrEqual(1_800);
 
       const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });

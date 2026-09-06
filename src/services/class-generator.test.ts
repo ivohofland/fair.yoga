@@ -498,9 +498,10 @@ describe('generateClassInstances (DB)', () => {
           // The 2s lock_timeout produced this. The lower bound proves the
           // archive really waited rather than failing instantly for some
           // unrelated reason. There is deliberately no upper bound on `waited`
-          // (#323, waitlist.test.ts:525-555): the 2s value is pinned by
-          // `db-locks.test.ts`, and a wall-clock ceiling flakes under parallel
-          // CPU contention.
+          // (#323, `waitlist-lock-order.test.ts`'s "gives up on the 2s bound
+          // when another transaction holds the class row" docblock): the 2s
+          // value is pinned by `db-locks.test.ts`, and a wall-clock ceiling
+          // flakes under parallel CPU contention.
           expect(waited).toBeGreaterThanOrEqual(1_800);
 
           // Asserted, not assumed. Returning instead of throwing is what
@@ -579,7 +580,9 @@ describe('generateClassInstances (DB)', () => {
           const waited = Date.now() - startedAt;
 
           expect(result).toEqual({ ok: false, reason: 'busy' });
-          // Lower bound proves it waited on the lock. Pinned by db-locks.test.ts (#323, waitlist.test.ts:525-555).
+          // Lower bound proves it waited on the lock. Pinned by db-locks.test.ts (#323,
+          // `waitlist-lock-order.test.ts`'s "gives up on the 2s bound when another
+          // transaction holds the class row" docblock).
           expect(waited).toBeGreaterThanOrEqual(1_800);
 
           // `target` is asserted because the message cannot carry it: one
@@ -2093,7 +2096,9 @@ describe('generateClassInstances (DB)', () => {
           const waited = Date.now() - startedAt;
 
           expect(result).toEqual({ ok: false, reason: 'busy' });
-          // Lower bound proves it waited on the lock. Pinned by db-locks.test.ts (#323, waitlist.test.ts:525-555).
+          // Lower bound proves it waited on the lock. Pinned by db-locks.test.ts (#323,
+          // `waitlist-lock-order.test.ts`'s "gives up on the 2s bound when another
+          // transaction holds the class row" docblock).
           expect(waited).toBeGreaterThanOrEqual(1_800);
 
           // The rollback took the flag with it: a resume that answers `busy`
@@ -2205,7 +2210,9 @@ describe('generateClassInstances (DB)', () => {
           const waited = Date.now() - startedAt;
 
           expect(result).toEqual({ ok: false, reason: 'busy' });
-          // Lower bound proves it waited on the lock. Pinned by db-locks.test.ts (#323, waitlist.test.ts:525-555).
+          // Lower bound proves it waited on the lock. Pinned by db-locks.test.ts (#323,
+          // `waitlist-lock-order.test.ts`'s "gives up on the 2s bound when another
+          // transaction holds the class row" docblock).
           expect(waited).toBeGreaterThanOrEqual(1_800);
 
           // The CAS had already succeeded when the pre-lock blocked (issue
