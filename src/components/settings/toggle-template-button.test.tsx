@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ToggleTemplateButton } from './toggle-template-button';
+import { UNREADABLE_CONFIRMATION_MESSAGE } from './template-action-messages';
 import { routerRefresh } from '../../../tests/setup/components';
 // Importing the mock fns from the setup file relies on Vitest giving the test
 // and the setup file the same module instance. If that does not hold in
@@ -153,5 +154,38 @@ describe('ToggleTemplateButton', () => {
 
     release(pausedOk);
     await waitFor(() => expect(button).toBeEnabled());
+  });
+
+  /**
+   * #193. A body-read failure after a 2xx (proxy truncation, malformed JSON)
+   * must not claim a network error or leave the UI stale. The mutation
+   * committed server-side, so the button produces a distinguishable message
+   * that does not claim failure, and calls router.refresh().
+   */
+  it('does not report a network error when the update succeeds but the body cannot be read', async () => {
+    stubFetch({
+      ok: true,
+      json: async () => {
+        throw new SyntaxError('Unexpected end of JSON input');
+      },
+    });
+    render(<ToggleTemplateButton templateId="tpl-1" isActive={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(screen.queryByText('Network error. Please try again.')).not.toBeInTheDocument();
+    expect(await screen.findByText(UNREADABLE_CONFIRMATION_MESSAGE)).toBeInTheDocument();
+    expect(routerRefresh).toHaveBeenCalled();
+  });
+
+  it('reports a network error when fetch itself throws', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ToggleTemplateButton templateId="tpl-1" isActive={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    expect(routerRefresh).not.toHaveBeenCalled();
   });
 });

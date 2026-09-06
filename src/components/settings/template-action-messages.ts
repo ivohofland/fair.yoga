@@ -320,6 +320,14 @@ export const UNARCHIVE_MESSAGE =
   'Un-archived. This recurring class is paused — resume it to put classes back on your schedule.';
 
 /**
+ * Shown when a template toggle or archive mutation succeeded (2xx) but the
+ * response body could not be parsed (#193). Confirms that the mutation was
+ * applied without falsely claiming a network failure.
+ */
+export const UNREADABLE_CONFIRMATION_MESSAGE =
+  'Updated, but could not read confirmation details.';
+
+/**
  * The noun `templateUpdatedMessage` uses for the thing being edited —
  * teacher-facing copy's own vocabulary, distinct from the generation and
  * edit-path logs' `'studio class'`/`'studio template'` pair. This is the pair

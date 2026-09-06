@@ -3,7 +3,11 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { readErrorMessage } from '@/lib/client-errors';
-import { resolveTemplateConfirmation, type TemplateToggleResponse } from './template-action-messages';
+import {
+  resolveTemplateConfirmation,
+  UNREADABLE_CONFIRMATION_MESSAGE,
+  type TemplateToggleResponse,
+} from './template-action-messages';
 
 interface ArchiveTemplateButtonProps {
   templateId: string;
@@ -22,18 +26,31 @@ export function ArchiveTemplateButton({ templateId, isArchived }: ArchiveTemplat
     setMessage('');
     try {
       const target = isArchived ? 'unarchived' : 'archived';
-      const res = await fetch(`/api/class-templates/${templateId}?state=${target}`, {
-        method: 'PATCH',
-      });
+      let res: Response;
+      try {
+        res = await fetch(`/api/class-templates/${templateId}?state=${target}`, {
+          method: 'PATCH',
+        });
+      } catch {
+        setError('Network error. Please try again.');
+        return;
+      }
+
       if (res.ok) {
-        const { data } = (await res.json()) as { data: TemplateToggleResponse };
-        setMessage(resolveTemplateConfirmation(data) ?? '');
+        try {
+          const { data } = (await res.json()) as { data: TemplateToggleResponse };
+          setMessage(resolveTemplateConfirmation(data) ?? '');
+        } catch {
+          // #193: past res.ok the mutation committed server-side. An unreadable
+          // body (proxy truncation, malformed JSON) must not claim network
+          // failure or skip router.refresh(), which would leave the UI stale
+          // and turn an idempotent retry into silence.
+          setMessage(UNREADABLE_CONFIRMATION_MESSAGE);
+        }
         router.refresh();
       } else {
         setError(await readErrorMessage(res, 'Failed to update. Please try again.'));
       }
-    } catch {
-      setError('Network error. Please try again.');
     } finally {
       setLoading(false);
     }
