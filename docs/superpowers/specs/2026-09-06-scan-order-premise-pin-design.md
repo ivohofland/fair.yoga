@@ -156,16 +156,23 @@ differently from the probe:
          ->  Index Scan using "CalendarEntry_teacherId_date_idx" on "CalendarEntry" e
 ```
 
-— `Class`-driven, where the probe at that moment was `CalendarEntry`-driven. A
-probe that plans differently from the statement under test can be green while
-that statement's order is wrong, and red while it is right.
+— `Class`-driven, where the probe at that moment was `CalendarEntry`-driven.
 
-### 2.5 With bitmap scans also off, physical order is unreachable
+This measurement is sound and its first reading was not. It was read as "the
+probe must carry those clauses to be meaningful", which §3.2 reverses. Read
+correctly it says something stronger and less comfortable: **no probe can plan
+like this statement**, because the clause doing most of the steering is the
+`ORDER BY c.id` the probe exists to omit. A probe is therefore a fixture check
+and nothing more, and the counterfactual it was reaching for — what the
+statement would do with the `ORDER BY` gone — is established by deleting the
+clause and running the suite, not by any `SELECT`.
+
+### 2.5 With bitmap scans also off, physical order is unreachable — but "index scan" is not "ordered"
 
 Postgres's scan paths over a plain table are: sequential, index, index-only,
 bitmap heap, and TID (which needs a `ctid` qual none of these statements has).
 `enable_seqscan = off` and `enable_bitmapscan = off` together leave only index
-and index-only scans, **both of which return index order**.
+and index-only scans, so **physical heap order becomes unreachable**.
 
 Checked adversarially — with `enable_indexscan` and `enable_indexonlyscan` off
 *as well*, so every path carries `disable_cost`:
@@ -176,8 +183,52 @@ Checked adversarially — with `enable_indexscan` and `enable_indexonlyscan` off
    ->  Index Scan using "Class_calendarEntryId_key" on "Class" c
 ```
 
-Postgres still returns an index-ordered plan rather than falling back to the
-heap. This is the property the file has always claimed and never had.
+Postgres still returns an index scan rather than falling back to the heap.
+
+**That is as far as it goes, and the first draft of this spec went further and
+was wrong.** It said the two survivors "both return index order". An `Index
+Scan` node returns key order only when its access method can order:
+
+```sql
+SELECT amname, pg_indexam_has_property(oid, 'can_order') FROM pg_am
+ WHERE amname IN ('btree', 'gist');
+--  btree | t
+--  gist  | f
+```
+
+This schema has exactly two GiST indexes, both from #296/#327's exclusion
+constraints: `CalendarEntry_teacher_slot_excl` and
+`ScheduleRule_teacher_slot_excl`. Both are PARTIAL —
+`WHERE ("cancelledAt" IS NULL)` and the `isArchived` equivalent — so a GiST scan
+is eligible only for a statement carrying the matching qual. `WaitlistEntry` is
+btree-only, so the student probe cannot reach one at all.
+
+Corrected, the property is: **btree** index scans return key order, and the
+settings make a btree or GiST index scan the only reachable shapes. Whether a
+statement can reach the GiST one is decided by its own predicate — see §3.2,
+where that decides what the teacher probe may carry.
+
+### 2.6 Three runs of one measurement, three answers
+
+The probe-variant sweep of §3.2 — four statement variants × six
+`(reltuples, relpages)` configurations for `Class` and `CalendarEntry` — was run
+three times by two different people on this one database:
+
+| run | driving scan |
+|---|---|
+| controller, first | `CalendarEntry_teacherId_date_idx` without the qual; **GiST** with it |
+| implementer, after running the lock-order files | `CalendarEntry_teacherId_date_idx`, all 24 |
+| controller, re-run after those test runs | `Class_calendarEntryId_key`, all 24 |
+
+**The "GiST-driven 6 of 6" figure this spec first reported is hereby
+withdrawn.** It was one database state, presented as a property. What actually
+holds is §2.2's finding in its sharpest form yet: the driving side of this
+statement moves with table churn, and the churn between these three runs was
+nothing but the test files under repair being executed.
+
+That is why §3.2's ruling rests on **eligibility, not cost**. Which plan wins
+today is not a thing this project can pin; which plans are *possible* is decided
+by the statement's own predicates, and that this project controls.
 
 ## 3. The design
 
@@ -204,20 +255,41 @@ The hooks matter as much as the probes: the probe measures the plan space the
 *probe* runs in, and the erasures run their own statements. Both must sit in the
 same restricted space or §2.4's mismatch returns by another route.
 
-### 3.2 Make the probe model the statement under test
+### 3.2 The probe is a fixture check, and carries only clauses that keep it btree-reachable
 
 Compose the teacher probe from `CLASS_TO_ENTRY_JOIN` (already exported from
-`db-locks.ts`, already what the production call site passes) and add the two
-clauses §2.4 measured as plan-relevant: `e."cancelledAt" IS NULL` and
-`FOR UPDATE OF c`. The probe transaction runs before the two holder
-transactions start, so the row locks it takes are uncontended.
+`db-locks.ts`, already what the production call site passes) and end it
+`FOR UPDATE OF c`. The probe transaction runs before the two holder transactions
+start, so the row locks it takes are uncontended.
 
 Same for the student probe and `CLASS_TO_WAITLIST_JOIN`.
+
+**It does NOT carry `e."cancelledAt" IS NULL`, and the reversal is the most
+important decision in this spec.** This section first said to add it, on §2.4's
+argument that the probe should plan like the statement it models. Review
+falsified that on two counts:
+
+1. `CalendarEntry_teacher_slot_excl` is **partial on exactly that qual** (§2.5).
+   Carrying it makes a GiST scan — which cannot order — an eligible path;
+   omitting it makes that path impossible. The qual selects nothing this
+   fixture's rows do not already satisfy, both entries being live, so dropping
+   it changes **no row the probe returns** — only which index paths exist.
+2. The fidelity goal was unreachable from the start. Production's statement
+   carries `ORDER BY c.id`, which is itself plan-steering (measured: it selects
+   a `Class_pkey`-driven shape), and the probe must not carry it, because
+   reading the *unordered* order is the whole point.
+
+So the probe is not a model of the production statement and must not be
+described as one. It is a check that the **fixture** is adversarial: read
+through an ordered index, these two rows come back HIGH-first. `FOR UPDATE OF c`
+stays because it is measured irrelevant to the driving side and costs nothing;
+the line between the two clauses is that one widens the plan space to an
+unordered scan and the other does not.
 
 The status list stays a literal: `CANCELLABLE_STATUSES_SQL` is module-private to
 `gdpr.ts`, and exporting a service's internals to let a test spell a filter the
 same way buys less than it costs. It is a filter on `Class` under every plan
-shape observed, so it is not plan-relevant; the join and the locking clause are.
+shape observed, so it is not plan-relevant; the join is.
 
 ### 3.3 Assert what the fixture assigned, as data
 
@@ -226,10 +298,10 @@ the earlier `CalendarEntry.date`, and the **higher** `Class.id` — evaluated by
 comparison in TypeScript, not by any query whose order a planner chooses.
 
 This is what makes the premise *derived* rather than *observed* (the issue's
-option 2). Given (a) these assignments and (b) §2.5's guarantee that the plan's
-order is some index's key, `[HIGH, LOW]` follows for every index key the fixture
-assigns. When it stops following, these assertions say which of the two halves
-moved.
+option 2). Given (a) these assignments and (b) §2.5 as corrected — the probe's
+reachable shapes are btree index scans, because §3.2 keeps it clear of the two
+GiST indexes — `[HIGH, LOW]` follows for every key those plans order by. When it
+stops following, these assertions say which of the two halves moved.
 
 ### 3.4 Attach the plan to the failure
 

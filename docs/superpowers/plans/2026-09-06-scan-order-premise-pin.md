@@ -19,6 +19,15 @@ PostgreSQL 16 in `fairyoga-db-1`.
 
 **Task order is load-bearing.** Task 2 measures Task 1's tree.
 
+**Amended during execution.** Task 1's review overturned one instruction below:
+Step 2 says to add `e."cancelledAt" IS NULL` to the teacher probe, and the
+shipped probe does not carry it — that qual is what makes the partial GiST index
+`CalendarEntry_teacher_slot_excl` an eligible path, and GiST returns no key
+order. The reasoning and what replaced it are spec §3.2 and §2.5; the steps
+below are left as they were written, since a plan is the record of what was
+instructed. Where a step states a fact about Postgres that turned out false, the
+fact is corrected in place.
+
 ## Global Constraints
 
 - **Test-only.** No production code, no schema change, no migration.
@@ -139,8 +148,10 @@ settings leave "an index-driven nested loop as the only cheap shape". A
 bitmap-driven nested loop is also cheap and also index-*driven* — it is not
 index-*ordered*, which is the property the sentence is reaching for. State the
 property the settings actually buy: sequential and bitmap scans are the two
-paths that return physical order, and both are off, so what is left returns
-index order.
+paths that return physical order, and both are off, so what is left is an index
+or index-only scan. Say **btree** index order, not "index order" — a GiST index
+scan is an index scan that returns no key order (`pg_indexam_has_property`), and
+this schema has two GiST indexes. Spec §2.5.
 
 `template-lock-order.test.ts`'s `expectPremiseOrder` docblock names "the three
 settings"; correct the number-word and the property alongside it.
