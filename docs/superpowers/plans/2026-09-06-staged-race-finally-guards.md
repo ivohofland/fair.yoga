@@ -125,14 +125,31 @@ The fix is the same `try`/`finally`; only the span and the contents of the
   its argument. The tests must still fail for the same reasons; a test that
   stops being able to fail is worse than the defect being fixed.
 - **`finally` bodies do not swallow.** Write `await claiming;`, not
-  `await claiming.catch(() => {})`. This follows `0c0f43b7`, the most recent
-  precedent, at all three of its sites. The accepted trade-off is that a
+  `await claiming.catch(() => {})`. The accepted trade-off is that a
   rejecting join in a `finally` replaces the staging assertion's message with
   its own — rare, because in the failure this fix exists to contain the holder
-  is healthy and commits normally once released. **Exception:** the two
-  pre-existing guarded sites that *do* swallow (`:357`, `:663`) each carry
-  their own written reason and are not touched, and a site whose own `finally`
-  already swallows keeps doing so.
+  is healthy and commits normally once released.
+
+  **This is a choice between two live in-repo conventions, not a dominant one.**
+  `0c0f43b7`, the most recent precedent and the one #474 cites, does not
+  swallow at any of its three sites. The two files being edited here mostly do:
+
+  ```
+  git show 8163c986:src/services/class-generator-lock-order.test.ts | grep -n 'catch(() => {})'
+  git show 8163c986:src/services/studio-class-template-lifecycle-lock-order.test.ts | grep -n 'catch(() => {})'
+  ```
+
+  returns **six** pre-existing swallow sites — `class-generator` `:361`,
+  `:431`, `:517`, `:1216`, `:1340` and `studio` `:664` — of which exactly
+  **one**, `class-generator:361`, states a reason beside its `catch`
+  (`:358-360`). `class-generator:513-516` explains its `finally` but not its
+  swallow.
+
+  The no-swallow side is taken anyway, because #474's own acceptance criteria
+  require that the tests "still fail for the same reasons", and swallowing a
+  join is what would let a failing one go unreported. Where a new `finally`
+  sits beside a swallowing sibling, its comment says so and why. **None of the
+  six pre-existing sites is touched.**
 - **The racing promises are joined inside the `finally`, not after it.** The
   repo holds two precedents that disagree: `0c0f43b7` moved
   `await Promise.all([erasing, registering])` *into* the `finally` at
@@ -292,20 +309,23 @@ and by the numbered `// 3.` comment above the release, which stays.
         expect(result.skipped).toEqual([{ date: collide, reason: 'blocked_by_overlap' }]);
       } finally {
         release();
-        try {
-          await holding;
-          await generating;
-        } finally {
-          await holder.$disconnect();
-        }
+        const joined = await Promise.allSettled([holding, generating]);
+        await holder.$disconnect();
+        const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+        if (failed) throw failed.reason;
       }
       ```
 
-      The nested `finally` is what keeps the disconnect from being skipped by
-      a rejecting join without swallowing that rejection. If you find a
-      flatter shape with the same three properties — releases, joins both,
-      disconnects, none skipped, none swallowed — prefer it and say in your
-      report why it is equivalent.
+      **`allSettled`, not sequential `await`s.** This snippet originally read
+      `release(); try { await holding; await generating } finally { await
+      holder.$disconnect() }`, which contradicts the property stated one
+      paragraph above it: sequential `await`s in a `finally` mean a rejecting
+      `holding` propagates immediately and `generating` is never joined at all
+      — the exact leak the comment beside it promises to prevent. The
+      whole-branch review caught it after the code had already followed the
+      snippet; the shape above joins both unconditionally, disconnects
+      unconditionally, and rethrows the first rejection so nothing is
+      swallowed.
 
 - [ ] Give each of those two `finally` blocks a comment covering: that the
       span starts where the holder is in flight, that `freshTemplate()` reads
