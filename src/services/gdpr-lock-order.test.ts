@@ -261,19 +261,25 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
    * Runs one probe statement under the forced plan and hands back both the
    * order it produced and the plan that produced it.
    *
-   * WHAT THE SETTINGS BUY, AND WHAT THEY DO NOT. Sequential and bitmap heap
-   * scans are Postgres's two scan paths over a plain table that return PHYSICAL
-   * heap order; both are off here, so the heap this file cannot own stops
-   * deciding anything (#470,
-   * `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md`).
+   * WHAT THE SETTINGS BUY, AND WHAT THEY DO NOT. Of Postgres's scan paths over
+   * a plain table — sequential, index, index-only, bitmap heap and TID — the
+   * two that return PHYSICAL heap order for the statements here are the
+   * sequential and the bitmap heap scan; both are off, so the heap this file
+   * cannot own stops deciding anything (#470,
+   * `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md`). A
+   * TID scan needs a `ctid` qual neither statement below has, so it is
+   * unreachable rather than switched off — `enable_tidscan` is not one of the
+   * four and is `on`.
    * What remains is index and index-only scans — but only a BTREE index scan
    * returns a key order a fixture can assign, and a GiST one does not. Every
    * GiST index this schema has is PARTIAL, so a statement reaches one only by
    * carrying its predicate: neither statement below carries one, which is why
    * the teacher probe drops the clause its comment names. `docs/lock-order.md`
    * owns the schema-wide account and the query that re-derives it.
-   * `enable_hashjoin`/`enable_mergejoin` are about join DIRECTION rather
-   * than scan order, and the measurements behind those two live in
+   * `enable_hashjoin`/`enable_mergejoin` are aimed at join DIRECTION rather
+   * than scan order, and they get it EMPIRICALLY rather than mechanically —
+   * removing hash and merge joins leaves a nested loop, not one direction of
+   * one. The measurement and its limits live in
    * `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan` — mirrored here
    * rather than imported, because a test helper crossing suites would couple
    * two files whose fixtures are independent.
@@ -284,15 +290,37 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
    * cost an archaeology session to answer it. Callers pass it as the row-order
    * assertion's message.
    *
-   * `EXPLAIN` plans without executing, so it takes no locks; the row-returning
-   * statement after it is what takes them. It is a re-plan of the same text
-   * under the same settings in the same transaction — not a record of the
-   * execution that follows, which Postgres does not hand back.
+   * `EXPLAIN` plans without executing, so it takes no ROW locks — only the
+   * relation-level locks the statement itself would take, released with this
+   * transaction; the row-returning statement after it is what takes the row
+   * locks. Measured, because "takes no locks" is what this said until #481 and
+   * it is false: parse analysis of a `FOR UPDATE` target takes `RowShareLock`
+   * on `Class` (`AccessShareLock` without the clause) and holds it to end of
+   * transaction, while `pg_locks` shows no `tuple` entries at all. Harmless
+   * here — `RowShareLock` conflicts only with `Exclusive`/`AccessExclusive`,
+   * which nothing in this test takes, and this transaction commits before
+   * either holder opens.
+   *
+   * It is a re-plan of the same text under the same settings in the same
+   * transaction — not a record of the execution that follows, which Postgres
+   * does not hand back.
    */
   async function probeUnderForcedPlan(
     statement: Prisma.Sql,
   ): Promise<{ ids: string[]; plan: string }> {
     return prisma.$transaction(async (tx) => {
+      // The shared 2s bound, for the ROW locks the statement below takes. Its
+      // `FOR UPDATE OF c` is uncontended by construction — fresh ids, serial
+      // tier, and this transaction commits before either holder opens — so
+      // this costs nothing on the happy path. It is here because the failure
+      // it prevents is the one this file has already been bitten by: Prisma's
+      // interactive-transaction timeout cannot roll back a statement already
+      // blocked inside Postgres (`db-locks.ts`), so a contending probe would
+      // hang to the 30s vitest timeout, which names the `it` and nothing else
+      // — exactly what `awaitHandshake`/`HANDSHAKE_TIMEOUT_MS` were added here
+      // to eliminate. With the bound, that becomes a `55P03` the assertion
+      // below reports with the plan attached.
+      await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);
       await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
       await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
       await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
@@ -301,10 +329,28 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
         Prisma.sql`EXPLAIN ${statement}`,
       );
       const rows = await tx.$queryRaw<Array<{ id: string }>>(statement);
-      return {
-        ids: rows.map((row) => row.id),
-        plan: explained.map((row) => row['QUERY PLAN']).join('\n'),
-      };
+      // THROW rather than hand back unusable plan text. `plan` is the whole
+      // reason this helper exists — it becomes the row-order assertion's
+      // message, and a silent blank degrades that back to the bare
+      // `expected [ …(2) ] to deeply equal [ …(2) ]` this work exists to
+      // eliminate, at the one moment it is needed.
+      //
+      // PER LINE, not on the joined string, and that is the whole guard. A
+      // renamed column makes every element `undefined`, and
+      // `[undefined, undefined].join('\n')` is `'\n'` — not `''` — so a
+      // `plan === ''` check passes a plan made entirely of newlines. Measured:
+      // this guard was written that way first, and reading `'QUERY PLANX'`
+      // instead left the suite GREEN. Zero rows, a renamed column and a blank
+      // line all fail here now.
+      const lines = explained.map((row) => row['QUERY PLAN']);
+      if (lines.length === 0 || lines.some((line) => typeof line !== 'string' || line === '')) {
+        throw new Error(
+          `probeUnderForcedPlan: EXPLAIN returned no usable plan text (${explained.length} ` +
+            `row(s), keys ${JSON.stringify(Object.keys(explained[0] ?? {}))}). The row-order ` +
+            'assertion message would have been empty or blank. Check the "QUERY PLAN" column name.',
+        );
+      }
+      return { ids: rows.map((row) => row.id), plan: lines.join('\n') };
     });
   }
 
@@ -431,14 +477,23 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     //   PARTIAL on exactly that predicate, and GiST has no key order at all
     //   (`pg_indexam_has_property(gist,'can_order')` is false). Carrying the
     //   qual makes that index eligible; dropping it makes it unreachable, and
-    //   drops NO ROW here, since both of this fixture's entries are live. What
-    //   this line owns is that THIS statement stays clear of that path; which
-    //   index it is, and how many the schema has, belong to the migrations that
-    //   created them — `docs/lock-order.md` owns that account and ships the
-    //   query that re-derives it.
+    //   drops NO ROW here, since both of this fixture's entries are live.
     //
-    // THE RESIDUAL THAT EXPOSES, and since spec §4.1 withdrew the other one it
-    // is the only one left — spec §4.2 is this paragraph. The
+    //   MEASURED, both directions, by the same hiding method as above. Hide
+    //   the btree the entry side normally drives from
+    //   (`CalendarEntry_teacherId_date_idx`) under the four settings, and the
+    //   two shapes go different ways: the production shape, carrying the qual,
+    //   falls to a GiST `Index Scan` — a path with no key order — while this
+    //   probe's shape, without it, falls to another BTREE and never reaches
+    //   GiST at all. Eligibility, not cost, exactly as above.
+    //
+    //   What this line owns is that THIS statement stays clear of that path;
+    //   which index it is, and how many the schema has, belong to the
+    //   migrations that created them — `docs/lock-order.md` owns that account
+    //   and ships the query that re-derives it.
+    //
+    // THE RESIDUAL THAT EXPOSES, and the only one — spec §4.2 is this
+    // paragraph. The
     // production statement carries `cancelledAt IS NULL`, so the MUTATED
     // statement — the one with `ORDER BY c.id` deleted, which is what the
     // counterfactual below is about — can plan onto an index with no key order
@@ -689,9 +744,11 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // failure, and `enable_bitmapscan` is the one #470 added: without it
           // a bitmap heap scan survives, and a bitmap heap scan returns
           // physical heap order, which is what `enable_seqscan = off` was
-          // added to rule out and did not. (The two join settings are about
-          // join DIRECTION, a separate job — `probeUnderForcedPlan`'s docblock
-          // splits the four.) Transaction-wide scope is acceptable here because
+          // added to rule out and did not. (The two join settings are aimed at
+          // join DIRECTION, a separate job, and they get it empirically rather
+          // than mechanically — `probeUnderForcedPlan`'s docblock splits the
+          // four and `forceIndexOrderedPlan` has the limits.) Transaction-wide
+          // scope is acceptable here because
           // the two scan settings discourage rather than forbid: Postgres
           // still takes those paths where no alternative exists, so the
           // erasure's remaining statements cannot fail on them, only be

@@ -22,15 +22,16 @@ const prisma = new PrismaClient();
  * 8 KB page shared with every other file in the parallel tier, so a
  * neighbour's `DELETE` plus autovacuum frees a low line pointer and the next
  * insert takes it — measured 2026-08-28, and the mechanism behind the CI
- * failure at `db-locks.test.ts:414` on 2026-08-27. Under these settings the
- * join side is ordered by `WaitlistEntry_classId_position_idx` (so by
- * `classId`) and the scan side by whichever btree its plan is driven from —
- * this file's fixture ASSIGNS every key those plans can order by, so no index
- * has to be named as the one. Btree specifically; see INDEX ORDER STILL MEANS
- * BTREE below.
+ * failure in `db-locks.test.ts`'s own lock-order case on 2026-08-27. Under
+ * these settings the join side is ordered by a btree leading with `classId` —
+ * both of `WaitlistEntry`'s composite indexes do — and the scan side by
+ * whichever btree its plan is driven from; this file's fixture ASSIGNS every
+ * key those plans can order by, so no index has to be named as the one. Btree
+ * specifically; see INDEX ORDER STILL MEANS BTREE below.
  *
  * The join side additionally needs the nested loop driven from
- * `WaitlistEntry`, which is what the measurements below are about.
+ * `WaitlistEntry`, which is what the measurements below are about — and which
+ * those measurements conclude the settings do not actually guarantee.
  *
  * All four settings are required, and `enable_hashjoin = off` alone is what
  * CI proved insufficient (#239 review). It removes a join ALGORITHM, not a
@@ -47,21 +48,28 @@ const prisma = new PrismaClient();
  * 0 rows and 2 rows and 50 rows pick `Class`-outer, 10 rows picks
  * `WaitlistEntry`-outer — so no amount of seeding makes a cost-chosen plan
  * safe. Adding `enable_mergejoin` leaves a nested loop as the only cheap join
- * shape, but NOT one direction of it: both directions stay index-supported
- * (`Class_pkey` inner one way, `WaitlistEntry_classId_position_idx` inner the
- * other), so which side drives is still a cost decision. What carries this
+ * shape, but NOT one direction of it: both directions stay index-supported —
+ * a btree on `Class.id` inner one way, one of `WaitlistEntry`'s
+ * `classId`-leading composites inner the other — so which side drives is still
+ * a cost decision. (Measured today under the four settings it drives from
+ * `Class`, with `c.id = w."classId"` as a Join Filter rather than an Index
+ * Cond; inflated statistics flip it. Benign for the ORDER either way, since
+ * `w."classId"` IS `c.id`.) What carries this
  * paragraph is therefore an empirical result and not a mechanism: with the two
  * join settings and `enable_seqscan = off` in force — the configuration the
  * 2026-08-16 sweep ran under — the direction held at 0, 2, 10, 50, 100, 200,
  * 1_000, 5_000, 10_000 and 50_000 background rows.
  *
  * INDEX-DRIVEN IS NOT INDEX-ORDERED, and that gap is what the seq-scan setting
- * alone left open. Postgres has exactly two scan paths over a plain table that
- * return PHYSICAL heap order — a sequential scan and a bitmap heap scan — and
- * a bitmap heap scan is fed by a bitmap INDEX scan, so a nested loop built
- * from two of those is index-DRIVEN and still hands back heap order. Turning
- * both off is what this helper buys: the remaining paths are index and
- * index-only scans. Measured in
+ * alone left open. Of Postgres's scan paths over a plain table — sequential,
+ * index, index-only, bitmap heap and TID — the two that return PHYSICAL heap
+ * order for the statements here are the sequential scan and the bitmap heap
+ * scan, and a bitmap heap scan is fed by a bitmap INDEX scan, so a nested loop
+ * built from two of those is index-DRIVEN and still hands back heap order.
+ * Turning both off is what this helper buys: the remaining reachable paths are
+ * index and index-only scans. A TID scan needs a `ctid` qual that neither
+ * statement in this file has — unreachable rather than switched off, and
+ * `enable_tidscan` is not among the four. Measured in
  * `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md` (#470),
  * including the adversarial case where every path carries `disable_cost` and
  * Postgres still declines to read the heap in physical order.
@@ -103,10 +111,11 @@ async function forceIndexOrderedPlan(tx: Prisma.TransactionClient): Promise<void
  * identical statements produce one plan, visit one physical order, and
  * serialise whether or not the clause is there — such a test passes against
  * the bug and proves nothing. `ORDER BY c.id` is load-bearing only where two
- * sites reach the same rows by DIFFERENT plans: the join below is driven by
- * `WaitlistEntry` and returns classes in `classId` order, while the scan is
- * driven from an index over this teacher's entries and returns them in that
- * index's key order — `Class.calendarEntryId`, `CalendarEntry.date` or
+ * sites reach the same rows by DIFFERENT plans: the join below returns classes
+ * in `classId` order under EITHER driving side — `w."classId"` IS `c.id`, so a
+ * `Class`-driven plan and a `WaitlistEntry`-driven one agree here — while the
+ * scan is driven from an index over this teacher's entries and returns them in
+ * that index's key order — `Class.calendarEntryId`, `CalendarEntry.date` or
  * `CalendarEntry.id`, depending on which index its plan takes. The fixture
  * ASSIGNS `classId` and every one of those three, so the two
  * natural orders are opposite by construction, and both premises are asserted
@@ -181,11 +190,15 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // Entry ids ANTI-correlated with the class ids they carry: the LOW class
     // gets the HIGH entry and vice versa. That inversion is what gives the
     // scan side a natural order of [HIGH, LOW] under the forced plan, whose
-    // driving index keys on `Class.calendarEntryId` or on `CalendarEntry.id`
-    // — the same pair of values either way, so which one wins does not change
-    // the order these ids produce. Assigned rather than defaulted, because a
-    // `uuid()` default would leave that order to chance — measured 20/20
-    // tracking the random entry id, 12 of 20 in the direction this test needs.
+    // driving index keys on `Class.calendarEntryId`, on `CalendarEntry.id` or
+    // on `CalendarEntry.date` — the same THREE this file names at its two
+    // other rosters, and all three reachable: the `date` one drives once the
+    // tables are large enough, measured with forged `pg_class` rows. The ids
+    // here settle the first two, the dates below settle the third, and every
+    // one of the three yields the same [HIGH, LOW]. Assigned rather than
+    // defaulted, because a `uuid()` default would leave that order to chance —
+    // measured 20/20 tracking the random entry id, 12 of 20 in the direction
+    // this test needs.
     lowEntryId = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
     highEntryId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
 
@@ -237,7 +250,14 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
       maxStudents: 10,
       status: 'open' as const,
     };
-    // Insertion order is no longer load-bearing — the entry ids above are.
+    // Insertion order is no longer load-bearing — the entry ids above are, and
+    // so are THE TWO DATES. `CalendarEntry.date` is the third key the forced
+    // plan can order by (see the roster above), so HIGH must take the EARLIER
+    // date for that plan to give [HIGH, LOW] like the other two. 2099-06-01
+    // against 2099-06-02 below, in that direction, for that reason — not
+    // arbitrary far-future values. `gdpr-lock-order.test.ts` pins its
+    // equivalents by reading them back in Premise 0; this file asserts only the
+    // resulting order, which is issue #482.
     await createClassFixture(prisma, {
       ...base,
       id: highClassId,
@@ -317,9 +337,12 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
 
     // Premise 2: the join's natural order — the REVERSE. Asserting premise 1
     // proves nothing about this: different tables, different physical layouts.
-    // Runs under the forced plan so the planner drives it from `WaitlistEntry`
-    // — see `forceIndexOrderedPlan` for why a cost-chosen plan cannot be
-    // relied on here, and why one setting was not enough.
+    // Runs under the same forced plan the caller below gets — see
+    // `forceIndexOrderedPlan` for what the four settings buy, why a cost-chosen
+    // plan cannot be relied on here, and why one setting was not enough. Which
+    // side the planner drives this join from is NOT among what they fix, and
+    // does not need to be: `w."classId"` IS `c.id`, so both directions return
+    // `classId` order.
     const joinOrder = await prisma.$transaction(async (tx) => {
       await forceIndexOrderedPlan(tx);
       return tx.$queryRaw<Array<{ id: string }>>`

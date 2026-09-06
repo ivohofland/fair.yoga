@@ -654,10 +654,15 @@ All four, and the fourth is the one #470 came back for. Index-DRIVEN is not
 index-ORDERED: a bitmap heap scan is fed by a bitmap index scan and still
 returns physical heap order — the same warning this section opens with, two
 paragraphs up — so the three settings above left one heap-ordered path open,
-reachable rather than excluded. Postgres has exactly two scan paths over a
-plain table that return physical order, sequential and bitmap heap; turn both
-off and what remains is index and index-only scans. Measured (including with
-every path carrying `disable_cost`) in
+reachable rather than excluded. Postgres's scan paths over a plain table are
+sequential, index, index-only, bitmap heap, and TID — and of those, sequential
+and bitmap heap are the two that return physical order for the statements here.
+Turn both off and what remains is index and index-only scans. **A TID scan is
+the qualifier that belongs on that sentence** (`enable_tidscan` is `on` and is
+not one of the four settings): it needs a `ctid` qual, which none of these
+statements has, so it is unreachable to them rather than excluded by anything.
+A statement that grew one would be back to heap order with every setting still
+in force. Measured (including with every path carrying `disable_cost`) in
 `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md`. Both
 settings discourage rather than forbid, so neither can make a statement fail.
 (The premise assertion #470 came from had flaked before, on 2026-08-27, in a
@@ -744,11 +749,10 @@ time.
 
 **Where two callers must disagree about the same table, ask which indexes each
 statement makes ELIGIBLE before concluding the shapes cannot be reconciled.**
-This paragraph used to end "some shapes cannot be reconciled by any fixture at
-all", and for the pair that motivated it that turned out to be false. Postgres
-builds an index path only where the index has usable clauses, useful pathkeys, a
-useful predicate, or supports an index-only scan (`build_index_paths`,
-`indxpath.c`). Two statements that join the same table on *different* columns
+Postgres builds an index path only where the index has usable clauses, useful
+pathkeys, a useful predicate, or supports an index-only scan
+(`build_index_paths`, `indxpath.c`). Two statements that join the same table on
+*different* columns
 therefore reach *different* indexes on it, and a fixture assigning those two
 columns in opposite directions makes the two callers disagree by construction —
 no cost comparison involved, and nothing for a planner to revisit.
@@ -781,6 +785,49 @@ Run the positive control too — the same statement with the clause that *should
 make the path eligible — or a broken instrument reads as a proof. Worked through
 for the two `Class` pre-locks in
 `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md` §1.1.
+
+The whole recipe, runnable. Substitute your own statement and the index you saw
+win; nothing commits:
+
+    -- 1. THE QUESTION: is the absent index unreachable, or merely outbid?
+    BEGIN;
+    UPDATE pg_index SET indisvalid = false
+     WHERE indexrelid = '"Class_calendarEntryId_key"'::regclass;   -- the winner
+    SET LOCAL enable_hashjoin = off; SET LOCAL enable_mergejoin = off;
+    SET LOCAL enable_seqscan = off;  SET LOCAL enable_bitmapscan = off;
+    EXPLAIN SELECT c.id FROM "Class" c
+      JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+     WHERE e."teacherId" = '00000000-0000-4000-8000-000000000001'
+     FOR UPDATE OF c;
+    ROLLBACK;
+    -- Seq Scan at 1e10  -> the alternative was never generated.
+    -- the alternative   -> it was there all along and merely lost.
+
+    -- 2. THE POSITIVE CONTROL: add the clause that SHOULD make it eligible.
+    --    Without this step a broken instrument reads as a proof.
+    BEGIN;
+    UPDATE pg_index SET indisvalid = false
+     WHERE indexrelid = '"Class_calendarEntryId_key"'::regclass;
+    SET LOCAL enable_hashjoin = off; SET LOCAL enable_mergejoin = off;
+    SET LOCAL enable_seqscan = off;  SET LOCAL enable_bitmapscan = off;
+    EXPLAIN SELECT c.id FROM "Class" c
+      JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+     WHERE e."teacherId" = '00000000-0000-4000-8000-000000000001'
+     ORDER BY c.id                                  -- supplies the pathkeys
+     FOR UPDATE OF c;
+    ROLLBACK;
+    -- must reach Class_pkey, with no 1e10 term, or step 1 proved nothing.
+
+    -- 3. CONFIRM NOTHING STUCK.
+    SELECT c.relname, i.indisvalid FROM pg_index i
+      JOIN pg_class c ON c.oid = i.indexrelid
+     WHERE c.relname = 'Class_calendarEntryId_key';   -- expect t
+
+`enable_seqscan = off` in both steps is the part that is easy to drop and fatal
+to drop — see the counterexample above. Left as a runnable block rather than a
+committed assertion deliberately: a test here would assert on literal planner
+output and pin the suite to one Postgres version's internals, while the
+behaviour that matters is already covered by the lock-order tests.
 
 It stays an argument about specific statements against a specific schema: a new
 index, or one added clause, can put the path back. Re-measure when either
