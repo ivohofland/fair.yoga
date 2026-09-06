@@ -310,15 +310,20 @@ describe('archiveOrUnarchiveStudioTemplate — queued behind a held template row
       // In a `finally`, so a failure above fails this test alone. Without it
       // the `FOR UPDATE` on this template row stands for the holder's full 15s
       // Prisma budget, this describe's `afterAll` (`sweepTeacher`) queues
-      // behind it to delete that same template, and the broken guard reports
-      // as its own assertion failure plus an `afterAll` hook timeout that
-      // names nothing about the guard. The
-      // two archives are joined here rather than below so a failure cannot
+      // behind it to delete that same template, and a broken guard is reported
+      // as this test's own assertion failure plus an `afterAll` hook timeout
+      // that names nothing about the guard.
+      //
+      // The two archives are joined here rather than below so a failure cannot
       // leave them writing this template against the shared `prisma` while
-      // that sweep is already deleting it.
+      // that sweep is already deleting it — and by `allSettled` rather than
+      // sequential `await`s, which would join whichever rejects first and skip
+      // the rest, leaving exactly that. The first rejection is rethrown, not
+      // swallowed.
       release();
-      await blocking;
-      await Promise.all([first, second]);
+      const joined = await Promise.allSettled([blocking, first, second]);
+      const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failed) throw failed.reason;
     }
 
     const settled = await Promise.all([first, second]);
@@ -465,15 +470,20 @@ describe('pauseOrResumeStudioTemplate — queued behind a held template row (DB)
       // In a `finally`, so a failure above fails this test alone. Without it
       // the `FOR UPDATE` on this template row stands for the holder's full 15s
       // Prisma budget, this describe's `afterAll` (`sweepTeacher`) queues
-      // behind it to delete that same template, and the broken guard reports
-      // as its own assertion failure plus an `afterAll` hook timeout that
-      // names nothing about the guard. The
-      // archive and the resume are joined here rather than below so a failure
-      // cannot leave them writing this template against the shared `prisma`
-      // while that sweep is already deleting it.
+      // behind it to delete that same template, and a broken guard is reported
+      // as this test's own assertion failure plus an `afterAll` hook timeout
+      // that names nothing about the guard.
+      //
+      // The archive and the resume are joined here rather than below so a
+      // failure cannot leave them writing this template against the shared
+      // `prisma` while that sweep is already deleting it — and by `allSettled`
+      // rather than sequential `await`s, which would join whichever rejects
+      // first and skip the rest, leaving exactly that. The first rejection is
+      // rethrown, not swallowed.
       release();
-      await blocking;
-      await Promise.all([archive, resume]);
+      const joined = await Promise.allSettled([blocking, archive, resume]);
+      const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failed) throw failed.reason;
     }
 
     const [archiveResult, resumeResult] = await Promise.all([archive, resume]);
@@ -558,15 +568,20 @@ describe('pauseOrResumeStudioTemplate — queued behind a held template row (DB)
       // In a `finally`, so a failure above fails this test alone. Without it
       // the `FOR UPDATE` on this template row stands for the holder's full 15s
       // Prisma budget, this describe's `afterAll` (`sweepTeacher`) queues
-      // behind it to delete that same template, and the broken guard reports
-      // as its own assertion failure plus an `afterAll` hook timeout that
-      // names nothing about the guard. The
-      // archive and the pause are joined here rather than below so a failure
-      // cannot leave them writing this template against the shared `prisma`
-      // while that sweep is already deleting it.
+      // behind it to delete that same template, and a broken guard is reported
+      // as this test's own assertion failure plus an `afterAll` hook timeout
+      // that names nothing about the guard.
+      //
+      // The archive and the pause are joined here rather than below so a
+      // failure cannot leave them writing this template against the shared
+      // `prisma` while that sweep is already deleting it — and by `allSettled`
+      // rather than sequential `await`s, which would join whichever rejects
+      // first and skip the rest, leaving exactly that. The first rejection is
+      // rethrown, not swallowed.
       release();
-      await blocking;
-      await Promise.all([archive, pause]);
+      const joined = await Promise.allSettled([blocking, archive, pause]);
+      const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failed) throw failed.reason;
     }
 
     const [archiveResult, pauseResult] = await Promise.all([archive, pause]);

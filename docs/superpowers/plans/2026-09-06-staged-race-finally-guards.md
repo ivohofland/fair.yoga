@@ -380,12 +380,20 @@ is already guarded — do not touch it.
       } finally {
         // <the comment specified in the next step>
         release();
-        await blocking;
-        await Promise.all([first, second]);
+        const joined = await Promise.allSettled([blocking, first, second]);
+        const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+        if (failed) throw failed.reason;
       }
 
       const settled = await Promise.all([first, second]);
       ```
+
+      **`allSettled`, for the reason Task 1's snippet gives.** Sequential
+      `await`s in a `finally` join whichever rejects first and skip everything
+      after it, which is the unjoined-writer leak the comment above the block
+      promises to prevent. Both snippets in this plan originally had that
+      defect and both implementations copied it; correcting only the narrative
+      would have left the example teaching the error.
 
       The second and third sites' racers are named `archive`/`resume` and
       `archive`/`pause`, not `first`/`second`, and the third has no comment

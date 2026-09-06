@@ -281,13 +281,18 @@ describe('the class generator under staged lock contention (DB)', () => {
         // block's `afterEach` restores — unjoined it commits after the
         // restore and hands whatever runs next an archived fixture.
         //
-        // Not swallowed, unlike the busy tests below: `claiming` rejects only
-        // when its own `expect` failed, and that same failure is what frees
-        // the row and lets the archive settle — so the message this `finally`
-        // would replace the staging one with is the root cause of both.
+        // `allSettled` rather than two sequential `await`s, which would join
+        // whichever rejects first and skip the other — leaving exactly the
+        // unjoined writer the sentence above says this block prevents. Not
+        // swallowed either: the first rejection is rethrown, so a claim that
+        // failed on its own budget still says so instead of being replaced by
+        // silence. It replaces the staging assertion's message when it fires,
+        // which is the accepted trade — the busy tests below take the other
+        // side and say why beside their own `catch`.
         release();
-        await claiming;
-        await archiving;
+        const joined = await Promise.allSettled([claiming, archiving]);
+        const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+        if (failed) throw failed.reason;
       }
 
       const result = await archiving;
@@ -612,12 +617,16 @@ describe('the class generator under staged lock contention (DB)', () => {
         // same `ScheduleRule` row and would block behind it. `sweeping` is
         // joined here rather than below because it runs on the shared `prisma`
         // client and is still creating the `CalendarEntry` rows that same
-        // `afterEach` deletes.
+        // `afterEach` deletes. `allSettled` rather than two sequential
+        // `await`s, which would join whichever rejects first and skip the
+        // other — leaving exactly the unjoined sweep this comment says it
+        // prevents. The first rejection is rethrown, not swallowed.
         //
         // 3. Commit the archive; the claim unblocks and sees isArchived: true.
         commit();
-        await archiving;
-        await sweeping;
+        const joined = await Promise.allSettled([archiving, sweeping]);
+        const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+        if (failed) throw failed.reason;
       }
 
       // 4. Nothing was materialised for a template the teacher shelved.
@@ -709,12 +718,17 @@ describe('the class generator under staged lock contention (DB)', () => {
         // `dayOfWeek` and `startTime` on that same `ScheduleRule` row and
         // would block behind it. `sweeping` is joined here rather than below
         // because it runs on the shared `prisma` client and is still creating
-        // the `CalendarEntry` rows that same `afterEach` deletes.
+        // the `CalendarEntry` rows that same `afterEach` deletes. `allSettled`
+        // rather than two sequential `await`s, which would join whichever
+        // rejects first and skip the other — leaving exactly the unjoined
+        // sweep this comment says it prevents. The first rejection is
+        // rethrown, not swallowed.
         //
         // 3. Commit. The claim unblocks and re-reads under its own lock.
         commit();
-        await editing;
-        await sweeping;
+        const joined = await Promise.allSettled([editing, sweeping]);
+        const failed = joined.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+        if (failed) throw failed.reason;
       }
 
       // 4. Everything it created carries the post-edit values.
