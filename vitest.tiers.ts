@@ -47,9 +47,9 @@ export const SWEEP_TESTS = [
 // answers, under a 6s ceiling.
 //
 // Nor is the parallel tier free of files that assert on how a staged race comes
-// out while holding a lock of their own. Issue #459 owns which files those are,
-// with the candidate list and the measurement; a roster here would be a second
-// copy of it. Until #459 lands, this list is short of the files that need it.
+// out while holding a lock of their own. This change closed three of them into
+// the siblings below; issue #468 owns the rest, with the candidate list and the
+// measurement — a roster here would be a second copy of it.
 //
 // MEMBERSHIP IS HELD BY THE MARKER, NOT BY A COMMAND. Every file below carries
 // `@serial-tier lock-contention` in its own header, with the reason that file
@@ -79,7 +79,8 @@ export const LOCK_CONTENTION_TESTS = [
   // Split out of `gdpr.test.ts` rather than moving that file, which runs in
   // ~26s: moving all of it cost the serial tier +92% (37.8s -> 72.6s). The
   // same move `class-lifecycle-tier-guard.test.ts` made, for the same reason,
-  // and the one #459 proposes for three more files. No test count here — the
+  // and the one made below for `waitlist-lock-order.test.ts` and
+  // `class-template-lifecycle-lock-order.test.ts`. No test count here — the
   // argument is about time, and a count moves whenever someone adds a case.
   'src/services/gdpr-lock-order.test.ts',
   'src/services/roster-link.test.ts',
