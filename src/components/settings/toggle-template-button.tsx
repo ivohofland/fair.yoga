@@ -33,21 +33,28 @@ export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateBut
         res = await fetch(`/api/class-templates/${templateId}?state=${target}`, {
           method: 'PATCH',
         });
-      } catch {
+      } catch (err) {
+        console.error('[toggle-template] request failed', { templateId, err });
         setError('Network error. Please try again.');
         return;
       }
 
       if (res.ok) {
+        let rawJson: unknown;
         try {
-          const { data } = (await res.json()) as { data: TemplateToggleResponse };
-          setMessage(resolveTemplateConfirmation(data) ?? '');
-        } catch {
-          // #193: past res.ok the mutation committed server-side. An unreadable
-          // body (proxy truncation, malformed JSON) must not claim network
-          // failure or skip router.refresh(), which would leave the UI stale
-          // and turn an idempotent retry into silence.
+          rawJson = await res.json();
+        } catch (err) {
+          console.error('[toggle-template] updated, but response body was unreadable', {
+            templateId,
+            err,
+          });
+          // #193: past res.ok the mutation committed. See UNREADABLE_CONFIRMATION_MESSAGE.
           setMessage(UNREADABLE_CONFIRMATION_MESSAGE);
+        }
+
+        if (rawJson !== undefined) {
+          const { data } = rawJson as { data: TemplateToggleResponse };
+          setMessage(resolveTemplateConfirmation(data) ?? '');
         }
         router.refresh();
       } else {
