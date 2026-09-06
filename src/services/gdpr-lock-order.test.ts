@@ -270,8 +270,8 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
    * cannot own stops deciding anything (#470,
    * `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md`). A
    * TID scan needs a `ctid` qual neither statement below has, so it is
-   * unreachable rather than switched off — `enable_tidscan` is not one of the
-   * four and is `on`.
+   * unreachable rather than switched off — `enable_tidscan` is not one of
+   * `FORCED_PLAN_SETTINGS`, and is `on`.
    * What remains is index and index-only scans — but only a BTREE index scan
    * returns a key order a fixture can assign, and a GiST one does not. Every
    * GiST index this schema has is PARTIAL, so a statement reaches one only by
@@ -282,9 +282,13 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
    * than scan order, and they get it EMPIRICALLY rather than mechanically —
    * removing hash and merge joins leaves a nested loop, not one direction of
    * one. The measurement and its limits live in
-   * `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan` — mirrored here
-   * rather than imported, because a test helper crossing suites would couple
-   * two files whose fixtures are independent.
+   * `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan`. Only the setting
+   * NAMES cross that boundary now — `tests/forced-plan-settings.ts`'s
+   * `FORCED_PLAN_SETTINGS` — and this function still sets them itself, in its
+   * own `tx.$executeRawUnsafe` loop below, rather than calling
+   * `forceIndexOrderedPlan`; no fixture or execution path crosses files, so
+   * importing the name list does not reopen the coupling a shared test helper
+   * would.
    *
    * THE PLAN COMES BACK WITH THE ROWS because a bare
    * `expected [ …(2) ] to deeply equal [ …(2) ]` says nothing about WHY the
@@ -482,7 +486,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     //
     //   MEASURED, both directions, by the same hiding method as above. Hide
     //   the btree the entry side normally drives from
-    //   (`CalendarEntry_teacherId_date_idx`) under the four settings, and the
+    //   (`CalendarEntry_teacherId_date_idx`) under `FORCED_PLAN_SETTINGS`, and the
     //   two shapes go different ways: the production shape, carrying the qual,
     //   falls to a GiST `Index Scan` — a path with no key order — while this
     //   probe's shape, without it, falls to another BTREE and never reaches
@@ -563,7 +567,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // with, and it is non-monotonic in table size. CI proved it — this
     // assertion is what failed on 2026-08-16 with [HIGH, LOW], because
     // `enable_hashjoin = off` alone removes a join ALGORITHM, not a join
-    // DIRECTION. All four settings are needed; the reasoning and the
+    // DIRECTION. All of `FORCED_PLAN_SETTINGS` are needed; the reasoning and the
     // measurements live in `db-locks-lock-order.test.ts`'s
     // `forceIndexOrderedPlan`, mirrored by `probeUnderForcedPlan` above.
     const joinOrder = await probeUnderForcedPlan(Prisma.sql`
@@ -662,8 +666,8 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // The statement this hook plans for is `deleteTeacherAccount`'s own
           // pre-lock, and unlike the probe it DOES carry
           // `e."cancelledAt" IS NULL` (`gdpr.ts`) — so a GiST path, which
-          // orders by nothing, is genuinely eligible to it. What these four
-          // settings close here is only the HEAP-ordered paths; "every
+          // orders by nothing, is genuinely eligible to it. What
+          // `FORCED_PLAN_SETTINGS` closes here is only the HEAP-ordered paths; "every
           // remaining path is btree" is true of the probe above and NOT of
           // this statement.
           //
@@ -674,7 +678,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // that clause deleted — and no probe can reach it, which is why the
           // mutation run rather than a `SELECT` is what settles it.
           //
-          // THE SAME FOUR THE PROBE RUNS UNDER, and that is the point rather
+          // THE SAME `FORCED_PLAN_SETTINGS` THE PROBE RUNS UNDER, and that is the point rather
           // than a coincidence: the probe above measures the plan space the
           // PROBE runs in, so a hook that restricted a different space would
           // put the two statements back on different plans.
@@ -740,14 +744,15 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // (index 0), not a bare string, and separate calls on the session
           // work where one multi-statement string fails with `42601`.
           //
-          // ALL FOUR, not just `enable_hashjoin` — that was the #239 CI
+          // ALL OF `FORCED_PLAN_SETTINGS`, not just `enable_hashjoin` — that was the #239 CI
           // failure, and `enable_bitmapscan` is the one #470 added: without it
           // a bitmap heap scan survives, and a bitmap heap scan returns
           // physical heap order, which is what `enable_seqscan = off` was
           // added to rule out and did not. (The two join settings are aimed at
           // join DIRECTION, a separate job, and they get it empirically rather
-          // than mechanically — `probeUnderForcedPlan`'s docblock splits the
-          // four and `forceIndexOrderedPlan` has the limits.) Transaction-wide
+          // than mechanically — `probeUnderForcedPlan`'s docblock splits
+          // `FORCED_PLAN_SETTINGS` and `forceIndexOrderedPlan` has the
+          // limits.) Transaction-wide
           // scope is acceptable here because
           // the two scan settings discourage rather than forbid: Postgres
           // still takes those paths where no alternative exists, so the
