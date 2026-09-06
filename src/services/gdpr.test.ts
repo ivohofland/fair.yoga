@@ -1831,10 +1831,12 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
 
 /**
  * The teacher half of the same guard (#196 branch 2, Task 3), which had no
- * test at all — `deleteStudentAccount`'s abort was pinned by the race above
- * and `deleteTeacherAccount`'s identical `AlreadyErasedError` by nothing.
+ * test at all — `deleteStudentAccount`'s abort was pinned by
+ * `gdpr-lock-order.test.ts`'s "erases once when the same student erasure runs
+ * twice concurrently" (#459) and `deleteTeacherAccount`'s identical
+ * `AlreadyErasedError` by nothing.
  *
- * Sequential, and that is not a weaker version of the race above: the two
+ * Sequential, and that is not a weaker version of that race: the two
  * aborts protect different things. The student one exists to stop a
  * post-commit `handleSpotFreed` loop running twice, which only a concurrent
  * duplicate can cause. This one guards the write itself — an unscoped

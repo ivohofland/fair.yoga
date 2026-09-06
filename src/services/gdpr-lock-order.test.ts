@@ -1320,8 +1320,8 @@ it('does not deadlock against a transaction that locks the class first and then 
  * this test passes unedited with `gdpr.ts` reverted to its pre-#367
  * revision. Kept as a regression guard that the reorder did not break a
  * safety property that already held. What pins the reorder itself is
- * "cancels a class that becomes cancellable immediately before the class
- * lock runs", in the describe above.
+ * `gdpr.test.ts`'s "cancels a class that becomes cancellable immediately
+ * before the class lock runs".
  */
 describe('deleteTeacherAccount blocks concurrent registrations on classes it locks (#367)', () => {
   const prisma = new PrismaClient();
