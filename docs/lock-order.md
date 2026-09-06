@@ -1418,15 +1418,19 @@ groups that answer differently because the two layers can say different things:
 | Layer | How it reaches the 409 | Endpoints |
 |---|---|---|
 | entry, `CalendarEntry_teacher_slot_excl` | `probeConflictingEntry` for WHICH entry, once a write is refused — four call sites, `grep -rn "probeConflictingEntry(" src/services/ src/app/api/` | `POST /api/classes`, `POST /api/studio-classes`: a zero-row `skipDuplicates` outcome (issue 331); `PUT /api/studio-classes/[id]`: a `catch` on `isExclusionConflictOn(err, 'CalendarEntry_teacher_slot_excl')`; `PUT /api/classes/[id]`: its service returns `slot_conflict` and the route runs the same probe |
-| rule, `ScheduleRule_teacher_slot_excl` | `SLOT_TAKEN[heldBy]`, keyed on `ruleSlotHolder`'s `RuleSlotHolder` — six call sites, `grep -rn "ruleSlotHolder(" src/services/ src/app/api/` | `POST /api/class-templates`, `POST /api/studio-class-templates`, `PUT /api/class-templates/[id]`, `PUT /api/studio-class-templates/[id]`, `PATCH /api/class-templates/[id]?state=unarchived`, `PATCH /api/studio-class-templates/[id]?state=unarchived` |
+| rule, `ScheduleRule_teacher_slot_excl` | `SLOT_TAKEN[heldBy]`, keyed on `ruleSlotHolder`'s `RuleSlotHolder` — four call sites, `grep -rn "ruleSlotHolder(" src/services/ src/app/api/` | `POST /api/class-templates`, `POST /api/studio-class-templates`, `PUT /api/class-templates/[id]`, `PUT /api/studio-class-templates/[id]`, `PATCH /api/class-templates/[id]?state=unarchived`, `PATCH /api/studio-class-templates/[id]?state=unarchived` |
 
-Four and six. An earlier version of this paragraph said "all eight routes …
+Four ENDPOINTS and six — the ten above, split by layer, and the third column is
+where they are named. The middle column counts call sites instead, which need
+not agree: the rule layer's edit and unarchive probes sit in `rule-lifecycle.ts`,
+generic over the child and so serving both template families from one line each.
+An earlier version of this paragraph said "all eight routes …
 five catch, three return", counting FILES on one side of the sentence and
 ENDPOINTS on the other, and so undercounted the reason-based side by the two
 `PATCH` unarchive arms. It closed by saying "named rather than counted", which
 is the right instinct and was defeated by naming an incomplete set — so the
-table above is the naming, and each row ships the grep that re-derives its
-half.
+table above is the naming, and each row ships the grep that re-derives its call
+sites.
 
 **The two layers name different things, and that is a deliberate asymmetry.**
 The rule layer can only say which FAMILY holds the weekday slot, because a
