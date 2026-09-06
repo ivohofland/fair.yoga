@@ -16,23 +16,26 @@
  * wording suggests would flag it; that shape ships today, and
  * `docs/superpowers/specs/2026-09-06-probe-placement-tether-design.md` §4 is
  * where it is named. Nor does this decide whether the transaction a call probes
- * after is the RIGHT one. That is a judgement about a whole function, the same
- * limit `db-locks-verdict-census.test.ts` states about verdicts.
+ * after is the RIGHT one. That is a judgement about a whole function, and
+ * nothing mechanical can make it.
  *
  * THE OTHER HALF OF THE SAME PARAGRAPH IS NOT THIS FILE'S. "Always against
  * `db`, never `tx`" is about the ARGUMENT, and it is held by the type
  * signature: `Prisma.TransactionClient` is `Omit<PrismaClient,
  * ITXClientDenyList>`, which lacks `$transaction` and so is not assignable to a
- * `PrismaClient` parameter. A misplaced call therefore cannot be one passing
- * `tx`; what compiles is a call inside the callback passing the OUTER client,
- * which takes a second pooled connection while the first is still held and
- * reads a snapshot blind to the very transaction it is asked about. That is the
- * one shape left, and it is the shape censused here. The design record above
- * separates those claims and says what holds each.
+ * `PrismaClient` parameter. Each probe's own test file pins that with a
+ * `@ts-expect-error` on a never-called function, so a parameter widened to
+ * accept a transaction client fails `tsc` — `rule-slot-holder.test.ts` and
+ * `entry-conflict.test.ts` are where those live. A misplaced call therefore
+ * cannot be one passing `tx`; what compiles is a call inside the callback
+ * passing the OUTER client, which takes a second pooled connection while the
+ * first is still held and reads a snapshot blind to the very transaction it is
+ * asked about. That is the one shape left, and it is the shape censused here.
+ * The design record above separates those claims and says what holds each.
  *
- * TWO CENSUSES, DELIBERATELY UNLIKE EACH OTHER — the arrangement the sibling
- * census argues for, reached differently, because here both sides read the
- * syntax tree and the unlikeness is in the predicates. A call is found by its
+ * TWO DETECTORS, DELIBERATELY UNLIKE EACH OTHER (the arrangement
+ * `db-locks-verdict-census.test.ts` sets out). Both sides here read the syntax
+ * tree, so the unlikeness is in the predicates. A call is found by its
  * callee: the probe's own name, a local name an import specifier binds to it
  * from its defining module, or a member of that name read off anything. So a
  * mention of the name in a comment or a string is not a call, and a call that
@@ -46,22 +49,22 @@
  * contains nothing.
  *
  * NON-VACUITY IS WHERE A CENSUS LIKE THIS DIES, so every guard below carries
- * its own reason beside it rather than a bare boolean. The last of them has no
- * analogue in the sibling file and is the one this census could not live
- * without: if `$transaction` detection ever stops firing, every call in the
- * repository reports "not inside a transaction" and the headline assertion goes
- * green forever while checking nothing.
+ * its own reason beside it rather than a bare boolean. The one this census
+ * could not live without is the last: if `$transaction` detection ever stops
+ * firing, every call in the repository reports "not inside a transaction" and
+ * the headline assertion goes green forever while checking nothing.
  *
  * WHAT IT DOES NOT SEE, so that a call landing there is nobody's failure here.
  * Test files are excluded: a test may place a probe wrongly on purpose to
  * demonstrate what happens, and this rule is about production call sites. The
- * defining modules are NOT excluded — the sibling excludes `db-locks.ts`
- * because the convention's marker text lives there, and no marker text exists
- * here — so a probe calling itself from inside a transaction would be caught.
- * A call reaching a probe through a local binding (`const f = ruleSlotHolder;
- * f(db, …)`) is invisible, as are `(0, ruleSlotHolder)(…)` and
- * `(cond ? a : b)(…)`; resolving those needs a full type-checker program this
- * test does not build. A callback passed by name (`db.$transaction(handler)`)
+ * defining modules are NOT excluded — neither calls its own probe, so searching
+ * them costs nothing and catches a self-call added later. A call reaching a
+ * probe through a local binding (`const f = ruleSlotHolder; f(db, …)`) is
+ * invisible, as are `(0, ruleSlotHolder)(…)` and `(cond ? a : b)(…)`; resolving
+ * those needs a full type-checker program this test does not build. An import
+ * alias is followed only from a specifier whose last segment is the defining
+ * module's own basename, so a probe reached through a re-exporting barrel is
+ * not followed either. A callback passed by name (`db.$transaction(handler)`)
  * puts `handler`'s body out of reach for the same reason, and a probe called
  * from a helper that is itself invoked inside a transaction is dynamically
  * inside and lexically outside. Nothing outside `src/` is searched: not
@@ -140,6 +143,28 @@ function typeScriptUnderSrc(): string[] {
  */
 function searchScope(): string[] {
   return typeScriptUnderSrc().filter((p) => !/\.test\.tsx?$/.test(p));
+}
+
+/**
+ * A SECOND read of `src/`, for the scope-reach guard alone, reaching no line of
+ * the walk it checks — not `typeScriptUnderSrc`, not `searchScope`, not their
+ * shared `readdirSync`.
+ *
+ * The duplication is the whole point. A guard whose two sides come from one
+ * function narrows in lockstep with it: a filter added inside that function
+ * drops an area from the census AND from the guard's expectation in the same
+ * edit, and the comparison stays equal. Only the extension and test-file rules
+ * are duplicated here; no exclusion a future edit adds to `searchScope` reaches
+ * this, which is exactly what has to make the two disagree.
+ */
+function areasUnderSrc(): Set<string> {
+  const areas = new Set<string>();
+  for (const found of readdirSync(path.join(root, 'src'), { recursive: true, encoding: 'utf8' })) {
+    const relative = found.split(path.sep).join('/');
+    if (!/\.tsx?$/.test(relative) || /\.test\.tsx?$/.test(relative)) continue;
+    areas.add(relative.split('/')[0] ?? relative);
+  }
+  return areas;
 }
 
 /**
@@ -269,8 +294,9 @@ interface ProbeCall extends Site {
 
 interface Census {
   readonly calls: readonly ProbeCall[];
-  /** Every `$transaction(fn, …)` the detector recognised, which is what the
-   * "recognises transaction callbacks" guard counts against the real tree. */
+  /** Where every `$transaction(fn, …)` the detector recognised sits. The
+   * "recognises transaction callbacks" guard counts these against the real
+   * tree; the fixtures compare them as `path:line`. */
   readonly transactionCallbacks: readonly Site[];
 }
 
@@ -331,6 +357,11 @@ function byLocation<T extends Site>(sites: readonly T[]): T[] {
   );
 }
 
+/** `path:line`, so every location this file reports is one a reader can open. */
+function label(site: Site): string {
+  return `${site.file}:${site.line}`;
+}
+
 /**
  * The failure list, in the shape the assertions compare. Shared by the real-tree
  * assertion and the fixtures below, so the fixtures pin the reported strings and
@@ -348,7 +379,7 @@ function findings(census: Census): { callsInsideATransaction: string[] } {
   return {
     callsInsideATransaction: byLocation(inside).map(
       (call) =>
-        `${call.file}:${call.line} (${call.helper}, inside the ${TRANSACTION} callback opened at line ${call.insideTransactionAt})`,
+        `${label(call)} (${call.helper}, inside the ${TRANSACTION} callback opened at line ${call.insideTransactionAt})`,
     ),
   };
 }
@@ -384,14 +415,13 @@ describe('every probe call sits outside every transaction callback', () => {
     // probe call site can only be in whichever directories happen to hold one —
     // a fraction of the tree either way. So a filter edit that drops whole
     // directories leaves every guard green while the census stops watching most
-    // of the repository. This compares against a walk written separately from
-    // `searchScope`'s: it shares the extension and test-file rules, and none of
-    // the exclusions a future edit would add, which is exactly what has to fail.
-    const required = new Set(
-      typeScriptUnderSrc()
-        .filter((p) => !/\.test\.tsx?$/.test(p))
-        .map(areaOf),
-    );
+    // of the repository.
+    //
+    // `areasUnderSrc` reads the directory itself rather than calling the walk,
+    // so a narrowing added anywhere in the walk — including inside the shared
+    // `typeScriptUnderSrc` — makes these two disagree instead of moving them
+    // together.
+    const required = areasUnderSrc();
     const reached = new Set(searchScope().map(areaOf));
     expect([...required].filter((area) => !reached.has(area)).sort()).toEqual([]);
   });
@@ -464,9 +494,14 @@ function censusOf(text: string): ReturnType<typeof findings> {
   return findings(takeCensus([{ file: FIXTURE, text }]));
 }
 
-/** What the transaction detector saw, for the fixtures that are about it. */
-function callbacksIn(text: string): number {
-  return takeCensus([{ file: FIXTURE, text }]).transactionCallbacks.length;
+/**
+ * WHERE the transaction detector fired, as `path:line`, for the fixtures that
+ * are about it. A location rather than a count, so a fixture asserting a clean
+ * verdict also says which `$transaction` the detector did and did not see —
+ * a bare number agrees with a detector that fired on the wrong call.
+ */
+function callbacksAt(text: string): string[] {
+  return byLocation(takeCensus([{ file: FIXTURE, text }]).transactionCallbacks).map(label);
 }
 
 /** `src/services/fixture.ts:3 (…, inside the $transaction callback opened at line 2)`. */
@@ -639,8 +674,10 @@ describe('the placement rule, against sources this repository does not contain',
   });
 
   it('accepts a call after the callback closes', () => {
-    // The shape every call site in the tree has, written out here so the clean
-    // verdict is pinned by something other than the tree agreeing with itself.
+    // The well-placed shape the whole rule is about: the probe issued once the
+    // callback has returned and the transaction is closed. Written out here so
+    // the clean verdict is pinned by a source this file controls, rather than
+    // by the tree agreeing with itself.
     const source = [
       'async function f(db: unknown) {',
       '  const outcome = await db.$transaction(async (tx: unknown) => {',
@@ -650,7 +687,7 @@ describe('the placement rule, against sources this repository does not contain',
       '}',
     ].join('\n');
     expect(censusOf(source)).toEqual(CLEAN);
-    expect(callbacksIn(source)).toBe(1);
+    expect(callbacksAt(source)).toEqual([`${FIXTURE}:2`]);
   });
 
   it('accepts a call before the transaction opens', () => {
@@ -665,6 +702,9 @@ describe('the placement rule, against sources this repository does not contain',
       '}',
     ].join('\n');
     expect(censusOf(source)).toEqual(CLEAN);
+    // The concise-body callback IS recognised, so the clean verdict is about
+    // where the call sits and not about the detector having gone quiet.
+    expect(callbacksAt(source)).toEqual([`${FIXTURE}:3`]);
   });
 
   it('accepts a call in a file holding no transaction at all', () => {
@@ -679,13 +719,14 @@ describe('the placement rule, against sources this repository does not contain',
       '}',
     ].join('\n');
     expect(censusOf(source)).toEqual(CLEAN);
-    expect(callbacksIn(source)).toBe(0);
+    expect(callbacksAt(source)).toEqual([]);
   });
 
   it('finds nothing to be inside in the array form of a transaction', () => {
     // `$transaction([…])` runs statements, not a callback, so there is no body
-    // a call could sit in. The count is asserted beside the verdict because a
-    // detector that recognised nothing at all would also report this clean.
+    // a call could sit in. Where the detector fired is asserted beside the
+    // verdict because a detector that recognised nothing at all would also
+    // report this clean.
     const source = [
       'async function f(db: unknown) {',
       '  await db.$transaction([db.a.create({}), db.b.create({})]);',
@@ -693,7 +734,51 @@ describe('the placement rule, against sources this repository does not contain',
       '}',
     ].join('\n');
     expect(censusOf(source)).toEqual(CLEAN);
-    expect(callbacksIn(source)).toBe(0);
+    expect(callbacksAt(source)).toEqual([]);
+  });
+
+  it('reads the first argument only, so a function later in the list cannot enclose', () => {
+    // The interactive form is `$transaction(callback, options)`: the callback is
+    // the FIRST argument, and a function anywhere else in the list is not a
+    // transaction body. A detector taking whichever argument happens to be
+    // function-shaped would report a call that never runs in the transaction.
+    const trailing = [
+      'async function f(db: unknown) {',
+      '  await db.$transaction([], async (tx: unknown) => {',
+      `    await ${RULE_SLOT_HOLDER}(db, {});`,
+      '  });',
+      '}',
+    ].join('\n');
+    expect(censusOf(trailing)).toEqual(CLEAN);
+    expect(callbacksAt(trailing)).toEqual([]);
+
+    // And a function reached through an options object, which is not an
+    // argument of the call at all.
+    const nested = [
+      'async function f(db: unknown) {',
+      `  await db.$transaction([], { onEvent: () => ${RULE_SLOT_HOLDER}(db, {}) });`,
+      '}',
+    ].join('\n');
+    expect(censusOf(nested)).toEqual(CLEAN);
+    expect(callbacksAt(nested)).toEqual([]);
+  });
+
+  it('reports a call inside the interactive form that carries options', () => {
+    // `$transaction(async (tx) => {…}, { timeout })`. A second argument must not
+    // stop the first from being the callback — this is the shape a call site
+    // reaches for the moment it needs a longer timeout.
+    const source = [
+      'async function f(db: unknown) {',
+      '  await db.$transaction(async (tx: unknown) => {',
+      `    await ${RULE_SLOT_HOLDER}(db, {});`,
+      '    return tx;',
+      '  }, { timeout: 10_000 });',
+      '}',
+    ].join('\n');
+    expect(censusOf(source)).toEqual({
+      callsInsideATransaction: [reported(3, RULE_SLOT_HOLDER, 2)],
+    });
+    expect(callbacksAt(source)).toEqual([`${FIXTURE}:2`]);
   });
 
   it('does not reach a callback passed by name, and says so here', () => {
@@ -711,7 +796,7 @@ describe('the placement rule, against sources this repository does not contain',
       '}',
     ].join('\n');
     expect(censusOf(source)).toEqual(CLEAN);
-    expect(callbacksIn(source)).toBe(0);
+    expect(callbacksAt(source)).toEqual([]);
   });
 
   it('does not count the name in a comment or in a string', () => {
@@ -725,7 +810,7 @@ describe('the placement rule, against sources this repository does not contain',
       '}',
     ].join('\n');
     expect(censusOf(source)).toEqual(CLEAN);
-    expect(callbacksIn(source)).toBe(1);
+    expect(callbacksAt(source)).toEqual([`${FIXTURE}:2`]);
   });
 
   it('counts a call inside a callback that never says await', () => {
@@ -757,6 +842,6 @@ describe('the placement rule, against sources this repository does not contain',
     expect(censusOf(source)).toEqual({
       callsInsideATransaction: [reported(4, RULE_SLOT_HOLDER, 3)],
     });
-    expect(callbacksIn(source)).toBe(2);
+    expect(callbacksAt(source)).toEqual([`${FIXTURE}:2`, `${FIXTURE}:3`]);
   });
 });
