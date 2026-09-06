@@ -976,12 +976,11 @@ describe('completeClass (DB)', () => {
   /**
    * The refusal's SHAPE is the assertion, not the absence of Payment rows.
    * After the terminality trigger lands (Task 8), "no Payment rows" is
-   * satisfied by the trigger alone and would no longer prove this lock.
+   * satisfied by the trigger alone and would no longer prove this gate.
    *
    * Nothing here waits or races: the cancel is a plain, already-committed
    * update issued before `completeClass` is even called. What this pins is
-   * `completeClass`'s own status gate — the `validateTransition` call, not
-   * the lock this file is otherwise about.
+   * `completeClass`'s own status gate — the `validateTransition` call.
    *
    * That gate is NOT uniquely pinned here, and the mutation says so: reducing
    * it to a no-op also fails "decides from the class row the holder left

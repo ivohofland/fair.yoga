@@ -38,8 +38,13 @@
  * for a different mechanism entirely: its case drops and re-adds a CHECK on
  * `Registration` with raw DDL, and `ALTER TABLE` takes ACCESS EXCLUSIVE, which
  * conflicts with every concurrent reader and writer of a table the parallel
- * tier touches all over. Nothing below takes a table lock and nothing there
- * holds a row, so neither file's reason covers the other's cases. Its name is
+ * tier touches all over. What separates the two files is that MECHANISM — a
+ * table-level ACCESS EXCLUSIVE the test's own DDL takes there, a staged
+ * two-party wait on rows here — and not which of them holds a row: both call
+ * `completeClass`, which opens with `lockClassRow`, so that one holds rows
+ * too — a lock taken inside a service call is invisible in the calling file's
+ * own text, which is why `vitest.tiers.ts` rests membership on a marker rather
+ * than on a search. Neither file's reason covers the other's cases. Its name is
  * about the tier guard it certifies rather than about lock order, which is why
  * these two cases are here under the established `*-lock-order.test.ts` name
  * instead of being appended to it.
@@ -137,23 +142,40 @@ describe('the Class row lock under real contention (DB)', () => {
   afterAll(async () => {
     // Dependency order: waitlist entries -> payments -> registrations ->
     // entries (which take their classes with them) -> students -> teacherRoom
-    // -> room -> teacher. Filtered by this file's own `teacherId` throughout,
-    // so it sweeps its own rows and nothing else's.
-    await prisma.waitlistEntry.deleteMany({ where: { class: { calendarEntry: { teacherId } } } });
-    await prisma.payment.deleteMany({
-      where: { registration: { class: { calendarEntry: { teacherId } } } },
-    });
-    await prisma.registration.deleteMany({ where: { class: { calendarEntry: { teacherId } } } });
-    // Before `teacherRoom.delete`: what blocks teardown is the surviving
-    // `Class` row via the plain `Class.teacherRoomId` FK.
-    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
-    for (const sid of studentIds) {
-      await prisma.student.delete({ where: { id: sid } });
+    // -> room -> teacher -> the account that owns the teacher's identity.
+    // Filtered by this file's own `teacherId` throughout, so it sweeps its own
+    // rows and nothing else's.
+    //
+    // The account is the step a teardown keyed on `teacherId` alone misses:
+    // `Teacher.accountId` points AT the account, so deleting the teacher
+    // leaves it standing and every run adds one more. Read before the deletes,
+    // because after them there is no teacher row to read it from.
+    //
+    // In a `finally`, so a failed delete cannot also leak the connection pool
+    // — the convention `0c0f43b7` set for these files.
+    try {
+      const { accountId } = await prisma.teacher.findUniqueOrThrow({
+        where: { id: teacherId },
+        select: { accountId: true },
+      });
+      await prisma.waitlistEntry.deleteMany({ where: { class: { calendarEntry: { teacherId } } } });
+      await prisma.payment.deleteMany({
+        where: { registration: { class: { calendarEntry: { teacherId } } } },
+      });
+      await prisma.registration.deleteMany({ where: { class: { calendarEntry: { teacherId } } } });
+      // Before `teacherRoom.delete`: what blocks teardown is the surviving
+      // `Class` row via the plain `Class.teacherRoomId` FK.
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+      for (const sid of studentIds) {
+        await prisma.student.delete({ where: { id: sid } });
+      }
+      await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
+      await prisma.room.delete({ where: { id: roomId } });
+      await prisma.teacher.delete({ where: { id: teacherId } });
+      await prisma.account.delete({ where: { id: accountId } });
+    } finally {
+      await prisma.$disconnect();
     }
-    await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
-    await prisma.room.delete({ where: { id: roomId } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
-    await prisma.$disconnect();
   });
 
   /**

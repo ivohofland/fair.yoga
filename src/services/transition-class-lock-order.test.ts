@@ -38,10 +38,14 @@
  * holder resolves once it has written under its locks, and `pg_stat_activity`
  * for the transition's own backend actually waiting on one.
  *
- * WHY THE REASON, NEVER THE BOOLEAN. A `55P03` lock timeout would also make
- * `ok` false, and so would `CONCURRENT_MODIFICATION`. `reason: 'CANCELLED'` is
- * the only outcome that says the transition waited, re-read, and refused
- * because the class is off.
+ * WHY THE REASON, NEVER THE BOOLEAN. `ok: false` is the answer to every
+ * refusal `transitionClass` declares, `CONCURRENT_MODIFICATION` among them —
+ * a CAS that missed for a reason having nothing to do with a cancel reads as
+ * `ok: false` too. `reason: 'CANCELLED'` is the only outcome that says the
+ * transition waited, re-read, and refused because the class is off. A lock
+ * timeout is not one of those alternatives: the catch maps only
+ * `Class_live_needs_open_room` and rethrows, so a `55P03` REJECTS and there is
+ * no `ok` of either value to read — the failure this header opens with.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

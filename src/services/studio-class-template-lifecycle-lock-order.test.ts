@@ -4,51 +4,51 @@
  * row and holds it while the verb under test queues behind that row under the
  * 2s `lock_timeout` `setLockTimeout` (`db-locks.ts`) puts on it. Each is
  * therefore both a source of lock noise on a table the parallel tier writes
- * all over, and an assertion a tier-mate's noise can falsify — and the two
- * shapes here fail in different directions.
+ * all over, and an assertion a tier-mate's noise can falsify — and the shapes
+ * here fail in different directions.
  *
- * THE THREE STAGED RACES — `two concurrent archives: the loser records
- * nothing over the winner`, `a concurrent archive mid-resume is reported as
- * archived, not thrown` and `a concurrent archive mid-pause is reported as
- * unchanged, not archived` — release the held row on a signal rather than a
- * timer, about half a second into their racers' wait, and assert both racers
- * are still unsettled after a fixed 300ms sleep before asserting what each
- * one got. Noise cannot break the unsettled half: a slower tier only keeps
- * them queued longer. What it endangers is the slack it leaves inside the 2s
- * bound. Staging the race spends 400-500ms of that bound deliberately, so
- * roughly 1.5s stands between the release path — the sleep resolving,
+ * THE STAGED RACES — the cases that start two racers against the held row and
+ * assert what each of them got. The hold ends on an explicit `release()` and
+ * never on a budget of its own, so the holding transaction cannot free the row
+ * by expiring; what decides WHEN that release fires is a fixed 300ms sleep,
+ * roughly half a second into the racers' wait, and it is the expiry of that
+ * same sleep the "both still unsettled" assertion is taken after. Noise cannot
+ * break the unsettled half: a slower tier only keeps them queued longer. What
+ * it endangers is the slack it leaves inside the 2s bound. Staging the race
+ * spends 400-500ms of that bound deliberately, so roughly 1.5s stands between
+ * the release path — the sleep resolving,
  * `release()`, the holder's `COMMIT` — and the point where the queued racers
  * stop waiting and answer `busy` instead of `archived` or `unchanged`. Past
  * that they report a broken guard while the guard is intact.
  *
- * The two mid-resume and mid-pause cases spend a second margin the first one
- * does not: the 100ms between starting the archive and starting the racer
- * that must lose to it. Postgres grants the row FIFO, and that gap is the
- * whole reason the archive gets it first — invert it and resume's
+ * A race whose two parties must arrive in a particular ORDER spends a second
+ * margin on top of that: the 100ms between starting the archive and starting
+ * the racer that must lose to it. Postgres grants the row FIFO, and that gap
+ * is the whole reason the archive gets it first — invert it and the loser's
  * compare-and-swap runs before the archive commits, so the expected
- * `{ ok: false, reason: 'archived' }` arrives as an `ok` resume and the case
- * indicts the CAS-miss classification it was written to hold. `two concurrent
- * archives` is indifferent to arrival order, finding its winner and loser by
- * result rather than by position, so only the handshake margin below exposes
- * it.
+ * `{ ok: false, reason: 'archived' }` arrives as an `ok` and the case indicts
+ * the CAS-miss classification it was written to hold. A race that finds its
+ * winner and loser by RESULT rather than by position is indifferent to
+ * arrival order, so only the handshake margin below exposes that one.
  *
- * That handshake is the margin all four share: 100ms for the holder's
+ * That handshake is the margin under every case here: 100ms for the holder's
  * `FOR UPDATE` to land before the first racer starts. Lose it and a racer
  * takes the row first and settles, and the case fails having never staged its
  * race at all.
  *
- * `returns busy when another transaction holds the row past the lock timeout,
- * and logs it` holds past the bound on purpose and asserts the `busy`, the
- * warn line and a floor of 1_800ms on `waited`. Noise can only push `waited`
- * up, so the floor cannot break, and the `busy` survives even a Prisma
- * `P2028` — `isTransientDbError` (`api-errors.ts`) covers both codes. What it
- * has instead are outer bounds: the holder's own `{ timeout: 15_000 }` and
- * the case's 20s budget. A tier that stretches the span from opening the
- * holder to releasing it past 15s makes Prisma abort the holder, which frees
- * the row and lets the edit commit and answer `ok`. It asserts no CEILING on
- * `waited` — #323 took the wall-clock ceilings off this repo's lock-timeout
- * cases so they could survive the parallel tier — so a raised
- * `LOCK_TIMEOUT_SQL` is not something this case can catch.
+ * THE ONES THAT LET THE HOLD OUTLIVE THE BOUND, asserting the `busy` the
+ * queued verb gives up with, the warn line that records it, and a floor of
+ * 1_800ms on `waited`. Noise can only push `waited` up, so the floor cannot
+ * break, and the `busy` survives even a Prisma `P2028` — `isTransientDbError`
+ * (`api-errors.ts`) covers both codes. What such a case has instead are outer
+ * bounds: the holder's own Prisma `{ timeout: … }` and the vitest budget on
+ * the case, tens of seconds each here. A tier that stretches the span from
+ * opening the holder to releasing it past the holder's budget makes Prisma
+ * abort the holder, which frees the row and lets the queued verb commit and
+ * answer `ok`. No CEILING on `waited` is asserted — #323 took the wall-clock
+ * ceilings off this repo's lock-timeout cases so they could survive the
+ * parallel tier — so a raised `LOCK_TIMEOUT_SQL` is not something this shape
+ * can catch.
  *
  * SPLIT OUT OF `studio-class-template-lifecycle.test.ts` (#468), AND NOT ON
  * COST. A file named on `LOCK_CONTENTION_TESTS` (`vitest.tiers.ts`) becomes

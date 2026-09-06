@@ -320,23 +320,18 @@ describe('generateClassInstances (DB)', () => {
     });
 
     /**
-     * The class family's `{ timeout: 10_000 }` pin, and it exists because this
-     * branch removed the only other one. The 5.5s test that is now `answers
-     * busy when the generation claim holds the row past the lock timeout`
-     * (`class-generator-lock-order.test.ts`) used to prove the budget end to
-     * end by outlasting Prisma's 5s default; under a 2s
-     * `lock_timeout` no archive can wait that long, so that proof became
-     * unwritable and the test was re-pointed at the bound. The docblock that
-     * replaced it then claimed `studio-class-generator.test.ts`'s `opens its
-     * transaction with { timeout: 10_000 }` still covered this. It does not —
-     * that test proxies `archiveOrUnarchiveStudioTemplate`, a different
-     * function in a different module — so between the re-point and this test,
-     * deleting the literal from either class-family function left the whole
-     * suite green.
+     * The class family's `{ timeout: 10_000 }` pin, and the only thing in this
+     * repo that reddens if the literal is deleted from
+     * `archiveOrUnarchiveTemplate`. `studio-class-generator.test.ts`'s `opens
+     * its transaction with { timeout: 10_000 }` does not cover it: that test
+     * proxies `archiveOrUnarchiveStudioTemplate`, a different function in a
+     * different module.
      *
-     * Cheap where the old proof was expensive: the Proxy records the options
-     * argument and delegates to the real `$transaction`, so nothing has to
-     * cross a five-second boundary to observe it.
+     * It cannot be pinned the expensive way. Outlasting Prisma's 5s default
+     * would prove the budget end to end, but under a 2s `lock_timeout` no
+     * archive can wait that long. So the Proxy records the options argument
+     * and delegates to the real `$transaction`, and nothing has to cross a
+     * five-second boundary to observe it.
      */
     it('opens the archive transaction with { timeout: 10_000 }', async () => {
       let recordedOptions: TransactionOptions | undefined;
@@ -466,10 +461,10 @@ describe('generateClassInstances (DB)', () => {
      * hold or sleep is needed to reproduce it, unlike the staged races in
      * `class-generator-lock-order.test.ts`.
      *
-     * What the docstring used to get wrong: it isn't a clean handoff where
-     * the archive's `deleteMany` withdraws everything the claim just made.
-     * That delete's boundary is `gt: today` (`scheduledWhere` in
-     * `class-template-lifecycle.ts`) — the same spare-today carve-out applied
+     * It is NOT a clean handoff in which the archive's `deleteMany` withdraws
+     * everything the claim just made. That delete's boundary is `gt: today`
+     * (`scheduledWhere` in `class-template-lifecycle.ts`) — the same
+     * spare-today carve-out applied
      * everywhere else, because a class hours from starting should not vanish
      * out from under students who already see it as open. So when the claim
      * generates a class dated today, that one class survives the archive that
