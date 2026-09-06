@@ -162,11 +162,14 @@ needed rather than redundant:
 > `probeOverlappingCandidates` beside it deliberately IS) would compile every call
 > site unchanged and break only in production, under contention.
 
-`rule-slot-holder.test.ts` has **no** such device — measured, zero
-`@ts-expect-error` directives in the file, against nine in `db-locks.test.ts`
-and one in `entry-conflict.test.ts`. Counted on the directive rather than on the
-string: `db-locks.test.ts` also names `@ts-expect-error` in prose inside a
-docblock, so a bare `grep -c` answers ten and overstates the device by one.
+`rule-slot-holder.test.ts` **had** no such device at `db443df3` — measured
+there, zero `@ts-expect-error` directives in the file, against nine in
+`db-locks.test.ts` and one in `entry-conflict.test.ts`. Task 1 below is what
+adds it, so the same commands answer one for that file at this branch's head;
+the other two figures are unchanged by this work. Counted on the directive
+rather than on the string: `db-locks.test.ts` also names `@ts-expect-error` in
+prose inside a docblock, so a bare `grep -c` answers ten and overstates the
+device by one.
 
 ```
 $ grep -cE '^\s*//\s*@ts-expect-error' src/lib/db-locks.test.ts

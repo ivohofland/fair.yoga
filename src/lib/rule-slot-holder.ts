@@ -54,9 +54,11 @@ export function minutesSinceMidnight(t: Date): number {
  * and passing the outer `db`: it asks the pool for a second connection while
  * the caller's own transaction still holds the first — under exactly the
  * contention that produces slot conflicts — and reads a committed snapshot
- * blind to the very transaction it is being asked about. So every call site
- * sits after its own transaction's closing `)`, where Prisma has already
- * committed or rolled back and `db` is a clean connection.
+ * blind to the very transaction it is being asked about. So no call site sits
+ * inside one: either after its own transaction's closing `)`, where Prisma has
+ * already committed or rolled back and `db` is a clean connection, or — where
+ * the refused transaction lives one layer down, inside a service the caller
+ * awaited — with no `)` of its own to sit after.
  *
  * Call sites reach this probe from a `catch`, where the refused statement
  * aborted the transaction, and from a normal return path, where a zero-row

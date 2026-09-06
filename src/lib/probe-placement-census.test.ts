@@ -3,9 +3,12 @@
  *
  * The probes listed in `PROBES` below ask the database which rule or which
  * entry holds a span, after a constraint has already refused a write. Each
- * one's docblock requires its call sites to sit after their own transaction's
- * closing `)`. This file is what makes that requirement fail a build rather
- * than fail a reader.
+ * one's docblock requires its call sites to sit outside every transaction
+ * callback — where a caller has a transaction of its own, after that
+ * transaction's closing `)`; where the refused transaction lives one layer
+ * down, inside a service the caller awaited, with no `)` of its own to sit
+ * after. This file is what makes that requirement fail a build rather than
+ * fail a reader.
  *
  * WHAT THIS GUARANTEES, AND WHAT IT DOES NOT. It reads LEXICAL position, and
  * only in the negative direction: no call may sit inside the callback argument
@@ -66,11 +69,11 @@
  * `probeOverlappingCandidates`, exported beside `probeConflictingEntry`, is
  * absent from `PROBES` deliberately rather than by oversight: it takes
  * `PrismaClient | Prisma.TransactionClient` because it is MEANT to run on the
- * caller's still-healthy transaction, so censusing it would redden this suite
- * against correct code. A call reaching a probe through a local binding
- * (`const f = ruleSlotHolder; f(db, …)`) is invisible, as are
- * `(0, ruleSlotHolder)(…)` and `(cond ? a : b)(…)`; resolving those needs a
- * full type-checker program this test does not build. An import
+ * caller's still-healthy transaction, so a correctly placed call to it inside a
+ * transaction callback would be reported here as a defect. A call reaching a
+ * probe through a local binding (`const f = ruleSlotHolder; f(db, …)`) is
+ * invisible, as are `(0, ruleSlotHolder)(…)` and `(cond ? a : b)(…)`; resolving
+ * those needs a full type-checker program this test does not build. An import
  * alias is followed only from a specifier whose last segment is the defining
  * module's own basename, so a probe reached through a re-exporting barrel is
  * not followed either. A callback passed by name (`db.$transaction(handler)`)
@@ -619,7 +622,7 @@ describe('the placement rule, against sources this repository does not contain',
     // into an inline `.map(async …)` runs on the outer client while the
     // callback's transaction is still open, exactly as an unbatched one would,
     // so a walk that stopped at the nearest arrow would report this clean — and
-    // this is the shape a batching refactor of the two entry creates produces.
+    // this is the shape a batching refactor of the entry creates produces.
     const source = [
       'async function f(prisma: unknown, items: unknown[]) {',
       '  await prisma.$transaction(async (tx: unknown) => {',
