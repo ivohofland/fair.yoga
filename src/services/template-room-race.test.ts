@@ -4,12 +4,14 @@ import { isCheckViolationOn } from '@/lib/check-violation';
 
 /**
  * @serial-tier lock-contention — the case below parks a transaction on a real
- * `ScheduleRule` row lock and then waits on a WALL CLOCK for that park to be
- * observed. The resume holds the row open under `{ timeout: 15_000 }` while a
- * second client's `teacherRoom.update` blocks on the cascade, and the
- * `pg_stat_activity` busy-poll that has to catch the block runs against an
- * explicit `Date.now() + 5_000` deadline whose expiry is itself the failure
- * (see the deadline's own comment: "the assertion at the foot is what fails").
+ * `ClassTemplate` row lock and then waits on a WALL CLOCK for that park to be
+ * observed. Both mirrors live on that one row: the resume's
+ * `scheduleRule.update` cascades into its `ruleLive` and holds it under
+ * `{ timeout: 15_000 }`, and a second client's `teacherRoom.update` then
+ * blocks trying to cascade into the same row's `roomArchived`. The
+ * `pg_stat_activity` busy-poll that has to catch that block runs against an
+ * explicit `Date.now() + 5_000` deadline whose expiry is itself the failure —
+ * the deadline is not a safety net, it is an assertion.
  * A tier-mate that delays this file's poll past five seconds therefore reddens
  * it without touching anything it asserts about — a parked transaction waiting
  * on a clock is exactly what `vitest.tiers.ts`'s criterion names as unable to

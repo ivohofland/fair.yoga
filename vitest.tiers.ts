@@ -59,8 +59,8 @@ export const SWEEP_TESTS = [
 // listed path stops existing. That pair is the whole membership rule: no
 // command decides it, and a file whose machinery no command can see joins the
 // same way every other one does — #468 added `update-class-lock-order.test.ts`
-// and `template-room-race.test.ts`, both of which take their locks through
-// service calls and appear in no lock-shaped search.
+// and `template-room-race.test.ts`, neither of which writes lock machinery in
+// its own source text, so no lock-shaped search reaches either.
 //
 // #459 and #468 carry the written verdicts, each with its measurement — moved
 // here, or measured and kept in the parallel tier. A roster here would be a
@@ -119,10 +119,11 @@ export const LOCK_CONTENTION_TESTS = [
   // #468: split out of `class-generator.test.ts`, which keeps every case that
   // stages nothing — the sibling's header gives the reason, shape by shape.
   'src/services/class-generator-lock-order.test.ts',
-  // #468, and found by reading rather than by any command: both take their
-  // locks through service calls instead of raw SQL, so every text search for
-  // lock machinery walks past them. No extraction — each is one test and the
-  // whole file is the staged race.
+  // #468, and found by reading rather than by any command: neither writes lock
+  // machinery in its own source text — one locks inside `completeClass`, the
+  // other through a foreign-key cascade — so every text search for it walks
+  // past them. No extraction — each is one test and the whole file is the
+  // staged race.
   'src/services/update-class-lock-order.test.ts',
   'src/services/template-room-race.test.ts',
 ] as const;

@@ -75,8 +75,9 @@ const prisma = new PrismaClient();
 // PREFIXED, not just timestamped: this file shares one test database with
 // `studio-class-template-lifecycle.test.ts`, which it was split from, and with
 // its serial tier-mates, and they all mint their fixtures from a clock value,
-// so a bare `Date.now()` could collide on a unique email or slug. The prefix
-// is this file's alone — no other file in the repo mints from it — which makes
+// so a bare `Date.now()` could collide on a unique email or slug. The prefix is
+// spelled from this file's own name rather than from the shared subject,
+// which makes
 // the namespaces disjoint by construction rather than by luck, and every
 // `afterAll` below sweeps its own describe's teacher only.
 const uniqueSuffix = `studiotpllock-${Date.now()}`;
