@@ -63,25 +63,40 @@ derivation issue #470 asked for** — "pinning it to something a planner cannot
 reverse" — and it is this spec's eligibility-not-cost method applied to its own
 largest stated residual.
 
-**Cost is not what does it.** With every scan type disabled so `disable_cost`
-removes cost from the decision, the teacher statement with and without
-`ORDER BY c.id` costs *identically* and differs only in the index:
+**"Not generated" has to be told apart from "generated but outbid", and a chosen
+plan cannot do it** — it is evidence only about the winner. Hiding the winner
+can: set `pg_index.indisvalid = false` on it inside `BEGIN … ROLLBACK` and
+re-plan.
 
-```
--- teacher statement, NO ORDER BY (the probe, and the mutated statement)
-->  Index Scan using "Class_calendarEntryId_key" on "Class" c  (cost=10000000000.12..10000000008.14 …)
--- SAME statement WITH ORDER BY c.id (production)
-->  Index Scan using "Class_pkey" on "Class" c                 (cost=10000000000.12..10000000008.14 …)
-```
+**Under the four settings, `enable_seqscan = off` among them.** That is
+load-bearing rather than incidental: an undiscouraged sequential scan over these
+single-page tables costs ~1.02 and would be the fallback whether or not an index
+path existed, so the experiment would answer "never generated" every time. With
+it off the fallback carries `disable_cost` and any generated index path must
+beat 1e10 to stay hidden. `docs/lock-order.md` carries the counterexample that
+makes this concrete.
 
-**And "not generated" was told apart from "generated but outbid", because a
-chosen plan is evidence only about the winner.** Hiding the winner settles it:
-with `Class_calendarEntryId_key` made invisible (`pg_index.indisvalid = false`,
-inside `BEGIN … ROLLBACK`), the no-`ORDER BY` teacher statement falls back to a
-`Seq Scan on "Class"` — **not** to `Class_pkey`. The control confirms the
-instrument: the same statement *with* `ORDER BY c.id`, under the same hiding,
-does reach `Class_pkey`. The student side mirrors it — hide `Class_pkey` and it
-falls back to a `Seq Scan`, not to `Class_calendarEntryId_key`.
+So measured:
+
+| statement | winner hidden | falls back to |
+|---|---|---|
+| teacher, no `ORDER BY` | `Class_calendarEntryId_key` | **`Seq Scan on "Class"` at 1e10** — not `Class_pkey` |
+| **control**: teacher, `ORDER BY c.id` | `Class_calendarEntryId_key` | **`Class_pkey`, cost 0.12..8.14**, no penalty term |
+| student, no `ORDER BY` | `Class_pkey` | **`Seq Scan on "Class"` at 1e10** — not `Class_calendarEntryId_key` |
+
+The control row is what makes the other two mean anything: it shows the
+instrument can find `Class_pkey` when a path for it exists, so its absence
+elsewhere is the index's, not the method's. Note how sharp the contrast is — the
+planner takes a sequential scan priced at 1e10 over an index that is present,
+un-hidden, and would cost 8.14. That only happens if no path for it was built.
+
+An earlier draft of this section put a pair of `EXPLAIN` costs here and called
+them *identical*, offering that as the proof that cost is not what decides.
+**Withdrawn**: re-measured, the two differ (`Class_calendarEntryId_key`
+0.25..8.27 against `Class_pkey` 0.12..8.14), and they had come from one
+`EXPLAIN` at one database state — §2.6's own failure mode, so the table above
+does not repeat it. Nothing rests on those numbers; the hiding control is the
+evidence.
 
 The mechanism is `build_index_paths` (`indxpath.c`): a path is built when the
 index has usable clauses, useful pathkeys, a useful predicate, or supports an
@@ -92,10 +107,11 @@ the index is not partial, and `FOR UPDATE` rules out index-only.
 **This is an argument about two specific statements on today's schema, not a
 law.** It turns on which clauses each statement carries, so a new index on
 `Class`, or a predicate mentioning `c.id` added to the teacher statement, can
-make the path exist again — measured: adding a bare `c.id > …` to its `WHERE`
-is enough to generate it (there it lost on cost, which is exactly the weaker
-kind of protection this section is replacing). Re-measure before relying on it
-after either statement changes.
+make the path exist again. Measured: adding a bare `c.id > …` to its `WHERE`
+is enough to generate a `Class_pkey` path — shown by the same hiding experiment,
+which under that variant reaches `Class_pkey` at 0.12..8.15 with an
+`Index Cond: (id > …)` instead of falling back. Re-measure before relying on
+this after either statement changes.
 
 Two further claims in the tree turned out false, both load-bearing:
 

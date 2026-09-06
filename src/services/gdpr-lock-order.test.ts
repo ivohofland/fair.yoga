@@ -383,15 +383,21 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     //
     // MEASURED, and by hiding the winner rather than by reading it. A chosen
     // plan says only which path won, so it cannot tell "never generated" from
-    // "generated, tied, lost". With every scan type carrying `disable_cost` the
-    // two variants cost the SAME (8.14) and differ only in the index, which
-    // already rules cost out; and with `Class_calendarEntryId_key` made
-    // invisible (`pg_index.indisvalid = false`, inside a rolled-back
-    // transaction) this statement falls back to a `Seq Scan`, NOT to
-    // `Class_pkey` — while the same statement carrying `ORDER BY c.id` reaches
-    // `Class_pkey` under that identical treatment. The student statement is the
-    // mirror: hide `Class_pkey` and it too falls back to a `Seq Scan` rather
-    // than to `Class_calendarEntryId_key`.
+    // "generated, tied, lost". Make `Class_calendarEntryId_key` invisible
+    // instead (`pg_index.indisvalid = false`, inside a rolled-back
+    // transaction), keeping `enable_seqscan = off` so the fallback carries
+    // `disable_cost`: this statement then takes a `Seq Scan` priced at 1e10
+    // over a `Class_pkey` that is present and would cost 8.14 — which happens
+    // only if no path for it was built. The same statement carrying
+    // `ORDER BY c.id` DOES reach `Class_pkey` under that identical treatment,
+    // and that control is what makes the first result mean anything. The
+    // student statement is the mirror: hide `Class_pkey` and it too falls back
+    // to a `Seq Scan` rather than to `Class_calendarEntryId_key`.
+    //
+    // `enable_seqscan = off` is part of the method, not scenery — undiscouraged,
+    // a seq scan of these single-page tables costs ~1.02 and would be the
+    // fallback whether or not an index path existed. `docs/lock-order.md`
+    // carries the recipe and the counterexample.
     //
     // AN ARGUMENT ABOUT TODAY'S TWO STATEMENTS ON TODAY'S SCHEMA, not a law. It
     // turns on which clauses each statement carries, so a new index on `Class`,
@@ -431,7 +437,8 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     //   created them — `docs/lock-order.md` owns that account and ships the
     //   query that re-derives it.
     //
-    // THE RESIDUAL THAT EXPOSES, and it is larger than the spec's §4. The
+    // THE RESIDUAL THAT EXPOSES, and since spec §4.1 withdrew the other one it
+    // is the only one left — spec §4.2 is this paragraph. The
     // production statement carries `cancelledAt IS NULL`, so the MUTATED
     // statement — the one with `ORDER BY c.id` deleted, which is what the
     // counterfactual below is about — can plan onto an index with no key order
