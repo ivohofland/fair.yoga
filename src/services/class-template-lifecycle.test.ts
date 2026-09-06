@@ -161,9 +161,7 @@ describe('updateClassTemplate (DB)', () => {
   // "Archived Edit" IS archived — which FREES its slot rather than taking
   // one, since the index is partial (WHERE isArchived = false). That
   // direction is always safe here: a freed slot can only make a
-  // later create legal, never illegal. It is worth naming because the sentence
-  // this replaces said no template in this block is ever archived, which was
-  // true when it was written and stopped being true when that case arrived.
+  // later create legal, never illegal.
   //
   // "Stamp Only" is the exception to the no-assertion half: it MOVES its
   // template's dayOfWeek and startTime, which frees this one's slot rather
@@ -936,11 +934,10 @@ describe('updateClassTemplate (DB)', () => {
    * window now produces in place of a race — is
    * `class-template-lifecycle-lock-order.test.ts`'s "a concurrent delete
    * blocks on the write lock and completes cleanly once the edit commits"
-   * (#459). (Not "once task 7 gave that wait a bound to test against", as
-   * this said: task 7's `setLockTimeout` bounds the EDIT's waits, and the
-   * party that waits in the replacement is the concurrent delete, bounded by
-   * that test's own `setLockTimeout(tx)` call. The replacement asserts
-   * blocking-then-completion and never tests against a bound at all.)
+   * (#459). Task 7's `setLockTimeout` bounds the EDIT's waits; the party
+   * that waits in the replacement is the concurrent delete, bounded by that
+   * test's own `setLockTimeout(tx)` call. The replacement asserts
+   * blocking-then-completion and never tests against a bound at all.
    *
    * Interposed rather than raced, like the pause guard's twin: the extension
    * performs the real read and then deletes the row before returning it, which

@@ -47,7 +47,7 @@ export const SWEEP_TESTS = [
 // answers, under a 6s ceiling.
 //
 // Nor is the parallel tier free of files that assert on how a staged race comes
-// out while holding a lock of their own. This branch closed the files it
+// out while holding a lock of their own. #459 closed the files it
 // targets into the siblings below; issue #468 owns what remains, with the
 // candidate list and the measurement — a roster here would be a second copy
 // of it.
