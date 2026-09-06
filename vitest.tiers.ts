@@ -108,6 +108,9 @@ export const LOCK_CONTENTION_TESTS = [
   // #468: split out of `studio-class-template-lifecycle.test.ts` for the same
   // reason — the sibling's own header carries it, case by case.
   'src/services/studio-class-template-lifecycle-lock-order.test.ts',
+  // #468: split out of `class-generator.test.ts`, which keeps every case that
+  // stages nothing — the sibling's header gives the reason, shape by shape.
+  'src/services/class-generator-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither
