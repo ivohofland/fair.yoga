@@ -5,8 +5,8 @@ import { log } from '@/lib/log';
 import { SpotFreedError } from '@/services/waitlist';
 
 /**
- * What `promoteAfterCancel` LOGS when the spot-freed hook fails, and that a
- * failure there still answers 200.
+ * What `promoteAfterCancel` and `notifyCancellation` LOG when their respective
+ * post-commit hooks fail, and that a failure in either still answers 200.
  *
  * `deleteStudentAccount`'s identical catch has had a test since the same
  * change added the `branch` field to both (`gdpr.test.ts`, "names the broadcast
@@ -27,8 +27,10 @@ import { SpotFreedError } from '@/services/waitlist';
  * `withErrorHandler`, the ownership checks and the cancel write all run.
  *
  * The route's own database work is stubbed rather than seeded because none of
- * it is under test here. What is under test is the four fields of one log
- * payload and the status code beside it.
+ * it is under test here. The first `describe` block below covers what is under
+ * test for `promoteAfterCancel`: the four fields of one log payload and the
+ * status code beside it. The second covers `notifyCancellation`'s own
+ * three-field payload and has its own docblock explaining it.
  */
 
 const handleSpotFreed = vi.fn();

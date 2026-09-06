@@ -338,6 +338,49 @@ export const DELETE = withErrorHandler(async (
 });
 
 /**
+ * The class a cancellation notice is about, named the way every cancellation
+ * notice names one: type, day, time. `startTime` is a `@db.Time` column, so
+ * it arrives as a `Date` and needs rendering rather than interpolating.
+ */
+function classPhrase(entry: { classType: string; date: Date; startTime: Date }): string {
+  return `${entry.classType} on ${formatDayHeader(entry.date)} at ${timeToHHmm(entry.startTime)}`;
+}
+
+/**
+ * Sends the student their cancellation notice, after the cancel has committed.
+ *
+ * Swallowed for the same reason `promoteAfterCancel` swallows: the status
+ * write has already landed, and a throw from here would answer 500 for a
+ * cancellation that fully succeeded — the student would see an error, retry,
+ * and be told their booking is already cancelled.
+ *
+ * `error` rather than `warn`, even for a transient failure, and unlike the
+ * waitlist hook next door: nothing sweeps for missing notifications, so a loss
+ * here is permanent. The student is simply never told.
+ *
+ * The inner `try`/`catch` around the `log.error` call is the same backstop
+ * `promoteAfterCancel` below nests for its own diagnostic log, and for the
+ * same reason — see the comment inside its inner `catch`.
+ */
+async function notifyCancellation(input: CreateNotificationInput): Promise<void> {
+  try {
+    await createNotification(prisma, input);
+  } catch (err) {
+    try {
+      log.error(
+        { err, recipientId: input.recipientId, type: input.type, classId: input.relatedClassId },
+        'cancellation notice not sent — the student was not told their booking ended',
+      );
+    } catch (loggingErr) {
+      log.error(
+        { err: loggingErr, recipientId: input.recipientId, classId: input.relatedClassId },
+        'cancellation-notice diagnostic failed unexpectedly',
+      );
+    }
+  }
+}
+
+/**
  * Runs the waitlist spot-freed hook after a cancel has committed. The cancel
  * already succeeded — a promotion failure must not turn it into a 500, so
  * errors are logged and swallowed here.
@@ -389,46 +432,6 @@ export const DELETE = withErrorHandler(async (
  * after an earlier one succeeded IS repaired, because `Class.spotBroadcastAt`
  * is cleared by the claim that consumed the earlier seat.
  */
-/**
- * The class a cancellation notice is about, named the way every cancellation
- * notice names one: type, day, time. `startTime` is a `@db.Time` column, so
- * it arrives as a `Date` and needs rendering rather than interpolating.
- */
-function classPhrase(entry: { classType: string; date: Date; startTime: Date }): string {
-  return `${entry.classType} on ${formatDayHeader(entry.date)} at ${timeToHHmm(entry.startTime)}`;
-}
-
-/**
- * Sends the student their cancellation notice, after the cancel has committed.
- *
- * Swallowed for the same reason `promoteAfterCancel` swallows: the status
- * write has already landed, and a throw from here would answer 500 for a
- * cancellation that fully succeeded — the student would see an error, retry,
- * and be told their booking is already cancelled.
- *
- * `error` rather than `warn`, even for a transient failure, and unlike the
- * waitlist hook next door: nothing sweeps for missing notifications, so a loss
- * here is permanent. The student is simply never told.
- *
- * The inner `try`/`catch` around the `log.error` call is the same backstop
- * `promoteAfterCancel` below nests for its own diagnostic log, and for the
- * same reason — see that function's docblock.
- */
-async function notifyCancellation(input: CreateNotificationInput): Promise<void> {
-  try {
-    await createNotification(prisma, input);
-  } catch (err) {
-    try {
-      log.error(
-        { err, recipientId: input.recipientId, type: input.type, classId: input.relatedClassId },
-        'cancellation notice not sent — the student was not told their booking ended',
-      );
-    } catch (loggingErr) {
-      log.error({ err: loggingErr }, 'cancellation-notice diagnostic failed unexpectedly');
-    }
-  }
-}
-
 async function promoteAfterCancel(classId: string): Promise<void> {
   try {
     await handleSpotFreed(prisma, classId);
