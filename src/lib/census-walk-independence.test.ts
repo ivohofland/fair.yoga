@@ -42,7 +42,14 @@
  * Shadowing is not modelled either — a
  * function-local sharing a name with a module-level binding is reported though
  * the call reaches the local. That direction is loud and correctable; the other
- * one hides the refactor this file exists to catch.
+ * one hides the refactor this file exists to catch. Two narrower gaps are
+ * accepted rather than closed (#492): `import x = SomeNamespace.Member`, the
+ * internal-namespace form of an import-equals declaration (as against the
+ * `require(...)` form fixtured below), is legacy syntax with no use anywhere
+ * in this codebase; and a walk hoisted into a `namespace N { export function
+ * walk() {...} }` and called as `N.walk()` resolves to no binding at all, but
+ * degrades loud rather than silent — the body then makes no `readdirSync`
+ * call, and the missing-walk arm above already reports that.
  *
  * A file that parses is assumed. `ts.createSourceFile` does not throw and no
  * diagnostics are read here, so a syntax error that swallows a call reports
@@ -101,7 +108,11 @@ function unwrap(expression: ts.Expression): ts.Expression {
 /** The identifier a callee roots in, or nothing when it roots in an expression. */
 function rootOf(callee: ts.Expression): string | undefined {
   let current = callee;
-  while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+  while (
+    ts.isPropertyAccessExpression(current) ||
+    ts.isElementAccessExpression(current) ||
+    ts.isNewExpression(current)
+  ) {
     current = unwrap(current.expression);
   }
   return ts.isIdentifier(current) ? current.text : undefined;
@@ -449,6 +460,64 @@ const { a } = something;
 ${OWN_WALK}`;
     expect(independenceOf(FIXTURE, guardSource(body, preamble))).toEqual([
       `${FIXTURE}:6 ${GUARD} calls a — a is declared at module level`,
+    ]);
+  });
+
+  it('reports a call rooting in a `new` expression', () => {
+    // `rootOf` walked PropertyAccessExpression/ElementAccessExpression chains
+    // looking for an Identifier root. A NewExpression broke that chain — it is
+    // neither of those two kinds — so `new Walker().walk()` used to stop there
+    // and return undefined: a walk reached through a class instance was
+    // invisible however the class itself was bound.
+    const preamble = `
+import { Walker } from './walker';
+`;
+    const body = `  for (const relative of new Walker().walk()) {
+    areas.add(relative.split('/')[0] ?? relative);
+  }`;
+    expect(independenceOf(FIXTURE, guardSource(body, preamble))).toEqual([
+      `${FIXTURE}:6 ${GUARD} calls new Walker().walk — Walker is imported from './walker'`,
+      `${FIXTURE} ${GUARD} makes no ${WALK} call`,
+    ]);
+  });
+
+  it('reports a call reaching through a default import', () => {
+    // `declare(clause.name, binding)` binds a default import's local name —
+    // exercised until now only by `import path from 'node:path'` in the clean
+    // fixtures above, which never has to distinguish "bound and clean" from
+    // "not bound at all". A default-imported walk is exactly as reachable as
+    // a named one.
+    const preamble = `
+import walk from './census-walk';
+`;
+    const body = `  for (const relative of walk()) {
+    areas.add(relative.split('/')[0] ?? relative);
+  }`;
+    expect(independenceOf(FIXTURE, guardSource(body, preamble))).toEqual([
+      `${FIXTURE}:6 ${GUARD} calls walk — walk is imported from './census-walk'`,
+      `${FIXTURE} ${GUARD} makes no ${WALK} call`,
+    ]);
+  });
+
+  it('reports a call rooting in a module-level class declaration', () => {
+    // The other declaration form `moduleLevelBindings` must cover: a class (or
+    // enum) declared at module level, called through a static method.
+    // `moduleLevelBindings` binds it via the same `isFunctionDeclaration ||
+    // isClassDeclaration || isEnumDeclaration` disjunct that already binds a
+    // plain `function` statement — untested until now for the class arm.
+    const preamble = `
+class CensusWalk {
+  static walk(): string[] {
+    return [];
+  }
+}
+`;
+    const body = `  for (const relative of CensusWalk.walk()) {
+    areas.add(relative.split('/')[0] ?? relative);
+  }`;
+    expect(independenceOf(FIXTURE, guardSource(body, preamble))).toEqual([
+      `${FIXTURE}:10 ${GUARD} calls CensusWalk.walk — CensusWalk is declared at module level`,
+      `${FIXTURE} ${GUARD} makes no ${WALK} call`,
     ]);
   });
 
