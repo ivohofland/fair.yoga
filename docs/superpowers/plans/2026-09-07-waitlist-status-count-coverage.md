@@ -70,10 +70,10 @@ diagnostic counts tabled below = 19.
 | `waitlist.ts:887` | suppressed-broadcast count | No | Let go: feeds only a `debug` line the module's own comment calls off-by-default |
 
 `gdpr.ts:882` is folded in rather than filed because it is the identical shape
-in the identical file — filing it would mean a future reviewer opens #495 for
-what this branch already had open. It is not free, though: a student row, a
-waitlist row, a field on the fixture's return shape, and two edits to the
-shared `cleanup`.
+in the identical file — filing it would mean a future reviewer opening a
+second issue for what this branch already had open. It is not free, though: a
+student row, a waitlist row, a field on the fixture's return shape, and two
+edits to the shared `cleanup`.
 
 ## Task 1 — teacher erasure (the acceptance criterion)
 
