@@ -158,12 +158,13 @@ function searchScope(): string[] {
 }
 
 /**
- * A SECOND read of `src/`, for the scope-reach guard alone, reaching no line of
- * the walk it checks — not `typeScriptUnderSrc`, not `searchScope`, not their
- * shared walk. It makes its own `readdirSync` call rather than reaching theirs,
- * which means their options object and this one must stay in step; a difference
- * there narrows this side alone, and the guard's second direction is what
- * reports that.
+ * A SECOND read of `src/`, for the scope-reach guard alone. What that guard
+ * checks against this is the census's own list of files consumed, and this
+ * reaches no line of anything that produces it — not `typeScriptUnderSrc`, not
+ * `searchScope`, not `censusOfTree`, not their shared walk. It makes its own
+ * `readdirSync` call rather than reaching theirs, which means their options
+ * object and this one must stay in step; a difference there narrows this side
+ * alone, and the guard's second direction is what reports that.
  *
  * The duplication is the whole point. A guard whose two sides come from one
  * function narrows in lockstep with it: a filter added inside that function
@@ -322,6 +323,13 @@ interface Census {
    * "recognises transaction callbacks" guard counts these against the real
    * tree; the fixtures compare them as `path:line`. */
   readonly transactionCallbacks: readonly Site[];
+  /**
+   * Every source consumed, repo-relative, recorded by the loop that reads it.
+   * The scope-reach guard derives its `reached` set from this rather than from
+   * a second call to the walk, so a filter inserted between the walk and this
+   * census narrows `reached` with it and the guard reports the difference.
+   */
+  readonly filesCensused: readonly string[];
 }
 
 /** A file to census: its repo-relative path, and its text. */
@@ -340,8 +348,14 @@ interface Source {
 function takeCensus(sources: readonly Source[]): Census {
   const calls: ProbeCall[] = [];
   const transactionCallbacks: Site[] = [];
+  const filesCensused: string[] = [];
 
   for (const { file, text } of sources) {
+    // Recorded here, by the loop that consumes the source, and not off the
+    // `sources` parameter before it: there is then no step between what this
+    // list says was read and what was read.
+    filesCensused.push(file);
+
     // The real path is the file name, so `.tsx` parses as TSX rather than as
     // TypeScript reading `<Foo>` as a type assertion. `true` sets parent
     // pointers, which `enclosingTransaction` walks.
@@ -371,7 +385,7 @@ function takeCensus(sources: readonly Source[]): Census {
     ts.forEachChild(source, visit);
   }
 
-  return { calls, transactionCallbacks };
+  return { calls, transactionCallbacks, filesCensused };
 }
 
 /** Sorted the way a reader would open them, so a failure list is stable. */
@@ -442,21 +456,29 @@ describe('every probe call sits outside every transaction callback', () => {
     // of the repository.
     //
     // `areasUnderSrc` reads the directory itself rather than calling the walk,
-    // so a narrowing that empties an area disagrees with it wherever in the
-    // walk it sits — inside the shared `typeScriptUnderSrc` included. The
-    // granularity is the area and no finer, as this test's name says: a
-    // narrowing leaving an area even one SEARCHED production file passes here.
-    // Searched, not merely present: `reached` is what `searchScope` yields, so
-    // an area left holding nothing that survives its filter does go red.
+    // so a narrowing that empties an area disagrees with it wherever the
+    // narrowing sits: inside the shared `typeScriptUnderSrc`, inside
+    // `searchScope`, or between the walk and `takeCensus` at `censusOfTree`'s
+    // call site. That last one is why `reached` is the census's own
+    // `filesCensused` and not a second call to the walk — the census names the
+    // files it consumed, so nothing narrowing it leaves this side whole.
     //
-    // Both directions, so a failure names which side moved. The second is
-    // empty by construction — `areasUnderSrc` applies a strict subset of
-    // `searchScope`'s rules to the same tree, so an area the census reaches is
-    // always one it requires — and that is what makes it worth asserting: it
-    // costs nothing until `areasUnderSrc` itself narrows, and a narrowing
-    // there shrinks the very difference the first direction asserts empty.
+    // The granularity is the area and no finer, as this test's name says: a
+    // narrowing leaving an area even one CENSUSED production file passes here.
+    // Censused, not merely present: an area left holding nothing the census
+    // consumed does go red.
+    //
+    // Both directions, so a failure names which side moved. The second stays
+    // empty while the census consumes a subset of `searchScope`, since
+    // `areasUnderSrc` applies a strict subset of `searchScope`'s rules to the
+    // same tree — so an area the census reaches is one it requires. What can
+    // now fire it, and could not while this side re-read the walk, is a census
+    // consuming a file `areasUnderSrc` would not require — a source list
+    // widened past the walk. Short of that it costs nothing until
+    // `areasUnderSrc` itself narrows, and a narrowing there shrinks the very
+    // difference the first direction asserts empty.
     const required = areasUnderSrc();
-    const reached = new Set(searchScope().map(areaOf));
+    const reached = new Set(censusOfTree().filesCensused.map(areaOf));
     expect({
       areasTheCensusMisses: [...required].filter((area) => !reached.has(area)).sort(),
       areasTheGuardMisses: [...reached].filter((area) => !required.has(area)).sort(),
