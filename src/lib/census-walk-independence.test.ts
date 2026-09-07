@@ -45,11 +45,11 @@
  * one hides the refactor this file exists to catch. Two narrower gaps are
  * accepted rather than closed (#492): `import x = SomeNamespace.Member`, the
  * internal-namespace form of an import-equals declaration (as against the
- * `require(...)` form fixtured below), is legacy syntax with no use anywhere
- * in this codebase; and a walk hoisted into a `namespace N { export function
- * walk() {...} }` and called as `N.walk()` resolves to no binding at all, but
- * degrades loud rather than silent — the body then makes no `readdirSync`
- * call, and the missing-walk arm above already reports that.
+ * `require(...)` form fixtured below), is legacy TypeScript syntax a hoisted
+ * walk is unlikely to use; and a walk hoisted into a `namespace N { export
+ * function walk() {...} }` and called as `N.walk()` resolves to no binding at
+ * all, but degrades loud rather than silent — the body then makes no
+ * `readdirSync` call, and the missing-walk arm above already reports that.
  *
  * A file that parses is assumed. `ts.createSourceFile` does not throw and no
  * diagnostics are read here, so a syntax error that swallows a call reports
