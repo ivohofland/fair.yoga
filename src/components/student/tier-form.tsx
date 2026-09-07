@@ -25,9 +25,10 @@ interface TierBody {
 }
 
 /**
- * #136. Reverse pin only — one key, and this form shares
- * `updateStudentSchema` with `notifications-form.tsx`. See that file for why
- * there is no forward pin.
+ * #136. Reverse pin only: `updateStudentSchema` is `.strict()`, so a key
+ * this form sent that the schema had dropped would 400 at runtime, and this
+ * catches it at compile time instead. No forward pin — the schema carries
+ * fields this form has no business rendering.
  */
 const _formHasNoExtras: NoneOf<Exclude<keyof TierBody, keyof UpdateStudentWire>> = true;
 void _formHasNoExtras;

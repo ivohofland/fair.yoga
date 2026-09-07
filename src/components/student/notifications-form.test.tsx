@@ -3,13 +3,13 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { NotificationsForm } from './notifications-form';
 
 /**
- * #136. This form's reverse pin proves its two keys —
- * `emailNotifications` and `reminderPref` — are ones `updateStudentSchema`
- * accepts. It deliberately has no forward pin: the schema has eight keys,
- * `tier-form.tsx` sends a third, and five have no student-facing input
- * anywhere. A pin cannot see what actually reaches the API, so this test
- * holds that: the exact key set sent, and that all four reminder options —
- * now produced from `REMINDER_OPTIONS` instead of inline JSX — still render.
+ * #136. The reverse pin in `notifications-form.tsx` proves its keys are ones
+ * `updateStudentSchema` accepts, but cannot see what reaches the API. That is
+ * what these tests hold: the exact key set sent, and that all four reminder
+ * options — produced from `REMINDER_OPTIONS` rather than inline JSX — render.
+ *
+ * No forward pin on the form: the schema carries fields no student-facing
+ * input renders, and a forward pin would name them.
  *
  * Nothing fetches on mount, so the save click is the first (and only) call.
  */

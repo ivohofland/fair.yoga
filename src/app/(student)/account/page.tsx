@@ -17,7 +17,8 @@ const SETTINGS_ITEMS = [
   { href: '/account/data', label: 'Data & deletion' },
 ];
 
-// The student settings index: personal details + one row per area, teacher-settings pattern.
+// The student settings index: personal details inline, then one row per
+// settings area, then sign-in.
 export default async function StudentSettingsPage() {
   const session = await getSession();
   if (!session?.studentId) redirectNonStudent(session);
