@@ -32,14 +32,20 @@ import { ownedInvitation, NOT_FOUND, DECLINED } from './shared';
  *
  * The third branch — present, not gone, not declined — IS reachable, and by
  * the one mechanism this domain is built around. `resolveInvitationOnLink`
- * (`services/link-consent.ts`) flips `status: { not: 'accepted' }` to
- * `accepted`, declined rows included: booking a class or joining a waitlist is
- * how a student takes their own decline back, and CLAUDE.md calls it the route
- * back. So the sequence is ordinary, not anomalous — the teacher's edit passes
- * its pre-check on a `pending` row, the invitee declines, the CAS matches
- * nothing, and the invitee then books. `info`, not `warn`, for that reason:
- * nothing is wrong when this fires, and the honest answer to the teacher is
- * that the row moved, not a story about a refusal.
+ * (`services/link-consent.ts`) returns a `declined` row to `accepted` on any
+ * booking or waitlist join by that student, unconditionally — unlike the
+ * `pending` half of the same rule, which turns on whether the act also created
+ * the roster link (`docs/data-model.md`, Invitation). Unconditional because
+ * booking a class or joining a waitlist is how a student takes their own
+ * decline back, and CLAUDE.md calls it the route back. That is the half this
+ * branch needs, and it is the whole of it: a CAS scoped `{ not: 'declined' }`
+ * can miss only on a row that went declined or vanished, so a re-read finding
+ * neither means a decline was taken back underneath it. The sequence is
+ * ordinary, not anomalous — the teacher's edit passes its pre-check on a
+ * `pending` row, the invitee declines, the CAS matches nothing, and the
+ * invitee then books. `info`, not `warn`, for that reason: nothing is wrong
+ * when this fires, and the honest answer to the teacher is that the row moved,
+ * not a story about a refusal.
  */
 async function casMatchedNothing(teacherId: string, id: string) {
   // Bounded: a throw here would turn a deterministic 409 into a 500, on the

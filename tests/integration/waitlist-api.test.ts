@@ -283,7 +283,7 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
   // — joining is the student's own act aimed at one named teacher, where a
   // promotion fires at a moment the teacher picks. Both fixtures below write
   // their `waiting` entry directly, so what these cases exercise is the
-  // `teacherStudent.upsert` `promoteNext`/`claimSpot` keep as a backstop for
+  // `linkTeacherStudent` call `promoteNext`/`claimSpot` keep as a backstop for
   // rows the join never touched: entries written before that change, or by
   // hand. The consequence is the same either way, and it is the third case
   // here: without the link, PUT /privacy answers TEACHER_NOT_LINKED and the
