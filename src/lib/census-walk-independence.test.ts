@@ -38,7 +38,7 @@
  *
  * WHICH FILES, discovered rather than written down: every `src/lib/*.test.ts`
  * declaring `areasUnderSrc` at module level, and separately, every
- * `src/lib/*.test.ts` declaring a `reached` variable anywhere in its text — a
+ * `src/lib/*.test.ts` declaring a `reached` variable anywhere in its syntax tree — a
  * third census file joins either discovery on its own, or both.
  * `KNOWN_CENSUS_FILES` is the floor under both, because a discovery finding
  * nothing would otherwise certify nothing.
@@ -75,11 +75,17 @@
  * in prose, so neither census's call detector has anything to match. It does
  * not spell the db-locks marker either, which that census treats as a
  * reserved token wherever it occurs in a file it searches. It likewise does
- * not discover itself: the discovery below reads module-level declarations,
- * and this file declares no function or function-valued variable named
- * `areasUnderSrc` — the name appears only in this docblock's prose, as the
- * `GUARD` constant, and inside fixture source strings that are parsed as
- * separate synthetic files, never as this one.
+ * not discover itself, on either of its own two invariants: the `GUARD`
+ * discovery reads module-level declarations only, and this file declares no
+ * function or function-valued variable named `areasUnderSrc`; the `REACHED`
+ * discovery (#492) is not scoped that way — it walks every node in every
+ * scope looking for a `VariableDeclaration` named `reached` — and this file
+ * declares no such variable as real code, at any depth. Both names appear
+ * only in this docblock's prose, as the `GUARD`/`REACHED` constants, and
+ * inside fixture source strings that are parsed as separate synthetic files,
+ * never as this one — a real `reached` local written anywhere in this file
+ * would join its own discovered set and redden its own assertion, which is a
+ * thinner margin than `GUARD`'s and worth remembering before adding one.
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -104,12 +110,14 @@ const REACHED = 'reached';
 const CENSUS = 'censusOfTree';
 
 /**
- * The census files that declare `GUARD` today. Not the list this file checks —
- * that is discovered — but the floor under it: discovery going stale or empty
+ * The census files that declare `GUARD` — and, in the discovery below,
+ * `REACHED` — today. Not either list this file checks — those are
+ * discovered — but the floor under both: discovery going stale or empty
  * fails here by name rather than silently checking nothing.
  *
- * A file renaming `GUARD`, or losing it, drops out of discovery and is reported
- * here rather than as "no violations in a function that was never located".
+ * A file renaming `GUARD` or `REACHED`, or losing either, drops out of the
+ * corresponding discovery and is reported here rather than as "no violations
+ * in a function that was never located".
  */
 const KNOWN_CENSUS_FILES: readonly string[] = [
   'src/lib/db-locks-verdict-census.test.ts',
@@ -247,25 +255,26 @@ function guardIn(source: ts.SourceFile): ts.Node | undefined {
 }
 
 /**
- * The initializer of the file's one `const reached = …;` declaration, found
- * by a full recursive walk rather than `guardIn`'s module-level-only one —
- * `reached` lives inside the scope-reach assertion's `it(...)` callback, not
- * at module level. `undefined`, as against finding one with a clean
- * initializer, when the file declares no such name — the same distinction
- * `guardIn`'s absence keeps for `independenceOf`.
+ * The initializers of every `const reached = …;` declaration in the file,
+ * found by a full recursive walk rather than `guardIn`'s module-level-only
+ * one — `reached` lives inside the scope-reach assertion's `it(...)`
+ * callback, not at module level. Every match, not just the first: two
+ * `reached` declarations in sibling `it(...)` callbacks are legal TypeScript
+ * (unlike two module-level `GUARD` declarations, which `tsc` itself would
+ * refuse), so a second one needs its own check — collecting only the first
+ * would leave it silently unguarded, the exact failure this file exists to
+ * make impossible.
  */
-function reachedIn(source: ts.SourceFile): ts.Expression | undefined {
-  let found: ts.Expression | undefined;
+function reachedIn(source: ts.SourceFile): readonly ts.Expression[] {
+  const found: ts.Expression[] = [];
   const visit = (node: ts.Node): void => {
-    if (found !== undefined) return;
     if (
       ts.isVariableDeclaration(node) &&
       ts.isIdentifier(node.name) &&
       node.name.text === REACHED &&
       node.initializer !== undefined
     ) {
-      found = node.initializer;
-      return;
+      found.push(node.initializer);
     }
     ts.forEachChild(node, visit);
   };
@@ -313,48 +322,54 @@ function independenceOf(file: string, text: string): readonly string[] | undefin
 }
 
 /**
- * What `REACHED`'s initializer reaches apart from `CENSUS`, with a
- * missing-`CENSUS`-call finding last — the same two-direction shape
- * `independenceOf` uses for `GUARD`, reusing `rootOf` and
- * `moduleLevelBindings` so a call reaching a forbidden name through a local
- * alias (`const s = searchScope; …s()…`) is caught the same way it already is
- * for `GUARD`.
+ * What each of `REACHED`'s initializers reaches apart from `CENSUS`, with
+ * each initializer's own missing-`CENSUS`-call finding last in its group —
+ * the same two-direction shape `independenceOf` uses for `GUARD`, reusing
+ * `rootOf` and `moduleLevelBindings` so a call reaching a forbidden name
+ * through a local alias (`const s = searchScope; …s()…`) is caught the same
+ * way it already is for `GUARD`. Unlike `independenceOf`'s node:-origin
+ * whitelist, this one allows `CENSUS` by name alone regardless of where it
+ * comes from — sufficient here because `censusOfTree` is always the file's
+ * own declaration, never imported.
  *
- * `undefined`, as against an empty list, when the file declares no `REACHED`.
+ * `undefined`, as against an empty array of findings, when the file declares
+ * no `REACHED` at all — not merely one whose initializers are all clean.
  */
 function reachedIndependenceOf(file: string, text: string): readonly string[] | undefined {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-  const initializer = reachedIn(source);
-  if (initializer === undefined) return undefined;
+  const initializers = reachedIn(source);
+  if (initializers.length === 0) return undefined;
 
   const bindings = moduleLevelBindings(source);
   const findings: string[] = [];
-  let sawCensus = false;
 
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node)) {
-      const callee = unwrap(node.expression);
-      const rootName = rootOf(callee);
-      if (rootName === CENSUS) sawCensus = true;
-      const binding = rootName === undefined ? undefined : bindings.get(rootName);
-      if (
-        rootName !== undefined &&
-        rootName !== CENSUS &&
-        binding !== undefined &&
-        !binding.fromNodeBuiltin
-      ) {
-        const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
-        const calleeText = callee.getText(source).replace(/\s+/g, ' ');
-        findings.push(
-          `${file}:${line} ${REACHED} calls ${calleeText} — ${rootName} ${binding.origin}`,
-        );
+  for (const initializer of initializers) {
+    let sawCensus = false;
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const callee = unwrap(node.expression);
+        const rootName = rootOf(callee);
+        if (rootName === CENSUS) sawCensus = true;
+        const binding = rootName === undefined ? undefined : bindings.get(rootName);
+        if (
+          rootName !== undefined &&
+          rootName !== CENSUS &&
+          binding !== undefined &&
+          !binding.fromNodeBuiltin
+        ) {
+          const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+          const calleeText = callee.getText(source).replace(/\s+/g, ' ');
+          findings.push(
+            `${file}:${line} ${REACHED} calls ${calleeText} — ${rootName} ${binding.origin}`,
+          );
+        }
       }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(initializer);
+      ts.forEachChild(node, visit);
+    };
+    visit(initializer);
+    if (!sawCensus) findings.push(`${file} ${REACHED} makes no ${CENSUS} call`);
+  }
 
-  if (!sawCensus) findings.push(`${file} ${REACHED} makes no ${CENSUS} call`);
   return findings;
 }
 
@@ -591,11 +606,11 @@ ${OWN_WALK}`;
   });
 
   it('reports a call rooting in a `new` expression', () => {
-    // `rootOf` walked PropertyAccessExpression/ElementAccessExpression chains
-    // looking for an Identifier root. A NewExpression broke that chain — it is
-    // neither of those two kinds — so `new Walker().walk()` used to stop there
-    // and return undefined: a walk reached through a class instance was
-    // invisible however the class itself was bound.
+    // `rootOf` must descend through a `NewExpression`, not only
+    // PropertyAccessExpression/ElementAccessExpression chains: without that
+    // disjunct `new Walker().walk()` roots in no identifier, and a walk
+    // reached through a class instance is invisible however the class itself
+    // is bound.
     const preamble = `
 import { Walker } from './walker';
 `;
@@ -609,11 +624,11 @@ import { Walker } from './walker';
   });
 
   it('reports a call reaching through a default import', () => {
-    // `declare(clause.name, binding)` binds a default import's local name —
-    // exercised until now only by `import path from 'node:path'` in the clean
-    // fixtures above, which never has to distinguish "bound and clean" from
-    // "not bound at all". A default-imported walk is exactly as reachable as
-    // a named one.
+    // `declare(clause.name, binding)` binds a default import's local name.
+    // The clean fixtures above import only `path from 'node:path'`, which
+    // never has to distinguish "bound and clean" from "not bound at all" —
+    // this pins the positive case: a default-imported walk is exactly as
+    // reachable as a named one.
     const preamble = `
 import walk from './census-walk';
 `;
@@ -627,11 +642,11 @@ import walk from './census-walk';
   });
 
   it('reports a call rooting in a module-level class declaration', () => {
-    // The other declaration form `moduleLevelBindings` must cover: a class (or
-    // enum) declared at module level, called through a static method.
-    // `moduleLevelBindings` binds it via the same `isFunctionDeclaration ||
-    // isClassDeclaration || isEnumDeclaration` disjunct that already binds a
-    // plain `function` statement — untested until now for the class arm.
+    // The other declaration form `moduleLevelBindings` must cover: a class
+    // (or enum) declared at module level, called through a static method —
+    // the same `isFunctionDeclaration || isClassDeclaration ||
+    // isEnumDeclaration` disjunct that binds a plain `function` statement
+    // also binds this.
     const preamble = `
 class CensusWalk {
   static walk(): string[] {
@@ -709,6 +724,29 @@ const s = searchScope;
 `;
     expect(reachedIndependenceOf(FIXTURE, reachedSource('new Set(s().map(areaOf))', preamble))).toEqual([
       `${FIXTURE}:16 ${REACHED} calls s — s is declared at module level`,
+      `${FIXTURE} ${REACHED} makes no ${CENSUS} call`,
+    ]);
+  });
+
+  it('reports a second `reached` declaration independently of the first', () => {
+    // Two `reached` declarations in sibling `it(...)` callbacks are legal
+    // TypeScript — unlike two module-level `GUARD` declarations, which `tsc`
+    // itself would refuse — so a second one needs its own check. This pins
+    // `reachedIn` collecting every match rather than only the first: the
+    // clean first declaration contributes nothing, and the dirty second one
+    // is checked on its own.
+    const source = `${REACHED_PREAMBLE}
+describe('x', () => {
+  it('first', () => {
+    const reached = new Set(censusOfTree().filesCensused.map(areaOf));
+  });
+  it('second', () => {
+    const reached = new Set(searchScope().map(areaOf));
+  });
+});
+`;
+    expect(reachedIndependenceOf(FIXTURE, source)).toEqual([
+      `${FIXTURE}:17 ${REACHED} calls searchScope — searchScope is declared at module level`,
       `${FIXTURE} ${REACHED} makes no ${CENSUS} call`,
     ]);
   });
