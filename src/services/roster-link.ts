@@ -17,13 +17,20 @@ import type { Prisma } from '@prisma/client';
  * CONFLICT` that relies on one existing — so dropping or renaming the key
  * fails this file to compile instead of quietly leaving an unguarded insert.
  *
- * Returns nothing on purpose: whether this call was the one that inserted is
- * not a distinction any caller has a use for. They all want the link to
- * exist afterwards, which it does either way.
+ * Returns whether this call inserted the row: `true` when this was the first
+ * link between the pair, `false` when it already stood. The value comes
+ * straight off the single `ON CONFLICT DO NOTHING` statement above —
+ * `createMany`'s own `count` is 1 on insert, 0 on conflict — so it is
+ * race-free the same way the write is: no caller has to re-read the table to
+ * learn which outcome its own statement got. `resolveInvitationOnLink`
+ * (`services/link-consent.ts`) is the caller that needs the distinction, to
+ * tell a booking that created the `TeacherStudent` link apart from one that
+ * found it already there.
  */
 export async function linkTeacherStudent(
   tx: Prisma.TransactionClient,
   pair: Prisma.TeacherStudentTeacherIdStudentIdCompoundUniqueInput,
-): Promise<void> {
-  await tx.teacherStudent.createMany({ data: [pair], skipDuplicates: true });
+): Promise<boolean> {
+  const { count } = await tx.teacherStudent.createMany({ data: [pair], skipDuplicates: true });
+  return count === 1;
 }
