@@ -230,6 +230,40 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     }
   });
 
+  it('sends nothing at all to a student whose roster link is archived', async () => {
+    // Sibling of the #412 case above: this guard's `teacherStudents` select
+    // is unfiltered by `isArchived`, same as `rosterLinkState`'s (#424's
+    // tripwire, `services/invitations.ts`), so an archived link must still
+    // short-circuit both the in-app notification and the direct-email
+    // fallback below it.
+    const email = `notify-archived-${suffix}@test.local`;
+    let studentId: string | undefined;
+    try {
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Notify', lastName: 'Archived', email,
+          teacherStudents: { create: { teacherId, isArchived: true } },
+        },
+        select: { id: true },
+      });
+      studentId = student.id;
+
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
+
+      const notifications = await prisma.notification.findMany({
+        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
+      });
+      expect(notifications).toHaveLength(0);
+      expect(sendMock).not.toHaveBeenCalled();
+    } finally {
+      if (studentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId } });
+        await prisma.notification.deleteMany({ where: { recipientId: studentId } });
+        await prisma.student.delete({ where: { id: studentId } });
+      }
+    }
+  });
+
   it('still notifies when the student is linked to a DIFFERENT teacher, not the caller', async () => {
     // Two independent reviewers each manually deleted `where: { teacherId }`
     // from this guard's `teacherStudents` select and found the entire unit

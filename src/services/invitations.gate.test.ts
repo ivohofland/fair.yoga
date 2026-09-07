@@ -109,7 +109,7 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
   async function seedLinked(
     label: string,
     privacy: { shareEmail: boolean } | null,
-    opts: { linked?: boolean } = {},
+    opts: { linked?: boolean; archived?: boolean } = {},
   ): Promise<string> {
     const email = `gate-${label}-${suffix}@test.local`;
     const student = await prisma.student.create({
@@ -117,7 +117,9 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
         firstName: 'Gate', lastName: label, email,
         claimedAt: new Date(),
         account: { create: { email } },
-        ...(opts.linked === false ? {} : { teacherStudents: { create: { teacherId } } }),
+        ...(opts.linked === false
+          ? {}
+          : { teacherStudents: { create: { teacherId, isArchived: opts.archived ?? false } } }),
         ...(privacy ? { studentPrivacy: { create: { teacherId, ...privacy } } } : {}),
       },
       select: { id: true, accountId: true },
@@ -168,6 +170,23 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
 
     expect(result).toEqual({ ok: false, reason: 'ALREADY_LINKED' });
     // A refusal, not a refusal-shaped success.
+    expect(
+      await prisma.invitation.findUnique({ where: { teacherId_email: { teacherId, email } } }),
+    ).toBeNull();
+  });
+
+  it('still answers ALREADY_LINKED when the roster link is archived', async () => {
+    // `shareEmail: true`, not `false`/`null`: this turns the assertion on
+    // `linked` alone. With `mayBeTold` withheld, an archived link that failed
+    // to count as `linked` would fall through to the same ordinary success as
+    // an unshared one — this test would pass either way, and catch nothing.
+    const email = await seedLinked('archived', { shareEmail: true }, { archived: true });
+
+    const result = await inviteContact(prisma, {
+      teacherId, email, firstName: 'Already', lastName: 'Mine',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'ALREADY_LINKED' });
     expect(
       await prisma.invitation.findUnique({ where: { teacherId_email: { teacherId, email } } }),
     ).toBeNull();
@@ -311,11 +330,11 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
 
   /**
    * `rosterLinkState`'s `log.warn` is the only runtime record that the #419
-   * bypass fired, and it is not redundant with `bypassesPrivacy`'s: that one
-   * needs the student to be PROJECTED, and `GET /api/students` lists only
-   * `isArchived: false` links while this gate reads links unfiltered. An
-   * archived unclaimed contact is therefore bypassed here and logged nowhere
-   * else.
+   * bypass fired at THIS gate, and it is not redundant with
+   * `bypassesPrivacy`'s: that one needs the student to be PROJECTED, and this
+   * gate is not a projection — see `rosterLinkState`'s own tripwire comment
+   * (`services/invitations.ts`) for why that difference means both need their
+   * own warn.
    *
    * Both directions, for the reason `student-visibility.test.ts` gives for
    * its twin: a warn that fired unconditionally would satisfy a firing test
