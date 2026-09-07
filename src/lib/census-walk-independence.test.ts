@@ -1,5 +1,5 @@
 /**
- * THE SCOPE-REACH GUARDS MUST KEEP READING THE TREE FOR THEMSELVES (#489).
+ * THE SCOPE-REACH GUARDS MUST KEEP READING THE TREE FOR THEMSELVES (#489, #492).
  *
  * A structural census under `src/lib` walks `src/`, censuses what it read, and
  * then checks that it reached every area of the tree. The checking side does
@@ -27,10 +27,21 @@
  * walk by name", which a rename defeats and which the refactor actually feared
  * — hoisting the walk into another module — walks straight past.
  *
+ * WHAT IT ALSO ASSERTS (#492). Each census file's `reached` — what the
+ * scope-reach assertion compares `areasUnderSrc` against — must be built from
+ * the census's own consumed-file list. Its initializer (the file's one
+ * `const reached = …` declaration, wherever it sits — inside the assertion's
+ * `it(...)` callback, not at module level) must call `censusOfTree`, and any
+ * other call rooting in a module-level binding is a finding: that is what
+ * catches a revert to a second, independent read of `searchScope()` or
+ * `typeScriptUnderSrc()`, aliased or not.
+ *
  * WHICH FILES, discovered rather than written down: every `src/lib/*.test.ts`
- * declaring `areasUnderSrc` at module level. A third census file joins on its
- * own. `KNOWN_CENSUS_FILES` is the floor under that discovery, because a
- * discovery finding nothing would otherwise certify nothing.
+ * declaring `areasUnderSrc` at module level, and separately, every
+ * `src/lib/*.test.ts` declaring a `reached` variable anywhere in its text — a
+ * third census file joins either discovery on its own, or both.
+ * `KNOWN_CENSUS_FILES` is the floor under both, because a discovery finding
+ * nothing would otherwise certify nothing.
  *
  * WHAT IT DOES NOT SEE, so a call landing there is nobody's failure here. A
  * callee rooting in a parameter is out of scope, and so is a non-identifier
@@ -49,7 +60,10 @@
  * walk is unlikely to use; and a walk hoisted into a `namespace N { export
  * function walk() {...} }` and called as `N.walk()` resolves to no binding at
  * all, but degrades loud rather than silent — the body then makes no
- * `readdirSync` call, and the missing-walk arm above already reports that.
+ * `readdirSync` call, and the missing-walk arm above already reports that. The
+ * `reached` tether below reuses this same root resolution, so it shares every
+ * blind spot above: a callee rooting in a parameter or a function-local, and
+ * the two narrower accepted gaps, apply there too.
  *
  * A file that parses is assumed. `ts.createSourceFile` does not throw and no
  * diagnostics are read here, so a syntax error that swallows a call reports
@@ -82,6 +96,12 @@ const GUARD = 'areasUnderSrc';
 
 /** The call its body must still make, so an emptied-out guard is not "clean". */
 const WALK = 'readdirSync' satisfies keyof typeof import('node:fs');
+
+/** The local this file's second invariant holds to independence (#492). */
+const REACHED = 'reached';
+
+/** The one call `REACHED`'s initializer must make — the census's own consumed list. */
+const CENSUS = 'censusOfTree';
 
 /**
  * The census files that declare `GUARD` today. Not the list this file checks —
@@ -227,6 +247,33 @@ function guardIn(source: ts.SourceFile): ts.Node | undefined {
 }
 
 /**
+ * The initializer of the file's one `const reached = …;` declaration, found
+ * by a full recursive walk rather than `guardIn`'s module-level-only one —
+ * `reached` lives inside the scope-reach assertion's `it(...)` callback, not
+ * at module level. `undefined`, as against finding one with a clean
+ * initializer, when the file declares no such name — the same distinction
+ * `guardIn`'s absence keeps for `independenceOf`.
+ */
+function reachedIn(source: ts.SourceFile): ts.Expression | undefined {
+  let found: ts.Expression | undefined;
+  const visit = (node: ts.Node): void => {
+    if (found !== undefined) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === REACHED &&
+      node.initializer !== undefined
+    ) {
+      found = node.initializer;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+/**
  * What the guard in one source reaches past `node:`, in source order, with the
  * missing-walk finding last.
  *
@@ -265,6 +312,52 @@ function independenceOf(file: string, text: string): readonly string[] | undefin
   return findings;
 }
 
+/**
+ * What `REACHED`'s initializer reaches apart from `CENSUS`, with a
+ * missing-`CENSUS`-call finding last — the same two-direction shape
+ * `independenceOf` uses for `GUARD`, reusing `rootOf` and
+ * `moduleLevelBindings` so a call reaching a forbidden name through a local
+ * alias (`const s = searchScope; …s()…`) is caught the same way it already is
+ * for `GUARD`.
+ *
+ * `undefined`, as against an empty list, when the file declares no `REACHED`.
+ */
+function reachedIndependenceOf(file: string, text: string): readonly string[] | undefined {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const initializer = reachedIn(source);
+  if (initializer === undefined) return undefined;
+
+  const bindings = moduleLevelBindings(source);
+  const findings: string[] = [];
+  let sawCensus = false;
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = unwrap(node.expression);
+      const rootName = rootOf(callee);
+      if (rootName === CENSUS) sawCensus = true;
+      const binding = rootName === undefined ? undefined : bindings.get(rootName);
+      if (
+        rootName !== undefined &&
+        rootName !== CENSUS &&
+        binding !== undefined &&
+        !binding.fromNodeBuiltin
+      ) {
+        const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+        const calleeText = callee.getText(source).replace(/\s+/g, ' ');
+        findings.push(
+          `${file}:${line} ${REACHED} calls ${calleeText} — ${rootName} ${binding.origin}`,
+        );
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(initializer);
+
+  if (!sawCensus) findings.push(`${file} ${REACHED} makes no ${CENSUS} call`);
+  return findings;
+}
+
 /** One discovered census file and what its guard reaches. */
 interface Checked {
   readonly file: string;
@@ -288,6 +381,24 @@ function censusFiles(): readonly Checked[] {
     }));
 }
 
+/**
+ * Every `*.test.ts` directly under `CENSUS_DIR` that declares `REACHED`, with
+ * what its initializer reaches. Memoised for the same reason `censusFiles` is:
+ * both assertions below read it, and the second must report on the same set
+ * the first put a floor under.
+ */
+let reachedChecked: readonly Checked[] | undefined;
+function reachedCensusFiles(): readonly Checked[] {
+  return (reachedChecked ??= readdirSync(path.join(root, CENSUS_DIR), { encoding: 'utf8' })
+    .filter((entry) => entry.endsWith('.test.ts'))
+    .map((entry) => `${CENSUS_DIR}/${entry}`)
+    .sort()
+    .flatMap((file) => {
+      const findings = reachedIndependenceOf(file, readFileSync(path.join(root, file), 'utf8'));
+      return findings === undefined ? [] : [{ file, findings }];
+    }));
+}
+
 describe('every scope-reach guard reads the tree for itself', () => {
   it('discovers the census files that declare the guard', () => {
     // First, because the assertion after it passes vacuously on an empty set:
@@ -306,6 +417,22 @@ describe('every scope-reach guard reads the tree for itself', () => {
 
   it('finds no guard reaching past a node: builtin', () => {
     expect(censusFiles().flatMap((entry) => entry.findings)).toEqual([]);
+  });
+});
+
+describe('every scope-reach guard derives what it reached from the census, not a second walk', () => {
+  it('discovers the census files that declare `reached`', () => {
+    // Same shape as the guard's own discovery test, and for the same reason:
+    // the assertion after this one passes vacuously on an empty set.
+    const discovered = reachedCensusFiles().map((entry) => entry.file);
+    expect({
+      knownFilesNotDeclaringIt: KNOWN_CENSUS_FILES.filter((file) => !discovered.includes(file)),
+      atLeastTwoDeclareIt: discovered.length >= 2,
+    }).toEqual({ knownFilesNotDeclaringIt: [], atLeastTwoDeclareIt: true });
+  });
+
+  it('finds no `reached` reaching past the census itself', () => {
+    expect(reachedCensusFiles().flatMap((entry) => entry.findings)).toEqual([]);
   });
 });
 
@@ -526,5 +653,75 @@ class CensusWalk {
     // the discovered set rather than joining it with an empty finding list,
     // and the floor assertion is what then reports it.
     expect(independenceOf(FIXTURE, PREAMBLE)).toBeUndefined();
+  });
+});
+
+/**
+ * The `reached` rule above, against sources this repository does not
+ * contain. Parsed the same way `independenceOf`'s own fixtures are, and for
+ * the same reason: the two real census files hold one shape each — the
+ * healthy one — so a predicate that has never reported anything here is
+ * indistinguishable from one that cannot.
+ */
+const REACHED_PREAMBLE = `
+function censusOfTree() {
+  return { filesCensused: [] as string[] };
+}
+function areaOf(file: string): string {
+  return file;
+}
+function searchScope(): string[] {
+  return [];
+}
+`;
+
+/** Wraps a `reached` initializer the way the real files' `it(...)` callback does. */
+function reachedSource(initializer: string, preamble = REACHED_PREAMBLE): string {
+  return `${preamble}
+describe('x', () => {
+  it('y', () => {
+    const ${REACHED} = ${initializer};
+  });
+});
+`;
+}
+
+describe('the reached rule, against sources this repository does not contain', () => {
+  it('reports nothing for the real shape', () => {
+    expect(
+      reachedIndependenceOf(FIXTURE, reachedSource('new Set(censusOfTree().filesCensused.map(areaOf))')),
+    ).toEqual([]);
+  });
+
+  it('reports a reach into a second, independent walk', () => {
+    expect(reachedIndependenceOf(FIXTURE, reachedSource('new Set(searchScope().map(areaOf))'))).toEqual([
+      `${FIXTURE}:14 ${REACHED} calls searchScope — searchScope is declared at module level`,
+      `${FIXTURE} ${REACHED} makes no ${CENSUS} call`,
+    ]);
+  });
+
+  it('reports the same reach through a local alias', () => {
+    // The alias-following half: `rootOf` and `moduleLevelBindings` are shared
+    // with `GUARD`'s predicate, so a call reaching `searchScope` through a
+    // renamed local is exactly as visible here as it already is there.
+    const preamble = `${REACHED_PREAMBLE}
+const s = searchScope;
+`;
+    expect(reachedIndependenceOf(FIXTURE, reachedSource('new Set(s().map(areaOf))', preamble))).toEqual([
+      `${FIXTURE}:16 ${REACHED} calls s — s is declared at module level`,
+      `${FIXTURE} ${REACHED} makes no ${CENSUS} call`,
+    ]);
+  });
+
+  it('reports a missing census call with no forbidden call alongside it', () => {
+    // The two directions are separable: nothing here roots in a module-level
+    // binding at all, so only the missing-call finding fires.
+    expect(reachedIndependenceOf(FIXTURE, reachedSource('new Set([].map(areaOf))'))).toEqual([
+      `${FIXTURE} ${REACHED} makes no ${CENSUS} call`,
+    ]);
+  });
+
+  it('finds nothing at all, as against nothing wrong, where no `reached` is declared', () => {
+    expect(reachedIndependenceOf(FIXTURE, REACHED_PREAMBLE)).toBeUndefined();
   });
 });
