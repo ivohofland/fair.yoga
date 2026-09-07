@@ -1343,11 +1343,10 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
   /**
    * `waitingEntriesLeft` counts the `waiting` entries, not the queue's history.
    *
-   * Every other fixture in this describe puts exactly ONE entry on its class
-   * and always in `waiting`, which makes the count's `status` filter a no-op:
-   * dropping it entirely leaves all of them green. So the field an operator
-   * reads to decide whether a skipped class left a residual worth cleaning up
-   * had no test that could tell a live queue from a spent one.
+   * A single-status queue cannot tell those apart: against one the count's
+   * `status` filter is a no-op, so this stages a queue with both a live head
+   * and a spent entry. That is the difference between a residual an operator
+   * still has to clean up and one that is already gone.
    *
    * Two students because `WaitlistEntry` is unique on `(classId, studentId)`,
    * so one class cannot hold two entries for the same student. Both rows
@@ -1397,9 +1396,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
 
     // Both rows are still there, so `1` is the filter's doing and not the
     // `removed` row having been swept away before the count ran.
-    expect(
-      await prisma.waitlistEntry.count({ where: { classId } }),
-    ).toBe(2);
+    expect(await prisma.waitlistEntry.count({ where: { classId } })).toBe(2);
 
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ classId, waitingEntriesLeft: 1 }),
@@ -1845,7 +1842,8 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
 
   /**
    * A student holding the only seat in an open class, with one other student
-   * waiting on it, and `now` half an hour inside the broadcast window.
+   * waiting on it, a third holding a spent (`removed`) entry, and `now` half an
+   * hour inside the broadcast window.
    *
    * `target` = now + 48h30m against a HOURS_48 deadline puts `deadline` at
    * now + 30m and `cutoff` at now − 30m, so `now` falls inside
@@ -2043,6 +2041,11 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
    * operator reading it could not tell one student's lost seat from N students
    * never told about one. The window is resolved inside the hook; this asserts
    * it survives the throw.
+   *
+   * It carries a second job the name does not say: the same line's `waiting`
+   * count. The fixture stages a spent entry beside the waiting one, so a count
+   * that ignored `status` would report 2 here. Retarget this test and that
+   * goes with it.
    */
   it('names the broadcast branch when the spot-freed hook fails after erasure', async () => {
     const fixture = await makeStudentWithFreedSpot();
