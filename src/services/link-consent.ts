@@ -29,27 +29,19 @@ import { requireNormalised } from '@/lib/schemas';
  * standing beside a link that already existed is left exactly where it is. A
  * `declined` row is cleared either way, and the `TeacherBlock` with it.
  *
- * The narrowing on `pending` is a security property (#418). A teacher who
- * guesses the address of a student who is already theirs but has withheld it
- * gets an ordinary success and a real, undelivered `pending` row (#417), so
- * that answer cannot be told apart from inviting a stranger. Resolving that
- * row on the student's next ordinary booking handed the answer back one probe
- * later: an `accepted` row on a linked pair is refused `ALREADY_LINKED`, which
- * is the fact being withheld. A row this function leaves alone has no second
- * probe to leak into — `link-consent.test.ts` drives that sequence end to end,
- * through the real invite path, and fails if this condition is widened again.
+ * The narrowing on `pending` is a security property (#418), and the asymmetry
+ * with `declined` below is deliberate rather than an oversight. Both halves
+ * turn on rows this file never touches — what `inviteContact` refuses, what
+ * `unlinkTeacher` writes, which rows `DELETE /api/invitations/[id]` will
+ * remove — so the rule and its derivation live in `docs/data-model.md`
+ * (Invitation), not here.
  *
- * `declined` is unconditional, and the asymmetry is deliberate rather than an
- * oversight. `unlinkTeacher` (`services/invitations.ts`) writes the tombstone
- * and deletes the `TeacherStudent` row in one transaction, so a decline
- * implies no link at the moment it is written — and every ordinary route
- * back creates the link, which makes `linkCreatedNow` true there anyway.
- * Narrowing it would change behaviour only where the pair is linked already,
- * and there it would strand the student: linked, unblocked, and permanently
- * un-re-invitable behind a tombstone `DELETE /api/invitations/[id]` refuses
- * to remove. Reversing a decline is the escape hatch the whole decline design
- * rests on: permanent from the teacher's side, always reversible from the
- * student's.
+ * What is true of this function, and is why the condition is written the way
+ * it is: a `pending` row left alone here never becomes `accepted`, so it never
+ * reaches the refusal an `accepted` row on a linked pair gets, and the probe
+ * that was waiting on it has nothing to observe. `link-consent.test.ts` drives
+ * that sequence end to end, through the real invite path, and fails if this
+ * condition is widened again.
  *
  * Call this only from a path where the student themselves is acting toward
  * one named teacher, at this instant. Today that is `POST /api/registrations`

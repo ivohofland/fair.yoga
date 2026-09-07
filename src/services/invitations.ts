@@ -35,13 +35,14 @@ export interface InviteResult {
    * this (teacher, email) pair, or the pair is already linked and #412's gate
    * declined to say so. True otherwise. Not a detail — it is the field that
    * stops a caller from notifying on every `ok: true`. `POST /api/students`
-   * (route.ts) gates its `notifyInvitee` call (below) on `delivered ===
+   * (route.ts) gates its `deliverInvitation` call (below) on `delivered ===
    * true`; that gate is one of two things that keep this from becoming a
    * channel back to the exact person who unlinked to get away from this
-   * teacher — `notifyInvitee` re-checks both conditions itself (F3, #166
-   * review), since this value is computed once, here, and can go stale by the
-   * time a caller reads it. The invitation itself is created either way —
-   * only delivery is withheld (#166 task 6c; wired in task 8).
+   * teacher — `notifyInvitee`, which `deliverInvitation` wraps, re-checks both
+   * conditions itself (F3, #166 review), since this value is computed once,
+   * here, and can go stale by the time a caller reads it. The invitation itself
+   * is created either way — only delivery is withheld (#166 task 6c; wired in
+   * task 8).
    */
   delivered: boolean;
 }
@@ -869,7 +870,11 @@ export async function acceptInvitation(
       // for. But `resolveInvitationOnLink` (services/link-consent.ts) can
       // ALSO reach this exact row: a booking or waitlist join by this same
       // account, with this same teacher, resolves the identical invitation
-      // as a side effect of the student's own consenting act (#166) — and
+      // as a side effect of the student's own consenting act (#166). For a
+      // `pending` row that other writer resolves only when its own link
+      // write created the roster link, and this race is where that holds:
+      // the pair is unlinked until one of the two transactions commits, so
+      // whichever of them inserted the link is the one that resolved. And
       // the roster-link write above already waits for that transaction to
       // fully commit before it can proceed (measured, #181 task 1), so by
       // the time this line runs, that other writer's 'accepted' may already

@@ -2085,8 +2085,8 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   let gatedAccountId: string;
   let gatedToken: string;
 
-  // Promoted off the waitlist with a PENDING invitation — resolved through
-  // promoteNext instead of a direct booking.
+  // Promoted off the waitlist with a PENDING invitation still standing —
+  // the fixture for what a promotion does NOT do to one.
   const promoteEmail = `resolve-promote-${suffix}@test.local`;
   let promoteStudentId: string;
 
@@ -2572,7 +2572,7 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     // so the entry below is written by hand — which is both the only way left
     // to reach a promotion with no link, and exactly what a `waiting` row
     // written before that change looks like. `promoteNext` keeps its
-    // `teacherStudent.upsert` as the backstop for those rows.
+    // `linkTeacherStudent` call as the backstop for those rows.
     //
     // `pending`, seeded as the state a resolving promotion would move AWAY
     // from: a fixture already `accepted` cannot tell the two apart.
@@ -2936,7 +2936,7 @@ describe('unlinking withdraws waiting entries for the teacher (#166 F3)', () => 
   // the unlink, and the teacher — not the student — can later reach back
   // through it (cancel the other registration below → handleSpotFreed →
   // promoteNext promotes this student → the promotion's own
-  // `teacherStudent.upsert` restores the very link the unlink just deleted)
+  // `linkTeacherStudent` call restores the very link the unlink just deleted)
   // with no further action from the student at all.
   const studentEmail = `f3-student-${suffix}@test.local`;
   let studentId: string;
@@ -3074,8 +3074,8 @@ describe('unlinking withdraws waiting entries for the teacher (#166 F3)', () => 
 
     // The property this whole test exists for: the link the student severed
     // is still severed after the teacher's cancel. `promoteNext` keeps a
-    // `teacherStudent.upsert` as a backstop for linkless waiting rows, and
-    // a surviving `waiting` entry is exactly what would aim that upsert at
+    // `linkTeacherStudent` call as a backstop for linkless waiting rows, and
+    // a surviving `waiting` entry is exactly what would aim that write at
     // this pair — so the withdrawal is what stands between the teacher and
     // a roster row the student deleted.
     expect(await prisma.teacherStudent.findUnique({
