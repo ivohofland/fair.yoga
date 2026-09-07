@@ -19,7 +19,8 @@ import { POST } from './route';
  * green while the oracle #418 closed reopens. `addToWaitlist`'s twin of this
  * wiring is pinned in `waitlist.test.ts`; this side had only
  * `tests/integration/registrations-api.test.ts`, which drives the app on
- * `:3000` and so cannot run from a worktree at all.
+ * `:3000` and so cannot run in a worktree with no dev server on that port
+ * (`BASE_URL`'s own docblock in `tests/helpers.ts` covers the override).
  *
  * The `POST` handler is invoked DIRECTLY, the way `api/classes/route.test.ts`
  * established: `NextRequest` is a plain Web-standard-based class Next.js
@@ -35,7 +36,7 @@ import { POST } from './route';
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
 
-describe('POST /api/registrations — a booking by someone already on the roster (#418)', () => {
+describe('POST /api/registrations — resolveInvitationOnLink wiring (#418)', () => {
   let teacherId: string;
   let studentId: string;
   let classId: string;
@@ -43,6 +44,13 @@ describe('POST /api/registrations — a booking by someone already on the roster
   let teacherRoomId: string;
   let studentEmail: string;
   let token: string;
+  // The `linkCreatedNow: true` half of the pair below: a student the teacher
+  // has invited but never linked. `unlinked` distinguishes this fixture from
+  // `studentId`/`studentEmail`/`token` above, which stay CLAIMED and LINKED
+  // for the decoy-probe case.
+  let unlinkedStudentId: string;
+  let unlinkedStudentEmail: string;
+  let unlinkedToken: string;
   const accountIds: string[] = [];
 
   beforeAll(async () => {
@@ -121,6 +129,32 @@ describe('POST /api/registrations — a booking by someone already on the roster
     accountIds.push(studentAccountId);
 
     token = await seedSession(prisma, studentAccountId);
+
+    // CLAIMED, NOT linked — the other half of the pair. A pending invitation
+    // stands for this address, and nothing has put them on the roster yet, so
+    // their own booking below is what should create the link AND resolve it.
+    unlinkedStudentEmail = `reg-route-unlinked-${suffix}@test.local`;
+    const unlinkedStudent = await prisma.student.create({
+      data: {
+        firstName: 'Reg', lastName: 'Unlinked',
+        email: unlinkedStudentEmail, incomeTier: 3, claimedAt: new Date(),
+        account: { create: { email: unlinkedStudentEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    unlinkedStudentId = unlinkedStudent.id;
+    const unlinkedAccountId = unlinkedStudent.accountId;
+    if (!unlinkedAccountId) throw new Error('fixture: the claimed student has no account');
+    accountIds.push(unlinkedAccountId);
+
+    unlinkedToken = await seedSession(prisma, unlinkedAccountId);
+
+    await prisma.invitation.create({
+      data: {
+        teacherId, email: unlinkedStudentEmail,
+        firstName: 'Reg', lastName: 'Unlinked', status: 'pending',
+      },
+    });
   });
 
   afterAll(async () => {
@@ -134,7 +168,7 @@ describe('POST /api/registrations — a booking by someone already on the roster
     await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
     await prisma.room.deleteMany({ where: { id: roomId } });
     await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
-    await prisma.student.deleteMany({ where: { id: studentId } });
+    await prisma.student.deleteMany({ where: { id: { in: [studentId, unlinkedStudentId] } } });
     await prisma.teacher.deleteMany({ where: { id: teacherId } });
     // Last, and after both profiles: `Student.accountId` and
     // `Teacher.accountId` are plain FKs with no cascade, so an account dropped
@@ -192,5 +226,57 @@ describe('POST /api/registrations — a booking by someone already on the roster
         select: { status: true, respondedAt: true },
       }),
     ).toEqual({ status: 'pending', respondedAt: null });
+  });
+
+  /**
+   * The twin of the case above: same route, same wiring, opposite starting
+   * link state. Here the student holds a `pending` invitation but is not yet
+   * on the teacher's roster, so THIS booking is what creates the
+   * `TeacherStudent` link — and `linkCreatedNow` should therefore be `true`
+   * when the handler hands it to `resolveInvitationOnLink`. Hardcode that
+   * argument to `false` (or drop the call to `resolveInvitationOnLink`
+   * entirely) and this is the test that dies; hardcode it to `true` and the
+   * test above does. Neither is provable from one of them alone, which is why
+   * they are a pair.
+   */
+  it('creates the roster link and accepts the invitation for a first-time booker', async () => {
+    expect(
+      await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId, studentId: unlinkedStudentId } },
+      }),
+    ).toBeNull();
+    expect(
+      await prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId, email: unlinkedStudentEmail } },
+        select: { status: true, respondedAt: true },
+      }),
+    ).toEqual({ status: 'pending', respondedAt: null });
+
+    const request = new NextRequest('http://localhost:3000/api/registrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(unlinkedToken) },
+      body: JSON.stringify({ classId }),
+    });
+    const res = await POST(request);
+
+    expect(res.status).toBe(201);
+    const registration = await prisma.registration.findUnique({
+      where: { classId_studentId: { classId, studentId: unlinkedStudentId } },
+      select: { status: true },
+    });
+    expect(registration).toEqual({ status: 'registered' });
+
+    expect(
+      await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId, studentId: unlinkedStudentId } },
+      }),
+    ).not.toBeNull();
+
+    const invitation = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email: unlinkedStudentEmail } },
+      select: { status: true, respondedAt: true },
+    });
+    expect(invitation.status).toBe('accepted');
+    expect(invitation.respondedAt).not.toBeNull();
   });
 });

@@ -16,11 +16,12 @@ import { POST } from './route';
  * reads the session off the request's own cookie jar rather than the
  * request-scoped `cookies()` helper from `next/headers` — so no live Next.js
  * server is needed to exercise this handler's own logic against the real test
- * database. No other route handler in this repo is unit-tested this way yet;
- * this file exists because the alternative (the integration tier) cannot run
- * in a worktree with no dev server on `:3000` (see
- * `tests/integration/classes-api.test.ts`'s own note on this), and the race
- * below needs to actually run somewhere.
+ * database. `src/app/api/registrations/route.test.ts` (#418) is the only
+ * other route handler in this repo unit-tested this way; this file exists
+ * because the alternative (the integration tier) cannot run in a worktree
+ * with no dev server on `:3000` (`BASE_URL`'s own docblock in
+ * `tests/helpers.ts` covers the override), and the race below needs to
+ * actually run somewhere.
  */
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();

@@ -63,7 +63,7 @@ touch it: the route gates on ownership and a `declined` status only
 status check), so a teacher holding any `accepted` invitation can `PUT` its
 `email` to a guessed address and then `POST /api/students` with that same
 address. `inviteContact` falls past both early returns and meets the gate's
-second disjunct (`invitations.ts:301`), answering `ALREADY_LINKED` when the
+second disjunct (`invitations.ts:299`), answering `ALREADY_LINKED` when the
 address is linked to that teacher and an ordinary `201` when it is a stranger's.
 Two HTTP calls, no student action. This is a **pre-existing #412/#417
 residual** rather than anything this branch introduces or was scoped to fix,
@@ -94,7 +94,7 @@ rests on.
 ### Why `declined` stays unconditional
 
 Not symmetry-for-its-own-sake, and not an oversight. `unlinkTeacher`
-(`invitations.ts:1085`) writes the `declined` tombstone and deletes the
+(`invitations.ts:1083`) writes the `declined` tombstone and deletes the
 `TeacherStudent` row in **one transaction**, so `declined` implies unlinked at
 the moment it is written. Every ordinary route back — book a class, join a queue
 — therefore *creates* the link and takes the `linkCreatedNow: true` column
@@ -246,14 +246,14 @@ through `projectStudentForTeacher` → `bypassesPrivacy`
 message. So an archived unclaimed contact is logged in two places, not one.
 
 Task 3 therefore replaces that sentence in both shipped copies — the comment
-at `invitations.ts:161-167` and the gate test's own tripwire docblock — with
+at `invitations.ts:162-165` and the gate test's own tripwire docblock — with
 what the select actually holds: `teacherStudents` is unfiltered, so an
 archived link still answers `linked` here, same as a live one. The tripwire
 itself stays; what changes is the reason given for it.
 
 The gap it was really about survives untouched. Adding `isArchived: false` to
 that select (`invitations.ts:149`) leaves the whole suite green, and
-`notifyInvitee`'s roster check (`invitations.ts:555`) has the same unfiltered
+`notifyInvitee`'s roster check (`invitations.ts:558`) has the same unfiltered
 read and the same missing pin. Archiving is a CRM filing action, not an
 unlink; both guards correctly treat an archived link as still-linked, and that
 is the thing to hold down.
