@@ -66,8 +66,9 @@ describe('ContactList', () => {
   // does not filter this (only `isArchived`), so the component must. What
   // that buys is that an ANSWERED invitation stops being a contact — not
   // that a person appears on only one list: since #418 a `pending` row can
-  // stand beside a live link for good, and that person renders on both. See
-  // `ContactRow`'s docblock (`contact-list.tsx`).
+  // stand beside a live link with nothing the student does to resolve it,
+  // and that person renders on both until the teacher deletes or archives
+  // the row. See `ContactRow`'s docblock (`contact-list.tsx`).
   it('does not list an accepted invitation', async () => {
     stubInvitations([
       { id: 'inv-1', firstName: 'Lena', lastName: 'Visser', email: 'lena@example.com', status: 'pending' },

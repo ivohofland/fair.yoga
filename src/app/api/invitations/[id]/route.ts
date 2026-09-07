@@ -75,6 +75,18 @@ async function casMatchedNothing(teacherId: string, id: string) {
   );
 }
 
+/**
+ * OPEN SECURITY ISSUE: #500. This handler gates on ownership and a `declined`
+ * status, and on nothing else — in particular there is no roster-link check
+ * on the incoming `email`. A teacher holding any `accepted` invitation can
+ * therefore re-address it to an address they guessed and then re-probe with
+ * `POST /api/students`, where `inviteContact`'s `ALREADY_LINKED` disjunct
+ * answers differently for one of their own students than for a stranger.
+ * That is the #412/#417 confirmation oracle through a second door, and it is
+ * still open: #418 narrowed what a booking resolves, which closes nothing
+ * here because this path never reaches `resolveInvitationOnLink`. Read the
+ * gates below as incomplete until #500 lands.
+ */
 export const PUT = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },

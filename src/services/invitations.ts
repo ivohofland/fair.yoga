@@ -868,19 +868,19 @@ export async function acceptInvitation(
       // for. But `resolveInvitationOnLink` (services/link-consent.ts) can
       // ALSO reach this exact row: a booking or waitlist join by this same
       // account, with this same teacher, resolves the identical invitation
-      // as a side effect of the student's own consenting act (#166). For a
-      // `pending` row that other writer resolves only when its own link
-      // write created the roster link, and this race is where that holds:
-      // the pair is unlinked until one of the two transactions commits, so
-      // whichever of them inserted the link is the one that resolved. And
-      // the roster-link write above already waits for that transaction to
-      // fully commit before it can proceed (measured, #181 task 1), so by
-      // the time this line runs, that other writer's 'accepted' may already
-      // be visible. That is not a failure to report: the invitation IS
-      // accepted, which is what this call wanted too — just achieved by a
-      // different hand. Treating that case as success is what makes a stale
-      // double-tap of "Accept" idempotent instead of a 409, the same shape
-      // #197 asks for elsewhere.
+      // as a side effect of the student's own consenting act (#166) — for a
+      // `pending` row, only when that act created the roster link, which
+      // `docs/data-model.md` (Invitation) states and derives. And the
+      // roster-link write above already waits for that transaction to fully
+      // commit before it can proceed (measured, #181 task 1), so by the time
+      // this line runs, that other writer's 'accepted' may already be
+      // visible. Which of the two wrote it is not something this branch
+      // reasons about: it re-READS the row, so it is right whatever the link
+      // state was. And an 'accepted' row is not a failure to report — the
+      // invitation IS accepted, which is what this call wanted too, just
+      // achieved by a different hand. Treating that case as success is what
+      // makes a stale double-tap of "Accept" idempotent instead of a 409, the
+      // same shape #197 asks for elsewhere.
       const current = await tx.invitation.findUnique({
         where: { id: invitation.id },
         select: { status: true },
