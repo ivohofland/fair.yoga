@@ -2509,10 +2509,13 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
    * owns the rule; what this owns is the WIRING at
    * `api/registrations/route.ts` — that the booking hands
    * `resolveInvitationOnLink` what `linkTeacherStudent` actually returned.
-   * Hardcode that argument to `true` there and every other test in this file
-   * stays green, because every one of them books from an UNLINKED pair, where
-   * `true` is the right answer. This is the only fixture in the tier that is
-   * already linked when the booking lands.
+   * Hardcode that argument to `'created'` there and every other test in this
+   * file stays green, because every one of them books from an UNLINKED pair,
+   * where `'created'` is the right answer. What this fixture adds is the
+   * pairing that makes a wrong answer observable at all: already on the
+   * roster when the booking lands, AND with an `Invitation` row standing on
+   * that pair for the wrong answer to move. A linked booker alone proves
+   * nothing — there is no row to watch.
    *
    * The second probe's REASON is the assertion, not the refusal:
    * `ALREADY_INVITED` and `ALREADY_LINKED` are both `ok: false`, and only the

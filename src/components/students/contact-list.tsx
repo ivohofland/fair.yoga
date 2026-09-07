@@ -32,12 +32,14 @@ interface InvitationListResponse {
  * and nothing does: a `pending` invitation standing beside a live
  * `TeacherStudent` link no longer resolves on the student's next booking
  * (#418), so a linked student the teacher invited at an address that student
- * withheld renders here as "Invited" and in `StudentDirectory` as a student,
- * indefinitely. That double listing is a known residual of the resolution
- * rule — `docs/data-model.md` (Invitation) owns the rule itself ("What a
- * student's own act resolves"), not this rendering consequence of it. What
- * this predicate holds is narrower and still worth holding: an invitation
- * its invitee answered is history, and history is not a contact.
+ * withheld renders here as "Invited" and in `StudentDirectory` as a student.
+ * Nothing the STUDENT does clears that row — the teacher's own `DELETE` and
+ * `PATCH ?state=archived` both still take it, and are the way out. That
+ * double listing is a known residual of the resolution rule —
+ * `docs/data-model.md` (Invitation) owns the rule itself ("What a student's
+ * own act resolves"), not this rendering consequence of it. What this
+ * predicate holds is narrower and still worth holding: an invitation its
+ * invitee answered is history, and history is not a contact.
  *
  * `GET /api/invitations` does not filter this out itself — it only takes
  * `?archived`, deliberately (see the route's own comment on why it has no

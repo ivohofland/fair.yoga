@@ -73,10 +73,14 @@ not here.
 ## 2. The decision
 
 `resolveInvitationOnLink` gains one input: whether the student's act **created**
-the link, rather than finding one already there.
+the link, rather than finding one already there. It ships as a two-member
+union, `LinkOutcome` (`src/services/roster-link.ts`), returned by
+`linkTeacherStudent` and taken by `resolveInvitationOnLink` — a `boolean` on
+that parameter would accept any other boolean in scope, and the wrong `true`
+is the oracle reopening.
 
 ```
-                     linkCreatedNow: true          linkCreatedNow: false
+                     'created'                     'already-linked'
 TeacherBlock         deleted                       deleted            (unchanged)
 Invitation pending   → accepted                    left standing      (THE CHANGE)
 Invitation declined  → accepted                    → accepted         (unchanged)
@@ -93,17 +97,31 @@ rests on.
 
 ### Why `declined` stays unconditional
 
-Not symmetry-for-its-own-sake, and not an oversight. `unlinkTeacher`
-(`invitations.ts:1083`) writes the `declined` tombstone and deletes the
-`TeacherStudent` row in **one transaction**, so `declined` implies unlinked at
-the moment it is written. Every ordinary route back — book a class, join a queue
-— therefore *creates* the link and takes the `linkCreatedNow: true` column
-anyway. Narrowing `declined` would change behaviour only in states reachable by
-a `promoteNext`/`claimSpot` re-link racing an unlink, and in exactly those
-states the student would be stuck: linked, unblocked, and permanently
-un-re-invitable behind a tombstone that `DELETE /api/invitations/[id]` refuses
-to remove. Leaving `declined` alone means the change cannot regress the one
-behaviour in this function that a student's access depends on.
+Not symmetry-for-its-own-sake, and not an oversight — but not for the reason
+first written here either. That reason was "`declined` implies unlinked at the
+moment it is written", from `unlinkTeacher` (`invitations.ts:1083`) writing the
+tombstone and deleting the `TeacherStudent` row in one transaction. It is
+false: `declineInvitation` (`invitations.ts:925`) also writes `declined`, with
+no link write and no link check, so a tombstone standing beside a live link is
+a state the app itself produces.
+
+The decision survives that, and is stronger for it. Two things hold it up.
+
+**Narrowing `declined` would only strand students.** With the false premise,
+the affected population looked like a race (`promoteNext`/`claimSpot`
+re-linking around an unlink). Without it, it is anyone who declined while
+linked as well — a larger set, all of them stuck the same way: linked,
+unblocked, and permanently un-re-invitable behind a tombstone that `DELETE
+/api/invitations/[id]` refuses to remove.
+
+**And a `declined` row is not an address a teacher can write to.** Both
+writers are reached only through the invitee's own session — `DELETE
+/api/teacher-links/[teacherId]` and `POST /api/invitations/[id]/respond`, both
+`requireStudent`, both taking the student from the session and never from the
+request. A teacher cannot manufacture a `declined` row at a guessed address,
+which is what turning this half into an oracle would require. That argument
+does not depend on link state at all, so nothing about it can be falsified the
+way the first one was.
 
 ### What is deliberately not changed
 
@@ -175,11 +193,13 @@ state, and the first of them is an ordinary CRM action.**
   resolves the row itself. So only the two promotions are in question, and
   reaching either needs a `waiting` row. They abstain for different reasons,
   and `docs/data-model.md` (Invitation) is where that is settled: a promotion
-  fires at a moment the *teacher* chooses, while a claim IS the student's own
-  act at that instant (`POST /api/waitlist/claim` is `requireSession` and
-  self-only, `src/app/api/waitlist/claim/route.ts:19-24`) and abstains because
-  the join that put them in the queue already answered whatever invitation
-  state was standing. A queue join normally links *and* resolves — but not every `waiting` row
+  is never the promoted student's own act, whichever of `handleSpotFreed`'s
+  callers fired it, while a claim IS the student's own act at that instant
+  (`POST /api/waitlist/claim` is `requireSession` and self-only,
+  `src/app/api/waitlist/claim/route.ts:19-24`) and abstains on the other bar:
+  its link write can insert only where the join's own is missing — a linkless
+  `waiting` row, or one whose link a later unlink deleted — so every link a
+  claim creates is a repair, and a repair is not a fresh act of consent. A queue join normally links *and* resolves — but not every `waiting` row
   came from one, and two comments in `waitlist.ts` say so. `promoteNext`'s link
   write exists precisely to repair the ones that did not: "a `waiting` row
   written before that change, and one written by hand (fixtures, a psql
@@ -192,7 +212,8 @@ state, and the first of them is an ordinary CRM action.**
   is `pending` and genuinely delivered. Then any cancellation (`handleSpotFreed` →
   `promoteNext`) creates the link and resolves nothing. The pair is now linked
   with a `pending` row standing, and every later booking passes
-  `linkCreatedNow: false`, so it stays pending for good. The teacher sees that
+  `'already-linked'`, so nothing the student does clears it again — the
+  teacher's `DELETE` or archive is the only exit left. The teacher sees that
   person as an "Invited" contact *and* in their student directory;
   `listPendingInvitations`' already-linked exclusion (§4 of the #412 spec)
   hides the row from the student, so nobody can answer it. Both exits still
@@ -224,9 +245,32 @@ unclaimed `Student` rows rather than `waiting` ones, while `CLAUDE.md`'s Data
 Model section assumes pre-#166 rows can still be around. Either way the fix is
 the teacher's own `DELETE`, and no path here becomes an oracle.
 
-The concurrent-insert race is the same shape and equally benign: two of the
-student's own requests in flight, one inserts and resolves, the other skips. The
-invitation is resolved either way.
+**Two writers MUTATE a standing decoy, and both are outside what this branch
+touches.** The two routes above are about what leaves a decoy standing; these
+are about what happens to one afterwards. Both are pre-existing, both matter
+more now that a decoy is permanent, and both are filed as **#502** rather than
+fixed here.
+
+- `deleteStudentAccount` (`src/services/gdpr.ts`) rewrites every `Invitation`
+  row matching the erased student's address to
+  `deleted-<studentId>@deleted.invalid`, with no status or link scope. A decoy
+  is such a row. `GET /api/invitations` returns `email`, so the teacher's
+  contact list shows the rewritten address — which says the person behind that
+  guessed address erased their account.
+- `unlinkTeacher` (`src/services/invitations.ts`) flips every `Invitation` for
+  `(teacherId, email)` to `declined`, likewise unscoped by status. A decoy the
+  student never saw therefore reads as a refusal they never made — and the
+  teacher watching for a status change gets one.
+
+Neither is reachable by the teacher's own action alone, which is why they are
+follow-ups rather than a blocker: each needs the student to erase or unlink.
+
+The concurrent-insert race is the same shape and equally benign, for the two
+resolving callers: a booking and a queue join in flight together, one inserts
+and resolves, the other finds the link and skips. The invitation is resolved
+either way. `claimSpot` is not in that set — it is the student's own request
+and resolves nothing — so a claim racing a booking leaves whatever the booking
+decided, which is the same answer the booking alone would have given.
 
 ## 4. The bundled gaps
 
