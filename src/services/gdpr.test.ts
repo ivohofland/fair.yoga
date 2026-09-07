@@ -1343,10 +1343,10 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
   /**
    * `waitingEntriesLeft` counts the `waiting` entries, not the queue's history.
    *
-   * A single-status queue cannot tell those apart: against one the count's
-   * `status` filter is a no-op, so this stages a queue with both a live head
-   * and a spent entry. That is the difference between a residual an operator
-   * still has to clean up and one that is already gone.
+   * A queue that is entirely `waiting` cannot tell those apart — against one
+   * the count's `status` filter is a no-op — so this stages a queue with both
+   * a live head and a spent entry. That is the difference between a residual
+   * an operator still has to clean up and one that is already gone.
    *
    * Two students because `WaitlistEntry` is unique on `(classId, studentId)`,
    * so one class cannot hold two entries for the same student. Both rows

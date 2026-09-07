@@ -24,23 +24,43 @@ docblock are both accurate.
 Sweeping the shape rather than the line gives four sites. Re-derive with:
 
 ```
-grep -rn --include='*.ts' -B1 '\.count(' src | grep -v '\.test\.' | grep -i waitlist
+grep -rn --include='*.ts' -A1 'waitlistEntry' src | grep -v '\.test\.' | grep '\.count('
 ```
 
-Deliberately not a pattern over the filter's own text (`"status: 'waiting' } })"`).
-That form matches one particular closing syntax, so it answers about
-*formatting* rather than about call sites: a site split across lines, or one
-writing `status` before `classId`, is invisible to it. It happens to return the
-same four today, which is exactly why it is the wrong command to ship — it
-would go on looking complete after a reformat. The command above walks
-`.count(` call sites instead, and returns those four plus one comment hit in
-`waitlist-retention.ts` that is a `db.class.count`, not a waitlist one.
+It returns exactly the four rows tabled below, at the line numbers in that
+table, and nothing else.
+
+Deliberately not a pattern over the filter's own text (`"status: 'waiting' } })"`),
+which is what this plan first shipped. That form matches one particular closing
+syntax, so it answers about *formatting* rather than about call sites: a site
+split across lines, or one writing `status` before `classId`, is invisible to
+it. It happens to return the same four today, which is exactly why it was the
+wrong command to ship — it would go on looking complete after a reformat.
+
+The command above has an assumption of its own, and this plan is in no position
+to leave it unstated: it needs `.count(` on the `waitlistEntry` line or the one
+immediately after (`-A1`). A comment interposed between the receiver and the
+call would hide a site from it. Better than keying on closing punctuation, not
+immune.
 
 Scope, to be precise about what "the shape" means here: counts whose only
-consumer is a log field. The ~20 other `status: 'waiting'` filters in `src` are
-behavioural — they decide who gets promoted or notified — so dropping one
-breaks something a test already watches. A diagnostic count is the case where
-nothing but an assertion on the log payload can see the filter at all.
+consumer is a log field. The other 19 `status: 'waiting'` lines in non-test
+`src` are behavioural — they scope a write, a lock set, a renumbering or a
+notification set — so a dropped filter there changes what the system *does*,
+not merely what it reports. A diagnostic count is the case where nothing but an
+assertion on the log payload can see the filter at all.
+
+**Whether tests actually catch those 19 was not measured**, and this plan will
+not claim it. The argument for scoping them out is structural — their output
+reaches a write rather than a log field — not a coverage result. Given that
+all four sites this issue *did* measure turned out unprovable, assuming
+coverage elsewhere is the one inference this issue is evidence against. If it
+matters later, measure it; do not cite this paragraph.
+
+That 19, with the command that re-derives it:
+`grep -rn --include='*.ts' "status: 'waiting'" src | grep -v '\.test\.'` gives
+28 hits, 5 of them inside comments, leaving 23 code lines; minus the 4
+diagnostic counts tabled below = 19.
 
 | Site | Role | Filter provable today? | Verdict |
 |---|---|---|---|
