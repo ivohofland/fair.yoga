@@ -308,6 +308,11 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
    * roster'` above, which is a different population `rosterLinkState`
    * reaches through the `unclaimed ||` disjunct and which already has its
    * own test.
+   *
+   * Every comparison below is load-bearing or absent. A cross-comparison
+   * standing beside absolute assertions of both its sides certifies nothing —
+   * it is implied by them — so where one is kept, exactly one side is pinned
+   * and the other is left for the comparison to derive.
    */
   it('answers a gated linked-unshared student the same as a genuine stranger, apart from the withheld delivered bit', async () => {
     const strangerEmail = `gate-cmp-stranger-${suffix}@test.local`;
@@ -320,10 +325,11 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
       teacherId, email: gatedEmail, firstName: 'Compare', lastName: 'Gated',
     });
 
-    // Cross-compared, not each asserted `true` in isolation — a change that
-    // flipped both to `ok: false` in step would still pass two separate
-    // `.ok === true` checks.
-    expect(gatedResult.ok).toBe(strangerResult.ok);
+    // Both narrowed to the success arm, which is STRONGER than comparing the
+    // two `ok`s: it says they agree AND which way. A cross-comparison here
+    // would certify nothing on top of these — the pair of throws already
+    // rules out both-false — and TypeScript needs them anyway to reach
+    // `.value` below.
     if (!strangerResult.ok) {
       throw new Error(`expected the stranger invite to succeed, got ${strangerResult.reason}`);
     }
@@ -338,10 +344,12 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
     expect(Object.keys(gatedResult.value).sort()).toEqual(Object.keys(strangerResult.value).sort());
 
     // `delivered` is the one field this pair is allowed to differ on, by
-    // design — see its own docblock on `InviteResult`.
-    expect(gatedResult.value.delivered).not.toBe(strangerResult.value.delivered);
+    // design — see its own docblock on `InviteResult`. Two assertions, not
+    // three: the gated side is pinned absolutely, and the stranger's `true`
+    // is what the cross-comparison then DERIVES rather than restates. Pin
+    // both absolutely and the comparison stops carrying anything.
     expect(gatedResult.value.delivered).toBe(false);
-    expect(strangerResult.value.delivered).toBe(true);
+    expect(gatedResult.value.delivered).not.toBe(strangerResult.value.delivered);
 
     const [strangerRow, gatedRow] = await Promise.all([
       prisma.invitation.findUniqueOrThrow({
