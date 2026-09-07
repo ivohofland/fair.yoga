@@ -1253,6 +1253,64 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       expect.stringContaining('post-commit skip diagnostic failed'),
     );
   });
+
+  it('does not log a skip diagnostic for a class it collected before the erasure itself rolled back', async () => {
+    // Same injection as the sibling tests above: the real predicate would
+    // never match an already-`completed` row, so its id is only in
+    // `upcoming` because the lock mock hands it back anyway.
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'rollback diagnostic class',
+      date: new Date('2026-06-06'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'completed',
+    });
+    const classId = cls.id;
+
+    const original = dbLocks.lockClassRowsOrdered;
+    const spy = vi
+      .spyOn(dbLocks, 'lockClassRowsOrdered')
+      .mockImplementation(async (tx, source) => {
+        const ids = await original(tx, source);
+        return source.entries === true ? [...ids, classId] : ids;
+      });
+    onTestFinished(() => spy.mockRestore());
+
+    // Stages the losing half of a concurrent double-erasure directly,
+    // rather than actually racing two calls: soft-delete the teacher up
+    // front, so THIS SAME transaction attempt both collects the class
+    // above as a skip AND then fails its own `teacher.updateMany` CAS
+    // (`erased.count === 0`) — the shape #407 item 2 names.
+    await prisma.teacher.update({ where: { id: teacherId }, data: { deletedAt: new Date() } });
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+
+    const err = await deleteTeacherAccount(prisma, teacherId).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AlreadyErasedError);
+    expect((err as AlreadyErasedError).half).toBe('teacher');
+
+    // The whole transaction rolled back, including the class's own CAS
+    // write — not just the caller-visible teacher row.
+    const after = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      include: { calendarEntry: true },
+    });
+    expect(after.status).toBe('completed');
+    expect(after.calendarEntry.cancelledAt).toBeNull();
+
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ classId }),
+      expect.stringContaining('cancel CAS matched nothing'),
+    );
+  });
 });
 
 /**
