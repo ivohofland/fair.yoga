@@ -728,4 +728,52 @@ describe('the census rules, against sources this repository does not contain', (
       verdictsWithoutCall: [`${FIXTURE}:2`],
     });
   });
+
+  it('orders a report across files by path before line', () => {
+    // The only fixture holding more than one file, and so the only thing that
+    // exercises the cross-file arm of `byLocation`. Every other fixture here is
+    // a single path and the real tree reports nothing, so without this the arm
+    // could be replaced by identity and the suite would stay green — leaving a
+    // multi-file failure list in whatever order the walk reached the files.
+    // Passed later-path-first, so a report in path order is the sort's doing,
+    // and reaching `takeCensus` directly because `censusOf` censuses one file.
+    const unverdicted = `async function f(tx: unknown) {\n  await ${HELPER}(tx, {});\n}`;
+    const later = 'src/services/z-later.ts';
+    const earlier = 'src/app/api/a-earlier.ts';
+    const census = takeCensus([
+      { file: later, text: unverdicted },
+      { file: earlier, text: unverdicted },
+    ]);
+    expect(findings(census)).toEqual({
+      callSitesNotPairedOneToOne: [
+        `${earlier}:2 (1 call, 0 verdicts)`,
+        `${later}:2 (1 call, 0 verdicts)`,
+      ],
+      verdictsWithoutCall: [],
+    });
+  });
+
+  it('orders two sites in one file by line', () => {
+    // `byLocation` directly, because no census can reach its line arm: the walk
+    // visits each file's AST in source order, so every array it builds is
+    // already in line order within a file, and no source written here can hand
+    // that arm an out-of-order same-file list. Hand-built descending, asserted
+    // ascending.
+    //
+    // What this does not buy: a broken line arm produces no wrong output today,
+    // precisely because the walk feeding it is source-ordered. What it holds is
+    // that `byLocation`'s docblock is true of both arms, and that a walk which
+    // stops arriving in source order fails here rather than in a mis-ordered
+    // failure list.
+    const file = 'src/services/one-file.ts';
+    expect(
+      byLocation([
+        { file, line: 20 },
+        { file, line: 4 },
+      ]),
+    ).toEqual([
+      { file, line: 4 },
+      { file, line: 20 },
+    ]);
+  });
 });

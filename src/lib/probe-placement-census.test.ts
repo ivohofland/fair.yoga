@@ -984,4 +984,28 @@ describe('the placement rule, against sources this repository does not contain',
       ],
     });
   });
+
+  it('orders two sites in one file by line', () => {
+    // `byLocation` directly, because no census can reach its line arm: the walk
+    // visits each file's AST in source order, so every array it builds is
+    // already in line order within a file, and no source written here can hand
+    // that arm an out-of-order same-file list. Hand-built descending, asserted
+    // ascending.
+    //
+    // What this does not buy: a broken line arm produces no wrong output today,
+    // precisely because the walk feeding it is source-ordered. What it holds is
+    // that `byLocation`'s docblock is true of both arms, and that a walk which
+    // stops arriving in source order fails here rather than in a mis-ordered
+    // failure list.
+    const file = 'src/services/one-file.ts';
+    expect(
+      byLocation([
+        { file, line: 20 },
+        { file, line: 4 },
+      ]),
+    ).toEqual([
+      { file, line: 4 },
+      { file, line: 20 },
+    ]);
+  });
 });
