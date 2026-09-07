@@ -160,11 +160,10 @@ function searchScope(): string[] {
 /**
  * A SECOND read of `src/`, for the scope-reach guard alone. What that guard
  * checks against this is the census's own list of files consumed, and this
- * reaches no line of anything that produces it — not `typeScriptUnderSrc`, not
- * `searchScope`, not `censusOfTree`, not their shared walk. It makes its own
- * `readdirSync` call rather than reaching theirs, which means their options
- * object and this one must stay in step; a difference there narrows this side
- * alone, and the guard's second direction is what reports that.
+ * reaches no line of the code that produces that list. It makes its own
+ * `readdirSync` call rather than reaching theirs, which means the two options
+ * objects must stay in step; a difference there narrows this side alone, and
+ * the guard's second direction is what reports that.
  *
  * The duplication is the whole point. A guard whose two sides come from one
  * function narrows in lockstep with it: a filter added inside that function
@@ -172,6 +171,7 @@ function searchScope(): string[] {
  * edit, and the comparison stays equal. Only the extension and test-file rules
  * are duplicated here; no exclusion a future edit adds to `searchScope` reaches
  * this, which is exactly what has to make the two disagree.
+ * `src/lib/census-walk-independence.test.ts` is what holds that.
  */
 function areasUnderSrc(): Set<string> {
   const areas = new Set<string>();
