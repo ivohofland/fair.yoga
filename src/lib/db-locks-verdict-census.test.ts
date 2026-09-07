@@ -104,9 +104,10 @@ const MARKER = ['VERDICT', '(#327)'].join(' ');
  * different way because this census reads syntax rather than text.
  *
  * `satisfies` is what keeps it honest through a rename. Without it the census
- * would simply stop finding calls and go red as `foundACall: false` plus four
- * orphan verdicts, naming nothing; with it the compiler refuses the file and
- * lists the module's real exports. That is *Comment Discipline*'s "where
+ * would simply stop finding calls and go red as `foundACall: false` plus one
+ * orphan verdict per surviving call site, naming nothing; with it the compiler
+ * refuses the file and lists the module's real exports. That is the
+ * *Comment Discipline* rule "where
  * membership matters, tether it to the compiler", and the import is a type
  * position, so it erases and adds no runtime dependency.
  */
@@ -136,7 +137,10 @@ function searchScope(): string[] {
 /**
  * A SECOND read of `src/`, for the scope-reach guard alone, reaching no line of
  * the walk it checks — not `typeScriptUnderSrc`, not `searchScope`, not their
- * shared `readdirSync`.
+ * shared walk. It makes its own `readdirSync` call rather than reaching theirs,
+ * which means their options object and this one must stay in step; a difference
+ * there narrows this side alone, and the guard's second direction is what
+ * reports that.
  *
  * The duplication is the whole point. A guard whose two sides come from one
  * function narrows in lockstep with it: a filter added inside that function
@@ -162,8 +166,8 @@ function areasUnderSrc(): Set<string> {
 /**
  * The first path segment under `src/` — `services`, `app`, or a bare filename
  * for something sitting directly in `src/`. What the scope-reach assertion
- * compares, because a filter edit that narrows this census will drop a whole
- * area rather than a scattering of files.
+ * compares, and the granularity it can hold: a narrowing that thins an area
+ * without emptying it is invisible to that assertion, which says so itself.
  */
 function areaOf(file: string): string {
   return file.slice('src/'.length).split('/')[0] ?? file;
@@ -437,7 +441,7 @@ describe('every lockClassRowsOrdered call site carries a verdict', () => {
 
   it('reaches every area of src that holds production TypeScript', () => {
     // The non-vacuity assertion below checks two TOTALS, which stay non-zero
-    // as long as any one call and any one verdict survive anywhere in the tree.
+    // as long as one call and one verdict survive anywhere the census searches.
     // So a filter edit that drops whole directories leaves both totals non-zero
     // and every assertion green while the census stops watching most of the
     // repository.
@@ -446,10 +450,23 @@ describe('every lockClassRowsOrdered call site carries a verdict', () => {
     // so a narrowing that empties an area disagrees with it wherever in the
     // walk it sits — inside the shared `typeScriptUnderSrc` included. The
     // granularity is the area and no finer, as this test's name says: a
-    // narrowing leaving an area even one production file passes here.
+    // narrowing leaving an area even one SEARCHED production file passes here.
+    // Searched is the load-bearing word — `reached` is what `searchScope`
+    // yields, so an area left holding only the excluded defining module has
+    // nothing in `reached` and does go red.
+    //
+    // Both directions, so a failure names which side moved. The second is
+    // empty by construction — `areasUnderSrc` applies a strict subset of
+    // `searchScope`'s rules to the same tree, so an area the census reaches is
+    // always one it requires — and that is what makes it worth asserting: it
+    // costs nothing until `areasUnderSrc` itself narrows, and a narrowing
+    // there shrinks the very difference the first direction asserts empty.
     const required = areasUnderSrc();
     const reached = new Set(searchScope().map(areaOf));
-    expect([...required].filter((area) => !reached.has(area)).sort()).toEqual([]);
+    expect({
+      areasTheCensusMisses: [...required].filter((area) => !reached.has(area)).sort(),
+      areasTheGuardMisses: [...reached].filter((area) => !required.has(area)).sort(),
+    }).toEqual({ areasTheCensusMisses: [], areasTheGuardMisses: [] });
   });
 
   it('excludes the test files and the defining module, neither of them vacuously', () => {
