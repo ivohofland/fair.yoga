@@ -33,12 +33,13 @@
  * discovery finding nothing would otherwise certify nothing.
  *
  * WHAT IT DOES NOT SEE, so a call landing there is nobody's failure here. A
- * callee rooting in a parameter or a function-local is out of scope, and so is
- * a non-identifier callee such as a regex literal's `.test` — neither can reach
- * another walk. That leaves one blind spot the censuses themselves also carry:
- * a walk reached through a local binding (`const w = shared; w();`) roots in a
- * local and is invisible, because resolving it needs a full type-checker
- * program this test does not build. Shadowing is not modelled either — a
+ * callee rooting in a parameter is out of scope, and so is a non-identifier
+ * callee such as a regex literal's `.test` — neither can reach another walk.
+ * A callee rooting in a function-local can, and that is the one blind spot
+ * the censuses themselves also carry: a walk reached through a local binding
+ * (`const w = shared; w();`) roots in a local and is invisible, because
+ * resolving it needs a full type-checker program this test does not build.
+ * Shadowing is not modelled either — a
  * function-local sharing a name with a module-level binding is reported though
  * the call reaches the local. That direction is loud and correctable; the other
  * one hides the refactor this file exists to catch.
@@ -50,7 +51,7 @@
  * THIS FILE STAYS OUT OF BOTH CENSUSES, and not only by the `*.test.ts`
  * exclusion each of them applies. It makes no call to any helper either
  * census watches, and does not name one anywhere in this file, in a call or
- * in prose, so neither census's text search has anything to match. It does
+ * in prose, so neither census's call detector has anything to match. It does
  * not spell the db-locks marker either, which that census treats as a
  * reserved token wherever it occurs in a file it searches. It likewise does
  * not discover itself: the discovery below reads module-level declarations,
