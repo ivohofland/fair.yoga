@@ -746,17 +746,11 @@ describe('classType and location whitespace trimming and validation (#311)', () 
     expect(discovered.sort()).toEqual([...locationSchemas].sort());
   });
 
-  it.each(classTypeSchemas)('%s rejects empty and whitespace-only classType', (name) => {
-    const schema = (schemas as Record<string, unknown>)[name] as z.ZodType;
-    const shape =
-      (schema as { shape?: Record<string, z.ZodType> }).shape ??
-      (schema as { _def?: { schema?: { shape?: Record<string, z.ZodType> } } })._def?.schema?.shape;
-    const field = shape?.classType;
-    expect(field).toBeDefined();
-    expect(field!.safeParse('').success).toBe(false);
-    expect(field!.safeParse('   ').success).toBe(false);
-    expect(field!.safeParse('\t\n  ').success).toBe(false);
-  });
+  // Whitespace rejection is no longer asserted per-schema here: the #405
+  // invariant at the end of this file covers every field of every exported
+  // schema, including these. What stays is what that invariant cannot say —
+  // which schemas carry these fields at all, and that padding is stripped
+  // before storage rather than merely rejected.
 
   it.each(classTypeSchemas)('%s trims padded classType before validation and storage', (name) => {
     const schema = (schemas as Record<string, unknown>)[name] as z.ZodType;
@@ -768,18 +762,6 @@ describe('classType and location whitespace trimming and validation (#311)', () 
     expect(field!.parse('  Vinyasa Flow  ')).toBe('Vinyasa Flow');
   });
 
-  it.each(locationSchemas)('%s rejects empty and whitespace-only location', (name) => {
-    const schema = (schemas as Record<string, unknown>)[name] as z.ZodType;
-    const shape =
-      (schema as { shape?: Record<string, z.ZodType> }).shape ??
-      (schema as { _def?: { schema?: { shape?: Record<string, z.ZodType> } } })._def?.schema?.shape;
-    const field = shape?.location;
-    expect(field).toBeDefined();
-    expect(field!.safeParse('').success).toBe(false);
-    expect(field!.safeParse('   ').success).toBe(false);
-    expect(field!.safeParse('\t\n  ').success).toBe(false);
-  });
-
   it.each(locationSchemas)('%s trims padded location before validation and storage', (name) => {
     const schema = (schemas as Record<string, unknown>)[name] as z.ZodType;
     const shape =
@@ -788,5 +770,80 @@ describe('classType and location whitespace trimming and validation (#311)', () 
     const field = shape?.location;
     expect(field).toBeDefined();
     expect(field!.parse('  Studio Centrum  ')).toBe('Studio Centrum');
+  });
+});
+
+/**
+ * A field that refuses a blank value must refuse one made of whitespace too.
+ *
+ * Derived from the module, never a roster: every exported schema is walked,
+ * so one added tomorrow is covered the moment it is exported. That is the
+ * whole reason this exists rather than a fourth hand-written list of schema
+ * names.
+ *
+ * The rule reads behaviour, not syntax. It never looks for `.min(1)`, so a
+ * field guarded another way passes untouched — `pageSlugField`'s
+ * `^[a-z0-9-]+$` refuses whitespace with no `.trim()` at all. And a field
+ * that legitimately accepts a blank value (`bio`, `notes`, a nullable
+ * `phone`) exempts itself by accepting `''`. There is no allowlist here,
+ * which is the point: nothing exists for a later change to add an
+ * exception to.
+ *
+ * Scope: top-level fields. An array field's element schema is not walked, so
+ * `z.array(z.string())` accepting `['   ']` is outside what this proves.
+ */
+describe('a field that refuses blank refuses whitespace too (#405)', () => {
+  /**
+   * The last entry is a non-breaking space — what a paste from a web page or
+   * an Option+Space on a Mac actually produces. `String.prototype.trim()`
+   * strips it, so a trimmed field rejects it; an untrimmed one stores it.
+   */
+  const BLANKS = ['   ', '\t\n  ', ' '] as const;
+
+  function shapeOf(schema: unknown): Record<string, z.ZodType> | undefined {
+    return (
+      (schema as { shape?: Record<string, z.ZodType> }).shape ??
+      (schema as { _def?: { schema?: { shape?: Record<string, z.ZodType> } } })._def?.schema
+        ?.shape
+    );
+  }
+
+  function sweep(): { offenders: string[]; checked: string[] } {
+    const offenders: string[] = [];
+    const checked: string[] = [];
+    const visit = (label: string, field: z.ZodType): void => {
+      if (field.safeParse('').success) return; // blank is legal here — exempt
+      checked.push(label);
+      for (const blank of BLANKS) {
+        if (field.safeParse(blank).success) {
+          offenders.push(`${label} accepts ${JSON.stringify(blank)}`);
+        }
+      }
+    };
+    for (const [name, schema] of Object.entries(schemas)) {
+      if (!(schema instanceof z.ZodType)) continue;
+      const shape = shapeOf(schema);
+      if (shape) {
+        for (const [key, field] of Object.entries(shape)) visit(`${name}.${key}`, field);
+      } else {
+        visit(name, schema); // a bare field export, e.g. `pageSlugField`
+      }
+    }
+    return { offenders, checked };
+  }
+
+  it('holds for every field of every exported schema', () => {
+    expect(sweep().offenders).toEqual([]);
+  });
+
+  /**
+   * A floor, deliberately not a census. The failure mode of a discovery loop
+   * is silence: if `Object.entries` stopped yielding schemas, or `shapeOf`
+   * stopped reading a shape, the test above would report no offenders and
+   * pass green while proving nothing. This is the assertion that notices.
+   * Set well below the real number so growth never touches it.
+   */
+  it('actually visited the schemas', () => {
+    expect(sweep().checked.length).toBeGreaterThanOrEqual(90);
   });
 });
