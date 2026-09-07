@@ -439,9 +439,10 @@ describe('every probe call sits outside every transaction callback', () => {
     // of the repository.
     //
     // `areasUnderSrc` reads the directory itself rather than calling the walk,
-    // so a narrowing added anywhere in the walk — including inside the shared
-    // `typeScriptUnderSrc` — makes these two disagree instead of moving them
-    // together.
+    // so a narrowing that empties an area disagrees with it wherever in the
+    // walk it sits — inside the shared `typeScriptUnderSrc` included. The
+    // granularity is the area and no finer, as this test's name says: a
+    // narrowing leaving an area even one production file passes here.
     const required = areasUnderSrc();
     const reached = new Set(searchScope().map(areaOf));
     expect([...required].filter((area) => !reached.has(area)).sort()).toEqual([]);
