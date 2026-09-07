@@ -9,6 +9,7 @@ import {
   createClassSchema,
   createStudioClassSchema,
   createRoomSchema,
+  updateRoomSchema,
   updateClassSchema,
   updateClassTemplateSchema,
   updateStudioClassTemplateSchema,
@@ -698,6 +699,34 @@ describe('createRoomSchema isPublic default', () => {
       isPublic: true,
     });
     expect(parsed.isPublic).toBe(true);
+  });
+});
+
+// #405. Blank is legal for both fields (no `.min(1)`), so the schema-wide
+// sweep below exempts them from its whitespace check — this is the only
+// place proving padding is actually stripped rather than merely accepted.
+describe('createRoomSchema and updateRoomSchema trim floor and roomName', () => {
+  it('strips padding from floor and roomName on create', () => {
+    const parsed = createRoomSchema.parse({
+      venueName: 'Somewhere',
+      address: 'Street 1',
+      city: 'Amsterdam',
+      postcode: '1234AB',
+      maxCapacity: 10,
+      floor: '  3rd floor  ',
+      roomName: '  Studio A  ',
+    });
+    expect(parsed.floor).toBe('3rd floor');
+    expect(parsed.roomName).toBe('Studio A');
+  });
+
+  it('strips padding from floor and roomName on update', () => {
+    const parsed = updateRoomSchema.parse({
+      floor: '  3rd floor  ',
+      roomName: '  Studio A  ',
+    });
+    expect(parsed.floor).toBe('3rd floor');
+    expect(parsed.roomName).toBe('Studio A');
   });
 });
 
