@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor, teardownStudent } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 
@@ -1689,5 +1689,80 @@ describe('POST /api/students answers a raced invite with ALREADY_INVITED (#161)'
     // One invitation, and it is the holder's.
     const rows = await prisma.invitation.findMany({ where: { email: raceEmail } });
     expect(rows.map((r) => r.firstName)).toEqual(['Holder']);
+  });
+});
+
+/**
+ * The PUT gate, from the outside. `session.studentId === id` is the only
+ * thing standing between one student and another's stored name, and until
+ * #405 no test made a cross-student attempt at all.
+ *
+ * Own fixtures: the students seeded at the top of this file have no
+ * `Account`, so none of them can hold a session to make this request with.
+ */
+describe('PUT /api/students/[id]', () => {
+  type Owner = { id: string; token: string; accountId: string };
+  let alice: Owner;
+  let bob: Owner;
+
+  async function mkClaimedStudent(name: string): Promise<Owner> {
+    const email = `putown-${name}-${suffix}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: name,
+        lastName: 'Owner',
+        email,
+        account: { create: { email } },
+        claimedAt: new Date(),
+      },
+    });
+    const token = await seedSession(prisma, student.accountId!);
+    return { id: student.id, token, accountId: student.accountId! };
+  }
+
+  async function put(id: string, body: Record<string, unknown>, token: string) {
+    return fetch(`${BASE_URL}/api/students/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(token) },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async function firstNameOf(id: string): Promise<string> {
+    const row = await prisma.student.findUniqueOrThrow({
+      where: { id },
+      select: { firstName: true },
+    });
+    return row.firstName;
+  }
+
+  beforeAll(async () => {
+    alice = await mkClaimedStudent('alice');
+    bob = await mkClaimedStudent('bob');
+  });
+
+  afterAll(async () => {
+    await teardownStudent(prisma, alice?.id, alice?.accountId);
+    await teardownStudent(prisma, bob?.id, bob?.accountId);
+  });
+
+  it("refuses one student's edit of another's name, and writes nothing", async () => {
+    const res = await put(bob.id, { firstName: 'Rewritten' }, alice.token);
+    expect(res.status).toBe(403);
+    // The status alone would pass against a route that answered 403 after
+    // writing. This is the assertion that makes the gate mean something.
+    expect(await firstNameOf(bob.id)).toBe('bob');
+  });
+
+  it('allows a student to edit their own name', async () => {
+    const res = await put(alice.id, { firstName: 'Alicia' }, alice.token);
+    expect(res.status).toBe(200);
+    expect(await firstNameOf(alice.id)).toBe('Alicia');
+  });
+
+  it('refuses a whitespace-only first name (#405 §1, over the wire)', async () => {
+    const res = await put(alice.id, { firstName: '   ' }, alice.token);
+    expect(res.status).toBe(400);
+    expect(await firstNameOf(alice.id)).toBe('Alicia');
   });
 });
