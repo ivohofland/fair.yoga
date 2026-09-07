@@ -8,11 +8,11 @@ survives the whole suite. **Confirmed by running it.** With the filter dropped
 to `.count({ where: { classId } })`:
 
 - `--project unit` — 86 files, 1395 tests, all passed.
-- `--project unit-sweeps` — one failure, `db-locks-lock-order.test.ts`, which
-  cannot observe this mutation: its only references to gdpr are seven comment
-  citations of a sibling file, no import and no call. Unmutated baseline of
-  that tier is 27 files / 217 tests green, and the file passes on its own
-  re-run. Lock-timing flake, not the mutation.
+- `--project unit-sweeps` — one failure, `src/lib/db-locks-lock-order.test.ts`,
+  which cannot observe this mutation: its only references to gdpr are seven
+  comment citations of a sibling file, no import and no call. Unmutated
+  baseline of that tier is 27 files / 217 tests green, and the file passes on
+  its own re-run. Lock-timing flake, not the mutation.
 - No `integration` test can catch it either: `waitingEntriesLeft` appears
   nowhere under `tests/`.
 
@@ -21,8 +21,26 @@ docblock are both accurate.
 
 ## What the issue did not cover
 
-Sweeping the shape rather than the line — `grep -rn --include='*.ts'
-"status: 'waiting' } })" src | grep -v '\.test\.'` — gives four sites:
+Sweeping the shape rather than the line gives four sites. Re-derive with:
+
+```
+grep -rn --include='*.ts' -B1 '\.count(' src | grep -v '\.test\.' | grep -i waitlist
+```
+
+Deliberately not a pattern over the filter's own text (`"status: 'waiting' } })"`).
+That form matches one particular closing syntax, so it answers about
+*formatting* rather than about call sites: a site split across lines, or one
+writing `status` before `classId`, is invisible to it. It happens to return the
+same four today, which is exactly why it is the wrong command to ship — it
+would go on looking complete after a reformat. The command above walks
+`.count(` call sites instead, and returns those four plus one comment hit in
+`waitlist-retention.ts` that is a `db.class.count`, not a waitlist one.
+
+Scope, to be precise about what "the shape" means here: counts whose only
+consumer is a log field. The ~20 other `status: 'waiting'` filters in `src` are
+behavioural — they decide who gets promoted or notified — so dropping one
+breaks something a test already watches. A diagnostic count is the case where
+nothing but an assertion on the log payload can see the filter at all.
 
 | Site | Role | Filter provable today? | Verdict |
 |---|---|---|---|
@@ -32,8 +50,10 @@ Sweeping the shape rather than the line — `grep -rn --include='*.ts'
 | `waitlist.ts:887` | suppressed-broadcast count | No | Let go: feeds only a `debug` line the module's own comment calls off-by-default |
 
 `gdpr.ts:882` is folded in rather than filed because it is the identical shape
-in the identical file and costs one fixture row — filing it would mean a
-future reviewer opens #495 for what this branch already had open.
+in the identical file — filing it would mean a future reviewer opens #495 for
+what this branch already had open. It is not free, though: a student row, a
+waitlist row, a field on the fixture's return shape, and two edits to the
+shared `cleanup`.
 
 ## Task 1 — teacher erasure (the acceptance criterion)
 
@@ -61,7 +81,10 @@ In `describe('student erasure is retry-safe against a concurrent duplicate
 erasure does not touch. Giving it to `fixture.studentId` would make
 `deleteStudentAccount` delete it during erasure, leaving the count `1` whether
 or not the filter is present — an assertion that passes for the wrong reason.
-So: a third student, created and reaped by the test itself.
+So: a third student, added to the shared `makeStudentWithFreedSpot` and reaped
+by the shared `cleanup`. That puts the spent entry in front of both tests in
+that describe, not only the broadcast one — harmless, because the sibling
+asserts on `log.error`'s message and never reads the `waiting` value.
 
 ## Verification, per task
 
