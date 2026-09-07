@@ -18,7 +18,8 @@ const SETTINGS_ITEMS = [
 ];
 
 // The student settings index: personal details inline, then one row per
-// settings area, then sign-in.
+// settings area, then — for a dual-hat account — a link to the teacher
+// side, then sign-in.
 export default async function StudentSettingsPage() {
   const session = await getSession();
   if (!session?.studentId) redirectNonStudent(session);

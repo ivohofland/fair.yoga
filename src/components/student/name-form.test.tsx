@@ -173,7 +173,7 @@ describe('NameForm', () => {
     });
     // The copy alone would pass with the error still discarded. This is the
     // assertion that makes the log a change rather than a gesture.
-    expect(logged).toHaveBeenCalled();
+    expect(logged).toHaveBeenCalledWith('student name save failed', expect.any(Error));
     logged.mockRestore();
   });
 });
