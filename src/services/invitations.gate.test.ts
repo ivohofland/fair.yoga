@@ -293,6 +293,76 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
     expect(result.value.delivered).toBe(true);
   });
 
+  /**
+   * #418's bundled gap B. Every case above pins one side of the
+   * indistinguishability property in isolation — a stranger fixture in one
+   * `it`, a gated fixture in another — so nothing catches a change that
+   * moves both sides in step. This test invites both in the same run and
+   * compares the two outcomes against each other, not against a literal
+   * repeated on each side.
+   *
+   * The stranger fixture is deliberately a bare address with no `Student`
+   * row at all — the actual baseline `rosterLinkState` returns
+   * `{ linked: false, mayBeTold: false }` for — and not the unclaimed
+   * fixture two tests above, which is a different population `rosterLinkState`
+   * reaches through the `unclaimed ||` disjunct and which already has its
+   * own test.
+   */
+  it('answers a gated linked-unshared student the same as a genuine stranger, apart from the withheld delivered bit', async () => {
+    const strangerEmail = `gate-cmp-stranger-${suffix}@test.local`;
+    const gatedEmail = await seedLinked('cmp-gated', { shareEmail: false });
+
+    const strangerResult = await inviteContact(prisma, {
+      teacherId, email: strangerEmail, firstName: 'Compare', lastName: 'Stranger',
+    });
+    const gatedResult = await inviteContact(prisma, {
+      teacherId, email: gatedEmail, firstName: 'Compare', lastName: 'Gated',
+    });
+
+    // Cross-compared, not each asserted `true` in isolation — a change that
+    // flipped both to `ok: false` in step would still pass two separate
+    // `.ok === true` checks.
+    expect(gatedResult.ok).toBe(strangerResult.ok);
+    if (!strangerResult.ok) {
+      throw new Error(`expected the stranger invite to succeed, got ${strangerResult.reason}`);
+    }
+    if (!gatedResult.ok) {
+      throw new Error(`expected the gated invite to succeed, got ${gatedResult.reason}`);
+    }
+
+    // Same result-object shape — the keys the caller gets back, compared
+    // against each other rather than against a hardcoded list. Values are
+    // not compared here: `id` is a fresh uuid per row and necessarily
+    // differs.
+    expect(Object.keys(gatedResult.value).sort()).toEqual(Object.keys(strangerResult.value).sort());
+
+    // `delivered` is the one field this pair is allowed to differ on — see
+    // its own docblock on `InviteResult`. It is not a leak: nothing on the
+    // wire carries it back to the teacher (routes gate notification on it
+    // internally; the HTTP response body does not include it), so recording
+    // the divergence here marks it as known and bounded rather than an
+    // oversight this comparison missed.
+    expect(gatedResult.value.delivered).not.toBe(strangerResult.value.delivered);
+    expect(gatedResult.value.delivered).toBe(false);
+    expect(strangerResult.value.delivered).toBe(true);
+
+    const [strangerRow, gatedRow] = await Promise.all([
+      prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId, email: strangerEmail } },
+        select: { status: true, respondedAt: true, isArchived: true },
+      }),
+      prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId, email: gatedEmail } },
+        select: { status: true, respondedAt: true, isArchived: true },
+      }),
+    ]);
+
+    // The resulting `Invitation` rows, compared against each other.
+    // `findUniqueOrThrow` above is what proves a row exists in both cases —
+    // a missing row throws before this assertion is ever reached.
+    expect(gatedRow).toEqual(strangerRow);
+  });
+
   it('answers ALREADY_LINKED on an accepted invitation, and leaves that row untouched', async () => {
     // The second disjunct. It exists to keep the gated path out of
     // `revivePendingInvitation`, which would flip this row to `pending`
