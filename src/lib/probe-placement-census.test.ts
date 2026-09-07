@@ -832,17 +832,20 @@ describe('the placement rule, against sources this repository does not contain',
 
   it('finds nothing to be inside in the array form of a transaction', () => {
     // `$transaction([…])` runs statements, not a callback, so there is no body
-    // a call could sit in. Where the detector fired is asserted beside the
-    // verdict because a detector that recognised nothing at all would also
-    // report this clean.
+    // a call could sit in. A live interactive transaction sits beside the array
+    // form so the callback list pins a non-empty result: a detector that
+    // recognised nothing would report `[]`, and one that accepted any first
+    // argument would report the array form's line too — either way the list
+    // below would not match.
     const source = [
       'async function f(db: unknown) {',
       '  await db.$transaction([db.a.create({}), db.b.create({})]);',
+      '  await db.$transaction(async (tx: unknown) => tx.c.create({}));',
       `  await ${RULE_SLOT_HOLDER}(db, {});`,
       '}',
     ].join('\n');
     expect(censusOf(source)).toEqual(CLEAN);
-    expect(callbacksAt(source)).toEqual([]);
+    expect(callbacksAt(source)).toEqual([`${FIXTURE}:3`]);
   });
 
   it('reads the first argument only, so a function later in the list cannot enclose', () => {
