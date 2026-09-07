@@ -37,11 +37,12 @@ import { requireNormalised } from '@/lib/schemas';
  * (Invitation), not here.
  *
  * What is true of this function, and is why the condition is written the way
- * it is: a `pending` row left alone here never becomes `accepted`, so it never
- * reaches the refusal an `accepted` row on a linked pair gets, and the probe
- * that was waiting on it has nothing to observe. `link-consent.test.ts` drives
- * that sequence end to end, through the real invite path, and fails if this
- * condition is widened again.
+ * it is: this call leaves such a row exactly as it found it, so nothing on the
+ * booking or waitlist path turns it into the `accepted` row a second probe
+ * would meet as `ALREADY_LINKED`. `acceptInvitation` still can — a door the
+ * invitee opens, not the prober. `link-consent.test.ts` drives that sequence
+ * end to end, through the real invite path, and fails if this condition is
+ * widened again.
  *
  * Call this only from a path where the student themselves is acting toward
  * one named teacher, at this instant. Today that is `POST /api/registrations`
