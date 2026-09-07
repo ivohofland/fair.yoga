@@ -232,7 +232,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // A self-booking student joins the teacher's roster: this link is how
       // the CRM sees them and how per-teacher privacy gets its scope.
       if (!isTeacher) {
-        await linkTeacherStudent(tx, { teacherId: cls.calendarEntry.teacherId, studentId });
+        const linkCreatedNow = await linkTeacherStudent(tx, {
+          teacherId: cls.calendarEntry.teacherId,
+          studentId,
+        });
 
         // #166: only the student's own booking is consent — this call sits
         // inside `!isTeacher` on purpose, so a roster add or a walk-in never
@@ -242,6 +245,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         await resolveInvitationOnLink(tx, {
           teacherId: cls.calendarEntry.teacherId,
           studentEmail: student.email,
+          linkCreatedNow,
         });
 
         // Layer 1+2 of the comms model: confirmation for the student,

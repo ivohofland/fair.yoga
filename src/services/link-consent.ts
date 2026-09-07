@@ -6,7 +6,7 @@
  * tidiness. `invitations.ts` imports `withdrawWaitingEntriesForTeacher` from
  * `waitlist.ts` (an unlink must withdraw the queue positions that would let
  * the teacher reach back through), and `waitlist.ts` needs this function
- * (joining a waitlist is a consenting act, so it resolves the invitation).
+ * (joining a waitlist is a consenting act, and this is what answers one).
  * Those two imports together are a cycle. It happened to work — both edges
  * resolve to hoisted function declarations, so neither is read at module
  * evaluation time — but it is a cycle that survives on a property nobody
@@ -22,11 +22,33 @@ import type { Prisma } from '@prisma/client';
 import { requireNormalised } from '@/lib/schemas';
 
 /**
- * A student's own act is acceptance, so it resolves whatever invitation
- * state stood between them and this teacher — `pending` and `declined`
- * alike, and the `TeacherBlock` along with them. Reversing a decline is the
- * escape hatch the whole decline design rests on: permanent from the
- * teacher's side, always reversible from the student's.
+ * A student's own act is acceptance — of whatever there was still left to
+ * accept. A booking or a waitlist join resolves a `pending` invitation only
+ * when it was the act that put the student on this teacher's roster; someone
+ * already on the roster has nothing left to consent to, so a `pending` row
+ * standing beside a link that already existed is left exactly where it is. A
+ * `declined` row is cleared either way, and the `TeacherBlock` with it.
+ *
+ * The narrowing on `pending` is a security property (#418). A teacher who
+ * guesses the address of a student who is already theirs but has withheld it
+ * gets an ordinary success and a real, undelivered `pending` row (#417), so
+ * that answer cannot be told apart from inviting a stranger. Resolving that
+ * row on the student's next ordinary booking handed the answer back one probe
+ * later: an `accepted` row on a linked pair is refused `ALREADY_LINKED`, which
+ * is the fact being withheld. A row this function leaves alone has no second
+ * probe to leak into — `link-consent.test.ts` drives that sequence end to end,
+ * through the real invite path, and fails if this condition is widened again.
+ *
+ * `declined` is unconditional, and the asymmetry is deliberate rather than an
+ * oversight. `unlinkTeacher` (`services/invitations.ts`) writes the tombstone
+ * and deletes the `TeacherStudent` row in one transaction, so a decline
+ * implies no link at the moment it is written, and every ordinary route back
+ * creates the link and takes the `true` column anyway. Narrowing it would
+ * change behaviour only where the pair is linked already, and there it would
+ * strand the student: linked, unblocked, and permanently un-re-invitable
+ * behind a tombstone `DELETE /api/invitations/[id]` refuses to remove.
+ * Reversing a decline is the escape hatch the whole decline design rests on:
+ * permanent from the teacher's side, always reversible from the student's.
  *
  * Call this only from a path where the student themselves is acting toward
  * one named teacher, at this instant. Today that is `POST /api/registrations`
@@ -48,12 +70,21 @@ import { requireNormalised } from '@/lib/schemas';
  * something a teacher can trigger, not to weaken what it does when they
  * can't.
  *
+ * `linkCreatedNow` is not that mode returning. It carries no claim about the
+ * caller's intent — the paragraph above is still the whole of what a caller
+ * must satisfy — only the fact of what this transaction's own link write did.
+ * Pass exactly what `linkTeacherStudent` (`services/roster-link.ts`) returned
+ * for this pair, from this transaction, and do not re-derive it: that value
+ * comes off the link's single `INSERT … ON CONFLICT DO NOTHING`, which is the
+ * one reading that cannot race. A `findUnique` before the insert can be
+ * overtaken by a concurrent writer, and one after it always finds the row.
+ *
  * `updateMany`, not `update`: most bookings have no invitation row at all
  * and a zero-row update must not throw.
  */
 export async function resolveInvitationOnLink(
   tx: Prisma.TransactionClient,
-  input: { teacherId: string; studentEmail: string },
+  input: { teacherId: string; studentEmail: string; linkCreatedNow: boolean },
 ): Promise<void> {
   // Asserted lowercase again, for the same reason each time: invitation
   // emails are always stored lowercase, and `Student.email` and
@@ -72,18 +103,20 @@ export async function resolveInvitationOnLink(
   // invitation from this teacher still undeliverable.
   await tx.teacherBlock.deleteMany({ where: { teacherId: input.teacherId, email } });
 
-  // `{ not: 'accepted' }` rather than a list, so a `declined` row flips too
-  // — that is the reversal this function exists for. An already-accepted row
-  // is excluded, so its `respondedAt` — the original acceptance moment —
-  // survives. Nothing reads it yet, which is exactly why this is worth
-  // getting right now: every later booking would otherwise silently
-  // overwrite it, and the drift wouldn't surface until something finally
-  // does read it.
+  // The two columns of the rule above, written as one `where`. On a link this
+  // call created, `{ not: 'accepted' }` — `pending` and `declined` alike. On a
+  // link that already stood, `declined` alone: the standing refusal is still
+  // the student's to reverse, the `pending` row is no longer theirs to
+  // resolve. An already-`accepted` row is excluded under either, so its
+  // `respondedAt` — the original acceptance moment — survives. Nothing reads
+  // it yet, which is exactly why this is worth getting right now: every later
+  // booking would otherwise silently overwrite it, and the drift wouldn't
+  // surface until something finally does read it.
   await tx.invitation.updateMany({
     where: {
       teacherId: input.teacherId,
       email,
-      status: { not: 'accepted' },
+      status: input.linkCreatedNow ? { not: 'accepted' } : 'declined',
     },
     data: { status: 'accepted', respondedAt: new Date() },
   });

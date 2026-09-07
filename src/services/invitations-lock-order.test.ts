@@ -559,9 +559,14 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    *
    * What this test owns now is a specific success, not just the absence of
    * `40P01`: on a lost `INSERT` race, the accept still succeeds, because the
-   * link itself is not the thing being decided — `linkTeacherStudent`'s
-   * `ON CONFLICT DO NOTHING` (#181) needs only that the row exist once the
-   * transaction commits, not that this call was the one that inserted it.
+   * link itself is not the thing `acceptInvitation` is deciding — it needs
+   * only that the row exist once the transaction commits, and
+   * `linkTeacherStudent`'s `ON CONFLICT DO NOTHING` (#181) gives it that
+   * whichever transaction did the inserting. So the accept ignores the
+   * boolean that helper returns; the booking below does not, threading it on
+   * to `resolveInvitationOnLink` as `linkCreatedNow` exactly as the route
+   * does (#418), and the handshake makes the booking the inserter — so it
+   * takes the `true` column and the invitation does move.
    * The atomic write alone is not enough, though: the booking's own
    * `resolveInvitationOnLink` call can commit — and mark this same
    * invitation `accepted` — before the blocked write returns, so
@@ -605,12 +610,13 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
       await tx.registration.create({
         data: { classId: cls.id, studentId, status: 'registered', tierAtBooking: 3 },
       });
-      await linkTeacherStudent(tx, { teacherId, studentId });
+      const linkCreatedNow = await linkTeacherStudent(tx, { teacherId, studentId });
       bookingHasLink();
       await new Promise((r) => setTimeout(r, 300));
       // The real call, not a hand-rolled stand-in: TeacherBlock then
-      // Invitation, which is where the cycle closes.
-      await resolveInvitationOnLink(tx, { teacherId, studentEmail: email });
+      // Invitation, which is where the cycle closes. The real flag too: a
+      // literal would pass here and stop being a copy of the route.
+      await resolveInvitationOnLink(tx, { teacherId, studentEmail: email, linkCreatedNow });
     }, { timeout: 15_000 });
 
     const [acceptResult, bookingResult] = await Promise.allSettled([
