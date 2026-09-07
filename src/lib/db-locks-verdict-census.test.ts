@@ -284,7 +284,9 @@ interface Census {
    * Every source consumed, repo-relative, recorded by the loop that reads it.
    * The scope-reach guard derives its `reached` set from this rather than from
    * a second call to the walk, so a filter inserted between the walk and this
-   * census narrows `reached` with it and the guard reports the difference.
+   * census narrows `reached` with it, and an area such a filter empties goes
+   * red. An area it merely thins does not — that guard's granularity is the
+   * area, as its own comment says.
    */
   readonly filesCensused: readonly string[];
 }
@@ -307,11 +309,6 @@ function takeCensus(sources: readonly Source[]): Census {
   const filesCensused: string[] = [];
 
   for (const { file, text } of sources) {
-    // Recorded here, by the loop that consumes the source, and not off the
-    // `sources` parameter before it: there is then no step between what this
-    // list says was read and what was read.
-    filesCensused.push(file);
-
     // The real path is the file name, so `.tsx` parses as TSX rather than as
     // TypeScript reading `<Foo>` as a type assertion. `true` sets parent
     // pointers, which `nearestAnchor` walks.
@@ -380,6 +377,14 @@ function takeCensus(sources: readonly Source[]): Census {
         paired: inAnyOf(pairedRanges, at),
       });
     }
+
+    // Last, so the record means the file was censused to completion rather
+    // than reached. Off the loop that consumes the source and not off the
+    // `sources` parameter before it, so nothing can thin the census without
+    // thinning this list; at the bottom of the body and not the top, so a
+    // `continue` added above — skipping a file that fails to parse is the
+    // shape to expect — drops the file from both alike.
+    filesCensused.push(file);
   }
 
   return { callSites, verdicts, filesCensused };
@@ -477,7 +482,7 @@ describe('every lockClassRowsOrdered call site carries a verdict', () => {
     // empty while the census consumes a subset of `searchScope`, since
     // `areasUnderSrc` applies a strict subset of `searchScope`'s rules to the
     // same tree — so an area the census reaches is one it requires. What can
-    // now fire it, and could not while this side re-read the walk, is a census
+    // fire it, and could not if this side re-read the walk, is a census
     // consuming a file `areasUnderSrc` would not require — a source list
     // widened past the walk. Short of that it costs nothing until
     // `areasUnderSrc` itself narrows, and a narrowing there shrinks the very
