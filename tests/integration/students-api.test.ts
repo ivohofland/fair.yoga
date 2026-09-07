@@ -1761,8 +1761,9 @@ describe('PUT /api/students/[id]', () => {
   });
 
   it('refuses a whitespace-only first name (#405 §1, over the wire)', async () => {
+    const before = await firstNameOf(alice.id);
     const res = await put(alice.id, { firstName: '   ' }, alice.token);
     expect(res.status).toBe(400);
-    expect(await firstNameOf(alice.id)).toBe('Alicia');
+    expect(await firstNameOf(alice.id)).toBe(before);
   });
 });
