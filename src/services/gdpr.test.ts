@@ -933,12 +933,89 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     expect(teacher.email).toMatch(/@deleted\.invalid$/);
 
     expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ classId, observedStatus: 'completed' }),
+      expect.objectContaining({
+        classId,
+        observedStatus: 'completed',
+        // Live and never cancelled — the `?? null` fallback for a
+        // genuinely-uncancelled entry, untested until now (#407 item 3).
+        observedCancelledAt: null,
+        waitingEntriesLeft: 1,
+      }),
       expect.stringContaining('cancel CAS matched nothing'),
     );
+  });
+
+  it('reports row-deleted when the class row is gone by the time the diagnostic reads it', async () => {
+    // Completed and ineligible, exactly like the sibling test above — the
+    // only difference this test adds is deleting the row for real between
+    // commit and the diagnostic read, so `observed` comes back `null`
+    // rather than throwing. `row-deleted` is the `?? 'row-deleted'`
+    // fallback's own branch, reachable since #242 moved this read after the
+    // transaction's locks release (#407 item 1).
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'row-deleted class',
+      date: new Date('2026-06-03'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'completed',
+    });
+    const classId = cls.id;
+    const calendarEntryId = cls.calendarEntry.id;
+
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId: waitingStudentId, position: 1, status: 'waiting' },
+    });
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+
+    const original = dbLocks.lockClassRowsOrdered;
+    const spy = vi
+      .spyOn(dbLocks, 'lockClassRowsOrdered')
+      .mockImplementation(async (tx, source) => {
+        const ids = await original(tx, source);
+        return source.entries === true ? [...ids, classId] : ids;
+      });
+    onTestFinished(() => spy.mockRestore());
+
+    // Deletes the row for real, inside the diagnostic's own `findUnique`
+    // call, then lets the real query run — it returns a genuine `null`,
+    // not a mocked one. `CalendarEntry` cascades to `Class` (and to its
+    // `WaitlistEntry`), so the residual queue this row held is gone with
+    // it — `waitingEntriesLeft` below is 0 for that reason, not because
+    // the count read failed.
+    const rowDeleting = prisma.$extends({
+      query: {
+        class: {
+          async findUnique({ args, query }) {
+            if ((args.where as { id?: string }).id !== classId) return query(args);
+            await prisma.calendarEntry.delete({ where: { id: calendarEntryId } });
+            return query(args);
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    await expect(deleteTeacherAccount(rowDeleting, teacherId)).resolves.toBeUndefined();
+
+    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+    expect(teacher.email).toMatch(/@deleted\.invalid$/);
+
     expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ waitingEntriesLeft: 1 }),
-      expect.anything(),
+      expect.objectContaining({
+        classId,
+        observedStatus: 'row-deleted',
+        observedCancelledAt: null,
+        waitingEntriesLeft: 0,
+      }),
+      expect.stringContaining('cancel CAS matched nothing'),
     );
   });
 
