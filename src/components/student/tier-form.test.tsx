@@ -3,11 +3,10 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { TierForm } from './tier-form';
 
 /**
- * #136. This form's reverse pin proves its one key, `incomeTier`, is one
- * `updateStudentSchema` accepts. Like `notifications-form.tsx`, it
- * deliberately has no forward pin — see that file's comment for why. This
- * test holds what the pin cannot see: the exact key set that reaches the
- * API, and that picking a different tier changes the value sent.
+ * #136. The reverse pin in `tier-form.tsx` proves its key is one
+ * `updateStudentSchema` accepts, but cannot see what reaches the API. That
+ * is what these tests hold: the exact key set sent, and that picking a
+ * different tier changes the value sent.
  *
  * Nothing fetches on mount, so the save click is the first (and only) call.
  */
