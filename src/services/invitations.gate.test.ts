@@ -303,8 +303,9 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
    *
    * The stranger fixture is deliberately a bare address with no `Student`
    * row at all — the actual baseline `rosterLinkState` returns
-   * `{ linked: false, mayBeTold: false }` for — and not the unclaimed
-   * fixture two tests above, which is a different population `rosterLinkState`
+   * `{ linked: false, mayBeTold: false }` for — and not the fixture in
+   * `'still invites an UNCLAIMED student who is not on this teacher's
+   * roster'` above, which is a different population `rosterLinkState`
    * reaches through the `unclaimed ||` disjunct and which already has its
    * own test.
    */
@@ -336,12 +337,8 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
     // differs.
     expect(Object.keys(gatedResult.value).sort()).toEqual(Object.keys(strangerResult.value).sort());
 
-    // `delivered` is the one field this pair is allowed to differ on — see
-    // its own docblock on `InviteResult`. It is not a leak: nothing on the
-    // wire carries it back to the teacher (routes gate notification on it
-    // internally; the HTTP response body does not include it), so recording
-    // the divergence here marks it as known and bounded rather than an
-    // oversight this comparison missed.
+    // `delivered` is the one field this pair is allowed to differ on, by
+    // design — see its own docblock on `InviteResult`.
     expect(gatedResult.value.delivered).not.toBe(strangerResult.value.delivered);
     expect(gatedResult.value.delivered).toBe(false);
     expect(strangerResult.value.delivered).toBe(true);
