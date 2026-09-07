@@ -138,9 +138,10 @@ function searchScope(): string[] {
  * A SECOND read of `src/`, for the scope-reach guard alone. What that guard
  * checks against this is the census's own list of files consumed, and this
  * reaches no line of the code that produces that list. It makes its own
- * `readdirSync` call rather than reaching theirs, which means the two options
- * objects must stay in step; a difference there narrows this side alone, and
- * the guard's second direction is what reports that.
+ * `readdirSync` call rather than reaching the loop that builds
+ * `filesCensused`, which means the two options objects must stay in step; a
+ * difference there narrows this side alone, and the guard's second direction
+ * is what reports that.
  *
  * The duplication is the whole point. A guard whose two sides come from one
  * function narrows in lockstep with it: a filter added inside that function
@@ -148,7 +149,8 @@ function searchScope(): string[] {
  * edit, and the comparison stays equal. Only the extension and test-file rules
  * are duplicated here; no exclusion a future edit adds to `searchScope` reaches
  * this, which is exactly what has to make the two disagree.
- * `src/lib/census-walk-independence.test.ts` is what holds that.
+ * `src/lib/census-walk-independence.test.ts` is what holds the two walks'
+ * independence.
  *
  * `DEFINING_MODULE` is deliberately among those not duplicated: an area whose
  * only production file is the one that exclusion removes is a hole this guard
@@ -281,12 +283,8 @@ interface Census {
   readonly callSites: readonly CallSite[];
   readonly verdicts: readonly (Site & { readonly paired: boolean })[];
   /**
-   * Every source consumed, repo-relative, recorded by the loop that reads it.
-   * The scope-reach guard derives its `reached` set from this rather than from
-   * a second call to the walk, so a filter inserted between the walk and this
-   * census narrows `reached` with it, and an area such a filter empties goes
-   * red. An area it merely thins does not — that guard's granularity is the
-   * area, as its own comment says.
+   * Every source consumed, repo-relative. The scope-reach guard below reads
+   * this rather than a second call to the walk — see its own comment for why.
    */
   readonly filesCensused: readonly string[];
 }
@@ -754,11 +752,12 @@ describe('the census rules, against sources this repository does not contain', (
   });
 
   it('orders two sites in one file by line', () => {
-    // `byLocation` directly, because no census can reach its line arm: the walk
-    // visits each file's AST in source order, so every array it builds is
-    // already in line order within a file, and no source written here can hand
-    // that arm an out-of-order same-file list. Hand-built descending, asserted
-    // ascending.
+    // `byLocation` directly, because no census this file's fixtures can build
+    // reaches its line arm: `groups` above is anchored entries in visit order
+    // followed by unanchored ones, so only an unanchored call could put this
+    // side out of line order, and `nearestAnchor`'s own docblock says that
+    // path is believed unreachable rather than ruled out. Hand-built
+    // descending, asserted ascending.
     //
     // What this does not buy: a broken line arm produces no wrong output today,
     // precisely because the walk feeding it is source-ordered. What it holds is

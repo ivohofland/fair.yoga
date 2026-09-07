@@ -11,7 +11,8 @@
  * on this branch's base: share the two walks, narrow the result, and every
  * db-locks census test stays green while the census watches a fraction of the
  * repository. That is the defect #472 closed, restored by a refactor whose
- * whole appearance is an improvement.
+ * whole appearance is an improvement. The measurement is in
+ * `docs/superpowers/specs/2026-09-07-census-scope-tethers-design.md`.
  *
  * Prose cannot hold that, and this repository ships an agent whose stated job
  * is removing duplication. So this file holds it instead, for every census file
@@ -47,12 +48,16 @@
  * nothing; `npm run typecheck` in CI's `checks` job is what holds that.
  *
  * THIS FILE STAYS OUT OF BOTH CENSUSES, and not only by the `*.test.ts`
- * exclusion each of them applies. It makes no call to any helper either census
- * watches — those names appear here in prose alone, and prose is not a call
- * expression — and it does not spell the db-locks marker, which that census
- * treats as a reserved token wherever it occurs in a file it searches. It
- * likewise does not discover itself: the discovery below reads declarations,
- * and `areasUnderSrc` appears here only inside fixture text.
+ * exclusion each of them applies. It makes no call to any helper either
+ * census watches, and does not name one anywhere in this file, in a call or
+ * in prose, so neither census's text search has anything to match. It does
+ * not spell the db-locks marker either, which that census treats as a
+ * reserved token wherever it occurs in a file it searches. It likewise does
+ * not discover itself: the discovery below reads module-level declarations,
+ * and this file declares no function or function-valued variable named
+ * `areasUnderSrc` — the name appears only in this docblock's prose, as the
+ * `GUARD` constant, and inside fixture source strings that are parsed as
+ * separate synthetic files, never as this one.
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -68,7 +73,7 @@ const CENSUS_DIR = 'src/lib';
 const GUARD = 'areasUnderSrc';
 
 /** The call its body must still make, so an emptied-out guard is not "clean". */
-const WALK = 'readdirSync';
+const WALK = 'readdirSync' satisfies keyof typeof import('node:fs');
 
 /**
  * The census files that declare `GUARD` today. Not the list this file checks —
@@ -408,6 +413,41 @@ const ${GUARD} = (): string[] => typeScriptUnderSrc();
     expect(independenceOf(FIXTURE, source)).toEqual([
       `${FIXTURE}:12 ${GUARD} calls typeScriptUnderSrc — typeScriptUnderSrc is declared at module level`,
       `${FIXTURE} ${GUARD} makes no ${WALK} call`,
+    ]);
+  });
+
+  it('reports a call reaching through an import assignment', () => {
+    // The one binding form `moduleLevelBindings` reads a specifier from that
+    // regular `ts.isImportDeclaration` handling above does not cover:
+    // `import x = require(...)`, parsed as a distinct `ts.ImportEqualsDeclaration`
+    // node. Bound here from a non-`node:` specifier, so the call is a finding —
+    // the clean fixtures above already prove a `node:` specifier reached this
+    // way would not be.
+    const preamble = `
+import legacyFs = require('./legacy-fs');
+`;
+    const body = `  for (const relative of legacyFs.readdirSync()) {
+    areas.add(relative.split('/')[0] ?? relative);
+  }`;
+    expect(independenceOf(FIXTURE, guardSource(body, preamble))).toEqual([
+      `${FIXTURE}:6 ${GUARD} calls legacyFs.readdirSync — legacyFs is imported from './legacy-fs'`,
+    ]);
+  });
+
+  it('reports a call rooting in a destructured module-level variable binding', () => {
+    // `declare` recurses into a variable's binding pattern rather than only
+    // handling a bare identifier — a name bound by `const { a } = something;`
+    // is exactly as reachable as one bound by `const a = something.a;`. That
+    // recursion is what this pins: remove it and this call's root is never
+    // added to `bindings`, so the lookup below finds nothing and the call
+    // passes silently instead of failing loudly.
+    const preamble = `
+const { a } = something;
+`;
+    const body = `  if (a().length === 0) return areas;
+${OWN_WALK}`;
+    expect(independenceOf(FIXTURE, guardSource(body, preamble))).toEqual([
+      `${FIXTURE}:6 ${GUARD} calls a — a is declared at module level`,
     ]);
   });
 

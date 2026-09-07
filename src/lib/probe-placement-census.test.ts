@@ -161,9 +161,10 @@ function searchScope(): string[] {
  * A SECOND read of `src/`, for the scope-reach guard alone. What that guard
  * checks against this is the census's own list of files consumed, and this
  * reaches no line of the code that produces that list. It makes its own
- * `readdirSync` call rather than reaching theirs, which means the two options
- * objects must stay in step; a difference there narrows this side alone, and
- * the guard's second direction is what reports that.
+ * `readdirSync` call rather than reaching the loop that builds
+ * `filesCensused`, which means the two options objects must stay in step; a
+ * difference there narrows this side alone, and the guard's second direction
+ * is what reports that.
  *
  * The duplication is the whole point. A guard whose two sides come from one
  * function narrows in lockstep with it: a filter added inside that function
@@ -171,7 +172,8 @@ function searchScope(): string[] {
  * edit, and the comparison stays equal. Only the extension and test-file rules
  * are duplicated here; no exclusion a future edit adds to `searchScope` reaches
  * this, which is exactly what has to make the two disagree.
- * `src/lib/census-walk-independence.test.ts` is what holds that.
+ * `src/lib/census-walk-independence.test.ts` is what holds the two walks'
+ * independence.
  */
 function areasUnderSrc(): Set<string> {
   const areas = new Set<string>();
@@ -324,12 +326,8 @@ interface Census {
    * tree; the fixtures compare them as `path:line`. */
   readonly transactionCallbacks: readonly Site[];
   /**
-   * Every source consumed, repo-relative, recorded by the loop that reads it.
-   * The scope-reach guard derives its `reached` set from this rather than from
-   * a second call to the walk, so a filter inserted between the walk and this
-   * census narrows `reached` with it, and an area such a filter empties goes
-   * red. An area it merely thins does not — that guard's granularity is the
-   * area, as its own comment says.
+   * Every source consumed, repo-relative. The scope-reach guard below reads
+   * this rather than a second call to the walk — see its own comment for why.
    */
   readonly filesCensused: readonly string[];
 }
