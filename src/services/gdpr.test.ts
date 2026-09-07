@@ -990,10 +990,12 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
 
     // Deletes the row for real, inside the diagnostic's own `findUnique`
     // call, then lets the real query run — it returns a genuine `null`,
-    // not a mocked one. The cascade this relies on is `docs/data-model.md`'s
-    // "deleting the entry cascades to the child" note — so the residual
-    // queue this row held is gone with it too, and `waitingEntriesLeft`
-    // below is 0 for that reason, not because the count read failed.
+    // not a mocked one. `docs/data-model.md`'s "deleting the entry
+    // cascades to the child" note covers the `Class` row; `WaitlistEntry`
+    // is a second, separate `onDelete: Cascade` in `prisma/schema.prisma`,
+    // so the residual queue this row held is gone with it too, and
+    // `waitingEntriesLeft` below is 0 for that reason, not because the
+    // count read failed.
     const rowDeleting = prisma.$extends({
       query: {
         class: {
@@ -1328,10 +1330,10 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     expect(after.status).toBe('completed');
     expect(after.calendarEntry.cancelledAt).toBeNull();
 
-    // The four sibling tests above use this same injection with a
-    // POSITIVE warn assertion, so a broken injection (nothing collected as
-    // a skip) fails those loudly first — this negative assertion is not
-    // this branch's only guard against a vacuous pass.
+    // The sibling tests above use this same injection with a POSITIVE
+    // warn assertion, so a broken injection (nothing collected as a skip)
+    // fails those loudly first — this negative assertion is not this
+    // branch's only guard against a vacuous pass.
     expect(warn).not.toHaveBeenCalledWith(
       expect.objectContaining({ classId }),
       expect.stringContaining('cancel CAS matched nothing'),
