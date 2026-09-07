@@ -168,9 +168,9 @@ export function StudioClassEditForm({
       // generated row would 409. Omission is what keeps the form honest with
       // gate 2.
       //
-      // Trimmed, because `z.string().min(1)` counts characters and accepts
-      // `'   '` — and `location` is the detail page's heading, so a whitespace
-      // save would blank it at 200.
+      // Trimmed client-side so a padded value never round-trips as a 400 the
+      // user has to decode — the wire schema trims too (`z.string().trim().min(1)`),
+      // so an untrimmed `'   '` would be refused, not stored.
       const payload: UpdateStudioClassWire = {
         classType: form.classType.trim(),
         location: form.location.trim(),

@@ -5,8 +5,8 @@ import { TierForm } from './tier-form';
 /**
  * #136. The reverse pin in `tier-form.tsx` proves its key is one
  * `updateStudentSchema` accepts, but cannot see what reaches the API. That
- * is what these tests hold: the exact key set sent, and that picking a
- * different tier changes the value sent.
+ * is what these tests hold: what the pin cannot see — the exact key set
+ * that reaches the API, and how the form behaves when the request fails.
  *
  * Nothing fetches on mount, so the save click is the first (and only) call.
  */
@@ -16,6 +16,7 @@ describe('TierForm', () => {
   afterEach(() => {
     fetchMock.mockReset();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   function stubFetch() {
@@ -85,6 +86,23 @@ describe('TierForm', () => {
       expect(screen.getByText('Network error. Try again.')).toBeInTheDocument();
     });
     expect(logged).toHaveBeenCalledWith('student tier save failed', expect.any(Error));
-    logged.mockRestore();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs and surfaces the server message when the response is not ok', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: { message: 'Income tier must be 1-5' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<TierForm studentId="student-1" currentTier={3} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /save tier/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Income tier must be 1-5')).toBeInTheDocument();
+    });
+    expect(logged).toHaveBeenCalledWith('student tier save failed (HTTP)', 400);
   });
 });

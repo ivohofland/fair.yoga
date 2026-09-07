@@ -57,11 +57,22 @@ export function NameForm({
         firstName: trimmedFirst,
         lastName: trimmedLast,
       };
-      const res = await fetch(`/api/students/${studentId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      // Only the request itself is wrapped, so "Network error" means
+      // exactly that — the success path below (state updates,
+      // router.refresh()) sits outside this inner try, so a failure there
+      // can't be mistaken for the save itself failing.
+      let res: Response;
+      try {
+        res = await fetch(`/api/students/${studentId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (err) {
+        console.error('student name save failed', err);
+        setError('Network error. Try again.');
+        return;
+      }
 
       if (res.ok) {
         setFirstName(trimmedFirst);
@@ -71,13 +82,6 @@ export function NameForm({
       } else {
         setError(await readErrorMessage(res, 'Could not save. Try again.'));
       }
-    } catch (err) {
-      // Bound and logged rather than discarded. Only `fetch` itself failing
-      // reaches here — offline, DNS, an aborted connection: `readErrorMessage`
-      // handles its own unreadable body and returns the fallback copy instead
-      // of throwing.
-      console.error('student name save failed', err);
-      setError('Network error. Try again.');
     } finally {
       setSaving(false);
     }
