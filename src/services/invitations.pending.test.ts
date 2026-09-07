@@ -344,4 +344,56 @@ describe('listPendingInvitations', () => {
       }
     }
   });
+
+  /**
+   * The same exclusion, against an ARCHIVED link. Archiving is a CRM filing
+   * action, not an unlink — the pair is still linked — and this read is
+   * unfiltered on `TeacherStudent.isArchived`, which is the behaviour to hold
+   * down rather than an oversight. Add `isArchived: false` to that `none` and
+   * nothing else in the suite notices, while this student starts seeing a
+   * card asking them to connect with a teacher `/account/privacy` already
+   * lists under "Your teachers" — that page reads its own links by existence,
+   * not by `isArchived: false`, and renders an archived one with a badge. The
+   * decline that card offers does not unlink, and since #418 the invitation
+   * behind it never resolves on its own, so nothing would clear it again.
+   *
+   * The control case above (a second teacher with an unrelated linked
+   * student) covers the `none: {}` mutation for both; what is new here is
+   * only the archived flag.
+   */
+  it('excludes it just the same when that roster link is archived', async () => {
+    const email = `pending-list-archived-${suffix}@test.local`;
+    let studentId: string | undefined;
+    let invitationId: string | undefined;
+    try {
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Archived', lastName: 'Linked', email,
+          teacherStudents: { create: { teacherId, isArchived: true } },
+        },
+        select: { id: true },
+      });
+      studentId = student.id;
+      // Measured rather than assumed: the fixture's whole point is the flag.
+      expect(
+        await prisma.teacherStudent.findFirstOrThrow({
+          where: { teacherId, studentId }, select: { isArchived: true },
+        }),
+      ).toEqual({ isArchived: true });
+
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email, firstName: 'Archived', lastName: 'Linked' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
+
+      expect(await listPendingInvitations(prisma, { accountEmail: email })).toEqual([]);
+    } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
+      if (studentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId } });
+        await prisma.student.delete({ where: { id: studentId } });
+      }
+    }
+  });
 });

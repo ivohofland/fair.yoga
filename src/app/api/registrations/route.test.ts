@@ -15,7 +15,7 @@ import { POST } from './route';
  * `services/link-consent.ts`, and `link-consent.test.ts` drives every cell of
  * it directly. What no test of that function can see is whether THIS handler
  * passes `linkTeacherStudent`'s own answer through or a literal: hardcode
- * `linkCreatedNow: true` at the call site and every one of those cases stays
+ * `linkOutcome: 'created'` at the call site and every one of those cases stays
  * green while the oracle #418 closed reopens. `addToWaitlist`'s twin of this
  * wiring is pinned in `waitlist.test.ts`; this side had only
  * `tests/integration/registrations-api.test.ts`, which drives the app on
@@ -44,14 +44,23 @@ describe('POST /api/registrations — resolveInvitationOnLink wiring (#418)', ()
   let teacherRoomId: string;
   let studentEmail: string;
   let token: string;
-  // The `linkCreatedNow: true` half of the pair below: a student the teacher
+  // The `linkOutcome: 'created'` half of the pair below: a student the teacher
   // has invited but never linked. `unlinked` distinguishes this fixture from
   // `studentId`/`studentEmail`/`token` above, which stay CLAIMED and LINKED
   // for the decoy-probe case.
   let unlinkedStudentId: string;
   let unlinkedStudentEmail: string;
   let unlinkedToken: string;
+  // The `declined` half, which turns on nothing: already on the roster, and
+  // behind a live `TeacherBlock`.
+  let blockedStudentId: string;
+  let blockedStudentEmail: string;
+  let blockedToken: string;
   const accountIds: string[] = [];
+  // A fixed instant so the reopening is measurable: `respondedAt` moving off
+  // this value is what says the row was written again, which a bare
+  // `not.toBeNull()` on an already-answered row cannot see.
+  const declinedAt = new Date('2026-02-03T04:05:06.000Z');
 
   beforeAll(async () => {
     await prisma.$connect();
@@ -155,6 +164,36 @@ describe('POST /api/registrations — resolveInvitationOnLink wiring (#418)', ()
         firstName: 'Reg', lastName: 'Unlinked', status: 'pending',
       },
     });
+
+    // CLAIMED, LINKED, declined, and blocked — the escape hatch's own shape.
+    // A student who unlinked leaves both the tombstone and the block behind;
+    // the link here is what a promotion racing that unlink restores
+    // (`withdrawWaitingEntriesForTeacher`'s docblock, services/waitlist.ts),
+    // and it is what makes this booking's own link write insert nothing.
+    blockedStudentEmail = `reg-route-blocked-${suffix}@test.local`;
+    const blockedStudent = await prisma.student.create({
+      data: {
+        firstName: 'Reg', lastName: 'Blocked',
+        email: blockedStudentEmail, incomeTier: 3, claimedAt: new Date(),
+        account: { create: { email: blockedStudentEmail } },
+        teacherStudents: { create: { teacherId } },
+      },
+      select: { id: true, accountId: true },
+    });
+    blockedStudentId = blockedStudent.id;
+    const blockedAccountId = blockedStudent.accountId;
+    if (!blockedAccountId) throw new Error('fixture: the claimed student has no account');
+    accountIds.push(blockedAccountId);
+
+    blockedToken = await seedSession(prisma, blockedAccountId);
+
+    await prisma.invitation.create({
+      data: {
+        teacherId, email: blockedStudentEmail,
+        firstName: 'Reg', lastName: 'Blocked', status: 'declined', respondedAt: declinedAt,
+      },
+    });
+    await prisma.teacherBlock.create({ data: { teacherId, email: blockedStudentEmail } });
   });
 
   afterAll(async () => {
@@ -168,7 +207,9 @@ describe('POST /api/registrations — resolveInvitationOnLink wiring (#418)', ()
     await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
     await prisma.room.deleteMany({ where: { id: roomId } });
     await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
-    await prisma.student.deleteMany({ where: { id: { in: [studentId, unlinkedStudentId] } } });
+    await prisma.student.deleteMany({
+      where: { id: { in: [studentId, unlinkedStudentId, blockedStudentId] } },
+    });
     await prisma.teacher.deleteMany({ where: { id: teacherId } });
     // Last, and after both profiles: `Student.accountId` and
     // `Teacher.accountId` are plain FKs with no cascade, so an account dropped
@@ -232,12 +273,12 @@ describe('POST /api/registrations — resolveInvitationOnLink wiring (#418)', ()
    * The twin of the case above: same route, same wiring, opposite starting
    * link state. Here the student holds a `pending` invitation but is not yet
    * on the teacher's roster, so THIS booking is what creates the
-   * `TeacherStudent` link — and `linkCreatedNow` should therefore be `true`
-   * when the handler hands it to `resolveInvitationOnLink`. Hardcode that
-   * argument to `false` (or drop the call to `resolveInvitationOnLink`
-   * entirely) and this is the test that dies; hardcode it to `true` and the
-   * test above does. Neither is provable from one of them alone, which is why
-   * they are a pair.
+   * `TeacherStudent` link — so the handler should hand
+   * `resolveInvitationOnLink` a `linkOutcome` of `'created'`. Hardcode that
+   * argument to `'already-linked'` (or drop the call to
+   * `resolveInvitationOnLink` entirely) and this is the test that dies;
+   * hardcode it to `'created'` and the test above does. Neither is provable
+   * from one of them alone, which is why they are a pair.
    */
   it('creates the roster link and accepts the invitation for a first-time booker', async () => {
     expect(
@@ -278,5 +319,65 @@ describe('POST /api/registrations — resolveInvitationOnLink wiring (#418)', ()
     });
     expect(invitation.status).toBe('accepted');
     expect(invitation.respondedAt).not.toBeNull();
+  });
+
+  /**
+   * The half of the rule that turns on nothing, pinned where the CALLER
+   * decides whether to call at all. `link-consent.test.ts` proves that
+   * `resolveInvitationOnLink` clears a `declined` row and its `TeacherBlock`
+   * under an `'already-linked'` outcome — but it proves it from inside the
+   * function, and nothing outside pinned that this route reaches the function
+   * at all in that case. Wrap the call here in
+   * `if (linkOutcome === 'created')` and every other test in this file, every
+   * cell in `link-consent.test.ts`, and the whole unit tier stay green: this
+   * is the one that dies. What it holds down is the escape hatch the decline
+   * design rests on — book a class and you are back — for the one population
+   * that needs it most, a student the teacher still has on their roster.
+   *
+   * `respondedAt` is compared against the seeded instant rather than
+   * `not.toBeNull()`: this row was already answered, so it was never null and
+   * a null check would pass on a write that never happened.
+   */
+  it('clears a declined tombstone and its block even though the link already stood', async () => {
+    // The starting state is half the test. A booking that silently did
+    // nothing would leave exactly this behind.
+    expect(
+      await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId, studentId: blockedStudentId } },
+      }),
+    ).not.toBeNull();
+    expect(
+      await prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId, email: blockedStudentEmail } },
+        select: { status: true, respondedAt: true },
+      }),
+    ).toEqual({ status: 'declined', respondedAt: declinedAt });
+    expect(
+      await prisma.teacherBlock.findUnique({
+        where: { teacherId_email: { teacherId, email: blockedStudentEmail } },
+      }),
+    ).not.toBeNull();
+
+    const request = new NextRequest('http://localhost:3000/api/registrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(blockedToken) },
+      body: JSON.stringify({ classId }),
+    });
+    const res = await POST(request);
+
+    expect(res.status).toBe(201);
+
+    const invitation = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email: blockedStudentEmail } },
+      select: { status: true, respondedAt: true },
+    });
+    expect(invitation.status).toBe('accepted');
+    expect(invitation.respondedAt).not.toEqual(declinedAt);
+
+    expect(
+      await prisma.teacherBlock.findUnique({
+        where: { teacherId_email: { teacherId, email: blockedStudentEmail } },
+      }),
+    ).toBeNull();
   });
 });

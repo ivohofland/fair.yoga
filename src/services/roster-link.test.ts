@@ -7,7 +7,7 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { linkTeacherStudent } from './roster-link';
+import { linkTeacherStudent, type LinkOutcome } from './roster-link';
 
 const prisma = new PrismaClient();
 
@@ -67,9 +67,9 @@ describe('linkTeacherStudent', () => {
   it('creates the link when there is none', async () => {
     const { teacherId, studentId } = await makeUnlinkedPair();
 
-    const created = await linkTeacherStudent(prisma, { teacherId, studentId });
+    const outcome = await linkTeacherStudent(prisma, { teacherId, studentId });
 
-    expect(created).toBe(true);
+    expect(outcome).toBe('created');
     const link = await prisma.teacherStudent.findUnique({
       where: { teacherId_studentId: { teacherId, studentId } },
     });
@@ -83,9 +83,9 @@ describe('linkTeacherStudent', () => {
       where: { teacherId_studentId: { teacherId, studentId } },
     });
 
-    const created = await linkTeacherStudent(prisma, { teacherId, studentId });
+    const outcome = await linkTeacherStudent(prisma, { teacherId, studentId });
 
-    expect(created).toBe(false);
+    expect(outcome).toBe('already-linked');
     const second = await prisma.teacherStudent.findUniqueOrThrow({
       where: { teacherId_studentId: { teacherId, studentId } },
     });
@@ -103,6 +103,12 @@ describe('linkTeacherStudent', () => {
    * The holder's transaction stays open until after the second writer has
    * issued its statement, so the second writer genuinely waits on an
    * uncommitted tuple rather than seeing a committed one.
+   *
+   * BOTH answers are captured, not just the loser's. `LinkOutcome` is what
+   * `resolveInvitationOnLink` decides a `pending` invitation on (#418), so an
+   * implementation that handed `'already-linked'` to the winner as well would
+   * be wrong in the direction that matters — the inserting act would resolve
+   * nothing — and a test reading only the loser's answer would pass.
    */
   it('returns rather than throwing when a concurrent writer wins the insert race', async () => {
     const { teacherId, studentId } = await makeUnlinkedPair();
@@ -112,8 +118,9 @@ describe('linkTeacherStudent', () => {
     let releaseHolder!: () => void;
     const released = new Promise<void>((r) => { releaseHolder = r; });
 
+    let holderOutcome: LinkOutcome | undefined;
     const holder = prisma.$transaction(async (tx) => {
-      await linkTeacherStudent(tx, { teacherId, studentId });
+      holderOutcome = await linkTeacherStudent(tx, { teacherId, studentId });
       holderInserted();
       await released;
     }, { timeout: 15_000 });
@@ -123,8 +130,9 @@ describe('linkTeacherStudent', () => {
     await new Promise((r) => setTimeout(r, 200));
     releaseHolder();
 
-    await expect(loser).resolves.toBe(false);
+    await expect(loser).resolves.toBe('already-linked');
     await holder;
+    expect(holderOutcome).toBe('created');
 
     const links = await prisma.teacherStudent.findMany({ where: { teacherId, studentId } });
     expect(links).toHaveLength(1);
