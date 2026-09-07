@@ -2131,16 +2131,17 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
   /**
    * The sibling read this loop guards with its own `.catch()`: the test
    * above fails `handleSpotFreed` but leaves this diagnostic's own
-   * `waitlistEntry.count` read real, so it can only ever prove `waiting: 1`
-   * — a successful count. `-1`, not `0`, is the same call `promoteAfterCancel`
-   * makes for the identical reason (`api/registrations/[id]/route.ts`, which
-   * `gdpr.ts`'s own comment on this line points to): a count no real queue
-   * can take keeps the line honest about not knowing rather than claiming
-   * nobody waited. Without this test, that `.catch()` in `deleteStudentAccount`'s
-   * post-commit loop can be mutated from `-1` to `0` and the whole suite
-   * stays green — an operator reading `waiting: 0` on a failed broadcast
-   * would then conclude nobody was waiting, on a queue that may be full of
-   * students never told their seat was free.
+   * `waitlistEntry.count` read real, so it can only ever prove a
+   * successful count, not the sentinel. `-1`, not `0`, is the same call
+   * `promoteAfterCancel` makes for the identical reason
+   * (`api/registrations/[id]/route.ts`, which `gdpr.ts`'s own comment on
+   * this line points to): "a count no real queue can take keeps the line
+   * honest about not knowing rather than claiming nobody waited." Without
+   * this test, that `.catch()` in `deleteStudentAccount`'s post-commit
+   * loop can be mutated from `-1` to `0` and the whole suite stays green —
+   * an operator reading `waiting: 0` on a failed broadcast would then
+   * conclude nobody was waiting, on a queue that may be full of students
+   * never told their seat was free.
    */
   it('logs the -1 sentinel, not 0, when the diagnostic\'s own waitlist-count read fails after the spot-freed hook fails', async () => {
     const fixture = await makeStudentWithFreedSpot();
@@ -2154,10 +2155,15 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       // post-commit loop in `gdpr.ts`), which the sibling test above leaves
       // real. Matched on `classId` alone: this fixture's class is never at
       // capacity when the loop runs (the erased student's freed seat is
-      // what got it here), so `handleSpotFreed`'s own `isFull` branch —
-      // the one other `waitlistEntry.count` call this match could reach,
-      // inside its own transaction — is never reached through it and
-      // cannot collide with this match.
+      // what got it here), so `handleSpotFreed`'s own `isFull` branch never
+      // runs its own count read. And if that reasoning were ever wrong —
+      // this match reaching a count inside `handleSpotFreed`'s own
+      // transaction instead of this one — the collision would not pass
+      // silently: that read carries no `(code: "55P03")` to make it
+      // transient, so the loop below would route to `log.error` instead of
+      // `log.warn`, and `warn.mock.calls.find(...)` would come back
+      // `undefined` against a real payload. This test fails loudly on that,
+      // not quietly.
       const failing = prisma.$extends({
         query: {
           notification: {
