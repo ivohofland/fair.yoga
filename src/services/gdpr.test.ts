@@ -1297,8 +1297,13 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     expect(err).toBeInstanceOf(AlreadyErasedError);
     expect((err as AlreadyErasedError).half).toBe('teacher');
 
-    // The whole transaction rolled back, including the class's own CAS
-    // write — not just the caller-visible teacher row.
+    // Sanity check, not a rollback proof by itself: this class was never
+    // eligible for cancellation (`completed` is not in
+    // CANCELLABLE_STATUSES), so its CAS was always going to report
+    // `count: 0` regardless of whether this transaction committed or
+    // rolled back. What DOES prove the rollback is the `AlreadyErasedError`
+    // above — Prisma's `$transaction` rolls back the whole attempt when its
+    // callback throws.
     const after = await prisma.class.findUniqueOrThrow({
       where: { id: classId },
       include: { calendarEntry: true },
