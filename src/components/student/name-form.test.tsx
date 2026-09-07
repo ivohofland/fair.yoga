@@ -158,4 +158,22 @@ describe('NameForm', () => {
     fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Annamarie' } });
     expect(screen.queryByText('Saved')).toBeNull();
   });
+
+  it('logs the failure and tells the student when fetch itself fails', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <NameForm studentId="student-1" initialFirstName="Anna" initialLastName="Smith" />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /save name/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Network error. Try again.');
+    });
+    // The copy alone would pass with the error still discarded. This is the
+    // assertion that makes the log a change rather than a gesture.
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
+  });
 });

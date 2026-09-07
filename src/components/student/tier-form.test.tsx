@@ -73,4 +73,18 @@ describe('TierForm', () => {
     const { body } = await save();
     expect(body).toEqual({ incomeTier: 4 });
   });
+
+  it('logs the failure and tells the student when fetch itself fails', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<TierForm studentId="student-1" currentTier={3} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /save tier/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Network error. Try again.')).toBeInTheDocument();
+    });
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
+  });
 });
