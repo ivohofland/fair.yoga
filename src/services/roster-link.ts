@@ -23,8 +23,9 @@ import type { Prisma } from '@prisma/client';
  * `createMany`'s own `count` is 1 on insert, 0 on conflict — so it is
  * race-free the same way the write is: no caller has to re-read the table to
  * learn which outcome its own statement got. `resolveInvitationOnLink`
- * (`services/link-consent.ts`) is the caller that needs the distinction, to
- * tell a booking that created the `TeacherStudent` link apart from one that
+ * (`services/link-consent.ts`) is written against that distinction: not a
+ * caller of this function, but a consumer a caller hands the value to, so it
+ * can tell an act that created the `TeacherStudent` link apart from one that
  * found it already there.
  */
 export async function linkTeacherStudent(

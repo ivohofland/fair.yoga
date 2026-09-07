@@ -166,6 +166,21 @@ The unclaimed disjunct restores what #412 accidentally took away, rather than op
 
 **What a student's own act resolves (#418).** The rule spans `resolveInvitationOnLink` (`src/services/link-consent.ts`), `linkTeacherStudent` (`src/services/roster-link.ts`) and the two callers that create a roster link on the student's behalf — `POST /api/registrations` (their own booking) and `addToWaitlist` (`src/services/waitlist.ts`) — so it is stated here rather than in any one of them. A booking or a waitlist join returns a **`pending`** invitation to `accepted` only when that same act created the `TeacherStudent` link; someone already on the roster has nothing left to consent to, so a `pending` row standing beside a link that already existed is left where it is. A **`declined`** row is returned to `accepted` either way, and the `TeacherBlock` is deleted either way. `promoteNext` and `claimSpot` (`waitlist.ts`) resolve nothing at all, and not for the same reason. A promotion fires at a moment the *teacher* chooses — cancel any registration and the head of the queue is linked — off a request the student made earlier, with nothing rechecking their intent in between. A claim is the student's own act at that instant (`POST /api/waitlist/claim` is `requireSession` and self-only), and abstains for the other reason: it can only come from someone already holding a `waiting` entry, and that join already answered whatever invitation state it had standing to answer — so a claim adds no consent left to resolve, and one that *did* resolve would reverse a decline made after the join. A new caller has to clear both bars: the act must be the student's own at this instant, and it must be the act that put them on the roster.
 
+That roster — which sites create a roster link, which of them resolve, which
+abstain — is re-derived rather than trusted from this prose:
+
+```sh
+grep -rnE 'linkTeacherStudent\(|resolveInvitationOnLink\(' --include="*.ts" src/ \
+  | grep -v '\.test\.ts'
+```
+
+**Nine lines today**: the two function definitions, plus every production site
+that creates a roster link or resolves an invitation on one. A link creator
+with no `resolveInvitationOnLink` in the same function is an abstainer, and
+needs its reason stated in the paragraph above. The match is syntactic — a call
+made through an alias would escape it — the same limit `docs/lock-order.md`'s
+`FOR UPDATE OF` check runs under.
+
 Each half is load-bearing against a different failure, and neither follows from the other:
 
 - The **`pending`** narrowing is a security property. A teacher who guesses the address of a student already on their roster who has not shared it gets an ordinary success and a real, undelivered `pending` row (the paragraph above) rather than the `ALREADY_LINKED` refusal that would confirm the address. Resolving that row on the student's next ordinary booking handed the same answer back one probe later, because an `accepted` row on a linked pair *is* refused `ALREADY_LINKED` — the third disjunct above. A row that never becomes `accepted` has no second probe to leak into.

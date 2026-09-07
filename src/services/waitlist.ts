@@ -292,7 +292,7 @@ export async function addToWaitlist(
     // permanent from the teacher's side, always reversible from the
     // student's. Booking is the other route back; this is the second.
     // `linkCreatedNow` decides the `pending` half: a re-join by someone this
-    // teacher already has on their roster resolves nothing (#418).
+    // teacher already has on their roster resolves no `pending` row (#418).
     await resolveInvitationOnLink(tx, {
       teacherId: cls.calendarEntry.teacherId,
       studentEmail: student.email,

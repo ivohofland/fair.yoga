@@ -63,9 +63,11 @@ describe('ContactList', () => {
   // #166: an `accepted` invitation is a person who is now a real student —
   // `resolveInvitationOnLink`/`acceptInvitation` already put them in
   // `TeacherStudent`, so `StudentDirectory` is where they render. The API
-  // does not filter this (only `isArchived`), so the component must: this
-  // is the guard that keeps a linked student off both lists' opposite, not
-  // the same person listed twice under two different labels.
+  // does not filter this (only `isArchived`), so the component must. What
+  // that buys is that an ANSWERED invitation stops being a contact — not
+  // that a person appears on only one list: since #418 a `pending` row can
+  // stand beside a live link for good, and that person renders on both. See
+  // `ContactRow`'s docblock (`contact-list.tsx`).
   it('does not list an accepted invitation', async () => {
     stubInvitations([
       { id: 'inv-1', firstName: 'Lena', lastName: 'Visser', email: 'lena@example.com', status: 'pending' },

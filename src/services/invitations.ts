@@ -159,12 +159,10 @@ async function rosterLinkState(
   const linked = student.teacherStudents.length > 0;
   const unclaimed = privacyIsBypassed(student);
 
-  // The second tripwire on the unclaimed-Student branch, and the reason this
-  // one exists rather than deferring to `bypassesPrivacy`'s: that warn fires
-  // when a student is PROJECTED, and this gate reaches students the
-  // projection does not. `teacherStudents` here is unfiltered, so an
-  // archived link still answers `linked` here, same as a live one. Gated on
-  // `linked` because that is when the bypass changes an answer.
+  // The second tripwire on the unclaimed-Student branch. `teacherStudents`
+  // here is unfiltered, so an archived link still answers `linked` here, same
+  // as a live one. Gated on `linked` because that is when the bypass changes
+  // an answer.
   //
   // `privacyIsBypassed` rather than an inline `claimedAt === null`: #419 was
   // the two surfaces disagreeing about this exact rule, so the predicate is

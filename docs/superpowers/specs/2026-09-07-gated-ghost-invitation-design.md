@@ -51,8 +51,24 @@ come apart on a path that exists today:
 take a genuine, delivered, un-marked invitation to a stranger and re-address it
 to a linked-but-unshared student. An origin marker is not set on that row, so it
 would still flip on the student's next booking and the oracle would still be
-open through a second door. The runtime fact closes both doors with one
-condition, and there is no marker to launder.
+open through a second door. The runtime fact closes that door too — a
+re-addressed `pending` row resolves no more readily than any other, and there is
+no marker to launder.
+
+That is the **`pending`** half of that route, and it is the whole of what this
+branch closes there. The same PUT walked with an **`accepted`** row never
+reaches `resolveInvitationOnLink` at all, so no condition on this function can
+touch it: the route gates on ownership and a `declined` status only
+(`src/app/api/invitations/[id]/route.ts:86-93` — no roster-link check, no other
+status check), so a teacher holding any `accepted` invitation can `PUT` its
+`email` to a guessed address and then `POST /api/students` with that same
+address. `inviteContact` falls past both early returns and meets the gate's
+second disjunct (`invitations.ts:301`), answering `ALREADY_LINKED` when the
+address is linked to that teacher and an ordinary `201` when it is a stranger's.
+Two HTTP calls, no student action. This is a **pre-existing #412/#417
+residual** rather than anything this branch introduces or was scoped to fix,
+and it is filed as its own follow-up issue; the fix belongs on the PUT route,
+not here.
 
 ## 2. The decision
 
@@ -152,12 +168,18 @@ state, and the first of them is an ordinary CRM action.**
   own students, which is the oracle — through a second door, and one a
   persisted origin marker would not have closed, since no marker is set on a
   re-addressed row.
-- **A linkless `waiting` row is promoted.** The non-student link creators are
-  `promoteNext` and `claimSpot` (`waitlist.ts`, each writing the link beside
-  its `activateRegistration` call — that function creates the `Registration`,
-  not the link) and `acceptInvitation`, which resolves the row itself. So only
-  the two promotions are in question, and reaching either needs a `waiting`
-  row. A queue join normally links *and* resolves — but not every `waiting` row
+- **A linkless `waiting` row is promoted.** The link creators that resolve
+  nothing are `promoteNext` and `claimSpot` (`waitlist.ts`, each writing the
+  link beside its `activateRegistration` call — that function creates the
+  `Registration`, not the link); `acceptInvitation` creates one too and
+  resolves the row itself. So only the two promotions are in question, and
+  reaching either needs a `waiting` row. They abstain for different reasons,
+  and `docs/data-model.md` (Invitation) is where that is settled: a promotion
+  fires at a moment the *teacher* chooses, while a claim IS the student's own
+  act at that instant (`POST /api/waitlist/claim` is `requireSession` and
+  self-only, `src/app/api/waitlist/claim/route.ts:19-24`) and abstains because
+  the join that put them in the queue already answered whatever invitation
+  state was standing. A queue join normally links *and* resolves — but not every `waiting` row
   came from one, and two comments in `waitlist.ts` say so. `promoteNext`'s link
   write exists precisely to repair the ones that did not: "a `waiting` row
   written before that change, and one written by hand (fixtures, a psql
