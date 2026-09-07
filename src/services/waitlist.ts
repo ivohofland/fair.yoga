@@ -281,16 +281,22 @@ export async function addToWaitlist(
       select: { email: true },
     });
 
-    await linkTeacherStudent(tx, { teacherId: cls.calendarEntry.teacherId, studentId });
+    const linkCreatedNow = await linkTeacherStudent(tx, {
+      teacherId: cls.calendarEntry.teacherId,
+      studentId,
+    });
 
-    // The student's own act at this instant, so it resolves whatever
-    // invitation state stood between them and this teacher — a `declined`
-    // one included, which is the escape hatch the whole decline design rests
-    // on: permanent from the teacher's side, always reversible from the
+    // The student's own act at this instant, so it answers the invitation
+    // state standing between them and this teacher — a `declined` one
+    // always, which is the escape hatch the whole decline design rests on:
+    // permanent from the teacher's side, always reversible from the
     // student's. Booking is the other route back; this is the second.
+    // `linkCreatedNow` decides the `pending` half: a re-join by someone this
+    // teacher already has on their roster resolves nothing (#418).
     await resolveInvitationOnLink(tx, {
       teacherId: cls.calendarEntry.teacherId,
       studentEmail: student.email,
+      linkCreatedNow,
     });
 
     // Find the current max position among 'waiting' entries
@@ -564,11 +570,11 @@ export async function promoteNext(
     // No `resolveInvitationOnLink` here, deliberately. A promotion fires at
     // a moment the TEACHER chooses — cancel any registration →
     // `handleSpotFreed` → here — off a request the student made earlier,
-    // with nothing rechecking their intent in between. Whatever invitation
-    // stood between these two was resolved by the join; anything that
-    // appeared after it is a decision this function has no standing to make,
-    // and making it here is what let a teacher time the acceptance of a row
-    // the student had not answered.
+    // with nothing rechecking their intent in between. Whatever the join had
+    // standing to resolve, it resolved there; anything that appeared after it
+    // is a decision this function has no standing to make, and making it here
+    // is what let a teacher time the acceptance of a row the student had not
+    // answered.
 
     // Update the waitlist entry: promoted status, promotedAt, link to registration
     const updatedEntry = await tx.waitlistEntry.update({
@@ -675,9 +681,9 @@ export async function claimSpot(
 
     // #166: the same backstop as `promoteNext` above, for the same reason —
     // and silent about invitations for a simpler one: a claim can only come
-    // from someone already holding a `waiting` entry, and the join that
-    // created it is what created the link and resolved the invitation.
-    // There is nothing left here to resolve.
+    // from someone already holding a `waiting` entry, and that join is the
+    // act that answered whatever invitation state it had standing to
+    // answer. Claiming a spot adds no consent this could resolve on.
     await linkTeacherStudent(tx, { teacherId: cls.calendarEntry.teacherId, studentId });
 
     const updatedEntry = await tx.waitlistEntry.update({
