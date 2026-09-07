@@ -755,6 +755,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
   let teacherRoomId: string;
   let registeredStudentId: string;
   let waitingStudentId: string;
+  let spentStudentId: string;
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
@@ -792,11 +793,12 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     });
     teacherRoomId = teacherRoom.id;
 
-    // Two students on the class this test skips: one registered, one
-    // waiting. A skip that is real (the class row untouched) has to be told
-    // apart from a skip that is only half-applied (the row untouched but
-    // the waitlist/notification side effects below the CAS still ran) —
-    // round 1 review, Important 2.
+    // Shared students, each named for the role it plays. The first two exist
+    // so that a skip which is real (the class row untouched) can be told apart
+    // from one that is only half-applied (the row untouched but the
+    // waitlist/notification side effects below the CAS still ran). The third
+    // holds a spent waitlist entry, which is what stops the mixed-status test
+    // below from having to borrow a student whose name says otherwise.
     const registered = await prisma.student.create({
       data: { firstName: 'Cas', lastName: 'Registered', email: `${suffix}-registered@test.local`, incomeTier: 2 },
       select: { id: true },
@@ -807,20 +809,27 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       select: { id: true },
     });
     waitingStudentId = waiting.id;
+    const spent = await prisma.student.create({
+      data: { firstName: 'Cas', lastName: 'Spent', email: `${suffix}-spent@test.local`, incomeTier: 2 },
+      select: { id: true },
+    });
+    spentStudentId = spent.id;
   });
 
   afterAll(async () => {
     await prisma.notification.deleteMany({
-      where: { recipientId: { in: [registeredStudentId, waitingStudentId] } },
+      where: { recipientId: { in: [registeredStudentId, waitingStudentId, spentStudentId] } },
     });
     await prisma.waitlistEntry.deleteMany({
-      where: { studentId: { in: [registeredStudentId, waitingStudentId] } },
+      where: { studentId: { in: [registeredStudentId, waitingStudentId, spentStudentId] } },
     });
     await prisma.registration.deleteMany({
-      where: { studentId: { in: [registeredStudentId, waitingStudentId] } },
+      where: { studentId: { in: [registeredStudentId, waitingStudentId, spentStudentId] } },
     });
     await prisma.calendarEntry.deleteMany({ where: { teacherId } });
-    await prisma.student.deleteMany({ where: { id: { in: [registeredStudentId, waitingStudentId] } } });
+    await prisma.student.deleteMany({
+      where: { id: { in: [registeredStudentId, waitingStudentId, spentStudentId] } },
+    });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.teacher.delete({ where: { id: teacherId } });
@@ -1350,8 +1359,15 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
    *
    * Two students because `WaitlistEntry` is unique on `(classId, studentId)`,
    * so one class cannot hold two entries for the same student. Both rows
-   * survive the erasure to be counted — a skipped class `continue`s before the
-   * waitlist sweep, which is exactly the residual the diagnostic reports.
+   * survive the erasure — a skipped class `continue`s before the waitlist
+   * sweep, so nothing on this path closes or deletes the queue. The one
+   * `waiting` row left standing is the residual the diagnostic reports; the
+   * `removed` one is not.
+   *
+   * The class is `completed`, which the real predicate would never hand back as
+   * cancellable — it reaches the skip path only because the
+   * `lockClassRowsOrdered` mock below appends its id, the same injection the
+   * sibling tests in this block use.
    */
   it('counts only the waiting entries, not a queue that already moved on', async () => {
     const cls = await createClassFixture(prisma, {
@@ -1377,7 +1393,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     // owed anything for it, so counting it would report a residual that is not
     // there.
     await prisma.waitlistEntry.create({
-      data: { classId, studentId: registeredStudentId, position: 2, status: 'removed' },
+      data: { classId, studentId: spentStudentId, position: 2, status: 'removed' },
     });
 
     const original = dbLocks.lockClassRowsOrdered;
@@ -1394,9 +1410,19 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
 
     await deleteTeacherAccount(prisma, teacherId);
 
-    // Both rows are still there, so `1` is the filter's doing and not the
-    // `removed` row having been swept away before the count ran.
-    expect(await prisma.waitlistEntry.count({ where: { classId } })).toBe(2);
+    // The staged mix, asserted as a mix rather than as a total. A total of 2
+    // would still hold if someone flipped the spent row to `waiting` — and then
+    // `waitingEntriesLeft` reads 2, the expectation below gets rebaselined to
+    // 2, and the `status` filter goes unexercised with nothing red.
+    // Pinning both statuses reddens on that edit as well as on a deleted row.
+    // Nothing on this path DELETES a waitlist row; that the queue was not
+    // CLOSED is what `waitingEntriesLeft: 1` rules out, since the sweep this
+    // skip bypasses would leave 0.
+    const staged = await prisma.waitlistEntry.findMany({
+      where: { classId },
+      select: { status: true },
+    });
+    expect(staged.map((e) => e.status).sort()).toEqual(['removed', 'waiting']);
 
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ classId, waitingEntriesLeft: 1 }),
@@ -1930,8 +1956,9 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
     });
     // A queue with a history, not just a head. The spot-freed diagnostic
     // reports how many students were left un-told, and with a single `waiting`
-    // entry on the class its `status` filter is a no-op — the broadcast test
-    // below is what holds this row to that job.
+    // entry on the class its `status` filter is a no-op. The test named 'names
+    // the broadcast branch, and counts only the waiting students, when the
+    // spot-freed hook fails after erasure' is what holds this row to that job.
     //
     // A THIRD student, deliberately: the obvious place for a spent entry is
     // `student` above, and that would defang the assertion, because erasing
@@ -2047,7 +2074,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
    * that ignored `status` would report 2 here. Retarget this test and that
    * goes with it.
    */
-  it('names the broadcast branch when the spot-freed hook fails after erasure', async () => {
+  it('names the broadcast branch, and counts only the waiting students, when the spot-freed hook fails after erasure', async () => {
     const fixture = await makeStudentWithFreedSpot();
     try {
       const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
@@ -2080,10 +2107,15 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       );
       // `waiting` is how many students this lost broadcast actually cost, so it
       // counts the queue's live head and not its history — the fixture's
-      // `removed` entry is what tells those two apart. The total below is
-      // asserted so that removing that entry from the fixture reddens this test
-      // instead of quietly making the count's `status` filter a no-op again.
-      expect(await prisma.waitlistEntry.count({ where: { classId: fixture.classId } })).toBe(2);
+      // `removed` entry is what tells those two apart. Asserted as a mix rather
+      // than as a total, because a total of 2 survives someone flipping that
+      // spent row to `waiting`, which makes the `status` filter a no-op with
+      // nothing red.
+      const staged = await prisma.waitlistEntry.findMany({
+        where: { classId: fixture.classId },
+        select: { status: true },
+      });
+      expect(staged.map((e) => e.status).sort()).toEqual(['removed', 'waiting']);
       expect(logged?.[0]).toMatchObject({
         classId: fixture.classId,
         waiting: 1,

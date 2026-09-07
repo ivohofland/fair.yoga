@@ -66,7 +66,7 @@ diagnostic counts tabled below = 19.
 |---|---|---|---|
 | `gdpr.ts:1514` | `deleteTeacherAccount` post-commit diagnostic | No | **Fix** — the issue's own subject |
 | `gdpr.ts:882` | `deleteStudentAccount` spot-freed diagnostic | No, though a real-DB test exists | **Fix** — same shape, same file |
-| `api/registrations/[id]/route.ts:481` | `promoteAfterCancel` diagnostic | Not there — `promote-after-cancel.test.ts` mocks the count (`waitlistCount.mockResolvedValue(3)`) | Decline: proving it needs a DB-tier test that does not exist, which is a design decision, not a leaf |
+| `api/registrations/[id]/route.ts:481` | `promoteAfterCancel` diagnostic | Not there — `promote-after-cancel.test.ts` mocks the count (`waitlistCount.mockReset().mockResolvedValue(3)`, line 131) | Decline: proving it needs a DB-tier test that does not exist, which is a design decision, not a leaf |
 | `waitlist.ts:887` | suppressed-broadcast count | No | Let go: feeds only a `debug` line the module's own comment calls off-by-default |
 
 `gdpr.ts:882` is folded in rather than filed because it is the identical shape
