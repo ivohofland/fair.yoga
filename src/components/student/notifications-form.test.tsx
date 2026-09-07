@@ -92,7 +92,7 @@ describe('NotificationsForm', () => {
     await waitFor(() => {
       expect(screen.getByText('Network error. Try again.')).toBeInTheDocument();
     });
-    expect(logged).toHaveBeenCalled();
+    expect(logged).toHaveBeenCalledWith('student notification prefs save failed', expect.any(Error));
     logged.mockRestore();
   });
 });

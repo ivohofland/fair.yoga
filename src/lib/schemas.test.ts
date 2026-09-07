@@ -746,9 +746,10 @@ describe('classType and location whitespace trimming and validation (#311)', () 
     expect(discovered.sort()).toEqual([...locationSchemas].sort());
   });
 
-  // Whitespace rejection is no longer asserted per-schema here: the #405
-  // invariant at the end of this file covers every field of every exported
-  // schema, including these. What stays is what that invariant cannot say —
+  // Whitespace rejection is no longer asserted per-schema here: the
+  // 'a field that refuses blank refuses whitespace too (#405)' block below
+  // covers every field of every exported schema, including these. What
+  // stays is what that invariant cannot say —
   // which schemas carry these fields at all, and that padding is stripped
   // before storage rather than merely rejected.
 
@@ -782,15 +783,16 @@ describe('classType and location whitespace trimming and validation (#311)', () 
  * names.
  *
  * The rule reads behaviour, not syntax. It never looks for `.min(1)`, so a
- * field guarded another way passes untouched — `pageSlugField`'s
- * `^[a-z0-9-]+$` refuses whitespace with no `.trim()` at all. And a field
- * that legitimately accepts a blank value (`bio`, `notes`, a nullable
- * `phone`) exempts itself by accepting `''`. There is no allowlist here,
+ * field guarded another way passes untouched — `pageSlugField` refuses
+ * whitespace through its own regex. And a field that legitimately accepts a
+ * blank value exempts itself by accepting `''`. There is no allowlist here,
  * which is the point: nothing exists for a later change to add an
  * exception to.
  *
- * Scope: top-level fields. An array field's element schema is not walked, so
- * `z.array(z.string())` accepting `['   ']` is outside what this proves.
+ * Scope: top-level fields. An array field's element schema is not walked
+ * (`z.array(z.string())` accepting `['   ']` is outside what this proves),
+ * and a `z.union`/`z.discriminatedUnion` schema falls through to being
+ * treated as a single bare field rather than having its branches walked.
  */
 describe('a field that refuses blank refuses whitespace too (#405)', () => {
   /**
@@ -798,7 +800,7 @@ describe('a field that refuses blank refuses whitespace too (#405)', () => {
    * an Option+Space on a Mac actually produces. `String.prototype.trim()`
    * strips it, so a trimmed field rejects it; an untrimmed one stores it.
    */
-  const BLANKS = ['   ', '\t\n  ', ' '] as const;
+  const BLANKS = ['   ', '\t\n  ', '\u00A0'] as const;
 
   function shapeOf(schema: unknown): Record<string, z.ZodType> | undefined {
     return (
