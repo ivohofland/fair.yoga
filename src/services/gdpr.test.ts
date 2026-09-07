@@ -987,10 +987,10 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
 
     // Deletes the row for real, inside the diagnostic's own `findUnique`
     // call, then lets the real query run — it returns a genuine `null`,
-    // not a mocked one. `CalendarEntry` cascades to `Class` (and to its
-    // `WaitlistEntry`), so the residual queue this row held is gone with
-    // it — `waitingEntriesLeft` below is 0 for that reason, not because
-    // the count read failed.
+    // not a mocked one. The cascade this relies on is `docs/data-model.md`'s
+    // "deleting the entry cascades to the child" note — so the residual
+    // queue this row held is gone with it too, and `waitingEntriesLeft`
+    // below is 0 for that reason, not because the count read failed.
     const rowDeleting = prisma.$extends({
       query: {
         class: {
