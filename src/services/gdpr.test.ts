@@ -1930,10 +1930,32 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
     await prisma.waitlistEntry.create({
       data: { classId: cls.id, studentId: waiter.id, position: 1, status: 'waiting' },
     });
+    // A queue with a history, not just a head. The spot-freed diagnostic
+    // reports how many students were left un-told, and with a single `waiting`
+    // entry on the class its `status` filter is a no-op — the broadcast test
+    // below is what holds this row to that job.
+    //
+    // A THIRD student, deliberately: the obvious place for a spent entry is
+    // `student` above, and that would defang the assertion, because erasing
+    // that student deletes their own waitlist rows and the count would read 1
+    // whether or not the filter survived. This one is nobody's erasure target.
+    const spentWaiter = await prisma.student.create({
+      data: {
+        firstName: 'Race',
+        lastName: 'Spent',
+        email: `${suffix}-spent@test.local`,
+        incomeTier: 2,
+      },
+      select: { id: true },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId: spentWaiter.id, position: 2, status: 'removed' },
+    });
 
     return {
       studentId: student.id,
       waiterId: waiter.id,
+      spentWaiterId: spentWaiter.id,
       classId: cls.id,
       teacherId: teacher.id,
       roomId: room.id,
@@ -1944,13 +1966,19 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
   /** Reaps a fixture whether or not the erasures under test got that far. */
   async function cleanup(fixture: Awaited<ReturnType<typeof makeStudentWithFreedSpot>>) {
     await prisma.notification.deleteMany({
-      where: { recipientId: { in: [fixture.studentId, fixture.waiterId, fixture.teacherId] } },
+      where: {
+        recipientId: {
+          in: [fixture.studentId, fixture.waiterId, fixture.spentWaiterId, fixture.teacherId],
+        },
+      },
     });
     await prisma.registration.deleteMany({ where: { classId: fixture.classId } });
     await prisma.calendarEntry.deleteMany({ where: { classes: { some: { id: fixture.classId } } } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId: fixture.teacherId } });
     await prisma.room.deleteMany({ where: { id: fixture.roomId } });
-    await prisma.student.deleteMany({ where: { id: { in: [fixture.studentId, fixture.waiterId] } } });
+    await prisma.student.deleteMany({
+      where: { id: { in: [fixture.studentId, fixture.waiterId, fixture.spentWaiterId] } },
+    });
     await prisma.teacher.deleteMany({ where: { id: fixture.teacherId } });
     await prisma.account.deleteMany({ where: { id: fixture.accountId } });
   }
@@ -2047,8 +2075,15 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       const logged = warn.mock.calls.find(
         (c) => (c[0] as { classId?: string } | undefined)?.classId === fixture.classId,
       );
+      // `waiting` is how many students this lost broadcast actually cost, so it
+      // counts the queue's live head and not its history — the fixture's
+      // `removed` entry is what tells those two apart. The total below is
+      // asserted so that removing that entry from the fixture reddens this test
+      // instead of quietly making the count's `status` filter a no-op again.
+      expect(await prisma.waitlistEntry.count({ where: { classId: fixture.classId } })).toBe(2);
       expect(logged?.[0]).toMatchObject({
         classId: fixture.classId,
+        waiting: 1,
         transient: true,
         branch: 'first_come_first_claimed',
       });
