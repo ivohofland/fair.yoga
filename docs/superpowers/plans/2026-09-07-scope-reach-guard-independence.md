@@ -28,8 +28,10 @@ The issue's extra observation is right too: `required` re-implements
 `searchScope`'s two exclusions inline rather than calling it, so a narrowing
 added at *either* end moves both sides together.
 
-**Sweep for the same shape, not just the same lines.** Three files under `src/`
-and `tests/` call `readdirSync`:
+**Sweep for the same shape, not just the same lines.** Five files call
+`readdirSync` — three under `src/`, two under `tests/`. Re-derived by
+`grep -rln readdirSync src tests --include='*.ts' --include='*.tsx'`. The three
+under `src/`:
 
 - `src/lib/db-locks-verdict-census.test.ts` — the subject of this plan.
 - `src/lib/probe-placement-census.test.ts` — already fixed by #467.
@@ -45,8 +47,8 @@ neither carries a guard of this shape.)
 
 ## Task 1 — give the scope-reach guard its own directory read
 
-**File:** `src/lib/db-locks-verdict-census.test.ts` (the only file this branch
-touches, apart from this plan).
+**File:** `src/lib/db-locks-verdict-census.test.ts`. (The whole-branch review
+added a second file — see *What the review changed* at the foot of this plan.)
 
 ### What to write
 
@@ -134,7 +136,9 @@ being edited on the branch and a checkout would discard the real work with it.
 
 ### Out of scope
 
-- `src/lib/probe-placement-census.test.ts` — already correct; do not touch it.
+- `src/lib/probe-placement-census.test.ts` — its `areasUnderSrc` is already
+  correct; do not change its behaviour. (Its *comment* turned out not to be —
+  see *What the review changed* below.)
 - `src/lib/serial-tier-membership.test.ts` — a different shape, see the sweep
   above; do not touch it.
 - Every other assertion in `db-locks-verdict-census.test.ts`. In particular the
@@ -157,8 +161,31 @@ touches no file under `tests/`, no route, and no service, so there is no
 integration surface for it to change; the PR body should cite the CI run for
 that tier rather than a local `verify`.
 
+## What the review changed
+
+The whole-branch review measured the replacement comment's closing sentence
+false, and it was false in two files rather than one.
+
+The sentence — "a narrowing added **anywhere** in the walk … makes these two
+disagree" — reads as a claim about *which narrowings* are caught, and the guard
+compares areas, so it does not catch one that leaves an area any production
+file at all. Measured inside `typeScriptUnderSrc`: `!p.startsWith('src/app/api/')`
+(65 production files) and `p !== 'src/services/gdpr.ts'` (2 of the 4 call sites)
+each leave all 19 assertions green. That is a smaller instance of exactly the
+defect #472 was filed over, so the comment now states the area granularity as a
+limit instead of implying its absence.
+
+The same sentence stood, word for word, in
+`src/lib/probe-placement-census.test.ts` — this branch took its wording from
+there. Correcting only the copy would have left the original standing, so both
+carry the corrected paragraph. That file's `areasUnderSrc` and every assertion
+in it are otherwise untouched; the edit is comment-only.
+
+Two smaller review findings were declined, and why is in the PR body.
+
 ## Not in this branch
 
 - **#464 and #467 are unaffected.** Both shipped. This changes neither's
-  behaviour — only the strength of one guard #464 left behind.
+  behaviour — only the strength of one guard #464 left behind, plus a
+  comment-only correction to one #467 shipped.
 - No `prisma/` change, so no migration.

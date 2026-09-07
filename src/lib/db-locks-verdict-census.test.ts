@@ -146,8 +146,8 @@ function searchScope(): string[] {
  * this, which is exactly what has to make the two disagree.
  *
  * `DEFINING_MODULE` is deliberately among those not duplicated: an area whose
- * only searched production file is the one that exclusion removes is a hole
- * this guard should report rather than bless.
+ * only production file is the one that exclusion removes is a hole this guard
+ * should report rather than bless.
  */
 function areasUnderSrc(): Set<string> {
   const areas = new Set<string>();
@@ -443,9 +443,10 @@ describe('every lockClassRowsOrdered call site carries a verdict', () => {
     // repository.
     //
     // `areasUnderSrc` reads the directory itself rather than calling the walk,
-    // so a narrowing added anywhere in the walk — including inside the shared
-    // `typeScriptUnderSrc` — makes these two disagree instead of moving them
-    // together.
+    // so a narrowing that empties an area disagrees with it wherever in the
+    // walk it sits — inside the shared `typeScriptUnderSrc` included. The
+    // granularity is the area and no finer, as this test's name says: a
+    // narrowing leaving an area even one production file passes here.
     const required = areasUnderSrc();
     const reached = new Set(searchScope().map(areaOf));
     expect([...required].filter((area) => !reached.has(area)).sort()).toEqual([]);
