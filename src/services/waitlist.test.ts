@@ -1269,9 +1269,9 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
    * `linkTeacherStudent`'s own return value to `resolveInvitationOnLink`, so
    * a join that inserted nothing resolves nothing, and an invitation the
    * teacher can see stays where their probe left it. Hardcode that argument
-   * to `true` and this is the test that dies; hardcode it to `false` and the
-   * test above does. Neither is provable from one of them alone, which is
-   * why they are a pair.
+   * to `'created'` and this is the test that dies; hardcode it to
+   * `'already-linked'` and the test above does. Neither is provable from one
+   * of them alone, which is why they are a pair.
    */
   it('leaves a pending invitation alone when the joiner was already on the roster', async () => {
     // The starting state is the test: linked already, invitation unanswered.

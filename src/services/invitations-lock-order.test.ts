@@ -563,10 +563,10 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * only that the row exist once the transaction commits, and
    * `linkTeacherStudent`'s `ON CONFLICT DO NOTHING` (#181) gives it that
    * whichever transaction did the inserting. So the accept ignores the
-   * boolean that helper returns; the booking below does not, threading it on
-   * to `resolveInvitationOnLink` as `linkCreatedNow` exactly as the route
-   * does (#418), and the handshake makes the booking the inserter — so it
-   * passes `true` and the invitation does move.
+   * `LinkOutcome` that helper returns; the booking below does not, threading
+   * it on to `resolveInvitationOnLink` exactly as the route does (#418), and
+   * the handshake makes the booking the inserter — so it passes `'created'`
+   * and the invitation does move.
    * The atomic write alone is not enough, though: the booking's own
    * `resolveInvitationOnLink` call can commit — and mark this same
    * invitation `accepted` — before the blocked write returns, so
@@ -610,13 +610,13 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
       await tx.registration.create({
         data: { classId: cls.id, studentId, status: 'registered', tierAtBooking: 3 },
       });
-      const linkCreatedNow = await linkTeacherStudent(tx, { teacherId, studentId });
+      const linkOutcome = await linkTeacherStudent(tx, { teacherId, studentId });
       bookingHasLink();
       await new Promise((r) => setTimeout(r, 300));
       // The real call, not a hand-rolled stand-in: TeacherBlock then
-      // Invitation, which is where the cycle closes. The real flag too: a
+      // Invitation, which is where the cycle closes. The real outcome too: a
       // literal would pass here and stop being a copy of the route.
-      await resolveInvitationOnLink(tx, { teacherId, studentEmail: email, linkCreatedNow });
+      await resolveInvitationOnLink(tx, { teacherId, studentEmail: email, linkOutcome });
     }, { timeout: 15_000 });
 
     const [acceptResult, bookingResult] = await Promise.allSettled([

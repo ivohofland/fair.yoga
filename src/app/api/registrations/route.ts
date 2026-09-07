@@ -232,7 +232,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // A self-booking student joins the teacher's roster: this link is how
       // the CRM sees them and how per-teacher privacy gets its scope.
       if (!isTeacher) {
-        const linkCreatedNow = await linkTeacherStudent(tx, {
+        const linkOutcome = await linkTeacherStudent(tx, {
           teacherId: cls.calendarEntry.teacherId,
           studentId,
         });
@@ -243,7 +243,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         // of the two routes back from one (joining a waitlist,
         // `addToWaitlist` in services/waitlist.ts, is the other).
         //
-        // `linkCreatedNow` is what the link write above actually did, and it
+        // `linkOutcome` is what the link write above actually did, and it
         // decides the `pending` half: a booking by someone this teacher
         // already has on their roster resolves no `pending` row (#418). The
         // rule, and why the two halves differ, are in `docs/data-model.md`
@@ -251,7 +251,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         await resolveInvitationOnLink(tx, {
           teacherId: cls.calendarEntry.teacherId,
           studentEmail: student.email,
-          linkCreatedNow,
+          linkOutcome,
         });
 
         // Layer 1+2 of the comms model: confirmation for the student,

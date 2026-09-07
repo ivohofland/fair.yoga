@@ -58,9 +58,9 @@ afterAll(async () => {
  * no two cases contend for the `(teacherId, email)` key an `Invitation` is
  * unique on, and none of them collides with a file running beside this one.
  *
- * Linked in every case, including the `linkCreatedNow: true` ones, because
- * that is the state this function is always called in: the link write runs
- * first and the flag says who wrote it, not whether it is there.
+ * Linked in every case, including the `'created'` ones, because that is the
+ * state this function is always called in: the link write runs first and the
+ * `LinkOutcome` says who wrote it, not whether it is there.
  *
  * Claimed is load-bearing for the last case and free for the rest.
  * `rosterLinkState` (`invitations.ts`) reads an unclaimed student as tellable
@@ -148,7 +148,7 @@ describe('resolveInvitationOnLink', () => {
     });
 
     await resolveInvitationOnLink(prisma, {
-      teacherId, studentEmail: email, linkCreatedNow: false,
+      teacherId, studentEmail: email, linkOutcome: 'already-linked',
     });
 
     expect(await invitationRow(teacherId, email)).toEqual({ status: 'pending', respondedAt: null });
@@ -160,7 +160,7 @@ describe('resolveInvitationOnLink', () => {
     });
 
     await resolveInvitationOnLink(prisma, {
-      teacherId, studentEmail: email, linkCreatedNow: true,
+      teacherId, studentEmail: email, linkOutcome: 'created',
     });
 
     const row = await invitationRow(teacherId, email);
@@ -170,7 +170,7 @@ describe('resolveInvitationOnLink', () => {
 
   /**
    * The deliberate asymmetry, and the case that makes it a decision rather
-   * than a slip: this is the ONE cell where `false` still writes. A decline
+   * than a slip: `'already-linked'` writes in this cell and no other. A decline
    * is what `DELETE /api/invitations/[id]` refuses to remove, so a student
    * who is somehow linked behind a standing tombstone has no way out but
    * this write.
@@ -182,7 +182,7 @@ describe('resolveInvitationOnLink', () => {
     });
 
     await resolveInvitationOnLink(prisma, {
-      teacherId, studentEmail: email, linkCreatedNow: false,
+      teacherId, studentEmail: email, linkOutcome: 'already-linked',
     });
 
     const row = await invitationRow(teacherId, email);
@@ -197,7 +197,7 @@ describe('resolveInvitationOnLink', () => {
     });
 
     await resolveInvitationOnLink(prisma, {
-      teacherId, studentEmail: email, linkCreatedNow: true,
+      teacherId, studentEmail: email, linkOutcome: 'created',
     });
 
     const row = await invitationRow(teacherId, email);
@@ -207,14 +207,14 @@ describe('resolveInvitationOnLink', () => {
 
   // The two cells that are the same under both columns, asserted under both
   // rather than under whichever one the writer happened to reach for.
-  for (const linkCreatedNow of [true, false]) {
-    it(`leaves an accepted invitation and its respondedAt alone (linkCreatedNow: ${linkCreatedNow})`, async () => {
+  for (const linkOutcome of ['created', 'already-linked'] as const) {
+    it(`leaves an accepted invitation and its respondedAt alone (${linkOutcome})`, async () => {
       const acceptedAt = new Date('2026-01-02T03:04:05.000Z');
-      const { teacherId, email } = await seedPair(`accepted-${linkCreatedNow}`, {
+      const { teacherId, email } = await seedPair(`accepted-${linkOutcome}`, {
         invitation: { status: 'accepted', respondedAt: acceptedAt },
       });
 
-      await resolveInvitationOnLink(prisma, { teacherId, studentEmail: email, linkCreatedNow });
+      await resolveInvitationOnLink(prisma, { teacherId, studentEmail: email, linkOutcome });
 
       expect(await invitationRow(teacherId, email)).toEqual({
         status: 'accepted',
@@ -222,10 +222,10 @@ describe('resolveInvitationOnLink', () => {
       });
     });
 
-    it(`deletes the TeacherBlock (linkCreatedNow: ${linkCreatedNow})`, async () => {
-      const { teacherId, email } = await seedPair(`blocked-${linkCreatedNow}`, { blocked: true });
+    it(`deletes the TeacherBlock (${linkOutcome})`, async () => {
+      const { teacherId, email } = await seedPair(`blocked-${linkOutcome}`, { blocked: true });
 
-      await resolveInvitationOnLink(prisma, { teacherId, studentEmail: email, linkCreatedNow });
+      await resolveInvitationOnLink(prisma, { teacherId, studentEmail: email, linkOutcome });
 
       const block = await prisma.teacherBlock.findUnique({
         where: { teacherId_email: { teacherId, email } },
@@ -265,7 +265,7 @@ describe('resolveInvitationOnLink', () => {
     // this teacher's roster, so the booking's own link write inserts nothing
     // and reports `false`.
     await resolveInvitationOnLink(prisma, {
-      teacherId, studentEmail: email, linkCreatedNow: false,
+      teacherId, studentEmail: email, linkOutcome: 'already-linked',
     });
 
     const probeTwo = await inviteContact(prisma, {

@@ -281,7 +281,7 @@ export async function addToWaitlist(
       select: { email: true },
     });
 
-    const linkCreatedNow = await linkTeacherStudent(tx, {
+    const linkOutcome = await linkTeacherStudent(tx, {
       teacherId: cls.calendarEntry.teacherId,
       studentId,
     });
@@ -291,12 +291,12 @@ export async function addToWaitlist(
     // always, which is the escape hatch the whole decline design rests on:
     // permanent from the teacher's side, always reversible from the
     // student's. Booking is the other route back; this is the second.
-    // `linkCreatedNow` decides the `pending` half: a re-join by someone this
+    // `linkOutcome` decides the `pending` half: a re-join by someone this
     // teacher already has on their roster resolves no `pending` row (#418).
     await resolveInvitationOnLink(tx, {
       teacherId: cls.calendarEntry.teacherId,
       studentEmail: student.email,
-      linkCreatedNow,
+      linkOutcome,
     });
 
     // Find the current max position among 'waiting' entries
@@ -680,10 +680,16 @@ export async function claimSpot(
     });
 
     // #166: the same backstop as `promoteNext` above, for the same reason —
-    // and silent about invitations for a simpler one: a claim can only come
-    // from someone already holding a `waiting` entry, and that join is the
-    // act that answered whatever invitation state it had standing to
-    // answer. Claiming a spot adds no consent this could resolve on.
+    // and that reason is also why nothing is resolved on it. This write can
+    // insert only where the join's own link write is missing: a `waiting` row
+    // that never carried one (pre-#166, or hand-written), or one whose link a
+    // later unlink deleted (`withdrawWaitingEntriesForTeacher`'s docblock
+    // names that race). Both are repairs, and a repair is not a fresh act of
+    // consent to resolve an invitation on — in the unlink case, resolving off
+    // one would clear the tombstone the student had just written. Where the
+    // join did write the link, this inserts nothing at all.
+    // `docs/data-model.md` (Invitation, "What a student's own act resolves")
+    // owns that rule and both abstentions.
     await linkTeacherStudent(tx, { teacherId: cls.calendarEntry.teacherId, studentId });
 
     const updatedEntry = await tx.waitlistEntry.update({

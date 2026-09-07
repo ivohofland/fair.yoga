@@ -19,6 +19,7 @@
  */
 
 import type { Prisma } from '@prisma/client';
+import type { LinkOutcome } from '@/services/roster-link';
 import { requireNormalised } from '@/lib/schemas';
 
 /**
@@ -39,34 +40,34 @@ import { requireNormalised } from '@/lib/schemas';
  * What is true of this function, and is why the condition is written the way
  * it is: this call leaves such a row exactly as it found it, so nothing on the
  * booking or waitlist path turns it into the `accepted` row a second probe
- * would meet as `ALREADY_LINKED`. `acceptInvitation` still can — a door the
- * invitee opens, not the prober. `link-consent.test.ts` drives that sequence
- * end to end, through the real invite path, and fails if this condition is
- * widened again.
+ * would meet as `ALREADY_LINKED`. `acceptInvitation` would still flip such a
+ * row, but nothing puts it in front of the student to accept:
+ * `listPendingInvitations` excludes a linked pair's invitation and
+ * `notifyInvitee` returns early on a live link, so reaching it means guessing
+ * a uuid.
+ *
+ * `link-consent.test.ts` walks the probe-book-probe sequence against this
+ * function directly — the booking half is a call to it, not a real one — and
+ * fails if this condition is widened again. The same sequence over a real
+ * booking is `src/app/api/registrations/route.test.ts` (the route handler,
+ * runnable in a worktree) and `tests/integration/invitations-api.test.ts`
+ * (over HTTP).
  *
  * Call this only from a path where the student themselves is acting toward
- * one named teacher, at this instant. Today that is `POST /api/registrations`
- * (their own booking — the call sits inside the `!isTeacher` branch, so a
- * teacher-initiated roster add never reaches it) and `addToWaitlist`
- * (services/waitlist.ts, reached only through `POST /api/waitlist`, which is
- * `requireStudent` and self-only). `promoteNext` and `claimSpot` deliberately
- * do NOT call this — see their comments. That rule, not the number of sites,
- * is what a new caller has to satisfy.
+ * one named teacher, at this instant. A waitlist promotion is not such a
+ * path: it fires when someone else's registration goes away, off a request
+ * the student made earlier, so it must not resolve anything — and no
+ * narrowing of what this function writes would make such a caller safe.
+ * Which sites create a roster link, which of them resolve and which abstain,
+ * is a census `docs/data-model.md` (Invitation, "What a student's own act
+ * resolves") owns and ships the re-derivation command for. That rule, not the
+ * number of sites, is what a new caller has to satisfy.
  *
- * There used to be a second mode here — a `LinkConsent` parameter whose
- * `standing` value resolved only a `pending` invitation — for the one caller
- * whose link was not created by an act of the student's: a waitlist
- * promotion, which fires when the teacher cancels some other registration.
- * That distinction has no referent any more. The link is created where the
- * consent is actually given, and promotion resolves nothing, so every caller
- * of this function is a student acting at this instant. Do not reintroduce
- * the mode: the way to keep a refusal safe is to not call this from
- * something a teacher can trigger, not to weaken what it does when they
- * can't.
- *
- * `linkCreatedNow` carries no claim about the caller's intent — the call-site
+ * `linkOutcome` carries no claim about the caller's intent — the call-site
  * rule above is the whole of what a caller must satisfy — only the fact of
- * what this transaction's own link write did.
+ * what this transaction's own link write did. The union is what stops an
+ * unrelated boolean arriving here; it cannot say "from this transaction", so
+ * that half is a rule to read rather than a type to satisfy.
  * Pass exactly what `linkTeacherStudent` (`services/roster-link.ts`) returned
  * for this pair, from this transaction, and do not re-derive it: that value
  * comes off the link's single `INSERT … ON CONFLICT DO NOTHING`, which is the
@@ -78,7 +79,7 @@ import { requireNormalised } from '@/lib/schemas';
  */
 export async function resolveInvitationOnLink(
   tx: Prisma.TransactionClient,
-  input: { teacherId: string; studentEmail: string; linkCreatedNow: boolean },
+  input: { teacherId: string; studentEmail: string; linkOutcome: LinkOutcome },
 ): Promise<void> {
   // Asserted lowercase again, for the same reason each time: invitation
   // emails are always stored lowercase, and `Student.email` and
@@ -110,7 +111,7 @@ export async function resolveInvitationOnLink(
     where: {
       teacherId: input.teacherId,
       email,
-      status: input.linkCreatedNow ? { not: 'accepted' } : 'declined',
+      status: input.linkOutcome === 'created' ? { not: 'accepted' } : 'declined',
     },
     data: { status: 'accepted', respondedAt: new Date() },
   });
