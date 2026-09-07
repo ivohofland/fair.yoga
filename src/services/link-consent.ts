@@ -42,13 +42,14 @@ import { requireNormalised } from '@/lib/schemas';
  * `declined` is unconditional, and the asymmetry is deliberate rather than an
  * oversight. `unlinkTeacher` (`services/invitations.ts`) writes the tombstone
  * and deletes the `TeacherStudent` row in one transaction, so a decline
- * implies no link at the moment it is written, and every ordinary route back
- * creates the link and takes the `true` column anyway. Narrowing it would
- * change behaviour only where the pair is linked already, and there it would
- * strand the student: linked, unblocked, and permanently un-re-invitable
- * behind a tombstone `DELETE /api/invitations/[id]` refuses to remove.
- * Reversing a decline is the escape hatch the whole decline design rests on:
- * permanent from the teacher's side, always reversible from the student's.
+ * implies no link at the moment it is written — and every ordinary route
+ * back creates the link, which makes `linkCreatedNow` true there anyway.
+ * Narrowing it would change behaviour only where the pair is linked already,
+ * and there it would strand the student: linked, unblocked, and permanently
+ * un-re-invitable behind a tombstone `DELETE /api/invitations/[id]` refuses
+ * to remove. Reversing a decline is the escape hatch the whole decline design
+ * rests on: permanent from the teacher's side, always reversible from the
+ * student's.
  *
  * Call this only from a path where the student themselves is acting toward
  * one named teacher, at this instant. Today that is `POST /api/registrations`

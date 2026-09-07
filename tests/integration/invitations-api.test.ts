@@ -2073,6 +2073,18 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   let unlinkAccountId: string;
   let unlinkToken: string;
 
+  // Already on this teacher's roster, with `shareEmail: false`, and books
+  // their own class — the shape #418 is about. The teacher can guess this
+  // address and gets an ordinary success (#417); what this student's booking
+  // must NOT do is turn that decoy row into the `accepted` one a second probe
+  // would read as `ALREADY_LINKED`. Needs a session: the booking has to go
+  // through the student's own route, since a teacher-initiated one never
+  // reaches `resolveInvitationOnLink` at all.
+  const gatedEmail = `resolve-gated-${suffix}@test.local`;
+  let gatedStudentId: string;
+  let gatedAccountId: string;
+  let gatedToken: string;
+
   // Promoted off the waitlist with a PENDING invitation — resolved through
   // promoteNext instead of a direct booking.
   const promoteEmail = `resolve-promote-${suffix}@test.local`;
@@ -2229,6 +2241,28 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       data: { teacherId: resolveTeacherId, studentId: unlinkStudentId },
     });
 
+    const gatedStudent = await prisma.student.create({
+      data: {
+        firstName: 'Resolve', lastName: 'Gated', email: gatedEmail, claimedAt: new Date(),
+        account: { create: { email: gatedEmail } }, incomeTier: 3,
+      },
+      select: { id: true, accountId: true },
+    });
+    gatedStudentId = gatedStudent.id;
+    gatedAccountId = gatedStudent.accountId as string;
+    gatedToken = await seedSession(prisma, gatedAccountId);
+    await prisma.teacherStudent.create({
+      data: { teacherId: resolveTeacherId, studentId: gatedStudentId },
+    });
+    // Claimed AND withholding: both halves are load-bearing (#412, #419).
+    // `rosterLinkState` reads an unclaimed student as tellable whatever this
+    // row says, so an unclaimed fixture would meet `ALREADY_LINKED` on the
+    // FIRST probe and never reach the sequence this tests. No Invitation row
+    // here — the test's own first probe is what creates it.
+    await prisma.studentPrivacy.create({
+      data: { teacherId: resolveTeacherId, studentId: gatedStudentId, shareEmail: false },
+    });
+
     // No account: promoteNext is called directly below, never through the
     // student's own session.
     const promoteStudent = await prisma.student.create({
@@ -2296,11 +2330,11 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   afterAll(async () => {
     const classIds = [openClassId, promoteClassId, claimClassId];
     const studentIds = [
-      declineStudentId, rosterStudentId, unlinkStudentId, promoteStudentId,
+      declineStudentId, rosterStudentId, unlinkStudentId, gatedStudentId, promoteStudentId,
       promoteDeclineStudentId, claimStudentId, claimHolderStudentId,
     ].filter(Boolean);
     const accountIds = [
-      declineAccountId, unlinkAccountId, promoteDeclineAccountId, claimAccountId,
+      declineAccountId, unlinkAccountId, gatedAccountId, promoteDeclineAccountId, claimAccountId,
     ].filter(Boolean);
 
     await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
@@ -2466,6 +2500,69 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       // file follows, not the only backstop.
       await prisma.invitation.deleteMany({
         where: { teacherId: resolveTeacherId, email: unlinkEmail },
+      });
+    }
+  });
+
+  /**
+   * #418, through the route rather than the service. `link-consent.test.ts`
+   * owns the rule; what this owns is the WIRING at
+   * `api/registrations/route.ts` — that the booking hands
+   * `resolveInvitationOnLink` what `linkTeacherStudent` actually returned.
+   * Hardcode that argument to `true` there and every other test in this file
+   * stays green, because every one of them books from an UNLINKED pair, where
+   * `true` is the right answer. This is the only fixture in the tier that is
+   * already linked when the booking lands.
+   *
+   * The second probe's REASON is the assertion, not the refusal:
+   * `ALREADY_INVITED` and `ALREADY_LINKED` are both `ok: false`, and only the
+   * second one tells the teacher that the address they guessed belongs to one
+   * of their own students.
+   */
+  it('a booking by a linked-but-unshared student leaves the decoy pending, so a re-probe still says ALREADY_INVITED', async () => {
+    try {
+      // Probe one: the gated success #417 ships. A real row, no delivery.
+      const probeOne = await inviteContact(prisma, {
+        teacherId: resolveTeacherId, email: gatedEmail, firstName: 'Guessed', lastName: 'Address',
+      });
+      if (!probeOne.ok) throw new Error(`expected the gated invite to succeed, got ${probeOne.reason}`);
+      expect(probeOne.value.delivered).toBe(false);
+      expect((await prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: gatedEmail } },
+      })).status).toBe('pending');
+
+      // The student's own ordinary booking — the act that used to resolve
+      // that row on the teacher's behalf.
+      const res = await fetch(`${BASE_URL}/api/registrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(gatedToken) },
+        body: JSON.stringify({ classId: openClassId }),
+      });
+      expect(res.status).toBe(201);
+
+      const inv = await prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: gatedEmail } },
+      });
+      expect(inv.status).toBe('pending');
+      expect(inv.respondedAt).toBeNull();
+
+      // Probe two: the observable. Same refusal an un-accepted stranger's
+      // address produces.
+      const probeTwo = await inviteContact(prisma, {
+        teacherId: resolveTeacherId, email: gatedEmail, firstName: 'Guessed', lastName: 'Address',
+      });
+      expect(probeTwo).toEqual({ ok: false, reason: 'ALREADY_INVITED' });
+    } finally {
+      // Both the registration and the probe's row, scoped to this student and
+      // address: the describe's `afterAll` sweeps both regardless, and this is
+      // the same per-test convention the cases above follow. The
+      // `TeacherStudent` link is deliberately NOT removed — it is fixture
+      // state this test starts from, not something it created.
+      await prisma.registration.deleteMany({
+        where: { classId: openClassId, studentId: gatedStudentId },
+      });
+      await prisma.invitation.deleteMany({
+        where: { teacherId: resolveTeacherId, email: gatedEmail },
       });
     }
   });

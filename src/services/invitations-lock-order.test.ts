@@ -566,7 +566,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * boolean that helper returns; the booking below does not, threading it on
    * to `resolveInvitationOnLink` as `linkCreatedNow` exactly as the route
    * does (#418), and the handshake makes the booking the inserter — so it
-   * takes the `true` column and the invitation does move.
+   * passes `true` and the invitation does move.
    * The atomic write alone is not enough, though: the booking's own
    * `resolveInvitationOnLink` call can commit — and mark this same
    * invitation `accepted` — before the blocked write returns, so

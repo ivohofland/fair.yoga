@@ -1076,6 +1076,8 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
   const emailOf = new Map<string, string>();
 
   let pendingId: string;
+  /** On the roster before they ever join — the one case #418 turns on. */
+  let alreadyLinkedId: string;
   let declinedId: string;
   let noopId: string;
   let guardId: string;
@@ -1203,6 +1205,11 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
     promoteClassId = await makeClass('Join Promote', 1);
 
     pendingId = await makeStudent('Pending', { status: 'pending' });
+    alreadyLinkedId = await makeStudent('AlreadyLinked', { status: 'pending' });
+    // The only student here who arrives linked. Everything else about them
+    // matches `pendingId`, so the pair of tests below differ in this row and
+    // nothing else.
+    await prisma.teacherStudent.create({ data: { teacherId, studentId: alreadyLinkedId } });
     declinedId = await makeStudent('Declined', { status: 'declined', blocked: true });
     noopId = await makeStudent('Noop', { status: 'pending' });
     guardId = await makeStudent('Guard', { status: 'pending' });
@@ -1254,6 +1261,29 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
     const invitation = await invitationOf(pendingId);
     expect(invitation.status).toBe('accepted');
     expect(invitation.respondedAt).not.toBeNull();
+  });
+
+  /**
+   * #418, and the twin of the test above: same class, same seeded `pending`
+   * row, one difference — the link already stands. `addToWaitlist` hands
+   * `linkTeacherStudent`'s own return value to `resolveInvitationOnLink`, so
+   * a join that inserted nothing resolves nothing, and an invitation the
+   * teacher can see stays where their probe left it. Hardcode that argument
+   * to `true` and this is the test that dies; hardcode it to `false` and the
+   * test above does. Neither is provable from one of them alone, which is
+   * why they are a pair.
+   */
+  it('leaves a pending invitation alone when the joiner was already on the roster', async () => {
+    // The starting state is the test: linked already, invitation unanswered.
+    expect(await link(alreadyLinkedId)).not.toBeNull();
+    expect((await invitationOf(alreadyLinkedId)).status).toBe('pending');
+
+    const entry = await addToWaitlist(prisma, fullClassId, alreadyLinkedId);
+    expect(entry.status).toBe('waiting');
+
+    const invitation = await invitationOf(alreadyLinkedId);
+    expect(invitation.status).toBe('pending');
+    expect(invitation.respondedAt).toBeNull();
   });
 
   it('joining reverses a decline and clears the block — the way back, through the queue', async () => {
