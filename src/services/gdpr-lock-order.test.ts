@@ -283,7 +283,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
    * removing hash and merge joins leaves a nested loop, not one direction of
    * one. The measurement and its limits live in
    * `db-locks-lock-order.test.ts`'s `forceIndexOrderedPlan`. Only the setting
-   * NAMES cross that boundary now — `tests/forced-plan-settings.ts`'s
+   * NAMES cross that boundary — `tests/forced-plan-settings.ts`'s
    * `FORCED_PLAN_SETTINGS` — and this function still sets them itself, in its
    * own `tx.$executeRawUnsafe` loop below, rather than calling
    * `forceIndexOrderedPlan`; no fixture or execution path crosses files, so
@@ -484,12 +484,12 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     //   qual makes that index eligible; dropping it makes it unreachable, and
     //   drops NO ROW here, since both of this fixture's entries are live.
     //
-    //   MEASURED, both directions, by the same hiding method as above. Hide
-    //   the btree the entry side normally drives from
-    //   (`CalendarEntry_teacherId_date_idx`) under `FORCED_PLAN_SETTINGS`, and the
-    //   two shapes go different ways: the production shape, carrying the qual,
-    //   falls to a GiST `Index Scan` — a path with no key order — while this
-    //   probe's shape, without it, falls to another BTREE and never reaches
+    //   MEASURED, both directions, by the same hiding method as above. Hide the
+    //   btree the entry side normally drives from
+    //   (`CalendarEntry_teacherId_date_idx`) under `FORCED_PLAN_SETTINGS`, and
+    //   the two shapes go different ways: the production shape, carrying the
+    //   qual, falls to a GiST `Index Scan` — a path with no key order — while
+    //   this probe's shape, without it, falls to another BTREE and never reaches
     //   GiST at all. Eligibility, not cost, exactly as above.
     //
     //   What this line owns is that THIS statement stays clear of that path;
@@ -567,8 +567,8 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // with, and it is non-monotonic in table size. CI proved it — this
     // assertion is what failed on 2026-08-16 with [HIGH, LOW], because
     // `enable_hashjoin = off` alone removes a join ALGORITHM, not a join
-    // DIRECTION. All of `FORCED_PLAN_SETTINGS` are needed; the reasoning and the
-    // measurements live in `db-locks-lock-order.test.ts`'s
+    // DIRECTION. All of `FORCED_PLAN_SETTINGS` are needed; the reasoning and
+    // the measurements live in `db-locks-lock-order.test.ts`'s
     // `forceIndexOrderedPlan`, mirrored by `probeUnderForcedPlan` above.
     const joinOrder = await probeUnderForcedPlan(Prisma.sql`
       SELECT c.id FROM "Class" c
@@ -662,14 +662,13 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // non-guarantee.
           //
           // WHAT THIS BUYS IS NARROWER THAN WHAT THE PROBE ABOVE GETS, and the
-          // difference is the whole of `THE RESIDUAL THAT EXPOSES` up there.
-          // The statement this hook plans for is `deleteTeacherAccount`'s own
-          // pre-lock, and unlike the probe it DOES carry
-          // `e."cancelledAt" IS NULL` (`gdpr.ts`) — so a GiST path, which
-          // orders by nothing, is genuinely eligible to it. What
-          // `FORCED_PLAN_SETTINGS` closes here is only the HEAP-ordered paths; "every
-          // remaining path is btree" is true of the probe above and NOT of
-          // this statement.
+          // difference is the whole of `THE RESIDUAL THAT EXPOSES` up there. The
+          // statement this hook plans for is `deleteTeacherAccount`'s own
+          // pre-lock, and unlike the probe it DOES carry `e."cancelledAt" IS NULL`
+          // (`gdpr.ts`) — so a GiST path, which orders by nothing, is genuinely
+          // eligible to it. What `FORCED_PLAN_SETTINGS` closes here is only the
+          // HEAP-ordered paths; "every remaining path is btree" is true of the
+          // probe above and NOT of this statement.
           //
           // That costs the unmutated erasure nothing, because its order does
           // not come from the scan at all: `lockClassRowsOrdered` ends the
@@ -678,16 +677,16 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // that clause deleted — and no probe can reach it, which is why the
           // mutation run rather than a `SELECT` is what settles it.
           //
-          // THE SAME `FORCED_PLAN_SETTINGS` THE PROBE RUNS UNDER, and that is the point rather
-          // than a coincidence: the probe above measures the plan space the
-          // PROBE runs in, so a hook that restricted a different space would
-          // put the two statements back on different plans.
+          // THE SAME `FORCED_PLAN_SETTINGS` THE PROBE RUNS UNDER, and that is
+          // the point rather than a coincidence: the probe above measures the
+          // plan space the PROBE runs in, so a hook that restricted a different
+          // space would put the two statements back on different plans.
           //
           // Hookable at all because `deleteTeacherAccount` calls
           // `setLockTimeout` (`gdpr.ts`), which is one
           // `$executeRawUnsafe(LOCK_TIMEOUT_SQL)` — the same statement the
           // student hook keys on. Same `SET LOCAL` scope argument as that
-          // hook: transaction-only, and the two scan settings discourage
+          // hook: transaction-only, and the scan settings discourage
           // rather than forbid, so the erasure's remaining statements are
           // planned differently and cannot fail on them.
           if (args[0] === LOCK_TIMEOUT_SQL) {
@@ -744,22 +743,21 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // (index 0), not a bare string, and separate calls on the session
           // work where one multi-statement string fails with `42601`.
           //
-          // ALL OF `FORCED_PLAN_SETTINGS`, not just `enable_hashjoin` — that was the #239 CI
-          // failure, and `enable_bitmapscan` is the one #470 added: without it
-          // a bitmap heap scan survives, and a bitmap heap scan returns
-          // physical heap order, which is what `enable_seqscan = off` was
-          // added to rule out and did not. (The two join settings are aimed at
+          // ALL OF `FORCED_PLAN_SETTINGS`, not just `enable_hashjoin` — that was
+          // the #239 CI failure, and `enable_bitmapscan` is the one #470 added:
+          // without it a bitmap heap scan survives, and a bitmap heap scan
+          // returns physical heap order, which is what `enable_seqscan = off`
+          // was added to rule out and did not. (The join settings are aimed at
           // join DIRECTION, a separate job, and they get it empirically rather
           // than mechanically — `probeUnderForcedPlan`'s docblock splits
-          // `FORCED_PLAN_SETTINGS` and `forceIndexOrderedPlan` has the
-          // limits.) Transaction-wide
-          // scope is acceptable here because
-          // the two scan settings discourage rather than forbid: Postgres
-          // still takes those paths where no alternative exists, so the
-          // erasure's remaining statements cannot fail on them, only be
-          // planned differently. `deleteStudentAccount` calls `setLockTimeout`
-          // twice (once itself, once inside the helper), so this fires twice;
-          // a repeated `SET LOCAL` overwrites rather than stacks.
+          // `FORCED_PLAN_SETTINGS` and `forceIndexOrderedPlan` has the limits.)
+          // Transaction-wide scope is acceptable here because the scan settings
+          // discourage rather than forbid: Postgres still takes those paths
+          // where no alternative exists, so the erasure's remaining statements
+          // cannot fail on them, only be planned differently.
+          // `deleteStudentAccount` calls `setLockTimeout` twice (once itself,
+          // once inside the helper), so this fires twice; a repeated `SET LOCAL`
+          // overwrites rather than stacks.
           if (args[0] === LOCK_TIMEOUT_SQL) {
             const first = await query(args);
             for (const setting of FORCED_PLAN_SETTINGS) {

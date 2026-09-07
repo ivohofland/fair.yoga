@@ -20,11 +20,10 @@ const prisma = new PrismaClient();
  * That is the property this whole file rests on, and it is why the same
  * settings in `FORCED_PLAN_SETTINGS` serve both sides. A heap-ordered scan of
  * `Class` hands back physical order, and physical order is not this test's to
- * own: `Class` is one
- * 8 KB page shared with every other file in the parallel tier, so a
- * neighbour's `DELETE` plus autovacuum frees a low line pointer and the next
- * insert takes it — measured 2026-08-28, and the mechanism behind the CI
- * failure in `db-locks.test.ts`'s own lock-order case on 2026-08-27. Under
+ * own: `Class` is one 8 KB page shared with every other file in the parallel
+ * tier, so a neighbour's `DELETE` plus autovacuum frees a low line pointer and
+ * the next insert takes it — measured 2026-08-28, and the mechanism behind the
+ * CI failure in `db-locks.test.ts`'s own lock-order case on 2026-08-27. Under
  * these settings the join side is ordered by a btree leading with `classId` —
  * both of `WaitlistEntry`'s composite indexes do — and the scan side by
  * whichever btree its plan is driven from; this file's fixture ASSIGNS every
@@ -35,12 +34,13 @@ const prisma = new PrismaClient();
  * `WaitlistEntry`, which is what the measurements below are about — and which
  * those measurements conclude the settings do not actually guarantee.
  *
- * All of `FORCED_PLAN_SETTINGS` are required, and `enable_hashjoin = off` alone is what
- * CI proved insufficient (#239 review). It removes a join ALGORITHM, not a
- * join DIRECTION: with hash joins gone the planner can still pick a nested
- * loop with `Class` as the outer relation and a `Materialize`d `WaitlistEntry`
- * scan inside, which returns `Class` heap order — the SAME order as the scan
- * caller, so the two agree and the reproduction cannot be built.
+ * All of `FORCED_PLAN_SETTINGS` are required, and `enable_hashjoin = off` alone
+ * is what CI proved insufficient (#239 review). It removes a join ALGORITHM,
+ * not a join DIRECTION: with hash joins gone the planner can still pick a
+ * nested loop with `Class` as the outer relation and a `Materialize`d
+ * `WaitlistEntry` scan inside, which returns `Class` heap order — the SAME
+ * order as the scan caller, so the two agree and the reproduction cannot be
+ * built.
  *
  * Which side wins is a cost knife-edge on the selectivity estimate for
  * `w."studentId"`, and `WaitlistEntry` has no index leading with that column
@@ -56,11 +56,11 @@ const prisma = new PrismaClient();
  * a cost decision. (Measured today under `FORCED_PLAN_SETTINGS` it drives from
  * `Class`, with `c.id = w."classId"` as a Join Filter rather than an Index
  * Cond; inflated statistics flip it. Benign for the ORDER either way, since
- * `w."classId"` IS `c.id`.) What carries this
- * paragraph is therefore an empirical result and not a mechanism: with the two
- * join settings and `enable_seqscan = off` in force — the configuration the
- * 2026-08-16 sweep ran under — the direction held at 0, 2, 10, 50, 100, 200,
- * 1_000, 5_000, 10_000 and 50_000 background rows.
+ * `w."classId"` IS `c.id`.) What carries this paragraph is therefore an
+ * empirical result and not a mechanism: with the two join settings and
+ * `enable_seqscan = off` in force — the configuration the 2026-08-16 sweep ran
+ * under — the direction held at 0, 2, 10, 50, 100, 200, 1_000, 5_000, 10_000
+ * and 50_000 background rows.
  *
  * INDEX-DRIVEN IS NOT INDEX-ORDERED, and that gap is what the seq-scan setting
  * alone left open. Of Postgres's scan paths over a plain table — sequential,
@@ -90,8 +90,9 @@ const prisma = new PrismaClient();
  * `enable_seqscan = off` and `enable_bitmapscan = off` discourage rather than
  * forbid — Postgres still takes those paths when nothing else can answer the
  * statement — so these cannot make a statement fail, only bias the planner.
- * `SET LOCAL` is transaction-scoped, so all of `FORCED_PLAN_SETTINGS` live entirely inside the
- * caller's transaction and reach neither the other caller nor production.
+ * `SET LOCAL` is transaction-scoped, so all of `FORCED_PLAN_SETTINGS` live
+ * entirely inside the caller's transaction and reach neither the other caller
+ * nor production.
  */
 async function forceIndexOrderedPlan(tx: Prisma.TransactionClient): Promise<void> {
   for (const setting of FORCED_PLAN_SETTINGS) {
@@ -426,10 +427,9 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // Runs under the same forced plan the caller below gets — see
     // `forceIndexOrderedPlan` for what the settings in `FORCED_PLAN_SETTINGS`
     // buy, why a cost-chosen plan cannot be relied on here, and why one
-    // setting was not enough. Which
-    // side the planner drives this join from is NOT among what they fix, and
-    // does not need to be: `w."classId"` IS `c.id`, so both directions return
-    // `classId` order.
+    // setting was not enough. Which side the planner drives this join from is
+    // NOT among what they fix, and does not need to be: `w."classId"` IS
+    // `c.id`, so both directions return `classId` order.
     const joinOrder = await probeUnderForcedPlan(Prisma.sql`
       SELECT c.id FROM "Class" c
       JOIN "WaitlistEntry" w ON w."classId" = c.id
