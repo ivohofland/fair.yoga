@@ -245,8 +245,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         //
         // `linkCreatedNow` is what the link write above actually did, and it
         // decides the `pending` half: a booking by someone this teacher
-        // already has on their roster resolves nothing (#418). The rule, and
-        // why the two halves differ, are in `docs/data-model.md` (Invitation).
+        // already has on their roster resolves no `pending` row (#418). The
+        // rule, and why the two halves differ, are in `docs/data-model.md`
+        // (Invitation).
         await resolveInvitationOnLink(tx, {
           teacherId: cls.calendarEntry.teacherId,
           studentEmail: student.email,

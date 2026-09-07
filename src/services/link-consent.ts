@@ -64,9 +64,9 @@ import { requireNormalised } from '@/lib/schemas';
  * something a teacher can trigger, not to weaken what it does when they
  * can't.
  *
- * `linkCreatedNow` is not that mode returning. It carries no claim about the
- * caller's intent — the paragraph above is still the whole of what a caller
- * must satisfy — only the fact of what this transaction's own link write did.
+ * `linkCreatedNow` carries no claim about the caller's intent — the call-site
+ * rule above is the whole of what a caller must satisfy — only the fact of
+ * what this transaction's own link write did.
  * Pass exactly what `linkTeacherStudent` (`services/roster-link.ts`) returned
  * for this pair, from this transaction, and do not re-derive it: that value
  * comes off the link's single `INSERT … ON CONFLICT DO NOTHING`, which is the
