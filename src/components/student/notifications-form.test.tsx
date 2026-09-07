@@ -79,4 +79,20 @@ describe('NotificationsForm', () => {
       'No reminders',
     ]);
   });
+
+  it('logs the failure and tells the student when fetch itself fails', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <NotificationsForm studentId="student-1" emailNotifications={true} reminderPref="morning" />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /save notifications/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Network error. Try again.')).toBeInTheDocument();
+    });
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
+  });
 });

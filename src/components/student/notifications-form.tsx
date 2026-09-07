@@ -93,7 +93,12 @@ export function NotificationsForm({
       } else {
         setError('Could not save. Try again.');
       }
-    } catch {
+    } catch (err) {
+      // Bound and logged rather than discarded. This form never reads the
+      // response body, so what reaches here is `fetch` itself failing —
+      // offline, DNS, an aborted connection — and without the log nothing
+      // records which.
+      console.error('student notification prefs save failed', err);
       setError('Network error. Try again.');
     } finally {
       setSaving(false);

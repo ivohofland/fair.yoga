@@ -71,7 +71,12 @@ export function NameForm({
       } else {
         setError(await readErrorMessage(res, 'Could not save. Try again.'));
       }
-    } catch {
+    } catch (err) {
+      // Bound and logged rather than discarded. Only `fetch` itself failing
+      // reaches here — offline, DNS, an aborted connection: `readErrorMessage`
+      // handles its own unreadable body and returns the fallback copy instead
+      // of throwing.
+      console.error('student name save failed', err);
       setError('Network error. Try again.');
     } finally {
       setSaving(false);
