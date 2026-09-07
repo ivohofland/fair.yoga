@@ -161,9 +161,8 @@ async function rosterLinkState(
   // The second tripwire on the unclaimed-Student branch, and the reason this
   // one exists rather than deferring to `bypassesPrivacy`'s: that warn fires
   // when a student is PROJECTED, and this gate reaches students the
-  // projection does not. `teacherStudents` here is unfiltered, while
-  // `GET /api/students` scopes its listing to `isArchived: false`, so an
-  // archived unclaimed contact is bypassed here and nowhere else. Gated on
+  // projection does not. `teacherStudents` here is unfiltered, so an
+  // archived link still answers `linked` here, same as a live one. Gated on
   // `linked` because that is when the bypass changes an answer.
   //
   // `privacyIsBypassed` rather than an inline `claimedAt === null`: #419 was
