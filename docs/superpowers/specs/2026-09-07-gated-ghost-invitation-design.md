@@ -67,7 +67,7 @@ second disjunct (`invitations.ts:301`), answering `ALREADY_LINKED` when the
 address is linked to that teacher and an ordinary `201` when it is a stranger's.
 Two HTTP calls, no student action. This is a **pre-existing #412/#417
 residual** rather than anything this branch introduces or was scoped to fix,
-and it is filed as its own follow-up issue; the fix belongs on the PUT route,
+and it is filed as #500; the fix belongs on the PUT route,
 not here.
 
 ## 2. The decision
