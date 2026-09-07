@@ -134,6 +134,32 @@ function searchScope(): string[] {
 }
 
 /**
+ * A SECOND read of `src/`, for the scope-reach guard alone, reaching no line of
+ * the walk it checks — not `typeScriptUnderSrc`, not `searchScope`, not their
+ * shared `readdirSync`.
+ *
+ * The duplication is the whole point. A guard whose two sides come from one
+ * function narrows in lockstep with it: a filter added inside that function
+ * drops an area from the census AND from the guard's expectation in the same
+ * edit, and the comparison stays equal. Only the extension and test-file rules
+ * are duplicated here; no exclusion a future edit adds to `searchScope` reaches
+ * this, which is exactly what has to make the two disagree.
+ *
+ * `DEFINING_MODULE` is deliberately among those not duplicated: an area whose
+ * only searched production file is the one that exclusion removes is a hole
+ * this guard should report rather than bless.
+ */
+function areasUnderSrc(): Set<string> {
+  const areas = new Set<string>();
+  for (const found of readdirSync(path.join(root, 'src'), { recursive: true, encoding: 'utf8' })) {
+    const relative = found.split(path.sep).join('/');
+    if (!/\.tsx?$/.test(relative) || /\.test\.tsx?$/.test(relative)) continue;
+    areas.add(relative.split('/')[0] ?? relative);
+  }
+  return areas;
+}
+
+/**
  * The first path segment under `src/` — `services`, `app`, or a bare filename
  * for something sitting directly in `src/`. What the scope-reach assertion
  * compares, because a filter edit that narrows this census will drop a whole
@@ -410,18 +436,17 @@ describe('every lockClassRowsOrdered call site carries a verdict', () => {
   });
 
   it('reaches every area of src that holds production TypeScript', () => {
-    // The non-vacuity assertion below checks two TOTALS, and all four call
-    // sites live under `src/services` — a fraction of the tree. So a filter
-    // edit that drops whole directories leaves both totals non-zero and every
-    // assertion green while the census stops watching most of the repository.
-    // This compares against a walk written separately from `searchScope`'s: it
-    // shares the extension and test-file rules, and none of the exclusions a
-    // future edit would add, which is exactly what has to fail.
-    const required = new Set(
-      typeScriptUnderSrc()
-        .filter((p) => !/\.test\.tsx?$/.test(p) && p !== DEFINING_MODULE)
-        .map(areaOf),
-    );
+    // The non-vacuity assertion below checks two TOTALS, which stay non-zero
+    // as long as any one call and any one verdict survive anywhere in the tree.
+    // So a filter edit that drops whole directories leaves both totals non-zero
+    // and every assertion green while the census stops watching most of the
+    // repository.
+    //
+    // `areasUnderSrc` reads the directory itself rather than calling the walk,
+    // so a narrowing added anywhere in the walk — including inside the shared
+    // `typeScriptUnderSrc` — makes these two disagree instead of moving them
+    // together.
+    const required = areasUnderSrc();
     const reached = new Set(searchScope().map(areaOf));
     expect([...required].filter((area) => !reached.has(area)).sort()).toEqual([]);
   });
