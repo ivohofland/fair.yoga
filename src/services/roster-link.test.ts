@@ -67,8 +67,9 @@ describe('linkTeacherStudent', () => {
   it('creates the link when there is none', async () => {
     const { teacherId, studentId } = await makeUnlinkedPair();
 
-    await linkTeacherStudent(prisma, { teacherId, studentId });
+    const created = await linkTeacherStudent(prisma, { teacherId, studentId });
 
+    expect(created).toBe(true);
     const link = await prisma.teacherStudent.findUnique({
       where: { teacherId_studentId: { teacherId, studentId } },
     });
@@ -82,8 +83,9 @@ describe('linkTeacherStudent', () => {
       where: { teacherId_studentId: { teacherId, studentId } },
     });
 
-    await linkTeacherStudent(prisma, { teacherId, studentId });
+    const created = await linkTeacherStudent(prisma, { teacherId, studentId });
 
+    expect(created).toBe(false);
     const second = await prisma.teacherStudent.findUniqueOrThrow({
       where: { teacherId_studentId: { teacherId, studentId } },
     });
@@ -121,7 +123,7 @@ describe('linkTeacherStudent', () => {
     await new Promise((r) => setTimeout(r, 200));
     releaseHolder();
 
-    await expect(loser).resolves.toBeUndefined();
+    await expect(loser).resolves.toBe(false);
     await holder;
 
     const links = await prisma.teacherStudent.findMany({ where: { teacherId, studentId } });
