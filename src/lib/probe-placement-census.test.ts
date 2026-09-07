@@ -160,7 +160,10 @@ function searchScope(): string[] {
 /**
  * A SECOND read of `src/`, for the scope-reach guard alone, reaching no line of
  * the walk it checks — not `typeScriptUnderSrc`, not `searchScope`, not their
- * shared `readdirSync`.
+ * shared walk. It makes its own `readdirSync` call rather than reaching theirs,
+ * which means their options object and this one must stay in step; a difference
+ * there narrows this side alone, and the guard's second direction is what
+ * reports that.
  *
  * The duplication is the whole point. A guard whose two sides come from one
  * function narrows in lockstep with it: a filter added inside that function
@@ -182,8 +185,8 @@ function areasUnderSrc(): Set<string> {
 /**
  * The first path segment under `src/` — `services`, `app`, or a bare filename
  * for something sitting directly in `src/`. What the scope-reach assertion
- * compares, because a filter edit that narrows this census will drop a whole
- * area rather than a scattering of files.
+ * compares, and the granularity it can hold: a narrowing that thins an area
+ * without emptying it is invisible to that assertion, which says so itself.
  */
 function areaOf(file: string): string {
   return file.slice('src/'.length).split('/')[0] ?? file;
@@ -442,10 +445,22 @@ describe('every probe call sits outside every transaction callback', () => {
     // so a narrowing that empties an area disagrees with it wherever in the
     // walk it sits — inside the shared `typeScriptUnderSrc` included. The
     // granularity is the area and no finer, as this test's name says: a
-    // narrowing leaving an area even one production file passes here.
+    // narrowing leaving an area even one SEARCHED production file passes here.
+    // Searched, not merely present: `reached` is what `searchScope` yields, so
+    // an area left holding nothing that survives its filter does go red.
+    //
+    // Both directions, so a failure names which side moved. The second is
+    // empty by construction — `areasUnderSrc` applies a strict subset of
+    // `searchScope`'s rules to the same tree, so an area the census reaches is
+    // always one it requires — and that is what makes it worth asserting: it
+    // costs nothing until `areasUnderSrc` itself narrows, and a narrowing
+    // there shrinks the very difference the first direction asserts empty.
     const required = areasUnderSrc();
     const reached = new Set(searchScope().map(areaOf));
-    expect([...required].filter((area) => !reached.has(area)).sort()).toEqual([]);
+    expect({
+      areasTheCensusMisses: [...required].filter((area) => !reached.has(area)).sort(),
+      areasTheGuardMisses: [...reached].filter((area) => !required.has(area)).sort(),
+    }).toEqual({ areasTheCensusMisses: [], areasTheGuardMisses: [] });
   });
 
   it('excludes the test files but not the defining modules, neither vacuously', () => {
