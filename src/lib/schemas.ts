@@ -153,7 +153,7 @@ export const studentSignupSchema = z.object({
 }).strict();
 
 export const magicLinkVerifySchema = z.object({
-  token: z.string().min(1),
+  token: z.string().trim().min(1),
 });
 
 export const magicLinkClaimSchema = z.object({
@@ -166,7 +166,7 @@ export const passkeyRegisterVerifySchema = z.object({
 
 export const passkeyAuthVerifySchema = z.object({
   response: z.record(z.string(), z.unknown()),
-  challengeId: z.string().min(1),
+  challengeId: z.string().trim().min(1),
   redirect: relativePath.optional(),
 });
 
@@ -214,8 +214,8 @@ const detectedTimezoneField = z
  * be one the caller has proved they control.
  */
 export const teacherProfileSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
+  firstName: z.string().trim().min(1),
+  lastName: z.string().trim().min(1),
   bio: z.string().max(250),
   pageSlug: pageSlugField,
   defaultTimezone: detectedTimezoneField.optional(),
@@ -227,13 +227,13 @@ export const teacherProfileSchema = z.object({
  * consumed signup ticket, never from the body.
  */
 export const studentProfileSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
+  firstName: z.string().trim().min(1),
+  lastName: z.string().trim().min(1),
 }).strict();
 
 export const updateTeacherSchema = z.object({
-  firstName: z.string().min(1).optional(),
-  lastName: z.string().min(1).optional(),
+  firstName: z.string().trim().min(1).optional(),
+  lastName: z.string().trim().min(1).optional(),
   photoUrl: z.string().url().nullable().optional(),
   bio: z.string().max(250).optional(),
   pageSlug: pageSlugField.optional(),
@@ -263,7 +263,7 @@ export const onboardingSkipSchema = z.object({ step: z.enum(OnboardingStep) }).s
  * on someone else's email address.
  */
 export const createInvitationSchema = z.object({
-  firstName: z.string().min(1),
+  firstName: z.string().trim().min(1),
   lastName: z.string().optional().default(''),
   email: emailField,
 }).strict();
@@ -274,7 +274,7 @@ export const createInvitationSchema = z.object({
  * create schema above: an unknown key here is a 400, not a silent drop.
  */
 export const updateInvitationSchema = z.object({
-  firstName: z.string().min(1).optional(),
+  firstName: z.string().trim().min(1).optional(),
   lastName: z.string().optional(),
   email: emailField.optional(),
 }).strict();
@@ -289,8 +289,8 @@ export const respondToInvitationSchema = z.object({
 }).strict();
 
 export const updateStudentSchema = z.object({
-  firstName: z.string().min(1).optional(),
-  lastName: z.string().min(1).optional(),
+  firstName: z.string().trim().min(1).optional(),
+  lastName: z.string().trim().min(1).optional(),
   phone: z.string().nullable().optional(),
   birthday: z.string().nullable().optional(), // ISO date string
   address: z.string().nullable().optional(),
@@ -320,10 +320,10 @@ export const updatePrivacySchema = z.object({
 // ============================================================================
 
 export const createRoomSchema = z.object({
-  venueName: z.string().min(1),
-  address: z.string().min(1),
-  city: z.string().min(1),
-  postcode: z.string().min(1),
+  venueName: z.string().trim().min(1),
+  address: z.string().trim().min(1),
+  city: z.string().trim().min(1),
+  postcode: z.string().trim().min(1),
   floor: z.string().optional().default(''),
   roomName: z.string().optional().default(''),
   maxCapacity: z.number().int().positive(),
@@ -333,10 +333,10 @@ export const createRoomSchema = z.object({
 });
 
 export const updateRoomSchema = z.object({
-  venueName: z.string().min(1).optional(),
-  address: z.string().min(1).optional(),
-  city: z.string().min(1).optional(),
-  postcode: z.string().min(1).optional(),
+  venueName: z.string().trim().min(1).optional(),
+  address: z.string().trim().min(1).optional(),
+  city: z.string().trim().min(1).optional(),
+  postcode: z.string().trim().min(1).optional(),
   floor: z.string().optional(),
   roomName: z.string().optional(),
   maxCapacity: z.number().int().positive().optional(),
@@ -567,7 +567,7 @@ export const claimWaitlistSchema = z.object({
 // ============================================================================
 
 export const markPaidSchema = z.object({
-  method: z.string().min(1),
+  method: z.string().trim().min(1),
 });
 
 // ============================================================================
@@ -576,7 +576,7 @@ export const markPaidSchema = z.object({
 
 export const createAnnouncementSchema = z.object({
   classId: z.string().uuid().optional(),
-  message: z.string().min(1),
+  message: z.string().trim().min(1),
 });
 
 // ============================================================================
