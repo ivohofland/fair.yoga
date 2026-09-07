@@ -936,8 +936,11 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       expect.objectContaining({
         classId,
         observedStatus: 'completed',
-        // Live and never cancelled — the `?? null` fallback for a
-        // genuinely-uncancelled entry, untested until now (#407 item 3).
+        // Live and never cancelled — this reads the entry's own
+        // `cancelledAt` column directly, which is already `null` (#407
+        // item 3). The `?? null` FALLBACK itself only substitutes when
+        // `observed` is missing entirely — that branch is the row-deleted
+        // test below.
         observedCancelledAt: null,
         waitingEntriesLeft: 1,
       }),
@@ -946,12 +949,12 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
   });
 
   it('reports row-deleted when the class row is gone by the time the diagnostic reads it', async () => {
-    // Completed and ineligible, exactly like the sibling test above — the
-    // only difference this test adds is deleting the row for real between
-    // commit and the diagnostic read, so `observed` comes back `null`
-    // rather than throwing. `row-deleted` is the `?? 'row-deleted'`
-    // fallback's own branch, reachable since #242 moved this read after the
-    // transaction's locks release (#407 item 1).
+    // Completed and ineligible, exactly like the sibling test above. The
+    // mechanism this test adds is deleting the row for real between commit
+    // and the diagnostic read, so `observed` comes back `null` rather than
+    // throwing. `row-deleted` is the `?? 'row-deleted'` fallback's own
+    // branch, reachable since #242 moved this read after the transaction's
+    // locks release (#407 item 1).
     const cls = await createClassFixture(prisma, {
       teacherId,
       teacherRoomId,
@@ -1012,6 +1015,10 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       expect.objectContaining({
         classId,
         observedStatus: 'row-deleted',
+        // The actual `?? null` fallback branch: `observed` is missing
+        // entirely here, so this is the substituted default, not a real
+        // column read (contrast the sibling test above, which reads a
+        // live entry's own `cancelledAt`).
         observedCancelledAt: null,
         waitingEntriesLeft: 0,
       }),
@@ -1283,6 +1290,11 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       });
     onTestFinished(() => spy.mockRestore());
 
+    // A prior test's own successful erasure already anonymized this
+    // account's email — reset it to a live value first, so the assertion
+    // below can tell "survived" from "was already anonymized regardless".
+    await prisma.account.update({ where: { id: accountId }, data: { email: `${suffix}@test.local` } });
+
     // Stages the losing half of a concurrent double-erasure directly,
     // rather than actually racing two calls: soft-delete the teacher up
     // front, so THIS SAME transaction attempt both collects the class
@@ -1297,13 +1309,18 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     expect(err).toBeInstanceOf(AlreadyErasedError);
     expect((err as AlreadyErasedError).half).toBe('teacher');
 
-    // Sanity check, not a rollback proof by itself: this class was never
-    // eligible for cancellation (`completed` is not in
-    // CANCELLABLE_STATUSES), so its CAS was always going to report
-    // `count: 0` regardless of whether this transaction committed or
-    // rolled back. What DOES prove the rollback is the `AlreadyErasedError`
-    // above — Prisma's `$transaction` rolls back the whole attempt when its
-    // callback throws.
+    // A genuine rollback observation, not an inference: no live student
+    // profile shares this account, so the transaction's own
+    // `tx.account.update` anonymizing the email runs — and succeeds —
+    // before the final CAS that aborts it. A live email here means that
+    // write was undone, not merely that it never ran.
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: accountId } });
+    expect(account.email).toBe(`${suffix}@test.local`);
+
+    // Sanity check, not a rollback proof by itself: the sibling tests
+    // above show this same fixture's `completed` status makes its CAS
+    // report `count: 0` even when the erasure commits normally, so this
+    // check alone can't distinguish a rollback from a commit.
     const after = await prisma.class.findUniqueOrThrow({
       where: { id: classId },
       include: { calendarEntry: true },
@@ -1311,6 +1328,10 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     expect(after.status).toBe('completed');
     expect(after.calendarEntry.cancelledAt).toBeNull();
 
+    // The four sibling tests above use this same injection with a
+    // POSITIVE warn assertion, so a broken injection (nothing collected as
+    // a skip) fails those loudly first — this negative assertion is not
+    // this branch's only guard against a vacuous pass.
     expect(warn).not.toHaveBeenCalledWith(
       expect.objectContaining({ classId }),
       expect.stringContaining('cancel CAS matched nothing'),
