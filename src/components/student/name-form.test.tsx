@@ -159,6 +159,25 @@ describe('NameForm', () => {
     expect(screen.queryByText('Saved')).toBeNull();
   });
 
+  it('shows Saved (not an error) and logs when refresh throws after a successful save', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubFetch(true);
+    routerRefresh.mockImplementationOnce(() => {
+      throw new Error('refresh boom');
+    });
+    render(
+      <NameForm studentId="student-1" initialFirstName="Anna" initialLastName="Smith" />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /save name/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Saved')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(logged).toHaveBeenCalledWith('student name save: refresh failed', expect.any(Error));
+    logged.mockRestore();
+  });
+
   it('logs the failure and tells the student when fetch itself fails', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockRejectedValue(new Error('offline'));

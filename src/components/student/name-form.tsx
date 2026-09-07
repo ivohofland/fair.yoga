@@ -78,7 +78,15 @@ export function NameForm({
         setFirstName(trimmedFirst);
         setLastName(trimmedLast);
         setSaved(true);
-        router.refresh();
+        // The save already succeeded and is reflected above; a refresh
+        // failure here is a stale-page problem, not a failed-save one, so it
+        // logs rather than reopening the error state a real user just saw
+        // clear.
+        try {
+          router.refresh();
+        } catch (err) {
+          console.error('student name save: refresh failed', err);
+        }
       } else {
         setError(await readErrorMessage(res, 'Could not save. Try again.'));
       }
