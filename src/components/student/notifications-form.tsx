@@ -7,6 +7,7 @@ import type { updateStudentSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
+import { readErrorMessage } from '@/lib/client-errors';
 
 interface NotificationsFormProps {
   studentId: string;
@@ -91,7 +92,8 @@ export function NotificationsForm({
       if (res.ok) {
         setSaved(true);
       } else {
-        setError('Could not save. Try again.');
+        console.error('student notification prefs save failed (HTTP)', res.status);
+        setError(await readErrorMessage(res, 'Could not save. Try again.'));
       }
     } catch (err) {
       // Bound and logged rather than discarded. This form never reads the

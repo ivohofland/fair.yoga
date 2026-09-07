@@ -746,12 +746,14 @@ describe('classType and location whitespace trimming and validation (#311)', () 
     expect(discovered.sort()).toEqual([...locationSchemas].sort());
   });
 
-  // Whitespace rejection is no longer asserted per-schema here: the
-  // 'a field that refuses blank refuses whitespace too (#405)' block below
-  // covers every field of every exported schema, including these. What
-  // stays is what that invariant cannot say —
-  // which schemas carry these fields at all, and that padding is stripped
-  // before storage rather than merely rejected.
+  // Whitespace rejection lives in the
+  // 'a field that refuses blank refuses whitespace too (#405)' block below,
+  // which walks every field of every exported schema — but exempts a field
+  // entirely once it accepts `''`, so it would not notice `classType` or
+  // `location` losing their own blank-rejection the way these deleted tests
+  // would have. What these two tests still hold: which schemas carry these
+  // fields at all, and that padding is stripped before storage rather than
+  // merely rejected.
 
   it.each(classTypeSchemas)('%s trims padded classType before validation and storage', (name) => {
     const schema = (schemas as Record<string, unknown>)[name] as z.ZodType;
@@ -779,20 +781,23 @@ describe('classType and location whitespace trimming and validation (#311)', () 
  *
  * Derived from the module, never a roster: every exported schema is walked,
  * so one added tomorrow is covered the moment it is exported. That is the
- * whole reason this exists rather than a fourth hand-written list of schema
+ * whole reason this exists rather than another hand-written list of schema
  * names.
  *
  * The rule reads behaviour, not syntax. It never looks for `.min(1)`, so a
  * field guarded another way passes untouched — `pageSlugField` refuses
- * whitespace through its own regex. And a field that legitimately accepts a
- * blank value exempts itself by accepting `''`. There is no allowlist here,
- * which is the point: nothing exists for a later change to add an
- * exception to.
+ * whitespace by another route. And a field that legitimately accepts a
+ * blank value exempts itself by accepting `''` — which cuts both ways: a
+ * field that STOPS refusing `''` drops out of this invariant's coverage
+ * rather than failing it, so there is no allowlist to weaken, but blank
+ * rejection itself has to be asserted somewhere else if it matters.
  *
  * Scope: top-level fields. An array field's element schema is not walked
  * (`z.array(z.string())` accepting `['   ']` is outside what this proves),
- * and a `z.union`/`z.discriminatedUnion` schema falls through to being
- * treated as a single bare field rather than having its branches walked.
+ * a `z.union`/`z.discriminatedUnion` schema falls through to being treated
+ * as a single bare field rather than having its branches walked, and
+ * `.trim()` strips JS whitespace, not every visually-blank character — a
+ * lone zero-width space (`'​'`) is not covered.
  */
 describe('a field that refuses blank refuses whitespace too (#405)', () => {
   /**
@@ -810,9 +815,10 @@ describe('a field that refuses blank refuses whitespace too (#405)', () => {
     );
   }
 
-  function sweep(): { offenders: string[]; checked: string[] } {
+  function sweep(): { offenders: string[]; checked: string[]; bare: string[] } {
     const offenders: string[] = [];
     const checked: string[] = [];
+    const bare: string[] = [];
     const visit = (label: string, field: z.ZodType): void => {
       if (field.safeParse('').success) return; // blank is legal here — exempt
       checked.push(label);
@@ -828,10 +834,11 @@ describe('a field that refuses blank refuses whitespace too (#405)', () => {
       if (shape) {
         for (const [key, field] of Object.entries(shape)) visit(`${name}.${key}`, field);
       } else {
+        bare.push(name);
         visit(name, schema); // a bare field export, e.g. `pageSlugField`
       }
     }
-    return { offenders, checked };
+    return { offenders, checked, bare };
   }
 
   it('holds for every field of every exported schema', () => {
@@ -839,13 +846,31 @@ describe('a field that refuses blank refuses whitespace too (#405)', () => {
   });
 
   /**
-   * A floor, deliberately not a census. The failure mode of a discovery loop
-   * is silence: if `Object.entries` stopped yielding schemas, or `shapeOf`
-   * stopped reading a shape, the test above would report no offenders and
-   * pass green while proving nothing. This is the assertion that notices.
-   * Set well below the real number so growth never touches it.
+   * Two guards against a discovery loop that silently checks nothing, each
+   * catching a failure mode the other cannot.
+   *
+   * A schema this PR fixed disappearing from discovery (its export removed,
+   * or `Object.entries` stopping short) shrinks `checked` without touching
+   * `bare` — caught by naming representative fields the loop must still
+   * reach, one from each family #405 fixed.
+   *
+   * A schema `shapeOf` cannot read (a union, a `.transform()`) falls
+   * through to being visited as a single bare field, which still increments
+   * `checked` silently — that field "passes" only because it rejects an
+   * object outright. Caught by pinning which exports take that fallback
+   * path: today only `pageSlugField`, guarded by its own regex rather than
+   * a walkable shape.
    */
-  it('actually visited the schemas', () => {
-    expect(sweep().checked.length).toBeGreaterThanOrEqual(90);
+  it('still reaches a representative field from every family this PR fixed', () => {
+    expect(sweep().checked).toEqual(expect.arrayContaining([
+      'updateStudentSchema.firstName',
+      'createRoomSchema.city',
+      'markPaidSchema.method',
+      'createAnnouncementSchema.message',
+    ]));
+  });
+
+  it('falls through to a bare visit for nothing but pageSlugField', () => {
+    expect(sweep().bare).toEqual(['pageSlugField']);
   });
 });

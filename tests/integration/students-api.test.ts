@@ -1693,9 +1693,12 @@ describe('POST /api/students answers a raced invite with ALREADY_INVITED (#161)'
 });
 
 /**
- * The PUT gate, from the outside. `session.studentId === id` is the only
- * thing standing between one student and another's stored name, and until
- * #405 no test made a cross-student attempt at all.
+ * The PUT gate, from the outside: this block exists to prove the 403 is
+ * about ownership, not about the endpoint being closed to everyone.
+ * `session.studentId === id` is the only thing standing between one
+ * student and another's stored name — and, since `PUT` (unlike `GET`) has
+ * no teacher branch at all, between a teacher and any student's stored
+ * name.
  *
  * Own fixtures: the students seeded at the top of this file have no
  * `Account`, so none of them can hold a session to make this request with.
@@ -1739,11 +1742,19 @@ describe('PUT /api/students/[id]', () => {
   beforeAll(async () => {
     alice = await mkClaimedStudent('alice');
     bob = await mkClaimedStudent('bob');
+    await prisma.teacherStudent.create({ data: { teacherId, studentId: alice.id } });
   });
 
   afterAll(async () => {
+    await prisma.teacherStudent.deleteMany({ where: { teacherId, studentId: alice?.id } });
     await teardownStudent(prisma, alice?.id, alice?.accountId);
     await teardownStudent(prisma, bob?.id, bob?.accountId);
+  });
+
+  it('refuses a teacher session even when the teacher is linked to the student', async () => {
+    const res = await put(alice.id, { firstName: 'Rewritten' }, teacherToken);
+    expect(res.status).toBe(403);
+    expect(await firstNameOf(alice.id)).toBe('alice');
   });
 
   it("refuses one student's edit of another's name, and writes nothing", async () => {
@@ -1764,6 +1775,9 @@ describe('PUT /api/students/[id]', () => {
     const before = await firstNameOf(alice.id);
     const res = await put(alice.id, { firstName: '   ' }, alice.token);
     expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: { message?: string } | string };
+    const message = typeof body.error === 'string' ? body.error : body.error?.message;
+    expect(message).toMatch(/firstName/i);
     expect(await firstNameOf(alice.id)).toBe(before);
   });
 });

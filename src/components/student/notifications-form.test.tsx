@@ -5,11 +5,12 @@ import { NotificationsForm } from './notifications-form';
 /**
  * #136. The reverse pin in `notifications-form.tsx` proves its keys are ones
  * `updateStudentSchema` accepts, but cannot see what reaches the API. That is
- * what these tests hold: the exact key set sent, and that all four reminder
- * options — produced from `REMINDER_OPTIONS` rather than inline JSX — render.
+ * what these tests hold: what the pin cannot see — the exact key set that
+ * reaches the API, that every `REMINDER_OPTIONS` entry renders, and how the
+ * form behaves when the request fails.
  *
- * No forward pin on the form: the schema carries fields no student-facing
- * input renders, and a forward pin would name them.
+ * No forward pin on the form: the schema carries fields this form has no
+ * business rendering.
  *
  * Nothing fetches on mount, so the save click is the first (and only) call.
  */
@@ -19,6 +20,7 @@ describe('NotificationsForm', () => {
   afterEach(() => {
     fetchMock.mockReset();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   function stubFetch() {
@@ -93,6 +95,25 @@ describe('NotificationsForm', () => {
       expect(screen.getByText('Network error. Try again.')).toBeInTheDocument();
     });
     expect(logged).toHaveBeenCalledWith('student notification prefs save failed', expect.any(Error));
-    logged.mockRestore();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs and surfaces the server message when the response is not ok', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: { message: 'Invalid reminder preference' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <NotificationsForm studentId="student-1" emailNotifications={true} reminderPref="morning" />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /save notifications/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Invalid reminder preference')).toBeInTheDocument();
+    });
+    expect(logged).toHaveBeenCalledWith('student notification prefs save failed (HTTP)', 400);
   });
 });
