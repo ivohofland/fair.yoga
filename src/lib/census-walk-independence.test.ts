@@ -22,19 +22,26 @@
  * WHAT IT ASSERTS. Inside `areasUnderSrc`, every callee that roots in a
  * module-level binding must root in an import from a `node:` specifier, and a
  * `readdirSync` call must be present. "Roots in" means the bare identifier of
- * an identifier callee, or the leftmost identifier of a property- or
- * element-access callee. That is deliberately wider than "does not call the
- * walk by name", which a rename defeats and which the refactor actually feared
- * — hoisting the walk into another module — walks straight past.
+ * an identifier callee, the leftmost identifier of a property- or
+ * element-access callee, or — unwrapped the same way — the identifier a
+ * construct expression invokes, so `new Walker().walk()` roots in `Walker`.
+ * That is deliberately wider than "does not call the walk by name", which a
+ * rename defeats and which the refactor actually feared — hoisting the walk
+ * into another module — walks straight past.
  *
  * WHAT IT ALSO ASSERTS (#492). Each census file's `reached` — what the
  * scope-reach assertion compares `areasUnderSrc` against — must be built from
- * the census's own consumed-file list. Its initializer (the file's one
- * `const reached = …` declaration, wherever it sits — inside the assertion's
- * `it(...)` callback, not at module level) must call `censusOfTree`, and any
- * other call rooting in a module-level binding is a finding: that is what
- * catches a revert to a second, independent read of `searchScope()` or
- * `typeScriptUnderSrc()`, aliased or not.
+ * the census's own consumed-file list. Every `const reached = …`
+ * declaration in the file (there may be more than one, and each is checked
+ * on its own) must call `censusOfTree`, and any other call rooting in a
+ * module-level binding not reached from a `node:` import is a finding — the
+ * same node:-origin allowance `areasUnderSrc`'s own check makes, with
+ * `censusOfTree` additionally allowed by name alone. That is what catches a
+ * revert to a second, independent read of `searchScope()` or
+ * `typeScriptUnderSrc()`, aliased or not — and, since `censusOfTree` itself
+ * must be unambiguous for the name-alone allowance to mean anything, a second
+ * declaration of `censusOfTree` anywhere in the file is a finding too, before
+ * any `reached` initializer is even inspected.
  *
  * WHICH FILES, discovered rather than written down: every `src/lib/*.test.ts`
  * declaring `areasUnderSrc` at module level, and separately, every
@@ -53,17 +60,22 @@
  * Shadowing is not modelled either — a
  * function-local sharing a name with a module-level binding is reported though
  * the call reaches the local. That direction is loud and correctable; the other
- * one hides the refactor this file exists to catch. Two narrower gaps are
- * accepted rather than closed (#492): `import x = SomeNamespace.Member`, the
- * internal-namespace form of an import-equals declaration (as against the
- * `require(...)` form fixtured below), is legacy TypeScript syntax a hoisted
- * walk is unlikely to use; and a walk hoisted into a `namespace N { export
- * function walk() {...} }` and called as `N.walk()` resolves to no binding at
- * all, but degrades loud rather than silent — the body then makes no
- * `readdirSync` call, and the missing-walk arm above already reports that. The
- * `reached` tether below reuses this same root resolution, so it shares every
- * blind spot above: a callee rooting in a parameter or a function-local, and
- * the two narrower accepted gaps, apply there too.
+ * one hides the refactor this file exists to catch. One narrower gap is
+ * accepted rather than closed (#492): a walk hoisted into a `namespace N {
+ * export function walk() {...} }` and called as `N.walk()` resolves to no
+ * binding at all, but degrades loud rather than silent — the body then makes
+ * no `readdirSync` call, and the missing-walk arm above already reports
+ * that. `import x = SomeNamespace.Member` — the internal-namespace form of
+ * an import-equals declaration, as against the `require(...)` form fixtured
+ * below — is not a gap at all: `moduleLevelBindings` falls through to the
+ * same module-level-local treatment any plain declaration gets, so a call
+ * reached this way is caught exactly like the destructured-variable case
+ * fixtured below; a dedicated fixture for it is added alongside that one,
+ * since it exercises a different branch of `moduleLevelBindings` even though
+ * both land on the same `local` treatment. The `reached` tether below reuses
+ * this same root resolution, so it shares the one blind spot above: a callee
+ * rooting in a parameter or a function-local, and the namespace-declaration
+ * gap, apply there too.
  *
  * A file that parses is assumed. `ts.createSourceFile` does not throw and no
  * diagnostics are read here, so a syntax error that swallows a call reports
@@ -86,6 +98,12 @@
  * never as this one — a real `reached` local written anywhere in this file
  * would join its own discovered set and redden its own assertion, which is a
  * thinner margin than `GUARD`'s and worth remembering before adding one.
+ *
+ * `reachedIn` ALSO DOES NOT SEE a `reached` declared without an initializer
+ * in the same statement — `let reached; if (…) { reached = …; } else { … }`,
+ * or a destructured `const { reached } = build();` — both leave
+ * `reachedIndependenceOf` unable to tell the file apart from one declaring no
+ * `reached` at all. Filed as a follow-up rather than closed here.
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -239,6 +257,12 @@ function moduleLevelBindings(source: ts.SourceFile): ReadonlyMap<string, Binding
  * function expression or arrow. Nothing when the source declares neither, which
  * is what keeps a file merely mentioning the name — this one, where it occurs
  * inside fixture text — out of the discovered set.
+ *
+ * Returns the FIRST such declaration found, trusting there is at most one.
+ * `tsc` itself enforces that for a `function` statement, and for `const`/`let`
+ * — redeclaring `GUARD` any of those ways is a compile error. It does not for
+ * `var`, which permits redeclaration; this project's lint step forbids `var`
+ * project-wide, which is what actually holds this assumption, not `tsc`.
  */
 function guardIn(source: ts.SourceFile): ts.Node | undefined {
   for (const statement of source.statements) {
@@ -322,15 +346,47 @@ function independenceOf(file: string, text: string): readonly string[] | undefin
 }
 
 /**
+ * How many times the file declares `CENSUS` — a function declaration or a
+ * variable bound to one — anywhere in it, at any depth. `reachedIndependenceOf`
+ * trusts a bare name match against `CENSUS`, the same way `independenceOf`
+ * trusts `WALK`'s; that trust only holds while the name is unambiguous. A
+ * second declaration — necessarily nested, since a second module-level one is
+ * a `tsc` redeclaration error the way `GUARD`'s is — shadows the first inside
+ * whatever scope it's declared in, and nothing that walks only a `reached`
+ * initializer ever visits a shadow's own body to see what it actually calls.
+ */
+function censusDeclarationCount(source: ts.SourceFile): number {
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === CENSUS) count++;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === CENSUS) {
+      count++;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return count;
+}
+
+/**
  * What each of `REACHED`'s initializers reaches apart from `CENSUS`, with
  * each initializer's own missing-`CENSUS`-call finding last in its group —
  * the same two-direction shape `independenceOf` uses for `GUARD`, reusing
  * `rootOf` and `moduleLevelBindings` so a call reaching a forbidden name
  * through a local alias (`const s = searchScope; …s()…`) is caught the same
- * way it already is for `GUARD`. Unlike `independenceOf`'s node:-origin
- * whitelist, this one allows `CENSUS` by name alone regardless of where it
- * comes from — sufficient here because `censusOfTree` is always the file's
- * own declaration, never imported.
+ * way it already is for `GUARD`. Reuses `independenceOf`'s node:-origin
+ * allowance too — a call rooting in a node:-imported binding is never a
+ * finding here either — and additionally allows a call rooting in a
+ * module-level binding named `CENSUS`, regardless of where it comes from,
+ * sufficient here because `censusOfTree` is always the file's own
+ * declaration, never imported.
+ *
+ * That name-alone trust is only sound while the name is unambiguous, which is
+ * what `censusDeclarationCount` polices first: a shadow named `censusOfTree`
+ * anywhere in the file — necessarily nested, since a second module-level one
+ * is a `tsc` redeclaration error — would satisfy the name check without its
+ * own body ever being inspected, so more than one declaration is a finding on
+ * its own, before any initializer is even walked.
  *
  * `undefined`, as against an empty array of findings, when the file declares
  * no `REACHED` at all — not merely one whose initializers are all clean.
@@ -342,6 +398,13 @@ function reachedIndependenceOf(file: string, text: string): readonly string[] | 
 
   const bindings = moduleLevelBindings(source);
   const findings: string[] = [];
+
+  const censusCount = censusDeclarationCount(source);
+  if (censusCount > 1) {
+    findings.push(
+      `${file} declares ${CENSUS} ${censusCount} times, not once — a shadow could be what "${REACHED}" actually calls`,
+    );
+  }
 
   for (const initializer of initializers) {
     let sawCensus = false;
@@ -663,6 +726,28 @@ class CensusWalk {
     ]);
   });
 
+  it('reports a call reaching through an import-equals internal-namespace reference', () => {
+    // `import x = SomeNamespace.Member;` is an ImportEqualsDeclaration whose
+    // moduleReference is an EntityName, not an ExternalModuleReference — the
+    // ternary in moduleLevelBindings falls through to `local` for this shape,
+    // a different branch than the require(...) fixture above exercises (that
+    // one takes the ExternalModuleReference arm). Untested until this
+    // fixture, though the code already handles it correctly.
+    const preamble = `
+namespace SomeNamespace {
+  export function Member() {
+    return [];
+  }
+}
+import x = SomeNamespace.Member;
+`;
+    const body = `  if (x().length === 0) return areas;
+${OWN_WALK}`;
+    expect(independenceOf(FIXTURE, guardSource(body, preamble))).toEqual([
+      `${FIXTURE}:11 ${GUARD} calls x — x is declared at module level`,
+    ]);
+  });
+
   it('finds nothing at all, as against nothing wrong, where no guard is declared', () => {
     // What discovery keys on. A file whose guard was renamed away drops out of
     // the discovered set rather than joining it with an empty finding list,
@@ -674,8 +759,8 @@ class CensusWalk {
 /**
  * The `reached` rule above, against sources this repository does not
  * contain. Parsed the same way `independenceOf`'s own fixtures are, and for
- * the same reason: the two real census files hold one shape each — the
- * healthy one — so a predicate that has never reported anything here is
+ * the same reason: the real census files hold one shape apiece — the healthy
+ * one — so a predicate that has never reported anything here is
  * indistinguishable from one that cannot.
  */
 const REACHED_PREAMBLE = `
@@ -748,6 +833,37 @@ describe('x', () => {
     expect(reachedIndependenceOf(FIXTURE, source)).toEqual([
       `${FIXTURE}:17 ${REACHED} calls searchScope — searchScope is declared at module level`,
       `${FIXTURE} ${REACHED} makes no ${CENSUS} call`,
+    ]);
+  });
+
+  it('reports a shadowed `censusOfTree` even though the name check alone would miss it', () => {
+    // The name-alone allowance for CENSUS only means anything if the name is
+    // unambiguous. A second `censusOfTree`, nested beside `reached`, performs
+    // a real independent walk here — and nothing that only walks the
+    // initializer expression would ever see this shadow's own body.
+    // `censusDeclarationCount` is what catches it instead: this fixture would
+    // otherwise report `[]`, fully clean, despite the shadow's `readdirSync`.
+    // (Never executed, only parsed, so these two imports need not resolve —
+    // included anyway for fixture realism, matching OWN_WALK's real shape.
+    // Prepended here rather than added to REACHED_PREAMBLE itself, which
+    // other fixtures share and must not gain unrelated imports.)
+    const source = `
+import { readdirSync } from 'node:fs';
+import path from 'node:path';
+${REACHED_PREAMBLE}
+describe('x', () => {
+  it('y', () => {
+    function censusOfTree() {
+      return {
+        filesCensused: readdirSync(path.join(root, 'src'), { recursive: true, encoding: 'utf8' }),
+      };
+    }
+    const reached = new Set(censusOfTree().filesCensused.map(areaOf));
+  });
+});
+`;
+    expect(reachedIndependenceOf(FIXTURE, source)).toEqual([
+      `${FIXTURE} declares ${CENSUS} 2 times, not once — a shadow could be what "${REACHED}" actually calls`,
     ]);
   });
 
