@@ -1857,11 +1857,11 @@ describe('deleteTeacherAccount cancels an in_progress class on the CAS loop, not
  * The class sits in the final-hour `first_come_first_claimed` window on
  * purpose: that is the only window where `handleSpotFreed` broadcasts rather
  * than auto-promoting, and a doubled auto-promotion is invisible (the second
- * call finds the head already `promoted` and returns `none`). Both tests
- * below need that broadcast path live — one to catch a diagnostic failure
- * inside it, the other to name which branch it failed in — even though the
- * doubled-broadcast guard that first justified the window now lives in
- * `gdpr-lock-order.test.ts` (#459).
+ * call finds the head already `promoted` and returns `none`). The tests
+ * below that fail past window resolution — inside the broadcast write, or
+ * in the diagnostic read that follows it — depend on landing in this
+ * branch, even though the doubled-broadcast guard that first justified the
+ * window now lives in `gdpr-lock-order.test.ts` (#459).
  */
 describe('student erasure is retry-safe against a concurrent duplicate (#196)', () => {
   const prisma = new PrismaClient();
@@ -2123,6 +2123,74 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
         branch: 'first_come_first_claimed',
       });
       expect(logged?.[1]).toContain('the waiting students were not told the seat is free');
+    } finally {
+      await cleanup(fixture);
+    }
+  }, 15_000);
+
+  /**
+   * The sibling read this loop guards with its own `.catch()`: the test
+   * above fails `handleSpotFreed` but leaves this diagnostic's own
+   * `waitlistEntry.count` read real, so it can only ever prove `waiting: 1`
+   * — a successful count. `-1`, not `0`, is the same call `promoteAfterCancel`
+   * makes for the identical reason (`api/registrations/[id]/route.ts`, which
+   * `gdpr.ts`'s own comment on this line points to): a count no real queue
+   * can take keeps the line honest about not knowing rather than claiming
+   * nobody waited. Without this test, that `.catch()` in `deleteStudentAccount`'s
+   * post-commit loop can be mutated from `-1` to `0` and the whole suite
+   * stays green — an operator reading `waiting: 0` on a failed broadcast
+   * would then conclude nobody was waiting, on a queue that may be full of
+   * students never told their seat was free.
+   */
+  it('logs the -1 sentinel, not 0, when the diagnostic\'s own waitlist-count read fails after the spot-freed hook fails', async () => {
+    const fixture = await makeStudentWithFreedSpot();
+    try {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+      onTestFinished(() => warn.mockRestore());
+
+      // Same broadcast-write injection as the sibling test above — it is
+      // what makes `handleSpotFreed` throw at all — plus a second
+      // injection on the diagnostic's OWN count read (`deleteStudentAccount`'s
+      // post-commit loop in `gdpr.ts`), which the sibling test above leaves
+      // real. Matched on `classId` alone: this fixture's class is never at
+      // capacity when the loop runs (the erased student's freed seat is
+      // what got it here), so `handleSpotFreed`'s own `isFull` branch —
+      // the one other `waitlistEntry.count` call this match could reach,
+      // inside its own transaction — is never reached through it and
+      // cannot collide with this match.
+      const failing = prisma.$extends({
+        query: {
+          notification: {
+            async createMany({ args, query }) {
+              const rows = args.data as Array<{ type?: string }> | undefined;
+              if (!Array.isArray(rows) || !rows.some((r) => r.type === 'spot_available')) {
+                return query(args);
+              }
+              throw new Error('injected: broadcast write failed (code: "55P03")');
+            },
+          },
+          waitlistEntry: {
+            async count({ args, query }) {
+              if ((args.where as { classId?: string } | undefined)?.classId !== fixture.classId) {
+                return query(args);
+              }
+              throw new Error('injected: diagnostic waitlist count failed');
+            },
+          },
+        },
+      }) as unknown as PrismaClient;
+
+      await expect(deleteStudentAccount(failing, fixture.studentId)).resolves.toBeUndefined();
+
+      const logged = warn.mock.calls.find(
+        (c) => (c[0] as { classId?: string } | undefined)?.classId === fixture.classId,
+      );
+      expect(logged?.[0]).toMatchObject({
+        classId: fixture.classId,
+        waiting: -1,
+        transient: true,
+        branch: 'first_come_first_claimed',
+      });
     } finally {
       await cleanup(fixture);
     }
