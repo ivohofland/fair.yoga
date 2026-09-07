@@ -181,8 +181,26 @@ there. Correcting only the copy would have left the original standing, so both
 carry the corrected paragraph. That file's `areasUnderSrc` and every assertion
 in it are otherwise untouched; the edit is comment-only.
 
-The review also caught a count in this plan's own sweep, corrected above. One
-finding was declined; why is in the PR body.
+The review also caught a count in this plan's own sweep, corrected above.
+
+**A third round, from the PR review.** The same defect class surfaced twice more,
+which is the honest summary of this branch:
+
+- **The guard's own expectation was unpinned.** `required` moved onto
+  `areasUnderSrc`, which nothing else in either file reaches, while the assertion
+  stayed one-directional — so a *shrinkage* of `required` shrank the very
+  difference being asserted empty. Deleting `recursive: true` from
+  `areasUnderSrc` typechecks and leaves everything green. Both directions are
+  asserted now, under named keys.
+- **"Searched" was the load-bearing word**, and this branch had deleted it two
+  paragraphs above, where it named an empty set. The granularity caveat was false
+  in this file and true in the sibling, because their `searchScope` functions
+  differ — copied wording is only safe where the code beneath it agrees.
+- `areaOf`'s docblock asserted the opposite of the caveat in both files, and a
+  prose count from #464 survived in the `satisfies` docblock. Both corrected.
+
+Two findings were filed as #489 rather than folded, and one declined; why is in
+the PR body.
 
 ## Not in this branch
 
