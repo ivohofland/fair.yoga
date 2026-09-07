@@ -473,8 +473,10 @@ describe('every probe call sits outside every transaction callback', () => {
     //
     // Both directions, so a failure names which side moved. The second stays
     // empty while the census consumes a subset of `searchScope`, since
-    // `areasUnderSrc` applies a strict subset of `searchScope`'s rules to the
-    // same tree — so an area the census reaches is one it requires. What can
+    // `areasUnderSrc` applies the same rules `searchScope` does to the same
+    // tree — equal here, unlike db-locks where the defining-module exclusion
+    // makes it a strict subset — so an area the census reaches is one it
+    // requires either way. What can
     // fire it, and could not if this side re-read the walk, is a census
     // consuming a file `areasUnderSrc` would not require — a source list
     // widened past the walk. Short of that it costs nothing until

@@ -15,8 +15,9 @@
  * TWO CENSUSES, DELIBERATELY UNLIKE EACH OTHER. The call side is read from the
  * syntax tree — a call expression whose callee names the helper, whether by its
  * own name, by a local name an import specifier binds to it, or as a member of
- * an imported namespace — so a mention of the name in a comment or a string is
- * not a call, and a call that never says `await` still is one. The verdict side
+ * that name read off anything — so a mention of the name in a comment or a
+ * string is not a call, and a call that never says `await` still is one. The
+ * verdict side
  * stays textual, because a comment convention has nowhere else to live. Neither
  * side is a search hoping the other agrees with it: one reads structure, the
  * other reads prose, and they are asserted to pair. The shell censuses of this
