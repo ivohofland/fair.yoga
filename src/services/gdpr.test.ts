@@ -1339,6 +1339,73 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       expect.stringContaining('cancel CAS matched nothing'),
     );
   });
+
+  /**
+   * `waitingEntriesLeft` counts the `waiting` entries, not the queue's history.
+   *
+   * Every other fixture in this describe puts exactly ONE entry on its class
+   * and always in `waiting`, which makes the count's `status` filter a no-op:
+   * dropping it entirely leaves all of them green. So the field an operator
+   * reads to decide whether a skipped class left a residual worth cleaning up
+   * had no test that could tell a live queue from a spent one.
+   *
+   * Two students because `WaitlistEntry` is unique on `(classId, studentId)`,
+   * so one class cannot hold two entries for the same student. Both rows
+   * survive the erasure to be counted — a skipped class `continue`s before the
+   * waitlist sweep, which is exactly the residual the diagnostic reports.
+   */
+  it('counts only the waiting entries, not a queue that already moved on', async () => {
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'mixed waitlist class',
+      date: new Date('2026-06-07'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'completed',
+    });
+    const classId = cls.id;
+
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId: waitingStudentId, position: 1, status: 'waiting' },
+    });
+    // The row that makes this test bite. `removed` is a spent entry: nobody is
+    // owed anything for it, so counting it would report a residual that is not
+    // there.
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId: registeredStudentId, position: 2, status: 'removed' },
+    });
+
+    const original = dbLocks.lockClassRowsOrdered;
+    const spy = vi
+      .spyOn(dbLocks, 'lockClassRowsOrdered')
+      .mockImplementation(async (tx, source) => {
+        const ids = await original(tx, source);
+        return source.entries === true ? [...ids, classId] : ids;
+      });
+    onTestFinished(() => spy.mockRestore());
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+
+    await deleteTeacherAccount(prisma, teacherId);
+
+    // Both rows are still there, so `1` is the filter's doing and not the
+    // `removed` row having been swept away before the count ran.
+    expect(
+      await prisma.waitlistEntry.count({ where: { classId } }),
+    ).toBe(2);
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ classId, waitingEntriesLeft: 1 }),
+      expect.stringContaining('cancel CAS matched nothing'),
+    );
+  });
 });
 
 /**
