@@ -136,14 +136,54 @@ as they can any other, and a re-probe after deleting it creates a fresh decoy.
 One behaviour is *lost*, and it is worth naming rather than discovering later. If
 a `TeacherStudent` link is created by something other than the student's own
 resolving act while a `pending` invitation stands, that invitation now stays
-pending forever instead of flipping on the student's next booking. The
-non-student link creators are `promoteNext`, `claimSpot`, `activateRegistration`
-(`waitlist.ts`) and `acceptInvitation` — every one of which requires the student
-to have already joined a queue (which links *and* resolves) or accepted (which
-resolves directly), so a `pending` row cannot survive into that state by any
-sequence this codebase produces. Where it did, the outcome would be a lingering
-"Invited" contact — the same benign artifact a decoy already is, and the same
-one #417 established as load-bearing rather than tolerated.
+pending forever instead of flipping on the student's next booking.
+
+The non-student link creators are `promoteNext` and `claimSpot` (`waitlist.ts`,
+each writing the link beside its `activateRegistration` call — that function
+creates the `Registration`, not the link) and `acceptInvitation`, which
+resolves the row itself. So only the two promotions are in question, and
+reaching either needs a `waiting` row. A queue join normally links *and*
+resolves — but not every `waiting` row came from one, and two comments in
+`waitlist.ts` say so. `promoteNext`'s link write exists precisely to repair the
+ones that did not: "a `waiting` row written before that change, and one written
+by hand (fixtures, a psql fix-up)" (`waitlist.ts:558-564`). And
+`withdrawWaitingEntriesForTeacher`'s docblock names an unlink committing after a
+join's withdrawal window as "the one way a `waiting` entry can outlive its link"
+(`waitlist.ts:1075-1082`).
+
+Those two cases land differently:
+
+- **A `waiting` row that never carried a link** — pre-#166, or hand-written.
+  The teacher invites that pair while it is unlinked, so the row is `pending`
+  and genuinely delivered. Then any cancellation (`handleSpotFreed` →
+  `promoteNext`) creates the link and resolves nothing. The pair is now linked
+  with a `pending` row standing, and every later booking passes
+  `linkCreatedNow: false`, so it stays pending for good. The teacher sees that
+  person as an "Invited" contact *and* in their student directory;
+  `listPendingInvitations`' already-linked exclusion (§4 of the #412 spec)
+  hides the row from the student, so nobody can answer it. Both exits still
+  work — the row is `pending`, not `declined`, so `PATCH ?state=archived` and
+  `DELETE` both take it. The staging is not hypothetical: two existing tests
+  build exactly this fixture, hand-writing the linkless `waiting` row —
+  `waitlist.test.ts`'s "a promotion repairs a missing link but leaves the
+  invitation as it stands" and `invitations-api.test.ts`'s "promoting off the
+  waitlist repairs a missing link and resolves nothing". Both assert the row
+  stays `pending`; what changes is that a later booking no longer clears it.
+- **The unlink race is not this case.** What `unlinkTeacher` leaves behind is a
+  `declined` tombstone, and `declined` is exactly the half this change leaves
+  unconditional — so a promotion re-linking around that race is followed by a
+  booking that still clears the tombstone and the `TeacherBlock` with it. That
+  is the state §2's "Why `declined` stays unconditional" is about.
+
+The outcome in the first case is a lingering "Invited" contact — the same benign
+artifact a decoy already is, and the same one #417 established as load-bearing
+rather than tolerated. It is not reachable through any sequence of ordinary app
+actions: it needs a `waiting` row the app itself did not write. How many such
+rows exist is a data question this branch does not answer, and the repo is not
+of one mind about it — `src/lib/student-visibility.ts` argues none do (no
+production deployment), while `CLAUDE.md`'s Data Model section assumes
+pre-#166 rows can still be around. Either way the fix is the teacher's own
+`DELETE`, and no path here becomes an oracle.
 
 The concurrent-insert race is the same shape and equally benign: two of the
 student's own requests in flight, one inserts and resolves, the other skips. The
@@ -155,15 +195,29 @@ Both are test-only, both were re-verified above, and the first stopped being
 optional when #424 shipped.
 
 **A. Archived-link scoping.** #424's second `log.warn` tripwire in
-`rosterLinkState` is justified by one sentence: `teacherStudents` here is
-unfiltered while `GET /api/students` scopes to `isArchived: false`, so an
-archived unclaimed contact is bypassed here and logged nowhere else. Adding
-`isArchived: false` to that select (`invitations.ts:149`) leaves the whole suite
-green while the comment becomes false and the tripwire's only argument
-evaporates. `notifyInvitee`'s roster check (`invitations.ts:555`) has the same
-unfiltered read and the same missing pin. Archiving is a CRM filing action, not
-an unlink; both guards correctly treat an archived link as still-linked, and
-that is the thing to hold down.
+`rosterLinkState` was justified by one sentence, and that sentence is false.
+It read: `teacherStudents` here is unfiltered while `GET /api/students` scopes
+its listing to `isArchived: false`, so an archived unclaimed contact is
+bypassed here and logged nowhere else. The route does not scope to `false` —
+it reads `isArchived` from an `archived` query parameter
+(`src/app/api/students/route.ts:20-23`), which `student-directory.tsx:47`
+sends as `'true'` for the archive tab — and that listing projects every row
+through `projectStudentForTeacher` → `bypassesPrivacy`
+(`src/lib/student-visibility.ts`), which logs the same bypass under its own
+message. So an archived unclaimed contact is logged in two places, not one.
+
+Task 3 therefore replaces that sentence in both shipped copies — the comment
+at `invitations.ts:161-167` and the gate test's own tripwire docblock — with
+what the select actually holds: `teacherStudents` is unfiltered, so an
+archived link still answers `linked` here, same as a live one. The tripwire
+itself stays; what changes is the reason given for it.
+
+The gap it was really about survives untouched. Adding `isArchived: false` to
+that select (`invitations.ts:149`) leaves the whole suite green, and
+`notifyInvitee`'s roster check (`invitations.ts:555`) has the same unfiltered
+read and the same missing pin. Archiving is a CRM filing action, not an
+unlink; both guards correctly treat an archived link as still-linked, and that
+is the thing to hold down.
 
 **B. Indistinguishability, side by side.** The stranger case and the gated case
 are each asserted, in different `describe` blocks, against different fixtures.

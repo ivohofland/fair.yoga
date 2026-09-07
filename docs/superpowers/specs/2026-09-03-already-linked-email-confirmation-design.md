@@ -184,6 +184,20 @@ slower confirmation oracle. Closing it fully would need a new column, which
 this plan forbids, and no cheaper alternative exists (see "Filed, not
 folded").
 
+> **Amended 2026-09-07 (#418).** "No cheaper alternative exists" is wrong, and
+> the residual these two paragraphs describe is now closed — with no migration.
+> No column was needed:
+> `linkTeacherStudent` (`src/services/roster-link.ts`) is a single `INSERT …
+> ON CONFLICT DO NOTHING`, and the `count` it already returns says whether
+> *this* act created the roster link. `resolveInvitationOnLink` takes that
+> value and returns a `pending` row to `accepted` only when it is true, so a
+> gated ghost never becomes `accepted` and neither channel in this paragraph
+> opens: the directory signal has no resolution to notice, and the second
+> probe meets `ALREADY_INVITED` like any un-accepted invitation. `declined`
+> still resolves either way. See
+> `docs/superpowers/specs/2026-09-07-gated-ghost-invitation-design.md`.
+> Everything above records the state as it was and is left standing.
+
 Two follow-on behaviours remain genuinely benign. Typing the same address
 again meets `ALREADY_INVITED` at `:177`, which returns *above* the gate — an
 answer about the teacher's own row, so no leak and no duplicate row. And
@@ -308,6 +322,15 @@ waitlist joins both call `resolveInvitationOnLink`, which flips a pending row
 to `accepted`, and `promoteNext`/`claimSpot` are reachable only for a student
 already linked by `addToWaitlist`.
 
+> **Amended 2026-09-07 (#418).** This paragraph no longer holds, and the
+> exclusion it justifies matters more because of it. Since #418 a booking or
+> waitlist join resolves a `pending` row only when it created the link, so
+> pending-plus-linked is now the ordinary resting state of a gated invitation
+> rather than a transient. The exclusion is what keeps that row from reaching
+> the student, and §3 of
+> `docs/superpowers/specs/2026-09-07-gated-ghost-invitation-design.md`
+> enumerates the states that produce it.
+
 ### 5. Comments to correct
 
 Each of these states something this change falsifies (*Comment Discipline*,
@@ -416,3 +439,12 @@ ordinary on the platform. It stays open rather than closed here for the same
 reason: closing it needs a new column recording that a link's acceptance was
 gate-suppressed, which this plan explicitly forbids, and no cheaper
 alternative exists. Filed as a known, accepted residual rather than fixed.
+
+> **Amended 2026-09-07 (#418).** The second residual was filed as #418 and is
+> now fixed, without a migration. "No cheaper alternative exists" is the claim
+> that did not survive: the marker was already in the roster-link write, since
+> `linkTeacherStudent`'s `ON CONFLICT DO NOTHING` reports whether it inserted.
+> The first residual — the ghost "Invited" contact that never resolves by
+> itself — stands exactly as described, and #418 makes it more literally true
+> rather than less. See
+> `docs/superpowers/specs/2026-09-07-gated-ghost-invitation-design.md`.
