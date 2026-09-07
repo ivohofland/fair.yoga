@@ -181,7 +181,8 @@ there. Correcting only the copy would have left the original standing, so both
 carry the corrected paragraph. That file's `areasUnderSrc` and every assertion
 in it are otherwise untouched; the edit is comment-only.
 
-Two smaller review findings were declined, and why is in the PR body.
+The review also caught a count in this plan's own sweep, corrected above. One
+finding was declined; why is in the PR body.
 
 ## Not in this branch
 
