@@ -133,29 +133,41 @@ invitation nobody accepts is the common case, and it is indistinguishable from a
 stranger who ignored the mail. The teacher can archive or delete the row exactly
 as they can any other, and a re-probe after deleting it creates a fresh decoy.
 
-One behaviour is *lost*, and it is worth naming rather than discovering later. If
-a `TeacherStudent` link is created by something other than the student's own
-resolving act while a `pending` invitation stands, that invitation now stays
-pending forever instead of flipping on the student's next booking.
+One behaviour is *lost*, and it is worth naming rather than discovering later.
+Wherever a `pending` invitation comes to stand beside a `TeacherStudent` link
+that no act of the student's created *for it*, that invitation now stays pending
+instead of flipping on the student's next booking. **Two routes reach that
+state, and the first of them is an ordinary CRM action.**
 
-The non-student link creators are `promoteNext` and `claimSpot` (`waitlist.ts`,
-each writing the link beside its `activateRegistration` call — that function
-creates the `Registration`, not the link) and `acceptInvitation`, which
-resolves the row itself. So only the two promotions are in question, and
-reaching either needs a `waiting` row. A queue join normally links *and*
-resolves — but not every `waiting` row came from one, and two comments in
-`waitlist.ts` say so. `promoteNext`'s link write exists precisely to repair the
-ones that did not: "a `waiting` row written before that change, and one written
-by hand (fixtures, a psql fix-up)" (`waitlist.ts:558-564`). And
-`withdrawWaitingEntriesForTeacher`'s docblock names an unlink committing after a
-join's withdrawal window as "the one way a `waiting` entry can outlive its link"
-(`waitlist.ts:1075-1082`).
+- **The teacher moves an address onto a linked pair.** `PUT
+  /api/invitations/[id]` accepts an arbitrary `email` edit —
+  `updateInvitationSchema` permits it (`src/lib/schemas.ts:276-280`) and the
+  route gates only on ownership, a `declined` status and the `(teacherId,
+  email)` unique key (`route.ts:78-152`). There is **no roster-link check**. So
+  a teacher fixing a typo'd address onto someone already on their roster lands
+  a `pending` row beside an existing link, with no waitlist row anywhere in it.
+  Staying `pending` here is the **correct** outcome rather than a regression,
+  and §1 above is the argument for exactly this case: a row that resolved here
+  would tell the teacher that the address they typed belongs to one of their
+  own students, which is the oracle — through a second door, and one a
+  persisted origin marker would not have closed, since no marker is set on a
+  re-addressed row.
+- **A linkless `waiting` row is promoted.** The non-student link creators are
+  `promoteNext` and `claimSpot` (`waitlist.ts`, each writing the link beside
+  its `activateRegistration` call — that function creates the `Registration`,
+  not the link) and `acceptInvitation`, which resolves the row itself. So only
+  the two promotions are in question, and reaching either needs a `waiting`
+  row. A queue join normally links *and* resolves — but not every `waiting` row
+  came from one, and two comments in `waitlist.ts` say so. `promoteNext`'s link
+  write exists precisely to repair the ones that did not: "a `waiting` row
+  written before that change, and one written by hand (fixtures, a psql
+  fix-up)" (`waitlist.ts:558-564`). And `withdrawWaitingEntriesForTeacher`'s
+  docblock names an unlink committing after a join's withdrawal window as "the
+  one way a `waiting` entry can outlive its link" (`waitlist.ts:1075-1082`).
 
-Those two cases land differently:
-
-- **A `waiting` row that never carried a link** — pre-#166, or hand-written.
-  The teacher invites that pair while it is unlinked, so the row is `pending`
-  and genuinely delivered. Then any cancellation (`handleSpotFreed` →
+  Concretely, for a `waiting` row that never carried a link — pre-#166, or
+  hand-written: the teacher invites that pair while it is unlinked, so the row
+  is `pending` and genuinely delivered. Then any cancellation (`handleSpotFreed` →
   `promoteNext`) creates the link and resolves nothing. The pair is now linked
   with a `pending` row standing, and every later booking passes
   `linkCreatedNow: false`, so it stays pending for good. The teacher sees that
@@ -169,21 +181,26 @@ Those two cases land differently:
   invitation as it stands" and `invitations-api.test.ts`'s "promoting off the
   waitlist repairs a missing link and resolves nothing". Both assert the row
   stays `pending`; what changes is that a later booking no longer clears it.
-- **The unlink race is not this case.** What `unlinkTeacher` leaves behind is a
-  `declined` tombstone, and `declined` is exactly the half this change leaves
-  unconditional — so a promotion re-linking around that race is followed by a
-  booking that still clears the tombstone and the `TeacherBlock` with it. That
-  is the state §2's "Why `declined` stays unconditional" is about.
 
-The outcome in the first case is a lingering "Invited" contact — the same benign
-artifact a decoy already is, and the same one #417 established as load-bearing
-rather than tolerated. It is not reachable through any sequence of ordinary app
-actions: it needs a `waiting` row the app itself did not write. How many such
-rows exist is a data question this branch does not answer, and the repo is not
-of one mind about it — `src/lib/student-visibility.ts` argues none do (no
-production deployment), while `CLAUDE.md`'s Data Model section assumes
-pre-#166 rows can still be around. Either way the fix is the teacher's own
-`DELETE`, and no path here becomes an oracle.
+**The unlink race is not a third route.** What `unlinkTeacher` leaves behind is
+a `declined` tombstone, and `declined` is exactly the half this change leaves
+unconditional — so a promotion re-linking around that race is followed by a
+booking that still clears the tombstone and the `TeacherBlock` with it. That is
+the state §2's "Why `declined` stays unconditional" is about.
+
+Both routes leave the same artifact: a lingering "Invited" contact, which is
+what a decoy already is, and what #417 established as load-bearing rather than
+tolerated. Both exits still take it, and a re-probe after deleting it creates a
+fresh decoy. What the two routes differ in is how often they are walked, not in
+what they leave behind. The PUT is an ordinary edit any teacher can make today;
+the promotion needs a `waiting` row the app itself did not write, and how many
+of those exist is a data question this branch does not answer. The repo is not
+of one mind about it either: `src/lib/student-visibility.ts:172-180` argues
+from a premise that would settle it — no production deployment, so no legacy
+rows of any kind survive — though the claim it actually makes there is about
+unclaimed `Student` rows rather than `waiting` ones, while `CLAUDE.md`'s Data
+Model section assumes pre-#166 rows can still be around. Either way the fix is
+the teacher's own `DELETE`, and no path here becomes an oracle.
 
 The concurrent-insert race is the same shape and equally benign: two of the
 student's own requests in flight, one inserts and resolves, the other skips. The

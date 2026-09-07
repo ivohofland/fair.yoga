@@ -242,6 +242,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         // launders itself into acceptance. It clears a decline, which is one
         // of the two routes back from one (joining a waitlist,
         // `addToWaitlist` in services/waitlist.ts, is the other).
+        //
+        // `linkCreatedNow` is what the link write above actually did, and it
+        // decides the `pending` half: a booking by someone this teacher
+        // already has on their roster resolves nothing (#418). The rule, and
+        // why the two halves differ, are in `docs/data-model.md` (Invitation).
         await resolveInvitationOnLink(tx, {
           teacherId: cls.calendarEntry.teacherId,
           studentEmail: student.email,
