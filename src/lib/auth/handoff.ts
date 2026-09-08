@@ -165,8 +165,7 @@ export async function claimWithCode(
     // these same rows can move its true count between this snapshot and the
     // writes below without this call ever seeing it (#504) — a mismatch
     // below is that documented race, not proof of a bug on its own. Which
-    // interleaving produces which direction, and how each is staged rather
-    // than waited for, is
+    // interleaving produces which direction is derived in
     // `docs/superpowers/specs/2026-09-08-handoff-race-staging-design.md` §5.
     const expectedReaps = live.filter((c) => c.handoffAttempts + 1 >= HANDOFF_MAX_ATTEMPTS).length;
 
