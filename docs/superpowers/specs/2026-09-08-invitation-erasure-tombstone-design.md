@@ -207,19 +207,29 @@ test to reintroduce this.
 `prisma.invitation.updateMany` that already writes `email`:
 
 ```ts
+const readdressed = email !== undefined && email !== invitation.email;
+...
 data: {
   ...rest,
-  ...(email !== undefined ? { email, delivered: false } : {}),
+  ...(email !== undefined ? { email } : {}),
+  ...(readdressed ? { delivered: false } : {}),
 },
 ```
 
-Unconditional on any `email` change, not gated on whether the new address
-looks blocked or linked — re-deriving that here would need the same
-`TeacherBlock`/roster queries `inviteContact` already runs, on a route that
-has never needed them, and `false` is simply the honest value regardless:
-no delivery attempt has been made to the new address, full stop, the same
-way a freshly-created row's `delivered` reflects nothing having been sent
-yet until the create/revive path's own check runs.
+Triggered on a genuine change to the stored address — compared against
+`ownedInvitation`'s own read of the row, not against whether `email` was
+merely present in the request body. `src/components/students/contact-form.tsx`
+(the only client that calls this route) sends all three fields on every
+save, so field presence alone would flip `delivered` on a pure name-typo fix
+that never touches the address — a distinct bug an earlier version of this
+fix shipped with and a later review round caught and closed. Not gated on
+whether the new address looks blocked or linked, either — re-deriving that
+here would need the same `TeacherBlock`/roster queries `inviteContact`
+already runs, on a route that has never needed them, and `false` is simply
+the honest value whenever the address moves: no delivery attempt has been
+made to the new one, full stop, the same way a freshly-created row's
+`delivered` reflects nothing having been sent yet until the create/revive
+path's own check runs.
 
 **The cost, named rather than chased:** a teacher who corrects a genuine
 typo (`PUT` to a real, unblocked, unlinked address) and then clicks
@@ -236,15 +246,22 @@ change (`notifyInvitee`'s callers and signature, not `unlinkTeacher` or
 `gdpr.ts`) and is deliberately left out of #502's scope: closing the
 leak does not require it, and the residual it would close is a UX gap
 (an invitation that stops auto-cleaning-up on unlink), not a disclosure.
+**Whoever picks this up should restructure `notifyInvitee`'s signature
+first:** it returns `Promise<void>` today, so there is no honest fresh value
+for a naive edit to persist — writing `delivered: true` next to the
+`lastNotifiedAt`/`lastNotifiedEmail` columns `resend` already writes
+unconditionally, without first giving `notifyInvitee` something true to
+report, would reopen leak #2 through a third door rather than close this
+residual.
 
 `invitations.ts:461-467`'s docblock currently states the opposite of what
 is now true — "`PUT`... edits `email` on a pending row without recomputing
 `delivered`, which looks like a second door and is not: PUT does not
 notify, so a value gone stale there reaches nobody." That was accurate when
 `delivered` had no persisted reader. It is corrected to state the current
-mechanism: `PUT` now recomputes `delivered` itself (to `false`) on every
-`email` change, so it cannot go stale in the way this paragraph used to
-argue was harmless anyway.
+mechanism: `PUT` now resets `Invitation.delivered` itself (to `false`) when
+the address actually changes, so it cannot go stale in the way this
+paragraph used to argue was harmless anyway.
 
 ### `acceptInvitation` / `declineInvitation` / `resolveInvitationOnLink` are unaffected
 
@@ -273,19 +290,33 @@ column.
   invite time** (`inviteContact`'s own `ALREADY_LINKED`/`ALREADY_INVITED`
   gates) — #502 is only about what two *mutation* writers do to an existing
   row, not about invite-time responses.
-- **A decoy planted before this migration ships stays exploitable via #2
-  until it is next touched.** The backfill cannot retroactively know which
-  pre-existing `pending` rows were ever delivered, so every row that exists
-  at migration time gets `delivered: true` — including real decoys already
-  planted under the old code. Fix #2 only protects a decoy from this point
-  forward: one created (or revived — `revivePendingInvitation` re-derives
-  `delivered` fresh) or re-addressed (Fix #3) after this ships. **Not fully
-  a one-time gap**, though — a row can also re-acquire a stale `delivered:
-  true` going forward whenever its `email` changes through some future
-  writer that (like `PUT` before Fix #3) forgets to invalidate it. Fix #3
-  closes the one such writer that exists today; naming the pattern here so
-  the next one that touches `Invitation.email` checks this column too,
-  rather than treating Fix #3 as the last time it needs saying.
+- **A decoy planted before this shipped stays exploitable via #2 until it is
+  next touched.** The backfill cannot retroactively know which pre-existing
+  `pending` rows were ever delivered, so every row that existed before this
+  shipped gets `delivered: true` — including real decoys already planted
+  under the old code. ("Before this shipped", not "at migration time": in a
+  `docker compose up -d --build` deploy the migrate service commits before
+  the app container is replaced, so the window this covers can run slightly
+  past the migration itself, up to the moment the new application code
+  starts serving.) Fix #2 only protects a decoy from this point forward: one
+  created (or revived — `revivePendingInvitation` re-derives `delivered`
+  fresh) or re-addressed (Fix #3) after this ships. **Not fully a one-time
+  gap**, though — a row can also re-acquire a stale `delivered: true` going
+  forward whenever its `email` changes through some future writer that (like
+  `PUT` before Fix #3) forgets to invalidate it. Fix #3 closes the one such
+  writer that exists today; naming the pattern here so the next one that
+  touches `Invitation.email` checks this column too, rather than treating
+  Fix #3 as the last time it needs saying.
+- **The erasure sweep's own rename is itself an observable oracle.**
+  `deleteStudentAccount` (`gdpr.ts`) rewrites a matching row's
+  `firstName`/`lastName` to "Deleted"/"Student" alongside the anonymised
+  `email` Fix #1 randomises — all three teacher-visible. A teacher watching
+  a planted decoy undergo that rename still learns the guessed address
+  belongs to a real, now-erased account, even though Fix #1 closed the
+  specific `studentId`-in-the-token leak. This is a real residual neither
+  fix here closes — filed separately as
+  [#520](https://github.com/ivohofland/fair.yoga/issues/520), not fixed in
+  this branch.
 
 ## Acceptance criteria (from the issue, restated as tests)
 

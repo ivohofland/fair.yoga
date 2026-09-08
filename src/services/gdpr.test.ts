@@ -552,10 +552,12 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
   /**
    * Whether `value` is an anonymised Invitation email/lastNotifiedEmail —
    * both that it has the random-token shape AND that it does not contain
-   * `subjectId`. Shape alone would pass a token that happens not to collide
-   * with `subjectId` by luck; membership alone would pass any string that
-   * merely omits it. Together they pin that the token is `crypto.randomUUID()`
-   * output, not a second deterministic derivation from the subject's id.
+   * `subjectId`. `!includes(subjectId)` is the half that pins #502:
+   * `Student.id` is a uuid, so the shape check alone matches the exact
+   * pre-fix value `deleted-${studentId}@deleted.invalid`. The shape check
+   * pins only that the write reached the intended format. That the token is
+   * random rather than a uuid-shaped derivation of the subject's id is
+   * pinned by the two-erasure test below, not here.
    */
   function isAnonymizedInvitationValue(value: string | null, subjectId: string): value is string {
     return value !== null && !value.includes(subjectId) && ANONYMIZED_INVITATION_VALUE.test(value);
@@ -617,13 +619,12 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
         lastNotifiedAt: new Date('2026-02-03T04:05:06.000Z'), lastNotifiedEmail: email,
       },
     });
-    // `delivered: false` (every other fixture in this block takes the
-    // schema default `true`) — acceptance criterion 1 wants the
-    // anonymisation assertions below proven against both shapes, since a
-    // future edit scoping `gdpr.ts`'s writers by `delivered` (a plausible
-    // "consistency" change, given #502 groups both writers by that column)
-    // could otherwise silently leave a decoy's real address unanonymised
-    // with nothing here to notice.
+    // `delivered: false` — acceptance criterion 1 wants the anonymisation
+    // assertions below proven against both shapes, since a future edit
+    // scoping `gdpr.ts`'s writers by `delivered` (a plausible "consistency"
+    // change, given #502 groups both writers by that column) could
+    // otherwise silently leave a decoy's real address unanonymised with
+    // nothing here to notice.
     await prisma.invitation.create({
       data: {
         teacherId: blockerId, email, firstName: 'Sammy', lastName: 'Typo',
@@ -721,14 +722,21 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
         expectAnonymizedInvitationValue(row.lastNotifiedEmail, studentId);
       }
     }
-    // "One token, reused across all three statements" (`gdpr.ts`'s own
-    // comment on `anonymizedEmail`) as a tested property, not just spec
-    // prose nothing here verifies: the `inviterId` row falls under the
+    // "One token, reused across every `Invitation` write below" (`gdpr.ts`'s
+    // own comment on `anonymizedEmail`) as a tested property, not just spec
+    // prose nothing here verifies. The `inviterId` row falls under the
     // second erasure statement, which writes `email` and `lastNotifiedEmail`
-    // from that same local in one call, so the two columns agree if and
-    // only if the reuse is real.
+    // from that same local in one call, so the two columns agree if and only
+    // if the reuse is real WITHIN that one statement — the next assertion
+    // extends the proof ACROSS statements: `blockerId`'s row (written by the
+    // first statement) against `inviterId`'s (the second), which only agree
+    // if both calls shared the one token this erasure run minted.
     const inviterRow = rows.find((r) => r.teacherId === inviterId);
+    const blockerRow = rows.find((r) => r.teacherId === blockerId);
+    expect(inviterRow).toBeDefined();
+    expect(blockerRow).toBeDefined();
     expect(inviterRow?.email).toBe(inviterRow?.lastNotifiedEmail);
+    expect(blockerRow?.email).toBe(inviterRow?.email);
 
     // The teacher's own filing state is theirs, not the subject's: the
     // decline still stands as a tombstone and the acceptance still records
@@ -754,6 +762,11 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     expect(moved?.email).toBe(movedAwayEmail);
     expect(moved?.firstName).toBe('Mo');
     expectAnonymizedInvitationValue(moved?.lastNotifiedEmail ?? null, studentId);
+
+    // The third leg of the cross-statement proof above: the third erasure
+    // statement (marker-keyed, reaching only `lastNotifiedEmail`) writes the
+    // same shared token too.
+    expect(moved?.lastNotifiedEmail).toBe(inviterRow?.email);
 
     // Deliberately untouched — see the comment at the erasure site and
     // `docs/data-model.md`. Retention vs. scrubbing is a legal call nobody

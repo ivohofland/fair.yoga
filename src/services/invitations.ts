@@ -228,14 +228,18 @@ async function rosterLinkState(
  *
  * The block check below runs unconditionally, before either the create or
  * the revive branch — a blocked and a fresh address run the exact same query
- * sequence, differing only in the `delivered` value neither response ever
- * carries on the wire. The revive path and the create path share that
- * precondition on purpose: a second block check written for just one of them
- * would be a second place to get it subtly wrong, and re-inviting a blocked
- * address has to stay as silent as inviting one for the first time. Both
- * branches also persist the resulting `delivered` on the row itself, so a
- * later write to the same row (`unlinkTeacher`'s tombstone) can scope itself
- * to rows that were actually delivered.
+ * sequence, differing only in the `delivered` value this function's own
+ * return value is the only in-process carrier of. The revive path and the
+ * create path share that precondition on purpose: a second block check
+ * written for just one of them would be a second place to get it subtly
+ * wrong, and re-inviting a blocked address has to stay as silent as inviting
+ * one for the first time. Both branches also persist the resulting
+ * `delivered` on the row itself, so a later write to the same row
+ * (`unlinkTeacher`'s tombstone) can scope itself to rows that were actually
+ * delivered — that persisted column is a value any future route's `select`
+ * could pick up, so whether it actually stays off the wire is proven by
+ * `tests/integration/invitations-api.test.ts`, not asserted here; see also
+ * the `delivered` row in `docs/data-model.md`.
  */
 export async function inviteContact(
   db: PrismaClient,
@@ -447,27 +451,33 @@ async function revivePendingInvitation(
  * with the re-check, not a redundancy — do not read it as license for a
  * future caller shaped like resend to skip the re-check.
  *
- * `delivered` (the caller's gate, above) is computed once, at
- * `inviteContact`'s create time, and can go stale before this function runs.
- * The live door is a `TeacherBlock` committed in between: `unlinkTeacher`
- * writes one inside its own transaction, and `POST /api/students` calls this
- * fire-and-forget (below), so the two are genuinely concurrent — the student
- * who unlinks a moment after the teacher clicks Send has a `delivered: true`
- * computed before their block existed. That window is the whole reason this
- * function re-queries `TeacherBlock` itself, below, rather than leaning on
- * the caller's value: the guard travels with the send rather than living
- * only in whichever caller remembers to check it. Keep the caller's own gate
- * too — belt and braces: it does nothing extra on the ordinary (unblocked,
- * unlinked) path, and saves this function's own re-checks entirely on the
- * withheld (blocked-or-linked) path, by skipping the call altogether.
+ * `InviteResult.delivered` (the caller's gate, above) — the in-memory
+ * value, not the persisted `Invitation.delivered` column discussed below —
+ * is computed once per `inviteContact` call, before either the create or
+ * the revive branch, and can go stale before this function runs. The live
+ * door is a `TeacherBlock` committed in between: `unlinkTeacher` writes one
+ * inside its own transaction, and `POST /api/students` calls this
+ * fire-and-forget (below), so the two are genuinely concurrent — the
+ * student who unlinks a moment after the teacher clicks Send has an
+ * `InviteResult.delivered: true` computed before their block existed. That
+ * window is the whole reason this function re-queries `TeacherBlock`
+ * itself, below, rather than leaning on the caller's value: the guard
+ * travels with the send rather than living only in whichever caller
+ * remembers to check it. Keep the caller's own gate too — belt and braces:
+ * it does nothing extra on the ordinary (unblocked, unlinked) path, and
+ * saves this function's own re-checks entirely on the withheld
+ * (blocked-or-linked) path, by skipping the call altogether.
  *
- * `PUT /api/invitations/[id]` recomputes `delivered` to `false` on every
- * `email` change (#502 Fix #3). Named only so the next reader, finding
- * `delivered` unconditionally reset on every re-address, does not conclude
- * the re-check below is now redundant — it is not: `delivered` is still a
- * value computed at `inviteContact`/`revivePendingInvitation`/`PUT` write
- * time, and a `TeacherBlock` committed after that write (the window this
- * whole function exists for) is invisible to all three. `POST
+ * `PUT /api/invitations/[id]` resets the PERSISTED `Invitation.delivered`
+ * column — not `InviteResult.delivered`, the in-memory value the paragraph
+ * above is about — to `false` when the incoming address differs from the
+ * row's own stored one (#502 Fix #3). Named only so the next reader,
+ * finding `Invitation.delivered` reset on every genuine re-address, does
+ * not conclude the re-check below is now redundant — it is not: this
+ * function's own gate is `InviteResult.delivered`, computed once at
+ * `inviteContact`/`revivePendingInvitation` time and never refreshed by a
+ * later `PUT`, and a `TeacherBlock` committed after that (the window this
+ * whole function exists for) is invisible to it either way. `POST
  * /api/invitations/[id]/resend` (#173) also calls this function directly —
  * it reads `email` fresh from the row in the same request it dispatches, so
  * there is no equivalent staleness window for it to worry about.
@@ -1094,12 +1104,13 @@ export async function unlinkTeacher(
     // and saves them re-sending into silence. `updateMany`, because most
     // links come from bookings and have no invitation at all.
     //
-    // `delivered: true` scopes this to rows the invitee was actually told
-    // about. A `delivered: false` row is the #417/#418 gate's decoy — the
-    // guessed student never saw it, so there is nothing for a `declined`
-    // status to honestly represent on their behalf. See
+    // `delivered: true` scopes this to rows this teacher's address was
+    // deliverable to when it was last written. Nothing here re-derives
+    // that — see `docs/data-model.md`'s `Invitation.delivered` row for who
+    // writes it and when. See
     // `docs/superpowers/specs/2026-09-08-invitation-erasure-tombstone-design.md`
-    // ("Fix #2") for why leaving it `pending` is not a new kind of state.
+    // ("Fix #2") for why leaving a `delivered: false` row `pending` is not a
+    // new kind of state.
     await tx.invitation.updateMany({
       where: { teacherId: input.teacherId, email, delivered: true },
       data: { status: 'declined', respondedAt: new Date() },
