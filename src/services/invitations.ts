@@ -1088,8 +1088,15 @@ export async function unlinkTeacher(
     // they typed that address, so telling them it is dead discloses nothing
     // and saves them re-sending into silence. `updateMany`, because most
     // links come from bookings and have no invitation at all.
+    //
+    // `delivered: true` scopes this to rows the invitee was actually told
+    // about. A `delivered: false` row is the #417/#418 gate's decoy — the
+    // guessed student never saw it, so there is nothing for a `declined`
+    // status to honestly represent on their behalf. See
+    // `docs/superpowers/specs/2026-09-08-invitation-erasure-tombstone-design.md`
+    // ("Fix #2") for why leaving it `pending` is not a new kind of state.
     await tx.invitation.updateMany({
-      where: { teacherId: input.teacherId, email },
+      where: { teacherId: input.teacherId, email, delivered: true },
       data: { status: 'declined', respondedAt: new Date() },
     });
 

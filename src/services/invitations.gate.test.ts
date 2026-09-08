@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { inviteContact } from './invitations';
+import { inviteContact, unlinkTeacher } from './invitations';
 import { log } from '@/lib/log';
 
 // `invitations.ts` imports `@/lib/log`, so the specifier here must match that
@@ -564,5 +564,135 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
 
       expect(log.warn).not.toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * Task 2 of #502: `unlinkTeacher`'s tombstone `updateMany`
+ * (`src/services/invitations.ts`) now scopes its `where` to
+ * `delivered: true`. These two tests drive the real gate above to produce a
+ * genuine `delivered: false` decoy row and the real `unlinkTeacher` against
+ * it, rather than fabricating a row shape by hand — the same rigor the
+ * `unlinkTeacher`-behavior tests in `tests/integration/invitations-api.test
+ * .ts` use, minus the HTTP layer (this file already has no server on
+ * `:3000` to reach).
+ */
+describe('unlinkTeacher scopes its tombstone to delivered invitations (#502)', () => {
+  let teacherId: string;
+  let teacherAccountId: string;
+  const studentIds: string[] = [];
+  const studentAccountIds: string[] = [];
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Unlink', lastName: 'Scope',
+        email: `unlink-scope-teacher-${suffix}@test.local`,
+        account: { create: { email: `unlink-scope-teacher-${suffix}@test.local` } },
+        bio: '#502 task 2 unlink-tombstone-scope fixture',
+        pageSlug: `unlink-scope-teacher-${suffix}`,
+      },
+    });
+    teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
+  });
+
+  afterAll(async () => {
+    if (studentIds.length) {
+      await prisma.teacherStudent.deleteMany({ where: { studentId: { in: studentIds } } });
+      await prisma.studentPrivacy.deleteMany({ where: { studentId: { in: studentIds } } });
+      await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    }
+    if (studentAccountIds.length) {
+      await prisma.account.deleteMany({ where: { id: { in: studentAccountIds } } });
+    }
+    if (teacherId) {
+      await prisma.invitation.deleteMany({ where: { teacherId } });
+      await prisma.teacherBlock.deleteMany({ where: { teacherId } });
+      await prisma.teacher.delete({ where: { id: teacherId } });
+      await prisma.account.delete({ where: { id: teacherAccountId } });
+    }
+    await prisma.$disconnect();
+  });
+
+  it('leaves a genuinely never-delivered invitation pending after its guessed student unlinks', async () => {
+    // Linked, claimed, no shared privacy: the same #417/#418 gate shape as
+    // `seedLinked(label, null)` above, reproduced here (rather than reusing
+    // that helper) because this test also needs the student's own id to
+    // call `unlinkTeacher`, which `seedLinked` does not return.
+    const email = `unlink-scope-undelivered-${suffix}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Unlink', lastName: 'Undelivered', email,
+        claimedAt: new Date(),
+        account: { create: { email } },
+        teacherStudents: { create: { teacherId } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentIds.push(student.id);
+    if (student.accountId) studentAccountIds.push(student.accountId);
+
+    const invited = await inviteContact(prisma, {
+      teacherId, email, firstName: 'Guessed', lastName: 'Decoy',
+    });
+    if (!invited.ok) throw new Error(`expected the gated invite to succeed, got ${invited.reason}`);
+    expect(invited.value.delivered).toBe(false);
+
+    const result = await unlinkTeacher(prisma, {
+      teacherId, studentId: student.id, accountEmail: email,
+    });
+    expect(result).toEqual({ ok: true });
+
+    // The invitee was never told this row exists, so `unlinkTeacher`'s
+    // scoped `updateMany` must not match it — it stays exactly as
+    // `inviteContact` left it.
+    const row = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email } },
+      select: { status: true, respondedAt: true },
+    });
+    expect(row.status).toBe('pending');
+    expect(row.respondedAt).toBeNull();
+  });
+
+  it('still tombstones a genuinely delivered invitation when its student unlinks (regression)', async () => {
+    // Invited BEFORE any link exists, so `rosterLinkState` reads
+    // `{ linked: false }` and `inviteContact` takes its ordinary path —
+    // `delivered: true`, no gate involved.
+    const email = `unlink-scope-delivered-${suffix}@test.local`;
+    const invited = await inviteContact(prisma, {
+      teacherId, email, firstName: 'Ordinary', lastName: 'Invite',
+    });
+    if (!invited.ok) throw new Error(`expected an ordinary delivered invite, got ${invited.reason}`);
+    expect(invited.value.delivered).toBe(true);
+
+    // The link forms afterward, independently of the invitation — a
+    // booking, in the real app (the same shape as the two residual routes
+    // `docs/superpowers/specs/2026-09-07-gated-ghost-invitation-design.md`
+    // §3 already names: a delivered `pending` row still standing once a
+    // link exists).
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Unlink', lastName: 'DeliveredRegression', email,
+        claimedAt: new Date(),
+        account: { create: { email } },
+        teacherStudents: { create: { teacherId } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentIds.push(student.id);
+    if (student.accountId) studentAccountIds.push(student.accountId);
+
+    const result = await unlinkTeacher(prisma, {
+      teacherId, studentId: student.id, accountEmail: email,
+    });
+    expect(result).toEqual({ ok: true });
+
+    const row = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email } },
+      select: { status: true, respondedAt: true },
+    });
+    expect(row.status).toBe('declined');
+    expect(row.respondedAt).not.toBeNull();
   });
 });
