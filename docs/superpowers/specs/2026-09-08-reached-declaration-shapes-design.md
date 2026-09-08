@@ -56,7 +56,7 @@ Two things survive that, and they are what this issue is actually about:
 | | Approach | Verdict |
 |---|---|---|
 | **A** | Widen `reachedIn` to correlate `let reached;` with the `reached = …` assignment expressions that follow it | **Declined.** Deciding *which* `reached` an assignment targets — across an `if`/`else`, a loop, or a nested function that shadows the name — is scope resolution, and this file deliberately builds no type-checker program (its docblock names that as its one accepted blind spot). An approximation here would be a new source of quiet wrong answers in the predicate whose whole job is not giving them. |
-| **B** | Widen to the destructured `const { reached } = …` form | **Taken.** Cheap and sound: the expression that produces `reached` is the declaration's own initializer, and walking it needs no scope resolution. |
+| **B** | Widen to the destructured `const { reached } = …` form | **Taken.** Cheap and sound: the expression the declaration is initialized from needs no scope resolution to walk, and section 2 covers what it does not reach. |
 | **C** | Treat a `reached` with no same-statement initializer as a finding | **Taken.** Same precedent as `censusDeclarationCount` (PR #498): a name whose meaning became ambiguous is reported loudly rather than trusted quietly. Its cost — a `reached` must keep its initializer in its own statement — is named by the failure message and fixed by one line. |
 
 B and C are not alternatives; each covers a shape the other does not. Taken
