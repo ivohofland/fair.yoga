@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import type { PrismaClient, MagicLinkPurpose } from '@prisma/client';
+import type { PrismaClient, MagicLinkPurpose, MagicLinkToken } from '@prisma/client';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
 import { log } from '@/lib/log';
@@ -65,11 +65,13 @@ export async function generateMagicLinkToken(
  * requires. Exported so more than one caller can perform that consumption
  * without duplicating it.
  *
- * Returns false when another concurrent caller won the delete.
+ * Returns false when the row is already gone — another caller won the
+ * single-use delete — or when it expired between the caller's read and this
+ * call. Emits one `log.info` when the purge below found rows.
  */
 export async function consumeTokenRow(
   db: PrismaClient,
-  row: { id: string; email: string; expiresAt: Date },
+  row: Pick<MagicLinkToken, 'id' | 'email' | 'expiresAt' | 'purpose'>,
 ): Promise<boolean> {
   const deleted = await db.magicLinkToken.deleteMany({ where: { id: row.id } });
   if (deleted.count === 0) return false;
@@ -94,25 +96,22 @@ export async function consumeTokenRow(
   // and says nothing about how many addresses there are.
   const purged = await db.magicLinkToken.deleteMany({ where: { email: row.email } });
 
-  // An observation, not a check (#506): how many surplus links this address
-  // had accumulated. Bounding that is the minting route's rate limit, per
-  // `generateMagicLinkToken` above, and nothing else reports on it — a large
-  // number means that limit leaked, or the address is being bombed.
+  // An observation, not a check (#506), and its subject is rows rather than
+  // live links: the delete just above filters on `email` alone, so this counts
+  // every row for the address that the daily sweep named above has not yet
+  // taken — expired ones included, signup tickets alongside sign-in links.
+  // It is also only what THIS call won, since two concurrent consumptions
+  // split the rows between them.
   //
-  // Turning it into a check is the tempting next edit, and it does not work.
-  // Comparing this against a pre-delete `count()` of the same `where` compares
-  // the predicate against itself: a defect in it moves both sides equally and
-  // the comparison stays silent, which is the outcome such a check would exist
-  // to prevent. What it would catch is a resend landing mid-purge — legitimate
-  // per `generateMagicLinkToken`'s docblock. That the purge matched everything
-  // is held instead by the `email = lower(email)` CHECK on this column, `row`
-  // being a stored row so both sides of the match are constrained, and pinned
-  // by "invalidates every other live token for that address on a successful
-  // sign-in" (`magic-link.test.ts`).
+  // Must not become a check. The only count to compare against would run that
+  // same `where`, so a defect in the predicate moves both sides together and
+  // the comparison stays silent — the outcome such a check would exist to
+  // prevent. None is needed anyway: `row.email` was read out of this very
+  // column, so the match is reflexive.
   if (purged.count > 0) {
     log.info(
-      { purged: purged.count },
-      'magic-link: invalidated surplus sibling links on consumption',
+      { purged: purged.count, purpose: row.purpose },
+      'magic-link: purged remaining token rows for this address on consumption',
     );
   }
   return true;

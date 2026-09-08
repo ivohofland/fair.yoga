@@ -110,6 +110,27 @@ describe('verifyMagicLinkToken', () => {
   });
 
   /**
+   * The reach of the purge above, on the columns a narrowing would filter.
+   * The sibling test before this one mints both its rows bare, so they share
+   * every default — `purpose: 'sign_in'`, a null `originBrowserHash`, a null
+   * `handoffCode` — and stays green against a purge narrowed by any of them.
+   * A narrowing has a motive (`handoff.ts` reasons that a code the owner is
+   * mid-way through typing must not be invalidated), and a null
+   * `originBrowserHash` is not what an emailed link looks like at all:
+   * `link-delivery.ts` stamps one on every link it sends.
+   */
+  it('purges siblings that differ from the consumed row, not just identical ones', async () => {
+    const email = `purge-reach-${Date.now()}@example.com`;
+    await generateMagicLinkToken(db, email, { purpose: 'teacher_profile_pending' });
+    await generateMagicLinkToken(db, email, { originBrowserHash: 'another-browser' });
+    const live = await generateMagicLinkToken(db, email, { originBrowserHash: 'this-browser' });
+
+    expect(await verifyMagicLinkToken(db, live)).not.toBeNull();
+
+    expect(await db.magicLinkToken.count({ where: { email } })).toBe(0);
+  });
+
+  /**
    * The placement guard for the sibling invalidation above. Captures the
    * stale row by `id` before minting the live one, rather than hashing
    * `stale` to look it up directly — `hashToken` is exported from this
@@ -137,18 +158,21 @@ describe('verifyMagicLinkToken', () => {
 });
 
 /**
- * The two guards on the purge count's log line (#506). Addresses carry a
+ * The guards on the purge count's log line (#506). Addresses carry a
  * `Date.now()` suffix while keeping the `@example.com` domain the file-level
- * `afterEach` sweeps: the silence case asserts a negative, so a row left
- * behind by a crashed earlier run would fail it, and that sweep only runs
- * between tests within a run.
+ * `afterEach` sweeps. In a whole-file run that suffix is redundant — eight
+ * tests run before this block and each one's sweep clears every
+ * `@example.com` row, a crashed earlier run's included. It earns its place in
+ * a FILTERED run (`vitest -t 'purge count'`), where those sweeps never
+ * happen and a leftover row sharing a fixed address would break the negative
+ * these cases assert.
  */
-describe('sibling-purge count logging (#506)', () => {
-  const MESSAGE = 'magic-link: invalidated surplus sibling links on consumption';
+describe('purge count logging (#506)', () => {
+  const MESSAGE = 'magic-link: purged remaining token rows for this address on consumption';
 
   afterEach(() => vi.restoreAllMocks());
 
-  it('reports how many surplus links a consumption invalidated', async () => {
+  it('reports how many rows the purge took', async () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
     const email = `purge-count-${Date.now()}@example.com`;
     await generateMagicLinkToken(db, email);
@@ -158,13 +182,35 @@ describe('sibling-purge count logging (#506)', () => {
     expect(await verifyMagicLinkToken(db, third)).not.toBeNull();
 
     // Two, not three: the single-use delete takes the consumed row before the
-    // purge runs, so only its siblings are left to count. Asserting the number
-    // rather than merely that a line fired is the point — the number is the
-    // whole payload.
-    expect(info).toHaveBeenCalledWith({ purged: 2 }, MESSAGE);
+    // purge runs, so only its siblings are left to count.
+    expect(info).toHaveBeenCalledWith({ purged: 2, purpose: 'sign_in' }, MESSAGE);
   });
 
-  it('stays silent when the consumed link had no siblings', async () => {
+  /**
+   * What the number counts, and the near side of the guard's boundary in one
+   * case. The purge filters on `email` alone, so a row the daily sweep has
+   * not yet taken is counted whether or not it is still live — the reason the
+   * message says "rows" and not "links". A count of exactly 1 is also the
+   * smallest value that must fire: without this, narrowing the guard from
+   * `> 0` to `> 1` survives every other case in this file.
+   */
+  it('counts rows the daily sweep has not taken, not only live ones', async () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
+    const email = `purge-expired-${Date.now()}@example.com`;
+    await generateMagicLinkToken(db, email);
+    const staleRow = await db.magicLinkToken.findFirstOrThrow({ where: { email } });
+    await db.magicLinkToken.update({
+      where: { id: staleRow.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    const live = await generateMagicLinkToken(db, email);
+
+    expect(await verifyMagicLinkToken(db, live)).not.toBeNull();
+
+    expect(info).toHaveBeenCalledWith({ purged: 1, purpose: 'sign_in' }, MESSAGE);
+  });
+
+  it('stays silent when the consumed row was the only one', async () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
     const email = `purge-silent-${Date.now()}@example.com`;
     const only = await generateMagicLinkToken(db, email);
@@ -172,9 +218,8 @@ describe('sibling-purge count logging (#506)', () => {
     expect(await verifyMagicLinkToken(db, only)).not.toBeNull();
 
     // A zero purge is the ordinary sign-in, and logging it would put a line
-    // saying nothing on every one. Without this case, relaxing the guard to
-    // fire unconditionally passes every other test in this file.
-    expect(info).not.toHaveBeenCalledWith(expect.anything(), MESSAGE);
+    // saying nothing on every one.
+    expect(info).not.toHaveBeenCalled();
   });
 });
 
