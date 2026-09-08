@@ -16,6 +16,11 @@ description: Build/launch/drive recipe for verifying fair.yoga changes in the ru
   email* below instead — it never touches the server at all.
 - Only if :3000 is genuinely empty: `EMAIL_DRY_RUN=1 npm run dev` — dry-run logs magic links
   to stdout instead of Resend (`.env` only has a placeholder Resend key, so real sends fail).
+- **In a worktree:** `npm run worktree:setup` (once), then `npm run worktree:up` —
+  boots a private `next dev` on its own port against its own seeded database.
+  The "never kill or restart :3000" rule above is about the *main checkout's*
+  server and doesn't apply to a worktree's own instance; stop it with `npm run
+  worktree:down` when done.
 
 ## Authenticate without email
 
