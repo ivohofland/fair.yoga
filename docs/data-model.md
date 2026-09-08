@@ -147,6 +147,7 @@ every teacher-facing route.
 | responded_at | datetime, nullable | Set when status leaves pending, cleared when an accepted row is returned to pending (see re-inviting, below) |
 | last_notified_at | datetime, nullable | When a notify was last attempted — written unconditionally by both `POST /api/students` and `POST /api/invitations/[id]/resend`, decoupled from whether `TeacherBlock` withholds delivery, so a teacher can never tell "blocked" from "not yet (re)sent" by watching this column (#173) |
 | last_notified_email | string, nullable | The address a notify was last attempted against — compared to `email` to tell the teacher whether an edit since then has gone unsent |
+| delivered | boolean, default true | Whether this invitation was safe to disclose to its invitee the last time the row was written — `false` when a `TeacherBlock` blocks the address or the pair is already linked. Set by both of `inviteContact`'s write paths (create and revive), re-derived fresh each time rather than fixed at the row's first write. A never-delivered row is the one a decoy invitation produces (#417/#418's gate) — the marker exists so a later writer can scope a mutation to rows that were actually delivered, without re-deriving delivery status from current `TeacherBlock`/roster state |
 | **Timestamps** | | |
 | created_at | datetime | |
 | **Constraints** | | |

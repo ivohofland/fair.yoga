@@ -258,6 +258,7 @@ model Invitation {
   respondedAt DateTime?
   lastNotifiedAt    DateTime?
   lastNotifiedEmail String?
+  delivered         Boolean          @default(true)
 
   teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
 
