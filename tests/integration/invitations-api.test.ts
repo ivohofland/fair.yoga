@@ -229,6 +229,46 @@ describe('GET /api/invitations', () => {
       if (archived) await prisma.invitation.delete({ where: { id: archived.id } });
     }
   });
+
+  it('never includes delivered on either a delivered or an undelivered row (#502)', async () => {
+    // `delivered` is a plain column on `Invitation` (#502 task 1) that this
+    // route's `select` has never named — planting one row of each value
+    // directly rather than through `inviteContact`'s gate, since what this
+    // test pins is the route's field list, not how either value came to be
+    // written.
+    const deliveredEmail = `inv-delivered-shape-${suffix}@test.local`;
+    const undeliveredEmail = `inv-undelivered-shape-${suffix}@test.local`;
+    let delivered: { id: string } | undefined;
+    let undelivered: { id: string } | undefined;
+    try {
+      delivered = await prisma.invitation.create({
+        data: { teacherId, email: deliveredEmail, firstName: 'Shape', lastName: 'Delivered', delivered: true },
+        select: { id: true },
+      });
+      undelivered = await prisma.invitation.create({
+        data: { teacherId, email: undeliveredEmail, firstName: 'Shape', lastName: 'Undelivered', delivered: false },
+        select: { id: true },
+      });
+
+      const res = await fetch(`${BASE_URL}/api/invitations`, { headers: cookie(teacherToken) });
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { data: { invitations: Array<Record<string, unknown> & { email: string }> } };
+      const deliveredRow = json.data.invitations.find((i) => i.email === deliveredEmail);
+      const undeliveredRow = json.data.invitations.find((i) => i.email === undeliveredEmail);
+      expect(deliveredRow).toBeDefined();
+      expect(undeliveredRow).toBeDefined();
+
+      // Narrowest correct pin: whether `delivered` itself leaked, not the
+      // rest of the field list — a `toEqual` against the whole array, or
+      // against a hand-maintained key census, would need updating every
+      // time an unrelated field is added to the route's `select`.
+      expect(Object.keys(deliveredRow!)).not.toContain('delivered');
+      expect(Object.keys(undeliveredRow!)).not.toContain('delivered');
+    } finally {
+      if (delivered) await prisma.invitation.delete({ where: { id: delivered.id } });
+      if (undelivered) await prisma.invitation.delete({ where: { id: undelivered.id } });
+    }
+  });
 });
 
 describe('DELETE /api/invitations/[id]', () => {
