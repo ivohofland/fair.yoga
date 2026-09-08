@@ -244,13 +244,14 @@ rather than leaving it silently wrong.
   their uncommitted edits, and integration tests need it live. An env var it lacks or a
   stale build is not a reason to touch it — work around it (`verify` skill) or ask the
   user. Start one yourself only if it's genuinely absent.
-- **In a worktree, integration and e2e can't run locally** — both are hard-wired to the dev
-  server on `:3000` and the shared dev DB (`docs/test-database.md`'s own non-goal), and a
-  worktree has neither. Scope `verify` to what doesn't need a live app — typecheck, lint,
-  unit, components; skip `--project integration` or it hangs on `ECONNREFUSED` — then push
-  and let CI be the integration/e2e signal instead: its database is throwaway and isolated
-  per run, unlike the shared one. Say so in the PR body — cite the CI run, not a local
-  `verify`, for that tier.
+- **In a worktree, integration and e2e run against the worktree's own isolated
+  app, not `:3000`.** Run `npm run worktree:setup` once, then `npm run
+  worktree:up` before `--project integration` or `playwright test` — both
+  read `INTEGRATION_BASE_URL` automatically. `npm run worktree:down` stops
+  the dev server when done; forgetting it is not a resource leak, an
+  opportunistic reap on the next `npm test` anywhere cleans it up.
+  `docs/superpowers/specs/2026-09-08-worktree-db-isolation-design.md` has
+  the mechanism.
 - **`@/lib/log` is pino and server-only** — check the whole transitive import chain before it
   reaches a `'use client'` component; `import type` is safe, it erases completely.
 - **Quote paths with parentheses when staging** — `(public)`, `(teacher)`, `(student)`; an

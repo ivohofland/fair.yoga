@@ -119,7 +119,7 @@ on it. This table is the shape, not the membership:
 |---|---|---|
 | `unit` | `src/**/*.test.ts` minus `SERIAL_TESTS` | **`ethical_yoga_test`** |
 | `unit-sweeps` | `SERIAL_TESTS` | **`ethical_yoga_test`** |
-| `integration` | `tests/integration/**/*.test.ts` | dev `ethical_yoga` (unchanged — must match the running app) |
+| `integration` | `tests/integration/**/*.test.ts` | dev `ethical_yoga` in the main checkout, `ethical_yoga_dev_<slug>` in a worktree — must match whichever app is running |
 | `components` | `src/**/*.test.tsx` | none (jsdom) |
 
 `--project <name>` selects one tier. A bare `npx vitest run` runs all of
@@ -210,11 +210,14 @@ rows behind (`npx prisma db seed` restores a pristine playground).
    then reseed dev and confirm the seed's future classes stay untouched
    after a full unit run.
 
-## 5. Future extension (not now)
+## 5. Per-worktree isolation
 
-Full isolation of integration + e2e would require booting a second app
-instance bound to the test database (e.g. `PORT=3100
-DATABASE_URL=$DATABASE_URL_TEST next start`) from a global setup, and
-pointing `BASE_URL`/Playwright at it. That buys complete separation at
-the cost of a server boot per run and double-resident memory — worth it
-only if targeted fixtures on the dev database ever cause real pain.
+Implemented — `docs/superpowers/specs/2026-09-08-worktree-db-isolation-design.md`.
+Every linked worktree gets its own `ethical_yoga_test_<slug>` (this section's
+`unit`/`unit-sweeps` databases) and its own seeded `ethical_yoga_dev_<slug>`
+plus a private `next dev` on its own port, inside the same shared
+`fairyoga-db-1` container — no per-worktree Docker container. Run `npm run
+worktree:setup` once per worktree, then `npm run worktree:up` to boot the
+app; `integration`/e2e read `INTEGRATION_BASE_URL` for that port instead of
+`:3000`. Orphaned resources from a removed worktree are reaped
+automatically the next time any `npm test` runs anywhere.
