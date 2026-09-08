@@ -1,0 +1,43 @@
+import fs from 'fs';
+
+export function generateEnvContent(templateContent: string, overrides: Record<string, string>): string {
+  const lines = templateContent.split('\n');
+  const applied = new Set<string>();
+  const result = lines.map((line) => {
+    const match = line.match(/^([A-Z_][A-Z0-9_]*)=/);
+    const key = match?.[1];
+    if (key !== undefined && key in overrides) {
+      const value = overrides[key];
+      if (value !== undefined) {
+        applied.add(key);
+        return `${key}="${value}"`;
+      }
+    }
+    return line;
+  });
+
+  const remaining = Object.keys(overrides).filter((key) => !applied.has(key));
+  if (remaining.length > 0) {
+    result.push('');
+    for (const key of remaining) {
+      const value = overrides[key];
+      if (value !== undefined) {
+        result.push(`${key}="${value}"`);
+      }
+    }
+  }
+  return result.join('\n');
+}
+
+export function writeEnvIfMissing(
+  envPath: string,
+  examplePath: string,
+  overrides: Record<string, string>,
+): boolean {
+  if (fs.existsSync(envPath)) {
+    return false;
+  }
+  const template = fs.readFileSync(examplePath, 'utf8');
+  fs.writeFileSync(envPath, generateEnvContent(template, overrides));
+  return true;
+}
