@@ -135,6 +135,10 @@ async function casMatchedNothing(teacherId: string, id: string, cas: InvitationC
  * `inviteContact`'s `accepted` disjunct (`services/invitations.ts`) to fire
  * on, so a guess-and-probe against a deleted row gets an ordinary fresh
  * invite either way, not a second door into the same oracle.
+ *
+ * It does not check the incoming address, and does not need to — but the
+ * write below resets `delivered` whenever the address changes, which is
+ * what makes not checking safe (#502 Fix #3).
  */
 export const PUT = withErrorHandler(async (
   request: NextRequest,
@@ -176,6 +180,15 @@ export const PUT = withErrorHandler(async (
 
   const { email, ...rest } = parsed.data;
 
+  // TRUE only when the incoming `email` differs from the row's own stored
+  // value — not merely present in the body. `email !== undefined` alone
+  // would be wrong here: `src/components/students/contact-form.tsx` (the
+  // only client that calls this route) sends all three fields on every
+  // save, so it would flip `delivered` on a pure name-typo fix that never
+  // touches the address, disarming `unlinkTeacher`'s tombstone for a row
+  // that is still genuinely delivered.
+  const readdressed = email !== undefined && email !== invitation.email;
+
   // Caught rather than pre-checked (F9, #166 review). `Invitation` has one
   // unique key besides its primary — `@@unique([teacherId, email])` — and
   // this is the only field on the form that can collide with it: the teacher
@@ -212,19 +225,23 @@ export const PUT = withErrorHandler(async (
       // the uniqueness check and later account-matching both depend on that
       // holding for every row, not just the ones created through POST.
       //
-      // `delivered: false` rides along with every `email` change,
-      // unconditionally — not gated on whether the new address looks
-      // blocked or linked, which would need the same `TeacherBlock`/roster
-      // queries `inviteContact` already runs, on a route that has never
-      // needed them. `false` is simply the honest value regardless: no
-      // delivery attempt has been made to the new address, full stop. This
-      // is what keeps `unlinkTeacher`'s `delivered: true`-scoped tombstone
-      // (`services/invitations.ts`) from matching a row whose CURRENT
-      // address was never actually told this invitation exists — closing
-      // the second door #502's decoy-invitation leak could otherwise
-      // reopen through a re-address. See "Fix #3" in
+      // `delivered: false` rides along with a genuine address change
+      // (`readdressed`, above) only — not gated on whether the new address
+      // looks blocked or linked, which would need the same
+      // `TeacherBlock`/roster queries `inviteContact` already runs, on a
+      // route that has never needed them. `false` is simply the honest
+      // value whenever the address moves: no delivery attempt has been made
+      // to the new one, full stop. This is what keeps `unlinkTeacher`'s
+      // `delivered: true`-scoped tombstone (`services/invitations.ts`) from
+      // matching a row whose CURRENT address was never actually told this
+      // invitation exists — closing the second door #502's decoy-invitation
+      // leak could otherwise reopen through a re-address. See "Fix #3" in
       // `docs/superpowers/specs/2026-09-08-invitation-erasure-tombstone-design.md`.
-      data: { ...rest, ...(email !== undefined ? { email, delivered: false } : {}) },
+      data: {
+        ...rest,
+        ...(email !== undefined ? { email } : {}),
+        ...(readdressed ? { delivered: false } : {}),
+      },
     });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
