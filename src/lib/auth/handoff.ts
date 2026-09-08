@@ -2,7 +2,6 @@ import crypto from 'crypto';
 import type { PrismaClient, MagicLinkPurpose } from '@prisma/client';
 import { hashToken, consumeTokenRow } from './magic-link';
 import { hashNonce, type BrowserNonce } from './origin-nonce';
-import { isRecordNotFound } from '@/lib/api-errors';
 
 export type HandoffOutcome =
   | { kind: 'verified'; email: string; redirectTo: string | null; purpose: MagicLinkPurpose }
@@ -24,8 +23,8 @@ function generateHandoffCode(): string {
  * it must leave the row spendable.
  *
  * Deliberately not routed through `verifyMagicLinkToken`: this decision has
- * to inspect the row before choosing whether to consume it — see the design
- * spec's §3 for why.
+ * to inspect the row before choosing whether to consume it — see
+ * `docs/superpowers/specs/2026-09-03-magic-link-device-handoff-design.md` §3.
  */
 export async function verifyWithHandoff(
   db: PrismaClient,
@@ -81,24 +80,29 @@ export async function verifyWithHandoff(
 }
 
 /** A 6-digit code is 10⁶, brute-forceable inside the token's fifteen minutes.
- *  This budget is the guard that does not depend on the nonce staying secret. */
+ *  Per BROWSER, not per token: wrong codes submitted under one nonce spend it
+ *  whichever of that browser's tokens they were aimed at. A per-token budget
+ *  is steerable by a caller who can mint tokens under the nonce, so this
+ *  scoping is what makes it the guard that does not depend on the nonce
+ *  staying secret. */
 export const HANDOFF_MAX_ATTEMPTS = 5;
 
 /**
  * Trades a code for the token it was stamped on, for the browser that
  * requested the link.
  *
- * Looks up by nonce rather than by code, so a wrong guess still finds a row
+ * Looks up by nonce rather than by code, so a wrong guess still finds rows
  * whose budget it must spend. Looking up by both would leave the attempt
  * counter unreachable and the budget unenforceable.
  *
  * A resend legitimately leaves more than one live token sharing this
  * browser's nonce, and either can end up stamped with its own code if both
- * get opened elsewhere. So every live candidate is fetched and matched by
- * CODE first — the caller is charged against the token their code actually
- * belongs to, not whichever is newest. Only when no candidate's code matches
- * does the newest one absorb the wrong guess, which is the one case the
- * "look up by nonce" reasoning above actually covers.
+ * get opened elsewhere. The submitted code is compared against every live
+ * candidate at once, so a match claims that specific token, and a code
+ * matching none of them is one failed guess against ALL of them — charged to
+ * all of them. Charging one chosen row instead undercounts, and lets a caller
+ * who can mint tokens under this nonce steer the charge off the token being
+ * guessed at.
  */
 export async function claimWithCode(
   db: PrismaClient,
@@ -109,44 +113,55 @@ export async function claimWithCode(
 
   const candidates = await db.magicLinkToken.findMany({
     where: {
+      // Scoped to the browser, not to an address. A shared browser carries one
+      // nonce across an abandoned sign-in, so another person's stamped token
+      // can sit in this set and shares the budget spent below — an accepted
+      // consequence, argued in
+      // `docs/superpowers/specs/2026-09-08-handoff-attempt-budget-design.md` §5.
       originBrowserHash: hashNonce(nonce),
       handoffCode: { not: null },
       expiresAt: { gt: new Date() },
     },
+    // No longer load-bearing for the budget, but it still settles the
+    // tie-break if two live candidates ever stamp the same code: the newest
+    // wins, rather than whatever order the database happened to return.
     orderBy: { createdAt: 'desc' },
   });
   if (candidates.length === 0) return { kind: 'invalid' };
 
-  const row = candidates.find((candidate) => candidate.handoffCode === code) ?? candidates[0]!;
+  // An exhausted row is dead to a match as well as to a miss, so it leaves the
+  // working set here. Reaped rather than merely skipped because the increment
+  // below can push more than one row over the line at once.
+  const spent = candidates.filter((c) => c.handoffAttempts >= HANDOFF_MAX_ATTEMPTS);
+  if (spent.length > 0) {
+    await db.magicLinkToken.deleteMany({ where: { id: { in: spent.map((c) => c.id) } } });
+  }
 
-  if (row.handoffAttempts >= HANDOFF_MAX_ATTEMPTS) {
-    await db.magicLinkToken.deleteMany({ where: { id: row.id } });
+  const live = candidates.filter((c) => c.handoffAttempts < HANDOFF_MAX_ATTEMPTS);
+  if (live.length === 0) return { kind: 'invalid' };
+
+  const match = live.find((candidate) => candidate.handoffCode === code);
+  if (!match) {
+    // Atomic per row, and `updateMany` rather than `update` so a row a
+    // concurrent caller already consumed is a no-op instead of a P2025 to
+    // catch. The delete re-reads the counter inside its own statement, so
+    // whichever concurrent guess pushed a row over the line, the row dies.
+    const ids = live.map((c) => c.id);
+    await db.magicLinkToken.updateMany({
+      where: { id: { in: ids } },
+      data: { handoffAttempts: { increment: 1 } },
+    });
+    await db.magicLinkToken.deleteMany({
+      where: { id: { in: ids }, handoffAttempts: { gte: HANDOFF_MAX_ATTEMPTS } },
+    });
     return { kind: 'invalid' };
   }
 
-  if (row.handoffCode !== code) {
-    // Atomic increment: two concurrent wrong guesses against the same row
-    // must not both read the same starting count and overwrite each other's
-    // write with the same absolute value, which would let one guess go
-    // uncharged.
-    let updated;
-    try {
-      updated = await db.magicLinkToken.update({
-        where: { id: row.id },
-        data: { handoffAttempts: { increment: 1 } },
-      });
-    } catch (err) {
-      // A concurrent caller already consumed or destroyed this row — the
-      // row being gone is exactly what "invalid" already means here.
-      if (isRecordNotFound(err)) return { kind: 'invalid' };
-      throw err;
-    }
-    if (updated.handoffAttempts >= HANDOFF_MAX_ATTEMPTS) {
-      await db.magicLinkToken.deleteMany({ where: { id: row.id } });
-    }
-    return { kind: 'invalid' };
-  }
-
-  if (!(await consumeTokenRow(db, row))) return { kind: 'invalid' };
-  return { kind: 'verified', email: row.email, redirectTo: row.redirectTo, purpose: row.purpose };
+  if (!(await consumeTokenRow(db, match))) return { kind: 'invalid' };
+  return {
+    kind: 'verified',
+    email: match.email,
+    redirectTo: match.redirectTo,
+    purpose: match.purpose,
+  };
 }
