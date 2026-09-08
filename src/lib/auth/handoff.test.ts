@@ -129,6 +129,18 @@ describe('claimWithCode', () => {
     return out.code;
   }
 
+  /** A stamped token under `nonce`, tagged by `redirectTo` so a test can find
+   *  its row and tell one candidate from another. Returns its code. */
+  async function stampedWithRedirect(email: string, nonce: string, redirectTo: string) {
+    const token = await generateMagicLinkToken(db, email, {
+      originBrowserHash: hashNonce(nonce),
+      redirectTo,
+    });
+    const out = await verifyWithHandoff(db, token, null);
+    if (out.kind !== 'handoff') throw new Error('expected a handoff');
+    return out.code;
+  }
+
   it('signs in the browser that requested the link', async () => {
     const email = `claim-ok-${Date.now()}@example.com`;
     const code = await stampedToken(email, 'nonce-c1');
@@ -186,28 +198,100 @@ describe('claimWithCode', () => {
     const email = `claim-multi-${Date.now()}@example.com`;
     const nonce = 'nonce-multi';
 
-    const olderToken = await generateMagicLinkToken(db, email, {
-      originBrowserHash: hashNonce(nonce),
-      redirectTo: '/older',
-    });
-    const olderOut = await verifyWithHandoff(db, olderToken, null);
-    if (olderOut.kind !== 'handoff') throw new Error('expected a handoff');
-
-    const newerToken = await generateMagicLinkToken(db, email, {
-      originBrowserHash: hashNonce(nonce),
-      redirectTo: '/newer',
-    });
-    const newerOut = await verifyWithHandoff(db, newerToken, null);
-    if (newerOut.kind !== 'handoff') throw new Error('expected a handoff');
+    const olderCode = await stampedWithRedirect(email, nonce, '/older');
+    await stampedWithRedirect(email, nonce, '/newer');
 
     // The redirect pins which token actually matched: the newer token's row
     // would answer '/newer' if the lookup had misattributed the guess to it.
-    expect(await claimWithCode(db, asBrowserNonce(nonce), olderOut.code)).toEqual({
+    expect(await claimWithCode(db, asBrowserNonce(nonce), olderCode)).toEqual({
       kind: 'verified',
       email,
       redirectTo: '/older',
       purpose: 'sign_in',
     });
+  });
+
+  // A submitted code is compared against every live candidate at once, so a
+  // code matching none of them is one failed guess against all of them.
+  it('charges every live candidate on a miss, not only the newest', async () => {
+    const email = `claim-chargeall-${Date.now()}@example.com`;
+    const nonce = `nonce-chargeall-${Date.now()}`;
+
+    const olderCode = await stampedWithRedirect(email, nonce, '/older');
+    const newerCode = await stampedWithRedirect(email, nonce, '/newer');
+    // Picked rather than hardcoded: a literal guess could collide with a
+    // generated code (10⁻⁶ each) and turn a miss into a match.
+    const wrong = ['000000', '111111', '222222'].find(
+      (guess) => guess !== olderCode && guess !== newerCode,
+    )!;
+
+    expect(await claimWithCode(db, asBrowserNonce(nonce), wrong)).toEqual({ kind: 'invalid' });
+
+    const older = await db.magicLinkToken.findFirst({ where: { email, redirectTo: '/older' } });
+    const newer = await db.magicLinkToken.findFirst({ where: { email, redirectTo: '/newer' } });
+    expect(older?.handoffAttempts).toBe(1);
+    expect(newer?.handoffAttempts).toBe(1);
+  });
+
+  // #423: a caller holding this browser's nonce can mint a NEWER token under
+  // it and leave it in the candidate list. The budget must not be steerable
+  // onto that decoy — the token actually being guessed at has to die.
+  it('a newer decoy cannot shield an older token from the attempt budget', async () => {
+    const email = `claim-decoy-${Date.now()}@example.com`;
+    const nonce = `nonce-decoy-${Date.now()}`;
+
+    const targetCode = await stampedWithRedirect(email, nonce, '/target');
+    const decoyCode = await stampedWithRedirect(email, nonce, '/decoy');
+    const wrong = ['000000', '111111', '222222'].find(
+      (guess) => guess !== targetCode && guess !== decoyCode,
+    )!;
+
+    for (let i = 0; i < HANDOFF_MAX_ATTEMPTS; i++) {
+      await claimWithCode(db, asBrowserNonce(nonce), wrong);
+    }
+
+    // Destroyed, not merely charged: the target's own correct code is dead.
+    expect(await claimWithCode(db, asBrowserNonce(nonce), targetCode)).toEqual({ kind: 'invalid' });
+  });
+
+  // Asserted with no `claimWithCode` call between the last guess and the read:
+  // the reap that runs before matching would otherwise clear these rows on the
+  // next call, hiding a miss path that never deleted them.
+  it('a spent budget destroys every live candidate before any later call', async () => {
+    const email = `claim-reapall-${Date.now()}@example.com`;
+    const nonce = `nonce-reapall-${Date.now()}`;
+
+    const firstCode = await stampedWithRedirect(email, nonce, '/first');
+    const secondCode = await stampedWithRedirect(email, nonce, '/second');
+    const wrong = ['000000', '111111', '222222'].find(
+      (guess) => guess !== firstCode && guess !== secondCode,
+    )!;
+
+    for (let i = 0; i < HANDOFF_MAX_ATTEMPTS; i++) {
+      await claimWithCode(db, asBrowserNonce(nonce), wrong);
+    }
+
+    expect(await db.magicLinkToken.findMany({ where: { email } })).toEqual([]);
+  });
+
+  // A row can sit at the budget without having been deleted — a crash between
+  // the increment and the delete would leave one. Reached by writing the
+  // counter directly, because no sequence of claims can produce this state:
+  // the miss path deletes a row the moment it hits the budget. Without a row
+  // in this state the reap that runs before matching could never be shown to
+  // do anything.
+  it('an exhausted row is dead to its own correct code, and is reaped', async () => {
+    const email = `claim-exhausted-${Date.now()}@example.com`;
+    const nonce = `nonce-exhausted-${Date.now()}`;
+
+    const code = await stampedWithRedirect(email, nonce, '/exhausted');
+    await db.magicLinkToken.updateMany({
+      where: { email, redirectTo: '/exhausted' },
+      data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS },
+    });
+
+    expect(await claimWithCode(db, asBrowserNonce(nonce), code)).toEqual({ kind: 'invalid' });
+    expect(await db.magicLinkToken.findFirst({ where: { email } })).toBeNull();
   });
 
   // Two concurrent wrong guesses against the same row must not undercount
