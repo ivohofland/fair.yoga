@@ -220,11 +220,11 @@ beforeAll(async () => {
   const [row] =
     await prisma.$queryRaw<Array<{ current_database: string }>>`SELECT current_database()`;
   const dbName = row?.current_database ?? '';
-  if (!/_test$/.test(dbName)) {
+  if (!/_test(_[a-z0-9_]+)?$/.test(dbName)) {
     throw new Error(
       `[waitlist-retention.test] refusing to run an unscoped DELETE sweep against "${dbName}" — ` +
         'this suite calls reapClosedWaitlistEntries, which is not scoped to its own fixtures. ' +
-        'Set DATABASE_URL_TEST to a database whose name ends in _test.',
+        'Set DATABASE_URL_TEST to a database whose name ends in _test, or (in a worktree) _test_<slug>.',
     );
   }
 
