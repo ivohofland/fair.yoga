@@ -259,7 +259,7 @@ property, left as ledger-only notes.
 ## Whole-branch review
 
 Two tasks touch shared ground worth a cross-task look even though this plan
-has 3 tasks (2+ triggers it per the skill): Task 1 changes where `blocked`
+has 4 tasks (2+ triggers it per the skill): Task 1 changes where `blocked`
 is computed and what `inviteContact` returns; Task 2 relies on that value
 being correct in every code path that can reach `unlinkTeacher`'s scoped
 write, including rows created before Task 1 shipped (the backfill residual

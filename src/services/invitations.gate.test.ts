@@ -382,9 +382,10 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
     expect(gatedRow).toEqual(strangerRow);
 
     // `delivered` read separately, on each row, rather than folded into the
-    // comparison above: it is the one field this pair is allowed to differ
-    // on (see the assertions on `.value.delivered` above), so it stays out
-    // of the equality check and is pinned absolutely instead.
+    // `select` the equality check above runs against: it is the one field
+    // that select would wrongly demand agreement on (see the assertions on
+    // `.value.delivered` above, which already pin the two apart), so it
+    // stays out of the equality check and is pinned absolutely instead.
     const [strangerDelivered, gatedDelivered] = await Promise.all([
       prisma.invitation.findUniqueOrThrow({
         where: { teacherId_email: { teacherId, email: strangerEmail } },
@@ -451,11 +452,14 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
     // without a full accept flow. No `Student`/`TeacherStudent` row at this
     // address, so `rosterLinkState` reads `{ linked: false, mayBeTold:
     // false }` for both invites below — only the `TeacherBlock` planted
-    // between them is what changes.
+    // between them is what changes. `delivered: false` is seeded explicitly
+    // (the schema default is `true`), so the first revive below has to
+    // WRITE `true` to make its own assertion pass, rather than that
+    // assertion passing vacuously on a value the revive never touched.
     const invitation = await prisma.invitation.create({
       data: {
         teacherId, email, firstName: 'Revive', lastName: 'Original',
-        status: 'accepted', respondedAt: acceptedAt,
+        status: 'accepted', respondedAt: acceptedAt, delivered: false,
       },
       select: { id: true },
     });
@@ -570,12 +574,14 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
 /**
  * Task 2 of #502: `unlinkTeacher`'s tombstone `updateMany`
  * (`src/services/invitations.ts`) now scopes its `where` to
- * `delivered: true`. These two tests drive the real gate above to produce a
- * genuine `delivered: false` decoy row and the real `unlinkTeacher` against
- * it, rather than fabricating a row shape by hand — the same rigor the
- * `unlinkTeacher`-behavior tests in `tests/integration/invitations-api.test
- * .ts` use, minus the HTTP layer (this file already has no server on
- * `:3000` to reach).
+ * `delivered: true`. Both tests below drive the real gate and the real
+ * `unlinkTeacher` against a row it produced, rather than fabricating a row
+ * shape by hand — the same rigor the `unlinkTeacher`-behavior tests in
+ * `tests/integration/invitations-api.test.ts` use, minus the HTTP layer.
+ * Only the first produces a genuine `delivered: false` decoy through the
+ * #417/#418 gate; the second is the regression half, producing an ordinary
+ * `delivered: true` row via the non-gate path and checking the tombstone
+ * still fires on it.
  */
 describe('unlinkTeacher scopes its tombstone to delivered invitations (#502)', () => {
   let teacherId: string;
@@ -666,11 +672,14 @@ describe('unlinkTeacher scopes its tombstone to delivered invitations (#502)', (
     if (!invited.ok) throw new Error(`expected an ordinary delivered invite, got ${invited.reason}`);
     expect(invited.value.delivered).toBe(true);
 
-    // The link forms afterward, independently of the invitation — a
-    // booking, in the real app (the same shape as the two residual routes
+    // The link forms afterward via a direct write that never calls
+    // `resolveInvitationOnLink` — NOT a real booking, which routes through
+    // it and would flip this row to `accepted`. It is the shape of the
+    // SECOND residual route
     // `docs/superpowers/specs/2026-09-07-gated-ghost-invitation-design.md`
-    // §3 already names: a delivered `pending` row still standing once a
-    // link exists).
+    // §3 names: a linkless `waiting` row promoted by `promoteNext`/
+    // `claimSpot`, which write the link but resolve nothing, leaving a
+    // delivered `pending` row standing once the link exists.
     const student = await prisma.student.create({
       data: {
         firstName: 'Unlink', lastName: 'DeliveredRegression', email,

@@ -579,7 +579,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // own id would let a teacher who plants a guessed-address decoy
     // invitation read the anonymised `email` back via `GET /api/invitations`
     // and recover the specific `Student.id` behind it (#502). One token per
-    // erasure call, reused across all three statements below. See
+    // erasure call, reused across every `Invitation` write below. See
     // `docs/superpowers/specs/2026-09-08-invitation-erasure-tombstone-design.md`
     // ("Fix #1") for why that reuse is safe.
     const anonymizedEmail = `deleted-${crypto.randomUUID()}@deleted.invalid`;
@@ -700,11 +700,9 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       data: {
         firstName: 'Deleted',
         lastName: 'Student',
-        // `studentId`-derived, unlike the random token `Invitation.email`
-        // gets above: a teacher reading this value already holds
-        // `studentId` (they are looking at that student's own profile), so
-        // there is no guessed-identity oracle here the way there is on an
-        // `Invitation` row from a different, guessed identity.
+        // `studentId`-derived because a teacher reading it is already
+        // scoped to that student (unlike `Invitation.email`, reachable via
+        // a guessed address) — see the spec's Fix #1.
         email: `deleted-${studentId}@deleted.invalid`,
         phone: null,
         birthday: null,
