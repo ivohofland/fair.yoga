@@ -42,20 +42,20 @@
  * node:-origin allowance `areasUnderSrc`'s own check makes, with
  * `censusOfTree` additionally allowed by name alone wherever it sits in the
  * declaration — and, separately, the initializer alone, which must itself
- * call `censusOfTree`. A `censusOfTree` call sitting in a sibling binding
- * element's default or in a computed property key cannot stand in for that:
+ * call `censusOfTree` — the requirement that catches a revert to a second,
+ * independent read of `searchScope()` or `typeScriptUnderSrc()`, aliased or
+ * not. A `censusOfTree` call sitting in a sibling binding element's default
+ * or in a computed property key cannot stand in for that requirement:
  * neither one produces `reached`'s own value. A call sitting in `reached`'s
  * own default is different — it genuinely can produce that value, when the
  * destructured property is absent — but `declaration.initializer` does not
  * reach a binding element's default either way, so the initializer-alone
  * check misses it deliberately, degrading loud (a false "makes no
  * `censusOfTree` call") rather than resolving whether the property was
- * actually absent. That is what catches a
- * revert to a second, independent read of `searchScope()` or
- * `typeScriptUnderSrc()`, aliased or not — and, since `censusOfTree` itself
- * must be unambiguous for the name-alone allowance to mean anything, a second
- * declaration of `censusOfTree` anywhere in the file is a finding too, before
- * any `reached` declaration is even inspected.
+ * actually absent. Since `censusOfTree` itself must be unambiguous for the
+ * name-alone allowance to mean anything, a second declaration of
+ * `censusOfTree` anywhere in the file is a finding too, before any `reached`
+ * declaration is even inspected.
  *
  * WHICH FILES, discovered rather than written down: every `src/lib/*.test.ts`
  * declaring `areasUnderSrc` at module level, and separately, every
@@ -113,10 +113,9 @@
  * parsed as separate synthetic files, never as this one — a real `reached`
  * binding written anywhere in this file, in any syntax that produces a
  * `VariableDeclaration` binding the name, would join its own discovered set
- * and redden its own assertion. That is a thinner margin than `GUARD`'s, and
- * thinner than this file's own margin was before #499 widened `REACHED`
- * discovery past the one bare `const reached = …` shape — worth remembering
- * before adding such a `VariableDeclaration` of that name in any form.
+ * and redden its own assertion — a thinner margin than `GUARD`'s, worth
+ * remembering before adding such a `VariableDeclaration` of that name in any
+ * form.
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -406,9 +405,11 @@ function censusDeclarationCount(source: ts.SourceFile): number {
  * `reachedIndependenceOf` below: that walk reads the whole
  * `VariableDeclaration`, on purpose, so a dirty call hiding in a sibling
  * binding element's default or a computed property key is still caught. This
- * search reads only `declaration.initializer` — the expression that actually
- * produces `REACHED`'s value — so a `CENSUS` call sitting anywhere else in
- * the declaration cannot stand in for the one `REACHED` itself must make.
+ * search reads only `declaration.initializer`, narrower on purpose — a call
+ * sitting in a binding element's default, `REACHED`'s own included, is not
+ * reachable from here even on a path where it is what actually produces
+ * `REACHED`'s value; `reachedIndependenceOf`'s own docblock below says why
+ * that miss is deliberate.
  */
 function callsCensus(node: ts.Node): boolean {
   return (
@@ -440,15 +441,16 @@ function callsCensus(node: ts.Node): boolean {
  * module-level binding named `CENSUS`, regardless of where it comes from,
  * sufficient here because `censusOfTree` is always the file's own
  * declaration, never imported. The missing-`CENSUS`-call arm is narrower:
- * `callsCensus` reads only `declaration.initializer`, the expression that
- * actually produces `REACHED`'s value. A call sitting in a sibling binding
- * element's default or a computed key cannot stand in for that — neither
- * produces `REACHED`'s own value. A call sitting in `REACHED`'s own default
- * is different: it genuinely can produce that value, when the destructured
- * property is absent — but `declaration.initializer` does not reach a
- * binding element's default either way, so this check misses it
- * deliberately, degrading loud (a false "makes no `CENSUS` call") rather
- * than resolving whether the property was actually absent.
+ * `callsCensus` reads only `declaration.initializer` — the expression
+ * assigned to the whole declaration. A call sitting in a sibling binding
+ * element's default or a computed key cannot stand in for the census call
+ * this checks for: neither one produces `REACHED`'s own value. A call
+ * sitting in `REACHED`'s own default is different: it genuinely can produce
+ * that value, when the destructured property is absent — but
+ * `declaration.initializer` does not reach a binding element's default
+ * either way, so this check misses it deliberately, degrading loud (a false
+ * "makes no `CENSUS` call") rather than resolving whether the property was
+ * actually absent.
  *
  * That name-alone trust is only sound while the name is unambiguous, which is
  * what `censusDeclarationCount` polices first: a shadow named `censusOfTree`
@@ -460,8 +462,7 @@ function callsCensus(node: ts.Node): boolean {
  * `undefined`, as against an empty array of findings, when
  * `reachedDeclarationsIn` collects no `VariableDeclaration` binding
  * `REACHED`. A `VariableDeclaration` that exists but has no initializer of
- * its own no longer collapses into this same answer; it gets the ambiguity
- * finding above instead.
+ * its own gets the ambiguity finding above instead, not this answer.
  */
 function reachedIndependenceOf(file: string, text: string): readonly string[] | undefined {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
