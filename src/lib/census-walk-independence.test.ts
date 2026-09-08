@@ -46,23 +46,23 @@
  * not to this one: `rootOf` and `moduleLevelBindings` catch a second,
  * independent read of the tree reached through a renamed local there, and
  * report it whether or not the initializer also calls `censusOfTree`. What
- * the initializer-alone requirement adds is the independent read the
- * forbidden-call arm deliberately allows — one rooting in a `node:` import,
- * which nothing else here reports — and it adds that only while the
- * initializer calls `censusOfTree` nowhere, since a census call sitting
- * beside such a read satisfies it. A `censusOfTree` call sitting in a
- * sibling binding element's default or in a computed property key cannot
- * stand in for that requirement: neither one produces `reached`'s own
- * value. A call sitting in `reached`'s own default is different — it
- * genuinely can produce that value, when the destructured property is
- * absent — but `declaration.initializer` does not reach a binding element's
- * default either way, so the initializer-alone check misses it
- * deliberately, degrading loud (a false "makes no `censusOfTree` call")
- * rather than resolving whether the property was actually absent. Since
- * `censusOfTree` itself must be unambiguous for the name-alone allowance to
- * mean anything, a second declaration of `censusOfTree` anywhere in the
- * file is a finding too, before any `reached` declaration is even
- * inspected.
+ * the initializer-alone requirement adds is a read the forbidden-call arm
+ * does not report — one rooting in a `node:` import, which it deliberately
+ * allows, or in a binding its root resolution cannot see — and it adds that
+ * only while the initializer calls `censusOfTree` nowhere, since a census
+ * call sitting beside such a read satisfies it. A `censusOfTree` call
+ * sitting in a sibling binding element's default or in a computed property
+ * key cannot stand in for that requirement: neither one produces
+ * `reached`'s own value. A call sitting in `reached`'s own default is
+ * different — it genuinely can produce that value, when the destructured
+ * property is absent — but `declaration.initializer` does not reach a
+ * binding element's default either way, so the initializer-alone check
+ * misses it deliberately, degrading loud (a false "makes no `censusOfTree`
+ * call") rather than resolving whether the property was actually absent.
+ * Since `censusOfTree` itself must be unambiguous for the name-alone
+ * allowance to mean anything, a second declaration of `censusOfTree`
+ * anywhere in the file is a finding too, before any `reached` declaration
+ * is even inspected.
  *
  * WHICH FILES, discovered rather than written down: every `src/lib/*.test.ts`
  * declaring `areasUnderSrc` at module level, and separately, every
@@ -93,10 +93,12 @@
  * reached this way is caught exactly like the destructured-variable case
  * fixtured below; a dedicated fixture for it is added alongside that one,
  * since it exercises a different branch of `moduleLevelBindings` even though
- * both land on the same `local` treatment. The `reached` tether below reuses
- * this same root resolution, so it shares the one blind spot above: a callee
- * rooting in a parameter or a function-local, and the namespace-declaration
- * gap, apply there too.
+ * both land on the same `local` treatment. The `reached` tether below
+ * reuses this same root resolution, so its forbidden-call arm shares the
+ * one blind spot above: a callee rooting in a parameter or a
+ * function-local, and the namespace-declaration gap, apply there too. Its
+ * must-call arm consults no bindings, so a `reached` whose initializer
+ * calls `censusOfTree` nowhere is reported whatever its read roots in.
  *
  * A file that parses is assumed. `ts.createSourceFile` does not throw and no
  * diagnostics are read here, so a syntax error that swallows a call reports
@@ -990,7 +992,7 @@ describe('x', () => {
   });
 
   it('reports a destructured declaration by walking the whole declaration', () => {
-    // `const { reached } = buildReachedSet();`'s `reached` has no initializer
+    // `const { reached } = buildReachedSet();`'s `reached` carries no default
     // of its own — the destructuring source, `buildReachedSet()`, is the
     // declaration's own `.initializer`. Walking the whole `VariableDeclaration`
     // reaches it for the forbidden-call finding; because this shape's
