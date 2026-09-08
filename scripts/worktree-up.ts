@@ -5,6 +5,7 @@ import { getRegistryPath, writeRegistryLocked, allocatePort, setPid } from '../s
 import { runReap } from '../src/lib/worktree/reap';
 import { provisionDatabase } from '../src/lib/db-provision';
 import { spawnDevServer } from '../src/lib/worktree/dev-server';
+import { killPidReal } from '../src/lib/worktree/side-effects';
 
 async function main(): Promise<void> {
   const identity = getWorktreeIdentity();
@@ -37,7 +38,12 @@ async function main(): Promise<void> {
   await provisionDatabase(devUrl, { seed: true });
 
   const pid = spawnDevServer(process.cwd(), port);
-  await writeRegistryLocked(registryPath, (registry) => setPid(registry, slug, pid));
+  try {
+    await writeRegistryLocked(registryPath, (registry) => setPid(registry, slug, pid));
+  } catch (err) {
+    killPidReal(pid);
+    throw err;
+  }
 
   console.log(`[worktree:up] dev server running at http://localhost:${port} (pid ${pid})`);
   console.log(`[worktree:up] INTEGRATION_BASE_URL=http://localhost:${port}`);
