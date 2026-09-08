@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import type { PrismaClient, MagicLinkPurpose } from '@prisma/client';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
+import { log } from '@/lib/log';
 
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 
@@ -91,7 +92,29 @@ export async function consumeTokenRow(
   // table is `cleanupExpiredAuth`'s daily sweep of `expiresAt < now` — roughly
   // a day's accumulation — NOT the rate limiter, which caps rows per address
   // and says nothing about how many addresses there are.
-  await db.magicLinkToken.deleteMany({ where: { email: row.email } });
+  const purged = await db.magicLinkToken.deleteMany({ where: { email: row.email } });
+
+  // An observation, not a check (#506): how many surplus links this address
+  // had accumulated. Bounding that is the minting route's rate limit, per
+  // `generateMagicLinkToken` above, and nothing else reports on it — a large
+  // number means that limit leaked, or the address is being bombed.
+  //
+  // Turning it into a check is the tempting next edit, and it does not work.
+  // Comparing this against a pre-delete `count()` of the same `where` compares
+  // the predicate against itself: a defect in it moves both sides equally and
+  // the comparison stays silent, which is the outcome such a check would exist
+  // to prevent. What it would catch is a resend landing mid-purge — legitimate
+  // per `generateMagicLinkToken`'s docblock. That the purge matched everything
+  // is held instead by the `email = lower(email)` CHECK on this column, `row`
+  // being a stored row so both sides of the match are constrained, and pinned
+  // by "invalidates every other live token for that address on a successful
+  // sign-in" (`magic-link.test.ts`).
+  if (purged.count > 0) {
+    log.info(
+      { purged: purged.count },
+      'magic-link: invalidated surplus sibling links on consumption',
+    );
+  }
   return true;
 }
 
