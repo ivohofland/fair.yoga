@@ -322,11 +322,12 @@ describe('claimWithCode', () => {
   // each other — see the atomic `{ increment: 1 }` in `claimWithCode`.
   it('counts both attempts when two wrong guesses race concurrently', async () => {
     const email = `claim-race-${Date.now()}@example.com`;
-    const code = await stampedToken(email, 'nonce-race');
+    const nonce = `nonce-race-${Date.now()}`;
+    const code = await stampedToken(email, nonce);
     // Stay under HANDOFF_MAX_ATTEMPTS so the row survives to be inspected.
     const guesses = ['111111', '222222', '333333', '444444'].filter((g) => g !== code);
 
-    await Promise.all(guesses.map((g) => claimWithCode(db, asBrowserNonce('nonce-race'), g)));
+    await Promise.all(guesses.map((g) => claimWithCode(db, asBrowserNonce(nonce), g)));
 
     const row = await db.magicLinkToken.findFirst({ where: { email } });
     expect(row?.handoffAttempts).toBe(guesses.length);
@@ -358,9 +359,10 @@ describe('claimWithCode', () => {
     }
     // The correct claim's consumeTokenRow deletes a row out from under at
     // least one concurrent wrong guess's updateMany across these 8 races —
-    // exactly the `incremented.count < ids.length` condition.
+    // the row-vanished-mid-write case the updateMany-undercount guard exists
+    // to catch.
     expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({}),
+      expect.objectContaining({ requested: expect.any(Number), affected: expect.any(Number) }),
       'handoff: updateMany affected fewer candidates than requested',
     );
   });
@@ -384,6 +386,81 @@ describe('claimWithCode', () => {
     }
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ expected: 1 }),
+      'handoff: deleteMany reaped a different number of exhausted candidates than expected',
+    );
+  });
+
+  // Two concurrent calls racing the same already-exhausted candidate both
+  // read it as `spent` and both try to delete it — whichever `deleteMany`
+  // runs second finds 0 rows left, since the first already removed it.
+  it('warns when two concurrent claims both try to reap the same already-spent candidate', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    for (let i = 0; i < 8; i++) {
+      const email = `claim-race-spent-${Date.now()}-${i}@example.com`;
+      const nonce = `nonce-race-spent-${Date.now()}-${i}`;
+      await stampedToken(email, nonce);
+      await db.magicLinkToken.updateMany({
+        where: { email },
+        data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS },
+      });
+      // The exact guess doesn't matter: this row is already exhausted and
+      // gets swept into `spent` regardless of whether it matches.
+      const guess = '000000';
+
+      await Promise.all([
+        claimWithCode(db, asBrowserNonce(nonce), guess),
+        claimWithCode(db, asBrowserNonce(nonce), guess),
+      ]);
+    }
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ expected: 1, actual: 0 }),
+      'handoff: spent-candidate cleanup reaped a different number of rows than expected',
+    );
+  });
+
+  it('does not warn on an ordinary uncontested miss', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const email = `claim-nowarn-${Date.now()}@example.com`;
+    const nonce = `nonce-nowarn-${Date.now()}`;
+    const code = await stampedToken(email, nonce);
+    const wrong = ['000000', '111111'].find((g) => g !== code)!;
+    await claimWithCode(db, asBrowserNonce(nonce), wrong);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  // The existing reap-race test above uses exactly one live candidate, which
+  // structurally caps `reaped.count` at 0 or 1 — it can only ever force the
+  // UNDER-count direction of the guard. An OVER-count needs at least two
+  // concurrent live candidates racing together: both calls' `findMany` reads
+  // happen before either call's writes, so both compute `expectedReaps = 1`
+  // (only the more-exhausted candidate is predicted to cross), but both
+  // calls' `updateMany`s increment BOTH candidates — if both increments land
+  // before either delete, both candidates cross the threshold together, and
+  // whichever delete runs first reaps both against its own `expected: 1`.
+  it('warns on an over-count when two concurrent candidates both cross the budget together', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    for (let i = 0; i < 8; i++) {
+      const email = `claim-race-overcount-${Date.now()}-${i}@example.com`;
+      const nonce = `nonce-race-overcount-${Date.now()}-${i}`;
+      const codeA = await stampedWithRedirect(email, nonce, '/a');
+      const codeB = await stampedWithRedirect(email, nonce, '/b');
+      await db.magicLinkToken.updateMany({
+        where: { email, redirectTo: '/a' },
+        data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS - 2 },
+      });
+      await db.magicLinkToken.updateMany({
+        where: { email, redirectTo: '/b' },
+        data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS - 1 },
+      });
+      const wrong = ['000000', '111111', '222222'].find((g) => g !== codeA && g !== codeB)!;
+
+      await Promise.all([
+        claimWithCode(db, asBrowserNonce(nonce), wrong),
+        claimWithCode(db, asBrowserNonce(nonce), wrong),
+      ]);
+    }
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ expected: 1, actual: 2 }),
       'handoff: deleteMany reaped a different number of exhausted candidates than expected',
     );
   });

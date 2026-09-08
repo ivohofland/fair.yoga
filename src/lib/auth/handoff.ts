@@ -139,7 +139,15 @@ export async function claimWithCode(
   // the other.
   const spent = candidates.filter((c) => c.handoffAttempts >= HANDOFF_MAX_ATTEMPTS);
   if (spent.length > 0) {
-    await db.magicLinkToken.deleteMany({ where: { id: { in: spent.map((c) => c.id) } } });
+    const reapedSpent = await db.magicLinkToken.deleteMany({
+      where: { id: { in: spent.map((c) => c.id) } },
+    });
+    if (reapedSpent.count !== spent.length) {
+      log.warn(
+        { expected: spent.length, actual: reapedSpent.count },
+        'handoff: spent-candidate cleanup reaped a different number of rows than expected',
+      );
+    }
   }
 
   const live = candidates.filter((c) => c.handoffAttempts < HANDOFF_MAX_ATTEMPTS);
