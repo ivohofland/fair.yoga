@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the four assertions in `src/lib/auth/handoff.test.ts` that hope two concurrent calls interleave a particular way with four that place the sibling's write exactly where the race puts it, so each of `claimWithCode`'s three count guards is pinned deterministically instead of ~92% of the time.
+**Goal:** Replace the four assertions in `src/lib/auth/handoff.test.ts` that hope two concurrent calls interleave a particular way with four that place the sibling's write exactly where the race puts it, so each of `claimWithCode`'s three count guards is pinned deterministically. The ~8%-in-tier failure rate was measured for the over-count assertion alone; the other three were never observed failing, and are latent rather than known-flaky.
 
 **Architecture:** Each staged test makes **one** real `claimWithCode` call through a client built with `prisma.$extends({ query: { magicLinkToken: { … } } })`. The hook interposes the concurrent sibling — either the sibling's whole `claimWithCode` call on the *unhooked* client, or the single statement it would have issued — at the statement boundary the race requires. No shared helper: the repo's existing hooks (`src/services/waitlist.test.ts:1551`, `src/services/gdpr.test.ts:1008`) are written inline per test, and each hook here is short enough to read as the race it stages.
 
@@ -14,7 +14,7 @@
 
 - **`HANDOFF_MAX_ATTEMPTS` is 5** and is imported, never hardcoded. Fixtures say `HANDOFF_MAX_ATTEMPTS - 1`, not `4`.
 - **The sibling always runs on the plain `db`,** never on the extended client — otherwise the hook re-enters itself.
-- **`$extends` returns a client missing `$on`,** so it is not assignable to a `PrismaClient` parameter. End every extension with `}) as unknown as PrismaClient;` and keep the one-line comment saying why, matching `src/services/waitlist.test.ts:1578`.
+- **`$extends` returns a client missing `$on`,** so it is not assignable to a `PrismaClient` parameter. End every extension with `}) as unknown as PrismaClient;`. Explain the cast once, in the first hook, and have the others back-reference it in-file. (This constraint originally said to repeat the explanation in each hook, matching `waitlist.test.ts`; the PR review found that cross-file form dead-ends and commit `f7e2727e` replaced it.)
 - **Every hook counts its own invocations** in a `let hookCalls = 0;` and every staged test asserts `expect(hookCalls).toBe(1)`. A hook that stops firing must fail loudly, not stage nothing silently.
 - **Every staged test asserts `expect(warn).toHaveBeenCalledTimes(1)`** as well as the payload. Each staged interleaving produces exactly one warn; a second one means the interleaving drifted.
 - **No `for` loop and no `Promise.all` in any staged test.** If either appears, the test is back to hoping.
@@ -339,7 +339,7 @@ git commit -m "test(auth): stage the spent-cleanup race instead of hoping for it
 
 In the `it('the race: a correct claim concurrent with wrong guesses never throws', …)` block:
 
-- delete its first line, `const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);`
+- delete the `const warn =` binding from its first line, but KEEP the spy itself — `vi.spyOn(log, 'warn').mockImplementation(() => undefined);` — with a comment saying it silences rather than asserts. The spy had two jobs and only the assertion was timing-dependent; removing the whole line lets real pino JSON escape an 8-iteration loop. (This bullet originally said to delete the line; commit `821fde63` corrected it.)
 - delete the trailing comment (`// The correct claim's consumeTokenRow deletes a row out from under at …`) together with the `expect(warn).toHaveBeenCalledWith(…)` that follows it.
 
 What remains is the `for` loop and the per-result `expect(['verified', 'invalid']).toContain(result.kind)`, which every interleaving satisfies. Leave the loop: a rejection needs a real window to occur in, and this assertion cannot be falsified by scheduling.
@@ -461,7 +461,7 @@ A roster of test titles in another file is precisely the claim CLAUDE.md's *Comm
     // this comment predicts is not one nobody has reproduced.
 ```
 
-Name the file, not the tests: `X.ts` / `X.test.ts` is a repo-wide pairing, so renaming one half is conspicuous, while a test title is renamed casually. Neither is caught mechanically — this is a bare string in a comment either way.
+Name neither the tests nor the file: point at `docs/`. A roster of test titles rots when anyone renames a test, and a claim about the test FILE's structure rots when anyone restructures it — neither is caught mechanically, since this is a bare string in a comment either way. The spec's §5 is where a claim about another module belongs, and it is the form `handoff.ts` already uses twice. (This step originally prescribed naming the file; commits `e328c8cd` and `7cd75595` arrived at the `docs/` link instead.)
 
 - [ ] **Step 2: Sweep for the names this branch invalidated**
 
@@ -486,7 +486,7 @@ The command's three terms deliberately do not reach `'the race: a correct claim 
 - [ ] **Step 3: Verify**
 
 Run: `npx vitest run --project unit src/lib/auth/handoff.test.ts && npm run typecheck && npm run lint`
-Expected: all green, 26-ish tests in the file, none failing.
+Expected: all green, none failing. The file held 26 tests before this branch; the exact number after depends on which tasks have landed when this step runs, so it is not asserted here.
 
 - [ ] **Step 4: Commit**
 
@@ -525,7 +525,7 @@ for i in $(seq 1 20); do
 done
 ```
 
-Expected: zero failures of any of the four staged tests. §7 of the spec explains why a `counts both attempts when two wrong guesses race concurrently` timeout, if it appears, is reported as itself rather than counted against this criterion — and why any *other* failure does count.
+Expected: zero failures of any of the four staged tests. §8 of the spec explains why a `counts both attempts when two wrong guesses race concurrently` timeout, if it appears, is reported as itself rather than counted against this criterion — and why any *other* failure does count.
 
 - [ ] **Step 3: Confirm no test still hopes**
 
