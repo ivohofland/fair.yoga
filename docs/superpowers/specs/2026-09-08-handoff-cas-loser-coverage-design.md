@@ -45,6 +45,11 @@ not the three a first reading suggests:
   criteria ask for, for the sub-case the `!winner?.handoffCode` check also
   guards against. It is **not** an argument that line 77 itself is
   unreachable — see 1.4.
+  The truthiness check itself defends against an out-of-band writer of the
+  column — a manual `psql` edit, a future backfill migration — that no
+  application code path can produce; it costs nothing to keep, since the
+  `?.` null-guard is required regardless and the truthiness check is the
+  same expression, so it stays.
 
 ### 1.3 What deletes the row, and who can race it
 
@@ -119,14 +124,14 @@ CAS on a serialized ordering regardless of what the CAS does.
 `prisma.$extends` query hook that interposes a real sibling call at the exact
 statement boundary a race requires, four times over
 (`'warns when the matched row is consumed between the snapshot and the
-increment'` at `:449` is the closest template: same function family, same
+increment'` is the closest template: same function family, same
 "hook `updateMany`, run the sibling on the *unhooked* client before
 `query(args)`" shape). This branch adds two more, for `verifyWithHandoff`
 instead of `claimWithCode`, replacing nothing — the issue's acceptance
 criteria require the existing loop test to survive unchanged, and unlike
 #509's four, this branch's two staged tests reach code the loop test cannot
-reach at all (line 77) or reach only probabilistically (line 78), so there is
-no timing-dependent twin to retire.
+reach at all (line 77) or reach only by an interleaving nothing guarantees
+(line 78), so there is no timing-dependent twin to retire.
 
 **Two tests, one per shape from §1.2:**
 

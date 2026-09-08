@@ -68,6 +68,10 @@ describe('verifyWithHandoff', () => {
   // and can never be claimed. Looped rather than a single `Promise.all`,
   // since the race window is timing-dependent: one iteration hitting it is
   // enough to prove the bug, but a suite that only tries once can get lucky.
+  //
+  // Kept alongside the two staged tests below: it's the only place two real
+  // callers exercise this path concurrently, rather than through one staged
+  // call.
   it('the race: concurrent first-opens of the same link agree on one code', async () => {
     for (let i = 0; i < 8; i++) {
       const email = `handoff-race-${Date.now()}-${i}@example.com`;
@@ -116,8 +120,7 @@ describe('verifyWithHandoff', () => {
       },
       // `$extends` returns a client missing `$on`, so it is not assignable to
       // `verifyWithHandoff`'s `PrismaClient` parameter even though every
-      // method it calls here is the real one — same cast every hook in this
-      // file uses.
+      // method it calls here is the real one.
     }) as unknown as PrismaClient;
 
     const loser = await verifyWithHandoff(racing, token, null);
@@ -160,7 +163,7 @@ describe('verifyWithHandoff', () => {
           },
         },
       },
-      // Same cast, same reason as the first hook in this file.
+      // Same cast, same reason as the first hook in this describe block.
     }) as unknown as PrismaClient;
 
     const loser = await verifyWithHandoff(racing, token, null);
@@ -607,7 +610,7 @@ describe('claimWithCode', () => {
           },
         },
       },
-      // Same cast, same reason as the first hook in this file.
+      // Same cast, same reason as the first hook in this describe block.
     }) as unknown as PrismaClient;
 
     expect(await claimWithCode(racing, asBrowserNonce(nonce), wrong)).toEqual({ kind: 'invalid' });
@@ -654,7 +657,7 @@ describe('claimWithCode', () => {
           },
         },
       },
-      // Same cast, same reason as the first hook in this file.
+      // Same cast, same reason as the first hook in this describe block.
     }) as unknown as PrismaClient;
 
     expect(await claimWithCode(racing, asBrowserNonce(nonce), guess)).toEqual({ kind: 'invalid' });
@@ -736,7 +739,7 @@ describe('claimWithCode', () => {
           },
         },
       },
-      // Same cast, same reason as the first hook in this file.
+      // Same cast, same reason as the first hook in this describe block.
     }) as unknown as PrismaClient;
 
     expect(await claimWithCode(racing, asBrowserNonce(nonce), wrong)).toEqual({ kind: 'invalid' });
