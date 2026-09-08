@@ -338,9 +338,10 @@ describe('claimWithCode', () => {
   // the live candidate ids. Both silently match zero rows instead of
   // throwing, so a row disappearing out from under either call must resolve
   // to a normal outcome, never an unhandled rejection. Looped, with more than
-  // one concurrent wrong guess per iteration, since whether any single write
-  // lands after the delete is timing-dependent — which is why this test
-  // asserts only the outcome every interleaving produces. That the
+  // one concurrent wrong guess per iteration. Whether any single write lands
+  // after the delete is timing-dependent, so this asserts only the outcome
+  // every interleaving produces; the loop and the extra guesses are there to
+  // give a rejection a real window to occur in. That the
   // `updateMany` under-count guard actually fires when the row does vanish is
   // pinned by the staged `updateMany` under-count test in this file, which
   // does not depend on scheduling.
@@ -393,8 +394,7 @@ describe('claimWithCode', () => {
       },
       // `$extends` returns a client missing `$on`, so it is not assignable to
       // `claimWithCode`'s `PrismaClient` parameter even though every method it
-      // calls here is the real one — same cast as the hooks in
-      // `waitlist.test.ts`.
+      // calls here is the real one.
     }) as unknown as PrismaClient;
 
     expect(await claimWithCode(racing, asBrowserNonce(nonce), wrong)).toEqual({ kind: 'invalid' });
@@ -439,10 +439,7 @@ describe('claimWithCode', () => {
           },
         },
       },
-      // `$extends` returns a client missing `$on`, so it is not assignable to
-      // `claimWithCode`'s `PrismaClient` parameter even though every method it
-      // calls here is the real one — same cast as the hooks in
-      // `waitlist.test.ts`.
+      // Same cast, same reason as the first hook in this file.
     }) as unknown as PrismaClient;
 
     expect(await claimWithCode(racing, asBrowserNonce(nonce), wrong)).toEqual({ kind: 'invalid' });
@@ -457,12 +454,9 @@ describe('claimWithCode', () => {
 
   // Two calls racing an already-exhausted candidate both read it as `spent`
   // and both try to delete it; whichever runs second finds nothing left.
-  // Staged by interposing the sibling right after THIS call's `findMany`, so
-  // both have the row in their `spent` set before either deletes it — which
-  // is the only ordering that reaches the guard.
-  //
-  // The exact guess doesn't matter: this row is already exhausted and gets
-  // swept into `spent` regardless of whether it matches.
+  // Staged by interposing the sibling right after THIS call's `findMany`,
+  // since the guard is reachable only when both calls hold the row in their
+  // `spent` set before either deletes it.
   it('warns when a sibling reaps the already-spent candidate first', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     const email = `claim-staged-spent-${Date.now()}@example.com`;
@@ -472,6 +466,8 @@ describe('claimWithCode', () => {
       where: { email },
       data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS },
     });
+    // The exact guess doesn't matter: this row is already exhausted and gets
+    // swept into `spent` regardless of whether it matches.
     const guess = '000000';
 
     let hookCalls = 0;
@@ -486,10 +482,7 @@ describe('claimWithCode', () => {
           },
         },
       },
-      // `$extends` returns a client missing `$on`, so it is not assignable to
-      // `claimWithCode`'s `PrismaClient` parameter even though every method it
-      // calls here is the real one — same cast as the hooks in
-      // `waitlist.test.ts`.
+      // Same cast, same reason as the first hook in this file.
     }) as unknown as PrismaClient;
 
     expect(await claimWithCode(racing, asBrowserNonce(nonce), guess)).toEqual({ kind: 'invalid' });
@@ -512,24 +505,27 @@ describe('claimWithCode', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  // Both concurrent calls read `handoffCode`, `handoffAttempts` in one
-  // `findMany` before either writes, so both compute `expectedReaps = 1` —
-  // only `/b`, at `MAX - 1`, is predicted to cross. Both then increment BOTH
-  // candidates, so `/a` crosses too and whichever `deleteMany` runs first
-  // reaps two rows against its own prediction of one.
+  // This call's snapshot sees `/a` at `MAX - 2` and `/b` at `MAX - 1`, so
+  // `expectedReaps` is 1 — only `/b` is predicted to cross. The sibling's
+  // increment then lands on BOTH candidates before this call's `deleteMany`,
+  // so `/a` crosses too and the reap takes two rows against a prediction of
+  // one.
   //
   // The sibling's `updateMany` is staged as `args` re-issued rather than as a
   // whole nested `claimWithCode` call: a nested call would take its snapshot
   // AFTER this call's increment, see `/b` already at the budget and reap
   // it as its own spent row — this call's `deleteMany` would then find
   // nothing and under-count, which is a different race. Re-issuing `args` is
-  // not an approximation of the sibling's statement — both calls derive
-  // `ids` from the same snapshot, so it is a copy of it.
+  // not an approximation of the sibling's statement — in this race both calls
+  // snapshot before either writes, so both derive the same `ids` and issue
+  // the identical statement; re-issuing `args` is a copy of it.
   //
   // Interposed inside the hook rather than issued before the call, so it
   // lands after the miss path has taken its snapshot and computed
-  // `expectedReaps` — the actual shape of the race, not a rearrangement of it
-  // that would also pass against a guard that never fired.
+  // `expectedReaps`. Issued before the call it would not stage this race at
+  // all: `/b` would already be at the budget when the snapshot is taken, so
+  // it would be swept into `spent` rather than predicted to cross, and every
+  // count would match.
   it('warns on an over-count when a sibling increment lands before this call reaps', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     const email = `claim-staged-overcount-${Date.now()}@example.com`;
@@ -559,10 +555,7 @@ describe('claimWithCode', () => {
           },
         },
       },
-      // `$extends` returns a client missing `$on`, so it is not assignable to
-      // `claimWithCode`'s `PrismaClient` parameter even though every method it
-      // calls here is the real one — same cast as the hooks in
-      // `waitlist.test.ts`.
+      // Same cast, same reason as the first hook in this file.
     }) as unknown as PrismaClient;
 
     expect(await claimWithCode(racing, asBrowserNonce(nonce), wrong)).toEqual({ kind: 'invalid' });
