@@ -103,8 +103,9 @@ A declaration is collected whether or not it has an initializer. The
 where the two meanings can be told apart.
 
 **Deliberately not collected:** a parameter, a `function`, or a `class` named
-`reached`. `reached` in these files is a set of areas built from a census; none
-of those three forms is one, and none can carry an initializer expression to
+`reached`, among any other shape that binds the name without ever being a
+`VariableDeclaration`. `reached` in these files is a set of areas built from a
+census; none of those is one, and none can carry an initializer expression to
 check.
 
 ### 2. `reachedIndependenceOf` branches per declaration
@@ -123,11 +124,11 @@ For each collected declaration:
   `declaration.initializer` alone, so a dirty call hiding in a sibling binding
   element's default or a computed property key is still caught, not only one
   sitting in the destructuring source expression. The must-call-`censusOfTree`
-  check reads `declaration.initializer` alone: only the expression that
-  actually produces `reached`'s value can satisfy it. A `censusOfTree()` call
-  sitting in a sibling binding element's default or a computed property key
-  cannot stand in for that — neither one produces `reached`'s own value. A
-  call sitting in `reached`'s *own* default is different: it genuinely can
+  check reads `declaration.initializer` alone — the expression assigned to the
+  whole declaration. A `censusOfTree()` call sitting in a sibling binding
+  element's default or a computed property key cannot stand in for the census
+  call this checks for: neither one produces `reached`'s own value. A call
+  sitting in `reached`'s *own* default is different: it genuinely can
   produce that value, when the destructured property is absent — but
   `declaration.initializer` does not reach a binding element's default either
   way, so this check misses it deliberately, degrading loud (a false "makes no
@@ -141,9 +142,7 @@ Findings keep reporting the **call expression's** line, not the declaration's,
 so existing expectations are unchanged.
 
 `undefined` — as against `[]` — means `reachedDeclarationsIn` collects no
-`VariableDeclaration` binding `reached`, whether because the file declares no
-such name at all or only in one of the shapes named above as deliberately not
-collected.
+`VariableDeclaration` binding `reached`.
 
 ### Consequence: a for-of binding is reported
 
