@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import {
   generateMagicLinkToken,
   verifyMagicLinkToken,
   cleanupExpiredTokens,
 } from './magic-link';
+import { log } from '@/lib/log';
 
 const db = new PrismaClient();
 
@@ -132,6 +133,48 @@ describe('verifyMagicLinkToken', () => {
     // If invalidation ran before the expiry check, this would be dead too —
     // which would let anyone holding an old link deny the real user theirs.
     expect(await verifyMagicLinkToken(db, live)).toEqual({ email, redirectTo: null, purpose: 'sign_in' });
+  });
+});
+
+/**
+ * The two guards on the purge count's log line (#506). Addresses carry a
+ * `Date.now()` suffix while keeping the `@example.com` domain the file-level
+ * `afterEach` sweeps: the silence case asserts a negative, so a row left
+ * behind by a crashed earlier run would fail it, and that sweep only runs
+ * between tests within a run.
+ */
+describe('sibling-purge count logging (#506)', () => {
+  const MESSAGE = 'magic-link: invalidated surplus sibling links on consumption';
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('reports how many surplus links a consumption invalidated', async () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
+    const email = `purge-count-${Date.now()}@example.com`;
+    await generateMagicLinkToken(db, email);
+    await generateMagicLinkToken(db, email);
+    const third = await generateMagicLinkToken(db, email);
+
+    expect(await verifyMagicLinkToken(db, third)).not.toBeNull();
+
+    // Two, not three: the single-use delete takes the consumed row before the
+    // purge runs, so only its siblings are left to count. Asserting the number
+    // rather than merely that a line fired is the point — the number is the
+    // whole payload.
+    expect(info).toHaveBeenCalledWith({ purged: 2 }, MESSAGE);
+  });
+
+  it('stays silent when the consumed link had no siblings', async () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
+    const email = `purge-silent-${Date.now()}@example.com`;
+    const only = await generateMagicLinkToken(db, email);
+
+    expect(await verifyMagicLinkToken(db, only)).not.toBeNull();
+
+    // A zero purge is the ordinary sign-in, and logging it would put a line
+    // saying nothing on every one. Without this case, relaxing the guard to
+    // fire unconditionally passes every other test in this file.
+    expect(info).not.toHaveBeenCalledWith(expect.anything(), MESSAGE);
   });
 });
 
