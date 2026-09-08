@@ -342,8 +342,13 @@ describe('claimWithCode', () => {
   // lands after the delete is timing-dependent — which is why this test
   // asserts only the outcome every interleaving produces. That the
   // `updateMany` under-count guard actually fires when the row does vanish is
-  // pinned by the staged test below, which does not depend on scheduling.
+  // pinned by the staged under-count test in this file, which does not
+  // depend on scheduling.
   it('the race: a correct claim concurrent with wrong guesses never throws', async () => {
+    // Spied to silence, not to assert: this race legitimately fires the
+    // `updateMany` under-count warn, and pinning that it does is the staged
+    // test's job, not this one's. `afterEach` restores it.
+    vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     for (let i = 0; i < 8; i++) {
       const email = `claim-race-throw-${Date.now()}-${i}@example.com`;
       const nonce = `nonce-race-throw-${Date.now()}-${i}`;
@@ -515,10 +520,11 @@ describe('claimWithCode', () => {
   //
   // The sibling's `updateMany` is staged as `args` re-issued rather than as a
   // whole nested `claimWithCode` call: a nested call would take its snapshot
-  // AFTER this call's increment and predict two reaps rather than one, which
-  // is a different race. Re-issuing `args` is not an approximation of the
-  // sibling's statement — both calls derive `ids` from the same snapshot, so
-  // it is a copy of it.
+  // AFTER this call's increment, see `/b` already past the budget and reap
+  // it as its own spent row — this call's `deleteMany` would then find
+  // nothing and under-count, which is a different race. Re-issuing `args` is
+  // not an approximation of the sibling's statement — both calls derive
+  // `ids` from the same snapshot, so it is a copy of it.
   //
   // Interposed inside the hook rather than issued before the call, so it
   // lands after the miss path has taken its snapshot and computed
