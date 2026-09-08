@@ -388,7 +388,10 @@ export async function inviteContact(
  * The names are rewritten and `isArchived` cleared because this is an
  * invitation the teacher is sending now: they typed a name into the form,
  * and a contact that reappeared only in the archive would look like the
- * request did nothing.
+ * request did nothing. `delivered` is rewritten too, to the caller's
+ * freshly re-derived value — a revive is a fresh delivery decision, not an
+ * inherited one, and carrying the OLD row's `delivered` forward would
+ * undermine #502 Fix #2's tombstone scoping.
  *
  * `updateMany` scoped to `status: 'accepted'`, rather than `update` by id,
  * for one race: `unlinkTeacher` writes `declined` + a `TeacherBlock` in a
@@ -458,14 +461,16 @@ async function revivePendingInvitation(
  * unlinked) path, and saves this function's own re-checks entirely on the
  * withheld (blocked-or-linked) path, by skipping the call altogether.
  *
- * `PUT /api/invitations/[id]` edits `email` on a pending row without
- * recomputing `delivered`, which looks like a second door and is not: PUT
- * does not notify, so a value gone stale there reaches nobody. Named only so
- * the next reader does not go checking it, find it harmless, and conclude
- * the re-check below is redundant. `POST /api/invitations/[id]/resend`
- * (#173) also calls this function directly — it reads `email` fresh from
- * the row in the same request it dispatches, so there is no equivalent
- * staleness window for it to worry about.
+ * `PUT /api/invitations/[id]` recomputes `delivered` to `false` on every
+ * `email` change (#502 Fix #3). Named only so the next reader, finding
+ * `delivered` unconditionally reset on every re-address, does not conclude
+ * the re-check below is now redundant — it is not: `delivered` is still a
+ * value computed at `inviteContact`/`revivePendingInvitation`/`PUT` write
+ * time, and a `TeacherBlock` committed after that write (the window this
+ * whole function exists for) is invisible to all three. `POST
+ * /api/invitations/[id]/resend` (#173) also calls this function directly —
+ * it reads `email` fresh from the row in the same request it dispatches, so
+ * there is no equivalent staleness window for it to worry about.
  *
  * A pair that is already linked gets nothing at all. #412's gate creates a
  * real pending invitation rather than refuse one for a student whose address

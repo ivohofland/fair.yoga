@@ -700,6 +700,11 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       data: {
         firstName: 'Deleted',
         lastName: 'Student',
+        // `studentId`-derived, unlike the random token `Invitation.email`
+        // gets above: a teacher reading this value already holds
+        // `studentId` (they are looking at that student's own profile), so
+        // there is no guessed-identity oracle here the way there is on an
+        // `Invitation` row from a different, guessed identity.
         email: `deleted-${studentId}@deleted.invalid`,
         phone: null,
         birthday: null,
