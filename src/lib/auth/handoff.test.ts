@@ -339,9 +339,11 @@ describe('claimWithCode', () => {
   // throwing, so a row disappearing out from under either call must resolve
   // to a normal outcome, never an unhandled rejection. Looped, with more than
   // one concurrent wrong guess per iteration, since whether any single write
-  // lands after the delete is timing-dependent.
+  // lands after the delete is timing-dependent — which is why this test
+  // asserts only the outcome every interleaving produces. That the
+  // `updateMany` under-count guard actually fires when the row does vanish is
+  // pinned by the staged test below, which does not depend on scheduling.
   it('the race: a correct claim concurrent with wrong guesses never throws', async () => {
-    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     for (let i = 0; i < 8; i++) {
       const email = `claim-race-throw-${Date.now()}-${i}@example.com`;
       const nonce = `nonce-race-throw-${Date.now()}-${i}`;
@@ -357,12 +359,45 @@ describe('claimWithCode', () => {
         expect(['verified', 'invalid']).toContain(result.kind);
       }
     }
-    // The correct claim's consumeTokenRow deletes a row out from under at
-    // least one concurrent wrong guess's updateMany across these 8 races —
-    // the row-vanished-mid-write case the updateMany-undercount guard exists
-    // to catch.
+  });
+
+  // The correct claim consumes the matched row between this wrong guess's
+  // snapshot and its increment, so the increment finds nothing to charge.
+  //
+  // The sibling is a whole `claimWithCode` on the UNHOOKED client, so every
+  // statement it issues is the real one and it cannot re-enter this hook.
+  // Interposed before `query(args)` rather than after it, because the row has
+  // to be gone by the time the increment runs — that gap is the race.
+  it('warns when the matched row is consumed between the snapshot and the increment', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const email = `claim-staged-underwrite-${Date.now()}@example.com`;
+    const nonce = `nonce-staged-underwrite-${Date.now()}`;
+    const code = await stampedToken(email, nonce);
+    const wrong = ['000000', '111111'].find((g) => g !== code)!;
+
+    let hookCalls = 0;
+    const racing = db.$extends({
+      query: {
+        magicLinkToken: {
+          async updateMany({ args, query }) {
+            hookCalls += 1;
+            await claimWithCode(db, asBrowserNonce(nonce), code);
+            return query(args);
+          },
+        },
+      },
+      // `$extends` returns a client missing `$on`, so it is not assignable to
+      // `claimWithCode`'s `PrismaClient` parameter even though every method it
+      // calls here is the real one — same cast as the hooks in
+      // `waitlist.test.ts`.
+    }) as unknown as PrismaClient;
+
+    expect(await claimWithCode(racing, asBrowserNonce(nonce), wrong)).toEqual({ kind: 'invalid' });
+
+    expect(hookCalls).toBe(1);
+    expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ requested: expect.any(Number), affected: expect.any(Number) }),
+      { requested: 1, affected: 0 },
       'handoff: updateMany affected fewer candidates than requested',
     );
   });
