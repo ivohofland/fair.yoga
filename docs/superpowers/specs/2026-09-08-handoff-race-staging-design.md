@@ -45,13 +45,16 @@ npx vitest run --project unit src/lib/auth/handoff.test.ts    # the file alone
 |---|---|---|
 | A | 20 | 1 — `counts both attempts when two wrong guesses race concurrently`, **5000 ms timeout** (§7) |
 | B | 30 | 0 |
-| C | 3 | 1 — name not captured; the run's `tests` time of 5.74 s against 2.36/2.31 s for its neighbours matches batch A's timeout signature |
+| C | 3 | 1 — name not captured; the run's `tests` time was 5.74 s against 692 ms / 699 ms for its two neighbours, which matches batch A's timeout signature |
 | D | 25, `--reporter=verbose --testTimeout=30000` | 1 — **the over-count test itself**, failing its assertion in 128 ms, no timeout involved |
 
 **The over-count test fails 1 run in 78 with no neighbours at all**, against 1
-in 12 in the tier. Isolation buys roughly a 6x reduction; it does not buy
-zero, and it cannot, because nothing about running alone makes the two calls
-interleave (§1.4). This is the measurement the issue's recommendation rests
+in 12 in the tier. Isolation clearly reduces the rate — but with one failure
+on each side, no multiplier those two numbers imply is worth stating, which is
+the same restraint this section faults the issue for skipping. The load-bearing
+half needs no ratio: isolation does not buy zero, and it cannot, because
+nothing about running alone forces the particular interleaving the assertion
+needs (§1.4). This is the measurement the issue's recommendation rests
 on, and it does not support it — §1.5.
 
 ### 1.3 #508 did not cause it — HOLDS
@@ -88,6 +91,16 @@ from *this call's own snapshot*. Serialized, every prediction is correct, so
 assertion about scheduling. A weakened assertion is a smaller target, not a
 different kind of target.
 
+**The failure §1.1 actually observed is a partial ordering, not this one.**
+There, both calls took their snapshots and then call 1 ran to completion, so
+call 2's `updateMany` found one row already gone and warned the under-count —
+the single `log.warn` the failure reports. That ordering reaches no direction
+of the `deleteMany` guard either: call 2 predicts one reap and takes exactly
+one. So option A would have failed on that run too. The table above is
+therefore the stronger statement rather than the observed one, and what
+running alone cannot force is the *particular* interleaving the assertion
+needs, not interleaving as such.
+
 ### 1.5 Option B puts a false claim in the marker, and would not fully fix it either — the issue's premise is WRONG
 
 The issue's recommendation is **B. Move `handoff.test.ts` into
@@ -99,8 +112,8 @@ header says *"Files that cannot run in `unit`'s parallel tier because of LOCK
 TIMING — either they create it or they measure it"*, and membership is held by
 a marker that spells it: `@serial-tier lock-contention`, in each file's own
 header, tethered by `src/lib/serial-tier-membership.test.ts`. `handoff.ts`
-opens no transaction, takes no explicit lock, and asserts on no SQLSTATE; its
-three writes are autocommit statements. Measured over the list:
+opens no transaction, takes no explicit lock, and asserts on no SQLSTATE;
+`claimWithCode`'s three writes are autocommit statements. Measured over the list:
 
 ```
 npx tsx -e "
@@ -177,8 +190,16 @@ with a log-spy assertion, three more appear, and all three are non-members:
 | `src/services/studio-class-generator.test.ts` | **Not a member.** `:209` asserts only what every interleaving produces (both sweeps resolve; four dates), and its own docblock says so explicitly. |
 | `src/services/studio-class-template-lifecycle-lock-order.test.ts` | **Not a member.** Its races are staged with real held locks and causal handshakes — deterministic by construction, which is why it is in the serial tier. |
 
-The six `tests/integration/**` hits are fixture-creation loops, not race
-retries — none of them wraps a `Promise.all` in the loop.
+The six `tests/integration/**` hits are not members either, but not for the
+reason a first pass suggests. Four of the loop sites ARE race retries wrapping
+a `Promise.all` — `classes-api.test.ts:1558`, `studio-api.test.ts:332` and
+`:2063`, `class-templates-api.test.ts:393`. They are non-members because their
+assertion, `expect([a.status, b.status].sort()).toEqual([201, 409])`, is
+satisfied by every interleaving: an exclusion constraint picks the winner, so
+the loop widens the window against a regression rather than hoping for an
+ordering. The remaining loops wrap no `Promise.all` at all — fixture creation
+(`registrations-api.test.ts:232`, `students-api.test.ts:32`) and rate-limiter
+bursts (`invitations-api.test.ts:719`, `students-api.test.ts:1545`, `:1616`).
 
 The command is a floor rather than a census: the genus is semantic, and a race
 retried without a counter, or asserted through a database read rather than a
@@ -238,6 +259,12 @@ the scheduler produced.
 | 3 | `deleteMany` reap **over**-count | `A` at `M-2`, `B` at `M-1` | `updateMany`, **after** `query(args)` | the sibling's `updateMany`, i.e. `args` re-issued | `{ expected: 1, actual: 2 }` |
 | 4 | spent-cleanup mismatch | one candidate at `M` | `findMany`, **after** `query(args)` | the sibling's whole call — it reaps the spent row first | `{ expected: 1, actual: 0 }` |
 
+The plan implements these in the reverse order — case 1 is Task 4, case 2 is
+Task 2, case 3 is Task 1, case 4 is Task 3 — so that Task 1 takes the guard
+#509 actually reports and the reported flake goes first. Each row names its
+guard, so nothing is ambiguous read alone; the mapping is here for anyone
+cross-referencing a number.
+
 Each replaces the looped test that asserted the same guard. Case 1's property
 moves off line 343, which keeps its own loop and its own deterministic
 assertion (§6).
@@ -256,8 +283,13 @@ and retire the second, so both halves of that roster go stale in this branch.
 
 That is the failure CLAUDE.md's *Comment Discipline* describes exactly — a
 claim reaching past its own file, whose invalidating edit happens somewhere its
-author never looks. It is replaced by a claim about the FILE rather than the
-tests: a file rename is caught by the compiler and a test rename by nothing.
+author never looks. It is replaced by a link to §5 of this document, which is
+where a claim about another module belongs; the same form `handoff.ts` already
+uses twice for its other cross-file claims. What it must not become is a claim about the FILE rather than the
+tests: `X.ts` / `X.test.ts` is a repo-wide pairing, so renaming one half is
+conspicuous, while a test title is renamed casually and by anyone. Neither is
+caught mechanically — `handoff.ts` does not import its test file, so the
+reference is a bare string either way.
 Replaced, not annotated — what the comment used to say belongs in the PR body.
 
 ---
