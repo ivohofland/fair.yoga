@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import type { PrismaClient, MagicLinkPurpose } from '@prisma/client';
 import { hashToken, consumeTokenRow } from './magic-link';
 import { hashNonce, type BrowserNonce } from './origin-nonce';
+import { log } from '@/lib/log';
 
 export type HandoffOutcome =
   | { kind: 'verified'; email: string; redirectTo: string | null; purpose: MagicLinkPurpose }
@@ -151,13 +152,37 @@ export async function claimWithCode(
     // catch. The delete re-reads the counter inside its own statement, so
     // whichever concurrent guess pushed a row over the line, the row dies.
     const ids = live.map((c) => c.id);
-    await db.magicLinkToken.updateMany({
+    // Expected reap count, derived from THIS call's own `live` snapshot,
+    // taken before the increment below runs. A sibling call racing one of
+    // these same rows can move its true count between this snapshot and the
+    // writes below without this call ever seeing it (#504) — a mismatch
+    // below is that documented race, not proof of a bug on its own. Forced
+    // in handoff.test.ts by "the race: a correct claim concurrent with wrong
+    // guesses never throws" and "warns when two concurrent wrong guesses
+    // race the same near-exhausted candidate".
+    const expectedReaps = live.filter((c) => c.handoffAttempts + 1 >= HANDOFF_MAX_ATTEMPTS).length;
+
+    const incremented = await db.magicLinkToken.updateMany({
       where: { id: { in: ids } },
       data: { handoffAttempts: { increment: 1 } },
     });
-    await db.magicLinkToken.deleteMany({
+    if (incremented.count < ids.length) {
+      log.warn(
+        { requested: ids.length, affected: incremented.count },
+        'handoff: updateMany affected fewer candidates than requested',
+      );
+    }
+
+    const reaped = await db.magicLinkToken.deleteMany({
       where: { id: { in: ids }, handoffAttempts: { gte: HANDOFF_MAX_ATTEMPTS } },
     });
+    if (reaped.count !== expectedReaps) {
+      log.warn(
+        { expected: expectedReaps, actual: reaped.count },
+        'handoff: deleteMany reaped a different number of exhausted candidates than expected',
+      );
+    }
+
     return { kind: 'invalid' };
   }
 

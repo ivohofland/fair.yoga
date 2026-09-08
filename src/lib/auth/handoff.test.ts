@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { generateMagicLinkToken } from './magic-link';
 import { hashNonce } from './origin-nonce';
 import { verifyWithHandoff, claimWithCode, HANDOFF_MAX_ATTEMPTS } from './handoff';
 import { asBrowserNonce } from './test-support';
+import { log } from '@/lib/log';
 
 const db = new PrismaClient();
 
@@ -140,6 +141,8 @@ describe('claimWithCode', () => {
     if (out.kind !== 'handoff') throw new Error('expected a handoff');
     return out.code;
   }
+
+  afterEach(() => vi.restoreAllMocks());
 
   it('signs in the browser that requested the link', async () => {
     const email = `claim-ok-${Date.now()}@example.com`;
@@ -337,9 +340,10 @@ describe('claimWithCode', () => {
   // one concurrent wrong guess per iteration, since whether any single write
   // lands after the delete is timing-dependent.
   it('the race: a correct claim concurrent with wrong guesses never throws', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     for (let i = 0; i < 8; i++) {
       const email = `claim-race-throw-${Date.now()}-${i}@example.com`;
-      const nonce = `nonce-race-throw-${i}`;
+      const nonce = `nonce-race-throw-${Date.now()}-${i}`;
       const code = await stampedToken(email, nonce);
       const wrongGuesses = ['111111', '222222', '333333'].filter((g) => g !== code);
 
@@ -352,5 +356,35 @@ describe('claimWithCode', () => {
         expect(['verified', 'invalid']).toContain(result.kind);
       }
     }
+    // The correct claim's consumeTokenRow deletes a row out from under at
+    // least one concurrent wrong guess's updateMany across these 8 races —
+    // exactly the `incremented.count < ids.length` condition.
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({}),
+      'handoff: updateMany affected fewer candidates than requested',
+    );
+  });
+
+  it('warns when two concurrent wrong guesses race the same near-exhausted candidate', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    for (let i = 0; i < 8; i++) {
+      const email = `claim-race-reap-${Date.now()}-${i}@example.com`;
+      const nonce = `nonce-race-reap-${Date.now()}-${i}`;
+      const code = await stampedToken(email, nonce);
+      await db.magicLinkToken.updateMany({
+        where: { email },
+        data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS - 1 },
+      });
+      const wrong = ['000000', '111111'].find((g) => g !== code)!;
+
+      await Promise.all([
+        claimWithCode(db, asBrowserNonce(nonce), wrong),
+        claimWithCode(db, asBrowserNonce(nonce), wrong),
+      ]);
+    }
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ expected: 1 }),
+      'handoff: deleteMany reaped a different number of exhausted candidates than expected',
+    );
   });
 });
