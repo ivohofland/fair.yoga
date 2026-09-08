@@ -17,7 +17,8 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "worktree:setup": "tsx scripts/worktree-setup.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"
