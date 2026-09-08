@@ -51,8 +51,10 @@ Delete that comment block and the `it(…)` it introduces, and write in their pl
   //
   // The sibling's `updateMany` is staged as `args` re-issued rather than as a
   // whole nested `claimWithCode` call: a nested call would take its snapshot
-  // AFTER this call's increment and predict two reaps rather than one, which
-  // is a different race. Re-issuing `args` is not an approximation of the
+  // AFTER this call's increment, see `/b` already at the budget and reap it
+  // as its own spent row — this call's `deleteMany` would then find nothing
+  // and under-count, which is a different race. Re-issuing `args` is not an
+  // approximation of the
   // sibling's statement — both calls derive `ids` from the same snapshot, so
   // it is a copy of it.
   //
@@ -459,7 +461,7 @@ A roster of test titles in another file is precisely the claim CLAUDE.md's *Comm
     // this comment predicts is not one nobody has reproduced.
 ```
 
-Name the file, not the tests: a file rename is caught by the compiler, a test rename by nothing.
+Name the file, not the tests: `X.ts` / `X.test.ts` is a repo-wide pairing, so renaming one half is conspicuous, while a test title is renamed casually. Neither is caught mechanically — this is a bare string in a comment either way.
 
 - [ ] **Step 2: Sweep for the names this branch invalidated**
 
@@ -473,9 +475,9 @@ Expected hits, and the verdict for each:
 
 | hit | verdict |
 |---|---|
-| `docs/superpowers/plans/2026-09-08-handoff-miss-observability.md` (3 hits) | **Leave.** A plan is a record of what a past branch did, not a live description of the code — correcting it would rewrite history rather than fix an error. |
-| `docs/superpowers/plans/2026-09-08-handoff-race-staging.md` (7 hits) | **Leave.** This file's own text quotes the retired titles deliberately, as the "before" side of what this branch changes — and one of the 7 is this file's own copy of the grep command above, which matches itself. |
-| `docs/superpowers/specs/2026-09-08-handoff-race-staging-design.md` (5 hits) | **Leave**, same reason. |
+| `docs/superpowers/plans/2026-09-08-handoff-miss-observability.md` | **Leave.** A plan is a record of what a past branch did, not a live description of the code — correcting it would rewrite history rather than fix an error. |
+| `docs/superpowers/plans/2026-09-08-handoff-race-staging.md` | **Leave.** This file's own text quotes the retired titles deliberately, as the "before" side of what this branch changes. Two of its hits are self-referential — its copy of the grep command above, and the row below naming the current test title — so its count moves whenever this table is edited, which is why none is written here. |
+| `docs/superpowers/specs/2026-09-08-handoff-race-staging-design.md` | **Leave**, same reason. |
 | `src/lib/auth/handoff.test.ts:466` (current title `'warns when a sibling reaps the already-spent candidate first'`) | **Leave.** It is current, not stale. |
 | any OTHER hit under `src/` | **Must be zero** after Step 1. None found. |
 
@@ -511,7 +513,7 @@ git stash list   # expect empty
 for i in 1 2 3; do npx vitest run --project unit src/lib/auth/handoff.test.ts 2>&1 | grep -E '^ +Duration|Tests  '; done
 ```
 
-The pre-branch baseline, measured on `42d259af`, was **2.36 s / 2.31 s** for 26 tests (a third run hit §7's stall at 7.26 s and is excluded, and the exclusion is stated in the PR body rather than hidden). Record the three new numbers as measured, whichever way they fall.
+The pre-branch baseline, measured on `42d259af`, was a **`tests` time of 692 ms / 699 ms** for 26 tests, inside a total `Duration` of 2.36 s / 2.31 s. A third run hit §7's stall — 5.74 s of `tests` inside a 7.26 s `Duration` — and is excluded, stated here rather than hidden. Record the three new numbers as measured, naming the same metric, whichever way they fall.
 
 - [ ] **Step 2: The acceptance criterion — 20 consecutive tier runs**
 
@@ -531,7 +533,7 @@ Expected: zero failures of any of the four staged tests. §7 of the spec explain
 grep -n "Promise.all\|for (let i = 0" src/lib/auth/handoff.test.ts
 ```
 
-Expected: exactly three surviving sites — the two `the race: …` tests and `counts both attempts when two wrong guesses race concurrently` — and none of them inside a test that asserts on `log.warn`. Verify that last clause by reading the three, not by grepping.
+Expected: nine lines. Three are the race sites — the two `the race: …` tests and `counts both attempts when two wrong guesses race concurrently`. The other three loops spend the attempt budget sequentially and wrap no `Promise.all`; the remaining lines are a comment and a second `Promise.all` inside one of the race tests. None of the three race sites may sit inside a test that asserts on `log.warn` — verify that last clause by reading them, not by grepping.
 
 - [ ] **Step 4: The rest of the gate**
 
