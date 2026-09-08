@@ -157,7 +157,7 @@ All in `tests/integration/invitations-api.test.ts`, alongside the existing
 2. **CAS race**: a `pending` row that becomes `accepted` between the
    pre-check and the write must not have its email moved. Driven the way
    this file drives other CAS races (a Prisma extension hook, per
-   `invitations.gate.test.ts`'s own note on hooking `student.findUnique` —
+   `invitations.revive.test.ts`'s own note on hooking `student.findUnique` —
    here hooking the read inside `ownedInvitation` or the `updateMany` call to
    flip the row to `accepted` first) — mutation-proof per the skill's
    requirement (§3): the test must fail if the CAS is reverted to `{ not:

@@ -47,7 +47,7 @@ has to move with it. No whole-branch review needed for a single-task plan.
    nothing-moved assertion).
 2. CAS race: a row `pending` at the read, `accepted` by the time of the
    write (hook the read or the `updateMany` the way
-   `invitations.gate.test.ts` hooks `student.findUnique`) → the write must
+   `invitations.revive.test.ts` hooks `student.findUnique`) → the write must
    not land. Prove this test is mutation-sensitive: temporarily revert the
    CAS to `{ not: 'declined' }`, confirm the test fails, restore.
 3. Comparative oracle test: run the PUT-then-POST two-call sequence once for
