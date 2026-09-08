@@ -26,12 +26,17 @@ has to move with it. No whole-branch review needed for a single-task plan.
    return NOT_PENDING();` immediately after the existing `declined` check.
 3. In the same handler, narrow the `updateMany`'s `where` from `{ id, status:
    { not: 'declined' } }` to `{ id, status: 'pending' }`.
-4. In `casMatchedNothing` (`route.ts`), add a branch: if the re-read finds
-   `observed.status === 'accepted'`, return `NOT_PENDING()`. Rewrite its
-   docblock's "matches nothing for TWO reasons" to state three (declined,
-   accepted, or gone) — keep the existing `resolveInvitationOnLink`
-   race-within-a-race paragraph, which is about the `declined` branch
-   specifically and is unaffected by widening the CAS.
+4. In `casMatchedNothing` (`route.ts`, shared by `PUT` and `DELETE`), add a
+   branch scoped to PUT's own CAS only — an `InvitationCasScope` parameter
+   naming which CAS the caller ran, checked alongside `observed.status ===
+   'accepted'` — returning `NOT_PENDING()`. Unconditional (no caller scoping)
+   would silently change `DELETE`'s answer on the `resolveInvitationOnLink`
+   race the existing docblock paragraph documents, since `DELETE`'s own CAS
+   still admits `accepted` and has no "must be pending" policy. Rewrite the
+   docblock to state three base miss-reasons for PUT's CAS and two for
+   DELETE's, and to state the caller-scoped treatment — the existing
+   `resolveInvitationOnLink` mechanism paragraph needs no rewrite, only the
+   added caller split.
 5. Replace the `OPEN SECURITY ISSUE: #500` docblock on the `PUT` handler with
    one stating the closed property in the present tense — match the voice
    of `resend`'s own docblock on the equivalent check, not a "this used to
@@ -58,11 +63,18 @@ has to move with it. No whole-branch review needed for a single-task plan.
    `invitations.gate.test.ts`'s "answers a gated linked-unshared student the
    same as a genuine stranger" test: pin one side, derive the other via the
    comparison, no restated literal on both sides.
-4. Prove the pre-check itself is load-bearing: temporarily remove the
-   `NOT_PENDING` pre-check in `PUT`, confirm test 1 fails (the CAS narrowing
-   alone would 409 with `CONTACT_CHANGED`/generic-409 rather than
-   `NOT_PENDING`, which is a real behavior difference on the direct,
-   non-race path), restore.
+4. Prove the pre-check itself is load-bearing. Note for whoever implements
+   this: a *valid* re-address body does not distinguish the pre-check from
+   the CAS-plus-`casMatchedNothing` safety net once both exist — the CAS
+   still misses on an already-`accepted` row and `casMatchedNothing`'s own
+   new branch still answers `NOT_PENDING`, so test 1 alone stays green with
+   the pre-check removed. The actual distinguishing case is an *invalid*
+   body (an unrecognized field) on an `accepted` row: with the pre-check,
+   the row is refused on its status before the body is ever parsed
+   (matching `DECLINED`'s existing ordering); without it, the request falls
+   through to `updateInvitationSchema` and 400s instead of 409ing. Write
+   that as its own test, temporarily remove the pre-check, confirm it fails
+   with 400 where it should 409, restore.
 5. Confirm `resend`'s existing "refuses a non-pending row that is not
    declined" test keeps passing unedited after the `shared.ts` dedup.
 

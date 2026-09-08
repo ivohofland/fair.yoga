@@ -23,53 +23,61 @@ import { ownedInvitation, NOT_FOUND, DECLINED, NOT_PENDING } from './shared';
 type InvitationCasScope = 'pending' | 'not-declined';
 
 /**
+ * The two CAS filters this file's writes run under, keyed by
+ * `InvitationCasScope` so a filter and the scope naming it can never drift
+ * apart: each caller below reads its own `where` fragment out of here and
+ * passes the very same key on to `casMatchedNothing`, rather than typing the
+ * filter and the scope as two separately-editable literals.
+ */
+const CAS_FILTER = {
+  pending: { status: 'pending' },
+  'not-declined': { status: { not: 'declined' } },
+} as const satisfies Record<InvitationCasScope, Prisma.InvitationWhereInput>;
+
+/**
  * What a CAS that matched nothing actually means — asked, not assumed.
  *
- * `where: { id, status: { not: 'declined' } }` (DELETE) matches nothing for
- * one of TWO reasons: the row went declined in the gap after the pre-check
- * (the original case this function exists for), or the row is simply
- * gone — a concurrent delete from the teacher's other tab, or their own
- * retried delete. `where: { id, status: 'pending' }` (PUT, since #500) can
- * miss for a THIRD reason besides those two: the row went accepted in that
- * same gap — PUT's own CAS is narrow enough to catch that, where DELETE's
- * still admits `accepted` and deletes it outright. Answering
- * `DECLINED_IS_PERMANENT` for any of these told a teacher who had just
- * deleted a contact that the person had declined their invitation: a false
- * statement about a third party's choice, made by a tool whose premise is
- * not making those.
+ * Each caller's own CAS decides which statuses count as a miss. DELETE's
+ * `CAS_FILTER['not-declined']` misses only when the row went `declined` in
+ * the gap after the pre-check (the original case this function exists for),
+ * or is simply gone — a concurrent delete from the teacher's other tab, or
+ * their own retried delete. PUT's `CAS_FILTER.pending` (since #500) misses
+ * on either of those too, plus a third way: the row went `accepted` in that
+ * same gap — PUT's own CAS is narrow enough to catch that; DELETE's still
+ * admits `accepted` and deletes it outright. Answering `DECLINED_IS_PERMANENT`
+ * for the vanished-row case would tell a teacher who had just deleted a
+ * contact that the person declined their invitation — a false statement
+ * about a third party's choice, made by a tool whose premise is not making
+ * those.
  *
  * So re-read and report what is actually there, the shape
  * `deleteTeacherAccount`'s class CAS (`services/gdpr.ts`) uses. Scoped to the
  * teacher again rather than by id alone: a row that is no longer theirs is not
  * theirs to hear about, which is the same reason `NOT_FOUND` exists above.
  *
- * The third branch — present, not gone, not declined — IS reachable, and by
- * the one mechanism this domain is built around. `resolveInvitationOnLink`
+ * A re-read finding `accepted` — present, not gone, not declined — is
+ * reachable two ways, and neither caller needs to tell them apart: directly
+ * (the invitee accepts in the gap, no decline involved), or by the one
+ * mechanism a `declined`-caused miss can hide behind — `resolveInvitationOnLink`
  * (`services/link-consent.ts`) returns a `declined` row to `accepted` on any
- * booking or waitlist join by that student, unconditionally — unlike the
- * `pending` half of the same rule, which turns on whether the act also created
- * the roster link (`docs/data-model.md`, Invitation). Unconditional because
- * booking a class or joining a waitlist is how a student takes their own
- * decline back, and CLAUDE.md calls it the route back. That is the half this
- * branch needs, and it is the whole of it: a CAS scoped `{ not: 'declined' }`
- * can miss only on a row that went declined or vanished, so a re-read finding
- * neither means a decline was taken back underneath it. The sequence is
- * ordinary, not anomalous — the teacher's edit (or deletion) passes its
- * pre-check on a not-yet-declined row, the invitee declines, the CAS matches
- * nothing, and the invitee then books — landing this branch's re-read on
- * `accepted`, even though the miss itself was caused by `declined`, not by
- * `accepted`.
+ * booking or waitlist join by that student, unconditionally, so a CAS that
+ * missed because the row went `declined` can still find `accepted` sitting
+ * there by the time this function's own re-read runs. Booking a class or
+ * joining a waitlist is how a student takes their own decline back, and
+ * CLAUDE.md calls it the route back — the sequence is ordinary, not
+ * anomalous, for either caller's own read-then-write gap.
  *
- * For DELETE this still falls all the way through to the generic 409 below,
- * unchanged since before #500: DELETE has never claimed a policy about
- * `pending`, so answering `NOT_PENDING` here would assert one it doesn't
- * have. For PUT, since #500, this same re-read is indistinguishable from
- * PUT's own direct reason below (an acceptance landing in the gap with no
- * decline involved at all) — rightly so, since PUT's policy is simply "not
- * pending is refused" regardless of how the row got there. `info`, not
- * `warn`, for the branch that still reaches the generic answer: nothing is
- * wrong when this fires, and the honest answer to the teacher is that the
- * row moved, not a story about a refusal.
+ * The two callers answer that same observation differently, because their
+ * policies differ, not because the mechanism does. DELETE has never claimed
+ * a policy about `pending` — deleting an `accepted` row outright is the
+ * whole point of leaving it the deliberate exception (`PUT`'s own docblock
+ * below) — so it falls all the way through to the generic 409, exactly as it
+ * did before #500. PUT's policy, since #500, is simply "not pending is
+ * refused" regardless of how the row got there, so this same observation
+ * answers `NOT_PENDING` there. `info`, not `warn`, for the branch that still
+ * reaches the generic answer: nothing is wrong when this fires, and the
+ * honest answer to the teacher is that the row moved, not a story about a
+ * refusal.
  */
 async function casMatchedNothing(teacherId: string, id: string, cas: InvitationCasScope) {
   // Bounded: a throw here would turn a deterministic 409 into a 500, on the
@@ -87,14 +95,25 @@ async function casMatchedNothing(teacherId: string, id: string, cas: InvitationC
     if (observed.status === 'declined') return DECLINED();
     // Scoped to PUT's own CAS: DELETE's `'not-declined'` CAS still admits
     // `accepted` rows and deletes them outright, so an `accepted` re-read
-    // there is the `resolveInvitationOnLink` race-within-a-race above, not a
-    // refusal — "no longer pending" is not a policy DELETE has ever stated.
-    if (cas === 'pending' && observed.status === 'accepted') return NOT_PENDING();
+    // there is the `resolveInvitationOnLink` race above, not a refusal —
+    // "no longer pending" is not a policy DELETE has ever stated. Logged
+    // before returning rather than falling through to the shared log call
+    // below: this is the one outcome under this branch #500 exists to make
+    // visible, and an early return that skipped the log would make it the
+    // only miss reason with no telemetry at all.
+    if (cas === 'pending' && observed.status === 'accepted') {
+      log.info(
+        { teacherId, invitationId: id, cas, observedStatus: 'accepted' },
+        'invitation CAS matched nothing; the row moved under the request',
+      );
+      return NOT_PENDING();
+    }
   }
   log.info(
     {
       teacherId,
       invitationId: id,
+      cas,
       observedStatus: observed === 'unread' ? 'unread' : observed.status,
     },
     'invitation CAS matched nothing; the row moved under the request',
@@ -107,17 +126,15 @@ async function casMatchedNothing(teacherId: string, id: string, cas: InvitationC
 
 /**
  * Gates on ownership and status, and nothing else — in particular there is
- * no roster-link check on the incoming `email`, because none is needed:
- * `NOT_PENDING` below refuses the whole write on any row that isn't
- * `pending`, so an `accepted` row can never be re-addressed to a guessed
- * value and re-probed with `POST /api/students` (#500). `resend` (`./resend/
- * route.ts`) answers the same row the same way, for the same reason: `PUT`
- * and `resend` are two of the three doors under this resource, both refusing
- * an `accepted` row outright. `DELETE`, the third, is the deliberate
- * exception — it allows removing an `accepted` row outright instead, which
- * does not reopen this oracle; see
- * `docs/superpowers/specs/2026-09-08-invitation-readdress-oracle-design.md`
- * for why.
+ * no roster-link check on the incoming `email`, because none is needed: the
+ * check below refuses the whole write on any row that isn't `pending`, so an
+ * `accepted` row can never be re-addressed to a guessed value and re-probed
+ * with `POST /api/students` (#500). `resend` (`./resend/route.ts`) refuses
+ * the same row the same way, for the same reason. `DELETE` deliberately does
+ * not: removing an `accepted` row leaves no `existing` row for
+ * `inviteContact`'s `accepted` disjunct (`services/invitations.ts`) to fire
+ * on, so a guess-and-probe against a deleted row gets an ordinary fresh
+ * invite either way, not a second door into the same oracle.
  */
 export const PUT = withErrorHandler(async (
   request: NextRequest,
@@ -176,18 +193,18 @@ export const PUT = withErrorHandler(async (
   // but the message is the edit form's, because "another contact holds this
   // address" is what the teacher standing on this page can act on.
   let changed: { count: number };
+  const scope: InvitationCasScope = 'pending';
   try {
     changed = await prisma.invitation.updateMany({
       // Status in the WHERE for the same reason DELETE has it: the pre-check
       // above cannot see a decline — or, since #500, an acceptance — that
-      // commits in its gap. `status: 'pending'` (positive equality) rather
+      // commits in its gap. `CAS_FILTER.pending` is positive equality rather
       // than `notIn: ['declined', 'accepted']`: naming the one state this
       // write allows means a future fourth `InvitationStatus` member is
-      // excluded by default, not silently admitted — the same "name the
-      // state you allow" preference `rosterLinkState`'s own docblock states
-      // (services/invitations.ts) for its `existing?.status === 'accepted'`
-      // check.
-      where: { id, status: 'pending' },
+      // excluded by default, not silently admitted — the same preference
+      // `inviteContact`'s own comment states (`services/invitations.ts`) for
+      // its `existing?.status === 'accepted'` check.
+      where: { id, ...CAS_FILTER[scope] },
       // Nothing here lowercases `email` — it arrives already normalised
       // by `emailField` (`updateInvitationSchema`, src/lib/schemas.ts) at
       // HTTP ingress, and `Invitation_email_lowercase_check` rejects
@@ -208,7 +225,7 @@ export const PUT = withErrorHandler(async (
   }
   // Not automatically the decline: the row may simply be gone. See
   // `casMatchedNothing`.
-  if (changed.count === 0) return casMatchedNothing(session.teacherId, id, 'pending');
+  if (changed.count === 0) return casMatchedNothing(session.teacherId, id, scope);
   return respondOk({ id });
 });
 
@@ -238,10 +255,11 @@ export const DELETE = withErrorHandler(async (
   // `casMatchedNothing`'s question — a decline is only one of its answers, and
   // "the row is already gone" is the other, which for a DELETE is the retry
   // this route is meant to survive.
+  const scope: InvitationCasScope = 'not-declined';
   const removed = await prisma.invitation.deleteMany({
-    where: { id, status: { not: 'declined' } },
+    where: { id, ...CAS_FILTER[scope] },
   });
-  if (removed.count === 0) return casMatchedNothing(session.teacherId, id, 'not-declined');
+  if (removed.count === 0) return casMatchedNothing(session.teacherId, id, scope);
   return respondOk({ id });
 });
 

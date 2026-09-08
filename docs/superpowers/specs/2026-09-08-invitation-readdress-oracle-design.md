@@ -121,22 +121,28 @@ by the issue, and tracing it out shows why.
    concurrently) would still match the old CAS and let the write through —
    the exact race shape `declined` was already guarded against, now closed
    for `accepted` too. `status: 'pending'` (positive equality) rather than
-   `notIn: ['declined', 'accepted']`: `InvitationStatus` has exactly three
-   members today and the Prisma-generated literal type means a future fourth
-   member is excluded from this CAS by default rather than silently
-   admitted — the same "name the state you allow, not the ones you happen to
-   know about today" preference `rosterLinkState`'s own docblock states for
-   `existing?.status === 'accepted'`.
+   `notIn: ['declined', 'accepted']`: naming the one state this write allows
+   means a future `InvitationStatus` member is excluded from this CAS by
+   default rather than silently admitted — the same preference
+   `inviteContact`'s own inline comment states (`services/invitations.ts`,
+   not `rosterLinkState`'s docblock, which has no `existing` variable in
+   scope) for its `existing?.status === 'accepted'` check.
 4. **`casMatchedNothing`**: its docblock currently states the CAS "matches
    nothing for TWO reasons" (declined, or gone) and analyses a "third branch"
    that is `declined`'s indirect return route through
-   `resolveInvitationOnLink`. Widening the CAS makes `accepted` a third base
-   reason a miss can occur (declined, accepted, or gone), so: add an
-   `observed.status === 'accepted'` branch returning `NOT_PENDING()`, and
-   rewrite the docblock to state three base reasons, not two — the
-   `resolveInvitationOnLink` race-within-a-race analysis for the `declined`
-   branch is unaffected and stays as prose describing that one branch, not
-   the whole check.
+   `resolveInvitationOnLink`. Widening PUT's CAS makes `accepted` a third
+   base reason a miss can occur on PUT's side (declined, accepted, or gone) —
+   but `casMatchedNothing` is shared with `DELETE`, whose own CAS is
+   unchanged and still admits `accepted` outright, so the new branch must be
+   scoped to PUT's caller only (an explicit `InvitationCasScope` parameter
+   naming which CAS the caller ran, checked alongside `observed.status ===
+   'accepted'`) rather than added unconditionally — an unconditional branch
+   would silently change DELETE's answer on the exact
+   `resolveInvitationOnLink` race the existing paragraph documents. Rewrite
+   the docblock to state three base reasons for PUT's CAS and two for
+   DELETE's, and to state the caller-scoped treatment explicitly; the
+   `resolveInvitationOnLink` mechanism paragraph itself is unaffected by
+   widening the CAS and needs no rewrite, only this added caller split.
 5. **`resend/route.ts`**: switch its inline `respondError('This invitation is
    no longer pending.', 409, 'NOT_PENDING')` to the new shared `NOT_PENDING()`
    — no behavior change, just the dedup `shared.ts`'s existing `DECLINED`
