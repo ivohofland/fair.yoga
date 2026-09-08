@@ -74,6 +74,14 @@ export async function verifyWithHandoff(
     // Lost the race: a concurrent opener already stamped a code first.
     // Return theirs — ours was never persisted.
     const winner = await db.magicLinkToken.findUnique({ where: { id: row.id } });
+    // `winner` reading back with a null `handoffCode` cannot happen today —
+    // this column has exactly one writer (the CAS a few lines above) and it
+    // always writes a well-formed 6-digit string. The `?.` guard defends
+    // against a null `winner` (the row deleted from under this call); the
+    // truthiness check defends against an out-of-band writer this code
+    // cannot see. See
+    // docs/superpowers/specs/2026-09-08-handoff-cas-loser-coverage-design.md
+    // §1.2 for the census this depends on.
     if (!winner?.handoffCode) return { kind: 'invalid' };
     return { kind: 'handoff', code: winner.handoffCode };
   }

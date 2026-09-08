@@ -69,9 +69,10 @@ describe('verifyWithHandoff', () => {
   // since the race window is timing-dependent: one iteration hitting it is
   // enough to prove the bug, but a suite that only tries once can get lucky.
   //
-  // Kept alongside the two staged tests below: it's the only place two real
-  // callers exercise this path concurrently, rather than through one staged
-  // call.
+  // Kept alongside the two staged tests below: this test proves the
+  // timing-dependent bug is real under a genuine race, while the staged
+  // tests below pin specific branches deterministically — two different
+  // jobs, neither replacing the other.
   it('the race: concurrent first-opens of the same link agree on one code', async () => {
     for (let i = 0; i < 8; i++) {
       const email = `handoff-race-${Date.now()}-${i}@example.com`;
@@ -140,7 +141,7 @@ describe('verifyWithHandoff', () => {
   // reads back `null` and the loser must report `invalid` rather than
   // dereference a row that no longer exists. This shape is unreachable by
   // the existing loop-based race test, which only ever stages two
-  // no-nonce opens — see the spec's §1.4.
+  // no-nonce opens — see the spec's §1.3-1.4.
   //
   // The sibling is a whole `verifyWithHandoff` call on the UNHOOKED client,
   // so every statement it issues is the real one and it cannot re-enter this
