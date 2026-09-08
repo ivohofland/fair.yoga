@@ -4,7 +4,7 @@
 
 **Goal:** Add two deterministic tests to `src/lib/auth/handoff.test.ts` that stage `verifyWithHandoff`'s compare-and-swap loser branch (`handoff.ts:73-79`) at the exact statement boundary the race requires, covering both of its reachable shapes — the winner-arm (`:78`, another opener stamped a code first) and the invalid-arm (`:77`, the token was consumed and deleted before this call's CAS ran). Neither shape is guaranteed by the existing `Promise.all`-based race test, and the invalid-arm is unreachable by it under any interleaving (see spec §1.4).
 
-**Architecture:** Each staged test makes **one** real `verifyWithHandoff` call through a `db.$extends({ query: { magicLinkToken: { ... } } })` hook on `updateMany` — the CAS statement — that interposes a real sibling call on the *unhooked* client before `query(args)` runs. This is the same idiom `handoff.test.ts` already uses four times for `claimWithCode` (closest template: `'warns when the matched row is consumed between the snapshot and the increment'`, `:449`). No shared helper — each hook is written inline, short enough to read as the race it stages.
+**Architecture:** Each staged test makes **one** real `verifyWithHandoff` call through a `db.$extends({ query: { magicLinkToken: { ... } } })` hook on `updateMany` — the CAS statement — that interposes a real sibling call on the *unhooked* client before `query(args)` runs. This is the same idiom `handoff.test.ts` already uses four times for `claimWithCode` (closest template: `'warns when the matched row is consumed between the snapshot and the increment'`). No shared helper — each hook is written inline, short enough to read as the race it stages.
 
 **Tech Stack:** TypeScript strict, Vitest 4 (`unit` project, real Postgres via `DATABASE_URL_TEST`), Prisma 6 client extensions.
 
@@ -29,7 +29,7 @@
 
 **Interfaces:**
 - Consumes: `mint(email, nonce)` (module-level, `:10`), `verifyWithHandoff`, `db` — all already imported/defined at the top of the file.
-- Produces: the first `$extends` cast in this insertion region, fully explained. **Task order is load-bearing: this task must run before Task 2** — Task 2's hook back-references this one's cast comment (`// Same cast, same reason as the first hook in this file.`), the convention this file's four existing `claimWithCode` hooks already use, and needs this task's comment to exist first.
+- Produces: the first `$extends` cast in this insertion region, fully explained. **Task order is load-bearing: this task must run before Task 2** — Task 2's hook back-references this one's cast comment (`// Same cast, same reason as the first hook in this describe block.`), the convention this file's four existing `claimWithCode` hooks already use, and needs this task's comment to exist first.
 
 - [ ] **Step 1: Add the test**
 
@@ -152,7 +152,7 @@ git commit -m "test(auth): stage the CAS winner-arm race instead of hoping for i
           },
         },
       },
-      // Same cast, same reason as the first hook in this file.
+      // Same cast, same reason as the first hook in this describe block.
     }) as unknown as PrismaClient;
 
     const loser = await verifyWithHandoff(racing, token, null);
