@@ -26,11 +26,12 @@ npx vitest run --project unit src/lib/auth/handoff.test.ts -t "counts both attem
 ```
 
 (the file alone, one test selected) produced **1 timeout in 150** —
-`5007ms`, `Duration 6.38s` — consistent with the issue's ~2.6% within
-binomial noise. Per-iteration wall time was otherwise tight: min 1.97s,
-median 2.19s, and the one failure at 7.14s — the same bimodal shape (fast, or
-+5s, nothing between) the issue's batch D reported, re-derived on a fresh
-sample.
+vitest reported `5007ms` and `Duration 6.38s` (vitest's own internal timers) —
+consistent with the issue's ~2.6% within binomial noise. Per-iteration wall
+time (external measurement including process-spawn overhead) was otherwise
+tight: min 1.97s, median 2.19s, and the one failure at 7.14s — the same
+bimodal shape (fast, or +5s, nothing between) the issue's batch D reported,
+re-derived on a fresh sample.
 
 ## 3. Negative control: the same query pattern, outside vitest
 
