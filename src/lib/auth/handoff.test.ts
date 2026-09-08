@@ -415,30 +415,49 @@ describe('claimWithCode', () => {
     );
   });
 
-  // Two concurrent calls racing the same already-exhausted candidate both
-  // read it as `spent` and both try to delete it — whichever `deleteMany`
-  // runs second finds 0 rows left, since the first already removed it.
-  it('warns when two concurrent claims both try to reap the same already-spent candidate', async () => {
+  // Two calls racing an already-exhausted candidate both read it as `spent`
+  // and both try to delete it; whichever runs second finds nothing left.
+  // Staged by interposing the sibling right after THIS call's `findMany`, so
+  // both have the row in their `spent` set before either deletes it — which
+  // is the only ordering that reaches the guard.
+  //
+  // The exact guess doesn't matter: this row is already exhausted and gets
+  // swept into `spent` regardless of whether it matches.
+  it('warns when a sibling reaps the already-spent candidate first', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    for (let i = 0; i < 8; i++) {
-      const email = `claim-race-spent-${Date.now()}-${i}@example.com`;
-      const nonce = `nonce-race-spent-${Date.now()}-${i}`;
-      await stampedToken(email, nonce);
-      await db.magicLinkToken.updateMany({
-        where: { email },
-        data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS },
-      });
-      // The exact guess doesn't matter: this row is already exhausted and
-      // gets swept into `spent` regardless of whether it matches.
-      const guess = '000000';
+    const email = `claim-staged-spent-${Date.now()}@example.com`;
+    const nonce = `nonce-staged-spent-${Date.now()}`;
+    await stampedToken(email, nonce);
+    await db.magicLinkToken.updateMany({
+      where: { email },
+      data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS },
+    });
+    const guess = '000000';
 
-      await Promise.all([
-        claimWithCode(db, asBrowserNonce(nonce), guess),
-        claimWithCode(db, asBrowserNonce(nonce), guess),
-      ]);
-    }
+    let hookCalls = 0;
+    const racing = db.$extends({
+      query: {
+        magicLinkToken: {
+          async findMany({ args, query }) {
+            hookCalls += 1;
+            const ours = await query(args);
+            await claimWithCode(db, asBrowserNonce(nonce), guess);
+            return ours;
+          },
+        },
+      },
+      // `$extends` returns a client missing `$on`, so it is not assignable to
+      // `claimWithCode`'s `PrismaClient` parameter even though every method it
+      // calls here is the real one — same cast as the hooks in
+      // `waitlist.test.ts`.
+    }) as unknown as PrismaClient;
+
+    expect(await claimWithCode(racing, asBrowserNonce(nonce), guess)).toEqual({ kind: 'invalid' });
+
+    expect(hookCalls).toBe(1);
+    expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ expected: 1, actual: 0 }),
+      { expected: 1, actual: 0 },
       'handoff: spent-candidate cleanup reaped a different number of rows than expected',
     );
   });
