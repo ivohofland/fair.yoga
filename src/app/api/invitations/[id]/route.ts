@@ -11,27 +11,31 @@ import {
 } from '@/lib/api-utils';
 import { updateInvitationSchema, archiveStateQuerySchema } from '@/lib/schemas';
 import { log } from '@/lib/log';
-import { ownedInvitation, NOT_FOUND, DECLINED } from './shared';
+import { ownedInvitation, NOT_FOUND, DECLINED, NOT_PENDING } from './shared';
 
 /**
  * What a CAS that matched nothing actually means — asked, not assumed.
  *
- * `where: { id, status: { not: 'declined' } }` matches nothing for TWO
- * reasons: the row went declined in the gap after the pre-check (the case the
- * guard exists for), or the row is simply gone — a concurrent delete from the
- * teacher's other tab, or their own retried delete. Answering
- * `DECLINED_IS_PERMANENT` for both told a teacher who had just deleted a
- * contact that the person had declined their invitation: a false statement
- * about a third party's choice, made by a tool whose premise is not making
- * those.
+ * `where: { id, status: { not: 'declined' } }` (DELETE) or `{ id, status:
+ * 'pending' }` (PUT, since #500) matches nothing for one of THREE base
+ * reasons: the row went declined in the gap after the pre-check (the
+ * original case this function exists for), the row went accepted in that
+ * same gap (PUT's CAS is narrow enough to miss on this too, since #500 —
+ * DELETE's own CAS still admits `accepted` and deletes it outright, so this
+ * branch answers only for PUT), or the row is simply gone — a concurrent
+ * delete from the teacher's other tab, or their own retried delete.
+ * Answering `DECLINED_IS_PERMANENT` for all three told a teacher who had
+ * just deleted a contact that the person had declined their invitation: a
+ * false statement about a third party's choice, made by a tool whose
+ * premise is not making those.
  *
  * So re-read and report what is actually there, the shape
  * `deleteTeacherAccount`'s class CAS (`services/gdpr.ts`) uses. Scoped to the
  * teacher again rather than by id alone: a row that is no longer theirs is not
  * theirs to hear about, which is the same reason `NOT_FOUND` exists above.
  *
- * The third branch — present, not gone, not declined — IS reachable, and by
- * the one mechanism this domain is built around. `resolveInvitationOnLink`
+ * The `declined` branch above IS reachable, and by the one mechanism this
+ * domain is built around. `resolveInvitationOnLink`
  * (`services/link-consent.ts`) returns a `declined` row to `accepted` on any
  * booking or waitlist join by that student, unconditionally — unlike the
  * `pending` half of the same rule, which turns on whether the act also created
@@ -51,8 +55,9 @@ async function casMatchedNothing(teacherId: string, id: string) {
   // Bounded: a throw here would turn a deterministic 409 into a 500, on the
   // retry path #196 exists to make safe. `'unread'` is its own outcome rather
   // than folding into `null`, which already means "gone" — and it falls to the
-  // neutral 409 below, never to `DECLINED()`. Reporting a decline we could not
-  // read is the precise failure this whole function was written to remove.
+  // neutral 409 below, never to `DECLINED()`/`NOT_PENDING()`. Reporting a
+  // decline or an acceptance we could not read is the precise failure this
+  // whole function was written to remove.
   const observed = await ownedInvitation(teacherId, id).catch((err: unknown) => {
     log.warn({ err, teacherId, invitationId: id }, 'invitation CAS re-read failed');
     return 'unread' as const;
@@ -60,6 +65,7 @@ async function casMatchedNothing(teacherId: string, id: string) {
   if (observed !== 'unread') {
     if (!observed) return NOT_FOUND();
     if (observed.status === 'declined') return DECLINED();
+    if (observed.status === 'accepted') return NOT_PENDING();
   }
   log.info(
     {
@@ -76,16 +82,17 @@ async function casMatchedNothing(teacherId: string, id: string) {
 }
 
 /**
- * OPEN SECURITY ISSUE: #500. This handler gates on ownership and a `declined`
- * status, and on nothing else — in particular there is no roster-link check
- * on the incoming `email`. A teacher holding any `accepted` invitation can
- * therefore re-address it to an address they guessed and then re-probe with
- * `POST /api/students`, where `inviteContact`'s `ALREADY_LINKED` disjunct
- * answers differently for one of their own students than for a stranger.
- * That is the #412/#417 confirmation oracle through a second door, and it is
- * still open: #418 narrowed what a booking resolves, which closes nothing
- * here because this path never reaches `resolveInvitationOnLink`. Read the
- * gates below as incomplete until #500 lands.
+ * Gates on ownership and status, and nothing else — in particular there is
+ * no roster-link check on the incoming `email`, because none is needed:
+ * `NOT_PENDING` below refuses the whole write on any row that isn't
+ * `pending`, so an `accepted` row can never be re-addressed to a guessed
+ * value and re-probed with `POST /api/students` (#500). `resend` (`./resend/
+ * route.ts`) answers the same row the same way, for the same reason — this
+ * is the one door of the three (PUT/DELETE/resend) under this resource that
+ * used to leave it open. `DELETE` is the deliberate exception: it allows
+ * removing an `accepted` row outright, which does not reopen this oracle —
+ * see `docs/superpowers/specs/2026-09-08-invitation-readdress-oracle-design.md`
+ * for why.
  */
 export const PUT = withErrorHandler(async (
   request: NextRequest,
@@ -103,6 +110,17 @@ export const PUT = withErrorHandler(async (
   // free that address for a fresh invite just as surely as deleting the row
   // would, so an edit is the same hole through a second door.
   if (invitation.status === 'declined') return DECLINED();
+
+  // The only other status is `accepted` (`InvitationStatus` has exactly
+  // three members) — refusing the whole update, not just `email`, the same
+  // way the `declined` refusal above already covers the whole body rather
+  // than one field. A route that let `firstName`/`lastName` through on a row
+  // it has otherwise decided is frozen would be a route with two policies
+  // instead of one (#500). Checked before `parseBody` below, not after: a
+  // frozen row is refused on its own status, not on whatever happens to be
+  // in the body — the same ordering `DECLINED` above already keeps, so an
+  // accepted row's write is never even validated, let alone considered.
+  if (invitation.status !== 'pending') return NOT_PENDING();
 
   const parsed = await parseBody(request, updateInvitationSchema);
   if ('error' in parsed) return parsed.error;
@@ -137,8 +155,15 @@ export const PUT = withErrorHandler(async (
   try {
     changed = await prisma.invitation.updateMany({
       // Status in the WHERE for the same reason DELETE has it: the pre-check
-      // above cannot see a decline that commits in its gap.
-      where: { id, status: { not: 'declined' } },
+      // above cannot see a decline — or, since #500, an acceptance — that
+      // commits in its gap. `status: 'pending'` (positive equality) rather
+      // than `notIn: ['declined', 'accepted']`: naming the one state this
+      // write allows means a future fourth `InvitationStatus` member is
+      // excluded by default, not silently admitted — the same "name the
+      // state you allow" preference `rosterLinkState`'s own docblock states
+      // (services/invitations.ts) for its `existing?.status === 'accepted'`
+      // check.
+      where: { id, status: 'pending' },
       // Nothing here lowercases `email` — it arrives already normalised
       // by `emailField` (`updateInvitationSchema`, src/lib/schemas.ts) at
       // HTTP ingress, and `Invitation_email_lowercase_check` rejects

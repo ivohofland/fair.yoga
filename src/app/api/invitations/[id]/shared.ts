@@ -52,3 +52,14 @@ export const DECLINED = () =>
     409,
     'DECLINED_IS_PERMANENT',
   );
+
+/**
+ * The refusal a non-pending, non-declined row earns — today that means
+ * `accepted`, the one status `DECLINED` above doesn't already cover. PUT's
+ * pre-check, its post-CAS answer (via `casMatchedNothing`, `route.ts`), and
+ * resend's pre-check all say exactly this, in one place, for the same reason
+ * `DECLINED` is: each copy of one sentence is another chance for them to
+ * stop agreeing.
+ */
+export const NOT_PENDING = () =>
+  respondError('This invitation is no longer pending.', 409, 'NOT_PENDING');
