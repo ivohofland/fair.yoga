@@ -164,10 +164,10 @@ export async function claimWithCode(
     // taken before the increment below runs. A sibling call racing one of
     // these same rows can move its true count between this snapshot and the
     // writes below without this call ever seeing it (#504) — a mismatch
-    // below is that documented race, not proof of a bug on its own. Forced
-    // in handoff.test.ts by "the race: a correct claim concurrent with wrong
-    // guesses never throws" and "warns when two concurrent wrong guesses
-    // race the same near-exhausted candidate".
+    // below is that documented race, not proof of a bug on its own. Each
+    // direction of it is staged deterministically in `handoff.test.ts` —
+    // there by construction rather than by timing, so a mismatch that only
+    // this comment predicts is not one nobody has reproduced.
     const expectedReaps = live.filter((c) => c.handoffAttempts + 1 >= HANDOFF_MAX_ATTEMPTS).length;
 
     const incremented = await db.magicLinkToken.updateMany({
