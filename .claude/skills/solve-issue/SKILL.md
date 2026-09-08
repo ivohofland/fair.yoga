@@ -284,8 +284,8 @@ Record what was measured and where the errors were, including your own, and what
 used to say where you corrected one — that record lives here, not beside the code. State
 which inherited claims held; show the arithmetic behind every number; name what the PR does
 *not* do (as "**#N is unaffected**", never "does not close #N" — see the hazard list); name
-by path which `integration` files this branch touched — from a worktree, cite the CI run for
-that tier, not a local one (see the hazard list).
+by path which `integration` files this branch touched — a worktree can run that tier locally
+now (see the hazard list); cite whichever run you actually have, local or CI's.
 
 **A green `npm run verify` is the whole integration suite**, since it runs every vitest
 project — say so with the arithmetic that proves it (`105 = 46 unit + 32 components + 27

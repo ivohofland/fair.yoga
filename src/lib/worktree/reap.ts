@@ -17,14 +17,18 @@ export async function reapOrphans(
   let next = registry;
   const reaped: string[] = [];
   for (const { slug, entry } of orphans) {
-    if (entry.pid !== null) {
-      deps.killPid(entry.pid);
+    try {
+      if (entry.pid !== null) {
+        deps.killPid(entry.pid);
+      }
+      const { test, dev } = dbNamesForSlug(slug);
+      await deps.dropDatabase(test);
+      await deps.dropDatabase(dev);
+      next = removeSlug(next, slug);
+      reaped.push(slug);
+    } catch (err) {
+      console.warn(`[reap] failed to reap orphaned worktree "${slug}" — will retry on the next sweep:`, err);
     }
-    const { test, dev } = dbNamesForSlug(slug);
-    await deps.dropDatabase(test);
-    await deps.dropDatabase(dev);
-    next = removeSlug(next, slug);
-    reaped.push(slug);
   }
   return { registry: next, reaped };
 }

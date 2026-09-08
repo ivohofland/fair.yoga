@@ -1,11 +1,26 @@
 // scripts/worktree-up.ts
+import fs from 'fs';
 import { loadEnv } from 'vite';
 import { getWorktreeIdentity } from '../src/lib/worktree/identity';
 import { getRegistryPath, writeRegistryLocked, allocatePort, setPid } from '../src/lib/worktree/registry';
 import { runReap } from '../src/lib/worktree/reap';
 import { provisionDatabase } from '../src/lib/db-provision';
-import { spawnDevServer } from '../src/lib/worktree/dev-server';
+import { spawnDevServer, buildDevServerLogPath } from '../src/lib/worktree/dev-server';
 import { killPidReal } from '../src/lib/worktree/side-effects';
+
+async function waitForServer(port: number, timeoutMs = 15000, intervalMs = 500): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`http://localhost:${port}`);
+      if (res.status < 500) return true;
+    } catch {
+      // not accepting connections yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
+}
 
 async function main(): Promise<void> {
   const identity = getWorktreeIdentity();
@@ -23,9 +38,13 @@ async function main(): Promise<void> {
     throw new Error('[worktree:up] DATABASE_URL not set — run `npm run worktree:setup` first');
   }
 
-  const reaped = await runReap(identity.gitCommonDir, registryPath, devUrl);
-  if (reaped.length > 0) {
-    console.log(`[worktree:up] reaped orphaned worktree resources: ${reaped.join(', ')}`);
+  try {
+    const reaped = await runReap(identity.gitCommonDir, registryPath, devUrl);
+    if (reaped.length > 0) {
+      console.log(`[worktree:up] reaped orphaned worktree resources: ${reaped.join(', ')}`);
+    }
+  } catch (err) {
+    console.warn('[worktree:up] reap sweep failed — continuing without it, this worktree is unaffected:', err);
   }
 
   let port = 0;
@@ -43,6 +62,19 @@ async function main(): Promise<void> {
   } catch (err) {
     killPidReal(pid);
     throw err;
+  }
+
+  const up = await waitForServer(port);
+  if (!up) {
+    killPidReal(pid);
+    await writeRegistryLocked(registryPath, (registry) => setPid(registry, slug, null));
+    let logTail = '(log unavailable)';
+    try {
+      logTail = fs.readFileSync(buildDevServerLogPath(process.cwd()), 'utf8').split('\n').slice(-20).join('\n');
+    } catch {
+      // log genuinely unreadable — report without it rather than masking the real failure
+    }
+    throw new Error(`[worktree:up] dev server did not come up on port ${port} within 15s:\n${logTail}`);
   }
 
   console.log(`[worktree:up] dev server running at http://localhost:${port} (pid ${pid})`);

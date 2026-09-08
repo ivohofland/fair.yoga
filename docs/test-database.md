@@ -123,8 +123,9 @@ on it. This table is the shape, not the membership:
 | `components` | `src/**/*.test.tsx` | none (jsdom) |
 
 `--project <name>` selects one tier. A bare `npx vitest run` runs all of
-them, `integration` included, which needs the app up on `:3000` — use
-`npm test`, which sequences the tiers, rather than running vitest directly.
+them, `integration` included, which needs the app up on `:3000` (or the
+worktree's own port) — use `npm test`, which sequences the tiers, rather
+than running vitest directly.
 The dangerous tests — everything that calls a service sweep with an injected
 clock — are all in the `unit-sweeps` roster, but no longer all of it: that tier
 also carries the lock-contention files, which are there for a different reason

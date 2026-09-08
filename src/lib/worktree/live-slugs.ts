@@ -25,18 +25,29 @@ export function listWorktreeAdminEntries(gitCommonDir: string): WorktreeAdminEnt
   if (!fs.existsSync(worktreesDir)) {
     return [];
   }
-  return fs.readdirSync(worktreesDir).map((rawName) => {
-    let workingDirExists = false;
-    let slug = rawName;
+  return fs.readdirSync(worktreesDir).flatMap((rawName) => {
+    let slug: string;
+    try {
+      slug = sanitizeSlug(rawName);
+    } catch {
+      // A raw admin-dir name with no safe characters could never have been
+      // registered under a matching key either — nothing to report for it.
+      return [];
+    }
+
+    let workingDirExists = true;
     try {
       const gitdirFile = path.join(worktreesDir, rawName, 'gitdir');
       const target = fs.readFileSync(gitdirFile, 'utf8').trim();
       workingDirExists = fs.existsSync(path.dirname(target));
-      slug = sanitizeSlug(rawName);
-    } catch {
-      workingDirExists = false;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        workingDirExists = false;
+      }
+      // any other error: treat the worktree as still live rather than
+      // reclassifying it as an orphan to destroy.
     }
-    return { slug, workingDirExists };
+    return [{ slug, workingDirExists }];
   });
 }
 
