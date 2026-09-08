@@ -307,8 +307,8 @@ interleaving can falsify — which is what makes them safe in a parallel tier:
   the compare-and-swap makes both callers return the persisted code under every
   ordering.
 
-  **Interleaving-independent is not the same as covered, and the first of
-  those three shows the difference.** Its assertion holds whether or not the
+  **Interleaving-independent is not the same as covered, and this first
+  bullet shows the difference.** Its assertion holds whether or not the
   two calls interleave — which is what makes it safe here — but
   `verifyWithHandoff`'s compare-and-swap loser branch (`handoff.ts:73-79`) is
   reached only when they do. Serialized, the second call returns at the reuse
@@ -320,9 +320,13 @@ interleaving can falsify — which is what makes them safe in a parallel tier:
   atomic `{ increment: 1 }`s land in some order and sum to four in all of them.
 - `the race: a correct claim concurrent with wrong guesses never throws`
   — minus its warn assertion, which case 1 above now holds deterministically.
-  Its remaining assertion is that every outcome is `verified` or `invalid`,
-  true under every ordering; the loop stays because a rejection needs a real
-  window to occur in.
+  It asserts that exactly one of its four concurrent calls verifies and the
+  rest are invalid — true under every ordering, because nothing but the
+  correct claim deletes the row and the wrong guesses never reach the budget.
+  The loop stays because a rejection needs a real window to occur in, and
+  three further rounds race two wrong guesses over the three fixtures the
+  staged tests retired: the only place left where two real callers contend
+  for a row a `deleteMany` will actually delete.
 
 ---
 
