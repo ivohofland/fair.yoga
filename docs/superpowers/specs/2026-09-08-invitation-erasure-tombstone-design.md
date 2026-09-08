@@ -6,7 +6,7 @@ Both writers and both leaks in #502 are confirmed exactly as filed, against
 `origin/main` at `d6f452ac` (`git diff` against that commit for the four
 files #502 cites is empty — no drift since the issue was written):
 
-1. **`deleteStudentAccount`** (`src/services/gdpr.ts:576-611`) anonymises
+1. **`deleteStudentAccount`** (`src/services/gdpr.ts`) anonymises
    `Invitation` rows matching the erased student's email in three
    `tx.invitation.updateMany` calls. The first two write
    `email: \`deleted-${studentId}@deleted.invalid\`` (plus `firstName:
@@ -17,17 +17,20 @@ files #502 cites is empty — no drift since the issue was written):
    `lastNotifiedEmail` never does — though not for the reason given here when
    this spec was written ("not selected anywhere", from a grep of
    `.invitation.find*` calls in `src/app` and `src/services`). It **is**
-   selected: the contacts detail page,
-   `src/app/(teacher)/students/contacts/[id]/page.tsx`, has read it since
-   #173, and that grep missed it. What keeps it off the teacher's screen is
-   that the page hands the column to `invitationDeliveryStatus`
-   (`src/lib/contacts.ts`), which compares it against the row's own `email`
-   and returns only whether a send happened and when — so a boolean and a
-   date reach the render, never an address. The other reader is
-   `exportStudentData`, Art. 15, which is the *subject's own* export, a
-   different audience this issue does not concern.
+   selected, by the contacts detail page
+   (`src/app/(teacher)/students/contacts/[id]/page.tsx`, since #173). That
+   grep returns the page; what it cannot show is a `select`, and nobody
+   opened one — a census of call sites is not a census of columns. What
+   keeps the column off the teacher's screen is that the page hands it to
+   `invitationDeliveryStatus` (`src/lib/contacts.ts`), which compares it
+   against the row's own `email` and returns only whether a send happened and
+   when, so a boolean and a date reach the render, never an address. The only
+   other reader of the row at all is `exportStudentData`, Art. 15 — which
+   selects neither `email` nor `lastNotifiedEmail`, and is the *subject's
+   own* export besides, a different audience this issue does not concern.
    So today's exploitable leak is on `email` only, but `lastNotifiedEmail`'s
-   write is the same pattern and `docs/data-model.md:216` documents both in
+   write is the same pattern and `docs/data-model.md`'s Invitation-erasure
+   paragraph documents both in
    the same breath — see "Why `lastNotifiedEmail` gets the same fix" below.
 
 2. **`unlinkTeacher`** (`src/services/invitations.ts:1087-1090`) writes
@@ -325,14 +328,13 @@ column.
   fix here closes — filed separately as
   [#520](https://github.com/ivohofland/fair.yoga/issues/520), not fixed in
   this branch. **#520 has since resolved it as accepted**: the signal is
-  irreducible, because the row is teacher-visible and the address must be
-  scrubbed, so every treatment of it is a visible change. The candidate fix
-  this bullet implies — scoping the anonymisation to `delivered: true` — was
-  refused, in part because `delivered` is not a decoy predicate (three
-  producers, only one a decoy, and `resend` never resets it). The reasoning
-  and the trade-off live in `docs/data-model.md`'s Invitation-erasure
-  paragraph, which owns the decision; this bullet only records that the
-  question left open here has an answer now.
+  irreducible, because one column serves both the teacher's display and the
+  system's matching, so every treatment of it is a visible change. The
+  candidate fix this bullet implies — scoping the anonymisation to
+  `delivered: true` — was refused, in part because `delivered` is not a decoy
+  predicate. The reasoning and the trade-off live in `docs/data-model.md`'s
+  Invitation-erasure paragraph, which owns the decision; this bullet only
+  records that the question left open here has an answer now.
 
 ## Acceptance criteria (from the issue, restated as tests)
 

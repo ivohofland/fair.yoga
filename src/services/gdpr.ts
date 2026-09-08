@@ -549,10 +549,15 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // email columns are lowercase by CHECK constraint (#170).
     //
     // Anonymised rather than deleted, and the reason is the teacher's side:
-    // a `declined` row is the tombstone that stops that teacher re-inviting
-    // this address, so deleting it would hand back the re-invite the refusal
-    // exists to deny — an erasure request would double as a way to clear
-    // every refusal anyone ever made. `status` and `respondedAt` therefore
+    // deleting the row would free `(teacherId, email)` and reopen
+    // `inviteContact`'s `DECLINED`/`ALREADY_INVITED` probe path at this
+    // address, so an erasure request would double as a way to clear every
+    // refusal anyone ever made. It does NOT keep a plain decline's refusal
+    // working — `inviteContact` looks a tombstone up by the address the
+    // teacher types, and the write below moves that key (#522, an open
+    // defect rather than a property of this design; the chain is in
+    // `docs/data-model.md`'s Invitation-erasure paragraph).
+    // `status` and `respondedAt` therefore
     // stay exactly as they are; the identity columns change, plus
     // `lastNotifiedEmail` wherever it still holds the subject's address —
     // independent of what the row's CURRENT `email` is, since `PUT
@@ -583,14 +588,11 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // `docs/superpowers/specs/2026-09-08-invitation-erasure-tombstone-design.md`
     // ("Fix #1") for why that reuse is safe.
     //
-    // Unscoped by `delivered` on purpose (#520). A teacher watching a
-    // guessed-address row rename itself to "Deleted Student" learns the
-    // address belonged to an account that has just erased, and no scope here
-    // closes that — the row is teacher-visible, so any treatment of it is a
-    // visible change. Narrowing these writers to spare a never-delivered row
-    // would leave the erased person's real address readable instead. That
-    // trade-off is decided in `docs/data-model.md`'s Invitation-erasure
-    // paragraph; `gdpr.test.ts` pins the behaviour it settles on.
+    // Unscoped by `delivered`, and by `status` and `isArchived`, on purpose
+    // (#520): the rename is observable to a teacher who guessed the address,
+    // and every narrowing that would hide it leaves the erased person's real
+    // address readable instead. `docs/data-model.md`'s Invitation-erasure
+    // paragraph decides that trade-off; `gdpr.test.ts` pins it.
     const anonymizedEmail = `deleted-${crypto.randomUUID()}@deleted.invalid`;
     await tx.invitation.updateMany({
       where: { email: student.email, lastNotifiedAt: null },
@@ -636,9 +638,10 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // mailbox still exists in the world: the teacher could re-type that
     // address and the invitation would actually be delivered. Retaining it
     // keeps a plaintext address for someone who asked to be forgotten, on a
-    // row they can no longer reach to clear (their account email is rewritten
-    // and their sessions are gone, so the unlink UI is unreachable for
-    // them). `CLAUDE.md` parks GDPR/legal review for proper consultation and
+    // row they can no longer reach to clear (the student profile the unlink
+    // UI hangs off is erased below — not the account, which survives with its
+    // email and sessions intact whenever a live teacher profile still uses
+    // it). `CLAUDE.md` parks GDPR/legal review for proper consultation and
     // this is exactly that call. Do not resolve it from in here.
     await tx.notification.deleteMany({ where: { recipientType: 'student', recipientId: studentId } });
     // Sessions and passkeys belong to the account. They die with the
