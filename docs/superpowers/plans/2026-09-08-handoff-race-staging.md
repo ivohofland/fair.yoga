@@ -473,9 +473,13 @@ Expected hits, and the verdict for each:
 
 | hit | verdict |
 |---|---|
-| `docs/superpowers/plans/2026-09-08-handoff-miss-observability.md` (4 hits) | **Leave.** A plan is a record of what a past branch did, not a live description of the code — correcting it would rewrite history rather than fix an error. |
-| `docs/superpowers/plans/2026-09-08-handoff-attempt-budget.md:260` | **Leave**, same reason. |
-| anything under `src/` | **Must be zero** after Step 1. If not, fix it. |
+| `docs/superpowers/plans/2026-09-08-handoff-miss-observability.md` (3 hits) | **Leave.** A plan is a record of what a past branch did, not a live description of the code — correcting it would rewrite history rather than fix an error. |
+| `docs/superpowers/plans/2026-09-08-handoff-race-staging.md` (7 hits) | **Leave.** This file's own text quotes the retired titles deliberately, as the "before" side of what this branch changes — and one of the 7 is this file's own copy of the grep command above, which matches itself. |
+| `docs/superpowers/specs/2026-09-08-handoff-race-staging-design.md` (5 hits) | **Leave**, same reason. |
+| `src/lib/auth/handoff.test.ts:466` (current title `'warns when a sibling reaps the already-spent candidate first'`) | **Leave.** It is current, not stale. |
+| any OTHER hit under `src/` | **Must be zero** after Step 1. None found. |
+
+The command's three terms deliberately do not reach `'the race: a correct claim concurrent with wrong guesses never throws'`, because that title survives this branch unchanged — only its warn assertion moved — so a sweep keyed on it would return live references and cost a verdict each.
 
 - [ ] **Step 3: Verify**
 
