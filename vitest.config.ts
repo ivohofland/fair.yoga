@@ -15,8 +15,9 @@ import { SERIAL_TESTS } from './vitest.tiers';
 // - unit-sweeps: `SERIAL_TESTS`, serial — the clock-injected, database-wide
 //   sweeps, kept off the dev/seed data and away from each other, plus the
 //   lock-contention files that cannot share a parallel tier
-// - integration: talks to the HTTP app on :3000, so its fixtures must
-//   live in the same database that app reads (dev locally, CI's in CI)
+// - integration: talks to the HTTP app on :3000, or on INTEGRATION_BASE_URL's
+//   port in a worktree, so its fixtures must live in the same database that
+//   app reads (dev locally, CI's in CI)
 // - components: jsdom rendering with `next/navigation` mocked
 //   (tests/setup/components.ts) — touches no database at all. `fetch` is NOT
 //   mocked there: each test that clicks stubs it itself via
@@ -28,6 +29,7 @@ export default defineConfig(({ mode }) => {
   const fileEnv = loadEnv(mode, process.cwd(), '');
   const devUrl = process.env.DATABASE_URL ?? fileEnv.DATABASE_URL ?? '';
   const testUrl = process.env.DATABASE_URL_TEST ?? fileEnv.DATABASE_URL_TEST ?? devUrl;
+  const integrationBaseUrl = process.env.INTEGRATION_BASE_URL ?? fileEnv.INTEGRATION_BASE_URL;
 
   return {
     resolve: {
@@ -140,7 +142,10 @@ export default defineConfig(({ mode }) => {
             // (#325), which wins over a project's setting — see
             // docs/test-database.md §2 for the mechanism.
             fileParallelism: false,
-            env: { DATABASE_URL: devUrl },
+            env: {
+              DATABASE_URL: devUrl,
+              ...(integrationBaseUrl ? { INTEGRATION_BASE_URL: integrationBaseUrl } : {}),
+            },
           },
         },
         {
