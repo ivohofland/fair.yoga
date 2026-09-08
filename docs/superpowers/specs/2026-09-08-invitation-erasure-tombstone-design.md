@@ -169,11 +169,28 @@ that happened. `GET /api/invitations` keeps returning that row exactly as
 it did the moment it was created — no new observable state, no new
 teacher-visible field, nothing to correlate against the unlink.
 
-A genuinely delivered `pending` row that still exists at unlink time (the
-two residual routes `docs/superpowers/specs/2026-09-07-gated-ghost-
-invitation-design.md` §3 already names — a `PUT`-readdressed row landing on
-a linked pair, or a linkless `waiting`-row promotion) is unaffected: it was
-delivered, `delivered: true`, the tombstone still fires exactly as before.
+A genuinely delivered `pending` row that still exists at unlink time — the
+linkless `waiting`-row promotion route `docs/superpowers/specs/2026-09-07-
+gated-ghost-invitation-design.md` §3 names — is unaffected: `email` never
+changed, `delivered: true` is still accurate, the tombstone still fires
+exactly as before.
+
+**The other residual route that spec names is not unaffected — it is the
+bypass this fix has to also close.** `PUT /api/invitations/[id]` re-
+addresses a `pending` row's `email` with no roster-link check
+(`route.ts`'s own docblock states this is deliberate — the status gate
+alone is sufficient for #500), and until now without touching `delivered`
+at all. A teacher can create an ordinary, genuinely-delivered invitation to
+an address they control, then `PUT` its `email` to a guessed victim
+address — the row now sits at the guessed address carrying a `delivered:
+true` inherited from the OLD address's delivery, not the new one. Nothing
+was ever delivered to whoever now holds that address. If the guess lands on
+a linked-but-unshared student, this reproduces #502's leak #2 exactly:
+`unlinkTeacher`'s `delivered: true` scope matches the re-addressed row, and
+it tombstones on that student's next unlink. **Fix #3, below, closes this**
+— `PUT` writes `delivered: false` whenever `email` changes, since that is
+simply true: delivery is a fact about a specific address, and changing the
+address always invalidates whatever was true of the old one.
 
 **Never select `delivered` from any student- or teacher-facing route.**
 `GET /api/invitations`'s select list stays exactly as it is today — an
@@ -183,6 +200,51 @@ response by default. No new named `satisfies`-tethered constant is needed
 for one call site; the plan adds a test pinning that the response shape
 doesn't gain the field, so a future edit to that `select` has to fail a
 test to reintroduce this.
+
+### Fix #3 — `PUT /api/invitations/[id]` keeps `delivered` honest on re-address
+
+`src/app/api/invitations/[id]/route.ts`'s `PUT` handler, in the same
+`prisma.invitation.updateMany` that already writes `email`:
+
+```ts
+data: {
+  ...rest,
+  ...(email !== undefined ? { email, delivered: false } : {}),
+},
+```
+
+Unconditional on any `email` change, not gated on whether the new address
+looks blocked or linked — re-deriving that here would need the same
+`TeacherBlock`/roster queries `inviteContact` already runs, on a route that
+has never needed them, and `false` is simply the honest value regardless:
+no delivery attempt has been made to the new address, full stop, the same
+way a freshly-created row's `delivered` reflects nothing having been sent
+yet until the create/revive path's own check runs.
+
+**The cost, named rather than chased:** a teacher who corrects a genuine
+typo (`PUT` to a real, unblocked, unlinked address) and then clicks
+`POST /api/invitations/[id]/resend` gets a real, successful delivery, but
+`delivered` stays `false` — `resend` calls `notifyInvitee` (which re-checks
+`TeacherBlock` structurally, correctly refuses to send when blocked) but
+does not itself persist a fresh `delivered` value, so this one path loses
+its unlink-tombstone eligibility going forward. That is a strictly safe
+failure direction — a row that should tombstone on unlink stays `pending`
+instead, the same non-disclosing residual state a genuine decoy already
+sits in — never the reverse. Wiring `resend` to persist `notifyInvitee`'s
+own fresh answer would close this residual too, but is a second, separable
+change (`notifyInvitee`'s callers and signature, not `unlinkTeacher` or
+`gdpr.ts`) and is deliberately left out of #502's scope: closing the
+leak does not require it, and the residual it would close is a UX gap
+(an invitation that stops auto-cleaning-up on unlink), not a disclosure.
+
+`invitations.ts:461-467`'s docblock currently states the opposite of what
+is now true — "`PUT`... edits `email` on a pending row without recomputing
+`delivered`, which looks like a second door and is not: PUT does not
+notify, so a value gone stale there reaches nobody." That was accurate when
+`delivered` had no persisted reader. It is corrected to state the current
+mechanism: `PUT` now recomputes `delivered` itself (to `false`) on every
+`email` change, so it cannot go stale in the way this paragraph used to
+argue was harmless anyway.
 
 ### `acceptInvitation` / `declineInvitation` / `resolveInvitationOnLink` are unaffected
 
@@ -217,9 +279,13 @@ column.
   at migration time gets `delivered: true` — including real decoys already
   planted under the old code. Fix #2 only protects a decoy from this point
   forward: one created (or revived — `revivePendingInvitation` re-derives
-  `delivered` fresh) after this ships. This is a one-time, unavoidable
-  migration-backfill gap, not an ongoing one; naming it here rather than
-  discovering it later.
+  `delivered` fresh) or re-addressed (Fix #3) after this ships. **Not fully
+  a one-time gap**, though — a row can also re-acquire a stale `delivered:
+  true` going forward whenever its `email` changes through some future
+  writer that (like `PUT` before Fix #3) forgets to invalidate it. Fix #3
+  closes the one such writer that exists today; naming the pattern here so
+  the next one that touches `Invitation.email` checks this column too,
+  rather than treating Fix #3 as the last time it needs saying.
 
 ## Acceptance criteria (from the issue, restated as tests)
 
@@ -247,6 +313,13 @@ column.
    `delivered` key, for a mixed set of delivered/undelivered rows.
 6. `docs/data-model.md:216`'s Invitation-erasure paragraph corrected to
    describe the random-token anonymisation, not the `student_id`-derived one.
+7. A test reproducing the exact PUT bypass: create a genuinely-delivered
+   invitation, `PUT` its `email` to a linked-but-unshared student's address,
+   assert `delivered` is now `false`, then unlink that student and assert
+   the row stays `pending` — the scenario Fix #3 exists to close.
+8. A test that an ordinary `PUT` re-address (to an unrelated, unblocked,
+   unlinked address) also sets `delivered: false` — pinning that Fix #3's
+   write is unconditional on the new address's status, not gated on it.
 
 ## Not in scope
 
