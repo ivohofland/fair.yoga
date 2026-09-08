@@ -226,13 +226,16 @@ async function rosterLinkState(
  * mean issuing dummy queries to flatten the timing, which is not worth the
  * contortion at this threat level.
  *
- * The block check below runs unconditionally, after the invitation row is
- * already written — a blocked and a fresh address run the exact same query
+ * The block check below runs unconditionally, before either the create or
+ * the revive branch — a blocked and a fresh address run the exact same query
  * sequence, differing only in the `delivered` value neither response ever
- * carries on the wire. The revive path and the create path share that tail
- * on purpose: a second block check written for the revive would be a second
- * place to get it subtly wrong, and re-inviting a blocked address has to
- * stay as silent as inviting one for the first time.
+ * carries on the wire. The revive path and the create path share that
+ * precondition on purpose: a second block check written for just one of them
+ * would be a second place to get it subtly wrong, and re-inviting a blocked
+ * address has to stay as silent as inviting one for the first time. Both
+ * branches also persist the resulting `delivered` on the row itself, so a
+ * later write to the same row (`unlinkTeacher`'s tombstone) can scope itself
+ * to rows that were actually delivered.
  */
 export async function inviteContact(
   db: PrismaClient,
@@ -300,9 +303,24 @@ export async function inviteContact(
     return { ok: false, reason: 'ALREADY_LINKED' };
   }
 
+  // A block makes this invitation undeliverable, not un-creatable. The row
+  // is real, the teacher sees it, edits it, archives it — everything behaves
+  // exactly as it does for an address that was never blocked, which is the
+  // point. Only delivery is withheld. See `delivered` on InviteResult.
+  //
+  // Shared by both paths below, so a re-invite of a blocked address is as
+  // silent as a first invite of one: same status, same body, same `id` key,
+  // and the difference lives only in `delivered`, which never reaches the
+  // wire.
+  const blocked = await db.teacherBlock.findUnique({
+    where: { teacherId_email: { teacherId, email } },
+    select: { id: true },
+  });
+  const delivered = blocked === null && !link.linked;
+
   let invitationId: string;
   if (existing) {
-    const revived = await revivePendingInvitation(db, existing.id, { firstName, lastName });
+    const revived = await revivePendingInvitation(db, existing.id, { firstName, lastName, delivered });
     // The revive matched no row, so the state this function read at the top
     // is gone. Two things can have done that, and neither is the invitee
     // refusing: `unlinkTeacher` wrote a `declined` tombstone under us, or
@@ -329,7 +347,7 @@ export async function inviteContact(
     // same constraint.
     try {
       const created = await db.invitation.create({
-        data: { teacherId, email, firstName, lastName },
+        data: { teacherId, email, firstName, lastName, delivered },
         select: { id: true },
       });
       invitationId = created.id;
@@ -354,21 +372,7 @@ export async function inviteContact(
     }
   }
 
-  // A block makes this invitation undeliverable, not un-creatable. The row
-  // is real, the teacher sees it, edits it, archives it — everything behaves
-  // exactly as it does for an address that was never blocked, which is the
-  // point. Only delivery is withheld. See `delivered` on InviteResult.
-  //
-  // Shared by both paths above, so a re-invite of a blocked address is as
-  // silent as a first invite of one: same status, same body, same `id` key,
-  // and the difference lives only in `delivered`, which never reaches the
-  // wire.
-  const blocked = await db.teacherBlock.findUnique({
-    where: { teacherId_email: { teacherId, email } },
-    select: { id: true },
-  });
-
-  return { ok: true, value: { id: invitationId, delivered: blocked === null && !link.linked } };
+  return { ok: true, value: { id: invitationId, delivered } };
 }
 
 /**
@@ -409,11 +413,11 @@ export async function inviteContact(
 async function revivePendingInvitation(
   db: PrismaClient,
   id: string,
-  names: { firstName: string; lastName: string },
+  fields: { firstName: string; lastName: string; delivered: boolean },
 ): Promise<string | null> {
   const revived = await db.invitation.updateMany({
     where: { id, status: 'accepted' },
-    data: { status: 'pending', respondedAt: null, isArchived: false, ...names },
+    data: { status: 'pending', respondedAt: null, isArchived: false, ...fields },
   });
   return revived.count === 0 ? null : id;
 }

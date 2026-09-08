@@ -146,9 +146,13 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
     expect(result.value.delivered).toBe(false);
     const row = await prisma.invitation.findUniqueOrThrow({
       where: { teacherId_email: { teacherId, email } },
-      select: { status: true },
+      select: { status: true, delivered: true },
     });
     expect(row.status).toBe('pending');
+    // Not just the in-memory return value — the row itself has to carry
+    // `delivered` too, since that is what a later writer will need to scope
+    // a mutation to rows that were actually delivered.
+    expect(row.delivered).toBe(false);
   });
 
   it('treats an explicit shareEmail: false exactly as a missing privacy row', async () => {
@@ -242,6 +246,11 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
     // an ordinary, delivered invitation.
     if (!result.ok) throw new Error(`expected an ordinary delivered invite, got ${result.reason}`);
     expect(result.value.delivered).toBe(true);
+    const row = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email } },
+      select: { delivered: true },
+    });
+    expect(row.delivered).toBe(true);
   });
 
   it('does not answer ALREADY_LINKED for a shared address that is NOT on the roster', async () => {
@@ -291,6 +300,11 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
     // ordinary (unblocked, unlinked-to-THIS-teacher) success path.
     if (!result.ok) throw new Error(`expected an ordinary delivered invite, got ${result.reason}`);
     expect(result.value.delivered).toBe(true);
+    const row = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email } },
+      select: { delivered: true },
+    });
+    expect(row.delivered).toBe(true);
   });
 
   /**
@@ -366,6 +380,23 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
     // `findUniqueOrThrow` above is what proves a row exists in both cases —
     // a missing row throws before this assertion is ever reached.
     expect(gatedRow).toEqual(strangerRow);
+
+    // `delivered` read separately, on each row, rather than folded into the
+    // comparison above: it is the one field this pair is allowed to differ
+    // on (see the assertions on `.value.delivered` above), so it stays out
+    // of the equality check and is pinned absolutely instead.
+    const [strangerDelivered, gatedDelivered] = await Promise.all([
+      prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId, email: strangerEmail } },
+        select: { delivered: true },
+      }),
+      prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId, email: gatedEmail } },
+        select: { delivered: true },
+      }),
+    ]);
+    expect(strangerDelivered.delivered).toBe(true);
+    expect(gatedDelivered.delivered).toBe(false);
   });
 
   it('answers ALREADY_LINKED on an accepted invitation, and leaves that row untouched', async () => {
@@ -401,6 +432,76 @@ describe('inviteContact — the visibility gate on ALREADY_LINKED (#412, #419)',
       firstName: 'Original',
       lastName: 'Name',
     });
+  });
+
+  /**
+   * Task 2 (`unlinkTeacher`'s tombstone scope) reads `delivered` off the row
+   * at the moment it acts, not off whatever the row's very first write said —
+   * so a revive has to keep that value current every time it fires, not just
+   * the first. This drives the SAME row through two revives: an ordinary one
+   * (no block, no link — `delivered: true`), then a second one after a
+   * `TeacherBlock` appears at the address, and checks the persisted column
+   * flips with it.
+   */
+  it('a revive persists the CURRENT delivered value, not the one from its first write', async () => {
+    const email = `gate-revive-delivered-${suffix}@test.local`;
+    const acceptedAt = new Date('2026-02-03T04:05:06.000Z');
+    // Hand-written `accepted` row, the same fixture shape
+    // `invitations.revive.test.ts` uses to drive `revivePendingInvitation`
+    // without a full accept flow. No `Student`/`TeacherStudent` row at this
+    // address, so `rosterLinkState` reads `{ linked: false, mayBeTold:
+    // false }` for both invites below — only the `TeacherBlock` planted
+    // between them is what changes.
+    const invitation = await prisma.invitation.create({
+      data: {
+        teacherId, email, firstName: 'Revive', lastName: 'Original',
+        status: 'accepted', respondedAt: acceptedAt,
+      },
+      select: { id: true },
+    });
+
+    const firstResult = await inviteContact(prisma, {
+      teacherId, email, firstName: 'Revive', lastName: 'First',
+    });
+    if (!firstResult.ok) {
+      throw new Error(`expected the first revive to succeed, got ${firstResult.reason}`);
+    }
+    expect(firstResult.value.id).toBe(invitation.id);
+    expect(firstResult.value.delivered).toBe(true);
+    expect(
+      (
+        await prisma.invitation.findUniqueOrThrow({
+          where: { id: invitation.id },
+          select: { delivered: true },
+        })
+      ).delivered,
+    ).toBe(true);
+
+    // Move the SAME row back to `accepted` — standing in for a second accept
+    // — and plant a block, so the next invite both revives this row again
+    // and finds it undelivered.
+    await prisma.invitation.update({
+      where: { id: invitation.id },
+      data: { status: 'accepted', respondedAt: acceptedAt },
+    });
+    await prisma.teacherBlock.create({ data: { teacherId, email } });
+
+    const secondResult = await inviteContact(prisma, {
+      teacherId, email, firstName: 'Revive', lastName: 'Second',
+    });
+    if (!secondResult.ok) {
+      throw new Error(`expected the second revive to succeed, got ${secondResult.reason}`);
+    }
+    expect(secondResult.value.id).toBe(invitation.id);
+    expect(secondResult.value.delivered).toBe(false);
+    expect(
+      (
+        await prisma.invitation.findUniqueOrThrow({
+          where: { id: invitation.id },
+          select: { delivered: true },
+        })
+      ).delivered,
+    ).toBe(false);
   });
 
   /**
