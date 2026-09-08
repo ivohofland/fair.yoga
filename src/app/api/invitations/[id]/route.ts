@@ -211,7 +211,20 @@ export const PUT = withErrorHandler(async (
       // anything else at rest. The column is lowercase by construction, and
       // the uniqueness check and later account-matching both depend on that
       // holding for every row, not just the ones created through POST.
-      data: { ...rest, ...(email !== undefined ? { email } : {}) },
+      //
+      // `delivered: false` rides along with every `email` change,
+      // unconditionally — not gated on whether the new address looks
+      // blocked or linked, which would need the same `TeacherBlock`/roster
+      // queries `inviteContact` already runs, on a route that has never
+      // needed them. `false` is simply the honest value regardless: no
+      // delivery attempt has been made to the new address, full stop. This
+      // is what keeps `unlinkTeacher`'s `delivered: true`-scoped tombstone
+      // (`services/invitations.ts`) from matching a row whose CURRENT
+      // address was never actually told this invitation exists — closing
+      // the second door #502's decoy-invitation leak could otherwise
+      // reopen through a re-address. See "Fix #3" in
+      // `docs/superpowers/specs/2026-09-08-invitation-erasure-tombstone-design.md`.
+      data: { ...rest, ...(email !== undefined ? { email, delivered: false } : {}) },
     });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {

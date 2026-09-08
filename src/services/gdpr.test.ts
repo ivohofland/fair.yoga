@@ -546,7 +546,8 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
   // The shape `gdpr.ts`'s `anonymizedEmail` writes: `deleted-` plus a
   // `crypto.randomUUID()` (32 hex digits, 4 hyphens — 36 characters) plus
   // `@deleted.invalid`.
-  const ANONYMIZED_INVITATION_VALUE = /^deleted-[0-9a-f-]{36}@deleted\.invalid$/;
+  const ANONYMIZED_INVITATION_VALUE =
+    /^deleted-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@deleted\.invalid$/;
 
   /**
    * Whether `value` is an anonymised Invitation email/lastNotifiedEmail —
@@ -616,10 +617,18 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
         lastNotifiedAt: new Date('2026-02-03T04:05:06.000Z'), lastNotifiedEmail: email,
       },
     });
+    // `delivered: false` (every other fixture in this block takes the
+    // schema default `true`) — acceptance criterion 1 wants the
+    // anonymisation assertions below proven against both shapes, since a
+    // future edit scoping `gdpr.ts`'s writers by `delivered` (a plausible
+    // "consistency" change, given #502 groups both writers by that column)
+    // could otherwise silently leave a decoy's real address unanonymised
+    // with nothing here to notice.
     await prisma.invitation.create({
       data: {
         teacherId: blockerId, email, firstName: 'Sammy', lastName: 'Typo',
         status: 'declined', respondedAt: new Date('2026-03-04T05:06:07.000Z'),
+        delivered: false,
       },
     });
     await prisma.teacherBlock.create({ data: { teacherId: blockerId, email } });
@@ -712,6 +721,15 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
         expectAnonymizedInvitationValue(row.lastNotifiedEmail, studentId);
       }
     }
+    // "One token, reused across all three statements" (`gdpr.ts`'s own
+    // comment on `anonymizedEmail`) as a tested property, not just spec
+    // prose nothing here verifies: the `inviterId` row falls under the
+    // second erasure statement, which writes `email` and `lastNotifiedEmail`
+    // from that same local in one call, so the two columns agree if and
+    // only if the reuse is real.
+    const inviterRow = rows.find((r) => r.teacherId === inviterId);
+    expect(inviterRow?.email).toBe(inviterRow?.lastNotifiedEmail);
+
     // The teacher's own filing state is theirs, not the subject's: the
     // decline still stands as a tombstone and the acceptance still records
     // when it happened. Scrubbing those would rewrite the teacher's history,
