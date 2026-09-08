@@ -225,8 +225,12 @@ Validated on this branch before the design was written: a hook on
 `magicLinkToken.updateMany` that re-issues the same statement produces
 `{ expected: 1, actual: 2 }` from the over-count guard, deterministically, in
 **49 ms** — against an eight-iteration loop that produces it ~92% of the time.
-`npx tsc --noEmit` is clean with the `as unknown as PrismaClient` cast the
-repo's existing hooks already use and document.
+`npx tsc --noEmit` is clean with the `as unknown as PrismaClient` cast. The
+repo's existing hooks explain this cast once, in the first hook, and the
+other three back-reference it in-file; the cross-file form the repo also uses
+was found to dead-end (`waitlist.test.ts` points at
+`class-transitions.test.ts`, whose cast carries no comment at all), which is
+why these tests do not copy it.
 
 **Two kinds of injection, and which one a case needs is decided by whether the
 sibling must share our snapshot.**
@@ -239,9 +243,9 @@ sibling must share our snapshot.**
   its snapshot *alongside* ours, so that a nested whole call — which would read
   a snapshot we have already moved — cannot reproduce it. The over-count is
   this case, and its fidelity argument is exact: both calls derive `ids` from
-  the same `findMany`, so the sibling's `updateMany` **is** `args`, and
-  re-issuing `args` is not an approximation of the sibling's statement but a
-  copy of it.
+  the same snapshot — two `findMany` statements taken before either writes —
+  so the sibling's `updateMany` **is** `args`, and re-issuing `args` is not an
+  approximation of the sibling's statement but a copy of it.
 
 ---
 
@@ -275,7 +279,7 @@ nothing — the same guard `waitlist.test.ts:1551` uses (`expect(hookCalls).toBe
 
 ### 5.1 One comment goes stale on the way, and it is the kind this repo names
 
-`handoff.ts:163-171` ends its `expectedReaps` paragraph with a roster of two
+`handoff.ts`'s `expectedReaps` docblock ended with a roster of two
 test titles in `handoff.test.ts` — `"the race: a correct claim concurrent with
 wrong guesses never throws"` and `"warns when two concurrent wrong guesses race
 the same near-exhausted candidate"`. Cases 1 and 2 change what the first holds
@@ -299,12 +303,22 @@ Replaced, not annotated — what the comment used to say belongs in the PR body.
 Three tests keep genuine concurrency, because each asserts something **no**
 interleaving can falsify — which is what makes them safe in a parallel tier:
 
-- `the race: concurrent first-opens of the same link agree on one code` (:71) —
+- `the race: concurrent first-opens of the same link agree on one code` —
   the compare-and-swap makes both callers return the persisted code under every
   ordering.
-- `counts both attempts when two wrong guesses race concurrently` (:323) — four
+
+  **Interleaving-independent is not the same as covered, and the first of
+  those three shows the difference.** Its assertion holds whether or not the
+  two calls interleave — which is what makes it safe here — but
+  `verifyWithHandoff`'s compare-and-swap loser branch (`handoff.ts:73-79`) is
+  reached only when they do. Serialized, the second call returns at the reuse
+  branch and the CAS never runs, and `a.code === b.code` is satisfied anyway.
+  That is #509's defect inverted: an assertion that cannot flake, over a
+  branch that is not guaranteed to execute. Filed as #514; nothing in this
+  branch changes it, and this section's verdict is about flakiness only.
+- `counts both attempts when two wrong guesses race concurrently` — four
   atomic `{ increment: 1 }`s land in some order and sum to four in all of them.
-- `the race: a correct claim concurrent with wrong guesses never throws` (:343)
+- `the race: a correct claim concurrent with wrong guesses never throws`
   — minus its warn assertion, which case 1 above now holds deterministically.
   Its remaining assertion is that every outcome is `verified` or `invalid`,
   true under every ordering; the loop stays because a rejection needs a real
@@ -325,9 +339,15 @@ event, absent entirely from 25 consecutive runs.
 
 Out of scope here: it is a different test, a different failure mode, and a
 different mechanism from the one #509 names, and this branch's change neither
-causes nor cures it. It is a live merge-gate flake, so it is **filed** rather
-than let go, with these measurements attached. The test itself survives this
-branch untouched (§6).
+causes nor cures it. It is a live merge-gate flake, so it is **filed as
+#512** rather than let go, with these measurements attached. The test itself
+survives this branch untouched (§6).
+
+**A second thing found in passing, and also filed.** `verifyWithHandoff`'s
+compare-and-swap loser branch is covered only when its test's two calls
+happen to interleave — §6 carries the derivation. Filed as #514. Like the
+stall, it is untouched by this branch: it is a different function, and it is
+under-coverage rather than a live defect.
 
 ---
 
