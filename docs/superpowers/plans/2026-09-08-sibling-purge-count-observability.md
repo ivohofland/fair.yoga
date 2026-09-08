@@ -81,12 +81,22 @@ than a runtime log. What is genuinely absent is the number itself.
 
 ## Decision: log the count as an observation, never as an assertion
 
-The count's value is not "did the purge work" but **how many surplus links
-existed**. `generateMagicLinkToken`'s docblock puts the bound on live tokens
-per address on the caller ("typically a rate limit on the minting route"), and
-nothing today reports whether that bound holds. A purge of 20 is evidence the
-rate limit leaked or that the address is being bombed. That signal exists
-nowhere else.
+The count's value is not "did the purge work" but **how many rows the purge
+took**. The purge filters on `email` alone, so that is every row for the
+address the daily sweep has not yet collected: expired ones included, and
+`signup-ticket.ts`'s hour-long `*_profile_pending` tickets alongside sign-in
+links. It is bounded by `cleanupExpiredAuth`'s daily cadence — which is what
+the pre-existing docblock at `magic-link.ts:90-94` already says bounds this
+table — and it is only the subset THIS call won, since concurrent consumptions
+split the rows. Nothing else reports per-address accumulation in that table.
+
+> This paragraph originally claimed the count measured *surplus live links*
+> and that a large value meant "the rate limit leaked or the address is being
+> bombed". Four PR reviewers found that false, and found it contradicting the
+> docblock five lines above the code it described. The decision below survived
+> the correction; its justification did not, so the paragraph is replaced
+> rather than annotated in the code. PR #508's body carries the full
+> before-and-after.
 
 **Level: `log.info`, not `warn`.** A non-zero purge is ordinary — every
 resend-then-click produces one. `warn` in this codebase means "visible without
@@ -117,7 +127,7 @@ for none of them is speculative.
 | Path | Change |
 |---|---|
 | `src/lib/auth/magic-link.ts` | Capture the purge result, log when non-zero, comment |
-| `src/lib/auth/magic-link.test.ts` | Two cases: fires with the right count; silent with no siblings |
+| `src/lib/auth/magic-link.test.ts` | Cases for the log's payload and silence, plus one pinning the purge's reach |
 
 ### Behaviour
 
@@ -137,46 +147,66 @@ Per CLAUDE.md *Comment Discipline*, it annotates only this code, states what
 is true now, and carries no prose count or roster. It must make two things
 survive a future reader:
 
-1. the number is an **observation**, and what it signals (the minting route's
-   rate limit);
+1. the number is an **observation**, and what it counts — rows the daily sweep
+   has not taken, of any purpose and any expiry state, and only those this
+   call won;
 2. why it is **not** a completeness check — comparing it against a same-
    predicate `count()` would compare the predicate to itself. Without this,
    #506 gets re-filed and re-implemented in the shape that cannot work.
 
-It points at the sibling test **in this same file** for the completeness pin
-rather than restating it.
+It keeps neither the `email = lower(email)` CHECK (owned by
+`docs/data-model.md`'s "Email is lowercase everywhere") nor a claim about
+`row` being a stored row (untetherable — the parameter is structural). The
+reflexive-predicate argument replaces both: `row.email` was read out of the
+column being matched.
 
 ### Tests
 
 Addresses are `Date.now()`-suffixed but keep the `@example.com` domain the
-file's `afterEach` sweeps (line 19-24). The suffix is not decoration: the
-silence case asserts a *negative*, so a row surviving a crashed prior run
-would fail it, and the `afterEach` only protects within a run.
+file's `afterEach` sweeps (line 19-24). In a whole-file run the suffix is
+redundant — eight tests precede this block and each one's sweep clears every
+`@example.com` row. It earns its place in a **filtered** run, where those
+sweeps never happen and a leftover row sharing a fixed address would break the
+negative these cases assert.
 
-1. **Fires, with the right count.** Mint three tokens for one address, consume
-   one. The single-use delete removes that row, so the purge matches the other
-   two: assert `log.info` called with `{ purged: 2 }` and this message. The
-   count assertion is the load-bearing half — `objectContaining({})` matches
-   any object and verifies nothing (#505's own review, item 3).
-2. **Stays silent with no siblings.** Mint one token, consume it. Assert
-   `log.info` was not called. Without this, `> 0` → `>= 0` passes every other
-   test in the file (#505's own review, item 4: neither new guard was proven
-   to stay silent).
+1. **Fires, with the right count.** Mint three, consume one, assert
+   `{ purged: 2, purpose: 'sign_in' }`. The count assertion is load-bearing —
+   `objectContaining({})` matches any object and verifies nothing (#505's own
+   review, item 3).
+2. **Counts un-swept rows, not live ones**, and pins the guard's near
+   boundary: an expired sibling plus a live one, consume the live one, assert
+   `{ purged: 1, … }`.
+3. **Names the consumed row's purpose** — consume a `teacher_profile_pending`
+   ticket, so the payload's `purpose` field asserts a value.
+4. **Stays silent with no siblings.** Assert `log.info` was not called
+   (strict, matching `handoff.test.ts:428`).
+
+Plus, in the `verifyMagicLinkToken` block, a case pinning the purge's **reach**
+against every column a narrowing would filter on.
 
 `vi.spyOn(log, 'info').mockImplementation(() => undefined)` with
 `afterEach(() => vi.restoreAllMocks())`, matching `handoff.test.ts`.
 
-### Prove both guards bite (§3 — required, not optional)
+### Prove every guard bites (§3 — required, not optional)
 
 Per mutation: apply, run, record the exact failure, restore, re-run green.
 
 | Mutation | Must redden |
 |---|---|
-| `purged.count > 0` → `purged.count > 99` | case 1 (fires) |
-| `purged.count > 0` → `purged.count >= 0` | case 2 (silent) |
-| `{ purged: purged.count }` → `{ purged: 0 }` | case 1's count assertion |
+| `purged.count > 0` → `> 1` | the boundary case (2) |
+| `purged.count > 0` → `>= 0` | the silence case (4) |
+| `{ purged: purged.count }` → `{ purged: 0 }` | cases 1 and 2 |
+| `purpose: row.purpose` → `'sign_in'` | the purpose case (3) |
+| purge `where` + `purpose` / `originBrowserHash` / `handoffCode` / `redirectTo` | the reach case |
+| purge `where` + `expiresAt: { gt: now }` | the boundary case (2) |
 
-The third is what separates "a log line fired" from "the right number
+> The table originally held three mutations, all probing the guard from
+> outside its boundary (`> 99`, `>= 0`, a corrupted count). PR review found
+> `> 1` survived the whole suite, and the sweep that followed found
+> `handoffCode: null` and a hardcoded `purpose` did too. Nine now, each
+> measured against the shipped test shape.
+
+The count mutation is what separates "a log line fired" from "the right number
 reached it".
 
 ## Verification
