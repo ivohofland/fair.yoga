@@ -349,6 +349,10 @@ describe('claimWithCode', () => {
   // `updateMany` under-count guard actually fires when the row does vanish is
   // pinned by the staged `updateMany` under-count test in this file, which
   // does not depend on scheduling.
+  //
+  // 20s, not vitest's 5s default: same client-side scheduling stall as
+  // "counts both attempts..." above, confirmed live on this test too. See
+  // `docs/superpowers/specs/2026-09-08-handoff-timeout-flake-design.md` (#512).
   it('the race: a correct claim concurrent with wrong guesses never throws', async () => {
     // Spied to silence, not to assert: this race can legitimately fire the
     // `updateMany` under-count warn, and pinning that it does is the staged
@@ -433,7 +437,7 @@ describe('claimWithCode', () => {
       });
       await raceTwoWrongGuesses(nonce, [codeA, codeB]);
     }
-  });
+  }, 20_000);
 
   // The correct claim consumes the matched row between this wrong guess's
   // snapshot and its increment, so the increment finds nothing to charge.

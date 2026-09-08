@@ -57,12 +57,15 @@ where datname = 'ethical_yoga_test' and pid <> pg_backend_pid() and state <> 'id
 ```
 
 every ~150ms over a separate `docker exec`, independent of the vitest
-process's own connections. For the captured failure — timeout window
-2.72s-in to 7.73s-in of that iteration's wall clock — **the sampler recorded
-zero non-idle rows for the entire stall**, not from this test's own
+process's own connections. For the captured failure — the whole `npx vitest
+run` process's measured lifetime, epoch 1788875840.36 to 1788875847.50, the
+same ~7.14s external wall time §2 reports — **the sampler recorded zero
+non-idle rows for the entire process lifetime**, not from this test's own
 connections and not from any other session. The nearest bracketing samples
-(taken every ~150ms) sit outside the window on both sides with nothing
-in between.
+(taken every ~150ms) sit outside that window on both sides with nothing
+in between; the sampler ran continuously and does not distinguish
+process-startup time from the test's own 5007ms, so the claim covers the
+whole process, not a carved-out sub-window inside it.
 
 That rules out, by direct observation rather than elimination, every
 Postgres-side candidate the issue still had open: a lock wait would show
@@ -114,17 +117,20 @@ only once.
 
 A bare number as `it(name, fn, timeout)`'s third argument, overriding
 vitest's 5000ms default for one test, is this codebase's existing idiom for
-exactly this shape of problem. `rule-lifecycle.ts` carries the identical
-warning in prose ("Under vitest it looks like 5s instead of 10s, because
-vitest's own default `testTimeout` is 5000ms and fires first — a property of
-the harness, not of Prisma or of this code"), and `gdpr.test.ts`,
-`class-transitions.test.ts`, `waitlist-lock-order.test.ts`,
-`roster-link.test.ts`, `template-room-race.test.ts`, and both
+exactly this shape of problem. `gdpr.test.ts`, `class-transitions.test.ts`,
+`waitlist-lock-order.test.ts`, `roster-link.test.ts`,
+`template-room-race.test.ts`, and both
 `rooms-api.test.ts`/`teacher-rooms-api.test.ts` in `tests/integration/`
-already carry a per-test `15_000`-`60_000` override for the same reason —
+already carry a per-test `15_000`-`30_000` override for the same reason —
 `rooms-api.test.ts`'s own comment: "vitest's default testTimeout is 5000ms
 and would otherwise win, replacing this assertion with a generic timeout
-that reads as flake." (`{ timeout: N }` as an *options object* also appears
+that reads as flake." `rule-lifecycle.ts` documents the same underlying
+phenomenon from the other side, in prose rather than a per-test override —
+its own service-code comment on a Prisma transaction warns a future reader
+not to misread vitest's masking behavior as the real budget: "Under vitest
+it looks like 5s instead, because vitest's own default `testTimeout` is
+5000ms and fires first — a property of the harness, not of Prisma or of
+this code." (`{ timeout: N }` as an *options object* also appears
 throughout these files, but that shape is Prisma's own `$transaction(fn,
 options)` timeout, a different API the same files also happen to use — not
 this one.)
@@ -147,8 +153,8 @@ sits inside this codebase's own range for the same kind of headroom
 `waitlist-reconciliation.test.ts`), without reaching for that file's high
 end, which those tests justify by an intentionally held lock or an
 intentional multi-second `setTimeout` this test has no equivalent of. This is
-scoped to the ONE test — not `vitest.config.ts`'s global default — so a
-genuine hang elsewhere in the file still fails fast.
+scoped to the two affected tests (§9) — not `vitest.config.ts`'s global
+default — so a genuine hang elsewhere in the file still fails fast.
 
 ## 7. Verification
 
@@ -178,4 +184,26 @@ genuine hang elsewhere in the file still fails fast.
   the proximate trigger (§5) — both are consistent with the measurements
   above and neither changes the fix.
 - This branch does not touch `claimWithCode`, `verifyWithHandoff`, or any
-  other test in the file.
+  test's assertions — only two tests' timeouts (§9) change.
+
+## 9. A second test hit the same mechanism, found during PR review
+
+The `pr-review-toolkit` test-coverage review of this branch's PR pointed out
+that `'the race: a correct claim concurrent with wrong guesses never
+throws'` (same file, same `describe` block) does substantially MORE
+concurrent-Postgres work per run than the test this spec fixes — an 8-loop
+of up to 4 concurrent `claimWithCode` calls, plus three more staged
+two-way races immediately after — and was never checked against the same
+mechanism, despite being at least as plausible a candidate.
+
+Measured the same way as §2: 100 consecutive isolated runs of that test
+alone produced **1 timeout in 100** — `5007ms`, vitest's own `Duration
+6.23s`, the identical signature (down to the millisecond) as the failure
+captured in §2 — against a tight bimodal spread otherwise (min 2.03s,
+median 2.20s, the one failure at 6.93s). This is the same client-side
+stall (§3-5), not a new mechanism, so it gets the same fix: a `20_000`
+per-test timeout override, added to this test alongside the one §6
+originally targeted. No further investigation was needed — the mechanism,
+the negative control, and the `pg_stat_activity` finding above apply
+identically; only the reproduction needed repeating on the new target to
+confirm it before applying the same fix blind.
