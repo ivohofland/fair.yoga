@@ -320,8 +320,9 @@ export class AlreadyErasedError extends Error {
  * - profile fields anonymized, email replaced with an unroutable unique one
  * - privacy rows, roster links, waitlist entries, notifications, sessions,
  *   magic-link tokens: deleted
- * - `Invitation` rows naming this address anonymized in place, so a teacher's
- *   refusal tombstones survive without the identity behind them
+ * - `Invitation` rows naming this address anonymized in place, keeping the
+ *   teacher's filing state without the identity behind it — but NOT their
+ *   refusal, which this frees (#522)
  * - `TeacherBlock` rows left standing on purpose; the tension is written down
  *   at the site and in `docs/data-model.md`
  * - upcoming registrations cancelled (teachers see the spot free up);
@@ -548,14 +549,13 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // matches on the address directly, with no normalisation needed: all six
     // email columns are lowercase by CHECK constraint (#170).
     //
-    // Anonymised rather than deleted, and the reason is the teacher's side:
-    // deleting the row would free `(teacherId, email)` and reopen
-    // `inviteContact`'s `DECLINED`/`ALREADY_INVITED` probe path at this
-    // address, so an erasure request would double as a way to clear every
-    // refusal anyone ever made. It does NOT keep a plain decline's refusal
-    // working — `inviteContact` looks a tombstone up by the address the
-    // teacher types, and the write below moves that key (#522, an open
-    // defect rather than a property of this design; the chain is in
+    // Anonymised rather than deleted, and the reason is narrower than it
+    // looks: what survives a scrub but not a delete is the teacher's own
+    // filing state — `status` and `respondedAt` — not the refusal itself.
+    // The write below frees `(teacherId, email)` exactly as a delete would,
+    // and `inviteContact` looks a tombstone up by the address the teacher
+    // types, so a plain decline's refusal does NOT survive this (#522, an
+    // open defect rather than a property of this design; the chain is in
     // `docs/data-model.md`'s Invitation-erasure paragraph).
     // `status` and `respondedAt` therefore
     // stay exactly as they are; the identity columns change, plus
