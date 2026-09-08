@@ -537,10 +537,14 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
   let blockerAccountId: string;
   let movedId: string;
   let movedAccountId: string;
+  let decoyId: string;
+  let decoyAccountId: string;
   let studentId: string;
   let studentAccountId: string;
   let strangerInvitationId: string;
   let movedInvitationId: string;
+  let decoyInvitationId: string;
+  let blockerInvitationId: string;
   const movedAwayEmail = `${suffix}-moved-away@test.local`;
 
   // The shape `gdpr.ts`'s `anonymizedEmail` writes: `deleted-` plus a
@@ -594,6 +598,9 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     const moved = await mkTeacher('moved');
     movedId = moved.id;
     movedAccountId = moved.accountId;
+    const decoy = await mkTeacher('decoy');
+    decoyId = decoy.id;
+    decoyAccountId = decoy.accountId;
 
     const student = await prisma.student.create({
       data: {
@@ -619,19 +626,24 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
         lastNotifiedAt: new Date('2026-02-03T04:05:06.000Z'), lastNotifiedEmail: email,
       },
     });
-    // `delivered: false` — acceptance criterion 1 wants the anonymisation
-    // assertions below proven against both shapes, since a future edit
-    // scoping `gdpr.ts`'s writers by `delivered` (a plausible "consistency"
-    // change, given #502 groups both writers by that column) could
-    // otherwise silently leave a decoy's real address unanonymised with
-    // nothing here to notice.
-    await prisma.invitation.create({
+    // `delivered: false` via the `TeacherBlock` producer — an ordinary
+    // re-invite of someone who blocked this teacher, which
+    // `docs/data-model.md`'s `delivered` row is explicit is not decoy-shaped.
+    // The `link.linked` decoy proper is the `decoyId` row below; both are
+    // here because the anonymisation assertions must hold across every
+    // producer of that column, and a future edit scoping `gdpr.ts`'s writers
+    // by `delivered` (a plausible "consistency" change, given #502 groups
+    // both writers by that column) would otherwise silently leave a real
+    // address unanonymised with nothing here to notice.
+    const blockerInvitation = await prisma.invitation.create({
       data: {
         teacherId: blockerId, email, firstName: 'Sammy', lastName: 'Typo',
         status: 'declined', respondedAt: new Date('2026-03-04T05:06:07.000Z'),
         delivered: false,
       },
+      select: { id: true },
     });
+    blockerInvitationId = blockerInvitation.id;
     await prisma.teacherBlock.create({ data: { teacherId: blockerId, email } });
 
     // A third teacher's row, shaped like the `inviterId` row above (accepted,
@@ -662,6 +674,25 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
       data: { email: movedAwayEmail },
     });
 
+    // The #417/#418 decoy proper (#520): a teacher guesses the address of a
+    // student already on their roster who has not shared it, and
+    // `inviteContact` computes `delivered: false` from `link.linked` rather
+    // than from a block. The row is `pending` and stays `pending` — the
+    // invitee never saw it — which is the shape the other two subject-
+    // addressed rows here cannot stand in for: both carry a `respondedAt`, so
+    // an erasure narrowed to rows that were answered would pass without them.
+    // The roster link is what makes this the `link.linked` producer rather
+    // than an arbitrary outstanding invite; no erasure statement reads it.
+    await prisma.teacherStudent.create({ data: { teacherId: decoyId, studentId } });
+    const decoyInvitation = await prisma.invitation.create({
+      data: {
+        teacherId: decoyId, email, firstName: 'Sammie', lastName: 'Guess',
+        delivered: false,
+      },
+      select: { id: true },
+    });
+    decoyInvitationId = decoyInvitation.id;
+
     // Somebody else entirely, on the teacher who gets erased last: the point
     // of clearing a teacher's contacts is that they hold OTHER people's
     // addresses, and an anonymised row alone could not show that.
@@ -677,10 +708,16 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
 
   afterAll(async () => {
     // Invitation and TeacherBlock cascade off Teacher.
-    await prisma.teacher.deleteMany({ where: { id: { in: [inviterId, blockerId, movedId] } } });
+    await prisma.teacher.deleteMany({
+      where: { id: { in: [inviterId, blockerId, movedId, decoyId] } },
+    });
     await prisma.student.deleteMany({ where: { id: studentId } });
     await prisma.account.deleteMany({
-      where: { id: { in: [inviterAccountId, blockerAccountId, movedAccountId, studentAccountId] } },
+      where: {
+        id: {
+          in: [inviterAccountId, blockerAccountId, movedAccountId, decoyAccountId, studentAccountId],
+        },
+      },
     });
     await prisma.$disconnect();
   });
@@ -691,11 +728,16 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     // The name is the teacher's guess at who this person is, held about them
     // without their involvement — precisely the kind of record Art. 15 is
     // for, and it appears nowhere else in the export.
-    expect(data.invitations).toHaveLength(2);
+    // Three: the `movedId` row's `email` has already moved off the subject's
+    // address, and this export keys on that current address.
+    expect(data.invitations).toHaveLength(3);
     const accepted = data.invitations.find((i) => i.status === 'accepted');
     expect(accepted?.teacher).toBe('Inv inviter');
     expect(accepted?.nameTheyUsed).toBe('Sam Typo');
     expect(data.invitations.find((i) => i.status === 'declined')?.teacher).toBe('Inv blocker');
+    // Withholding delivery withholds the email, not the record: the decoy is
+    // a name someone guessed at this address, so Art. 15 owes it to them.
+    expect(data.invitations.find((i) => i.status === 'pending')?.nameTheyUsed).toBe('Sammie Guess');
 
     expect(data.blockedTeachers).toHaveLength(1);
     expect(data.blockedTeachers[0]?.teacher).toBe('Inv blocker');
@@ -705,15 +747,18 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     await deleteStudentAccount(prisma, studentId);
 
     const allRows = await prisma.invitation.findMany({
-      where: { teacherId: { in: [inviterId, blockerId, movedId] }, firstName: { not: 'A' } },
+      where: {
+        teacherId: { in: [inviterId, blockerId, movedId, decoyId] },
+        firstName: { not: 'A' },
+      },
       orderBy: { teacherId: 'asc' },
     });
-    expect(allRows).toHaveLength(3);
+    expect(allRows).toHaveLength(4);
 
-    // The two rows whose CURRENT `email` was still the subject's real
+    // The three rows whose CURRENT `email` was still the subject's real
     // address at erasure time.
     const rows = allRows.filter((r) => r.id !== movedInvitationId);
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     for (const row of rows) {
       expectAnonymizedInvitationValue(row.email, studentId);
       expect(row.firstName).toBe('Deleted');
@@ -740,12 +785,34 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
 
     // The teacher's own filing state is theirs, not the subject's: the
     // decline still stands as a tombstone and the acceptance still records
-    // when it happened. Scrubbing those would rewrite the teacher's history,
-    // and the CHECK constraint binding `respondedAt` to `status` would
-    // reject a half-done job anyway.
-    expect(rows.map((r) => r.status).sort()).toEqual(['accepted', 'declined']);
+    // when it happened, and the decoy nobody ever answered is still
+    // outstanding. Scrubbing those would rewrite the teacher's history, and
+    // the CHECK constraint binding `respondedAt` to `status` would reject a
+    // half-done job anyway. `pending` being in that set is what makes the
+    // loop above load-bearing for #520: an erasure narrowed to rows that were
+    // answered — "leave outstanding invites alone" — would leave the decoy's
+    // real address standing, and the other two subject-addressed rows cannot
+    // catch that narrowing, since both were answered.
+    expect(rows.map((r) => r.status).sort()).toEqual(['accepted', 'declined', 'pending']);
     expect(rows.some((r) => isAnonymizedInvitationValue(r.lastNotifiedEmail, studentId))).toBe(true);
-    expect(rows.every((r) => r.respondedAt !== null)).toBe(true);
+    const decoyRow = rows.find((r) => r.id === decoyInvitationId);
+    expect(decoyRow?.respondedAt).toBeNull();
+    expect(
+      rows.filter((r) => r.id !== decoyInvitationId).every((r) => r.respondedAt !== null),
+    ).toBe(true);
+
+    // #520 decided that the rename the loop above pins is accepted rather
+    // than closed: it is observable to a teacher watching a guessed address,
+    // and every alternative leaves an erased person's plaintext address on a
+    // row that teacher reads forever. `docs/data-model.md`'s
+    // Invitation-erasure paragraph owns that reasoning. What is added here is
+    // the one property nothing pinned before — that the erasure does not
+    // launder the delivery marker on its way past. `docs/data-model.md`'s
+    // `delivered` row claims `deleteStudentAccount` never writes this column;
+    // a row that came out `true` would read as genuinely delivered to every
+    // future writer scoping on it, quietly converting a decoy into one.
+    expect(allRows.filter((r) => !r.delivered).map((r) => r.id).sort())
+      .toEqual([decoyInvitationId, blockerInvitationId].sort());
 
     // The `movedId` fixture: its CURRENT `email` had already moved off the
     // subject's address before erasure ran (the beforeAll `update` above,

@@ -582,6 +582,15 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // erasure call, reused across every `Invitation` write below. See
     // `docs/superpowers/specs/2026-09-08-invitation-erasure-tombstone-design.md`
     // ("Fix #1") for why that reuse is safe.
+    //
+    // Unscoped by `delivered` on purpose (#520). A teacher watching a
+    // guessed-address row rename itself to "Deleted Student" learns the
+    // address belonged to an account that has just erased, and no scope here
+    // closes that — the row is teacher-visible, so any treatment of it is a
+    // visible change. Narrowing these writers to spare a never-delivered row
+    // would leave the erased person's real address readable instead. That
+    // trade-off is decided in `docs/data-model.md`'s Invitation-erasure
+    // paragraph; `gdpr.test.ts` pins the behaviour it settles on.
     const anonymizedEmail = `deleted-${crypto.randomUUID()}@deleted.invalid`;
     await tx.invitation.updateMany({
       where: { email: student.email, lastNotifiedAt: null },
