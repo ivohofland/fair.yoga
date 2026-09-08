@@ -25,7 +25,9 @@ files #502 cites is empty — no drift since the issue was written):
    `invitationDeliveryStatus` (`src/lib/contacts.ts`), which compares it
    against the row's own `email` and returns only whether a send happened and
    when, so a boolean and a date reach the render, never an address. The only
-   other reader of the row at all is `exportStudentData`, Art. 15 — which
+   other reader of the row at all is `exportStudentData`, Art. 15 (re-derive
+   with `grep -rn '\.invitation\.find' src/app src/services` and open each
+   `select`; the call-site list alone is what went wrong the first time) — which
    selects neither `email` nor `lastNotifiedEmail`, and is the *subject's
    own* export besides, a different audience this issue does not concern.
    So today's exploitable leak is on `email` only, but `lastNotifiedEmail`'s
@@ -33,7 +35,7 @@ files #502 cites is empty — no drift since the issue was written):
    paragraph documents both in
    the same breath — see "Why `lastNotifiedEmail` gets the same fix" below.
 
-2. **`unlinkTeacher`** (`src/services/invitations.ts:1087-1090`) writes
+2. **`unlinkTeacher`** (`src/services/invitations.ts`, its `invitation.updateMany`) writes
    `status: 'declined', respondedAt: new Date()` to every `Invitation` row
    matching `{ teacherId, email }` — no scope on whether the row was ever
    delivered. `unlinkTeacher` runs only from `DELETE
@@ -111,7 +113,7 @@ keeps doing it — a latent trap for the next surface that ever selects
 `lastNotifiedEmail` (a future admin/debug view, an audit export), and an
 inconsistency a reader of `gdpr.ts` would have to explain. Reusing
 `anonymizedEmail` in the third statement too costs nothing extra (same
-variable, no new query) and removes the drift. `docs/data-model.md:216`,
+variable, no new query) and removes the drift. `docs/data-model.md`'s Invitation-erasure paragraph,
 which documents this exact pattern in prose, gets corrected to match.
 
 `firstName`/`lastName` already anonymise to fixed literals (`'Deleted'`,
@@ -360,7 +362,7 @@ column.
    what it always matched.
 5. A test asserting `GET /api/invitations`'s response never contains a
    `delivered` key, for a mixed set of delivered/undelivered rows.
-6. `docs/data-model.md:216`'s Invitation-erasure paragraph corrected to
+6. `docs/data-model.md`'s Invitation-erasure paragraph corrected to
    describe the random-token anonymisation, not the `student_id`-derived one.
 7. A test reproducing the exact PUT bypass: create a genuinely-delivered
    invitation, `PUT` its `email` to a linked-but-unshared student's address,
@@ -392,7 +394,7 @@ transaction they run in — only the literal they write changes.
 ## References
 
 - Issue: #502
-- `src/services/gdpr.ts:576-611`, `docs/data-model.md:216`
+- `src/services/gdpr.ts` (`deleteStudentAccount`), `docs/data-model.md`'s Invitation-erasure paragraph
 - `src/services/invitations.ts:237-372` (`inviteContact`), `:409-419`
   (`revivePendingInvitation`), `:968-1093` (`unlinkTeacher`)
 - `src/app/api/invitations/route.ts:11-17` (the teacher-visible select)

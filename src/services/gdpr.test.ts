@@ -546,7 +546,14 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
   let decoyInvitationId: string;
   let blockerInvitationId: string;
   let inviterInvitationId: string;
+  let staleMarkerId: string;
+  let staleMarkerAccountId: string;
+  let staleMarkerInvitationId: string;
+  let legacyId: string;
+  let legacyAccountId: string;
+  let legacyInvitationId: string;
   const movedAwayEmail = `${suffix}-moved-away@test.local`;
+  const staleMarkerAwayEmail = `${suffix}-stale-marker-away@test.local`;
 
   // The shape `gdpr.ts`'s `anonymizedEmail` writes: `deleted-` plus a
   // `crypto.randomUUID()` (32 hex digits, 4 hyphens — 36 characters) plus
@@ -602,6 +609,12 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     const decoy = await mkTeacher('decoy');
     decoyId = decoy.id;
     decoyAccountId = decoy.accountId;
+    const staleMarker = await mkTeacher('stale');
+    staleMarkerId = staleMarker.id;
+    staleMarkerAccountId = staleMarker.accountId;
+    const legacy = await mkTeacher('legacy');
+    legacyId = legacy.id;
+    legacyAccountId = legacy.accountId;
 
     const student = await prisma.student.create({
       data: {
@@ -699,6 +712,45 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
       data: { email: movedAwayEmail, delivered: false, isArchived: true },
     });
 
+    // A SECOND row for the third, marker-keyed statement, and `pending` where
+    // `movedId`'s is `accepted`. Re-addressing is a `pending`-row action —
+    // `PUT /api/invitations/[id]` refuses it once a row is `accepted` (#500),
+    // so `movedId`'s story (re-addressed, then accepted at the new address)
+    // is the rarer end of that path and a row that simply stays outstanding
+    // is the commoner one. Without this fixture, narrowing statement 3 by
+    // `status: { not: 'pending' }` leaves the subject's real address standing
+    // in `last_notified_email` and every assertion here still passes, since
+    // the only row that statement reached was answered. Left unarchived so
+    // statement 3 keeps one row on each side of `isArchived` too.
+    // The second fixture for the FIRST statement, and the `pending` one —
+    // `blockerId`'s is `declined`, so it satisfies a narrowing to answered
+    // rows and cannot catch one. That statement's population is legacy (see
+    // `blockerId`'s comment), but legacy rows are real rows holding real
+    // addresses, and a narrowing there would strand exactly the outstanding
+    // ones. `delivered` is left at the schema default `true`, which is also
+    // what `20260901114046_invitation_last_notified` backfilled every
+    // pre-existing row to regardless of its actual delivery history — so
+    // this row is shaped like what that migration left behind, and it gives
+    // the first statement a `delivered: true` row where it otherwise had
+    // only a `false` one.
+    const legacyInvitation = await prisma.invitation.create({
+      data: {
+        teacherId: legacyId, email, firstName: 'Legacy', lastName: 'Pending',
+      },
+      select: { id: true },
+    });
+    legacyInvitationId = legacyInvitation.id;
+
+    const staleMarkerInvitation = await prisma.invitation.create({
+      data: {
+        teacherId: staleMarkerId, email: staleMarkerAwayEmail,
+        firstName: 'Stale', lastName: 'Marker', delivered: false,
+        lastNotifiedAt: new Date('2026-06-07T08:09:10.000Z'), lastNotifiedEmail: email,
+      },
+      select: { id: true },
+    });
+    staleMarkerInvitationId = staleMarkerInvitation.id;
+
     // The #417/#418 decoy proper (#520): a teacher guesses the address of a
     // student already on their roster who has not shared it, and
     // `inviteContact` computes `delivered: false` from `link.linked` rather
@@ -747,13 +799,18 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
   afterAll(async () => {
     // Invitation and TeacherBlock cascade off Teacher.
     await prisma.teacher.deleteMany({
-      where: { id: { in: [inviterId, blockerId, movedId, decoyId] } },
+      where: {
+        id: { in: [inviterId, blockerId, movedId, decoyId, staleMarkerId, legacyId] },
+      },
     });
     await prisma.student.deleteMany({ where: { id: studentId } });
     await prisma.account.deleteMany({
       where: {
         id: {
-          in: [inviterAccountId, blockerAccountId, movedAccountId, decoyAccountId, studentAccountId],
+          in: [
+            inviterAccountId, blockerAccountId, movedAccountId, decoyAccountId,
+            staleMarkerAccountId, legacyAccountId, studentAccountId,
+          ],
         },
       },
     });
@@ -766,16 +823,20 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     // The name is the teacher's guess at who this person is, held about them
     // without their involvement — precisely the kind of record Art. 15 is
     // for, and it appears nowhere else in the export.
-    // Three: the `movedId` row's `email` has already moved off the subject's
-    // address, and this export keys on that current address.
-    expect(data.invitations).toHaveLength(3);
+    // Four of the six rows: `movedId`'s and `staleMarkerId`'s `email` have
+    // both already moved off the subject's address, and this export keys on
+    // that current address.
+    expect(data.invitations).toHaveLength(4);
     const accepted = data.invitations.find((i) => i.status === 'accepted');
     expect(accepted?.teacher).toBe('Inv inviter');
     expect(accepted?.nameTheyUsed).toBe('Sam Typo');
     expect(data.invitations.find((i) => i.status === 'declined')?.teacher).toBe('Inv blocker');
     // Withholding delivery withholds the email, not the record: the decoy is
     // a name someone guessed at this address, so Art. 15 owes it to them.
-    expect(data.invitations.find((i) => i.status === 'pending')?.nameTheyUsed).toBe('Sammie Guess');
+    // Matched on the teacher, not on `status === 'pending'` — two fixtures
+    // are pending now, and `find` would have picked between them arbitrarily.
+    expect(data.invitations.find((i) => i.teacher === 'Inv decoy')?.nameTheyUsed)
+      .toBe('Sammie Guess');
 
     expect(data.blockedTeachers).toHaveLength(1);
     expect(data.blockedTeachers[0]?.teacher).toBe('Inv blocker');
@@ -790,19 +851,24 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     // failure.
     const allRows = await prisma.invitation.findMany({
       where: {
-        teacherId: { in: [inviterId, blockerId, movedId, decoyId] },
+        teacherId: { in: [inviterId, blockerId, movedId, decoyId, staleMarkerId, legacyId] },
         id: { not: strangerInvitationId },
       },
       orderBy: { teacherId: 'asc' },
     });
     expect(allRows.map((r) => r.id).sort()).toEqual(
-      [inviterInvitationId, blockerInvitationId, movedInvitationId, decoyInvitationId].sort(),
+      [
+        inviterInvitationId, blockerInvitationId, movedInvitationId, decoyInvitationId,
+        staleMarkerInvitationId, legacyInvitationId,
+      ].sort(),
     );
 
     // The three rows whose CURRENT `email` was still the subject's real
     // address at erasure time.
-    const rows = allRows.filter((r) => r.id !== movedInvitationId);
-    expect(rows).toHaveLength(3);
+    const rows = allRows.filter(
+      (r) => r.id !== movedInvitationId && r.id !== staleMarkerInvitationId,
+    );
+    expect(rows).toHaveLength(4);
     for (const row of rows) {
       expectAnonymizedInvitationValue(row.email, studentId);
       expect(row.firstName).toBe('Deleted');
@@ -841,7 +907,8 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     // biconditional (`("respondedAt" IS NULL) = (status = 'pending')`), so
     // given these statuses the database already entails every `respondedAt`
     // this test could assert, and such an assertion could not fail.
-    expect(rows.map((r) => r.status).sort()).toEqual(['accepted', 'declined', 'pending']);
+    expect(rows.map((r) => r.status).sort())
+      .toEqual(['accepted', 'declined', 'pending', 'pending']);
     expect(rows.some((r) => isAnonymizedInvitationValue(r.lastNotifiedEmail, studentId))).toBe(true);
 
     // #520 decided that the rename the loop above pins is accepted rather
@@ -857,7 +924,9 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     // Only the `inviterId` row is `true` — it is the one fixture here that
     // was neither blocked, re-addressed, nor planted at a guessed address.
     expect(allRows.filter((r) => !r.delivered).map((r) => r.id).sort())
-      .toEqual([decoyInvitationId, blockerInvitationId, movedInvitationId].sort());
+      .toEqual(
+        [decoyInvitationId, blockerInvitationId, movedInvitationId, staleMarkerInvitationId].sort(),
+      );
 
     // The `movedId` fixture: its CURRENT `email` had already moved off the
     // subject's address before erasure ran (the beforeAll `update` above,
@@ -879,6 +948,18 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     // statement (marker-keyed, reaching only `lastNotifiedEmail`) writes the
     // same shared token too.
     expect(moved?.lastNotifiedEmail).toBe(inviterRow?.email);
+
+    // The same three assertions for the `staleMarkerId` row, which differs
+    // from `movedId`'s only in still being `pending`. That difference is the
+    // whole point: `movedId`'s row was answered, so it satisfies a narrowing
+    // of the third statement to answered rows and cannot catch one. This row
+    // is the tripwire for that narrowing — re-addressing is a `pending`-row
+    // action, so it is also the commoner shape of the two.
+    const staleMarkerRow = allRows.find((r) => r.id === staleMarkerInvitationId);
+    expect(staleMarkerRow?.email).toBe(staleMarkerAwayEmail);
+    expect(staleMarkerRow?.firstName).toBe('Stale');
+    expectAnonymizedInvitationValue(staleMarkerRow?.lastNotifiedEmail ?? null, studentId);
+    expect(staleMarkerRow?.lastNotifiedEmail).toBe(inviterRow?.email);
 
     // Deliberately untouched — see the comment at the erasure site and
     // `docs/data-model.md`. Retention vs. scrubbing is a legal call nobody
