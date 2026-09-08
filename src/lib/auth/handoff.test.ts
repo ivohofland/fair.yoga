@@ -367,25 +367,50 @@ describe('claimWithCode', () => {
     );
   });
 
-  it('warns when two concurrent wrong guesses race the same near-exhausted candidate', async () => {
+  // A sibling wrong guess runs to completion between this call's increment
+  // and its reap: it finds the row already at the budget, sweeps it into its
+  // own `spent` set and deletes it there, so this call's `deleteMany` finds
+  // nothing left to reap against its prediction of one.
+  //
+  // The sibling is a whole `claimWithCode` on the UNHOOKED client, so every
+  // statement it issues is the real one and it cannot re-enter this hook.
+  // Interposed after `query(args)` rather than before it, because the row has
+  // to cross the budget — this call's own increment is what puts it there.
+  it('warns when a sibling reaps the row this call was about to reap', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    for (let i = 0; i < 8; i++) {
-      const email = `claim-race-reap-${Date.now()}-${i}@example.com`;
-      const nonce = `nonce-race-reap-${Date.now()}-${i}`;
-      const code = await stampedToken(email, nonce);
-      await db.magicLinkToken.updateMany({
-        where: { email },
-        data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS - 1 },
-      });
-      const wrong = ['000000', '111111'].find((g) => g !== code)!;
+    const email = `claim-staged-underreap-${Date.now()}@example.com`;
+    const nonce = `nonce-staged-underreap-${Date.now()}`;
+    const code = await stampedToken(email, nonce);
+    await db.magicLinkToken.updateMany({
+      where: { email },
+      data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS - 1 },
+    });
+    const wrong = ['000000', '111111'].find((g) => g !== code)!;
 
-      await Promise.all([
-        claimWithCode(db, asBrowserNonce(nonce), wrong),
-        claimWithCode(db, asBrowserNonce(nonce), wrong),
-      ]);
-    }
+    let hookCalls = 0;
+    const racing = db.$extends({
+      query: {
+        magicLinkToken: {
+          async updateMany({ args, query }) {
+            hookCalls += 1;
+            const ours = await query(args);
+            await claimWithCode(db, asBrowserNonce(nonce), wrong);
+            return ours;
+          },
+        },
+      },
+      // `$extends` returns a client missing `$on`, so it is not assignable to
+      // `claimWithCode`'s `PrismaClient` parameter even though every method it
+      // calls here is the real one — same cast as the hooks in
+      // `waitlist.test.ts`.
+    }) as unknown as PrismaClient;
+
+    expect(await claimWithCode(racing, asBrowserNonce(nonce), wrong)).toEqual({ kind: 'invalid' });
+
+    expect(hookCalls).toBe(1);
+    expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ expected: 1 }),
+      { expected: 1, actual: 0 },
       'handoff: deleteMany reaped a different number of exhausted candidates than expected',
     );
   });
