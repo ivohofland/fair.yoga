@@ -3677,7 +3677,7 @@ describe('PUT then POST /api/students answers a guessed address the same either 
         status: 'accepted',
         respondedAt: new Date(),
       },
-      select: { id: true },
+      select: { id: true, email: true },
     });
   }
 
@@ -3715,13 +3715,15 @@ describe('PUT then POST /api/students answers a guessed address the same either 
     expect(strangerPutBody).toEqual(gatedPutBody);
 
     // Neither decoy moved — confirming the PUT above did nothing, not just
-    // that it was refused with the right code.
+    // that it was refused with the right code. `toBe` the decoy's OWN seeded
+    // address, the same strength as the direct-refusal test above, not
+    // merely `not.toBe` the guessed one.
     const [gatedDecoyRow, strangerDecoyRow] = await Promise.all([
       prisma.invitation.findUniqueOrThrow({ where: { id: gatedDecoy.id } }),
       prisma.invitation.findUniqueOrThrow({ where: { id: strangerDecoy.id } }),
     ]);
-    expect(gatedDecoyRow.email).not.toBe(gatedEmail);
-    expect(strangerDecoyRow.email).not.toBe(strangerEmail);
+    expect(gatedDecoyRow.email).toBe(gatedDecoy.email);
+    expect(strangerDecoyRow.email).toBe(strangerDecoy.email);
 
     // Second call: both POSTs succeed as ordinary fresh invites — an
     // `ALREADY_LINKED` refusal on the gated side is exactly the
