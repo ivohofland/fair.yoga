@@ -176,12 +176,11 @@ describe('verifyMagicLinkToken', () => {
 /**
  * The guards on the purge count's log line (#506). Addresses carry a
  * `Date.now()` suffix while keeping the `@example.com` domain the file-level
- * `afterEach` sweeps. In a whole-file run that suffix is redundant — eight
- * tests run before this block and each one's sweep clears every
- * `@example.com` row, a crashed earlier run's included. It earns its place in
- * a FILTERED run (`vitest -t 'purge count'`), where those sweeps never
- * happen and a leftover row sharing a fixed address would break the negative
- * these cases assert.
+ * `afterEach` sweeps. In a whole-file run that suffix is redundant — every
+ * test before this block sweeps every `@example.com` row on its way out, a
+ * crashed earlier run's included. It earns its place in a FILTERED run
+ * (`vitest -t 'purge count'`), where those sweeps never happen and a leftover
+ * row sharing a fixed address would break the negative these cases assert.
  */
 describe('purge count logging (#506)', () => {
   const MESSAGE = 'magic-link: purged remaining token rows for this address on consumption';
@@ -207,8 +206,8 @@ describe('purge count logging (#506)', () => {
    * case. The purge filters on `email` alone, so a row the daily sweep has
    * not yet taken is counted whether or not it is still live — the reason the
    * message says "rows" and not "links". A count of exactly 1 is also the
-   * smallest value that must fire: without this, narrowing the guard from
-   * `> 0` to `> 1` survives every other case in this file.
+   * smallest value that must fire, which is what puts a guard narrowed from
+   * `> 0` to `> 1` in reach of a test at all.
    */
   it('counts rows the daily sweep has not taken, not only live ones', async () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);

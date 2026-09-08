@@ -66,8 +66,13 @@ export async function generateMagicLinkToken(
  * without duplicating it.
  *
  * Returns false when the row is already gone — another caller won the
- * single-use delete — or when it expired between the caller's read and this
- * call. Emits one `log.info` when the purge below found rows.
+ * single-use delete — or when it had expired. The expiry branch is the
+ * ordinary gate for `verifyMagicLinkToken` below, which pre-checks nothing;
+ * for `handoff.ts`, which does, it closes the window between its read and
+ * this call. Either way the single-use delete above it has already run, so an
+ * expired token is destroyed by the call that rejects it.
+ *
+ * Emits one `log.info` when the purge below found rows.
  */
 export async function consumeTokenRow(
   db: PrismaClient,
@@ -106,8 +111,7 @@ export async function consumeTokenRow(
   // Must not become a check. The only count to compare against would run that
   // same `where`, so a defect in the predicate moves both sides together and
   // the comparison stays silent — the outcome such a check would exist to
-  // prevent. None is needed anyway: `row.email` was read out of this very
-  // column, so the match is reflexive.
+  // prevent.
   if (purged.count > 0) {
     log.info(
       { purged: purged.count, purpose: row.purpose },
