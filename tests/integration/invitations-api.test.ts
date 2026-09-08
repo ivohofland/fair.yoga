@@ -7,6 +7,7 @@ import { PrismaClient } from '@prisma/client';
 // still covered through the real route — see the tombstone above the
 // registered-invitee notification test.
 import { inviteContact, unlinkTeacher } from '@/services/invitations';
+import { deleteStudentAccount } from '@/services/gdpr';
 import { promoteNext } from '@/services/waitlist';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -154,6 +155,15 @@ describe('GET /api/invitations', () => {
     // the teacherId filter working, not an empty table making the equality
     // check above vacuous.
     expect(json.data.invitations.some((i) => i.id === otherTeacherInvitationId)).toBe(false);
+
+    // `delivered` must never reach a teacher-facing route. It is literally
+    // `!blocked && !linked` (`docs/data-model.md`'s `delivered` row), so
+    // serving it would hand this teacher the #173 block secret and the
+    // #417/#418 gate secret outright, from a list they load anyway. The
+    // prohibition is stated in that row and was enforced by nothing until
+    // this line: every leak of it is a `select` away, and `select` is what
+    // this test reads.
+    expect(json.data.invitations[0]).not.toHaveProperty('delivered');
   });
 
   it('lists an invitation for a blocked address exactly like any other', async () => {
@@ -3906,5 +3916,118 @@ describe('PUT then POST /api/students answers a guessed address the same either 
       }),
     ]);
     expect(gatedCreatedRow).toEqual(strangerCreatedRow);
+  });
+});
+
+/**
+ * #520: the erasure rename as the teacher actually receives it.
+ *
+ * `gdpr.test.ts` pins what `deleteStudentAccount` writes; this pins what
+ * comes back out of the route the decision is about. The two are not the
+ * same claim — `docs/data-model.md`'s Invitation-erasure paragraph rests on
+ * `GET /api/invitations` selecting `email`, `firstName` and `lastName`, and
+ * dropping any of those from that select would falsify the premise without
+ * touching a single service test.
+ *
+ * Pinned as the ACCEPTED state, not a defect: #520 decided the rename stays
+ * observable rather than be hidden behind a `delivered` scope, because every
+ * way of hiding it retains the erased person's real address on a row this
+ * very endpoint serves.
+ */
+describe('GET /api/invitations after the invitee erases (#520)', () => {
+  const erasedEmail = `inv-erased-${suffix}@test.local`;
+  let erasedTeacherId: string;
+  let erasedTeacherAccountId: string;
+  let erasedTeacherToken: string;
+  let erasedStudentId: string;
+  let erasedStudentAccountId: string;
+  let erasedInvitationId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Erasure', lastName: 'Watcher',
+        email: `inv-erasure-watcher-${suffix}@test.local`,
+        bio: '#520 fixtures', pageSlug: `inv-erasure-watcher-${suffix}`,
+        account: { create: { email: `inv-erasure-watcher-${suffix}@test.local` } },
+      },
+      select: { id: true, accountId: true },
+    });
+    erasedTeacherId = teacher.id;
+    erasedTeacherAccountId = teacher.accountId!;
+    erasedTeacherToken = await seedSession(prisma, erasedTeacherAccountId);
+
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Erased', lastName: 'Invitee', email: erasedEmail,
+        claimedAt: new Date(), account: { create: { email: erasedEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    erasedStudentId = student.id;
+    erasedStudentAccountId = student.accountId!;
+
+    // Shaped as `POST /api/students` leaves a row: the marker is written
+    // unconditionally there, so a row without it is not one this route can
+    // serve for anyone who signed up after
+    // `20260901114046_invitation_last_notified`.
+    const invitation = await prisma.invitation.create({
+      data: {
+        teacherId: erasedTeacherId, email: erasedEmail,
+        firstName: 'Guessed', lastName: 'Name',
+        lastNotifiedAt: new Date(), lastNotifiedEmail: erasedEmail,
+      },
+      select: { id: true },
+    });
+    erasedInvitationId = invitation.id;
+  });
+
+  afterAll(async () => {
+    await prisma.teacher.deleteMany({ where: { id: erasedTeacherId } });
+    await prisma.student.deleteMany({ where: { id: erasedStudentId } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [erasedTeacherAccountId, erasedStudentAccountId] } },
+    });
+  });
+
+  it('serves the row anonymised, and never the erased address', async () => {
+    const before = await fetch(`${BASE_URL}/api/invitations`, {
+      headers: cookie(erasedTeacherToken),
+    });
+    const beforeJson = (await before.json()) as {
+      data: { invitations: Array<{ id: string; email: string; firstName: string }> };
+    };
+    // The control: without it, the assertions below would pass just as well
+    // against a route that never served this row at all.
+    expect(beforeJson.data.invitations.find((i) => i.id === erasedInvitationId)?.email)
+      .toBe(erasedEmail);
+
+    await deleteStudentAccount(prisma, erasedStudentId);
+
+    const res = await fetch(`${BASE_URL}/api/invitations`, {
+      headers: cookie(erasedTeacherToken),
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      data: {
+        invitations: Array<{ id: string; email: string; firstName: string; lastName: string }>;
+      };
+    };
+    const row = json.data.invitations.find((i) => i.id === erasedInvitationId);
+
+    // Still served — anonymised in place, not deleted. Deleting would free
+    // `(teacherId, email)` and reopen the probe path at that address.
+    expect(row).toBeDefined();
+    expect(row?.email).not.toBe(erasedEmail);
+    expect(row?.email).toMatch(/^deleted-[0-9a-f-]{36}@deleted\.invalid$/);
+    expect(row?.email).not.toContain(erasedStudentId);
+
+    // The rename itself, which is the signal #520 accepts: the teacher who
+    // typed a guessed address watches it become this.
+    expect(row?.firstName).toBe('Deleted');
+    expect(row?.lastName).toBe('Student');
+
+    // Nothing anywhere in the response still carries the erased address.
+    expect(JSON.stringify(json)).not.toContain(erasedEmail);
   });
 });
