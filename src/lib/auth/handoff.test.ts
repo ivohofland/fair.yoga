@@ -320,6 +320,14 @@ describe('claimWithCode', () => {
 
   // Two concurrent wrong guesses against the same row must not undercount
   // each other — see the atomic `{ increment: 1 }` in `claimWithCode`.
+  //
+  // 20s, not vitest's 5s default: this test's own four-way-concurrent
+  // Postgres round-trip runs in single-digit milliseconds uncontended, but a
+  // client-side scheduling stall (never reaching Postgres — confirmed by
+  // `pg_stat_activity` staying empty for the whole stall) can occasionally
+  // blow past 5000ms on a busy host. See
+  // `docs/superpowers/specs/2026-09-08-handoff-timeout-flake-design.md` (#512)
+  // for the measurement.
   it('counts both attempts when two wrong guesses race concurrently', async () => {
     const email = `claim-race-${Date.now()}@example.com`;
     const nonce = `nonce-race-${Date.now()}`;
@@ -331,7 +339,7 @@ describe('claimWithCode', () => {
 
     const row = await db.magicLinkToken.findFirst({ where: { email } });
     expect(row?.handoffAttempts).toBe(guesses.length);
-  });
+  }, 20_000);
 
   // A correct claim deletes the matched row via `consumeTokenRow` at the same
   // moment a concurrent wrong guess is running `updateMany`/`deleteMany` over
