@@ -31,7 +31,7 @@ const teacher = await prisma.teacher.findUniqueOrThrow({ where: { email: 'ivo@fa
 const token = randomBytes(32).toString('hex');
 const hash = createHash('sha256').update(token).digest('hex');
 await prisma.session.create({ data: { id: hash, accountId: teacher.accountId, expiresAt: new Date(Date.now() + 86400_000) } });
-// Playwright: addCookies([{ name: 'fair_yoga_session', value: token, url: 'http://localhost:3000' }])
+// Playwright: addCookies([{ name: 'fair_yoga_session', value: token, url: process.env.INTEGRATION_BASE_URL ?? 'http://localhost:3000' }])
 ```
 
 Delete the session row when done. (`tests/helpers.ts`'s `seedSession(db, accountId)` does the same thing for the test suites; `src/lib/auth/session.ts`'s `createSession` is the production path.)

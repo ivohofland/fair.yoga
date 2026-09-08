@@ -38,4 +38,19 @@ describe('listWorktreeAdminEntries', () => {
 
     fs.rmSync(worktreeRoot, { recursive: true, force: true });
   });
+
+  it('treats a non-ENOENT read error as still live, not orphaned', () => {
+    const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fairyoga-live-slugs-worktree-'));
+    const adminDir = path.join(gitCommonDir, 'worktrees', 'broken-worktree');
+    fs.mkdirSync(adminDir, { recursive: true });
+    // A directory where the gitdir file should be triggers EISDIR on
+    // readFileSync — a real, non-ENOENT error class, not "worktree removed."
+    fs.mkdirSync(path.join(adminDir, 'gitdir'));
+
+    const entries = listWorktreeAdminEntries(gitCommonDir);
+
+    expect(entries).toEqual([{ slug: 'broken_worktree', workingDirExists: true }]);
+
+    fs.rmSync(worktreeRoot, { recursive: true, force: true });
+  });
 });

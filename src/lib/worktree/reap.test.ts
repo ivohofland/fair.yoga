@@ -43,4 +43,23 @@ describe('reapOrphans', () => {
     expect(result.registry).toEqual(registry);
     expect(dropDatabase).not.toHaveBeenCalled();
   });
+
+  it('does not let one orphan\'s failure prevent a later orphan in the same call from being reaped', async () => {
+    const registry: Registry = {
+      fix_517: { port: 3100, pid: null },
+      fix_520: { port: 3101, pid: null },
+    };
+    const dropDatabase = vi.fn().mockImplementation((dbName: string) => {
+      if (dbName.includes('fix_517')) {
+        return Promise.reject(new Error('simulated drop failure'));
+      }
+      return Promise.resolve();
+    });
+    const killPid = vi.fn();
+
+    const result = await reapOrphans(registry, new Set(), { dropDatabase, killPid });
+
+    expect(result.reaped).toEqual(['fix_520']);
+    expect(result.registry).toEqual({ fix_517: { port: 3100, pid: null } });
+  });
 });

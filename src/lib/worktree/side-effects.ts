@@ -5,7 +5,7 @@ export async function dropDatabaseReal(dbName: string, anyDatabaseUrl: string): 
   assertSafeDatabaseName(dbName);
   const admin = new PrismaClient({ datasources: { db: { url: withDatabaseName(anyDatabaseUrl, 'postgres') } } });
   try {
-    await admin.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${dbName}"`);
+    await admin.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
   } finally {
     await admin.$disconnect();
   }
