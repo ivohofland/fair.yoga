@@ -423,8 +423,10 @@ function censusDeclarationCount(source: ts.SourceFile): number {
  * census at all — for which only an invocation counts. A callee that merely
  * roots in the name invokes nothing while the exemption above keeps the
  * forbidden-call arm off it, and the fixture below pins what can then hide
- * inside such an expression. `censusOfTree.call(null)` is the price: this arm
- * reports it as no census call at all, loud and wrong, on a shape no census
+ * inside such an expression. The price is the converse: an invocation whose
+ * callee is not that bare identifier — `censusOfTree.call(null)`,
+ * `.apply(null)`, `censusOfTree.bind(null)()`, `new censusOfTree()` — is
+ * reported here as no census call at all, loud and wrong, on shapes no census
  * file writes. Root-based there, callee-identity here.
  *
  * Narrower in scope, too. The forbidden-call arm reads the whole
@@ -947,16 +949,17 @@ describe('x', () => {
   });
 
   it('reports a shadowed `censusOfTree` even though the name check alone would miss it', () => {
-    // The name-alone allowance for CENSUS only means anything if the name is
-    // unambiguous. A second `censusOfTree`, nested beside `reached`, performs
-    // a real independent walk here — and nothing that only walks the
-    // initializer expression would ever see this shadow's own body.
-    // `censusDeclarationCount` is what catches it instead: this fixture would
-    // otherwise report `[]`, fully clean, despite the shadow's `readdirSync`.
-    // (Never executed, only parsed, so these two imports need not resolve —
-    // included anyway for fixture realism, matching OWN_WALK's real shape.
-    // Prepended here rather than added to REACHED_PREAMBLE itself, which
-    // other fixtures share and must not gain unrelated imports.)
+    // Trusting the name `CENSUS` rather than inspecting a body only means
+    // anything while the name is unambiguous. A second `censusOfTree`, nested
+    // beside `reached`, performs a real independent walk here — and nothing
+    // that only walks the initializer expression would ever see this shadow's
+    // own body. `censusDeclarationCount` is what catches it instead: this
+    // fixture would otherwise report `[]`, fully clean, despite the shadow's
+    // `readdirSync`. (Never executed, only parsed, so these two imports need
+    // not resolve — included anyway for fixture realism, matching OWN_WALK's
+    // real shape. Prepended here rather than added to REACHED_PREAMBLE
+    // itself, which other fixtures share and must not gain unrelated
+    // imports.)
     const source = `
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
@@ -986,15 +989,15 @@ describe('x', () => {
   });
 
   it('reports an initializer that roots in `censusOfTree` without invoking it', () => {
-    // The bypass `callsCensus`'s callee-identity test closes, and the only
-    // fixture in this file that reddens when that test is loosened back to a
-    // root match. Every call below is one the forbidden-call arm allows —
-    // `censusOfTree.name.concat` on its `CENSUS` root, `readdirSync` on its
-    // `node:` origin — so that arm is silent by design while `readdirSync`
-    // reads the tree a second time. Ask only whether some call ROOTS in
-    // `censusOfTree` and this source answers yes on the token in
-    // `censusOfTree.name`, certifying an independent walk clean; ask whether
-    // the callee IS `censusOfTree` and it answers no.
+    // The bypass `callsCensus`'s callee-identity test closes, and what pins
+    // that test rather than its scope: loosen `callsCensus` to a root match
+    // and this expectation stops holding. Every call below is one the
+    // forbidden-call arm allows — `censusOfTree.name.concat` on its `CENSUS`
+    // root, `readdirSync` on its `node:` origin — so that arm is silent by
+    // design while `readdirSync` reads the tree a second time. Ask only
+    // whether some call ROOTS in `censusOfTree` and this source answers yes
+    // on the token in `censusOfTree.name`, certifying an independent walk
+    // clean; ask whether the callee IS `censusOfTree` and it answers no.
     const preamble = `
 import { readdirSync } from 'node:fs';
 ${REACHED_PREAMBLE}`;
