@@ -675,7 +675,11 @@ git commit -m "feat(worktrees): generate .env from .env.example without ever ove
 **Files:**
 - Create: `src/lib/db-provision.ts`
 - Test: `src/lib/db-provision.test.ts`
-- Modify: `tests/setup/unit-db.ts` (full replacement below)
+
+`tests/setup/unit-db.ts` is refactored in Task 6, not here — it needs both
+`provisionDatabase` (this task) and `runReap` (Task 6), and committing it
+mid-refactor with only the first would leave its import of `runReap`
+unresolved until Task 6 lands.
 
 **Interfaces:**
 - Consumes: nothing from Tasks 1-4.
@@ -781,82 +785,14 @@ export async function provisionDatabase(url: string, options: ProvisionOptions):
 Run: `npx vitest run --project unit src/lib/db-provision.test.ts`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Refactor `tests/setup/unit-db.ts` to use it**
-
-Replace the file's contents entirely with:
-
-```typescript
-// tests/setup/unit-db.ts
-/**
- * Global setup for the vitest `unit` AND `unit-sweeps` projects: provision
- * and migrate the dedicated test database (docs/test-database.md), and —
- * in a linked worktree — reap any other worktree's orphaned databases and
- * dev-server process (docs/superpowers/specs/2026-09-08-worktree-db-isolation-design.md).
- *
- * `unit-sweeps` is the tier holding the service tests that inject far-future
- * clocks into database-wide sweeps — on a shared database those once
- * completed the seed's future classes and mailed their payment requests.
- * This setup PROVISIONS `DATABASE_URL_TEST` (creates it, migrates it) so
- * those tests have somewhere isolated to run.
- *
- * IT DOES NOT GUARANTEE THEY RUN THERE. The switch is made by
- * `vitest.config.ts`, which resolves both projects' `DATABASE_URL` to
- * `DATABASE_URL_TEST ?? devUrl`. When `DATABASE_URL_TEST` is unset this
- * function returns early and that fallback is the DEV database — the
- * isolation is a value in `.env`, i.e. configuration, not a guard. Suites
- * taking an unscoped destructive write correct this in their own headers;
- * stated here too, because this is the source they copy from.
- *
- * A suite that takes an UNSCOPED destructive write must therefore carry its own
- * runtime guard on the connected database's name, as
- * `waitlist-retention.test.ts` does. CI sets `DATABASE_URL_TEST` explicitly
- * (`.github/workflows/ci.yml`, the `test-unit` job) precisely so that guard does not skip the suite
- * on the merge gate; the early return below is what made it do exactly that.
- */
-
-import { loadEnv } from 'vite';
-import { provisionDatabase } from '../../src/lib/db-provision';
-import { getWorktreeIdentity } from '../../src/lib/worktree/identity';
-import { getRegistryPath } from '../../src/lib/worktree/registry';
-import { runReap } from '../../src/lib/worktree/reap';
-
-export default async function setup(): Promise<void> {
-  const fileEnv = loadEnv('', process.cwd(), '');
-  const devUrl = process.env.DATABASE_URL ?? fileEnv.DATABASE_URL;
-  const testUrl = process.env.DATABASE_URL_TEST ?? fileEnv.DATABASE_URL_TEST;
-
-  if (!testUrl) {
-    console.log('[unit-db] DATABASE_URL_TEST not set — using DATABASE_URL as-is');
-    return;
-  }
-  if (testUrl === devUrl) {
-    throw new Error(
-      '[unit-db] DATABASE_URL_TEST equals DATABASE_URL — refusing to run unit tests ' +
-        'against the dev database. Point DATABASE_URL_TEST at a separate database.',
-    );
-  }
-
-  const identity = getWorktreeIdentity();
-  if (!identity.isMainCheckout) {
-    const reaped = await runReap(identity.gitCommonDir, getRegistryPath(identity.gitCommonDir), testUrl);
-    if (reaped.length > 0) {
-      console.log(`[unit-db] reaped orphaned worktree resources: ${reaped.join(', ')}`);
-    }
-  }
-
-  await provisionDatabase(testUrl, { seed: false });
-  console.log(`[unit-db] unit tests run against ${new URL(testUrl).pathname.slice(1)}`);
-}
-```
-
-This references `runReap`, added in Task 6 — this task's own tests (Step 4) already pass without it; the full-suite check that exercises `unit-db.ts` itself is deferred to Task 6's Step 5.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/lib/db-provision.ts src/lib/db-provision.test.ts tests/setup/unit-db.ts
-git commit -m "refactor(worktrees): extract database provisioning out of the vitest global setup"
+git add src/lib/db-provision.ts src/lib/db-provision.test.ts
+git commit -m "feat(worktrees): add provisionDatabase, extracted for reuse beyond the vitest global setup"
 ```
+
+`tests/setup/unit-db.ts` still has its original body at the end of this task — Task 6 is what rewrites it, once `runReap` exists too.
 
 ---
 
@@ -866,6 +802,9 @@ git commit -m "refactor(worktrees): extract database provisioning out of the vit
 - Create: `src/lib/worktree/side-effects.ts`
 - Create: `src/lib/worktree/reap.ts`
 - Test: `src/lib/worktree/reap.test.ts`
+- Modify: `tests/setup/unit-db.ts` (full replacement, Step 5 below — deferred
+  from Task 5 because it needs both `provisionDatabase`, Task 5, and
+  `runReap`, produced by this task's Step 3)
 
 **Interfaces:**
 - Consumes: `diffOrphans`, `removeSlug`, `Registry`, `writeRegistryLocked` (Task 3); `dbNamesForSlug` (Task 1); `getLiveSlugs` (Task 2); `withDatabaseName`, `assertSafeDatabaseName` (Task 5).
@@ -1013,15 +952,83 @@ export async function runReap(
 Run: `npx vitest run --project unit src/lib/worktree/reap.test.ts`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Confirm the full unit/unit-sweeps run still passes**
+- [ ] **Step 5: Refactor `tests/setup/unit-db.ts` to use `provisionDatabase` and `runReap`**
+
+Replace the file's contents entirely with:
+
+```typescript
+// tests/setup/unit-db.ts
+/**
+ * Global setup for the vitest `unit` AND `unit-sweeps` projects: provision
+ * and migrate the dedicated test database (docs/test-database.md), and —
+ * in a linked worktree — reap any other worktree's orphaned databases and
+ * dev-server process (docs/superpowers/specs/2026-09-08-worktree-db-isolation-design.md).
+ *
+ * `unit-sweeps` is the tier holding the service tests that inject far-future
+ * clocks into database-wide sweeps — on a shared database those once
+ * completed the seed's future classes and mailed their payment requests.
+ * This setup PROVISIONS `DATABASE_URL_TEST` (creates it, migrates it) so
+ * those tests have somewhere isolated to run.
+ *
+ * IT DOES NOT GUARANTEE THEY RUN THERE. The switch is made by
+ * `vitest.config.ts`, which resolves both projects' `DATABASE_URL` to
+ * `DATABASE_URL_TEST ?? devUrl`. When `DATABASE_URL_TEST` is unset this
+ * function returns early and that fallback is the DEV database — the
+ * isolation is a value in `.env`, i.e. configuration, not a guard. Suites
+ * taking an unscoped destructive write correct this in their own headers;
+ * stated here too, because this is the source they copy from.
+ *
+ * A suite that takes an UNSCOPED destructive write must therefore carry its own
+ * runtime guard on the connected database's name, as
+ * `waitlist-retention.test.ts` does. CI sets `DATABASE_URL_TEST` explicitly
+ * (`.github/workflows/ci.yml`, the `test-unit` job) precisely so that guard does not skip the suite
+ * on the merge gate; the early return below is what made it do exactly that.
+ */
+
+import { loadEnv } from 'vite';
+import { provisionDatabase } from '../../src/lib/db-provision';
+import { getWorktreeIdentity } from '../../src/lib/worktree/identity';
+import { getRegistryPath } from '../../src/lib/worktree/registry';
+import { runReap } from '../../src/lib/worktree/reap';
+
+export default async function setup(): Promise<void> {
+  const fileEnv = loadEnv('', process.cwd(), '');
+  const devUrl = process.env.DATABASE_URL ?? fileEnv.DATABASE_URL;
+  const testUrl = process.env.DATABASE_URL_TEST ?? fileEnv.DATABASE_URL_TEST;
+
+  if (!testUrl) {
+    console.log('[unit-db] DATABASE_URL_TEST not set — using DATABASE_URL as-is');
+    return;
+  }
+  if (testUrl === devUrl) {
+    throw new Error(
+      '[unit-db] DATABASE_URL_TEST equals DATABASE_URL — refusing to run unit tests ' +
+        'against the dev database. Point DATABASE_URL_TEST at a separate database.',
+    );
+  }
+
+  const identity = getWorktreeIdentity();
+  if (!identity.isMainCheckout) {
+    const reaped = await runReap(identity.gitCommonDir, getRegistryPath(identity.gitCommonDir), testUrl);
+    if (reaped.length > 0) {
+      console.log(`[unit-db] reaped orphaned worktree resources: ${reaped.join(', ')}`);
+    }
+  }
+
+  await provisionDatabase(testUrl, { seed: false });
+  console.log(`[unit-db] unit tests run against ${new URL(testUrl).pathname.slice(1)}`);
+}
+```
+
+- [ ] **Step 6: Confirm the full unit/unit-sweeps run still passes**
 
 Run: `npm test`
-Expected: PASS — `unit-db.ts` (Task 5) now resolves its `runReap` import; on the main checkout `identity.isMainCheckout` is `true` so reap never runs, and behavior matches today exactly.
+Expected: PASS — on the main checkout `identity.isMainCheckout` is `true` so reap never runs, and behavior matches today exactly.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/lib/worktree/side-effects.ts src/lib/worktree/reap.ts src/lib/worktree/reap.test.ts
+git add src/lib/worktree/side-effects.ts src/lib/worktree/reap.ts src/lib/worktree/reap.test.ts tests/setup/unit-db.ts
 git commit -m "feat(worktrees): reap databases and dev-server pids for removed worktrees"
 ```
 
