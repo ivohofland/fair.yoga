@@ -9,6 +9,7 @@
  * data falls outside the GDPR (Recital 26).
  */
 
+import crypto from 'crypto';
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
 import { Prisma } from '@prisma/client';
 import type { PrismaClient, ClassStatus } from '@prisma/client';
@@ -573,10 +574,19 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // side of it). It also stays unique per teacher, so a student invited by
     // several teachers anonymises to one value without colliding on
     // `@@unique([teacherId, email])`.
+    //
+    // Random, not derived from `studentId`: a token built from the subject's
+    // own id would let a teacher who plants a guessed-address decoy
+    // invitation read the anonymised `email` back via `GET /api/invitations`
+    // and recover the specific `Student.id` behind it (#502). One token per
+    // erasure call, reused across all three statements below. See
+    // `docs/superpowers/specs/2026-09-08-invitation-erasure-tombstone-design.md`
+    // ("Fix #1") for why that reuse is safe.
+    const anonymizedEmail = `deleted-${crypto.randomUUID()}@deleted.invalid`;
     await tx.invitation.updateMany({
       where: { email: student.email, lastNotifiedAt: null },
       data: {
-        email: `deleted-${studentId}@deleted.invalid`,
+        email: anonymizedEmail,
         firstName: 'Deleted',
         lastName: 'Student',
       },
@@ -584,10 +594,10 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     await tx.invitation.updateMany({
       where: { email: student.email, lastNotifiedAt: { not: null } },
       data: {
-        email: `deleted-${studentId}@deleted.invalid`,
+        email: anonymizedEmail,
         firstName: 'Deleted',
         lastName: 'Student',
-        lastNotifiedEmail: `deleted-${studentId}@deleted.invalid`,
+        lastNotifiedEmail: anonymizedEmail,
       },
     });
     // The two statements above only catch rows whose CURRENT `email` is
@@ -607,7 +617,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // still be corresponding with; only the stale marker is the subject's.
     await tx.invitation.updateMany({
       where: { lastNotifiedEmail: student.email },
-      data: { lastNotifiedEmail: `deleted-${studentId}@deleted.invalid` },
+      data: { lastNotifiedEmail: anonymizedEmail },
     });
 
     // `TeacherBlock` is DELIBERATELY not touched here, and the omission is
