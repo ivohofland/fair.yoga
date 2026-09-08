@@ -428,39 +428,64 @@ describe('claimWithCode', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  // The existing reap-race test above uses exactly one live candidate, which
-  // structurally caps `reaped.count` at 0 or 1 — it can only ever force the
-  // UNDER-count direction of the guard. An OVER-count needs at least two
-  // concurrent live candidates racing together: both calls' `findMany` reads
-  // happen before either call's writes, so both compute `expectedReaps = 1`
-  // (only the more-exhausted candidate is predicted to cross), but both
-  // calls' `updateMany`s increment BOTH candidates — if both increments land
-  // before either delete, both candidates cross the threshold together, and
-  // whichever delete runs first reaps both against its own `expected: 1`.
-  it('warns on an over-count when two concurrent candidates both cross the budget together', async () => {
+  // Both concurrent calls read `handoffCode`, `handoffAttempts` in one
+  // `findMany` before either writes, so both compute `expectedReaps = 1` —
+  // only `/b`, at `MAX - 1`, is predicted to cross. Both then increment BOTH
+  // candidates, so `/a` crosses too and whichever `deleteMany` runs first
+  // reaps two rows against its own prediction of one.
+  //
+  // The sibling's `updateMany` is staged as `args` re-issued rather than as a
+  // whole nested `claimWithCode` call: a nested call would take its snapshot
+  // AFTER this call's increment and predict two reaps rather than one, which
+  // is a different race. Re-issuing `args` is not an approximation of the
+  // sibling's statement — both calls derive `ids` from the same snapshot, so
+  // it is a copy of it.
+  //
+  // Interposed inside the hook rather than issued before the call, so it
+  // lands after the miss path has taken its snapshot and computed
+  // `expectedReaps` — the actual shape of the race, not a rearrangement of it
+  // that would also pass against a guard that never fired.
+  it('warns on an over-count when a sibling increment lands before this call reaps', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    for (let i = 0; i < 8; i++) {
-      const email = `claim-race-overcount-${Date.now()}-${i}@example.com`;
-      const nonce = `nonce-race-overcount-${Date.now()}-${i}`;
-      const codeA = await stampedWithRedirect(email, nonce, '/a');
-      const codeB = await stampedWithRedirect(email, nonce, '/b');
-      await db.magicLinkToken.updateMany({
-        where: { email, redirectTo: '/a' },
-        data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS - 2 },
-      });
-      await db.magicLinkToken.updateMany({
-        where: { email, redirectTo: '/b' },
-        data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS - 1 },
-      });
-      const wrong = ['000000', '111111', '222222'].find((g) => g !== codeA && g !== codeB)!;
+    const email = `claim-staged-overcount-${Date.now()}@example.com`;
+    const nonce = `nonce-staged-overcount-${Date.now()}`;
 
-      await Promise.all([
-        claimWithCode(db, asBrowserNonce(nonce), wrong),
-        claimWithCode(db, asBrowserNonce(nonce), wrong),
-      ]);
-    }
+    const codeA = await stampedWithRedirect(email, nonce, '/a');
+    const codeB = await stampedWithRedirect(email, nonce, '/b');
+    await db.magicLinkToken.updateMany({
+      where: { email, redirectTo: '/a' },
+      data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS - 2 },
+    });
+    await db.magicLinkToken.updateMany({
+      where: { email, redirectTo: '/b' },
+      data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS - 1 },
+    });
+    const wrong = ['000000', '111111', '222222'].find((g) => g !== codeA && g !== codeB)!;
+
+    let hookCalls = 0;
+    const racing = db.$extends({
+      query: {
+        magicLinkToken: {
+          async updateMany({ args, query }) {
+            hookCalls += 1;
+            const ours = await query(args);
+            await db.magicLinkToken.updateMany(args);
+            return ours;
+          },
+        },
+      },
+      // `$extends` returns a client missing `$on`, so it is not assignable to
+      // `claimWithCode`'s `PrismaClient` parameter even though every method it
+      // calls here is the real one — same cast as the hooks in
+      // `waitlist.test.ts`.
+    }) as unknown as PrismaClient;
+
+    expect(await claimWithCode(racing, asBrowserNonce(nonce), wrong)).toEqual({ kind: 'invalid' });
+
+    expect(hookCalls).toBe(1);
+    expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ expected: 1, actual: 2 }),
+      { expected: 1, actual: 2 },
       'handoff: deleteMany reaped a different number of exhausted candidates than expected',
     );
   });
