@@ -86,6 +86,50 @@ describe('verifyWithHandoff', () => {
     }
   });
 
+  // The CAS loser's winner-arm (`handoff.ts:78`): a sibling first-open wins
+  // the compare-and-swap and stamps its own code before this call's
+  // `updateMany` runs, so this call matches zero rows, reads the row back,
+  // and must return the WINNER's code — not its own, which was never
+  // persisted.
+  //
+  // The sibling is a whole `verifyWithHandoff` call on the UNHOOKED client,
+  // so every statement it issues is the real one and it cannot re-enter this
+  // hook. Interposed before `query(args)` rather than after it, because the
+  // sibling has to win the CAS before this call's own write attempt runs —
+  // that ordering is the race.
+  it('the loser of a staged first-open race returns the code the winner persisted', async () => {
+    const email = `handoff-staged-winner-${Date.now()}@example.com`;
+    const nonce = 'nonce-staged-winner';
+    const token = await mint(email, nonce);
+
+    let hookCalls = 0;
+    let sibling: Awaited<ReturnType<typeof verifyWithHandoff>> | undefined;
+    const racing = db.$extends({
+      query: {
+        magicLinkToken: {
+          async updateMany({ args, query }) {
+            hookCalls += 1;
+            sibling = await verifyWithHandoff(db, token, null);
+            return query(args);
+          },
+        },
+      },
+      // `$extends` returns a client missing `$on`, so it is not assignable to
+      // `verifyWithHandoff`'s `PrismaClient` parameter even though every
+      // method it calls here is the real one — same cast every hook in this
+      // file uses.
+    }) as unknown as PrismaClient;
+
+    const loser = await verifyWithHandoff(racing, token, null);
+
+    expect(hookCalls).toBe(1);
+    if (sibling?.kind !== 'handoff') throw new Error('expected a handoff');
+    expect(loser).toEqual(sibling);
+
+    const row = await db.magicLinkToken.findFirst({ where: { email } });
+    expect(row?.handoffCode).toBe(sibling.code);
+  });
+
   it('lets the real browser still sign in after a stranger stamped a code', async () => {
     const email = `handoff-nopoison-${Date.now()}@example.com`;
     const token = await mint(email, 'nonce-5');
