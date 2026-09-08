@@ -194,6 +194,16 @@ repository does not contain` suite):
 4. A nested/array binding pattern — pins `bindsReached`'s recursion past one
    level.
 5. `for (const reached of …)` — pins the row-8 consequence.
+6. `const { reached, ignored = censusOfTree() } = { reached: … };` — pins the
+   two-scope split itself: the forbidden-call arm reads the whole declaration
+   and so sees `ignored`'s default, while the must-call arm reads only
+   `declaration.initializer` and so cannot let that default stand in for a
+   census call `reached` never makes.
+7. An initializer that roots in `censusOfTree` without invoking it, beside a
+   real second read of the tree — `censusOfTree.name.concat(…readdirSync(…))`.
+   Added with the fix that closes it: `callsCensus` tests the callee's own
+   identity rather than its root, so a census-rooted non-call no longer
+   satisfies the must-call arm.
 
 Plus the standing regression checks: the two real census files still report
 `[]`, `KNOWN_CENSUS_FILES` still discovers both, and the AST sweep from row 9

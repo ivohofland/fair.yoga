@@ -31,38 +31,36 @@
  *
  * WHAT IT ALSO ASSERTS (#492, widened by #499). Each census file's `reached`
  * — what the scope-reach assertion compares `areasUnderSrc` against — must be
- * built from the census's own consumed-file list. Every declaration binding
- * `reached`, whatever syntax introduces it — a bare `const`, a destructured
- * or nested binding pattern, a `for...of` loop's own binding — is checked on
- * its own (there may be more than one). A declaration with no initializer of
- * its own is itself a finding: what it is later assigned, if anything, is
- * not visible to a walk of the declaration. A declaration that does carry an
- * initializer is read two ways: the whole declaration, for any call rooting
- * in a module-level binding not reached from a `node:` import — the same
- * node:-origin allowance `areasUnderSrc`'s own check makes, with
- * `censusOfTree` additionally allowed by name alone wherever it sits in the
- * declaration — and, separately, the initializer alone, which must itself
- * call `censusOfTree`. Alias resistance belongs to the forbidden-call arm,
- * not to this one: `rootOf` and `moduleLevelBindings` catch a second,
- * independent read of the tree reached through a renamed local there, and
- * report it whether or not the initializer also calls `censusOfTree`. What
- * the initializer-alone requirement adds is a read the forbidden-call arm
- * does not report — one rooting in a `node:` import, which it deliberately
- * allows, or in a binding its root resolution cannot see — and it adds that
- * only while the initializer calls `censusOfTree` nowhere, since a census
- * call sitting beside such a read satisfies it. A `censusOfTree` call
- * sitting in a sibling binding element's default or in a computed property
- * key cannot stand in for that requirement: neither one produces
- * `reached`'s own value. A call sitting in `reached`'s own default is
- * different — it genuinely can produce that value, when the destructured
- * property is absent — but `declaration.initializer` does not reach a
- * binding element's default either way, so the initializer-alone check
- * misses it deliberately, degrading loud (a false "makes no `censusOfTree`
- * call") rather than resolving whether the property was actually absent.
- * Since `censusOfTree` itself must be unambiguous for the name-alone
- * allowance to mean anything, a second declaration of `censusOfTree`
- * anywhere in the file is a finding too, before any `reached` declaration
- * is even inspected.
+ * built from the census's own consumed-file list. Every `VariableDeclaration`
+ * binding `reached`, whatever syntax introduces it — a bare `const`, a
+ * destructured or nested binding pattern, a `for...of` loop's own binding —
+ * is checked on its own (there may be more than one). A declaration with no
+ * initializer of its own is itself a finding: what it is later assigned, if
+ * anything, is not visible to a walk of the declaration. A declaration that
+ * does carry an initializer is read two ways: the whole declaration, for any
+ * call rooting in a module-level binding not reached from a `node:` import —
+ * the same node:-origin allowance `areasUnderSrc`'s own check makes, with a
+ * call rooting in a module-level binding named `censusOfTree` additionally
+ * allowed wherever it sits in the declaration — and, separately, the
+ * initializer alone, which must itself call `censusOfTree`. Alias resistance
+ * belongs to the forbidden-call arm, not to this one: `rootOf` and
+ * `moduleLevelBindings` catch a second, independent read of the tree reached
+ * through a renamed local there, and report it whether or not the initializer
+ * also calls `censusOfTree`. What the initializer-alone requirement adds is a
+ * read the forbidden-call arm does not report, and it adds that only while
+ * the initializer calls `censusOfTree` nowhere, since a census call sitting
+ * beside such a read satisfies it. A `censusOfTree` call sitting in a sibling
+ * binding element's default or in a computed property key cannot stand in for
+ * that requirement: neither one produces `reached`'s own value. A call
+ * sitting in `reached`'s own default is different — it genuinely can produce
+ * that value, when the destructured property is absent — but
+ * `declaration.initializer` does not reach a binding element's default either
+ * way, so the initializer-alone check misses it deliberately, degrading loud
+ * (a false "makes no `censusOfTree` call") rather than resolving whether the
+ * property was actually absent. Since `censusOfTree` itself must be
+ * unambiguous for that allowance to mean anything, a second declaration of
+ * `censusOfTree` anywhere in the file is a finding too, before any `reached`
+ * declaration is even inspected.
  *
  * WHICH FILES, discovered rather than written down: every `src/lib/*.test.ts`
  * declaring `areasUnderSrc` at module level, and separately, every
@@ -71,13 +69,16 @@
  * `KNOWN_CENSUS_FILES` is the floor under both, because a discovery finding
  * nothing would otherwise certify nothing.
  *
- * WHAT IT DOES NOT SEE, so a call landing there is nobody's failure here. A
- * callee rooting in a parameter is out of scope, and so is a non-identifier
- * callee such as a regex literal's `.test` — neither can reach another walk.
- * A callee rooting in a function-local can, and that is the one blind spot
- * the censuses themselves also carry: a walk reached through a local binding
- * (`const w = shared; w();`) roots in a local and is invisible, because
- * resolving it needs a full type-checker program this test does not build.
+ * WHAT IT DOES NOT SEE, so a call landing there is nobody's failure here. The
+ * forbidden-call arm reports a callee only when its root resolves to a name
+ * the module level binds, so a callee with no identifier root at all
+ * (`[walk][0]()`, a regex literal's `.test`) and one rooting in a name the
+ * module level does not bind (a parameter, a function-local) both fall
+ * outside it. Either can reach another walk, and beside a `readdirSync` the
+ * body still makes, the missing-walk arm does not rescue it — so either
+ * degrades silent. The function-local shape (`const w = shared; w();`) is the
+ * one the censuses themselves also carry, and resolving either needs a full
+ * type-checker program this test does not build.
  * Shadowing is not modelled either — a
  * function-local sharing a name with a module-level binding is reported though
  * the call reaches the local. That direction is loud and correctable; the other
@@ -94,9 +95,8 @@
  * fixtured below; a dedicated fixture for it is added alongside that one,
  * since it exercises a different branch of `moduleLevelBindings` even though
  * both land on the same `local` treatment. The `reached` tether below
- * reuses this same root resolution, so its forbidden-call arm shares the
- * one blind spot above: a callee rooting in a parameter or a
- * function-local, and the namespace-declaration gap, apply there too. Its
+ * reuses this same root resolution, so its forbidden-call arm is blind
+ * wherever the guard's own is, the namespace-declaration gap included. Its
  * must-call arm consults no bindings, so a `reached` whose initializer
  * calls `censusOfTree` nowhere is reported whatever its read roots in.
  *
@@ -387,13 +387,13 @@ function independenceOf(file: string, text: string): readonly string[] | undefin
  * variable bound to one — anywhere in it, at any depth. `reachedIndependenceOf`
  * trusts a bare name match against `CENSUS`, the same way `independenceOf`
  * trusts `WALK`'s; that trust only holds while the name is unambiguous. A
- * second declaration — necessarily nested, since a second module-level one is
- * a `tsc` redeclaration error the way `GUARD`'s is — shadows the first inside
- * whatever scope it's declared in, and the per-declaration walk below cannot
- * tell a shadow's call apart from a call to the genuine `censusOfTree`: it
- * trusts the name alone, regardless of where the shadow itself is declared,
- * including nested inside `reached`'s own initializer where that walk does
- * reach.
+ * second declaration — nested, where it shadows the first inside its own
+ * scope, or module-level, which `tsc` accepts for an overload signature
+ * standing beside its implementation — leaves the per-declaration walk below
+ * unable to tell its call apart from a call to the genuine `censusOfTree`: it
+ * trusts the name alone, regardless of where that second declaration is
+ * itself declared, including nested inside `reached`'s own initializer where
+ * that walk does reach.
  */
 function censusDeclarationCount(source: ts.SourceFile): number {
   let count = 0;
@@ -409,9 +409,25 @@ function censusDeclarationCount(source: ts.SourceFile): number {
 }
 
 /**
- * Whether `node`, or anything nested inside it, is a call rooting in
- * `CENSUS`. Deliberately narrower than the forbidden-call walk in
- * `reachedIndependenceOf` below: that walk reads the whole
+ * Whether `node`, or anything nested inside it, invokes `CENSUS` — the callee
+ * itself, unwrapped, being that bare identifier, not merely a callee that
+ * roots in it.
+ *
+ * Deliberately not the test `reachedIndependenceOf`'s forbidden-call arm
+ * applies to the same name, and the two must not be unified. That arm exempts
+ * a call ROOTING in `CENSUS`, because such a call reaches no second walk
+ * however it is spelled: drop its `rootName !== CENSUS` exemption and the
+ * real census shape becomes a finding against itself, along with
+ * `censusOfTree.call(null)` and `new censusOfTree().filesCensused.map(…)`.
+ * This arm asks the opposite question — whether the initializer invokes the
+ * census at all — for which only an invocation counts. A callee that merely
+ * roots in the name invokes nothing while the exemption above keeps the
+ * forbidden-call arm off it, and the fixture below pins what can then hide
+ * inside such an expression. `censusOfTree.call(null)` is the price: this arm
+ * reports it as no census call at all, loud and wrong, on a shape no census
+ * file writes. Root-based there, callee-identity here.
+ *
+ * Narrower in scope, too. The forbidden-call arm reads the whole
  * `VariableDeclaration`, on purpose, so a dirty call hiding in a sibling
  * binding element's default or a computed property key is still caught. This
  * search reads only `declaration.initializer`, narrower on purpose — a call
@@ -421,10 +437,11 @@ function censusDeclarationCount(source: ts.SourceFile): number {
  * that miss is deliberate.
  */
 function callsCensus(node: ts.Node): boolean {
-  return (
-    (ts.isCallExpression(node) && rootOf(unwrap(node.expression)) === CENSUS) ||
-    ts.forEachChild(node, callsCensus) === true
-  );
+  if (ts.isCallExpression(node)) {
+    const callee = unwrap(node.expression);
+    if (ts.isIdentifier(callee) && callee.text === CENSUS) return true;
+  }
+  return ts.forEachChild(node, callsCensus) === true;
 }
 
 /**
@@ -462,11 +479,12 @@ function callsCensus(node: ts.Node): boolean {
  * actually absent.
  *
  * That name-alone trust is only sound while the name is unambiguous, which is
- * what `censusDeclarationCount` polices first: a shadow named `censusOfTree`
- * anywhere in the file — necessarily nested, since a second module-level one
- * is a `tsc` redeclaration error — would satisfy the name check without its
- * own body ever being inspected, so more than one declaration is a finding on
- * its own, before any declaration is even walked.
+ * what `censusDeclarationCount` polices first: a second `censusOfTree`
+ * anywhere in the file would satisfy the name check without its own body ever
+ * being inspected — nested, shadowing the first, or module-level, which `tsc`
+ * accepts for an overload signature standing beside its implementation — so
+ * more than one declaration is a finding on its own, before any declaration
+ * is even walked.
  *
  * `undefined`, as against an empty array of findings, when
  * `reachedDeclarationsIn` collects no `VariableDeclaration` binding
@@ -963,6 +981,26 @@ describe('x', () => {
     // The two directions are separable: nothing here roots in a module-level
     // binding at all, so only the missing-call finding fires.
     expect(reachedIndependenceOf(FIXTURE, reachedSource('new Set([].map(areaOf))'))).toEqual([
+      `${FIXTURE} ${REACHED} makes no ${CENSUS} call`,
+    ]);
+  });
+
+  it('reports an initializer that roots in `censusOfTree` without invoking it', () => {
+    // The bypass `callsCensus`'s callee-identity test closes, and the only
+    // fixture in this file that reddens when that test is loosened back to a
+    // root match. Every call below is one the forbidden-call arm allows —
+    // `censusOfTree.name.concat` on its `CENSUS` root, `readdirSync` on its
+    // `node:` origin — so that arm is silent by design while `readdirSync`
+    // reads the tree a second time. Ask only whether some call ROOTS in
+    // `censusOfTree` and this source answers yes on the token in
+    // `censusOfTree.name`, certifying an independent walk clean; ask whether
+    // the callee IS `censusOfTree` and it answers no.
+    const preamble = `
+import { readdirSync } from 'node:fs';
+${REACHED_PREAMBLE}`;
+    const initializer =
+      'new Set(censusOfTree.name.concat(...(readdirSync("src") as string[])).split("").map(areaOf))';
+    expect(reachedIndependenceOf(FIXTURE, reachedSource(initializer, preamble))).toEqual([
       `${FIXTURE} ${REACHED} makes no ${CENSUS} call`,
     ]);
   });
