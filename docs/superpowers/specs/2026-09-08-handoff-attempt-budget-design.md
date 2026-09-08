@@ -236,9 +236,10 @@ and re-verifying.
 
 | Case | Mutation that must turn it RED |
 |---|---|
-| Older target + newer decoy: five misses destroy the **target**, not only the decoy | restore `?? candidates[0]!` as the miss target |
-| Every live candidate is charged on a miss | narrow the `updateMany` to `live[0].id` alone |
-| A spent budget destroys every candidate, not one | drop the `deleteMany … { gte: … }` |
+| Older target + newer decoy: five misses destroy the **target**, not only the decoy | narrow the miss-path `updateMany` to the newest id alone — the post-rewrite equivalent of restoring `?? candidates[0]!` |
+| Every live candidate is charged on a miss | the same narrowing |
+| A spent budget destroys every candidate before any later call | drop the miss-path `deleteMany … { gte: … }` |
+| An exhausted row is dead to its own correct code, and is reaped | remove exhaustion handling entirely (first assertion); drop only the `spent` reap (second) |
 | A correct code still claims its own token, not the newest (`handoff.test.ts:185`) | must stay green throughout — it is the regression this replaces |
 | Concurrent misses still count individually (`handoff.test.ts:215`) | must stay green |
 | A correct claim racing wrong guesses never throws (`handoff.test.ts:233`) | must stay green |
@@ -246,6 +247,23 @@ and re-verifying.
 The first case is the one #423 exists for and did not previously exist in any
 form: no test today distinguishes "the decoy absorbed the guess" from "the
 target absorbed it".
+
+Several of these cases resist the obvious test. Each was found by checking
+whether a mutation could fail, not by reading the code, and the plan repeats
+them where they are applied:
+
+- **The spent-budget case must read the rows with no `claimWithCode` call in
+  between.** The reap at the top of the function would clean up on that next
+  call and hide a miss path that never deleted anything.
+- **An exhausted-but-live row cannot be produced by any sequence of claims** —
+  the miss path deletes a row the moment it reaches the budget. The test writes
+  `handoffAttempts` directly, which is what makes the reap provable at all
+  rather than defensive code that certifies nothing.
+- **Dropping only the exhaustion filter is undetectable**, because the `spent`
+  delete has already removed the row and `consumeTokenRow` then returns `false`
+  for a row it cannot find (`magic-link.ts:72-73`), reaching `invalid` by
+  another route. The filter is kept regardless: it is what makes the outcome
+  independent of that return value instead of accidentally correct through it.
 
 `handoff.test.ts` reaches the database directly and does not need the dev
 server; `npx vitest run src/lib/auth/handoff.test.ts` is the inner loop.
@@ -265,5 +283,9 @@ annotated; the before-and-after belongs in the PR body.
 - `handoff.ts:111-115` — a short note that the candidate set is scoped to the
   browser, not to an email address, since §5 turns that into a property a
   reader touching this query needs.
+- `handoff.ts:27-28` — `verifyWithHandoff`'s docblock points at "the design
+  spec's §3". Adding this file makes that pointer ambiguous, so it is changed
+  to name `2026-09-03-magic-link-device-handoff-design.md` by path. The
+  ambiguity is caused by this branch, which is why fixing it belongs to it.
 - No other document describes this budget. `docs/lock-order.md:1073`'s
   "150-attempt budget" is lock retry, unrelated.
