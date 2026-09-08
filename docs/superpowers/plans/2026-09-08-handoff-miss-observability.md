@@ -225,13 +225,22 @@ validation caused a real, correctly-attributed `log.warn` call from
 unrelated concurrent candidates sharing the same stale nonce, before the
 rows were cleaned out. Both new/modified tests in this task suffix their
 nonce with `Date.now()`, matching the pattern their own email variable
-already uses one line above. **Not touched**: the file's other hardcoded
-nonces (`nonce-race`, `nonce-c1`-`nonce-c5`, `nonce-multi`, `nonce-1`-`nonce-5`,
-`nonce-race-stamp`) — none of them are concurrent-and-log-observing, so the
-same accumulation is provably inert for them (each test matches by its own
-uniquely-generated code or its own uniquely-suffixed email, never by counting
-candidates), and fixing tests this task isn't otherwise touching would be
-unrelated-scope cleanup.
+already uses one line above.
+
+The pre-existing `'nonce-race'` test ("counts both attempts when two wrong
+guesses race concurrently") is concurrent-and-log-observing too: it races
+concurrent `claimWithCode` calls via `Promise.all` over a hardcoded,
+non-suffixed nonce, in the same persistent test DB. Two independent PR
+reviewers of #505 reproduced this firing a real, unmocked `log.warn` after
+local runs accumulated live rows sharing that nonce. Its nonce is now
+suffixed with `Date.now()` the same way, in the same PR review's fix.
+
+**Not touched**: the file's other hardcoded nonces (`nonce-c1`-`nonce-c5`,
+`nonce-multi`, `nonce-1`-`nonce-5`, `nonce-race-stamp`) — none of them are
+concurrent-and-log-observing, so the same accumulation is provably inert for
+them (each test matches by its own uniquely-generated code or its own
+uniquely-suffixed email, never by counting candidates), and fixing tests
+this task isn't otherwise touching would be unrelated-scope cleanup.
 
 **Behaviour to verify.** `npx vitest run --project unit src/lib/auth/handoff.test.ts`
 — baseline today is **22 tests, all passing** (measured by running it; also
@@ -264,11 +273,11 @@ were reverted rather than committed:
    mutations didn't leave anything behind.
 
 **A shared-database caveat for this specific mutation proof.** Step 3, run
-more than once in a row without cleanup in between, will show one extra,
-correctly-attributed `log.warn` call from the pre-existing "counts both
-attempts when two wrong guesses race concurrently" test (its own hardcoded
-`'nonce-race'`, deliberately not fixed — see above). That is expected and
-harmless — nothing asserts on it — not a sign the mutation proof failed.
+more than once in a row without cleanup in between, could still show an
+extra, correctly-attributed `log.warn` call if some concurrent-and-
+log-observing test in this file accumulated stale rows under an unsuffixed
+nonce. Every such test — `'nonce-race'` included (see above) — now suffixes
+its nonce with `Date.now()`, so no known accumulation source remains.
 
 **Commit.**
 
