@@ -871,6 +871,80 @@ describe('POST /api/invitations/[id]/resend (#173)', () => {
   }, 30_000);
 });
 
+describe('resend does not touch delivered, so a genuine decoy stays tombstone-proof (#502 regression)', () => {
+  // `resend`'s route does not write `delivered` at all today — safe, since
+  // it never learns a fresh answer worth persisting (see the spec's Fix #3
+  // section: `notifyInvitee` returns `Promise<void>`, so there is no honest
+  // value to write without restructuring its signature). This pins that
+  // absence as a tested property: a naive `delivered: true` write next to
+  // the `lastNotifiedAt`/`lastNotifiedEmail` columns this route already
+  // writes unconditionally would silently reopen #502's leak #2 through a
+  // third door, and nothing else in this suite would catch it.
+  it('a real #417/#418 decoy resends successfully but stays undelivered, and unlink still leaves it pending', async () => {
+    // The real gate: a student already linked to this teacher, claimed, no
+    // shared privacy row — the same shape `invitations.gate.test.ts` and
+    // `put-readdress-delivered.test.ts` build by hand. `inviteContact` sees
+    // the linked-but-unshared pair and creates a real, undelivered `pending`
+    // row rather than refuse.
+    const email = `resend-decoy-${suffix}@test.local`;
+    let studentId: string | undefined;
+    let studentAccountId: string | undefined;
+    let invitationId: string | undefined;
+    try {
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Resend', lastName: 'Decoy', email,
+          claimedAt: new Date(),
+          account: { create: { email } },
+          teacherStudents: { create: { teacherId } },
+        },
+        select: { id: true, accountId: true },
+      });
+      studentId = student.id;
+      studentAccountId = student.accountId ?? undefined;
+
+      const invited = await inviteContact(prisma, {
+        teacherId, email, firstName: 'Guessed', lastName: 'Decoy',
+      });
+      if (!invited.ok) throw new Error(`expected the gated invite to succeed, got ${invited.reason}`);
+      expect(invited.value.delivered).toBe(false);
+      invitationId = invited.value.id;
+
+      const res = await fetch(`${BASE_URL}/api/invitations/${invitationId}/resend`, {
+        method: 'POST', headers: cookie(teacherToken),
+      });
+      expect(res.status).toBe(200);
+
+      const afterResend = await prisma.invitation.findUniqueOrThrow({
+        where: { id: invitationId },
+        select: { delivered: true },
+      });
+      expect(afterResend.delivered).toBe(false);
+
+      const result = await unlinkTeacher(prisma, {
+        teacherId, studentId, accountEmail: email,
+      });
+      expect(result).toEqual({ ok: true });
+
+      const afterUnlink = await prisma.invitation.findUniqueOrThrow({
+        where: { id: invitationId },
+        select: { status: true, respondedAt: true },
+      });
+      expect(afterUnlink.status).toBe('pending');
+      expect(afterUnlink.respondedAt).toBeNull();
+    } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
+      await prisma.teacherBlock.deleteMany({ where: { teacherId, email } });
+      if (studentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId } });
+        await prisma.studentPrivacy.deleteMany({ where: { studentId } });
+        await prisma.student.deleteMany({ where: { id: studentId } });
+      }
+      if (studentAccountId) await prisma.account.deleteMany({ where: { id: studentAccountId } });
+    }
+  });
+});
+
 describe('resend answers 404 for a row deleted while the request was in flight (#173)', () => {
   it('the marker write does not throw when the row is gone', async () => {
     const email = `resend-race-delete-${suffix}@test.local`;
