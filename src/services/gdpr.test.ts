@@ -543,6 +543,29 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
   let movedInvitationId: string;
   const movedAwayEmail = `${suffix}-moved-away@test.local`;
 
+  // The shape `gdpr.ts`'s `anonymizedEmail` writes: `deleted-` plus a
+  // `crypto.randomUUID()` (32 hex digits, 4 hyphens — 36 characters) plus
+  // `@deleted.invalid`.
+  const ANONYMIZED_INVITATION_VALUE = /^deleted-[0-9a-f-]{36}@deleted\.invalid$/;
+
+  /**
+   * Whether `value` is an anonymised Invitation email/lastNotifiedEmail —
+   * both that it has the random-token shape AND that it does not contain
+   * `subjectId`. Shape alone would pass a token that happens not to collide
+   * with `subjectId` by luck; membership alone would pass any string that
+   * merely omits it. Together they pin that the token is `crypto.randomUUID()`
+   * output, not a second deterministic derivation from the subject's id.
+   */
+  function isAnonymizedInvitationValue(value: string | null, subjectId: string): value is string {
+    return value !== null && !value.includes(subjectId) && ANONYMIZED_INVITATION_VALUE.test(value);
+  }
+
+  function expectAnonymizedInvitationValue(value: string | null, subjectId: string) {
+    expect(value).not.toBeNull();
+    expect(value as string).not.toContain(subjectId);
+    expect(value as string).toMatch(ANONYMIZED_INVITATION_VALUE);
+  }
+
   const mkTeacher = async (label: string) => {
     const teacher = await prisma.teacher.create({
       data: {
@@ -682,12 +705,12 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     const rows = allRows.filter((r) => r.id !== movedInvitationId);
     expect(rows).toHaveLength(2);
     for (const row of rows) {
-      expect(row.email).toBe(`deleted-${studentId}@deleted.invalid`);
+      expectAnonymizedInvitationValue(row.email, studentId);
       expect(row.firstName).toBe('Deleted');
       expect(row.lastName).toBe('Student');
-      expect(
-        row.lastNotifiedEmail === null || row.lastNotifiedEmail === `deleted-${studentId}@deleted.invalid`,
-      ).toBe(true);
+      if (row.lastNotifiedEmail !== null) {
+        expectAnonymizedInvitationValue(row.lastNotifiedEmail, studentId);
+      }
     }
     // The teacher's own filing state is theirs, not the subject's: the
     // decline still stands as a tombstone and the acceptance still records
@@ -695,7 +718,7 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     // and the CHECK constraint binding `respondedAt` to `status` would
     // reject a half-done job anyway.
     expect(rows.map((r) => r.status).sort()).toEqual(['accepted', 'declined']);
-    expect(rows.some((r) => r.lastNotifiedEmail === `deleted-${studentId}@deleted.invalid`)).toBe(true);
+    expect(rows.some((r) => isAnonymizedInvitationValue(r.lastNotifiedEmail, studentId))).toBe(true);
     expect(rows.every((r) => r.respondedAt !== null)).toBe(true);
 
     // The `movedId` fixture: its CURRENT `email` had already moved off the
@@ -712,7 +735,7 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     const moved = allRows.find((r) => r.id === movedInvitationId);
     expect(moved?.email).toBe(movedAwayEmail);
     expect(moved?.firstName).toBe('Mo');
-    expect(moved?.lastNotifiedEmail).toBe(`deleted-${studentId}@deleted.invalid`);
+    expectAnonymizedInvitationValue(moved?.lastNotifiedEmail ?? null, studentId);
 
     // Deliberately untouched — see the comment at the erasure site and
     // `docs/data-model.md`. Retention vs. scrubbing is a legal call nobody
@@ -733,6 +756,48 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     ).toBeNull();
     // The other teacher's contacts are none of this erasure's business.
     expect(await prisma.invitation.count({ where: { teacherId: inviterId } })).toBe(1);
+  });
+
+  it('two erasures anonymise Invitation rows to different tokens', async () => {
+    // Self-contained: the shared `studentId`/`inviterId` fixtures above are
+    // already erased by this point, and `deleteStudentAccount` refuses a
+    // second erasure of the same student (`AlreadyErasedError`). Proving the
+    // token isn't a second deterministic derivation (e.g. accidentally
+    // hashing something else student-identifying, which would just move the
+    // oracle rather than close it) needs two genuinely independent erasures.
+    const pairSuffix = `${suffix}-pair`;
+    const teacher = await mkTeacher('pair');
+    const makeErasedSubject = async (label: string) => {
+      const subjectEmail = `${pairSuffix}-${label}@test.local`;
+      const student = await prisma.student.create({
+        data: {
+          firstName: label, lastName: 'Subject', email: subjectEmail,
+          claimedAt: new Date(), account: { create: { email: subjectEmail } },
+        },
+        select: { id: true, accountId: true },
+      });
+      const invitation = await prisma.invitation.create({
+        data: { teacherId: teacher.id, email: subjectEmail, firstName: label, lastName: 'Guess' },
+        select: { id: true },
+      });
+      await deleteStudentAccount(prisma, student.id);
+      return { student, invitationId: invitation.id };
+    };
+
+    const a = await makeErasedSubject('a');
+    const b = await makeErasedSubject('b');
+
+    const rowA = await prisma.invitation.findUniqueOrThrow({ where: { id: a.invitationId } });
+    const rowB = await prisma.invitation.findUniqueOrThrow({ where: { id: b.invitationId } });
+    expectAnonymizedInvitationValue(rowA.email, a.student.id);
+    expectAnonymizedInvitationValue(rowB.email, b.student.id);
+    expect(rowA.email).not.toBe(rowB.email);
+
+    await prisma.teacher.deleteMany({ where: { id: teacher.id } });
+    await prisma.student.deleteMany({ where: { id: { in: [a.student.id, b.student.id] } } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [teacher.accountId, a.student.accountId!, b.student.accountId!] } },
+    });
   });
 });
 
