@@ -164,10 +164,10 @@ export async function claimWithCode(
     // taken before the increment below runs. A sibling call racing one of
     // these same rows can move its true count between this snapshot and the
     // writes below without this call ever seeing it (#504) — a mismatch
-    // below is that documented race, not proof of a bug on its own. Each
-    // direction of it is staged deterministically in `handoff.test.ts`, by
-    // construction rather than by timing — so this paragraph describes a
-    // race that has been reproduced, not one only argued for.
+    // below is that documented race, not proof of a bug on its own. Which
+    // interleaving produces which direction, and how each is staged rather
+    // than waited for, is
+    // `docs/superpowers/specs/2026-09-08-handoff-race-staging-design.md` §5.
     const expectedReaps = live.filter((c) => c.handoffAttempts + 1 >= HANDOFF_MAX_ATTEMPTS).length;
 
     const incremented = await db.magicLinkToken.updateMany({
