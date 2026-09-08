@@ -603,9 +603,12 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
 
     // A third teacher's row, shaped like the `inviterId` row above (accepted,
     // a marker set to the subject's real address) — then, immediately, the
-    // exact edit `PUT /api/invitations/[id]` performs: the row's CURRENT
-    // `email` moves off the subject's address entirely, while the marker
-    // (`lastNotifiedEmail`) is left holding it. A fresh teacher is needed
+    // state a `PUT /api/invitations/[id]` typo correction leaves behind: PUT
+    // moves `email` off the subject's address while the row is still
+    // `pending` (#500 refuses it once `accepted`), the invitee then accepts
+    // at the new address, and CURRENT `email` moves off the subject's
+    // address entirely while the marker (`lastNotifiedEmail`) is left
+    // holding it. A fresh teacher is needed
     // for this: `@@unique([teacherId, email])` already has both `inviterId`
     // and `blockerId` holding a row keyed on (their id, the subject's
     // email), so a same-teacher second row at that address could not even
@@ -697,8 +700,10 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
 
     // The `movedId` fixture: its CURRENT `email` had already moved off the
     // subject's address before erasure ran (the beforeAll `update` above,
-    // simulating a teacher's `PUT /api/invitations/[id]` typo correction),
-    // so it was never the subject's address AT ERASURE TIME — the first two
+    // simulating a `PUT /api/invitations/[id]` typo correction made while
+    // the row was still `pending`, before the invitee accepted at the new
+    // address — #500 refuses that same edit once a row is `accepted`), so
+    // it was never the subject's address AT ERASURE TIME — the first two
     // erasure statements in `gdpr.ts` match on that CURRENT `email` and so
     // leave this row's identity columns untouched, which the next two
     // assertions pin. Only `lastNotifiedEmail`, which still held the
