@@ -134,6 +134,12 @@ describe('verifyMagicLinkToken', () => {
     });
     await db.magicLinkToken.update({ where: { id: stamped.id }, data: { handoffCode: '424242' } });
     const live = await generateMagicLinkToken(db, email, { originBrowserHash: 'this-browser' });
+    // Minted AFTER the row that gets consumed: a resend still in flight when
+    // its owner clicks the earlier mail. Every other sibling in this file is
+    // older than the consumed one, and "the older link is dead" is how the
+    // case above puts it — so a purge narrowed to older rows only would be
+    // green everywhere else while leaving this one live in an inbox.
+    await generateMagicLinkToken(db, email);
 
     expect(await verifyMagicLinkToken(db, live)).not.toBeNull();
 
