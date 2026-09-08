@@ -294,6 +294,27 @@ describe('claimWithCode', () => {
     expect(await db.magicLinkToken.findFirst({ where: { email } })).toBeNull();
   });
 
+  it('reaps an already-exhausted sibling while still charging a live candidate in the same call', async () => {
+    const email = `claim-mixed-${Date.now()}@example.com`;
+    const nonce = `nonce-mixed-${Date.now()}`;
+
+    const liveCode = await stampedWithRedirect(email, nonce, '/live');
+    await stampedWithRedirect(email, nonce, '/already-exhausted');
+    await db.magicLinkToken.updateMany({
+      where: { email, redirectTo: '/already-exhausted' },
+      data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS },
+    });
+
+    const wrong = ['000000', '111111', '222222'].find((g) => g !== liveCode)!;
+    expect(await claimWithCode(db, asBrowserNonce(nonce), wrong)).toEqual({ kind: 'invalid' });
+
+    expect(
+      await db.magicLinkToken.findFirst({ where: { email, redirectTo: '/already-exhausted' } }),
+    ).toBeNull();
+    const live = await db.magicLinkToken.findFirst({ where: { email, redirectTo: '/live' } });
+    expect(live?.handoffAttempts).toBe(1);
+  });
+
   // Two concurrent wrong guesses against the same row must not undercount
   // each other — see the atomic `{ increment: 1 }` in `claimWithCode`.
   it('counts both attempts when two wrong guesses race concurrently', async () => {
@@ -308,11 +329,12 @@ describe('claimWithCode', () => {
     expect(row?.handoffAttempts).toBe(guesses.length);
   });
 
-  // A correct claim deletes the row via `consumeTokenRow` at the same moment
-  // a concurrent wrong guess is trying to `update` its attempt counter. The
-  // row being gone out from under that `update` must resolve to `{ kind:
-  // 'invalid' }`, not propagate Prisma's P2025. Looped, with more than one
-  // concurrent wrong guess per iteration, since whether any single `update`
+  // A correct claim deletes the matched row via `consumeTokenRow` at the same
+  // moment a concurrent wrong guess is running `updateMany`/`deleteMany` over
+  // the live candidate ids. Both silently match zero rows instead of
+  // throwing, so a row disappearing out from under either call must resolve
+  // to a normal outcome, never an unhandled rejection. Looped, with more than
+  // one concurrent wrong guess per iteration, since whether any single write
   // lands after the delete is timing-dependent.
   it('the race: a correct claim concurrent with wrong guesses never throws', async () => {
     for (let i = 0; i < 8; i++) {

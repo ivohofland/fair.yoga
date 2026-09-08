@@ -375,6 +375,8 @@ becoming a per-door judgement the next contributor has to re-make correctly.
 
 ## 6. Rate limiting and the attempt budget
 
+*(§6's "per-token" framing below is superseded — the attempt budget is now per-browser-nonce; see `2026-09-08-handoff-attempt-budget-design.md` §3.)*
+
 - `POST /api/auth/magic-link/claim` is a new unauthenticated endpoint and gets a
   per-IP limit from `src/lib/rate-limit.ts`, in its own partition, following the
   two existing partitions `magic-link:ip` and `magic-link:email`

@@ -80,8 +80,9 @@ export async function verifyWithHandoff(
 }
 
 /** A 6-digit code is 10⁶, brute-forceable inside the token's fifteen minutes.
- *  Per BROWSER, not per token: wrong codes submitted under one nonce spend it
- *  whichever of that browser's tokens they were aimed at. A per-token budget
+ *  Per BROWSER, not per token: a wrong code submitted under one nonce is
+ *  charged against every live token that nonce could be claiming, not just
+ *  the one it was aimed at. A per-token budget
  *  is steerable by a caller who can mint tokens under the nonce, so this
  *  scoping is what makes it the guard that does not depend on the nonce
  *  staying secret. */
@@ -122,16 +123,19 @@ export async function claimWithCode(
       handoffCode: { not: null },
       expiresAt: { gt: new Date() },
     },
-    // No longer load-bearing for the budget, but it still settles the
-    // tie-break if two live candidates ever stamp the same code: the newest
-    // wins, rather than whatever order the database happened to return.
+    // Not load-bearing for the budget: a miss charges every live candidate.
+    // It settles the tie-break if two live candidates ever stamp the same
+    // code — the newest wins, rather than whatever order the database
+    // happened to return.
     orderBy: { createdAt: 'desc' },
   });
   if (candidates.length === 0) return { kind: 'invalid' };
 
   // An exhausted row is dead to a match as well as to a miss, so it leaves the
-  // working set here. Reaped rather than merely skipped because the increment
-  // below can push more than one row over the line at once.
+  // working set here. Deleted, not merely filtered out: a row can sit at or
+  // past the budget without having been reaped — a crash between the increment
+  // and the delete below, or a concurrent caller that has done the one and not
+  // the other.
   const spent = candidates.filter((c) => c.handoffAttempts >= HANDOFF_MAX_ATTEMPTS);
   if (spent.length > 0) {
     await db.magicLinkToken.deleteMany({ where: { id: { in: spent.map((c) => c.id) } } });
