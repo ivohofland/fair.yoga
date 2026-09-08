@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 import { generateMagicLinkToken } from './magic-link';
 import { hashNonce } from './origin-nonce';
 import { verifyWithHandoff, claimWithCode, HANDOFF_MAX_ATTEMPTS } from './handoff';
@@ -361,9 +361,73 @@ describe('claimWithCode', () => {
         ...wrongGuesses.map((g) => claimWithCode(db, asBrowserNonce(nonce), g)),
       ]);
 
-      for (const result of results) {
-        expect(['verified', 'invalid']).toContain(result.kind);
-      }
+      // Deterministic, not merely non-throwing: nothing but the correct claim
+      // deletes this row — the wrong guesses drive `handoffAttempts` only to
+      // `wrongGuesses.length`, under the budget, so their reap matches
+      // nothing — and the row therefore survives to be consumed under every
+      // ordering.
+      expect(results.filter((r) => r.kind === 'verified')).toHaveLength(1);
+      expect(results.filter((r) => r.kind === 'invalid')).toHaveLength(wrongGuesses.length);
+    }
+
+    // Real concurrency over a row that a `deleteMany` actually deletes: the
+    // staged tests below serialize by construction, and the loop above uses a
+    // 0-attempt fixture, where `expectedReaps` is 0 and the reap matches
+    // nothing. Two wrong guesses can never match, so `invalid` is the outcome
+    // under every interleaving — nothing asserted here is timing-dependent.
+    const raceTwoWrongGuesses = async (nonce: string, codes: string[]) => {
+      // Picked rather than hardcoded: a literal guess could collide with a
+      // generated code (10⁻⁶ each) and turn a miss into a match.
+      const guesses = ['000000', '111111', '222222', '333333'].filter((g) => !codes.includes(g));
+      const [a, b] = await Promise.all(
+        guesses.slice(0, 2).map((g) => claimWithCode(db, asBrowserNonce(nonce), g)),
+      );
+      expect(a).toEqual({ kind: 'invalid' });
+      expect(b).toEqual({ kind: 'invalid' });
+    };
+
+    {
+      // One candidate one attempt short of the budget: both guesses push it
+      // over, and whichever reap runs second finds it already taken.
+      const email = `claim-race-nearbudget-${Date.now()}@example.com`;
+      const nonce = `nonce-race-nearbudget-${Date.now()}`;
+      const code = await stampedToken(email, nonce);
+      await db.magicLinkToken.updateMany({
+        where: { email },
+        data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS - 1 },
+      });
+      await raceTwoWrongGuesses(nonce, [code]);
+    }
+
+    {
+      // One candidate already at the budget: both calls sweep it into their
+      // own `spent` set before either deletes it.
+      const email = `claim-race-spent-${Date.now()}@example.com`;
+      const nonce = `nonce-race-spent-${Date.now()}`;
+      const code = await stampedToken(email, nonce);
+      await db.magicLinkToken.updateMany({
+        where: { email },
+        data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS },
+      });
+      await raceTwoWrongGuesses(nonce, [code]);
+    }
+
+    {
+      // Two candidates at different distances from the budget — the staged
+      // over-count fixture, run here by two real callers instead.
+      const email = `claim-race-overcount-${Date.now()}@example.com`;
+      const nonce = `nonce-race-overcount-${Date.now()}`;
+      const codeA = await stampedWithRedirect(email, nonce, '/a');
+      const codeB = await stampedWithRedirect(email, nonce, '/b');
+      await db.magicLinkToken.updateMany({
+        where: { email, redirectTo: '/a' },
+        data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS - 2 },
+      });
+      await db.magicLinkToken.updateMany({
+        where: { email, redirectTo: '/b' },
+        data: { handoffAttempts: HANDOFF_MAX_ATTEMPTS - 1 },
+      });
+      await raceTwoWrongGuesses(nonce, [codeA, codeB]);
     }
   });
 
@@ -382,12 +446,13 @@ describe('claimWithCode', () => {
     const wrong = ['000000', '111111'].find((g) => g !== code)!;
 
     let hookCalls = 0;
+    let sibling: Awaited<ReturnType<typeof claimWithCode>> | undefined;
     const racing = db.$extends({
       query: {
         magicLinkToken: {
           async updateMany({ args, query }) {
             hookCalls += 1;
-            await claimWithCode(db, asBrowserNonce(nonce), code);
+            sibling = await claimWithCode(db, asBrowserNonce(nonce), code);
             return query(args);
           },
         },
@@ -400,6 +465,9 @@ describe('claimWithCode', () => {
     expect(await claimWithCode(racing, asBrowserNonce(nonce), wrong)).toEqual({ kind: 'invalid' });
 
     expect(hookCalls).toBe(1);
+    // A staging that collapsed — a sibling that no longer consumes the row —
+    // fails here as itself, rather than downstream as a missing warn.
+    expect(sibling).toEqual({ kind: 'verified', email, redirectTo: null, purpose: 'sign_in' });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
       { requested: 1, affected: 0 },
@@ -416,6 +484,11 @@ describe('claimWithCode', () => {
   // statement it issues is the real one and it cannot re-enter this hook.
   // Interposed after `query(args)` rather than before it, because the row has
   // to cross the budget — this call's own increment is what puts it there.
+  //
+  // The `warn` spy counts the injected sibling's calls too, and that is what
+  // makes the total of 1 load-bearing: the mirror ordering — sibling first,
+  // this call second — produces the same `{expected: 1, actual: 0}` payload
+  // plus an `updateMany` under-count, so only the count excludes it.
   it('warns when a sibling reaps the row this call was about to reap', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     const email = `claim-staged-underreap-${Date.now()}@example.com`;
@@ -428,13 +501,14 @@ describe('claimWithCode', () => {
     const wrong = ['000000', '111111'].find((g) => g !== code)!;
 
     let hookCalls = 0;
+    let sibling: Awaited<ReturnType<typeof claimWithCode>> | undefined;
     const racing = db.$extends({
       query: {
         magicLinkToken: {
           async updateMany({ args, query }) {
             hookCalls += 1;
             const ours = await query(args);
-            await claimWithCode(db, asBrowserNonce(nonce), wrong);
+            sibling = await claimWithCode(db, asBrowserNonce(nonce), wrong);
             return ours;
           },
         },
@@ -445,6 +519,9 @@ describe('claimWithCode', () => {
     expect(await claimWithCode(racing, asBrowserNonce(nonce), wrong)).toEqual({ kind: 'invalid' });
 
     expect(hookCalls).toBe(1);
+    // A staging that collapsed — a sibling that no longer runs the reap —
+    // fails here as itself, rather than downstream as a missing warn.
+    expect(sibling).toEqual({ kind: 'invalid' });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
       { expected: 1, actual: 0 },
@@ -471,13 +548,14 @@ describe('claimWithCode', () => {
     const guess = '000000';
 
     let hookCalls = 0;
+    let sibling: Awaited<ReturnType<typeof claimWithCode>> | undefined;
     const racing = db.$extends({
       query: {
         magicLinkToken: {
           async findMany({ args, query }) {
             hookCalls += 1;
             const ours = await query(args);
-            await claimWithCode(db, asBrowserNonce(nonce), guess);
+            sibling = await claimWithCode(db, asBrowserNonce(nonce), guess);
             return ours;
           },
         },
@@ -488,6 +566,9 @@ describe('claimWithCode', () => {
     expect(await claimWithCode(racing, asBrowserNonce(nonce), guess)).toEqual({ kind: 'invalid' });
 
     expect(hookCalls).toBe(1);
+    // A staging that collapsed — a sibling that no longer reaps the spent row
+    // — fails here as itself, rather than downstream as a missing warn.
+    expect(sibling).toEqual({ kind: 'invalid' });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
       { expected: 1, actual: 0 },
@@ -526,6 +607,11 @@ describe('claimWithCode', () => {
   // all: `/b` would already be at the budget when the snapshot is taken, so
   // it would be swept into `spent` rather than predicted to cross, and every
   // count would match.
+  //
+  // What this does not execute is two real callers reaching that state — the
+  // sibling here is a statement, not a call. That the state is reachable at
+  // all rests on the argument above, not on anything this test runs; the
+  // surviving real-concurrency test above covers the same fixture.
   it('warns on an over-count when a sibling increment lands before this call reaps', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     const email = `claim-staged-overcount-${Date.now()}@example.com`;
@@ -544,13 +630,14 @@ describe('claimWithCode', () => {
     const wrong = ['000000', '111111', '222222'].find((g) => g !== codeA && g !== codeB)!;
 
     let hookCalls = 0;
+    let siblingIncrement: Prisma.BatchPayload | undefined;
     const racing = db.$extends({
       query: {
         magicLinkToken: {
           async updateMany({ args, query }) {
             hookCalls += 1;
             const ours = await query(args);
-            await db.magicLinkToken.updateMany(args);
+            siblingIncrement = await db.magicLinkToken.updateMany(args);
             return ours;
           },
         },
@@ -561,6 +648,10 @@ describe('claimWithCode', () => {
     expect(await claimWithCode(racing, asBrowserNonce(nonce), wrong)).toEqual({ kind: 'invalid' });
 
     expect(hookCalls).toBe(1);
+    // A staging that collapsed — a sibling increment that no longer lands on
+    // both candidates — fails here as itself, rather than downstream as a
+    // missing warn.
+    expect(siblingIncrement?.count).toBe(2);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
       { expected: 1, actual: 2 },
