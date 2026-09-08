@@ -2,7 +2,6 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
-  respondError,
   requireTeacher,
   isErrorResponse,
   withErrorHandler,
@@ -10,7 +9,7 @@ import {
 import { checkStudentWriteLimit, respondRateLimited } from '@/lib/rate-limit';
 import { deliverInvitation } from '@/services/invitations';
 import { log } from '@/lib/log';
-import { ownedInvitation, NOT_FOUND, DECLINED } from '../shared';
+import { ownedInvitation, NOT_FOUND, DECLINED, NOT_PENDING } from '../shared';
 
 /**
  * Resend a pending invitation to its current address (#173) — the recovery
@@ -66,7 +65,7 @@ export const POST = withErrorHandler(async (
     // render — but the id travels in a URL, not a secret, so a direct call
     // still needs an honest answer rather than a 404 that pretends the row
     // doesn't exist.
-    return respondError('This invitation is no longer pending.', 409, 'NOT_PENDING');
+    return NOT_PENDING();
   }
 
   // Unconditional — see this route's own docblock above for why this must

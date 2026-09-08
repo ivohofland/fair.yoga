@@ -370,6 +370,69 @@ describe('PUT /api/invitations/[id]', () => {
     }
   });
 
+  it('refuses to update an accepted row with the same NOT_PENDING refusal resend already uses, closing the #500 readdress oracle', async () => {
+    // #500: before this refusal existed, PUT would re-address this row to
+    // any guessed address, and a follow-up POST /api/students would then
+    // read `inviteContact`'s ALREADY_LINKED gate for that address — a
+    // two-call oracle confirming whether the guess belonged to one of this
+    // teacher's own students. Mirrors the declined test above: same shape,
+    // same untouched-row assertion, the other status `NOT_PENDING` exists for.
+    const putAcceptedEmail = `inv-put-accepted-${suffix}@test.local`;
+    let accepted: { id: string } | undefined;
+    try {
+      accepted = await prisma.invitation.create({
+        data: { teacherId, email: putAcceptedEmail, status: 'accepted', respondedAt: new Date() },
+        select: { id: true },
+      });
+
+      const res = await fetch(`${BASE_URL}/api/invitations/${accepted.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ email: `inv-put-guess-${suffix}@test.local` }),
+      });
+      expect(res.status).toBe(409);
+      expect((await res.json()).error.code).toBe('NOT_PENDING');
+
+      // The address never moved — the whole point of the refusal is that a
+      // guessed address never lands on the row at all.
+      const row = await prisma.invitation.findUniqueOrThrow({ where: { id: accepted.id } });
+      expect(row.email).toBe(putAcceptedEmail);
+    } finally {
+      if (accepted) await prisma.invitation.delete({ where: { id: accepted.id } });
+    }
+  });
+
+  it('refuses an accepted row before the body is even validated, the same way declined already does', async () => {
+    // The CAS narrowing and `casMatchedNothing`'s own NOT_PENDING branch
+    // (both exercised by the race test below) would still answer NOT_PENDING
+    // for a VALID body on an already-accepted row even without this
+    // pre-check — the write would simply match zero rows and fall through.
+    // This is the scenario that only the pre-check itself catches: an
+    // invalid body on a row this route has already decided is frozen must
+    // not reach `updateInvitationSchema` at all, the same ordering
+    // `DECLINED` above already keeps. Without the pre-check this answers a
+    // schema-validation 400 instead — a real information difference (what's
+    // wrong with a body that was never going to be written).
+    const putAcceptedEmail = `inv-put-accepted-badbody-${suffix}@test.local`;
+    let accepted: { id: string } | undefined;
+    try {
+      accepted = await prisma.invitation.create({
+        data: { teacherId, email: putAcceptedEmail, status: 'accepted', respondedAt: new Date() },
+        select: { id: true },
+      });
+
+      const res = await fetch(`${BASE_URL}/api/invitations/${accepted.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ nickname: 'Nope' }),
+      });
+      expect(res.status).toBe(409);
+      expect((await res.json()).error.code).toBe('NOT_PENDING');
+    } finally {
+      if (accepted) await prisma.invitation.delete({ where: { id: accepted.id } });
+    }
+  });
+
   it('refuses an email that another of this teacher\'s contacts already holds, in words a teacher can act on', async () => {
     // F9, #166 review. Retyping one contact's address as another's is an
     // ordinary mistake, not a race — but it violates
@@ -3436,4 +3499,244 @@ describe('invitation writes are retry-safe against a concurrent decline (#196)',
     expect(body.error.code).toBeUndefined();
     expect(res.status).toBe(404);
   }, 20_000);
+});
+
+/**
+ * #500's own race, alongside #196's above: `PUT`'s pre-check reads `pending`
+ * and its CAS narrowing (`where: { id, status: 'pending' }`) is what has to
+ * catch an acceptance landing in the gap before the write — the pre-check
+ * cannot, since it already ran. Same lever as the #196 block: a second
+ * client holds the row's `accepted` write open in an uncommitted
+ * transaction, so this request's own pre-check still reads `pending` and its
+ * `updateMany` then parks on the holder's row lock until it commits.
+ */
+describe('PUT /api/invitations/[id] is retry-safe against a concurrent acceptance (#500)', () => {
+  let raceTeacherId: string;
+  let raceTeacherAccountId: string;
+  let raceTeacherToken: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Race', lastName: 'Accept',
+        email: `inv-race-accept-teacher-${suffix}@test.local`,
+        account: { create: { email: `inv-race-accept-teacher-${suffix}@test.local` } },
+        bio: 'Teacher for concurrent-acceptance PUT race tests (#500)',
+        pageSlug: `inv-race-accept-teacher-${suffix}`,
+      },
+    });
+    raceTeacherId = teacher.id;
+    raceTeacherAccountId = teacher.accountId;
+    raceTeacherToken = await seedSession(prisma, raceTeacherAccountId);
+  });
+
+  afterAll(async () => {
+    await prisma.invitation.deleteMany({ where: { teacherId: raceTeacherId } });
+    await prisma.teacherBlock.deleteMany({ where: { teacherId: raceTeacherId } });
+    await prisma.session.deleteMany({ where: { accountId: raceTeacherAccountId } });
+    await prisma.teacher.deleteMany({ where: { id: raceTeacherId } });
+    await prisma.account.deleteMany({ where: { id: raceTeacherAccountId } });
+  });
+
+  it('refuses to edit a row that was accepted while the request was in flight, and the guessed address never lands', async () => {
+    const email = `race-accept-put-${suffix}@test.local`;
+    const guessedEmail = `race-accept-guess-${suffix}@test.local`;
+    const inv = await prisma.invitation.create({
+      data: { teacherId: raceTeacherId, email, firstName: 'Race', lastName: 'Accept', status: 'pending' },
+    });
+
+    // The invitee accepts and holds it UNCOMMITTED, so the route's own
+    // pre-check still reads `pending` and its write then parks on the
+    // holder's row lock — same lever as the #196 block's decline races.
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let accepted!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const parked = new Promise<void>((r) => { accepted = r; });
+    const holding = holder.$transaction(async (tx) => {
+      await tx.invitation.updateMany({
+        where: { id: inv.id, status: 'pending' },
+        data: { status: 'accepted', respondedAt: new Date() },
+      });
+      accepted();
+      await released;
+    }, { timeout: 20_000 });
+
+    await parked;
+    const editing = fetch(`${BASE_URL}/api/invitations/${inv.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(raceTeacherToken) },
+      body: JSON.stringify({ email: guessedEmail }),
+    });
+
+    // Asserted, not assumed — a request that answered before ever reaching
+    // the holder's lock (e.g. on a pre-check that fired early) would leave
+    // this test green having raced nothing.
+    let settled = false;
+    void editing.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(settled).toBe(false);
+
+    release();
+    await holding;
+    const res = await editing;
+    await holder.$disconnect();
+
+    // The guessed address never landed — the CAS narrowing this test exists
+    // to pin is what stops it, since the pre-check above already read
+    // `pending` and could not have caught this itself.
+    const still = await prisma.invitation.findUniqueOrThrow({ where: { id: inv.id } });
+    expect(still.email).toBe(email);
+    expect(still.status).toBe('accepted');
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('NOT_PENDING');
+  }, 20_000);
+});
+
+/**
+ * The acceptance criterion for #500, in the shape
+ * `invitations.gate.test.ts`'s "answers a gated linked-unshared student the
+ * same as a genuine stranger" test uses: two full attack attempts run side
+ * by side, and the two OUTCOMES are compared against each other rather than
+ * each pinned independently against a literal. A cross-comparison beside
+ * absolute assertions on both sides certifies nothing beyond them, so here
+ * one side (`NOT_PENDING`, `201`) is pinned and the other is derived only
+ * through the comparison.
+ *
+ * Each guess gets its own fresh `accepted` decoy `Invitation` — a real row
+ * this teacher already holds, exactly the shape the attack in #500 needs:
+ * hold an accepted invitation, `PUT` it to a guessed address, then
+ * `POST /api/students` the same address and read what `inviteContact`'s
+ * `ALREADY_LINKED` gate says. Before this task, the `PUT` succeeded
+ * regardless of the guess and the decoy's address moved to it; after, the
+ * decoy is refused untouched and the follow-up `POST` is an ordinary fresh
+ * invite either way, which is what makes the two guesses land on the same
+ * outcome.
+ */
+describe('PUT then POST /api/students answers a guessed address the same either way (#500)', () => {
+  let oracleTeacherId: string;
+  let oracleTeacherAccountId: string;
+  let oracleTeacherToken: string;
+  let gatedStudentId: string;
+  let gatedStudentAccountId: string;
+  const gatedEmail = `oracle-gated-${suffix}@test.local`;
+  const strangerEmail = `oracle-stranger-${suffix}@test.local`;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Oracle', lastName: 'Teacher',
+        email: `oracle-teacher-${suffix}@test.local`,
+        account: { create: { email: `oracle-teacher-${suffix}@test.local` } },
+        bio: '#500 comparative-oracle fixture',
+        pageSlug: `oracle-teacher-${suffix}`,
+      },
+    });
+    oracleTeacherId = teacher.id;
+    oracleTeacherAccountId = teacher.accountId;
+    oracleTeacherToken = await seedSession(prisma, oracleTeacherAccountId);
+
+    // A claimed, linked student with `shareEmail: false` — the exact
+    // population #419 already made indistinguishable from a stranger on the
+    // `POST /api/students` gate alone (`invitations.gate.test.ts`'s own
+    // comparative test). What #500 adds is the `PUT` re-address step ahead
+    // of it; this fixture is what a genuine guess would target.
+    const gatedStudent = await prisma.student.create({
+      data: {
+        firstName: 'Oracle', lastName: 'Gated', email: gatedEmail,
+        claimedAt: new Date(),
+        account: { create: { email: gatedEmail } },
+        teacherStudents: { create: { teacherId: oracleTeacherId } },
+        studentPrivacy: { create: { teacherId: oracleTeacherId, shareEmail: false } },
+      },
+      select: { id: true, accountId: true },
+    });
+    gatedStudentId = gatedStudent.id;
+    gatedStudentAccountId = gatedStudent.accountId as string;
+  });
+
+  afterAll(async () => {
+    await prisma.studentPrivacy.deleteMany({ where: { studentId: gatedStudentId } });
+    await prisma.teacherStudent.deleteMany({ where: { studentId: gatedStudentId } });
+    await prisma.student.deleteMany({ where: { id: gatedStudentId } });
+    await prisma.account.deleteMany({ where: { id: gatedStudentAccountId } });
+    await prisma.invitation.deleteMany({ where: { teacherId: oracleTeacherId } });
+    await prisma.session.deleteMany({ where: { accountId: oracleTeacherAccountId } });
+    await prisma.teacher.deleteMany({ where: { id: oracleTeacherId } });
+    await prisma.account.deleteMany({ where: { id: oracleTeacherAccountId } });
+  });
+
+  /** A fresh `accepted` decoy this teacher already holds — the row the
+   *  attack in #500 re-addresses. */
+  async function seedDecoy(label: string) {
+    return prisma.invitation.create({
+      data: {
+        teacherId: oracleTeacherId,
+        email: `oracle-decoy-${label}-${suffix}@test.local`,
+        status: 'accepted',
+        respondedAt: new Date(),
+      },
+      select: { id: true },
+    });
+  }
+
+  /** The two-call attack itself: re-address the decoy to `guessEmail`, then
+   *  probe `POST /api/students` with the same address. */
+  async function probe(decoyId: string, guessEmail: string) {
+    const putRes = await fetch(`${BASE_URL}/api/invitations/${decoyId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(oracleTeacherToken) },
+      body: JSON.stringify({ email: guessEmail }),
+    });
+    const postRes = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(oracleTeacherToken) },
+      body: JSON.stringify({ firstName: 'Oracle', lastName: 'Probe', email: guessEmail }),
+    });
+    return { putRes, postRes };
+  }
+
+  it('answers a linked-and-private student\'s address the same as a stranger\'s, at both calls', async () => {
+    const gatedDecoy = await seedDecoy('gated');
+    const strangerDecoy = await seedDecoy('stranger');
+
+    const gated = await probe(gatedDecoy.id, gatedEmail);
+    const stranger = await probe(strangerDecoy.id, strangerEmail);
+
+    // First call: both PUTs refused identically — the guess never reaches
+    // the gate at all. Pinned on the gated side, then derived for the
+    // stranger via the comparison rather than restated.
+    expect(gated.putRes.status).toBe(409);
+    const gatedPutBody = (await gated.putRes.json()) as { error: { code?: string } };
+    expect(gatedPutBody.error.code).toBe('NOT_PENDING');
+    const strangerPutBody = (await stranger.putRes.json()) as { error: { code?: string } };
+    expect(stranger.putRes.status).toBe(gated.putRes.status);
+    expect(strangerPutBody).toEqual(gatedPutBody);
+
+    // Neither decoy moved — confirming the PUT above did nothing, not just
+    // that it was refused with the right code.
+    const [gatedDecoyRow, strangerDecoyRow] = await Promise.all([
+      prisma.invitation.findUniqueOrThrow({ where: { id: gatedDecoy.id } }),
+      prisma.invitation.findUniqueOrThrow({ where: { id: strangerDecoy.id } }),
+    ]);
+    expect(gatedDecoyRow.email).not.toBe(gatedEmail);
+    expect(strangerDecoyRow.email).not.toBe(strangerEmail);
+
+    // Second call: both POSTs succeed as ordinary fresh invites — an
+    // `ALREADY_LINKED` refusal on the gated side is exactly the
+    // confirmation #500 exists to deny. Pinned on the gated side (`201`),
+    // then compared key-for-key against the stranger's, `id` excepted
+    // (a fresh uuid per row, necessarily different).
+    expect(gated.postRes.status).toBe(201);
+    expect(stranger.postRes.status).toBe(gated.postRes.status);
+    const gatedPostBody = (await gated.postRes.json()) as { data: { id: string } };
+    const strangerPostBody = (await stranger.postRes.json()) as { data: { id: string } };
+    // `id` is the only key `POST /api/students` ever returns
+    // (src/app/api/students/route.ts), so "equal apart from id" reduces to:
+    // same keys (there is nothing else to compare), and the ids themselves
+    // differ — proving two distinct rows were created, not one reused.
+    expect(Object.keys(strangerPostBody.data).sort()).toEqual(Object.keys(gatedPostBody.data).sort());
+    expect(strangerPostBody.data.id).not.toBe(gatedPostBody.data.id);
+  });
 });
