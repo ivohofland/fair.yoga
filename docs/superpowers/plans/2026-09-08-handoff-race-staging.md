@@ -476,7 +476,7 @@ Expected hits, and the verdict for each:
 | hit | verdict |
 |---|---|
 | `docs/superpowers/plans/2026-09-08-handoff-miss-observability.md` | **Leave.** A plan is a record of what a past branch did, not a live description of the code — correcting it would rewrite history rather than fix an error. |
-| `docs/superpowers/plans/2026-09-08-handoff-race-staging.md` | **Leave.** This file's own text quotes the retired titles deliberately, as the "before" side of what this branch changes. Two of its hits are self-referential — its copy of the grep command above, and the row below naming the current test title — so its count moves whenever this table is edited, which is why none is written here. |
+| `docs/superpowers/plans/2026-09-08-handoff-race-staging.md` | **Leave.** This file's own text quotes the retired titles deliberately, as the "before" side of what this branch changes. Several of its hits are self-referential — its own copy of the grep command, this table's rows, and the task bodies that quote current test titles — so its count moves whenever this file is edited, which is why none is written here. |
 | `docs/superpowers/specs/2026-09-08-handoff-race-staging-design.md` | **Leave**, same reason. |
 | `src/lib/auth/handoff.test.ts:466` (current title `'warns when a sibling reaps the already-spent candidate first'`) | **Leave.** It is current, not stale. |
 | any OTHER hit under `src/` | **Must be zero** after Step 1. None found. |
@@ -533,7 +533,7 @@ Expected: zero failures of any of the four staged tests. §7 of the spec explain
 grep -n "Promise.all\|for (let i = 0" src/lib/auth/handoff.test.ts
 ```
 
-Expected: nine lines. Three are the race sites — the two `the race: …` tests and `counts both attempts when two wrong guesses race concurrently`. The other three loops spend the attempt budget sequentially and wrap no `Promise.all`; the remaining lines are a comment and a second `Promise.all` inside one of the race tests. None of the three race sites may sit inside a test that asserts on `log.warn` — verify that last clause by reading them, not by grepping.
+Expected: nine lines across six tests. Six of the lines belong to the three race sites — the two `the race: …` tests and `counts both attempts when two wrong guesses race concurrently` — which contribute between one and three lines each, since a loop, its `Promise.all`, and a comment naming `Promise.all` all match. The other three are `for` loops that spend the attempt budget sequentially and wrap no `Promise.all`. Six plus three closes at nine. None of the three race sites may sit inside a test that asserts on `log.warn` — verify that by reading them, not by grepping.
 
 - [ ] **Step 4: The rest of the gate**
 
