@@ -42,9 +42,10 @@
  * node:-origin allowance `areasUnderSrc`'s own check makes, with
  * `censusOfTree` additionally allowed by name alone wherever it sits in the
  * declaration — and, separately, the initializer alone, which must itself
- * call `censusOfTree`, so a `censusOfTree` call sitting only in a sibling
- * binding element's default or a computed property key cannot stand in for
- * the call `reached`'s own value must itself make. That is what catches a
+ * call `censusOfTree`, so a `censusOfTree` call sitting anywhere else in the
+ * declaration — `reached`'s own default, a sibling binding element's
+ * default, or a computed property key — cannot stand in for the call
+ * `reached`'s own value must itself make. That is what catches a
  * revert to a second, independent read of `searchScope()` or
  * `typeScriptUnderSrc()`, aliased or not — and, since `censusOfTree` itself
  * must be unambiguous for the name-alone allowance to mean anything, a second
@@ -99,20 +100,18 @@
  * discovery reads module-level declarations only, and this file declares no
  * function or function-valued variable named `areasUnderSrc`; the `REACHED`
  * discovery (#492, widened by #499) is not scoped that way — it walks every
- * node in every scope looking for a `VariableDeclaration` that binds
- * `reached`, in any shape `bindsReached` recognizes: a bare identifier, a
- * destructured or nested binding pattern at any depth, a `for...of` loop's
- * own binding — with or without an initializer — and this file declares no
- * such variable as real code, in any of those shapes, at any depth. Both
- * names appear only in this docblock's prose, as the `GUARD`/`REACHED`
- * constants, and inside fixture source strings that are parsed as separate
- * synthetic files, never as this one — a real `reached` binding written
- * anywhere in this file, bare, destructured, nested, or a loop variable,
+ * node in every scope looking for any `VariableDeclaration` that binds
+ * `reached`, whatever syntax introduces it and with or without an
+ * initializer — and this file declares no such variable as real code, at any
+ * depth. Both names appear only in this docblock's prose, as the
+ * `GUARD`/`REACHED` constants, and inside fixture source strings that are
+ * parsed as separate synthetic files, never as this one — a real `reached`
+ * binding written anywhere in this file, in any syntax that binds the name,
  * would join its own discovered set and redden its own assertion. That is a
  * thinner margin than `GUARD`'s, and thinner than this file's own margin was
  * before #499 widened `REACHED` discovery past the one bare
  * `const reached = …` shape — worth remembering before adding a binding of
- * that name in any of the shapes just named.
+ * that name in any form.
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -377,8 +376,11 @@ function independenceOf(file: string, text: string): readonly string[] | undefin
  * trusts `WALK`'s; that trust only holds while the name is unambiguous. A
  * second declaration — necessarily nested, since a second module-level one is
  * a `tsc` redeclaration error the way `GUARD`'s is — shadows the first inside
- * whatever scope it's declared in, and nothing that walks only a `reached`
- * initializer ever visits a shadow's own body to see what it actually calls.
+ * whatever scope it's declared in, and the per-declaration walk below cannot
+ * tell a shadow's call apart from a call to the genuine `censusOfTree`: it
+ * trusts the name alone, regardless of where the shadow itself is declared,
+ * including nested inside `reached`'s own initializer where that walk does
+ * reach.
  */
 function censusDeclarationCount(source: ts.SourceFile): number {
   let count = 0;
@@ -400,7 +402,7 @@ function censusDeclarationCount(source: ts.SourceFile): number {
  * `VariableDeclaration`, on purpose, so a dirty call hiding in a sibling
  * binding element's default or a computed property key is still caught. This
  * search reads only `declaration.initializer` — the expression that actually
- * produces `REACHED`'s value — so a `${CENSUS}` call sitting anywhere else in
+ * produces `REACHED`'s value — so a `CENSUS` call sitting anywhere else in
  * the declaration cannot stand in for the one `REACHED` itself must make.
  */
 function callsCensus(node: ts.Node): boolean {
@@ -435,9 +437,9 @@ function callsCensus(node: ts.Node): boolean {
  * declaration, never imported. The missing-`CENSUS`-call arm is narrower:
  * `callsCensus` reads only `declaration.initializer`, the expression that
  * actually produces `REACHED`'s value, so a `censusOfTree` call sitting
- * anywhere else in the declaration — that same sibling default, or a
- * computed key — cannot stand in for the one this declaration's own value
- * must make.
+ * anywhere else in the declaration — `REACHED`'s own default, a sibling
+ * binding element's default, or a computed key — cannot stand in for the one
+ * this declaration's own value must make.
  *
  * That name-alone trust is only sound while the name is unambiguous, which is
  * what `censusDeclarationCount` polices first: a shadow named `censusOfTree`
@@ -446,10 +448,14 @@ function callsCensus(node: ts.Node): boolean {
  * own body ever being inspected, so more than one declaration is a finding on
  * its own, before any declaration is even walked.
  *
- * `undefined`, as against an empty array of findings, when the file declares
- * no `REACHED` at all — the one meaning it now carries, since a declaration
- * that exists but has no initializer of its own no longer collapses into
- * this same answer; it gets the ambiguity finding above instead.
+ * `undefined`, as against an empty array of findings, when
+ * `reachedDeclarationsIn` collects no `VariableDeclaration` binding
+ * `REACHED` — either because the file declares no such name at all, or
+ * because it only declares one as a `function`, `class`, or parameter, none
+ * of which `reachedDeclarationsIn` collects (none can carry an initializer
+ * expression to check). A `VariableDeclaration` that exists but has no
+ * initializer of its own no longer collapses into this same answer; it gets
+ * the ambiguity finding above instead.
  */
 function reachedIndependenceOf(file: string, text: string): readonly string[] | undefined {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -504,7 +510,7 @@ function reachedIndependenceOf(file: string, text: string): readonly string[] | 
   return findings;
 }
 
-/** One discovered census file and what its guard reaches. */
+/** One discovered census file and its findings — shared by both discoveries. */
 interface Checked {
   readonly file: string;
   readonly findings: readonly string[];
@@ -970,10 +976,12 @@ describe('x', () => {
   });
 
   it('reports a destructured declaration by walking the whole declaration', () => {
-    // `const { reached } = buildReachedSet();` has no `reached` initializer
-    // of its own to collect under the old match — the destructuring source
-    // is the declaration's initializer, not `reached`'s. Walking the whole
-    // `VariableDeclaration` reaches it anyway.
+    // `const { reached } = buildReachedSet();`'s `reached` has no initializer
+    // of its own — the destructuring source, `buildReachedSet()`, is the
+    // declaration's own `.initializer`. Walking the whole `VariableDeclaration`
+    // reaches it for the forbidden-call finding; because this shape's
+    // initializer is exactly that same call, `callsCensus`'s narrower
+    // initializer-only walk reaches it too, for the missing-call finding.
     const preamble = `${REACHED_PREAMBLE}
 function buildReachedSet(): Set<string> {
   return new Set(searchScope().map(areaOf));
@@ -996,8 +1004,10 @@ describe('x', () => {
     // What keeps the fixture above from passing for the wrong reason: a
     // blanket "any destructured shape is a finding" would satisfy that
     // expectation too. This one derives `reached` from `censusOfTree`
-    // directly in the declaration's own initializer, so walking the whole
-    // declaration must find it clean.
+    // directly in the declaration's own initializer: the whole-declaration
+    // walk finds the call name-allowed, so no forbidden-call finding, and
+    // `callsCensus`'s narrower initializer-only walk finds that same call,
+    // so no missing-call finding either.
     const source = `${REACHED_PREAMBLE}
 describe('x', () => {
   it('y', () => {
@@ -1011,7 +1021,7 @@ describe('x', () => {
   it('reports a missing census call hidden behind a sibling binding element default', () => {
     // The forbidden-call walk above still reads the whole declaration on
     // purpose, so `ignored`'s own default calling `censusOfTree` is
-    // correctly not a finding by itself. But the missing-${CENSUS}-call
+    // correctly not a finding by itself. But the missing-`CENSUS`-call
     // check must read only the declaration's own initializer — the
     // expression that actually produces `reached`'s value — so that default
     // cannot stand in for a call `reached` itself never makes. `reached`
@@ -1059,9 +1069,9 @@ describe('x', () => {
   it('reports a nested binding pattern, two levels deep and past an array hole', () => {
     // `bindsReached`'s recursion must reach past more than one level, and
     // its `ts.isBindingElement` guard must survive an `ArrayBindingPattern`
-    // hole rather than crash on it: `buildPair`'s first element is skipped
-    // by the guard, and `reached` is only found by recursing from the array
-    // pattern into the nested object pattern.
+    // hole rather than crash on it: `const [, { reached }]`'s own first
+    // element is the hole, skipped by the guard, and `reached` is only found
+    // by recursing from the array pattern into the nested object pattern.
     const preamble = `${REACHED_PREAMBLE}
 function buildPair(): [string, { reached: Set<string> }] {
   return ['', { reached: new Set(searchScope().map(areaOf)) }];

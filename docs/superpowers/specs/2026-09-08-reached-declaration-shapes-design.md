@@ -116,13 +116,22 @@ For each collected declaration:
   The missing-`censusOfTree` finding is deliberately **not** also emitted: the
   declaration may well be assigned from `censusOfTree` later, so claiming it
   makes no such call would be asserting something this file cannot know.
-- **With an initializer** → walk the **whole `VariableDeclaration`** rather
-  than only `declaration.initializer`. For the plain `const reached = …` shape
-  the two are identical (the remaining children are an `Identifier` and an
-  optional type node, neither of which can hold a `CallExpression`), so no
-  existing fixture moves. For a destructured one it additionally covers the
-  source expression, a binding element's default (`{ reached = fallback() }`),
-  and a computed property key.
+- **With an initializer** → two different walks, over two different scopes,
+  for two different questions. The forbidden-call check — any other call
+  rooting in a module-level binding not reached from a `node:` import — reads
+  the **whole `VariableDeclaration`**, deliberately wider than
+  `declaration.initializer` alone, so a dirty call hiding in a sibling binding
+  element's default or a computed property key is still caught, not only one
+  sitting in the destructuring source expression. The must-call-`censusOfTree`
+  check reads `declaration.initializer` alone: only the expression that
+  actually produces `reached`'s value can satisfy it, so a `censusOfTree()`
+  call sitting anywhere *else* in the declaration — `reached`'s own default, a
+  sibling binding element's default, or a computed property key — cannot stand
+  in for the one `reached`'s own value must itself make. For the plain
+  `const reached = …` shape the whole declaration and its initializer are
+  identical (the remaining children are an `Identifier` and an optional type
+  node, neither of which can hold a `CallExpression`), so no existing fixture
+  moves.
 
 Findings keep reporting the **call expression's** line, not the declaration's,
 so existing expectations are unchanged.
