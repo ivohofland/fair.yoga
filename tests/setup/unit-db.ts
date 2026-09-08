@@ -1,6 +1,8 @@
 /**
  * Global setup for the vitest `unit` AND `unit-sweeps` projects: provision
- * and migrate the dedicated test database (docs/test-database.md).
+ * and migrate the dedicated test database (docs/test-database.md), and —
+ * in a linked worktree — reap any other worktree's orphaned databases and
+ * dev-server process (docs/superpowers/specs/2026-09-08-worktree-db-isolation-design.md).
  *
  * `unit-sweeps` is the tier holding the service tests that inject far-future
  * clocks into database-wide sweeps — on a shared database those once
@@ -23,9 +25,11 @@
  * on the merge gate; the early return below is what made it do exactly that.
  */
 
-import { execSync } from 'child_process';
 import { loadEnv } from 'vite';
-import { PrismaClient } from '@prisma/client';
+import { provisionDatabase } from '../../src/lib/db-provision';
+import { getWorktreeIdentity } from '../../src/lib/worktree/identity';
+import { getRegistryPath } from '../../src/lib/worktree/registry';
+import { runReap } from '../../src/lib/worktree/reap';
 
 export default async function setup(): Promise<void> {
   const fileEnv = loadEnv('', process.cwd(), '');
@@ -43,31 +47,14 @@ export default async function setup(): Promise<void> {
     );
   }
 
-  const dbName = new URL(testUrl).pathname.slice(1);
-  if (!/^[a-z0-9_]+$/i.test(dbName)) {
-    throw new Error(`[unit-db] unsafe test database name: ${dbName}`);
-  }
-
-  // Create the database if it doesn't exist, via the maintenance DB.
-  const adminUrl = new URL(testUrl);
-  adminUrl.pathname = '/postgres';
-  const admin = new PrismaClient({ datasources: { db: { url: adminUrl.toString() } } });
-  try {
-    const exists = await admin.$queryRaw<
-      { one: number }[]
-    >`SELECT 1 AS one FROM pg_database WHERE datname = ${dbName}`;
-    if (exists.length === 0) {
-      await admin.$executeRawUnsafe(`CREATE DATABASE "${dbName}"`);
-      console.log(`[unit-db] created database ${dbName}`);
+  const identity = getWorktreeIdentity();
+  if (!identity.isMainCheckout) {
+    const reaped = await runReap(identity.gitCommonDir, getRegistryPath(identity.gitCommonDir), testUrl);
+    if (reaped.length > 0) {
+      console.log(`[unit-db] reaped orphaned worktree resources: ${reaped.join(', ')}`);
     }
-  } finally {
-    await admin.$disconnect();
   }
 
-  // Keep the schema in lockstep with dev — a no-op when up to date.
-  execSync('npx prisma migrate deploy', {
-    env: { ...process.env, DATABASE_URL: testUrl },
-    stdio: 'pipe',
-  });
-  console.log(`[unit-db] unit tests run against ${dbName}`);
+  await provisionDatabase(testUrl, { seed: false });
+  console.log(`[unit-db] unit tests run against ${new URL(testUrl).pathname.slice(1)}`);
 }
