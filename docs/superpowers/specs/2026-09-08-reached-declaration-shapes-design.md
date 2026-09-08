@@ -124,20 +124,26 @@ For each collected declaration:
   element's default or a computed property key is still caught, not only one
   sitting in the destructuring source expression. The must-call-`censusOfTree`
   check reads `declaration.initializer` alone: only the expression that
-  actually produces `reached`'s value can satisfy it, so a `censusOfTree()`
-  call sitting anywhere *else* in the declaration — `reached`'s own default, a
-  sibling binding element's default, or a computed property key — cannot stand
-  in for the one `reached`'s own value must itself make. For the plain
-  `const reached = …` shape the whole declaration and its initializer are
-  identical (the remaining children are an `Identifier` and an optional type
-  node, neither of which can hold a `CallExpression`), so no existing fixture
-  moves.
+  actually produces `reached`'s value can satisfy it. A `censusOfTree()` call
+  sitting in a sibling binding element's default or a computed property key
+  cannot stand in for that — neither one produces `reached`'s own value. A
+  call sitting in `reached`'s *own* default is different: it genuinely can
+  produce that value, when the destructured property is absent — but
+  `declaration.initializer` does not reach a binding element's default either
+  way, so this check misses it deliberately, degrading loud (a false "makes no
+  `censusOfTree` call") rather than resolving whether the property was
+  actually absent. For the plain `const reached = …` shape the whole
+  declaration and its initializer are identical (the remaining children are an
+  `Identifier` and an optional type node, neither of which can hold a
+  `CallExpression`), so no existing fixture moves.
 
 Findings keep reporting the **call expression's** line, not the declaration's,
 so existing expectations are unchanged.
 
-`undefined` — as against `[]` — still means "this file binds no `reached` at
-all", and now means only that.
+`undefined` — as against `[]` — means `reachedDeclarationsIn` collects no
+`VariableDeclaration` binding `reached`, whether because the file declares no
+such name at all or only in one of the shapes named above as deliberately not
+collected.
 
 ### Consequence: a for-of binding is reported
 
