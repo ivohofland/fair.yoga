@@ -196,10 +196,13 @@ of up to 4 concurrent `claimWithCode` calls, plus three more staged
 two-way races immediately after — and was never checked against the same
 mechanism, despite being at least as plausible a candidate.
 
-Measured the same way as §2: 100 consecutive isolated runs of that test
-alone produced **1 timeout in 100** — `5007ms`, vitest's own `Duration
-6.23s`, the identical signature (down to the millisecond) as the failure
-captured in §2 — against a tight bimodal spread otherwise (min 2.03s,
+Measured the same way as §2 (`npx vitest run --project unit
+src/lib/auth/handoff.test.ts -t "the race: a correct claim concurrent with
+wrong guesses never throws"`): 100 consecutive isolated runs of that test
+alone produced **1 timeout in 100** — the identical `5007ms` overshoot past
+vitest's 5000ms default as the failure captured in §2 (vitest's own
+`Duration`, 6.23s here vs. 6.38s there, is ordinary run-to-run variance, not
+part of the match) — against a tight bimodal spread otherwise (min 2.03s,
 median 2.20s, the one failure at 6.93s). This is the same client-side
 stall (§3-5), not a new mechanism, so it gets the same fix: a `20_000`
 per-test timeout override, added to this test alongside the one §6
