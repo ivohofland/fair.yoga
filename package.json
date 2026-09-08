@@ -18,7 +18,9 @@
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset",
-    "worktree:setup": "tsx scripts/worktree-setup.ts"
+    "worktree:setup": "tsx scripts/worktree-setup.ts",
+    "worktree:up": "tsx scripts/worktree-up.ts",
+    "worktree:down": "tsx scripts/worktree-down.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"
