@@ -91,7 +91,7 @@ describe('verifyWithHandoff', () => {
     }
   });
 
-  // The CAS loser's winner-arm (`handoff.ts:78`): a sibling first-open wins
+  // The CAS loser's winner-arm (`handoff.ts:86`): a sibling first-open wins
   // the compare-and-swap and stamps its own code before this call's
   // `updateMany` runs, so this call matches zero rows, reads the row back,
   // and must return the WINNER's code — not its own, which was never
@@ -134,7 +134,7 @@ describe('verifyWithHandoff', () => {
     expect(row?.handoffCode).toBe(sibling.code);
   });
 
-  // The CAS loser's invalid-arm (`handoff.ts:77`): a sibling call for the
+  // The CAS loser's invalid-arm (`handoff.ts:85`): a sibling call for the
   // SAME token, with the browser's own matching nonce, consumes and deletes
   // the row before this call's `updateMany` runs. This call's CAS matches
   // zero rows because the row is gone — not merely stamped — so `winner`
