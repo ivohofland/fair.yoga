@@ -121,8 +121,18 @@ describe('verifyMagicLinkToken', () => {
    */
   it('purges siblings that differ from the consumed row, not just identical ones', async () => {
     const email = `purge-reach-${Date.now()}@example.com`;
-    await generateMagicLinkToken(db, email, { purpose: 'teacher_profile_pending' });
+    await generateMagicLinkToken(db, email, {
+      purpose: 'teacher_profile_pending',
+      redirectTo: '/settings/profile',
+    });
     await generateMagicLinkToken(db, email, { originBrowserHash: 'another-browser' });
+    // Stamped after minting: `generateMagicLinkToken` takes no `handoffCode`,
+    // and a purge narrowed by `handoffCode: null` is green against every row
+    // it can mint.
+    const stamped = await db.magicLinkToken.findFirstOrThrow({
+      where: { email, originBrowserHash: 'another-browser' },
+    });
+    await db.magicLinkToken.update({ where: { id: stamped.id }, data: { handoffCode: '424242' } });
     const live = await generateMagicLinkToken(db, email, { originBrowserHash: 'this-browser' });
 
     expect(await verifyMagicLinkToken(db, live)).not.toBeNull();
@@ -208,6 +218,19 @@ describe('purge count logging (#506)', () => {
     expect(await verifyMagicLinkToken(db, live)).not.toBeNull();
 
     expect(info).toHaveBeenCalledWith({ purged: 1, purpose: 'sign_in' }, MESSAGE);
+  });
+
+  it('names the purpose of the row whose consumption triggered the purge', async () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
+    const email = `purge-purpose-${Date.now()}@example.com`;
+    await generateMagicLinkToken(db, email);
+    const ticket = await generateMagicLinkToken(db, email, { purpose: 'teacher_profile_pending' });
+
+    expect(await verifyMagicLinkToken(db, ticket)).not.toBeNull();
+
+    // Every other case here consumes a `sign_in` row, so without this one a
+    // payload hardcoding that purpose passes the whole file.
+    expect(info).toHaveBeenCalledWith({ purged: 1, purpose: 'teacher_profile_pending' }, MESSAGE);
   });
 
   it('stays silent when the consumed row was the only one', async () => {
