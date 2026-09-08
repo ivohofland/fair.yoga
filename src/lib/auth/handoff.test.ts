@@ -130,6 +130,48 @@ describe('verifyWithHandoff', () => {
     expect(row?.handoffCode).toBe(sibling.code);
   });
 
+  // The CAS loser's invalid-arm (`handoff.ts:77`): a sibling call for the
+  // SAME token, with the browser's own matching nonce, consumes and deletes
+  // the row before this call's `updateMany` runs. This call's CAS matches
+  // zero rows because the row is gone — not merely stamped — so `winner`
+  // reads back `null` and the loser must report `invalid` rather than
+  // dereference a row that no longer exists. This shape is unreachable by
+  // the existing loop-based race test, which only ever stages two
+  // no-nonce opens — see the spec's §1.4.
+  //
+  // The sibling is a whole `verifyWithHandoff` call on the UNHOOKED client,
+  // so every statement it issues is the real one and it cannot re-enter this
+  // hook. Interposed before `query(args)`, because the row has to be gone
+  // by the time this call's own write attempt runs — that gap is the race.
+  it('returns invalid when the sibling consumes the token before the loser writes', async () => {
+    const email = `handoff-staged-deleted-${Date.now()}@example.com`;
+    const nonce = 'nonce-staged-deleted';
+    const token = await mint(email, nonce);
+
+    let hookCalls = 0;
+    let sibling: Awaited<ReturnType<typeof verifyWithHandoff>> | undefined;
+    const racing = db.$extends({
+      query: {
+        magicLinkToken: {
+          async updateMany({ args, query }) {
+            hookCalls += 1;
+            sibling = await verifyWithHandoff(db, token, asBrowserNonce(nonce));
+            return query(args);
+          },
+        },
+      },
+      // Same cast, same reason as the first hook in this file.
+    }) as unknown as PrismaClient;
+
+    const loser = await verifyWithHandoff(racing, token, null);
+
+    expect(hookCalls).toBe(1);
+    // A staging that collapsed — a sibling that no longer consumes the row —
+    // fails here as itself, rather than downstream as a wrong outcome.
+    expect(sibling).toEqual({ kind: 'verified', email, redirectTo: null, purpose: 'sign_in' });
+    expect(loser).toEqual({ kind: 'invalid' });
+  });
+
   it('lets the real browser still sign in after a stranger stamped a code', async () => {
     const email = `handoff-nopoison-${Date.now()}@example.com`;
     const token = await mint(email, 'nonce-5');
