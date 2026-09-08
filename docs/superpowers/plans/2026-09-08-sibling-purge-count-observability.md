@@ -164,9 +164,9 @@ column being matched.
 
 Addresses are `Date.now()`-suffixed but keep the `@example.com` domain the
 file's `afterEach` sweeps (line 19-24). In a whole-file run the suffix is
-redundant — eight tests precede this block and each one's sweep clears every
-`@example.com` row. It earns its place in a **filtered** run, where those
-sweeps never happen and a leftover row sharing a fixed address would break the
+redundant — every test before this block sweeps every `@example.com` row on
+its way out. It earns its place in a **filtered** run, where those sweeps
+never happen and a leftover row sharing a fixed address would break the
 negative these cases assert.
 
 1. **Fires, with the right count.** Mint three, consume one, assert
@@ -182,7 +182,9 @@ negative these cases assert.
    (strict, matching `handoff.test.ts:428`).
 
 Plus, in the `verifyMagicLinkToken` block, a case pinning the purge's **reach**
-against every column a narrowing would filter on.
+against the columns below — not every column on the table (`handoffAttempts`
+defaults to 0 on every row a test can mint, so a narrowing on it survives; the
+motive for writing one is thin, and it is left unpinned deliberately).
 
 `vi.spyOn(log, 'info').mockImplementation(() => undefined)` with
 `afterEach(() => vi.restoreAllMocks())`, matching `handoff.test.ts`.
@@ -198,13 +200,8 @@ Per mutation: apply, run, record the exact failure, restore, re-run green.
 | `{ purged: purged.count }` → `{ purged: 0 }` | cases 1 and 2 |
 | `purpose: row.purpose` → `'sign_in'` | the purpose case (3) |
 | purge `where` + `purpose` / `originBrowserHash` / `handoffCode` / `redirectTo` | the reach case |
+| purge `where` + `createdAt: { lte: row.createdAt }` (older rows only) | the reach case |
 | purge `where` + `expiresAt: { gt: now }` | the boundary case (2) |
-
-> The table originally held three mutations, all probing the guard from
-> outside its boundary (`> 99`, `>= 0`, a corrupted count). PR review found
-> `> 1` survived the whole suite, and the sweep that followed found
-> `handoffCode: null` and a hardcoded `purpose` did too. Nine now, each
-> measured against the shipped test shape.
 
 The count mutation is what separates "a log line fired" from "the right number
 reached it".
