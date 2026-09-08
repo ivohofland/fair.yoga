@@ -279,6 +279,20 @@ function guardIn(source: ts.SourceFile): ts.Node | undefined {
 }
 
 /**
+ * Whether a binding name introduces `REACHED`, directly or through a
+ * destructuring pattern — the same recursion `moduleLevelBindings`'s own
+ * `declare` already performs on `ts.BindingName`, not re-explained here.
+ * `elements.some(…)` guarded by `ts.isBindingElement` serves both pattern
+ * kinds: an `ArrayBindingPattern`'s elements may include an
+ * `OmittedExpression` hole, which the guard skips, while an
+ * `ObjectBindingPattern`'s never do.
+ */
+function bindsReached(target: ts.BindingName): boolean {
+  if (ts.isIdentifier(target)) return target.text === REACHED;
+  return target.elements.some((element) => ts.isBindingElement(element) && bindsReached(element.name));
+}
+
+/**
  * The initializers of every `const reached = …;` declaration in the file,
  * found by a full recursive walk rather than `guardIn`'s module-level-only
  * one — `reached` lives inside the scope-reach assertion's `it(...)`
@@ -289,16 +303,11 @@ function guardIn(source: ts.SourceFile): ts.Node | undefined {
  * would leave it silently unguarded, the exact failure this file exists to
  * make impossible.
  */
-function reachedIn(source: ts.SourceFile): readonly ts.Expression[] {
-  const found: ts.Expression[] = [];
+function reachedDeclarationsIn(source: ts.SourceFile): readonly ts.VariableDeclaration[] {
+  const found: ts.VariableDeclaration[] = [];
   const visit = (node: ts.Node): void => {
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === REACHED &&
-      node.initializer !== undefined
-    ) {
-      found.push(node.initializer);
+    if (ts.isVariableDeclaration(node) && bindsReached(node.name)) {
+      found.push(node);
     }
     ts.forEachChild(node, visit);
   };
@@ -393,8 +402,8 @@ function censusDeclarationCount(source: ts.SourceFile): number {
  */
 function reachedIndependenceOf(file: string, text: string): readonly string[] | undefined {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-  const initializers = reachedIn(source);
-  if (initializers.length === 0) return undefined;
+  const declarations = reachedDeclarationsIn(source);
+  if (declarations.length === 0) return undefined;
 
   const bindings = moduleLevelBindings(source);
   const findings: string[] = [];
@@ -406,7 +415,15 @@ function reachedIndependenceOf(file: string, text: string): readonly string[] | 
     );
   }
 
-  for (const initializer of initializers) {
+  for (const declaration of declarations) {
+    if (declaration.initializer === undefined) {
+      const line = source.getLineAndCharacterOfPosition(declaration.getStart(source)).line + 1;
+      findings.push(
+        `${file}:${line} ${REACHED} is declared with no initializer of its own — nothing here can see what it is assigned`,
+      );
+      continue;
+    }
+
     let sawCensus = false;
     const visit = (node: ts.Node): void => {
       if (ts.isCallExpression(node)) {
@@ -429,7 +446,7 @@ function reachedIndependenceOf(file: string, text: string): readonly string[] | 
       }
       ts.forEachChild(node, visit);
     };
-    visit(initializer);
+    visit(declaration);
     if (!sawCensus) findings.push(`${file} ${REACHED} makes no ${CENSUS} call`);
   }
 
@@ -873,6 +890,69 @@ describe('x', () => {
     expect(reachedIndependenceOf(FIXTURE, reachedSource('new Set([].map(areaOf))'))).toEqual([
       `${FIXTURE} ${REACHED} makes no ${CENSUS} call`,
     ]);
+  });
+
+  it('reports a bare declaration with no initializer of its own', () => {
+    // The #472/#489/#492 regression reached through a different syntactic
+    // door: `let reached;` with the assignment split across an `if`/`else`
+    // still builds `reached` from a second, independent walk in one branch,
+    // but leaves no initializer in the declaration itself for anything here
+    // to inspect. Reporting the ambiguity loudly is the deliberate choice
+    // over resolving which assignment wins.
+    const source = `${REACHED_PREAMBLE}
+describe('x', () => {
+  it('y', () => {
+    let ${REACHED};
+    if (Math.random() > 0.5) {
+      ${REACHED} = new Set(censusOfTree().filesCensused.map(areaOf));
+    } else {
+      ${REACHED} = new Set(searchScope().map(areaOf));
+    }
+  });
+});
+`;
+    expect(reachedIndependenceOf(FIXTURE, source)).toEqual([
+      `${FIXTURE}:14 ${REACHED} is declared with no initializer of its own — nothing here can see what it is assigned`,
+    ]);
+  });
+
+  it('reports a destructured declaration by walking the whole declaration', () => {
+    // `const { reached } = buildReachedSet();` has no `reached` initializer
+    // of its own to collect under the old match — the destructuring source
+    // is the declaration's initializer, not `reached`'s. Walking the whole
+    // `VariableDeclaration` reaches it anyway.
+    const preamble = `${REACHED_PREAMBLE}
+function buildReachedSet(): Set<string> {
+  return new Set(searchScope().map(areaOf));
+}
+`;
+    const source = `${preamble}
+describe('x', () => {
+  it('y', () => {
+    const { ${REACHED} } = buildReachedSet();
+  });
+});
+`;
+    expect(reachedIndependenceOf(FIXTURE, source)).toEqual([
+      `${FIXTURE}:18 ${REACHED} calls buildReachedSet — buildReachedSet is declared at module level`,
+      `${FIXTURE} ${REACHED} makes no ${CENSUS} call`,
+    ]);
+  });
+
+  it('reports nothing for a destructured declaration that derives from the census', () => {
+    // What keeps the fixture above from passing for the wrong reason: a
+    // blanket "any destructured shape is a finding" would satisfy that
+    // expectation too. This one derives `reached` from `censusOfTree`
+    // directly in the declaration's own initializer, so walking the whole
+    // declaration must find it clean.
+    const source = `${REACHED_PREAMBLE}
+describe('x', () => {
+  it('y', () => {
+    const { ${REACHED} } = { ${REACHED}: new Set(censusOfTree().filesCensused.map(areaOf)) };
+  });
+});
+`;
+    expect(reachedIndependenceOf(FIXTURE, source)).toEqual([]);
   });
 
   it('finds nothing at all, as against nothing wrong, where no `reached` is declared', () => {
