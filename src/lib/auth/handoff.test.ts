@@ -345,7 +345,7 @@ describe('claimWithCode', () => {
   // pinned by the staged `updateMany` under-count test in this file, which
   // does not depend on scheduling.
   it('the race: a correct claim concurrent with wrong guesses never throws', async () => {
-    // Spied to silence, not to assert: this race legitimately fires the
+    // Spied to silence, not to assert: this race can legitimately fire the
     // `updateMany` under-count warn, and pinning that it does is the staged
     // test's job, not this one's. `afterEach` restores it.
     vi.spyOn(log, 'warn').mockImplementation(() => undefined);
