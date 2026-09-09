@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { inviteContact, declineInvitation } from './invitations';
+import { inviteContact, declineInvitation, listDeclinedTeachers } from './invitations';
 import { deleteStudentAccount } from './gdpr';
 import { resolveInvitationOnLink } from './link-consent';
 
@@ -271,5 +271,43 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
       select: { id: true },
     });
     expect(block).toBeNull();
+  });
+
+  it('lists a teacher whose invitation this account declined', async () => {
+    const { teacher, email } = await makeTeacherAndInvitee();
+    const invitation = await invite(teacher.id, email);
+    await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
+
+    const rows = await listDeclinedTeachers(prisma, { accountEmail: email });
+    expect(rows.map((r) => r.teacher.pageSlug)).toContain(teacher.pageSlug);
+  });
+
+  it('lists nothing once the account is erased, even though the block survives', async () => {
+    const { teacher, student, email } = await makeTeacherAndInvitee();
+    const invitation = await invite(teacher.id, email);
+    await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
+    await deleteStudentAccount(prisma, student.id);
+
+    // The block is still there — it is what keeps the suppression working.
+    const block = await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId: teacher.id, email } },
+      select: { id: true },
+    });
+    expect(block).not.toBeNull();
+
+    // The narrative is not. A new account on this address learns nothing
+    // about the erased person's refusal.
+    const rows = await listDeclinedTeachers(prisma, { accountEmail: email });
+    expect(rows).toEqual([]);
+  });
+
+  it('lists nothing for a pair that is currently linked', async () => {
+    const { teacher, student, email } = await makeTeacherAndInvitee();
+    const invitation = await invite(teacher.id, email);
+    await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
+    await prisma.teacherStudent.create({ data: { teacherId: teacher.id, studentId: student.id } });
+
+    const rows = await listDeclinedTeachers(prisma, { accountEmail: email });
+    expect(rows).toEqual([]);
   });
 });
