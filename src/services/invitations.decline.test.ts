@@ -231,6 +231,15 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
     await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
     await deleteStudentAccount(prisma, student.id);
 
+    // The block is what survived the scrub — assert it, or the final
+    // `toBeNull` below would pass just as well against an erasure that had
+    // deleted it, which is the regression this test exists to catch.
+    const survived = await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId: teacher.id, email } },
+      select: { id: true },
+    });
+    expect(survived).not.toBeNull();
+
     // They come back: a new account and Student row on the same address.
     const account = await prisma.account.create({ data: { email } });
     const returning = await prisma.student.create({
