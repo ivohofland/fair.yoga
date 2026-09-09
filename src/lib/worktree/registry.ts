@@ -107,36 +107,157 @@ export function readRegistry(registryPath: string): Registry {
   throw new Error(`[registry] ${registryPath} does not contain a JSON object`);
 }
 
+export interface LockOptions {
+  retries?: number;
+  delayMs?: number;
+  staleMs?: number;
+}
+
+export const DEFAULT_LOCK_OPTIONS: Required<LockOptions> = {
+  retries: 50,
+  delayMs: 20,
+  staleMs: 60_000,
+};
+
+export interface LockInfo {
+  pid: number;
+  createdAt: number;
+}
+
+export function isPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 function sleepSync(ms: number): void {
   const buffer = new Int32Array(new SharedArrayBuffer(4));
   Atomics.wait(buffer, 0, 0, ms);
 }
 
-function acquireLock(lockDir: string, retries = 50, delayMs = 20): void {
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      fs.mkdirSync(lockDir);
-      return;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-        throw err;
-      }
-      sleepSync(delayMs);
+export function isLockStale(lockDir: string, staleMs: number): { stale: boolean; reason?: string } {
+  if (!fs.existsSync(lockDir)) {
+    return { stale: false };
+  }
+
+  const ownerPath = path.join(lockDir, 'owner.json');
+  let info: LockInfo | null = null;
+  try {
+    const raw = fs.readFileSync(ownerPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      info = parsed as LockInfo;
+    }
+  } catch {
+    // owner.json may be absent or unreadable
+  }
+
+  if (info && typeof info.pid === 'number' && Number.isInteger(info.pid) && info.pid > 0) {
+    if (!isPidAlive(info.pid)) {
+      return { stale: true, reason: `holder pid ${info.pid} is not alive` };
     }
   }
-  throw new Error(`Timed out waiting for lock at ${lockDir}`);
+
+  let lockTime: number | null = null;
+  if (info && typeof info.createdAt === 'number') {
+    lockTime = info.createdAt;
+  } else {
+    try {
+      const stat = fs.statSync(lockDir);
+      lockTime = stat.mtimeMs;
+    } catch {
+      return { stale: true, reason: 'could not stat lock directory' };
+    }
+  }
+
+  if (lockTime !== null && Date.now() - lockTime >= staleMs) {
+    return {
+      stale: true,
+      reason: `lock age (${Date.now() - lockTime}ms) exceeded threshold of ${staleMs}ms`,
+    };
+  }
+
+  return { stale: false };
 }
 
-function releaseLock(lockDir: string): void {
-  fs.rmSync(lockDir, { recursive: true, force: true });
+export function acquireLock(lockDir: string, options?: LockOptions): void {
+  const retries = options?.retries ?? DEFAULT_LOCK_OPTIONS.retries;
+  const delayMs = options?.delayMs ?? DEFAULT_LOCK_OPTIONS.delayMs;
+  const staleMs = options?.staleMs ?? DEFAULT_LOCK_OPTIONS.staleMs;
+
+  let reclaimedStale = false;
+
+  while (true) {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        fs.mkdirSync(lockDir);
+        try {
+          const ownerInfo: LockInfo = { pid: process.pid, createdAt: Date.now() };
+          fs.writeFileSync(path.join(lockDir, 'owner.json'), `${JSON.stringify(ownerInfo)}\n`);
+        } catch (writeErr) {
+          fs.rmSync(lockDir, { recursive: true, force: true });
+          throw writeErr;
+        }
+        return;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+          throw err;
+        }
+        sleepSync(delayMs);
+      }
+    }
+
+    if (!reclaimedStale) {
+      if (!fs.existsSync(lockDir)) {
+        continue;
+      }
+      const { stale, reason } = isLockStale(lockDir, staleMs);
+      if (stale) {
+        console.warn(`[registry] reclaiming stale lock at ${lockDir} (${reason})`);
+        fs.rmSync(lockDir, { recursive: true, force: true });
+        reclaimedStale = true;
+        continue;
+      }
+    }
+
+    throw new Error(`Timed out waiting for lock at ${lockDir}`);
+  }
+}
+
+export function releaseLock(lockDir: string, expectedPid?: number): void {
+  try {
+    const ownerPath = path.join(lockDir, 'owner.json');
+    if (expectedPid !== undefined) {
+      try {
+        const raw = fs.readFileSync(ownerPath, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.pid === 'number' && parsed.pid !== expectedPid) {
+          // Lock was reclaimed by another process; do not remove their lock directory.
+          return;
+        }
+      } catch {
+        // If owner.json is absent or unreadable, proceed with removal
+      }
+    }
+    fs.rmSync(lockDir, { recursive: true, force: true });
+  } catch {
+    // Ignore release errors to avoid masking errors from mutate
+  }
 }
 
 export async function writeRegistryLocked(
   registryPath: string,
   mutate: (registry: Registry) => Registry | Promise<Registry>,
+  lockOptions?: LockOptions,
 ): Promise<Registry> {
   const lockDir = `${registryPath}.lock`;
-  acquireLock(lockDir);
+  acquireLock(lockDir, lockOptions);
   try {
     const current = readRegistry(registryPath);
     const next = await mutate(current);
@@ -145,6 +266,6 @@ export async function writeRegistryLocked(
     fs.renameSync(tmpPath, registryPath);
     return next;
   } finally {
-    releaseLock(lockDir);
+    releaseLock(lockDir, process.pid);
   }
 }
