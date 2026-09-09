@@ -1365,9 +1365,12 @@ describe('Invitation and TeacherBlock take one lock order (#522)', () => {
    * test drops to zero rejections. The payload is what draws the arrow, not
    * the hand-rolling and not the interleaving.
    *
-   * So `update: {}` in `declineInvitation` is load-bearing, and this is the
-   * test that says so out loud rather than leaving it to a comment: change it
-   * and this goes red instead of production going `40P01`.
+   * So `update: {}` in `declineInvitation` is load-bearing, and this pair
+   * says so out loud rather than leaving it to a comment. The two halves
+   * answer different questions: this one shows what a non-empty payload
+   * costs, and the test above it — which drives the real function — is the
+   * one that goes red if `declineInvitation`'s own payload ever gains a
+   * field, instead of production going `40P01`.
    */
   it('the same race deadlocks once the block upsert carries a real field — why update: {} is load-bearing', async () => {
     const { teacherId, email, invitationId } = await makeBlockedPendingInvite();
