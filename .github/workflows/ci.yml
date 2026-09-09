@@ -68,8 +68,15 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      # Visible but non-blocking: the current high advisories live in
-      # next/vite themselves with no compatible fix released yet.
+      # Visible but non-blocking. What this reports is the state of the
+      # transitive tree, which changes when a new advisory is published and
+      # nobody here has edited a file — so a blocking gate would stop
+      # unrelated pull requests on a dependency no code in this repo imports.
+      # The step exists to put that state in front of a reviewer, not to
+      # decide the merge.
+      #
+      # `docs/supply-chain.md` carries what currently stands, how far each of
+      # it reaches into this app, and the command that re-derives both.
       - name: Dependency audit
         run: npm audit --audit-level=high
         continue-on-error: true

@@ -69,6 +69,59 @@ Nothing enforces the declarative paths (`Dockerfile`, the workflows) or the
 documentation — only a reviewer reads them. They were correct when measured;
 the table above and its command are what make a regression visible.
 
+## Known advisories, and why the audit step does not block
+
+`ci.yml` runs `npm audit --audit-level=high` with `continue-on-error: true`.
+The census belongs here rather than beside that step for the same reason the
+install census does: what it counts lives in `package-lock.json`, and a new
+advisory published against an unchanged tree falsifies it without anyone
+editing the workflow.
+
+Re-derive with:
+
+```bash
+npm audit --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+  const j=JSON.parse(s);
+  console.log(JSON.stringify(j.metadata.vulnerabilities));
+  for (const [n,v] of Object.entries(j.vulnerabilities))
+    console.log(n, v.severity, JSON.stringify(v.fixAvailable));});'
+```
+
+Add `--omit=dev` for the production tree — the one that ships in the Docker
+image. Both numbers are worth having, because most of what the unqualified
+command reports is lint and test tooling that never leaves a developer's
+machine or a CI runner.
+
+Measured 2026-09-09, immediately after #539 took `next` to `16.3.4`: **12 in
+the whole tree** (5 moderate, 7 high, 0 critical), of which **5 are in the
+production tree** (1 moderate, 4 high, 0 critical). The remaining 7 are
+therefore dev-only. `next` itself reports nothing.
+
+**In the production tree** — all five reach in through a direct dependency's
+own subtree, so none can be fixed by editing `package.json`:
+
+| Package | Reached through | Forward fix |
+|---|---|---|
+| `prisma`, `@prisma/config`, `deepmerge-ts` | `@prisma/client` | **None.** npm's suggestion is `prisma@6.12.0`, `isSemVerMajor: true` — a *downgrade* from the pinned `6.19.3` |
+| `nanoid` | `next` → `postcss` | `fixAvailable: true`, by overriding the nested version |
+| `baseline-browser-mapping` | `next` | `fixAvailable: true`, same |
+
+The last two are worth stating plainly: `next` is at the newest published
+version and still resolves both of them below their fixed range. Upgrading the
+framework further is not the lever; an override is.
+
+**Dev-only** — `brace-expansion`, `browserslist` and `js-yaml` arrive through
+`eslint-config-next` and `eslint`; `@humanfs/node` through `eslint`; `vitest`
+and its two `@vitest/*` packages are the test runner. They run against this
+repo's own source on a developer's machine and on CI. Every advisory among
+them is a denial-of-service or a path-traversal reachable only by feeding the
+tool hostile input — which, here, would mean this repo's own files.
+
+So the step reports real things, and none of them is a reason to stop a pull
+request that did not cause them. What would change that: an advisory against a
+package this app's *request path* actually executes, or any critical. Either
+is a reason to fix rather than to note.
+
 ## Not yet in place
 
 The controls that would keep a *compromised* version out, rather than an
