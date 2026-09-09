@@ -26,6 +26,16 @@ export function dbNamesForSlug(slug: string): DatabaseNames {
   };
 }
 
+/**
+ * True only for the shared `ethical_yoga_test` or a per-worktree
+ * `ethical_yoga_test_<slug>` — anchored at both ends, so a name merely
+ * ending in `_test` or `_test_<slug>` (e.g. a dev database whose slug
+ * contains "test") does not match.
+ */
+export function isTestDatabaseName(name: string): boolean {
+  return /^ethical_yoga_test(_[a-z0-9_]+)?$/.test(name);
+}
+
 export interface WorktreeIdentity {
   isMainCheckout: boolean;
   slug: string | null;

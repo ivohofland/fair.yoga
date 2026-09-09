@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeSlug, dbNamesForSlug, resolveIdentity } from './identity';
+import { sanitizeSlug, dbNamesForSlug, resolveIdentity, isTestDatabaseName } from './identity';
 
 describe('sanitizeSlug', () => {
   it('lowercases and replaces hyphens with underscores', () => {
@@ -27,6 +27,32 @@ describe('dbNamesForSlug', () => {
       test: 'ethical_yoga_test_fix_517',
       dev: 'ethical_yoga_dev_fix_517',
     });
+  });
+});
+
+describe('isTestDatabaseName', () => {
+  it('accepts the shared convention', () => {
+    expect(isTestDatabaseName('ethical_yoga_test')).toBe(true);
+  });
+
+  it('accepts the per-worktree convention', () => {
+    expect(isTestDatabaseName('ethical_yoga_test_verify_517')).toBe(true);
+  });
+
+  it('rejects the plain dev database', () => {
+    expect(isTestDatabaseName('ethical_yoga')).toBe(false);
+  });
+
+  it('rejects a name that merely contains test as a substring', () => {
+    expect(isTestDatabaseName('ethical_yoga_testing')).toBe(false);
+  });
+
+  it('rejects a dev database whose worktree slug happens to contain "test"', () => {
+    expect(isTestDatabaseName('ethical_yoga_dev_fix_test_flake')).toBe(false);
+  });
+
+  it('rejects a dev database name ending in _test_<slug>', () => {
+    expect(isTestDatabaseName('ethical_yoga_dev_my_test_worktree')).toBe(false);
   });
 });
 

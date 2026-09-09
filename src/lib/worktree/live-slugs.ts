@@ -43,9 +43,9 @@ export function listWorktreeAdminEntries(gitCommonDir: string): WorktreeAdminEnt
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         workingDirExists = false;
+      } else {
+        console.warn(`[live-slugs] could not read gitdir for "${rawName}" (${(err as NodeJS.ErrnoException).code ?? err}) — treating as still live rather than reaping it`);
       }
-      // any other error: treat the worktree as still live rather than
-      // reclassifying it as an orphan to destroy.
     }
     return [{ slug, workingDirExists }];
   });

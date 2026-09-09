@@ -37,8 +37,10 @@ The interference runs both ways:
 **Non-goals**
 
 - Isolating **Playwright e2e** or the **integration tests** from the dev
-  server. Both talk to the app on `:3000`, and that app reads the dev
-  database; pointing their fixtures elsewhere would break them. See §5.
+  server *in the main checkout*. Both talk to the app on `:3000`, and that
+  app reads the dev database; pointing their fixtures elsewhere would break
+  them there. A worktree gets its own isolated app and database instead —
+  see §5.
 - Per-test-file database isolation or transactional rollbacks (heavier
   machinery than this codebase needs). Since #321 `fileParallelism` is
   per-project, not global: `unit` and `components` run their files in
@@ -113,7 +115,9 @@ The interference runs both ways:
 Vitest 4's `projects` config splits the suite by blast radius. The roster of
 each is in `vitest.config.ts`, except the two unit tiers' — those split on
 `SERIAL_TESTS`, which lives in `vitest.tiers.ts` with the reason each member is
-on it. This table is the shape, not the membership:
+on it. This table is the shape, not the membership. The `Database` column
+names the main-checkout database for each tier — in a worktree, `unit` and
+`unit-sweeps` run against `ethical_yoga_test_<slug>` instead, per §5:
 
 | Project | Files | Database |
 |---|---|---|

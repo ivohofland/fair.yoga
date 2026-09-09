@@ -1,8 +1,8 @@
 /**
  * Global setup for the vitest `unit` AND `unit-sweeps` projects: provision
- * and migrate the dedicated test database (docs/test-database.md), and —
- * in a linked worktree — reap any other worktree's orphaned databases and
- * dev-server process (docs/superpowers/specs/2026-09-08-worktree-db-isolation-design.md).
+ * and migrate the dedicated test database (docs/test-database.md), and
+ * reap any other worktree's orphaned databases and dev-server process
+ * (docs/superpowers/specs/2026-09-08-worktree-db-isolation-design.md).
  *
  * `unit-sweeps` is the tier holding the service tests that inject far-future
  * clocks into database-wide sweeps — on a shared database those once
@@ -47,16 +47,14 @@ export default async function setup(): Promise<void> {
     );
   }
 
-  const identity = getWorktreeIdentity();
-  if (!identity.isMainCheckout) {
-    try {
-      const reaped = await runReap(identity.gitCommonDir, getRegistryPath(identity.gitCommonDir), testUrl);
-      if (reaped.length > 0) {
-        console.log(`[unit-db] reaped orphaned worktree resources: ${reaped.join(', ')}`);
-      }
-    } catch (err) {
-      console.warn('[unit-db] reap sweep failed — continuing without it, this worktree is unaffected:', err);
+  try {
+    const identity = getWorktreeIdentity();
+    const reaped = await runReap(identity.gitCommonDir, getRegistryPath(identity.gitCommonDir), testUrl);
+    if (reaped.length > 0) {
+      console.log(`[unit-db] reaped orphaned worktree resources: ${reaped.join(', ')}`);
     }
+  } catch (err) {
+    console.warn('[unit-db] reap sweep failed — continuing without it, this worktree is unaffected:', err);
   }
 
   await provisionDatabase(testUrl, { seed: false });
