@@ -49,8 +49,7 @@ const eslintConfig = defineConfig([
   // playwright-report/ and test-results/ are that same failure with a different
   // source: Playwright writes minified trace bundles into them, so running the
   // e2e suite and then `npm run verify` turned lint red on generated
-  // JavaScript no diff had touched. Gitignored, and CI's `checks` job never
-  // runs e2e, which is why it stayed invisible.
+  // JavaScript no diff had touched. Both are build output, never authored.
   globalIgnores([
     '.next/**',
     '.next-build/**',
