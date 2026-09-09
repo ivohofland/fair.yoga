@@ -73,10 +73,21 @@ function basename(dir: string): string {
 export function resolveIdentity(gitDir: string, gitCommonDir: string): WorktreeIdentity {
   const isMainCheckout = normalizeDir(gitDir) === normalizeDir(gitCommonDir);
   const rawName = isMainCheckout ? null : (basename(gitDir) as RawName);
+  let dbSlug: DbSlug | null = null;
+  if (rawName !== null) {
+    try {
+      dbSlug = sanitizeSlug(rawName) as DbSlug;
+    } catch (err) {
+      throw new Error(
+        `resolveIdentity: worktree admin-dir name "${rawName}" cannot be turned into a database slug ` +
+          `(${(err as Error).message}) — rename this worktree's directory to include at least one of [a-z0-9_]`,
+      );
+    }
+  }
   return {
     isMainCheckout,
     rawName,
-    dbSlug: rawName === null ? null : (sanitizeSlug(rawName) as DbSlug),
+    dbSlug,
     gitCommonDir: normalizeDir(gitCommonDir),
   };
 }
