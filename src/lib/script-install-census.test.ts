@@ -182,4 +182,17 @@ describe('what the matcher does and does not treat as an invocation', () => {
     const source = 'execSync(`npm install ${extra}`);';
     expect(installInvocationsIn('fixture.ts', source)).toEqual([]);
   });
+
+  // The two below pin blind spots rather than behaviour, which is the point:
+  // the docblock claims them, and a matcher widened to catch either must
+  // update that list in the same commit or turn this file red.
+  it('does not see a renamed or injected callee', () => {
+    const source = ["run('npm install');", "installFn('npm install');"].join('\n');
+    expect(installInvocationsIn('fixture.ts', source)).toEqual([]);
+  });
+
+  it('does not see a command behind a prefix', () => {
+    const source = "execSync('cd packages/x && npm install');";
+    expect(installInvocationsIn('fixture.ts', source)).toEqual([]);
+  });
 });
