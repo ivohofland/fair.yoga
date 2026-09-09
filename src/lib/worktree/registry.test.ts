@@ -246,6 +246,12 @@ describe('isLockStale', () => {
       path.join(lockDir, 'owner.json'),
       JSON.stringify({ pid: process.pid, createdAt: Date.now() - 120_000 }),
     );
+    // Also age the directory's own mtime: isLockStale's age fallback reads directory
+    // mtime, not owner.json's createdAt. Without this, the assertion below would still
+    // pass even if the alive-pid short-circuit were deleted, because the fallback would
+    // then see a freshly-created (not-yet-stale) directory instead of an aged one.
+    const twoMinutesAgo = new Date(Date.now() - 120_000);
+    fs.utimesSync(lockDir, twoMinutesAgo, twoMinutesAgo);
     expect(isLockStale(lockDir, 60_000)).toEqual({ stale: false });
   });
 
@@ -360,20 +366,57 @@ describe('acquireLock / releaseLock staleness recovery', () => {
     expect(fs.existsSync(lockDir)).toBe(false);
   });
 
-  it('releaseLock does not delete lock directory on unreadable owner.json error', () => {
+  it('releaseLock warns and releases anyway when owner.json cannot be verified (not ENOENT)', () => {
     fs.mkdirSync(lockDir);
+    fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(() => {
-      const err = new Error('permission denied') as NodeJS.ErrnoException;
-      err.code = 'EACCES';
+      const err = new Error('too many open files') as NodeJS.ErrnoException;
+      err.code = 'EMFILE';
       throw err;
     });
     try {
       releaseLock(lockDir, process.pid);
-      expect(fs.existsSync(lockDir)).toBe(true);
     } finally {
       readSpy.mockRestore();
-      releaseLock(lockDir);
     }
+    // Releasing anyway (rather than leaking) is the point: a lock this process still
+    // holds must not become permanently unreclaimable just because the verification
+    // read hit a transient error — see the regression test below for why.
+    expect(fs.existsSync(lockDir)).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('could not verify lock ownership'));
+    warnSpy.mockRestore();
+  });
+
+  it('releaseLock still refuses to delete on a genuine, verified pid/token mismatch even under the same conditions', () => {
+    fs.mkdirSync(lockDir);
+    fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({ pid: 2147483647, createdAt: Date.now() }));
+    releaseLock(lockDir, process.pid);
+    expect(fs.existsSync(lockDir)).toBe(true);
+    releaseLock(lockDir);
+  });
+
+  it('regression: a transient release read-failure does not permanently wedge the same still-alive process', () => {
+    const handle = acquireLock(lockDir);
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(() => {
+      const err = new Error('too many open files') as NodeJS.ErrnoException;
+      err.code = 'EMFILE';
+      throw err;
+    });
+    try {
+      releaseLock(lockDir, handle.token);
+    } finally {
+      readSpy.mockRestore();
+    }
+    // The leak this guards against: if release silently no-ops here, the directory
+    // stays behind showing this process's own (alive) pid as holder. isLockStale would
+    // then report it as {stale: false} forever, and no one — including this same
+    // process moments later — could ever reclaim it. Proving the directory is actually
+    // gone is what distinguishes "released" from "leaked but coincidentally not stale".
+    expect(fs.existsSync(lockDir)).toBe(false);
+    const reacquired = acquireLock(lockDir, { retries: 5, delayMs: 5 });
+    expect(reacquired.pid).toBe(process.pid);
+    releaseLock(lockDir, reacquired.token);
   });
 
   it('writeRegistryLocked aborts and throws if lock is lost before commit', async () => {

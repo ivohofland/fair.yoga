@@ -328,24 +328,26 @@ export function releaseLock(lockDir: string, expectedTokenOrPid?: string | numbe
   try {
     if (expectedTokenOrPid !== undefined) {
       const { info, error } = readLockInfo(lockDir);
-      if (error) {
-        if (error.code === 'ENOENT') {
+      if (info) {
+        // owner.json read cleanly — only a genuine, verified mismatch blocks release.
+        // isLockStale never reclaims a lock whose recorded pid is alive, so the only
+        // way another process now owns this path is if we (the caller) are that dead
+        // holder — impossible, since we're the ones running this code.
+        const matches =
+          typeof expectedTokenOrPid === 'string' ? info.token === expectedTokenOrPid : info.pid === expectedTokenOrPid;
+        if (!matches) {
           return;
         }
-        return;
+      } else if (error && error.code !== 'ENOENT') {
+        // owner.json exists but couldn't be verified (EACCES/EMFILE/EIO/corrupt JSON).
+        // Refusing to delete here would leak the lock permanently: once our own pid is
+        // what isLockStale sees as "alive", nobody — including us on a later attempt —
+        // can ever reclaim it. The caller reached this point holding `expectedTokenOrPid`,
+        // so a stale read here is far likelier to be transient noise on our own file than
+        // evidence of a different owner. Warn and proceed rather than wedge indefinitely.
+        console.warn(`[registry] could not verify lock ownership at ${lockDir} before release (${error}) — releasing anyway`);
       }
-      if (!info) {
-        return;
-      }
-      if (typeof expectedTokenOrPid === 'string') {
-        if (info.token !== expectedTokenOrPid) {
-          return;
-        }
-      } else {
-        if (info.pid !== expectedTokenOrPid) {
-          return;
-        }
-      }
+      // error.code === 'ENOENT': nothing there to protect; fall through and clean up.
     }
     fs.rmSync(lockDir, { recursive: true, force: true });
   } catch {
