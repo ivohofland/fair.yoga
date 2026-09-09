@@ -15,6 +15,9 @@ RUN npm ci
 FROM deps AS build
 WORKDIR /app
 COPY . .
+# Ensures the runner's COPY below always finds a directory, even though
+# this repo does not track a public/ of its own — see docs/supply-chain.md.
+RUN mkdir -p public
 # Build-time page-data collection instantiates PrismaClient, which only
 # needs the env var to EXIST (no connection is made). Runtime env from
 # compose overrides this dummy completely.

@@ -98,8 +98,10 @@ image this repo builds.** Neither of the two stages that ship matches it:
   `node_modules` it gets is the one inside `.next-build/standalone`, which Next
   populates by tracing actual imports — so it holds far less than the
   production dependency tree. (It copies two other trees, `.next-build/static`
-  and `public`; neither carries dependencies. The `public` copy is why
-  `docker build` currently fails — #543.)
+  and `public`; neither carries dependencies. This repo has never tracked a
+  `public/` of its own — icons are Next's file-based `app/icon.svg` convention
+  instead — so the `build` stage creates one empty before the copy; #543 has
+  the history.)
   Check what is really in it with
   ```bash
   for p in nanoid baseline-browser-mapping postcss prisma @prisma/config deepmerge-ts; do
