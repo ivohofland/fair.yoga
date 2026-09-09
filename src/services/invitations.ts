@@ -956,13 +956,15 @@ export async function declineInvitation(
 
     // `Invitation` before `TeacherBlock`, per `docs/lock-order.md`.
     //
-    // `update: {}` is load-bearing, not laziness. An empty update keeps Prisma
-    // on the non-atomic path, which takes no row lock when the block already
-    // exists; `resolveInvitationOnLink` (services/link-consent.ts) takes these
-    // two tables in the opposite order, and that no-lock path is what keeps
-    // the pair from deadlocking. `docs/lock-order.md` carries the same warning
-    // for `unlinkTeacher`'s upsert, and `invitations-lock-order.test.ts`
-    // proves both directions.
+    // `update: {}` is load-bearing, not laziness. Whenever the block row
+    // already exists, an empty update keeps Prisma on the non-atomic,
+    // non-locking path — `resolveInvitationOnLink` (services/link-consent.ts)
+    // takes these two tables in the opposite order, and that path is what
+    // keeps an UPDATE-branch race from deadlocking. A first decline for this
+    // pair still INSERTs (no existing row to match), and that INSERT still
+    // takes a row lock and joins the wait graph like any other write —
+    // `unlinkTeacher`'s identical upsert carries the same exposure.
+    // `docs/lock-order.md` covers both paths.
     await tx.teacherBlock.upsert({
       where: { teacherId_email: { teacherId: invitation.teacherId, email } },
       update: {},

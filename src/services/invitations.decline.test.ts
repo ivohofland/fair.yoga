@@ -15,7 +15,42 @@ const prisma = new PrismaClient();
 const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 describe('a decline writes a suppression entry that survives erasure (#522)', () => {
+  // Every case below builds its own teacher/student pair via
+  // `makeTeacherAndInvitee` rather than sharing one across the `describe`
+  // (unlike `invitations.gate.test.ts`'s single `beforeAll` teacher), so
+  // cleanup collects ids across every call instead of populating them once.
+  const teacherIds: string[] = [];
+  const teacherAccountIds: string[] = [];
+  const studentIds: string[] = [];
+
   afterAll(async () => {
+    if (studentIds.length) {
+      // `Student.accountId` is the FK and there is no cascade, so the
+      // account ids are read back here rather than carried from creation —
+      // `makeTeacherAndInvitee` has no other use for them.
+      const accounts = await prisma.student.findMany({
+        where: { id: { in: studentIds } },
+        select: { accountId: true },
+      });
+      await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+      const studentAccountIds = accounts
+        .map((s) => s.accountId)
+        .filter((id): id is string => id !== null);
+      if (studentAccountIds.length) {
+        await prisma.account.deleteMany({ where: { id: { in: studentAccountIds } } });
+      }
+    }
+    if (teacherIds.length) {
+      // `Invitation` and `TeacherBlock` both cascade on `Teacher` delete
+      // (`onDelete: Cascade`); deleted explicitly first anyway, the same
+      // belt-and-suspenders style `invitations.gate.test.ts` uses.
+      await prisma.invitation.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.teacherBlock.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+    }
+    if (teacherAccountIds.length) {
+      await prisma.account.deleteMany({ where: { id: { in: teacherAccountIds } } });
+    }
     await prisma.$disconnect();
   });
 
@@ -32,6 +67,8 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
         pageSlug: `tess-${suffix}-${crypto.randomBytes(3).toString('hex')}`,
       },
     });
+    teacherIds.push(teacher.id);
+    teacherAccountIds.push(teacher.accountId);
     const student = await prisma.student.create({
       data: {
         firstName: 'Sam',
@@ -40,8 +77,9 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
         claimedAt: new Date(),
         account: { create: { email } },
       },
-      select: { id: true, accountId: true },
+      select: { id: true },
     });
+    studentIds.push(student.id);
     return { teacher, student, email };
   }
 
@@ -113,6 +151,42 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
       accountEmail: email,
     });
     expect(second).toEqual({ ok: false, reason: 'NOT_PENDING' });
+
+    const block = await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId: teacher.id, email } },
+      select: { id: true },
+    });
+    expect(block).toBeNull();
+  });
+
+  it('rolls back the status write when the block upsert fails mid-transaction', async () => {
+    const { teacher, email } = await makeTeacherAndInvitee();
+    const invitation = await invite(teacher.id, email);
+
+    // A client extension that makes only this one call fail, propagated
+    // through to `$transaction`'s `tx` — proves the status write and the
+    // block upsert commit or fail together, which is the whole reason
+    // `declineInvitation` wraps them in one transaction rather than issuing
+    // them as two independent statements.
+    const failingBlock = prisma.$extends({
+      query: {
+        teacherBlock: {
+          upsert() {
+            throw new Error('boom');
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    await expect(
+      declineInvitation(failingBlock, { invitationId: invitation.id, accountEmail: email }),
+    ).rejects.toThrow('boom');
+
+    const row = await prisma.invitation.findUniqueOrThrow({
+      where: { id: invitation.id },
+      select: { status: true },
+    });
+    expect(row.status).toBe('pending');
 
     const block = await prisma.teacherBlock.findUnique({
       where: { teacherId_email: { teacherId: teacher.id, email } },
