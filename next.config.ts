@@ -38,6 +38,12 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   // Self-contained server bundle for the Docker image (see Dockerfile).
   output: "standalone",
+  // `next dev` otherwise writes a managed block into AGENTS.md whenever it
+  // detects an AI coding agent, leaving an uncommitted change in every such
+  // session. Off because the block's text is owned by Next, not by this
+  // repo: committing it would put a string that a future patch release can
+  // reword into a file whose claims this project maintains deliberately.
+  agentRules: false,
   // Production builds get their own directory: `next build` writing into
   // the dev server's `.next` corrupts its compiler state, which then
   // silently serves stale pages until restarted (bit us repeatedly).
