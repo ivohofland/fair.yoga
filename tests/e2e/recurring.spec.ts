@@ -20,7 +20,9 @@ function cronSecret(): string {
   const env = fs.readFileSync('.env', 'utf8');
   const match = /^CRON_SECRET=(.*)$/m.exec(env);
   if (!match) throw new Error('CRON_SECRET not found in environment or .env');
-  return match[1]!.trim().replace(/^"|"$/g, '');
+  const value = match[1]!.trim().replace(/^"|"$/g, '');
+  if (!value) throw new Error('CRON_SECRET is empty in .env');
+  return value;
 }
 
 const suffix = uniqueSuffix();
