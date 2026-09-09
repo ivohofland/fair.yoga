@@ -47,8 +47,10 @@ repository's own* `.git`, shared by every worktree on this machine.
 `~/.gemini/antigravity/worktrees/fair.yoga/<underscored_name>`. Both naming
 conventions run `sanitizeSlug` at every `worktree:setup`/`worktree:up`/`npm
 test` invocation (`tests/setup/unit-db.ts` calls `runReap` in the global
-setup for the `unit`/`unit-sweeps` vitest projects, unconditionally, from
-every worktree). A key-scheme change that swaps the registry key from
+setup for the `unit`/`unit-sweeps` vitest projects, from every worktree that
+has run `worktree:setup` — the call runs whenever `DATABASE_URL_TEST` is
+set, which every such worktree's `.env` does). A key-scheme change that
+swaps the registry key from
 sanitized-slug to raw-admin-dir-name, with no transition handling, makes
 **every currently-registered row look orphaned** the first time any
 worktree's reap sweep runs post-merge — mine included, the moment I run
@@ -176,17 +178,23 @@ for each [key, entry] in registry:
 
 The `key === entry.dbSlug` gate restricts the dbSlug-based rescue to rows
 that are *structurally* pre-migration (or coincidentally clean) — it only
-ever fires for a row whose own key already equals its own `dbSlug`. The
-lookup inside that branch (`liveRawNames.find(name => sanitizeSlug(name) ===
-key)` — a linear scan over live raw names, not a `Map` keyed by `dbSlug`)
-compares against `key`, which this gate has already established equals
-`entry.dbSlug` for any row that reaches it. These are two independent,
-redundant safeguards against the same failure — a rawName-keyed dead row
-being wrongly rescued via a `dbSlug` collision with a live worktree — verified
-by mutation testing: removing the gate alone, or changing the lookup's
-comparison target to `entry.dbSlug` alone, each still leaves that failure
-excluded by the other; only removing both together reopens it. This
-redundancy is intentional, not a sign either check is superfluous — a later
+ever fires for a row whose own key already equals its own `dbSlug`. For
+every row this codebase's own write paths ever produce (`allocatePort`, the
+`readRegistry` backfill, `reapOrphans`'s own rekey step), `key !==
+entry.dbSlug` is only possible when `dbSlug` was never `sanitizeSlug(key)`
+to begin with — i.e. an already-anomalous row: hand-edited JSON, or a
+pre-existing `dbSlug` collision predating the `allocatePort` guard (see
+Non-goals below). For such an anomalous row, this gate and the rescue
+lookup's comparison against `key` (`liveRawNames.find(name =>
+sanitizeSlug(name) === key)` — a linear scan over live raw names, not a
+`Map` keyed by `dbSlug`, comparing against `key` rather than `entry.dbSlug`)
+are two independent, redundant safeguards against the same failure — that
+row being wrongly rescued via a `dbSlug` collision with a live worktree —
+verified by mutation testing with two separate fixtures (`reap.test.ts`):
+removing the gate alone, or changing the lookup's comparison target to
+`entry.dbSlug` alone, each still leaves that failure excluded by the other;
+only removing both together reopens it. This redundancy is intentional for
+that anomalous case, not a sign either check is superfluous — a later
 refactor of the lookup (e.g. to a `Map<dbSlug, rawName>` for efficiency
 across many worktrees, which would naturally index by `dbSlug` instead of
 scanning and compare against it directly) must keep this gate rather than
@@ -260,21 +268,33 @@ tested today. New/updated unit coverage:
   different rawName keys, naming both in the error; does not throw when the
   same rawName is re-allocated (idempotent re-run).
 - `readRegistry` backfills `dbSlug` for an entry parsed without one; leaves
-  an entry that already has `dbSlug` untouched.
+  an entry that already has `dbSlug` untouched; throws on an entry with a
+  missing or invalid `port`/`pid` rather than returning a plausible-looking
+  but invalid entry.
 - `reapOrphans`: the three-case migration behavior — rekeys a legacy row to
   a live worktree whose sanitized name matches it; silently drops a legacy
   row whose target rawName already has its own entry; still reaps (kill +
   drop + remove) a legacy row with no live claimant; still reaps a
   rawName-keyed row with no live claimant; leaves a live rawName-keyed row
-  untouched. Mutation check: a rawName-keyed dead row whose `dbSlug`
-  happens to collide with a *different* live worktree's `dbSlug` must still
-  be reaped, not rescued — proves that the gate and the rescue lookup's
-  comparison-against-`key` are not both decorative (removing either alone
-  still passes; removing both together is what this check catches — see §4).
-  A further combined case mixes all three row shapes — a legacy-shaped live
-  row, a legacy-shaped dead row, and a new-scheme rawName-keyed live row —
-  in one registry and one `reapOrphans` call, the shape a real transition
-  sweep actually sees.
+  untouched. Two mutation checks, each isolating one of §4's two independent
+  safeguards for an anomalous (`key !== entry.dbSlug`) row: (a) a row whose
+  `dbSlug` happens to collide with a *different* live worktree's `dbSlug`,
+  but whose own `key` is not itself reachable by sanitizing any live raw
+  name — catches only the combined mutation (gate removed AND lookup target
+  changed together); (b) a row whose own `key` IS itself reachable by
+  sanitizing a live raw name that already has its own row, with an unrelated
+  `dbSlug` — catches the gate being removed alone. Together they prove
+  neither safeguard is decorative, without either test proving more than it
+  can (see §4's "already-anomalous row" caveat — this redundancy is not
+  claimed to protect *any* row, only one where `dbSlug` was never
+  `sanitizeSlug(key)`). A further combined case mixes all three row shapes —
+  a legacy-shaped live row, a legacy-shaped dead row, and a new-scheme
+  rawName-keyed live row — in one registry and one `reapOrphans` call, the
+  shape a real transition sweep actually sees. A separate case round-trips a
+  pre-migration-shaped JSON file (no `dbSlug` field) through the real
+  `readRegistry` before feeding it to `reapOrphans`, rather than
+  hand-building an already-backfilled `Registry` object — the seam named in
+  "Verifying the premise" above.
 - `listWorktreeAdminEntries` / `computeLiveWorktreeNames`: existing coverage
   ported to `rawName`, unchanged in intent — two worktrees whose raw names
   differ only by the characters `sanitizeSlug` used to collapse (e.g.

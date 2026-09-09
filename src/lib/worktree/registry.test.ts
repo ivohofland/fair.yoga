@@ -134,6 +134,16 @@ describe('readRegistry / writeRegistryLocked', () => {
     });
   });
 
+  it('throws on an entry with a missing port rather than returning a plausible-looking-but-invalid entry', () => {
+    fs.writeFileSync(registryPath, JSON.stringify({ fix_517: { pid: null } }));
+    expect(() => readRegistry(registryPath)).toThrow(/fix_517/);
+  });
+
+  it('throws on an entry with a non-number pid rather than returning a plausible-looking-but-invalid entry', () => {
+    fs.writeFileSync(registryPath, JSON.stringify({ fix_517: { port: 3100, pid: 'not-a-number' } }));
+    expect(() => readRegistry(registryPath)).toThrow(/fix_517/);
+  });
+
   it('writes what the mutate function returns and persists it', async () => {
     await writeRegistryLocked(registryPath, () => ({ 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } }));
     expect(readRegistry(registryPath)).toEqual({ 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } });

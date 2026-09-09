@@ -38,7 +38,10 @@ export function isTestDatabaseName(name: string): boolean {
 
 export interface WorktreeIdentity {
   isMainCheckout: boolean;
-  /** Git's own admin-dir basename — unique by git's own construction. */
+  /**
+   * Git's own admin-dir basename — empirically verified unique on creation;
+   * see docs/superpowers/specs/2026-09-09-worktree-registry-key-collision-design.md §1.
+   */
   rawName: string | null;
   /** sanitizeSlug(rawName) — Postgres-identifier-safe, not guaranteed unique. */
   dbSlug: string | null;

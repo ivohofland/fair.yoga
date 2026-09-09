@@ -4,11 +4,11 @@ import path from 'path';
 export interface RegistryEntry {
   port: number;
   pid: number | null;
-  /** sanitizeSlug(rawName) at the time this entry was created — used only to derive database names. */
+  /** sanitizeSlug(rawName) at creation time, fixed thereafter — derives database names and identifies legacy (pre-migration) rows in reap.ts. */
   dbSlug: string;
 }
 
-/** Keyed by rawName (git's own admin-dir basename), not by the Postgres-safe dbSlug. */
+/** Keyed by rawName going forward; a pre-migration row may still be keyed by its own dbSlug until reapOrphans (reap.ts) rekeys or removes it. */
 export type Registry = Record<string, RegistryEntry>;
 
 export interface PortRange {
@@ -97,6 +97,9 @@ export function readRegistry(registryPath: string): Registry {
     const entries = parsed as Record<string, Omit<RegistryEntry, 'dbSlug'> & { dbSlug?: string }>;
     const backfilled: Registry = {};
     for (const [key, entry] of Object.entries(entries)) {
+      if (typeof entry?.port !== 'number' || (entry.pid !== null && typeof entry.pid !== 'number')) {
+        throw new Error(`[registry] ${registryPath} entry "${key}" has a missing or invalid port/pid — refusing to silently treat it as valid`);
+      }
       backfilled[key] = { ...entry, dbSlug: entry.dbSlug ?? key };
     }
     return backfilled;

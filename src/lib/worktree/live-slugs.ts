@@ -16,8 +16,10 @@ export function computeLiveWorktreeNames(entries: WorktreeAdminEntry[]): Set<str
  * each holding a `gitdir` file pointing at that worktree's `.git` file. If the
  * worktree's own directory was deleted without `git worktree remove`, that
  * target no longer exists — the same staleness check `git worktree prune` uses.
- * The raw directory name IS the value `identity.ts` computes as `rawName` from
- * inside that same worktree, so no sanitizing is needed (or performed) here.
+ * The raw directory name is what identity.ts's resolveIdentity computes as
+ * rawName for that worktree — see
+ * docs/superpowers/specs/2026-09-09-worktree-registry-key-collision-design.md
+ * §3 for why the two are guaranteed equal.
  */
 export function listWorktreeAdminEntries(gitCommonDir: string): WorktreeAdminEntry[] {
   const worktreesDir = path.join(gitCommonDir, 'worktrees');

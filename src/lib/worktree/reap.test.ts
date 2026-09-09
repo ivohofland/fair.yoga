@@ -1,6 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { reapOrphans } from './reap';
-import type { Registry } from './registry';
+import { readRegistry, type Registry } from './registry';
 
 describe('reapOrphans', () => {
   it('kills the pid, drops both databases, and removes the entry for each orphan', async () => {
@@ -210,6 +213,62 @@ describe('reapOrphans', () => {
       expect(dropDatabase).toHaveBeenCalledTimes(2);
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_fix_520');
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_fix_520');
+    });
+
+    it('does not rescue a dead row whose key is itself sanitize-reachable from a live worktree, when its own dbSlug is unrelated', async () => {
+      // key !== entry.dbSlug here too, but unlike the earlier mutation-check
+      // fixture ("old-name", unreachable by any sanitizeSlug output), THIS
+      // row's key ("live_worktree") is itself exactly sanitizeSlug of the
+      // live raw name "live-worktree" — so the rescue lookup below would
+      // find and misclassify it if the `key === entry.dbSlug` gate were
+      // removed alone, independent of what the lookup compares against.
+      // This isolates the gate specifically — see
+      // docs/superpowers/specs/2026-09-09-worktree-registry-key-collision-design.md
+      // §4.
+      const registry: Registry = {
+        live_worktree: { port: 3100, pid: 4242, dbSlug: 'unrelated_slug' },
+        'live-worktree': { port: 3200, pid: 111, dbSlug: 'live_worktree' },
+      };
+      const dropDatabase = vi.fn().mockResolvedValue(undefined);
+      const killPid = vi.fn();
+
+      const result = await reapOrphans(registry, new Set(['live-worktree']), { dropDatabase, killPid });
+
+      expect(result.reaped).toEqual(['live_worktree']);
+      expect(result.migrated).toEqual([]);
+      expect(result.registry).toEqual({ 'live-worktree': { port: 3200, pid: 111, dbSlug: 'live_worktree' } });
+      expect(killPid).toHaveBeenCalledWith(4242);
+      expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_unrelated_slug');
+      expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_unrelated_slug');
+    });
+  });
+
+  describe('readRegistry -> reapOrphans (real JSON round-trip)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fairyoga-reap-registry-test-'));
+    const registryPath = path.join(dir, 'fairyoga-worktrees.json');
+
+    afterEach(() => {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir, { recursive: true });
+    });
+
+    it('rekeys a legacy row read from a real pre-migration JSON file (no dbSlug field), not a hand-built object', async () => {
+      // Matches what every currently-existing worktree's registry row
+      // actually looks like on disk today — see spec "Verifying the
+      // premise".
+      fs.writeFileSync(registryPath, JSON.stringify({ fix_517: { port: 3100, pid: 4242 } }));
+
+      const registry = readRegistry(registryPath);
+      const dropDatabase = vi.fn().mockResolvedValue(undefined);
+      const killPid = vi.fn();
+
+      const result = await reapOrphans(registry, new Set(['fix-517']), { dropDatabase, killPid });
+
+      expect(result.registry).toEqual({ 'fix-517': { port: 3100, pid: 4242, dbSlug: 'fix_517' } });
+      expect(result.migrated).toEqual([{ from: 'fix_517', to: 'fix-517' }]);
+      expect(result.reaped).toEqual([]);
+      expect(killPid).not.toHaveBeenCalled();
+      expect(dropDatabase).not.toHaveBeenCalled();
     });
   });
 });
