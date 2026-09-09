@@ -1222,12 +1222,16 @@ doesn't already match this document, you have just reintroduced a live
 `40P01`. Check this file first.
 
 For `declineInvitation` that edit is no longer silent, and the executable form
-of this paragraph is worth more than the paragraph: the
+of this paragraph is worth more than the paragraph: the first test of the
 `Invitation and TeacherBlock take one lock order` describe in
-`src/services/invitations-lock-order.test.ts` races the real function against
-the real `resolveInvitationOnLink` both ways — the empty-update race settles,
-and the same race with a real field in the payload gets `40P01`. Give
-`declineInvitation`'s upsert a field and the first of those two goes red.
+`src/services/invitations-lock-order.test.ts` races the real
+`declineInvitation` against the real `resolveInvitationOnLink` and settles.
+Give that upsert a real field and that test goes red. The second test in the
+describe shows what the field costs — the same race gets `40P01` — but its
+decline side is hand-rolled, because the payload is the mutation under test
+and no client extension can reach inside it. So it is the first test, not the
+second, that watches the production function.
+
 `unlinkTeacher`'s upsert has no equivalent pin: the #174 task 7 measurement
 below raced hand-shaped transactions, not that function, so an edit to its
 payload still fails first in production.
@@ -1985,9 +1989,10 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   the canonical line names. Conformant by order, and separately safe by the
   empty-`update` quirk above: its block upsert is `update: {}`, which is what
   keeps it from deadlocking against `resolveInvitationOnLink`'s opposite
-  order. Both halves of that are pinned directly, against the real function —
-  see the `Invitation and TeacherBlock` describe in
-  `src/services/invitations-lock-order.test.ts`.
+  order. The `Invitation and TeacherBlock` describe in
+  `src/services/invitations-lock-order.test.ts` pins both halves, but only its
+  first test drives this function — the second hand-rolls the decline side so
+  it can vary the upsert payload, which is the thing under test there.
 - **`acceptInvitation`** (`src/services/invitations.ts`) — `TeacherStudent`
   then `Invitation`. Was the other way round until #174 task 7, and **the old
   order deadlocks against a real production writer**:
@@ -2286,9 +2291,11 @@ canonical line names and `invitations.ts`'s block upserts take. Directly
 tested twice, and the two measurements differ in what they drove. #174 task 7:
 a transaction shaped like `resolveInvitationOnLink`'s order racing one shaped
 like `unlinkTeacher`'s did **not** deadlock. #522: the real
-`declineInvitation` racing the real `resolveInvitationOnLink` also did not,
-and the same race with a real field in the block upsert's payload did
-(`src/services/invitations-lock-order.test.ts`). Both settle for the same
+`declineInvitation` racing the real `resolveInvitationOnLink` also did not —
+and the same race **did** deadlock once the block upsert's payload carried a
+real field, with the decline side hand-rolled for that one so the payload
+could be varied (`src/services/invitations-lock-order.test.ts`; the booking
+side is the real function in both). Both settle for the same
 reason — those upserts are `update: {}` and hit the non-locking path described
 above whenever a block already exists. This is not a "shared prior
 `TeacherStudent` lock" protecting it — an earlier working hypothesis, now

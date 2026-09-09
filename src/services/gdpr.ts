@@ -634,10 +634,9 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
 
     // `TeacherBlock` is DELIBERATELY not touched here, and the omission is
     // undecided rather than settled — see `docs/data-model.md`
-    // (TeacherBlock), which names every writer of this table and the rule
-    // they follow. These rows hold the subject's refusals whichever way they
-    // said no, so what to do with them here is one question rather than one
-    // per route. They are also what the scrub above leans on: that write
+    // (TeacherBlock), which has the rule these rows follow. They hold the
+    // subject's refusals whichever way they said no, so what to do with them
+    // here is one question rather than one per route. They are also what the scrub above leans on: that write
     // frees `(teacherId, email)`, and this row is the whole of what still
     // stands between the subject and mail from a teacher they refused.
     // Scrubbing the address breaks that, because every
