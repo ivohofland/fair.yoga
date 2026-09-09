@@ -4,8 +4,11 @@ import path from 'path';
 export interface RegistryEntry {
   port: number;
   pid: number | null;
+  /** sanitizeSlug(rawName) at the time this entry was created — used only to derive database names. */
+  dbSlug: string;
 }
 
+/** Keyed by rawName (git's own admin-dir basename), not by the Postgres-safe dbSlug. */
 export type Registry = Record<string, RegistryEntry>;
 
 export interface PortRange {
@@ -17,45 +20,54 @@ export const DEFAULT_PORT_RANGE: PortRange = { min: 3100, max: 3999 };
 
 export function allocatePort(
   registry: Registry,
-  slug: string,
+  rawName: string,
+  dbSlug: string,
   range: PortRange = DEFAULT_PORT_RANGE,
 ): { registry: Registry; port: number } {
-  const existing = registry[slug];
+  const existing = registry[rawName];
   if (existing) {
     return { registry, port: existing.port };
+  }
+  const collision = Object.entries(registry).find(([, entry]) => entry.dbSlug === dbSlug);
+  if (collision) {
+    const [collidingKey] = collision;
+    throw new Error(
+      `allocatePort: worktree "${rawName}" sanitizes to database slug "${dbSlug}", which is already claimed by ` +
+        `registered worktree "${collidingKey}" — rename one of the two worktree directories to resolve the collision.`,
+    );
   }
   const claimed = new Set(Object.values(registry).map((entry) => entry.port));
   for (let port = range.min; port <= range.max; port++) {
     if (!claimed.has(port)) {
-      return { registry: { ...registry, [slug]: { port, pid: null } }, port };
+      return { registry: { ...registry, [rawName]: { port, pid: null, dbSlug } }, port };
     }
   }
   throw new Error(`No free port in range ${range.min}-${range.max}`);
 }
 
-export function setPid(registry: Registry, slug: string, pid: number | null): Registry {
-  const existing = registry[slug];
+export function setPid(registry: Registry, key: string, pid: number | null): Registry {
+  const existing = registry[key];
   if (!existing) {
-    throw new Error(`setPid: no registry entry for slug "${slug}" — call allocatePort first`);
+    throw new Error(`setPid: no registry entry for key "${key}" — call allocatePort first`);
   }
-  return { ...registry, [slug]: { ...existing, pid } };
+  return { ...registry, [key]: { ...existing, pid } };
 }
 
-export function removeSlug(registry: Registry, slug: string): Registry {
+export function removeEntry(registry: Registry, key: string): Registry {
   const next = { ...registry };
-  delete next[slug];
+  delete next[key];
   return next;
 }
 
 export interface OrphanEntry {
-  slug: string;
+  key: string;
   entry: RegistryEntry;
 }
 
-export function diffOrphans(registry: Registry, liveSlugs: ReadonlySet<string>): OrphanEntry[] {
+export function diffOrphans(registry: Registry, liveKeys: ReadonlySet<string>): OrphanEntry[] {
   return Object.entries(registry)
-    .filter(([slug]) => !liveSlugs.has(slug))
-    .map(([slug, entry]) => ({ slug, entry }));
+    .filter(([key]) => !liveKeys.has(key))
+    .map(([key, entry]) => ({ key, entry }));
 }
 
 export function getRegistryPath(gitCommonDir: string): string {
@@ -79,7 +91,15 @@ export function readRegistry(registryPath: string): Registry {
     throw new Error(`[registry] ${registryPath} contains invalid JSON — refusing to silently discard it: ${err}`);
   }
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    return parsed as Registry;
+    // Pre-migration on-disk shape has no dbSlug field; under the scheme it
+    // replaces, the key WAS always exactly sanitizeSlug(rawName), so the key
+    // is the correct backfilled dbSlug for that row.
+    const entries = parsed as Record<string, Omit<RegistryEntry, 'dbSlug'> & { dbSlug?: string }>;
+    const backfilled: Registry = {};
+    for (const [key, entry] of Object.entries(entries)) {
+      backfilled[key] = { ...entry, dbSlug: entry.dbSlug ?? key };
+    }
+    return backfilled;
   }
   throw new Error(`[registry] ${registryPath} does not contain a JSON object`);
 }

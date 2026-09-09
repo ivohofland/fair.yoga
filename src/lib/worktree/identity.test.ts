@@ -59,14 +59,30 @@ describe('isTestDatabaseName', () => {
 describe('resolveIdentity', () => {
   it('is the main checkout when git-dir equals git-common-dir', () => {
     const result = resolveIdentity('/repo/.git', '/repo/.git');
-    expect(result).toEqual({ isMainCheckout: true, slug: null, gitCommonDir: '/repo/.git' });
+    expect(result).toEqual({
+      isMainCheckout: true,
+      rawName: null,
+      dbSlug: null,
+      gitCommonDir: '/repo/.git',
+    });
   });
 
-  it('is a linked worktree when the dirs differ, slug is the git-dir basename', () => {
+  it('is a linked worktree whose rawName needs no sanitizing — rawName and dbSlug match', () => {
+    const result = resolveIdentity('/repo/.git/worktrees/fix_517', '/repo/.git');
+    expect(result).toEqual({
+      isMainCheckout: false,
+      rawName: 'fix_517',
+      dbSlug: 'fix_517',
+      gitCommonDir: '/repo/.git',
+    });
+  });
+
+  it('is a linked worktree whose rawName needs sanitizing — dbSlug differs from rawName', () => {
     const result = resolveIdentity('/repo/.git/worktrees/fix-517', '/repo/.git');
     expect(result).toEqual({
       isMainCheckout: false,
-      slug: 'fix_517',
+      rawName: 'fix-517',
+      dbSlug: 'fix_517',
       gitCommonDir: '/repo/.git',
     });
   });
