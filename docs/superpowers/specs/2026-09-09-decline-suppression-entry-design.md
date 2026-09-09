@@ -248,9 +248,15 @@ The query mirrors `listPendingInvitations`'s own exclusions —
 — so a teacher who added this student to their roster while a declined row
 stood does not appear as "not connected". It selects `pageSlug` for the link.
 
-**Known gap, accepted:** an unlinker with no invitation row at all (most links
-come from bookings) gets no entry. There is no narrative row to read, and
-reading the block instead is the disclosure this section exists to avoid.
+**Known gap, accepted, in two halves.** An unlinker gets no entry when there is
+no `declined` row to read — either because no invitation ever existed (links
+made by booking), or because `unlinkTeacher` scopes its status write to
+`delivered: true` and so leaves an undelivered row untombstoned. Both halves
+have the same cause and the same answer: there is no narrative row, and reading
+`TeacherBlock` instead is precisely the erased-history disclosure this section
+exists to avoid. The refusal still holds in both — `inviteContact` answers
+`DECLINED` off the block — so what is missing is the explanation, not the
+protection.
 
 ## Docs to correct
 
