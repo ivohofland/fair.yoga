@@ -92,7 +92,7 @@ having, because most of what the unqualified command reports is lint and test
 tooling.
 
 **`--omit=dev` is a proxy for "ships to production", not a description of any
-image this repo builds.** Neither Docker stage matches it:
+image this repo builds.** Neither of the two stages that ship matches it:
 
 - The `runner` stage (`Dockerfile:32-46`) is **narrower**. The only
   `node_modules` it gets is the one inside `.next-build/standalone`, which Next
@@ -101,7 +101,11 @@ image this repo builds.** Neither Docker stage matches it:
   and `public`; neither carries dependencies. The `public` copy is why
   `docker build` currently fails — #543.)
   Check what is really in it with
-  `for p in <names>; do [ -d ".next-build/standalone/node_modules/$p" ] && echo "$p present" || echo "$p absent"; done`
+  ```bash
+  for p in nanoid baseline-browser-mapping postcss prisma @prisma/config deepmerge-ts; do
+    [ -d ".next-build/standalone/node_modules/$p" ] && echo "$p present" || echo "$p absent"
+  done
+  ```
   after a build.
 - The `migrate` stage (`Dockerfile:26`) is **wider**. It is `FROM deps`, i.e. a
   plain `npm ci`, so it ships the entire tree — every devDependency included.
@@ -122,25 +126,30 @@ as well.)
 
 | Package | Reached through | Forward fix |
 |---|---|---|
-| `prisma`, `@prisma/config`, `deepmerge-ts` | `@prisma/client` | **None.** npm's suggestion is `prisma@6.12.0`, `isSemVerMajor: true` — a *downgrade* from the pinned `6.19.3` |
+| `prisma`, `@prisma/config`, `deepmerge-ts` | `@prisma/client` | **None.** npm's suggestion is `prisma@6.12.0`, `isSemVerMajor: true` — a *downgrade* from the `6.19.3` the lockfile resolves |
 | `nanoid` | `next` → `postcss` | `npm update nanoid` |
 | `baseline-browser-mapping` | `next` | `npm update baseline-browser-mapping` |
 
+Re-derive the "reached through" column with `npm ls <package> --omit=dev`, and
+the dev-only paragraph below with `npm ls <package>` — these edges rot faster
+than the totals do, and this table has already carried one wrong one.
+
 The last two are stale lockfile resolutions, not constrained versions, and the
 distinction decides the fix. `postcss` declares `nanoid: ^3.3.16` and `next`
-declares `baseline-browser-mapping: ^2.9.19`; the fixed `3.3.18` and `2.11.21`
-both satisfy those ranges. So nothing upstream is holding them back — the
-committed lockfile is, and refreshing it is enough. That is what npm's bare
+declares `baseline-browser-mapping: ^2.9.19`; the first fixed versions —
+`3.3.18` (advisory range `<3.3.18`) and `2.11.0` (`>=2.0.0 <2.11.0`) — both
+satisfy those ranges, so nothing upstream is holding them back — the committed
+lockfile is, and refreshing it is enough. That is what npm's bare
 `fixAvailable: true` means, as against the object form the three
 `prisma`-rooted entries get. An `overrides` block would work and is the wrong
 tool: heavier, and pinned against a range that will drift.
 
-**Dev-only** — `brace-expansion`, `browserslist` and `js-yaml` arrive through
-`eslint-config-next` and `eslint`; `@humanfs/node` through `eslint`; `vitest`
-and `@vitest/coverage-v8` are direct devDependencies and `@vitest/mocker`
-comes with them. They run against this repo's own source on a developer's
-machine and on CI, and every advisory among them needs hostile input fed to
-the tool — which here would mean this repo's own files. Mostly
+**Dev-only** — `browserslist` arrives through `eslint-config-next`, `js-yaml`
+and `@humanfs/node` through `eslint`, and `brace-expansion` through both;
+`vitest` and `@vitest/coverage-v8` are direct devDependencies and
+`@vitest/mocker` comes with them. They run against this repo's own source on a
+developer's machine and on CI, and every advisory among them needs hostile
+input fed to the tool — which here would mean this repo's own files. Mostly
 denial-of-service and path traversal, though not only: `browserslist`'s
 GHSA-73wf-gq98-2v4g is a prototype write via an untrusted
 `browserslist-stats.json`, and `@humanfs/node`'s is a symlink escape during a

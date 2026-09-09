@@ -4,7 +4,7 @@ A free, open-source toolkit for independent yoga teachers. Not a marketplace —
 
 ## Tech Stack
 
-- **Framework:** Next.js 14+ (App Router) — single process for frontend, SSR, and API
+- **Framework:** Next.js 16 (App Router) — single process for frontend, SSR, and API
 - **Language:** TypeScript with `strict: true` — no `any`, no implicit types, non-negotiable
 - **Auth:** Magic link (oslo/crypto) + passkeys (@simplewebauthn/server). No passwords, no SMS. Sessions stored in DB.
 - **Deployment:** Single VPS, Docker (Next.js + PostgreSQL), Nginx, Let's Encrypt
