@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { generateEnvContent, writeEnvIfMissing, readEnvValue, findMismatchedEnvKeys } from './env-file';
+import { generateEnvContent, writeEnvIfMissing, readEnvValue, findMismatchedEnvKeys, generateCronSecret, hasEmptyCronSecret } from './env-file';
 
 describe('generateEnvContent', () => {
   it('replaces an existing key in place', () => {
@@ -92,5 +92,41 @@ describe('findMismatchedEnvKeys', () => {
   it('treats a missing key as mismatched', () => {
     fs.writeFileSync(envPath, 'OTHER="x"');
     expect(findMismatchedEnvKeys(envPath, { DATABASE_URL: 'postgresql://a' })).toEqual(['DATABASE_URL']);
+  });
+});
+
+describe('generateCronSecret', () => {
+  it('returns a 48-character lowercase hex string', () => {
+    const secret = generateCronSecret();
+    expect(secret).toMatch(/^[0-9a-f]{48}$/);
+  });
+
+  it('returns a different value on each call', () => {
+    expect(generateCronSecret()).not.toBe(generateCronSecret());
+  });
+});
+
+describe('hasEmptyCronSecret', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fairyoga-env-cron-test-'));
+  const envPath = path.join(dir, '.env');
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+  });
+
+  it('returns true when CRON_SECRET is missing entirely', () => {
+    fs.writeFileSync(envPath, 'OTHER="x"');
+    expect(hasEmptyCronSecret(envPath)).toBe(true);
+  });
+
+  it('returns true when CRON_SECRET is present but blank', () => {
+    fs.writeFileSync(envPath, 'CRON_SECRET=""');
+    expect(hasEmptyCronSecret(envPath)).toBe(true);
+  });
+
+  it('returns false when CRON_SECRET holds a value', () => {
+    fs.writeFileSync(envPath, 'CRON_SECRET="abc123"');
+    expect(hasEmptyCronSecret(envPath)).toBe(false);
   });
 });

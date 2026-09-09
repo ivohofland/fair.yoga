@@ -1,4 +1,5 @@
 import fs from 'fs';
+import crypto from 'crypto';
 
 export function generateEnvContent(templateContent: string, overrides: Record<string, string>): string {
   const lines = templateContent.split('\n');
@@ -53,4 +54,14 @@ export function findMismatchedEnvKeys(envPath: string, overrides: Record<string,
   return Object.entries(overrides)
     .filter(([key, expected]) => readEnvValue(envPath, key) !== expected)
     .map(([key]) => key);
+}
+
+/** `openssl rand -hex 24`'s equivalent — matches DEPLOYMENT.md's production CRON_SECRET recipe. */
+export function generateCronSecret(): string {
+  return crypto.randomBytes(24).toString('hex');
+}
+
+/** True when `envPath`'s CRON_SECRET is missing or blank — the value `.env.example` ships, and what a pre-fix worktree's `.env` still carries. */
+export function hasEmptyCronSecret(envPath: string): boolean {
+  return !readEnvValue(envPath, 'CRON_SECRET');
 }
