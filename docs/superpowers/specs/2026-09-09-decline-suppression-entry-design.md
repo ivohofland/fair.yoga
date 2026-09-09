@@ -302,16 +302,28 @@ permissive change makes a shared-fixture test pass for the wrong reason.
 
 ## Not in scope
 
+Both of the following were considered as spin-outs and **deliberately not
+filed**. The reasoning is recorded here so neither is re-raised as an oversight.
+
 - **Hashing `TeacherBlock.email`.** The parked "scrub or hash" question, which
-  applies to unlink-written blocks equally. Filing it as a decision issue with
-  the options above is the follow-up; resolving it inside a security fix is not.
-- **A per-invitation URL.** The invitation email links to a bare
-  `${baseUrl}/login` (`invitations.ts:604`), so there is no invitation link to
-  land on, and a valid invitee has to find `/account/privacy` themselves. Worth
-  fixing, but adding one turns the email into a capability token — anyone
-  holding the link learns an invitation exists for that address — which
-  reverses a deliberate design decision (`acceptInvitation` authorizes by
-  address precisely because "the invitation id travels in a URL and is not a
-  secret"). Its own issue.
+  applies to unlink-written blocks equally — declined above, in "The decision".
+  Not filed because it is already written down where it belongs:
+  `docs/data-model.md`'s `TeacherBlock` section states both options and their
+  costs, and this spec's docs task sharpens that paragraph rather than
+  duplicating it into the tracker. A future maintainer is no worse off; the
+  record has an owner already.
+- **The invitee's landing surface.** `deliverInvitation` branches on whether a
+  `Student` row exists. An existing student gets an in-app
+  `teacher_invitation` notification whose email fallback points at a real
+  invitation page — a discoverable path. A stranger gets
+  `sendInvitationEmail(…, `${baseUrl}/login`)` (`invitations.ts:604`), and that
+  link is generic **on purpose**: a per-invitation destination would disclose
+  whether fair.yoga already knew the address, which is why that function's
+  comment requires the copy not to branch and `renderInvitationEmail`'s own
+  test pins it. What remains is narrow — a stranger's first sign-in lands on
+  `/bookings`, and the pending card lives on `/account/privacy` — and the
+  obvious fix is the one the design forbids. Not a leaf: it needs a design
+  decision before it is work, so filing it as a task would file the wrong
+  thing.
 - **#502 and #520 are unaffected.** This spec changes no `delivered` semantics
   and no anonymisation token.
