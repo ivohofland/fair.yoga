@@ -5,7 +5,7 @@ import path from 'path';
 import {
   allocatePort,
   setPid,
-  removeSlug,
+  removeEntry,
   diffOrphans,
   getRegistryPath,
   readRegistry,
@@ -14,60 +14,81 @@ import {
 } from './registry';
 
 describe('allocatePort', () => {
-  it('allocates the lowest free port in range for a new slug', () => {
-    const { registry, port } = allocatePort({}, 'fix_517', { min: 3100, max: 3102 });
+  it('allocates the lowest free port in range for a new rawName', () => {
+    const { registry, port } = allocatePort({}, 'fix-517', 'fix_517', { min: 3100, max: 3102 });
     expect(port).toBe(3100);
-    expect(registry).toEqual({ fix_517: { port: 3100, pid: null } });
+    expect(registry).toEqual({ 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } });
   });
 
-  it('skips ports already claimed by other slugs', () => {
-    const existing: Registry = { fix_520: { port: 3100, pid: null } };
-    const { port } = allocatePort(existing, 'fix_517', { min: 3100, max: 3102 });
+  it('skips ports already claimed by other entries', () => {
+    const existing: Registry = { 'fix-520': { port: 3100, pid: null, dbSlug: 'fix_520' } };
+    const { port } = allocatePort(existing, 'fix-517', 'fix_517', { min: 3100, max: 3102 });
     expect(port).toBe(3101);
   });
 
-  it('returns the existing port unchanged when the slug is already registered', () => {
-    const existing: Registry = { fix_517: { port: 3100, pid: 999 } };
-    const { registry, port } = allocatePort(existing, 'fix_517', { min: 3100, max: 3102 });
+  it('returns the existing port unchanged when the rawName is already registered', () => {
+    const existing: Registry = { 'fix-517': { port: 3100, pid: 999, dbSlug: 'fix_517' } };
+    const { registry, port } = allocatePort(existing, 'fix-517', 'fix_517', { min: 3100, max: 3102 });
+    expect(port).toBe(3100);
+    expect(registry).toBe(existing);
+  });
+
+  it('ignores a mismatched dbSlug for an already-registered rawName — the stored dbSlug is authoritative', () => {
+    const existing: Registry = { 'fix-517': { port: 3100, pid: 999, dbSlug: 'fix_517' } };
+    const { registry, port } = allocatePort(existing, 'fix-517', 'some_other_slug', { min: 3100, max: 3102 });
     expect(port).toBe(3100);
     expect(registry).toBe(existing);
   });
 
   it('throws when the range is exhausted', () => {
-    const existing: Registry = { a: { port: 3100, pid: null }, b: { port: 3101, pid: null } };
-    expect(() => allocatePort(existing, 'c', { min: 3100, max: 3101 })).toThrow();
+    const existing: Registry = {
+      a: { port: 3100, pid: null, dbSlug: 'a' },
+      b: { port: 3101, pid: null, dbSlug: 'b' },
+    };
+    expect(() => allocatePort(existing, 'c', 'c', { min: 3100, max: 3101 })).toThrow();
+  });
+
+  it('throws on a dbSlug collision between two different rawName keys, naming both', () => {
+    const existing: Registry = { 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } };
+    expect(() => allocatePort(existing, 'fix_517', 'fix_517', { min: 3100, max: 3102 })).toThrow(
+      /fix_517.*fix-517|fix-517.*fix_517/,
+    );
   });
 });
 
 describe('setPid', () => {
-  it('updates only the given slug', () => {
-    const existing: Registry = { fix_517: { port: 3100, pid: null } };
-    expect(setPid(existing, 'fix_517', 4242)).toEqual({ fix_517: { port: 3100, pid: 4242 } });
+  it('updates only the given key', () => {
+    const existing: Registry = { 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } };
+    expect(setPid(existing, 'fix-517', 4242)).toEqual({
+      'fix-517': { port: 3100, pid: 4242, dbSlug: 'fix_517' },
+    });
   });
 
-  it('throws for an unregistered slug', () => {
-    expect(() => setPid({}, 'fix_517', 4242)).toThrow();
+  it('throws for an unregistered key', () => {
+    expect(() => setPid({}, 'fix-517', 4242)).toThrow();
   });
 });
 
-describe('removeSlug', () => {
-  it('removes only the given slug', () => {
+describe('removeEntry', () => {
+  it('removes only the given key', () => {
     const existing: Registry = {
-      fix_517: { port: 3100, pid: null },
-      fix_520: { port: 3101, pid: null },
+      'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' },
+      'fix-520': { port: 3101, pid: null, dbSlug: 'fix_520' },
     };
-    expect(removeSlug(existing, 'fix_517')).toEqual({ fix_520: { port: 3101, pid: null } });
+    expect(removeEntry(existing, 'fix-517')).toEqual({
+      'fix-520': { port: 3101, pid: null, dbSlug: 'fix_520' },
+    });
   });
 });
 
 describe('diffOrphans', () => {
-  it('returns entries whose slug is not live', () => {
+  it('returns entries whose key is not live', () => {
     const existing: Registry = {
-      fix_517: { port: 3100, pid: null },
-      fix_520: { port: 3101, pid: 4242 },
+      'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' },
+      'fix-520': { port: 3101, pid: 4242, dbSlug: 'fix_520' },
     };
-    const result = diffOrphans(existing, new Set(['fix_517']));
-    expect(result).toEqual([{ slug: 'fix_520', entry: { port: 3101, pid: 4242 } }]);
+    const result = diffOrphans(existing, new Set(['fix-517']));
+    expect(result).toEqual([{ key: 'fix-520', entry: { port: 3101, pid: 4242, dbSlug: 'fix_520' } }]);
   });
 });
 
@@ -98,21 +119,36 @@ describe('readRegistry / writeRegistryLocked', () => {
     expect(readRegistry(path.join(dir, 'does-not-exist.json'))).toEqual({});
   });
 
+  it('backfills dbSlug: key for a pre-migration entry parsed with no dbSlug field', () => {
+    fs.writeFileSync(registryPath, JSON.stringify({ fix_517: { port: 3100, pid: null } }));
+    expect(readRegistry(registryPath)).toEqual({ fix_517: { port: 3100, pid: null, dbSlug: 'fix_517' } });
+  });
+
+  it('leaves an entry that already has dbSlug untouched (not overwritten with the key)', () => {
+    fs.writeFileSync(
+      registryPath,
+      JSON.stringify({ 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } }),
+    );
+    expect(readRegistry(registryPath)).toEqual({
+      'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' },
+    });
+  });
+
   it('writes what the mutate function returns and persists it', async () => {
-    await writeRegistryLocked(registryPath, () => ({ fix_517: { port: 3100, pid: null } }));
-    expect(readRegistry(registryPath)).toEqual({ fix_517: { port: 3100, pid: null } });
+    await writeRegistryLocked(registryPath, () => ({ 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } }));
+    expect(readRegistry(registryPath)).toEqual({ 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } });
   });
 
   it('supports an async mutate function', async () => {
     await writeRegistryLocked(registryPath, async (registry) => {
       await Promise.resolve();
-      return { ...registry, fix_520: { port: 3101, pid: null } };
+      return { ...registry, 'fix-520': { port: 3101, pid: null, dbSlug: 'fix_520' } };
     });
-    expect(readRegistry(registryPath)).toEqual({ fix_520: { port: 3101, pid: null } });
+    expect(readRegistry(registryPath)).toEqual({ 'fix-520': { port: 3101, pid: null, dbSlug: 'fix_520' } });
   });
 
   it('writes atomically — no leftover temp file after a successful write', async () => {
-    await writeRegistryLocked(registryPath, () => ({ fix_517: { port: 3100, pid: null } }));
+    await writeRegistryLocked(registryPath, () => ({ 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } }));
     const files = fs.readdirSync(dir);
     expect(files.filter((f) => f.includes('.tmp.'))).toEqual([]);
   });

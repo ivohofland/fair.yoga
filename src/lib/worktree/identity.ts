@@ -38,7 +38,10 @@ export function isTestDatabaseName(name: string): boolean {
 
 export interface WorktreeIdentity {
   isMainCheckout: boolean;
-  slug: string | null;
+  /** Git's own admin-dir basename — unique by git's own construction. */
+  rawName: string | null;
+  /** sanitizeSlug(rawName) — Postgres-identifier-safe, not guaranteed unique. */
+  dbSlug: string | null;
   gitCommonDir: string;
 }
 
@@ -55,9 +58,11 @@ function basename(dir: string): string {
 /** Pure — decides identity from git's own output. */
 export function resolveIdentity(gitDir: string, gitCommonDir: string): WorktreeIdentity {
   const isMainCheckout = normalizeDir(gitDir) === normalizeDir(gitCommonDir);
+  const rawName = isMainCheckout ? null : basename(gitDir);
   return {
     isMainCheckout,
-    slug: isMainCheckout ? null : sanitizeSlug(basename(gitDir)),
+    rawName,
+    dbSlug: rawName === null ? null : sanitizeSlug(rawName),
     gitCommonDir: normalizeDir(gitCommonDir),
   };
 }
