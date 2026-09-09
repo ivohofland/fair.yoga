@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -122,6 +123,49 @@ export const DEFAULT_LOCK_OPTIONS: Required<LockOptions> = {
 export interface LockInfo {
   pid: number;
   createdAt: number;
+  token?: string;
+}
+
+export interface LockHandle {
+  lockDir: string;
+  pid: number;
+  token: string;
+}
+
+export function parseLockInfo(raw: string): LockInfo | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null;
+  }
+  const obj = parsed as Record<string, unknown>;
+  if (typeof obj.pid !== 'number' || !Number.isInteger(obj.pid) || obj.pid <= 0) {
+    return null;
+  }
+  if (typeof obj.createdAt !== 'number' || !Number.isFinite(obj.createdAt) || obj.createdAt <= 0) {
+    return null;
+  }
+  const token = typeof obj.token === 'string' ? obj.token : undefined;
+  return {
+    pid: obj.pid,
+    createdAt: obj.createdAt,
+    token,
+  };
+}
+
+export function readLockInfo(lockDir: string): { info: LockInfo | null; error?: NodeJS.ErrnoException } {
+  const ownerPath = path.join(lockDir, 'owner.json');
+  try {
+    const raw = fs.readFileSync(ownerPath, 'utf8');
+    const info = parseLockInfo(raw);
+    return { info };
+  } catch (err) {
+    return { info: null, error: err as NodeJS.ErrnoException };
+  }
 }
 
 export function isPidAlive(pid: number): boolean {
@@ -132,7 +176,12 @@ export function isPidAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ESRCH') {
+      return false;
+    }
+    // EPERM or any ambiguous system error: assume the process is alive (conservative guard against lock theft)
+    return true;
   }
 }
 
@@ -147,107 +196,169 @@ export function isLockStale(lockDir: string, staleMs: number): { stale: boolean;
   }
 
   const ownerPath = path.join(lockDir, 'owner.json');
-  let info: LockInfo | null = null;
+  let raw: string | null = null;
   try {
-    const raw = fs.readFileSync(ownerPath, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') {
-      info = parsed as LockInfo;
+    raw = fs.readFileSync(ownerPath, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(`[registry] unreadable lock info at ${ownerPath} (${err}): falling back to directory age check`);
     }
-  } catch {
-    // owner.json may be absent or unreadable
   }
 
-  if (info && typeof info.pid === 'number' && Number.isInteger(info.pid) && info.pid > 0) {
+  const info = raw !== null ? parseLockInfo(raw) : null;
+  if (raw !== null && info === null) {
+    console.warn(`[registry] corrupted lock info at ${ownerPath}: falling back to directory age check`);
+  }
+
+  // 1. PID-based staleness: evaluated when PID is known.
+  if (info !== null) {
     if (!isPidAlive(info.pid)) {
       return { stale: true, reason: `holder pid ${info.pid} is not alive` };
     }
+    // Holder PID is confirmed alive. Never reclaim an active process's lock by age.
+    return { stale: false };
   }
 
+  // 2. Age-based staleness: fallback only when PID is absent or unparseable.
   let lockTime: number | null = null;
-  if (info && typeof info.createdAt === 'number') {
-    lockTime = info.createdAt;
-  } else {
-    try {
-      const stat = fs.statSync(lockDir);
-      lockTime = stat.mtimeMs;
-    } catch {
-      return { stale: true, reason: 'could not stat lock directory' };
-    }
+  try {
+    const stat = fs.statSync(lockDir);
+    lockTime = stat.mtimeMs;
+  } catch {
+    return { stale: false };
   }
 
-  if (lockTime !== null && Date.now() - lockTime >= staleMs) {
+  if (Date.now() - lockTime >= staleMs) {
     return {
       stale: true,
-      reason: `lock age (${Date.now() - lockTime}ms) exceeded threshold of ${staleMs}ms`,
+      reason: `unidentified lock age (${Date.now() - lockTime}ms) exceeded threshold of ${staleMs}ms`,
     };
   }
 
   return { stale: false };
 }
 
-export function acquireLock(lockDir: string, options?: LockOptions): void {
+export function reclaimStaleLock(lockDir: string, staleMs: number): boolean {
+  const nonce = crypto.randomBytes(4).toString('hex');
+  const reclaimingDir = `${lockDir}.reclaiming.${process.pid}.${Date.now()}.${nonce}`;
+
+  try {
+    fs.renameSync(lockDir, reclaimingDir);
+  } catch {
+    // Another concurrent process already renamed or removed lockDir
+    return false;
+  }
+
+  const check = isLockStale(reclaimingDir, staleMs);
+  if (check.stale) {
+    console.warn(`[registry] reclaimed stale lock at ${lockDir} (${check.reason})`);
+    fs.rmSync(reclaimingDir, { recursive: true, force: true });
+    return true;
+  }
+
+  // The lock was unexpectedly alive; restore it back to lockDir if possible
+  try {
+    fs.renameSync(reclaimingDir, lockDir);
+  } catch {
+    fs.rmSync(reclaimingDir, { recursive: true, force: true });
+  }
+  return false;
+}
+
+export function acquireLock(lockDir: string, options?: LockOptions): LockHandle {
   const retries = options?.retries ?? DEFAULT_LOCK_OPTIONS.retries;
   const delayMs = options?.delayMs ?? DEFAULT_LOCK_OPTIONS.delayMs;
   const staleMs = options?.staleMs ?? DEFAULT_LOCK_OPTIONS.staleMs;
 
   let reclaimedStale = false;
+  let observedToken: string | null | undefined = undefined;
 
   while (true) {
     for (let attempt = 0; attempt < retries; attempt++) {
       try {
         fs.mkdirSync(lockDir);
+        const token = `${process.pid}:${Date.now()}:${crypto.randomBytes(6).toString('hex')}`;
+        const ownerInfo: LockInfo = { pid: process.pid, createdAt: Date.now(), token };
         try {
-          const ownerInfo: LockInfo = { pid: process.pid, createdAt: Date.now() };
           fs.writeFileSync(path.join(lockDir, 'owner.json'), `${JSON.stringify(ownerInfo)}\n`);
         } catch (writeErr) {
           fs.rmSync(lockDir, { recursive: true, force: true });
           throw writeErr;
         }
-        return;
+        return { lockDir, pid: process.pid, token };
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
           throw err;
+        }
+        if (observedToken === undefined) {
+          const { info } = readLockInfo(lockDir);
+          observedToken = info?.token ?? null;
         }
         sleepSync(delayMs);
       }
     }
 
-    if (!reclaimedStale) {
-      if (!fs.existsSync(lockDir)) {
-        continue;
-      }
-      const { stale, reason } = isLockStale(lockDir, staleMs);
-      if (stale) {
-        console.warn(`[registry] reclaiming stale lock at ${lockDir} (${reason})`);
-        fs.rmSync(lockDir, { recursive: true, force: true });
+    if (!fs.existsSync(lockDir)) {
+      continue;
+    }
+
+    const { stale } = isLockStale(lockDir, staleMs);
+    if (stale && !reclaimedStale) {
+      const reclaimed = reclaimStaleLock(lockDir, staleMs);
+      if (reclaimed) {
         reclaimedStale = true;
-        continue;
       }
+      observedToken = undefined;
+      continue;
+    }
+
+    // Check if the lock holder changed while we were waiting
+    const { info: currentInfo } = readLockInfo(lockDir);
+    const currentToken = currentInfo?.token ?? null;
+    if (observedToken !== undefined && currentToken !== observedToken) {
+      observedToken = currentToken;
+      continue;
     }
 
     throw new Error(`Timed out waiting for lock at ${lockDir}`);
   }
 }
 
-export function releaseLock(lockDir: string, expectedPid?: number): void {
+export function releaseLock(lockDir: string, expectedTokenOrPid?: string | number): void {
   try {
-    const ownerPath = path.join(lockDir, 'owner.json');
-    if (expectedPid !== undefined) {
-      try {
-        const raw = fs.readFileSync(ownerPath, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed.pid === 'number' && parsed.pid !== expectedPid) {
-          // Lock was reclaimed by another process; do not remove their lock directory.
+    if (expectedTokenOrPid !== undefined) {
+      const { info, error } = readLockInfo(lockDir);
+      if (error) {
+        if (error.code === 'ENOENT') {
           return;
         }
-      } catch {
-        // If owner.json is absent or unreadable, proceed with removal
+        return;
+      }
+      if (!info) {
+        return;
+      }
+      if (typeof expectedTokenOrPid === 'string') {
+        if (info.token !== expectedTokenOrPid) {
+          return;
+        }
+      } else {
+        if (info.pid !== expectedTokenOrPid) {
+          return;
+        }
       }
     }
     fs.rmSync(lockDir, { recursive: true, force: true });
   } catch {
-    // Ignore release errors to avoid masking errors from mutate
+    // Ignore release errors to avoid masking caller errors or failed operations
+  }
+}
+
+export function assertLockHeld(handle: LockHandle): void {
+  const { info, error } = readLockInfo(handle.lockDir);
+  if (error || !info || info.pid !== handle.pid || info.token !== handle.token) {
+    throw new Error(
+      `[registry] lock at ${handle.lockDir} was lost during mutation (held by ${info?.pid ?? 'unknown'}, expected ${handle.pid})`,
+    );
   }
 }
 
@@ -257,15 +368,25 @@ export async function writeRegistryLocked(
   lockOptions?: LockOptions,
 ): Promise<Registry> {
   const lockDir = `${registryPath}.lock`;
-  acquireLock(lockDir, lockOptions);
+  const handle = acquireLock(lockDir, lockOptions);
   try {
     const current = readRegistry(registryPath);
     const next = await mutate(current);
-    const tmpPath = `${registryPath}.tmp.${process.pid}`;
-    fs.writeFileSync(tmpPath, `${JSON.stringify(next, null, 2)}\n`);
-    fs.renameSync(tmpPath, registryPath);
+    const tmpPath = `${registryPath}.tmp.${process.pid}.${crypto.randomBytes(4).toString('hex')}`;
+    try {
+      fs.writeFileSync(tmpPath, `${JSON.stringify(next, null, 2)}\n`);
+      assertLockHeld(handle);
+      fs.renameSync(tmpPath, registryPath);
+    } catch (writeErr) {
+      try {
+        fs.rmSync(tmpPath, { force: true });
+      } catch {
+        // Ignore tmp cleanup error
+      }
+      throw writeErr;
+    }
     return next;
   } finally {
-    releaseLock(lockDir, process.pid);
+    releaseLock(lockDir, handle.token);
   }
 }
