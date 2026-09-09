@@ -4,17 +4,18 @@ import path from 'path';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { reapOrphans } from './reap';
 import { readRegistry, type Registry } from './registry';
+import type { RawName, DbSlug } from './identity';
 
 describe('reapOrphans', () => {
   it('kills the pid, drops both databases, and removes the entry for each orphan', async () => {
     const registry: Registry = {
-      fix_517: { port: 3100, pid: null, dbSlug: 'fix_517' },
-      fix_520: { port: 3101, pid: 4242, dbSlug: 'fix_520' },
+      fix_517: { port: 3100, pid: null, dbSlug: 'fix_517' as DbSlug },
+      fix_520: { port: 3101, pid: 4242, dbSlug: 'fix_520' as DbSlug },
     };
     const dropDatabase = vi.fn().mockResolvedValue(undefined);
     const killPid = vi.fn().mockReturnValue('signaled');
 
-    const result = await reapOrphans(registry, new Set(['fix_517']), { dropDatabase, killPid });
+    const result = await reapOrphans(registry, new Set(['fix_517' as RawName]), { dropDatabase, killPid });
 
     expect(result.reaped).toEqual(['fix_520']);
     expect(result.registry).toEqual({ fix_517: { port: 3100, pid: null, dbSlug: 'fix_517' } });
@@ -57,7 +58,7 @@ describe('reapOrphans', () => {
   });
 
   it('does not call killPid for an orphan with no recorded pid', async () => {
-    const registry: Registry = { fix_520: { port: 3101, pid: null, dbSlug: 'fix_520' } };
+    const registry: Registry = { fix_520: { port: 3101, pid: null, dbSlug: 'fix_520' as DbSlug } };
     const dropDatabase = vi.fn().mockResolvedValue(undefined);
     const killPid = vi.fn().mockReturnValue('signaled');
 
@@ -67,11 +68,11 @@ describe('reapOrphans', () => {
   });
 
   it('leaves a live rawName-keyed row untouched', async () => {
-    const registry: Registry = { 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } };
+    const registry: Registry = { 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' as DbSlug } };
     const dropDatabase = vi.fn().mockResolvedValue(undefined);
     const killPid = vi.fn().mockReturnValue('signaled');
 
-    const result = await reapOrphans(registry, new Set(['fix-517']), { dropDatabase, killPid });
+    const result = await reapOrphans(registry, new Set(['fix-517' as RawName]), { dropDatabase, killPid });
 
     expect(result.reaped).toEqual([]);
     expect(result.migrated).toEqual([]);
@@ -82,8 +83,8 @@ describe('reapOrphans', () => {
 
   it("does not let one orphan's failure prevent a later orphan in the same call from being reaped", async () => {
     const registry: Registry = {
-      fix_517: { port: 3100, pid: null, dbSlug: 'fix_517' },
-      fix_520: { port: 3101, pid: null, dbSlug: 'fix_520' },
+      fix_517: { port: 3100, pid: null, dbSlug: 'fix_517' as DbSlug },
+      fix_520: { port: 3101, pid: null, dbSlug: 'fix_520' as DbSlug },
     };
     const dropDatabase = vi.fn().mockImplementation((dbName: string) => {
       if (dbName.includes('fix_517')) {
@@ -103,11 +104,11 @@ describe('reapOrphans', () => {
     it('rekeys a legacy row (key equals its own dbSlug) to the live raw name whose sanitizeSlug output matches that key', async () => {
       // "fix_517" is the pre-migration key/dbSlug for a worktree whose real
       // admin-dir name is "fix-517" (sanitizeSlug('fix-517') === 'fix_517').
-      const registry: Registry = { fix_517: { port: 3100, pid: 4242, dbSlug: 'fix_517' } };
+      const registry: Registry = { fix_517: { port: 3100, pid: 4242, dbSlug: 'fix_517' as DbSlug } };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
       const killPid = vi.fn().mockReturnValue('signaled');
 
-      const result = await reapOrphans(registry, new Set(['fix-517']), { dropDatabase, killPid });
+      const result = await reapOrphans(registry, new Set(['fix-517' as RawName]), { dropDatabase, killPid });
 
       expect(result.registry).toEqual({ 'fix-517': { port: 3100, pid: 4242, dbSlug: 'fix_517' } });
       expect(result.migrated).toEqual([{ from: 'fix_517', to: 'fix-517' }]);
@@ -119,14 +120,14 @@ describe('reapOrphans', () => {
     it("silently drops a legacy row when the target raw name already has its own entry", async () => {
       const registry: Registry = {
         // Stale leftover from "fix-517"'s own earlier self-migration.
-        fix_517: { port: 3100, pid: 4242, dbSlug: 'fix_517' },
+        fix_517: { port: 3100, pid: 4242, dbSlug: 'fix_517' as DbSlug },
         // "fix-517" already re-registered itself under its true rawName key.
-        'fix-517': { port: 3105, pid: 555, dbSlug: 'fix_517' },
+        'fix-517': { port: 3105, pid: 555, dbSlug: 'fix_517' as DbSlug },
       };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
       const killPid = vi.fn().mockReturnValue('signaled');
 
-      const result = await reapOrphans(registry, new Set(['fix-517']), { dropDatabase, killPid });
+      const result = await reapOrphans(registry, new Set(['fix-517' as RawName]), { dropDatabase, killPid });
 
       expect(result.registry).toEqual({ 'fix-517': { port: 3105, pid: 555, dbSlug: 'fix_517' } });
       expect(result.migrated).toEqual([]);
@@ -136,12 +137,12 @@ describe('reapOrphans', () => {
     });
 
     it('still reaps (kill + drop + remove) a legacy row with no live claimant', async () => {
-      const registry: Registry = { fix_517: { port: 3100, pid: 4242, dbSlug: 'fix_517' } };
+      const registry: Registry = { fix_517: { port: 3100, pid: 4242, dbSlug: 'fix_517' as DbSlug } };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
       const killPid = vi.fn().mockReturnValue('signaled');
 
       // No live raw name sanitizes to "fix_517".
-      const result = await reapOrphans(registry, new Set(['some-other-worktree']), { dropDatabase, killPid });
+      const result = await reapOrphans(registry, new Set(['some-other-worktree' as RawName]), { dropDatabase, killPid });
 
       expect(result.registry).toEqual({});
       expect(result.reaped).toEqual(['fix_517']);
@@ -152,7 +153,7 @@ describe('reapOrphans', () => {
     });
 
     it('still reaps a rawName-keyed (non-legacy-shaped) dead row with no live claimant', async () => {
-      const registry: Registry = { 'fix-517': { port: 3100, pid: 4242, dbSlug: 'fix_517' } };
+      const registry: Registry = { 'fix-517': { port: 3100, pid: 4242, dbSlug: 'fix_517' as DbSlug } };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
       const killPid = vi.fn().mockReturnValue('signaled');
 
@@ -181,13 +182,13 @@ describe('reapOrphans', () => {
       // dropped with no killPid/dropDatabase call, which is what this test
       // catches.
       const registry: Registry = {
-        'old-name': { port: 3100, pid: 4242, dbSlug: 'live_worktree' },
-        'live-worktree': { port: 3200, pid: 111, dbSlug: 'live_worktree' },
+        'old-name': { port: 3100, pid: 4242, dbSlug: 'live_worktree' as DbSlug },
+        'live-worktree': { port: 3200, pid: 111, dbSlug: 'live_worktree' as DbSlug },
       };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
       const killPid = vi.fn().mockReturnValue('signaled');
 
-      const result = await reapOrphans(registry, new Set(['live-worktree']), { dropDatabase, killPid });
+      const result = await reapOrphans(registry, new Set(['live-worktree' as RawName]), { dropDatabase, killPid });
 
       expect(result.reaped).toEqual(['old-name']);
       expect(result.migrated).toEqual([]);
@@ -203,11 +204,11 @@ describe('reapOrphans', () => {
       // worktree must not abort the whole sweep — it simply cannot be the
       // rescue target for any legacy row, so the legacy row here falls
       // through to normal orphan handling.
-      const registry: Registry = { fix_517: { port: 3100, pid: 4242, dbSlug: 'fix_517' } };
+      const registry: Registry = { fix_517: { port: 3100, pid: 4242, dbSlug: 'fix_517' as DbSlug } };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
       const killPid = vi.fn().mockReturnValue('signaled');
 
-      const result = await reapOrphans(registry, new Set(['!!!']), { dropDatabase, killPid });
+      const result = await reapOrphans(registry, new Set(['!!!' as RawName]), { dropDatabase, killPid });
 
       expect(result.reaped).toEqual(['fix_517']);
       expect(result.migrated).toEqual([]);
@@ -223,14 +224,14 @@ describe('reapOrphans', () => {
       // (b) fix_520: legacy-shaped row for a worktree with no live claimant.
       // (c) "fix-525": already rawName-keyed (post-fix scheme) and live.
       const registry: Registry = {
-        fix_517: { port: 3100, pid: 1111, dbSlug: 'fix_517' },
-        fix_520: { port: 3101, pid: 2222, dbSlug: 'fix_520' },
-        'fix-525': { port: 3102, pid: 3333, dbSlug: 'fix_525' },
+        fix_517: { port: 3100, pid: 1111, dbSlug: 'fix_517' as DbSlug },
+        fix_520: { port: 3101, pid: 2222, dbSlug: 'fix_520' as DbSlug },
+        'fix-525': { port: 3102, pid: 3333, dbSlug: 'fix_525' as DbSlug },
       };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
       const killPid = vi.fn().mockReturnValue('signaled');
 
-      const result = await reapOrphans(registry, new Set(['fix-517', 'fix-525']), { dropDatabase, killPid });
+      const result = await reapOrphans(registry, new Set(['fix-517' as RawName, 'fix-525' as RawName]), { dropDatabase, killPid });
 
       expect(result.registry).toEqual({
         'fix-517': { port: 3100, pid: 1111, dbSlug: 'fix_517' }, // (a) rekeyed
@@ -256,13 +257,13 @@ describe('reapOrphans', () => {
       // docs/superpowers/specs/2026-09-09-worktree-registry-key-collision-design.md
       // §4.
       const registry: Registry = {
-        live_worktree: { port: 3100, pid: 4242, dbSlug: 'unrelated_slug' },
-        'live-worktree': { port: 3200, pid: 111, dbSlug: 'live_worktree' },
+        live_worktree: { port: 3100, pid: 4242, dbSlug: 'unrelated_slug' as DbSlug },
+        'live-worktree': { port: 3200, pid: 111, dbSlug: 'live_worktree' as DbSlug },
       };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
       const killPid = vi.fn().mockReturnValue('signaled');
 
-      const result = await reapOrphans(registry, new Set(['live-worktree']), { dropDatabase, killPid });
+      const result = await reapOrphans(registry, new Set(['live-worktree' as RawName]), { dropDatabase, killPid });
 
       expect(result.reaped).toEqual(['live_worktree']);
       expect(result.migrated).toEqual([]);
@@ -292,7 +293,7 @@ describe('reapOrphans', () => {
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
       const killPid = vi.fn().mockReturnValue('signaled');
 
-      const result = await reapOrphans(registry, new Set(['fix-517']), { dropDatabase, killPid });
+      const result = await reapOrphans(registry, new Set(['fix-517' as RawName]), { dropDatabase, killPid });
 
       expect(result.registry).toEqual({ 'fix-517': { port: 3100, pid: 4242, dbSlug: 'fix_517' } });
       expect(result.migrated).toEqual([{ from: 'fix_517', to: 'fix-517' }]);

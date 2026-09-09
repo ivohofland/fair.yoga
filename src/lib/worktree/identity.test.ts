@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeSlug, dbNamesForSlug, resolveIdentity, isTestDatabaseName } from './identity';
+import { sanitizeSlug, dbNamesForSlug, resolveIdentity, isTestDatabaseName, type DbSlug, type RawName } from './identity';
 
 describe('sanitizeSlug', () => {
   it('lowercases and replaces hyphens with underscores', () => {
@@ -23,7 +23,7 @@ describe('sanitizeSlug', () => {
 
 describe('dbNamesForSlug', () => {
   it('prefixes the slug for both database families', () => {
-    expect(dbNamesForSlug('fix_517')).toEqual({
+    expect(dbNamesForSlug('fix_517' as DbSlug)).toEqual({
       test: 'ethical_yoga_test_fix_517',
       dev: 'ethical_yoga_dev_fix_517',
     });
@@ -92,3 +92,26 @@ describe('resolveIdentity', () => {
     expect(result.isMainCheckout).toBe(true);
   });
 });
+
+/**
+ * Compile-time assertion that `RawName` and `DbSlug` cannot be assigned from
+ * a plain string without a cast, and that a `RawName` cannot stand in for a
+ * `DbSlug` at `dbNamesForSlug` (#528).
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _rawNameBrandRejectsPlainString(s: string): RawName {
+  // @ts-expect-error Plain string cannot be assigned to RawName
+  return s;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _dbSlugBrandRejectsPlainString(s: string): DbSlug {
+  // @ts-expect-error Plain string cannot be assigned to DbSlug
+  return s;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _dbNamesForSlugRejectsRawName(rawName: RawName) {
+  // @ts-expect-error A RawName is not a DbSlug
+  return dbNamesForSlug(rawName);
+}

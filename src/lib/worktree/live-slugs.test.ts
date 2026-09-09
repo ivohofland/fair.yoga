@@ -3,12 +3,13 @@ import os from 'os';
 import path from 'path';
 import { describe, it, expect, afterEach } from 'vitest';
 import { computeLiveWorktreeNames, listWorktreeAdminEntries } from './live-slugs';
+import type { RawName } from './identity';
 
 describe('computeLiveWorktreeNames', () => {
   it('keeps only entries whose working directory still exists', () => {
     const result = computeLiveWorktreeNames([
-      { rawName: 'fix-517', workingDirExists: true },
-      { rawName: 'fix-520', workingDirExists: false },
+      { rawName: 'fix-517' as RawName, workingDirExists: true },
+      { rawName: 'fix-520' as RawName, workingDirExists: false },
     ]);
     expect(result).toEqual(new Set(['fix-517']));
   });
@@ -22,8 +23,8 @@ describe('computeLiveWorktreeNames', () => {
     // issue's own concrete example. Comparing raw names directly must
     // produce two distinct live entries, not one.
     const result = computeLiveWorktreeNames([
-      { rawName: 'fix-517', workingDirExists: true },
-      { rawName: 'fix_517', workingDirExists: true },
+      { rawName: 'fix-517' as RawName, workingDirExists: true },
+      { rawName: 'fix_517' as RawName, workingDirExists: true },
     ]);
     expect(result).toEqual(new Set(['fix-517', 'fix_517']));
     expect(result.size).toBe(2);

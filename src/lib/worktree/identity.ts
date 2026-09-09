@@ -3,6 +3,17 @@ import path from 'path';
 
 const MAX_SLUG_LENGTH = 40;
 
+declare const rawNameBrand: unique symbol;
+declare const dbSlugBrand: unique symbol;
+
+/** Git's own admin-dir basename — unique by git's own construction (see
+ *  WorktreeIdentity.rawName's docblock). Obtained only from resolveIdentity. */
+export type RawName = string & { readonly [rawNameBrand]: true };
+/** sanitizeSlug(rawName) — Postgres-identifier-safe, not guaranteed unique.
+ *  Obtained only from resolveIdentity or a caller that reasons explicitly
+ *  about the rawName/dbSlug distinction. */
+export type DbSlug = string & { readonly [dbSlugBrand]: true };
+
 export function sanitizeSlug(raw: string): string {
   const cleaned = raw
     .toLowerCase()
@@ -19,7 +30,7 @@ export interface DatabaseNames {
   dev: string;
 }
 
-export function dbNamesForSlug(slug: string): DatabaseNames {
+export function dbNamesForSlug(slug: DbSlug): DatabaseNames {
   return {
     test: `ethical_yoga_test_${slug}`,
     dev: `ethical_yoga_dev_${slug}`,
@@ -42,9 +53,9 @@ export interface WorktreeIdentity {
    * Git's own admin-dir basename — empirically verified unique on creation;
    * see docs/superpowers/specs/2026-09-09-worktree-registry-key-collision-design.md §1.
    */
-  rawName: string | null;
+  rawName: RawName | null;
   /** sanitizeSlug(rawName) — Postgres-identifier-safe, not guaranteed unique. */
-  dbSlug: string | null;
+  dbSlug: DbSlug | null;
   gitCommonDir: string;
 }
 
@@ -61,11 +72,11 @@ function basename(dir: string): string {
 /** Pure — decides identity from git's own output. */
 export function resolveIdentity(gitDir: string, gitCommonDir: string): WorktreeIdentity {
   const isMainCheckout = normalizeDir(gitDir) === normalizeDir(gitCommonDir);
-  const rawName = isMainCheckout ? null : basename(gitDir);
+  const rawName = isMainCheckout ? null : (basename(gitDir) as RawName);
   return {
     isMainCheckout,
     rawName,
-    dbSlug: rawName === null ? null : sanitizeSlug(rawName),
+    dbSlug: rawName === null ? null : (sanitizeSlug(rawName) as DbSlug),
     gitCommonDir: normalizeDir(gitCommonDir),
   };
 }

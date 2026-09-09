@@ -1,13 +1,14 @@
 import fs from 'fs';
 import path from 'path';
+import type { RawName } from './identity';
 
 export interface WorktreeAdminEntry {
-  rawName: string;
+  rawName: RawName;
   workingDirExists: boolean;
 }
 
 /** Pure — given what's on disk, decides which raw worktree names are still live. */
-export function computeLiveWorktreeNames(entries: WorktreeAdminEntry[]): Set<string> {
+export function computeLiveWorktreeNames(entries: WorktreeAdminEntry[]): Set<RawName> {
   return new Set(entries.filter((entry) => entry.workingDirExists).map((entry) => entry.rawName));
 }
 
@@ -39,10 +40,13 @@ export function listWorktreeAdminEntries(gitCommonDir: string): WorktreeAdminEnt
         console.warn(`[live-slugs] could not read gitdir for "${rawName}" (${(err as NodeJS.ErrnoException).code ?? err}) — treating as still live rather than reaping it`);
       }
     }
-    return { rawName, workingDirExists };
+    // rawName here is the directory name read directly off disk under
+    // <gitCommonDir>/worktrees/ — the same value identity.ts's resolveIdentity
+    // computes as RawName for that worktree (docblock above).
+    return { rawName: rawName as RawName, workingDirExists };
   });
 }
 
-export function getLiveWorktreeNames(gitCommonDir: string): Set<string> {
+export function getLiveWorktreeNames(gitCommonDir: string): Set<RawName> {
   return computeLiveWorktreeNames(listWorktreeAdminEntries(gitCommonDir));
 }
