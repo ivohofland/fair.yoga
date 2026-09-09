@@ -87,35 +87,56 @@ npm audit --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",(
     console.log(n, v.severity, JSON.stringify(v.fixAvailable));});'
 ```
 
-Add `--omit=dev` for the production tree — the one that ships in the Docker
-image. Both numbers are worth having, because most of what the unqualified
-command reports is lint and test tooling that never leaves a developer's
-machine or a CI runner.
+Add `--omit=dev` for the production dependency tree. Both numbers are worth
+having, because most of what the unqualified command reports is lint and test
+tooling.
+
+**`--omit=dev` is a proxy for "ships to production", not a description of any
+image this repo builds.** Neither Docker stage matches it:
+
+- The `runner` stage (`Dockerfile:32-43`) is **narrower**. It copies only
+  `.next-build/standalone`, whose `node_modules` Next populates by tracing
+  actual imports — so it holds far less than the production dependency tree.
+  Check what is really in it with
+  `for p in <names>; do [ -d ".next-build/standalone/node_modules/$p" ] && echo "$p present" || echo "$p absent"; done`
+  after a build.
+- The `migrate` stage (`Dockerfile:26`) is **wider**. It is `FROM deps`, i.e. a
+  plain `npm ci`, so it ships the entire tree — every devDependency included.
+
+Read `--omit=dev` as "could plausibly execute at runtime somewhere", and check
+the image when the answer matters.
 
 Measured 2026-09-09, immediately after #539 took `next` to `16.3.4`: **12 in
 the whole tree** (5 moderate, 7 high, 0 critical), of which **5 are in the
 production tree** (1 moderate, 4 high, 0 critical). The remaining 7 are
 therefore dev-only. `next` itself reports nothing.
 
-**In the production tree** — all five reach in through a direct dependency's
-own subtree, so none can be fixed by editing `package.json`:
+**In the production dependency tree** — none is a direct dependency; all five
+arrive through one:
 
 | Package | Reached through | Forward fix |
 |---|---|---|
 | `prisma`, `@prisma/config`, `deepmerge-ts` | `@prisma/client` | **None.** npm's suggestion is `prisma@6.12.0`, `isSemVerMajor: true` — a *downgrade* from the pinned `6.19.3` |
-| `nanoid` | `next` → `postcss` | `fixAvailable: true`, by overriding the nested version |
-| `baseline-browser-mapping` | `next` | `fixAvailable: true`, same |
+| `nanoid` | `next` → `postcss` | `npm update nanoid` |
+| `baseline-browser-mapping` | `next` | `npm update baseline-browser-mapping` |
 
-The last two are worth stating plainly: `next` is at the newest published
-version and still resolves both of them below their fixed range. Upgrading the
-framework further is not the lever; an override is.
+The last two are stale lockfile resolutions, not constrained versions, and the
+distinction decides the fix. `postcss` declares `nanoid: ^3.3.16` and `next`
+declares `baseline-browser-mapping: ^2.9.19`; the fixed `3.3.18` and `2.11.21`
+both satisfy those ranges. So nothing upstream is holding them back — the
+committed lockfile is, and refreshing it is enough. That is what npm's bare
+`fixAvailable: true` means, as against the object form the three
+`prisma`-rooted entries get. An `overrides` block would work and is the wrong
+tool: heavier, and pinned against a range that will drift.
 
 **Dev-only** — `brace-expansion`, `browserslist` and `js-yaml` arrive through
 `eslint-config-next` and `eslint`; `@humanfs/node` through `eslint`; `vitest`
-and its two `@vitest/*` packages are the test runner. They run against this
-repo's own source on a developer's machine and on CI. Every advisory among
-them is a denial-of-service or a path-traversal reachable only by feeding the
-tool hostile input — which, here, would mean this repo's own files.
+and `@vitest/coverage-v8` are direct devDependencies and `@vitest/mocker`
+comes with them. They run against this repo's own source on a developer's
+machine and on CI, and every advisory among them needs hostile input fed to
+the tool — which here would mean this repo's own files. Mostly
+denial-of-service and path traversal; `browserslist`'s GHSA-73wf-gq98-2v4g is
+the exception, a prototype write via an untrusted `browserslist-stats.json`.
 
 So the step reports real things, and none of them is a reason to stop a pull
 request that did not cause them. What would change that: an advisory against a
