@@ -273,41 +273,104 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
     expect(block).toBeNull();
   });
 
-  it('lists a teacher whose invitation this account declined', async () => {
-    const { teacher, email } = await makeTeacherAndInvitee();
-    const invitation = await invite(teacher.id, email);
-    await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
+  // `listDeclinedTeachers` is a sibling read to `listPendingInvitations`
+  // (services/invitations.ts), not a decline-writing case like the ones
+  // above — its own nested `describe` so the outer name (about the write)
+  // doesn't stand in for these.
+  describe('listDeclinedTeachers', () => {
+    // A second teacher for the same address as `makeTeacherAndInvitee`'s,
+    // for the two discrimination tests below — each proves its filter
+    // excludes one row while still returning a live sibling to the SAME
+    // address, the shape `invitations.pending.test.ts` uses for its own
+    // `deletedAt`/status exclusions, and for the same reason: asserting
+    // only that the excluded row is absent would pass just as well against
+    // a filter mistyped into matching nothing at all.
+    async function makeTeacher(overrides: { deletedAt?: Date } = {}) {
+      const teacherEmail = `teacher-${suffix}-${crypto.randomBytes(3).toString('hex')}@example.com`;
+      const teacher = await prisma.teacher.create({
+        data: {
+          firstName: 'Tess',
+          lastName: 'Teacher',
+          email: teacherEmail,
+          account: { create: { email: teacherEmail } },
+          bio: '#522 decline-suppression fixture',
+          pageSlug: `tess-${suffix}-${crypto.randomBytes(3).toString('hex')}`,
+          ...overrides,
+        },
+      });
+      teacherIds.push(teacher.id);
+      teacherAccountIds.push(teacher.accountId);
+      return teacher;
+    }
 
-    const rows = await listDeclinedTeachers(prisma, { accountEmail: email });
-    expect(rows.map((r) => r.teacher.pageSlug)).toContain(teacher.pageSlug);
-  });
+    it('lists a teacher whose invitation this account declined', async () => {
+      const { teacher, email } = await makeTeacherAndInvitee();
+      const invitation = await invite(teacher.id, email);
+      await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
 
-  it('lists nothing once the account is erased, even though the block survives', async () => {
-    const { teacher, student, email } = await makeTeacherAndInvitee();
-    const invitation = await invite(teacher.id, email);
-    await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
-    await deleteStudentAccount(prisma, student.id);
-
-    // The block is still there — it is what keeps the suppression working.
-    const block = await prisma.teacherBlock.findUnique({
-      where: { teacherId_email: { teacherId: teacher.id, email } },
-      select: { id: true },
+      const rows = await listDeclinedTeachers(prisma, { accountEmail: email });
+      expect(rows.map((r) => r.teacher.pageSlug)).toContain(teacher.pageSlug);
     });
-    expect(block).not.toBeNull();
 
-    // The narrative is not. A new account on this address learns nothing
-    // about the erased person's refusal.
-    const rows = await listDeclinedTeachers(prisma, { accountEmail: email });
-    expect(rows).toEqual([]);
-  });
+    it('lists nothing once the account is erased, even though the block survives', async () => {
+      const { teacher, student, email } = await makeTeacherAndInvitee();
+      const invitation = await invite(teacher.id, email);
+      await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
+      await deleteStudentAccount(prisma, student.id);
 
-  it('lists nothing for a pair that is currently linked', async () => {
-    const { teacher, student, email } = await makeTeacherAndInvitee();
-    const invitation = await invite(teacher.id, email);
-    await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
-    await prisma.teacherStudent.create({ data: { teacherId: teacher.id, studentId: student.id } });
+      // The block is still there — it is what keeps the suppression working.
+      const block = await prisma.teacherBlock.findUnique({
+        where: { teacherId_email: { teacherId: teacher.id, email } },
+        select: { id: true },
+      });
+      expect(block).not.toBeNull();
 
-    const rows = await listDeclinedTeachers(prisma, { accountEmail: email });
-    expect(rows).toEqual([]);
+      // The narrative is not. A new account on this address learns nothing
+      // about the erased person's refusal.
+      const rows = await listDeclinedTeachers(prisma, { accountEmail: email });
+      expect(rows).toEqual([]);
+    });
+
+    it('lists nothing for a pair that is currently linked', async () => {
+      const { teacher, student, email } = await makeTeacherAndInvitee();
+      const invitation = await invite(teacher.id, email);
+      await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
+      await prisma.teacherStudent.create({ data: { teacherId: teacher.id, studentId: student.id } });
+
+      const rows = await listDeclinedTeachers(prisma, { accountEmail: email });
+      expect(rows).toEqual([]);
+    });
+
+    it('excludes a pending invitation, while still listing a declined one to the same address', async () => {
+      const { teacher: declinedTeacher, email } = await makeTeacherAndInvitee();
+      const declinedInvitation = await invite(declinedTeacher.id, email);
+      await declineInvitation(prisma, { invitationId: declinedInvitation.id, accountEmail: email });
+
+      // A second teacher's invitation to the same address, left pending —
+      // otherwise unanswered, this teacher's Accept/Decline card is still
+      // live on the same page a "Not connected" listing would sit under.
+      const pendingTeacher = await makeTeacher();
+      await invite(pendingTeacher.id, email);
+
+      const rows = await listDeclinedTeachers(prisma, { accountEmail: email });
+      expect(rows.map((r) => r.teacher.pageSlug)).toEqual([declinedTeacher.pageSlug]);
+    });
+
+    it('excludes a declined invitation from a soft-deleted teacher, while still listing a live one to the same address', async () => {
+      const { teacher: liveTeacher, email } = await makeTeacherAndInvitee();
+      const liveInvitation = await invite(liveTeacher.id, email);
+      await declineInvitation(prisma, { invitationId: liveInvitation.id, accountEmail: email });
+
+      // A second, soft-deleted teacher's declined invitation to the same
+      // address — erasure (`deleteTeacherAccount`, services/gdpr.ts) leaves
+      // `Invitation` standing, so a pre-erasure decline stays `declined`
+      // forever on a teacher renamed "Deleted Teacher".
+      const erasedTeacher = await makeTeacher({ deletedAt: new Date() });
+      const erasedInvitation = await invite(erasedTeacher.id, email);
+      await declineInvitation(prisma, { invitationId: erasedInvitation.id, accountEmail: email });
+
+      const rows = await listDeclinedTeachers(prisma, { accountEmail: email });
+      expect(rows.map((r) => r.teacher.pageSlug)).toEqual([liveTeacher.pageSlug]);
+    });
   });
 });
