@@ -35,23 +35,18 @@ const eslintConfig = defineConfig([
       ],
     },
   },
-  // A hardcoded `http://localhost:3000` in an e2e spec breaks against any dev
-  // server not literally on port 3000 (a worktree's isolated server, for
-  // one). Import `BASE_URL` from `'../helpers'` and interpolate it instead.
+  // A hardcoded dev-server origin in an e2e spec breaks against any server
+  // not on that exact host and port (a worktree's isolated server, for one).
   {
     files: ['tests/e2e/**/*.ts'],
     rules: {
       'no-restricted-syntax': [
         'error',
         {
-          selector: 'Literal[value=/localhost:3000/]',
+          selector:
+            'Literal[value=/(localhost|127\\.0\\.0\\.1):[0-9]+/], TemplateElement[value.raw=/(localhost|127\\.0\\.0\\.1):[0-9]+/]',
           message:
-            "Don't hardcode http://localhost:3000 — import BASE_URL from '../helpers' and interpolate it instead, so specs work against any origin (e.g. a worktree's dev server on another port).",
-        },
-        {
-          selector: 'TemplateElement[value.raw=/localhost:3000/]',
-          message:
-            "Don't hardcode http://localhost:3000 — import BASE_URL from '../helpers' and interpolate it instead, so specs work against any origin (e.g. a worktree's dev server on another port).",
+            "Don't hardcode a localhost/127.0.0.1 origin — import BASE_URL from '../helpers' and interpolate it instead, so specs work against any origin (e.g. a worktree's dev server on another port).",
         },
       ],
     },
