@@ -760,8 +760,8 @@ export async function listPendingInvitations(
  * ("Known gap, accepted"). The converse is not a gap and is covered by
  * `invitations.decline.test.ts`: where `unlinkTeacher` DOES find a
  * `delivered: true` row it writes `declined` on it, and this lists that
- * teacher — the section's copy names no route in, so it is true of a refusal
- * made either way.
+ * teacher — the section's copy names no route by which the refusal was made,
+ * so it reads true of one made either way.
  *
  * The exclusions state their reasons here rather than borrowing them from
  * `listPendingInvitations` above, which happens to filter on the same
