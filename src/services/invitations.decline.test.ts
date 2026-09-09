@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { inviteContact, declineInvitation } from './invitations';
 import { deleteStudentAccount } from './gdpr';
+import { resolveInvitationOnLink } from './link-consent';
 
 // `invitations.ts` imports `@/lib/log`, so the specifier here must match
 // that one — the same constraint `invitations.gate.test.ts` documents for
@@ -187,6 +188,74 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
       select: { status: true },
     });
     expect(row.status).toBe('pending');
+
+    const block = await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId: teacher.id, email } },
+      select: { id: true },
+    });
+    expect(block).toBeNull();
+  });
+
+  it('a booking clears a decline-written block and returns the row to accepted', async () => {
+    const { teacher, email } = await makeTeacherAndInvitee();
+    const invitation = await invite(teacher.id, email);
+    await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
+
+    // What POST /api/registrations does inside `!isTeacher` on a booking that
+    // created the link — the student's own act, which is the only thing that
+    // lifts a block.
+    await prisma.$transaction(async (tx) => {
+      await resolveInvitationOnLink(tx, {
+        teacherId: teacher.id,
+        studentEmail: email,
+        linkOutcome: 'created',
+      });
+    });
+
+    const block = await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId: teacher.id, email } },
+      select: { id: true },
+    });
+    expect(block).toBeNull();
+
+    const row = await prisma.invitation.findUnique({
+      where: { id: invitation.id },
+      select: { status: true },
+    });
+    expect(row?.status).toBe('accepted');
+  });
+
+  it('a returning erased decliner clears the surviving block by booking', async () => {
+    const { teacher, student, email } = await makeTeacherAndInvitee();
+    const invitation = await invite(teacher.id, email);
+    await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
+    await deleteStudentAccount(prisma, student.id);
+
+    // They come back: a new account and Student row on the same address.
+    const account = await prisma.account.create({ data: { email } });
+    const returning = await prisma.student.create({
+      data: {
+        firstName: 'Sam',
+        lastName: 'Student',
+        email,
+        incomeTier: 3,
+        accountId: account.id,
+        claimedAt: new Date(),
+      },
+    });
+    // Registered in the same teardown array the helper populates — this
+    // Student/Account pair is created outside `makeTeacherAndInvitee`, but
+    // the `afterAll` above resolves each student's `accountId` from the row
+    // itself, so pushing the id here is enough to reach both deletes.
+    studentIds.push(returning.id);
+
+    await prisma.$transaction(async (tx) => {
+      await resolveInvitationOnLink(tx, {
+        teacherId: teacher.id,
+        studentEmail: email,
+        linkOutcome: 'created',
+      });
+    });
 
     const block = await prisma.teacherBlock.findUnique({
       where: { teacherId_email: { teacherId: teacher.id, email } },
