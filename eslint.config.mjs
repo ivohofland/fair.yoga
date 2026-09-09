@@ -35,10 +35,14 @@ const eslintConfig = defineConfig([
       ],
     },
   },
-  // A hardcoded dev-server origin in an e2e spec breaks against any server
-  // not on that exact host and port (a worktree's isolated server, for one).
+  // A hardcoded dev-server origin in a test file breaks against any server
+  // not on that exact host and port (a worktree's isolated server, for
+  // one). Scoped to the whole tests/ tree, not just e2e — #547 found the
+  // same defect one tier over. tests/helpers.ts is excluded: it's where
+  // the fallback literal legitimately lives.
   {
-    files: ['tests/e2e/**/*.ts'],
+    files: ['tests/**/*.ts'],
+    ignores: ['tests/helpers.ts'],
     rules: {
       'no-restricted-syntax': [
         'error',
@@ -46,7 +50,7 @@ const eslintConfig = defineConfig([
           selector:
             'Literal[value=/(localhost|127\\.0\\.0\\.1):[0-9]+/], TemplateElement[value.raw=/(localhost|127\\.0\\.0\\.1):[0-9]+/]',
           message:
-            "Don't hardcode a localhost/127.0.0.1 origin — import BASE_URL from '../helpers' and interpolate it instead, so specs work against any origin (e.g. a worktree's dev server on another port).",
+            "Don't hardcode a localhost/127.0.0.1 origin — import BASE_URL from '../helpers' and interpolate it instead, so tests work against any origin (e.g. a worktree's dev server on another port).",
         },
       ],
     },
