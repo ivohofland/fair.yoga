@@ -203,14 +203,14 @@ describe('PendingInvitationCard', () => {
     expect(screen.getByRole('button', { name: /^decline$/i })).toBeEnabled();
   });
 
-  it('offers the route back only once declining is being confirmed', () => {
+  it('states the route back only once declining is being confirmed', () => {
     stubFetch();
     render(<PendingInvitationCard invitationId="inv-1" teacherName="Jane Teacher" />);
-    expect(screen.queryByText(/booking one of their classes/i)).toBeNull();
+    expect(screen.queryByText(/the way back is booking one of/i)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /^decline$/i }));
 
-    expect(screen.getByText(/booking one of their classes/i)).toBeInTheDocument();
+    expect(screen.getByText(/the way back is booking one of/i)).toBeInTheDocument();
   });
 
   it('renders no decline confirmation, and fetches nothing, until the trigger is clicked', () => {

@@ -110,9 +110,6 @@ export function PendingInvitationCard({ invitationId, teacherName }: PendingInvi
             Declining can&apos;t be undone here — the way back is booking one of{' '}
             {teacherName}&apos;s classes.
           </p>
-          <p className="type-caption mb-3">
-            You can connect later by booking one of their classes.
-          </p>
           <div className="flex items-center gap-3">
             <Button variant="destructive" onClick={() => respond('decline')} disabled={submitting}>
               {submitting ? 'Declining...' : 'Decline invitation'}
