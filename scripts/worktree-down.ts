@@ -19,7 +19,7 @@ async function main(): Promise<void> {
       return registry;
     }
     if (entry.pid !== null) {
-      const stopped = killPidReal(entry.pid);
+      const stopped = killPidReal(entry.pid, entry.port);
       console.log(stopped ? `[worktree:down] stopped pid ${entry.pid}` : `[worktree:down] pid ${entry.pid} was already gone`);
     }
     return setPid(registry, rawName, null);

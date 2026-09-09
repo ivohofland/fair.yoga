@@ -20,7 +20,7 @@ describe('reapOrphans', () => {
     expect(result.registry).toEqual({ fix_517: { port: 3100, pid: null, dbSlug: 'fix_517' } });
     expect(result.migrated).toEqual([]);
     expect(killPid).toHaveBeenCalledTimes(1);
-    expect(killPid).toHaveBeenCalledWith(4242);
+    expect(killPid).toHaveBeenCalledWith(4242, 3101);
     expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_fix_520');
     expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_fix_520');
     expect(dropDatabase).toHaveBeenCalledTimes(2);
@@ -116,7 +116,7 @@ describe('reapOrphans', () => {
       expect(result.registry).toEqual({});
       expect(result.reaped).toEqual(['fix_517']);
       expect(result.migrated).toEqual([]);
-      expect(killPid).toHaveBeenCalledWith(4242);
+      expect(killPid).toHaveBeenCalledWith(4242, 3100);
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_fix_517');
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_fix_517');
     });
@@ -131,7 +131,7 @@ describe('reapOrphans', () => {
       expect(result.registry).toEqual({});
       expect(result.reaped).toEqual(['fix-517']);
       expect(result.migrated).toEqual([]);
-      expect(killPid).toHaveBeenCalledWith(4242);
+      expect(killPid).toHaveBeenCalledWith(4242, 3100);
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_fix_517');
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_fix_517');
     });
@@ -162,7 +162,7 @@ describe('reapOrphans', () => {
       expect(result.reaped).toEqual(['old-name']);
       expect(result.migrated).toEqual([]);
       expect(result.registry).toEqual({ 'live-worktree': { port: 3200, pid: 111, dbSlug: 'live_worktree' } });
-      expect(killPid).toHaveBeenCalledWith(4242);
+      expect(killPid).toHaveBeenCalledWith(4242, 3100);
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_live_worktree');
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_live_worktree');
     });
@@ -182,7 +182,7 @@ describe('reapOrphans', () => {
       expect(result.reaped).toEqual(['fix_517']);
       expect(result.migrated).toEqual([]);
       expect(result.registry).toEqual({});
-      expect(killPid).toHaveBeenCalledWith(4242);
+      expect(killPid).toHaveBeenCalledWith(4242, 3100);
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_fix_517');
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_fix_517');
     });
@@ -209,7 +209,7 @@ describe('reapOrphans', () => {
       expect(result.migrated).toEqual([{ from: 'fix_517', to: 'fix-517' }]);
       expect(result.reaped).toEqual(['fix_520']); // (b) fully reaped
       expect(killPid).toHaveBeenCalledTimes(1);
-      expect(killPid).toHaveBeenCalledWith(2222);
+      expect(killPid).toHaveBeenCalledWith(2222, 3101);
       expect(dropDatabase).toHaveBeenCalledTimes(2);
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_fix_520');
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_fix_520');
@@ -237,7 +237,7 @@ describe('reapOrphans', () => {
       expect(result.reaped).toEqual(['live_worktree']);
       expect(result.migrated).toEqual([]);
       expect(result.registry).toEqual({ 'live-worktree': { port: 3200, pid: 111, dbSlug: 'live_worktree' } });
-      expect(killPid).toHaveBeenCalledWith(4242);
+      expect(killPid).toHaveBeenCalledWith(4242, 3100);
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_unrelated_slug');
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_unrelated_slug');
     });

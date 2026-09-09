@@ -72,13 +72,13 @@ async function main(): Promise<void> {
   try {
     await writeRegistryLocked(registryPath, (registry) => setPid(registry, rawName, pid));
   } catch (err) {
-    killPidReal(pid);
+    killPidReal(pid, port);
     throw err;
   }
 
   const up = await waitForServer(port);
   if (!up) {
-    killPidReal(pid);
+    killPidReal(pid, port);
     await writeRegistryLocked(registryPath, (registry) => setPid(registry, rawName, null));
     let logTail = '(log unavailable)';
     try {

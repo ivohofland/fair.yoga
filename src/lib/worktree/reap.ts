@@ -5,7 +5,7 @@ import { dropDatabaseReal, killPidReal } from './side-effects';
 
 export interface ReapDeps {
   dropDatabase: (dbName: string) => Promise<void>;
-  killPid: (pid: number) => void;
+  killPid: (pid: number, port: number) => void;
 }
 
 export interface ReapResult {
@@ -38,7 +38,7 @@ async function reapEntry(
 ): Promise<Registry> {
   try {
     if (entry.pid !== null) {
-      deps.killPid(entry.pid);
+      deps.killPid(entry.pid, entry.port);
     }
     const { test, dev } = dbNamesForSlug(entry.dbSlug);
     await deps.dropDatabase(test);
