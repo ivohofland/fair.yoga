@@ -2,7 +2,7 @@ import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher } from './account-helpers';
 import { hydrationSignal, patchOk, reloadHydrated, SERVER_RENDER_TIMEOUT } from './page-helpers';
-import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { uniqueSuffix, seedSession, sessionCookie, BASE_URL } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
@@ -514,7 +514,7 @@ test.describe('One-off studio classes', () => {
     await page.waitForURL(/\/studio-class\/(?!new$)[\w-]+$/, { timeout: 10_000 });
 
     const created = await prisma.studioClass.findFirstOrThrow({ where: { calendarEntry: { teacherId: soloTeacherId, classType: 'Cover Class' } }, include: { calendarEntry: true } });
-    expect(page.url()).toBe(`http://localhost:3000/studio-class/${created.id}`);
+    expect(page.url()).toBe(`${BASE_URL}/studio-class/${created.id}`);
     expect(created.calendarEntry.scheduleRuleId).toBeNull();
 
     // Issue 304, manual half: the page the log form lands on heads with the
@@ -566,7 +566,7 @@ test.describe('One-off studio classes', () => {
     // A hard navigation, not a soft push — see the comment at
     // the `window.location.assign` comment in
     // `delete-studio-class-button.tsx`.
-    await page.waitForURL('http://localhost:3000/schedule', { timeout: 10_000 });
+    await page.waitForURL(`${BASE_URL}/schedule`, { timeout: 10_000 });
     expect(await prisma.studioClass.count({ where: { id: created.id } })).toBe(0);
   });
 });

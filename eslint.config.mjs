@@ -35,6 +35,30 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // Issue #541: a hardcoded `http://localhost:3000` in an e2e spec breaks in
+  // any environment where the dev server isn't literally on port 3000 (a git
+  // worktree's isolated dev server, for one). `tests/helpers.ts` exports
+  // `BASE_URL` for exactly this — resolved from `INTEGRATION_BASE_URL` with
+  // that same literal as its fallback — so every e2e spec should interpolate
+  // it instead of hardcoding the origin.
+  {
+    files: ['tests/e2e/**/*.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'Literal[value=/localhost:3000/]',
+          message:
+            "Don't hardcode http://localhost:3000 — import BASE_URL from '../helpers' and interpolate it instead, so specs work against any origin (e.g. a worktree's dev server on another port).",
+        },
+        {
+          selector: 'TemplateElement[value.raw=/localhost:3000/]',
+          message:
+            "Don't hardcode http://localhost:3000 — import BASE_URL from '../helpers' and interpolate it instead, so specs work against any origin (e.g. a worktree's dev server on another port).",
+        },
+      ],
+    },
+  },
   // docs/ holds the vendored design-system reference (prototype JSX, generated
   // support.js) — documentation, not app code.
   //

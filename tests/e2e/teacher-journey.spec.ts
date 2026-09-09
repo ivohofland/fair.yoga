@@ -2,7 +2,7 @@ import { test, expect } from './fixtures';
 import type { BrowserContext } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
-import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { uniqueSuffix, seedSession, sessionCookie, BASE_URL } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
@@ -279,7 +279,7 @@ test.describe('Teacher journey', () => {
 
   test('a booking arrives and shows on the class page', async ({ page, context }) => {
     // The student side of this API round-trip is covered in booking.spec.
-    const res = await fetch('http://localhost:3000/api/registrations', {
+    const res = await fetch(`${BASE_URL}/api/registrations`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
