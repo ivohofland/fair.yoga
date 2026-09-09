@@ -7,15 +7,15 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { acceptInvitation, unlinkTeacher } from './invitations';
+import { acceptInvitation, declineInvitation, unlinkTeacher } from './invitations';
 import { resolveInvitationOnLink } from './link-consent';
 import { linkTeacherStudent } from './roster-link';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 
 /**
- * Lock-ORDER invariants for the two table pairs #174 task 7 fixed:
- * `{Invitation, TeacherStudent}` and `{StudentPrivacy, TeacherStudent}`.
+ * Lock-ORDER invariants for the table pairs the describes below name, each
+ * in its own title.
  *
  * These are database invariants, not HTTP ones — nothing here calls the app
  * on `:3000`, there is no `BASE_URL`, no session, no `fetch`. They provoke
@@ -249,10 +249,11 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * `INSERT ... ON CONFLICT DO UPDATE`, which DOES take the row lock. The
    * cycle re-forms and Postgres answers with `40P01` again. This is what
    * makes the empty-update protection "one payload away from vanishing"
-   * rather than a permanent safety net: nothing stops a future edit to
-   * `unlinkTeacher`'s `TeacherBlock` `update: {}` (`invitations.ts` — the one
-   * real site left this quirk still governs, see `docs/lock-order.md`) from
-   * landing exactly here with no warning.
+   * rather than a permanent safety net: nothing stops a future edit to a
+   * `TeacherBlock` `update: {}` in `invitations.ts` — a site this quirk still
+   * governs, see `docs/lock-order.md` — from landing exactly here with no
+   * warning. `declineInvitation`'s upsert is raced directly by the
+   * `{Invitation, TeacherBlock}` describe at the bottom of this file.
    */
   it('the opposite order deadlocks once the TeacherStudent write is not empty — the quirk this project stopped relying on', async () => {
     const { teacherId, studentId, email, invitationId } = await makeLinkedStudentWithPendingInvite();
@@ -294,11 +295,11 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * that deadlocks above, in `unlinkTeacher`'s order — `TeacherStudent`
    * before `Invitation` — does not. This is the property the reorder in
    * `acceptInvitation` actually buys, independent of any Prisma
-   * upsert-compilation quirk: even if `unlinkTeacher`'s `TeacherBlock`
-   * `update: {}` (`invitations.ts` — the one real site left this quirk still
-   * governs, see `docs/lock-order.md`) started taking a real lock tomorrow,
-   * the write order alone is enough to prevent the cycle, because both
-   * sides now agree which row to reach for first.
+   * upsert-compilation quirk: even if the `TeacherBlock` `update: {}` upserts
+   * in `invitations.ts` — sites this quirk still governs, see
+   * `docs/lock-order.md` — started taking a real lock tomorrow, the write
+   * order alone is enough to prevent the cycle, because both sides now agree
+   * which row to reach for first.
    *
    * No `bReady`/`bHasLink` handshake here, unlike the two tests above —
    * deliberately, not an oversight. Both transactions now reach for
@@ -1147,4 +1148,250 @@ describe('StudentPrivacy and TeacherStudent take one lock order (#174 task 7)', 
       }),
     ).toBeNull();
   });
+});
+
+describe('Invitation and TeacherBlock take one lock order (#522)', () => {
+  const blockTeacherIds: string[] = [];
+  const blockTeacherAccountIds: string[] = [];
+
+  afterAll(async () => {
+    if (blockTeacherIds.length) {
+      await prisma.teacherBlock.deleteMany({ where: { teacherId: { in: blockTeacherIds } } });
+      await prisma.invitation.deleteMany({ where: { teacherId: { in: blockTeacherIds } } });
+      await prisma.teacher.deleteMany({ where: { id: { in: blockTeacherIds } } });
+    }
+    if (blockTeacherAccountIds.length) {
+      await prisma.account.deleteMany({ where: { id: { in: blockTeacherAccountIds } } });
+    }
+  });
+
+  /**
+   * A teacher with a `pending` invitation and a `TeacherBlock` already
+   * standing on the same `(teacherId, email)`.
+   *
+   * The standing block is the precondition, not scenery: it is the only state
+   * in which `declineInvitation`'s `update: {}` does anything at all. A first
+   * decline for a pair finds no row to match and genuinely `INSERT`s, which
+   * takes the row lock whatever the payload says — so a fixture without the
+   * block would deadlock in both tests below and prove nothing about the
+   * payload.
+   *
+   * Reachable, not contrived: `unlinkTeacher` (`invitations.ts`) scopes its
+   * invitation write to `delivered: true` and then writes the block
+   * unconditionally, leaving an undelivered invitation `pending` beside a
+   * fresh block — which is why this row carries `delivered: false`.
+   *
+   * No `Student` row and no roster link: neither `declineInvitation` nor
+   * `resolveInvitationOnLink` reads one, and this pair's cycle closes between
+   * `Invitation` and `TeacherBlock` alone.
+   */
+  async function makeBlockedPendingInvite() {
+    const local = uniqueSuffix();
+    const email = `block-lock-order-${local}@test.local`;
+
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Block', lastName: 'Order',
+        email: `block-lock-order-teacher-${local}@test.local`,
+        account: { create: { email: `block-lock-order-teacher-${local}@test.local` } },
+        bio: '#522 Invitation/TeacherBlock lock-order fixture teacher',
+        pageSlug: `block-lock-order-${local}`,
+      },
+      select: { id: true, accountId: true },
+    });
+    blockTeacherIds.push(teacher.id);
+    blockTeacherAccountIds.push(teacher.accountId);
+
+    const invitation = await prisma.invitation.create({
+      data: {
+        teacherId: teacher.id, email, firstName: 'Block', lastName: 'Order',
+        delivered: false,
+      },
+      select: { id: true },
+    });
+
+    await prisma.teacherBlock.create({ data: { teacherId: teacher.id, email } });
+
+    return { teacherId: teacher.id, email, invitationId: invitation.id };
+  }
+
+  /**
+   * The counterparty both tests below race: a transaction around the REAL
+   * `resolveInvitationOnLink` (`link-consent.ts`), which is what `POST
+   * /api/registrations` reaches on a booking that created the link. It takes
+   * `TeacherBlock` then `Invitation` — the opposite order to
+   * `declineInvitation`'s, which is the whole reason there is anything here
+   * to test.
+   *
+   * Hooked at its `Invitation` write, and that position does two jobs at
+   * once: reaching that statement proves the `TeacherBlock` `deleteMany`
+   * above it already ran, so this is both where the block row is known to be
+   * held and where waiting for the decline's own half is safe. Neither side
+   * can wait on a signal the other has not already sent — each fires its own
+   * before awaiting — so the handshake cannot hang the test the way the
+   * `{Invitation, TeacherStudent}` tests above warn about.
+   *
+   * The sleep after the signals is the same widen-the-window device the rest
+   * of this file uses: the decline's block write is one round trip behind the
+   * signal it sends, and a wait edge that has not reached Postgres yet is not
+   * one.
+   *
+   * `hook.fired` is not decoration. Both hooks here are keyed by Prisma
+   * method NAME; if `resolveInvitationOnLink` stops reaching `updateMany`,
+   * the handshake silently never fires, both transactions run unsynchronised,
+   * and the deadlock test below passes having raced nothing.
+   */
+  function bookingShapedResolve(input: {
+    teacherId: string;
+    email: string;
+    signalBlockRowHeld: () => void;
+    invitationRowHeld: Promise<void>;
+  }) {
+    const hook = { fired: false };
+    const client = prisma.$extends({
+      query: {
+        invitation: {
+          async updateMany({ args, query }) {
+            hook.fired = true;
+            input.signalBlockRowHeld();
+            await input.invitationRowHeld;
+            await new Promise((r) => setTimeout(r, 200));
+            return query(args);
+          },
+        },
+      },
+      // Same cast rationale as the tests above.
+    }) as unknown as PrismaClient;
+
+    const transaction = client.$transaction(
+      async (tx) =>
+        resolveInvitationOnLink(tx, {
+          teacherId: input.teacherId,
+          studentEmail: input.email,
+          linkOutcome: 'created',
+        }),
+      { timeout: 15_000 },
+    );
+
+    return { transaction, hook };
+  }
+
+  /**
+   * The real `declineInvitation` against the real `resolveInvitationOnLink`,
+   * forced into the exact interleaving that would deadlock if either side
+   * took a lock it does not:
+   *
+   *   decline: Invitation (held) -> TeacherBlock (asked for)
+   *   booking: TeacherBlock (held) -> Invitation (asked for)
+   *
+   * That is a cycle on paper, and it settles anyway — because the decline's
+   * `upsert({ where, update: {}, create })` meets an existing block row and
+   * Prisma compiles that to plain, non-locking `SELECT`s (`docs/lock-order
+   * .md`, "The empty-`update` upsert quirk"). The arrow out of the decline is
+   * never drawn, so there is no cycle for Postgres to detect.
+   *
+   * This test therefore does NOT show the order is safe. It shows the order
+   * is currently survivable for one reason, and the test below it names that
+   * reason by taking it away.
+   *
+   * The hook sits on the decline's own pivot: reaching the block upsert
+   * proves its `Invitation` write already committed its row lock, so one hook
+   * both signals that and waits for the booking's half. `declineHookFired`
+   * guards the same vacuous pass the booking's `hook.fired` does.
+   */
+  it('a real decline racing a booking-shaped resolve does not deadlock — the empty-update path holds', async () => {
+    const { teacherId, email, invitationId } = await makeBlockedPendingInvite();
+
+    let signalBlockRowHeld!: () => void;
+    const blockRowHeld = new Promise<void>((r) => { signalBlockRowHeld = r; });
+    let signalInvitationRowHeld!: () => void;
+    const invitationRowHeld = new Promise<void>((r) => { signalInvitationRowHeld = r; });
+
+    let declineHookFired = false;
+    const declining = prisma.$extends({
+      query: {
+        teacherBlock: {
+          async upsert({ args, query }) {
+            declineHookFired = true;
+            signalInvitationRowHeld();
+            await blockRowHeld;
+            return query(args);
+          },
+        },
+      },
+      // Same cast rationale as the tests above.
+    }) as unknown as PrismaClient;
+
+    const booking = bookingShapedResolve({
+      teacherId, email, signalBlockRowHeld, invitationRowHeld,
+    });
+
+    const [declineResult, bookingResult] = await Promise.allSettled([
+      declineInvitation(declining, { invitationId, accountEmail: email }),
+      booking.transaction,
+    ]);
+
+    expect(declineHookFired).toBe(true);
+    expect(booking.hook.fired).toBe(true);
+    // `{ ok: true }`, not merely "did not reject": a decline that answered
+    // NOT_PENDING would also settle, and would also have taken no locks.
+    expect(declineResult).toMatchObject({ status: 'fulfilled', value: { ok: true } });
+    expect(bookingResult.status).toBe('fulfilled');
+  }, 30_000);
+
+  /**
+   * The same race, with the one edit `docs/lock-order.md` warns a future
+   * tidy-up will make: a real column in the block upsert's `update` payload.
+   * Prisma switches to the atomic `INSERT ... ON CONFLICT DO UPDATE`, which
+   * waits on the booking's uncommitted delete of that same row, the missing
+   * arrow gets drawn, and Postgres answers `40P01`.
+   *
+   * `createdAt` is chosen because it is a real, writable column on
+   * `TeacherBlock` and stamping it is the shape of edit that actually shows
+   * up in a tidy-up. Nothing about the deadlock depends on which column it
+   * is — only on the payload being non-empty.
+   *
+   * The decline side is hand-rolled, unlike the test above: the payload is
+   * the mutation under test and no client extension can reach inside it. Its
+   * two statements are `declineInvitation`'s own, in its order, so what
+   * differs between the two tests is the payload and nothing else. The
+   * booking side is the same real function in both.
+   *
+   * So `update: {}` in `declineInvitation` is load-bearing, and this is the
+   * test that says so out loud rather than leaving it to a comment: change it
+   * and this goes red instead of production going `40P01`.
+   */
+  it('the same race deadlocks once the block upsert carries a real field — why update: {} is load-bearing', async () => {
+    const { teacherId, email, invitationId } = await makeBlockedPendingInvite();
+
+    let signalBlockRowHeld!: () => void;
+    const blockRowHeld = new Promise<void>((r) => { signalBlockRowHeld = r; });
+    let signalInvitationRowHeld!: () => void;
+    const invitationRowHeld = new Promise<void>((r) => { signalInvitationRowHeld = r; });
+
+    const declining = prisma.$transaction(async (tx) => {
+      await tx.invitation.updateMany({
+        where: { id: invitationId, status: 'pending' },
+        data: { status: 'declined', respondedAt: new Date() },
+      });
+      signalInvitationRowHeld();
+      await blockRowHeld;
+      await tx.teacherBlock.upsert({
+        where: { teacherId_email: { teacherId, email } },
+        update: { createdAt: new Date() },
+        create: { teacherId, email },
+      });
+    }, { timeout: 15_000 });
+
+    const booking = bookingShapedResolve({
+      teacherId, email, signalBlockRowHeld, invitationRowHeld,
+    });
+
+    const results = await Promise.allSettled([declining, booking.transaction]);
+    const rejections = results.filter((r) => r.status === 'rejected');
+
+    expect(booking.hook.fired).toBe(true);
+    expect(rejections).toHaveLength(1);
+    expect(String((rejections[0] as PromiseRejectedResult).reason)).toMatch(/40P01|deadlock/i);
+  }, 30_000);
 });
