@@ -16,6 +16,7 @@ import {
   isLockStale,
   isPidAlive,
   readLockInfo,
+  assertLockHeld,
   type Registry,
 } from './registry';
 
@@ -453,6 +454,43 @@ describe('acquireLock / releaseLock staleness recovery', () => {
     expect(fs.existsSync(lockPath)).toBe(false);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[registry] reclaimed stale lock'));
     warnSpy.mockRestore();
+  });
+
+  it('assertLockHeld recovers from a transient read failure without throwing', () => {
+    const handle = acquireLock(lockDir);
+    const originalReadFileSync = fs.readFileSync.bind(fs);
+    let calls = 0;
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation((...args: Parameters<typeof fs.readFileSync>) => {
+      calls++;
+      if (calls === 1) {
+        const err = new Error('too many open files') as NodeJS.ErrnoException;
+        err.code = 'EMFILE';
+        throw err;
+      }
+      return originalReadFileSync(...args);
+    });
+    try {
+      expect(() => assertLockHeld(handle)).not.toThrow();
+      expect(calls).toBeGreaterThan(1);
+    } finally {
+      readSpy.mockRestore();
+      releaseLock(lockDir, handle.token);
+    }
+  });
+
+  it('assertLockHeld throws a "could not verify" error (not "was lost") on a persistent ambiguous read failure', () => {
+    const handle = acquireLock(lockDir);
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(() => {
+      const err = new Error('too many open files') as NodeJS.ErrnoException;
+      err.code = 'EMFILE';
+      throw err;
+    });
+    try {
+      expect(() => assertLockHeld(handle)).toThrow(/could not verify lock ownership/);
+    } finally {
+      readSpy.mockRestore();
+      releaseLock(lockDir, handle.token);
+    }
   });
 });
 

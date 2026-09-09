@@ -355,13 +355,47 @@ export function releaseLock(lockDir: string, expectedTokenOrPid?: string | numbe
   }
 }
 
+const ASSERT_LOCK_HELD_RETRIES = 3;
+const ASSERT_LOCK_HELD_RETRY_DELAY_MS = 5;
+
 export function assertLockHeld(handle: LockHandle): void {
-  const { info, error } = readLockInfo(handle.lockDir);
-  if (error || !info || info.pid !== handle.pid || info.token !== handle.token) {
+  let result = readLockInfo(handle.lockDir);
+  // A non-ENOENT error is ambiguous (EACCES/EMFILE/EIO) — retry briefly before
+  // concluding anything, since a transient read glitch on our own just-read file is
+  // far more likely than a genuine mid-mutation theft (isLockStale never reclaims a
+  // lock whose pid is alive, and we are that pid). ENOENT means the directory is
+  // genuinely gone, so there's nothing to gain from retrying it.
+  for (
+    let attempt = 1;
+    attempt < ASSERT_LOCK_HELD_RETRIES && !result.info && result.error && result.error.code !== 'ENOENT';
+    attempt++
+  ) {
+    sleepSync(ASSERT_LOCK_HELD_RETRY_DELAY_MS);
+    result = readLockInfo(handle.lockDir);
+  }
+  const { info, error } = result;
+
+  if (info) {
+    if (info.pid === handle.pid && info.token === handle.token) {
+      return;
+    }
     throw new Error(
-      `[registry] lock at ${handle.lockDir} was lost during mutation (held by ${info?.pid ?? 'unknown'}, expected ${handle.pid})`,
+      `[registry] lock at ${handle.lockDir} was lost during mutation (held by ${info.pid}, expected ${handle.pid})`,
     );
   }
+
+  if (!error || error.code === 'ENOENT') {
+    throw new Error(
+      `[registry] lock at ${handle.lockDir} was lost during mutation (held by unknown, expected ${handle.pid})`,
+    );
+  }
+
+  // Read kept failing for a reason unrelated to the lock's actual state. Abort the
+  // commit rather than guess — but say what actually happened instead of implying
+  // the lock was confirmed stolen.
+  throw new Error(
+    `[registry] could not verify lock ownership at ${handle.lockDir} before commit (${error}) — aborting rather than risk an unsynchronized write`,
+  );
 }
 
 export async function writeRegistryLocked(
