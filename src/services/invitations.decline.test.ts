@@ -1,7 +1,13 @@
 import { describe, it, expect, afterAll, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { inviteContact, declineInvitation, acceptInvitation, listDeclinedTeachers } from './invitations';
+import {
+  inviteContact,
+  declineInvitation,
+  acceptInvitation,
+  unlinkTeacher,
+  listDeclinedTeachers,
+} from './invitations';
 import { deleteStudentAccount } from './gdpr';
 import { resolveInvitationOnLink } from './link-consent';
 
@@ -25,7 +31,23 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
   const studentIds: string[] = [];
 
   afterAll(async () => {
-    if (studentIds.length) {
+    // Every step runs whatever an earlier one throws, and the errors are
+    // rethrown together at the end. The steps stay ordered (FKs), but a
+    // single failing statement must not skip the ones after it or the
+    // `$disconnect`: this suite writes into a database every other suite
+    // shares, so a skipped cleanup leaks fixture rows into their queries
+    // rather than only failing this file.
+    const errors: unknown[] = [];
+    const step = async (run: () => Promise<unknown>): Promise<void> => {
+      try {
+        await run();
+      } catch (err) {
+        errors.push(err);
+      }
+    };
+
+    await step(async () => {
+      if (!studentIds.length) return;
       // `Student.accountId` is the FK and there is no cascade, so the
       // account ids are read back here rather than carried from creation —
       // `makeTeacherAndInvitee` has no other use for them.
@@ -40,19 +62,23 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
       if (studentAccountIds.length) {
         await prisma.account.deleteMany({ where: { id: { in: studentAccountIds } } });
       }
-    }
-    if (teacherIds.length) {
+    });
+    await step(async () => {
+      if (!teacherIds.length) return;
       // `Invitation` and `TeacherBlock` both cascade on `Teacher` delete
       // (`onDelete: Cascade`); deleted explicitly first anyway, the same
       // belt-and-suspenders style `invitations.gate.test.ts` uses.
       await prisma.invitation.deleteMany({ where: { teacherId: { in: teacherIds } } });
       await prisma.teacherBlock.deleteMany({ where: { teacherId: { in: teacherIds } } });
       await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
-    }
-    if (teacherAccountIds.length) {
+    });
+    await step(async () => {
+      if (!teacherAccountIds.length) return;
       await prisma.account.deleteMany({ where: { id: { in: teacherAccountIds } } });
-    }
-    await prisma.$disconnect();
+    });
+    await step(() => prisma.$disconnect());
+
+    if (errors.length) throw new AggregateError(errors, 'decline-suite teardown failed');
   });
 
   async function makeTeacherAndInvitee() {
@@ -327,6 +353,53 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
       });
       expect(row.status).toBe('pending');
     });
+
+    it('answers NOT_PENDING for an accepted row on a blocked pair, and commits no link', async () => {
+      const { teacher, student, email } = await makeTeacherAndInvitee();
+      const invitation = await invite(teacher.id, email);
+
+      // `delivered: false` is what makes the state below reachable rather
+      // than hand-built: `PUT /api/invitations/[id]` resets that column on a
+      // genuine re-address (#502 Fix #3), and `unlinkTeacher`'s status write
+      // is scoped to `delivered: true` — so the unlink writes the block and
+      // deletes the link while leaving this row `accepted`.
+      await prisma.invitation.update({
+        where: { id: invitation.id },
+        data: { delivered: false },
+      });
+      expect(await acceptInvitation(prisma, {
+        invitationId: invitation.id,
+        studentId: student.id,
+        accountEmail: email,
+      })).toEqual({ ok: true });
+      expect(await unlinkTeacher(prisma, {
+        teacherId: teacher.id,
+        studentId: student.id,
+        accountEmail: email,
+      })).toEqual({ ok: true });
+
+      // The arm `acceptInvitation`'s block guard is load-bearing for, and the
+      // only one a test can tell apart from its absence: delete the guard and
+      // the CAS's own re-read treats an already-`accepted` row as success, so
+      // the call returns `{ ok: true }` having committed a roster link for a
+      // blocked pair. The `declined` case above answers NOT_PENDING either
+      // way, because `NotPendingError` rolls that link write back.
+      const result = await acceptInvitation(prisma, {
+        invitationId: invitation.id,
+        studentId: student.id,
+        accountEmail: email,
+      });
+      expect(result).toEqual({ ok: false, reason: 'NOT_PENDING' });
+
+      expect(await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId: teacher.id, studentId: student.id } },
+      })).toBeNull();
+      const row = await prisma.invitation.findUniqueOrThrow({
+        where: { id: invitation.id },
+        select: { status: true },
+      });
+      expect(row.status).toBe('accepted');
+    });
   });
 
   // `listDeclinedTeachers` is a sibling read to `listPendingInvitations`
@@ -362,6 +435,30 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
       const { teacher, email } = await makeTeacherAndInvitee();
       const invitation = await invite(teacher.id, email);
       await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
+
+      const rows = await listDeclinedTeachers(prisma, { accountEmail: email });
+      expect(rows.map((r) => r.teacher.pageSlug)).toContain(teacher.pageSlug);
+    });
+
+    it('lists a teacher the student unlinked — the other writer of a declined row', async () => {
+      const { teacher, student, email } = await makeTeacherAndInvitee();
+      const invitation = await invite(teacher.id, email);
+      expect(await acceptInvitation(prisma, {
+        invitationId: invitation.id,
+        studentId: student.id,
+        accountEmail: email,
+      })).toEqual({ ok: true });
+
+      // `unlinkTeacher` is the refusal route this section is NOT keyed on:
+      // it writes the same `TeacherBlock` a decline does, and flips a
+      // `delivered: true` invitation to `declined` alongside. That row is
+      // what this read finds, so a walk-away is listed exactly like a
+      // decline — which is why the section's copy names no route in.
+      expect(await unlinkTeacher(prisma, {
+        teacherId: teacher.id,
+        studentId: student.id,
+        accountEmail: email,
+      })).toEqual({ ok: true });
 
       const rows = await listDeclinedTeachers(prisma, { accountEmail: email });
       expect(rows.map((r) => r.teacher.pageSlug)).toContain(teacher.pageSlug);

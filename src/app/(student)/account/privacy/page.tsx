@@ -97,7 +97,11 @@ export default async function PrivacySettingsPage() {
       {declinedTeachers.length > 0 && (
         <div className="mb-6">
           {/* h2, same reasoning as "Pending invitations" and "Your teachers"
-              below (review F8) — each card's own heading is an h3. */}
+              below (review F8) — each card's own heading is an h3. Both
+              branches of this section are asserted in
+              `tests/e2e/invitations.spec.ts`, for the same reason the empty
+              state below is: nothing in the Vitest suite can render this
+              page (async server component, prisma). */}
           <h2 className="type-subtitle mb-3">Not connected</h2>
           <div className="flex flex-col gap-4">
             {declinedTeachers.map((row) => (
@@ -119,9 +123,8 @@ export default async function PrivacySettingsPage() {
       )}
 
       {/* h2, matching the headings above — without one, a section is
-          indistinguishable to a screen reader from the one before it, since
-          the only other headings here are the card titles underneath
-          (review F8). */}
+          indistinguishable to a screen reader from the one before it
+          (review F8). Each card's own heading underneath is an h3. */}
       <h2 className="type-subtitle mb-3">Your teachers</h2>
 
       {links.length === 0 ? (

@@ -16,7 +16,8 @@ import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
  *      accepts → the CRM lists them under Students, not Contacts.
  *   2. add a second contact → student declines → the CRM shows them
  *      Declined, under Contacts, with no remove affordance
- *      (`canRemoveContact`, `lib/contacts.ts`).
+ *      (`canRemoveContact`, `lib/contacts.ts`), and the student's own page
+ *      grows a "Not connected" entry for that teacher (#522).
  *
  * No prior e2e spec drives `/students` at all, so this is also the first
  * coverage of that page through a real browser.
@@ -28,6 +29,10 @@ const suffix = uniqueSuffix();
 const teacherEmail = `e2e-invite-teacher-${suffix}@test.local`;
 const acceptingEmail = `e2e-invite-accept-${suffix}@test.local`;
 const decliningEmail = `e2e-invite-decline-${suffix}@test.local`;
+// Read back by the "Not connected" assertions below, which check the link
+// this section renders actually points at this teacher's public page — so the
+// slug the fixture writes and the slug the test expects are one literal.
+const teacherPageSlug = `e2e-invite-${suffix}`;
 
 let teacherId: string;
 let acceptingStudentId: string;
@@ -57,7 +62,7 @@ test.describe('Invitations — add, accept, decline', () => {
         email: teacherEmail,
         account: { create: { email: teacherEmail } },
         bio: 'Fixture for the #166 e2e invitation flow',
-        pageSlug: `e2e-invite-${suffix}`,
+        pageSlug: teacherPageSlug,
       },
     });
     teacherId = teacher.id;
@@ -215,6 +220,14 @@ test.describe('Invitations — add, accept, decline', () => {
       page.getByText('by booking a class or joining a waitlist'),
     ).toBeVisible();
 
+    // The absent branch of the "Not connected" section (#522), taken on the
+    // same account and the same render that grows it a moment later: this
+    // student has refused nobody yet, so `listDeclinedTeachers` returns
+    // nothing and the whole section — heading included — is off the page.
+    // Asserted here rather than on the accepting student above so that the
+    // decline is the only thing that differs between the two branches.
+    await expect(page.getByRole('heading', { name: 'Not connected' })).toHaveCount(0);
+
     await page.getByRole('button', { name: 'Decline' }).click();
     await page.getByRole('button', { name: 'Decline invitation' }).click();
     await expect(page.getByRole('heading', { name: 'Pending invitations' })).not.toBeVisible();
@@ -222,9 +235,25 @@ test.describe('Invitations — add, accept, decline', () => {
     await expect(page.getByText('Book a class or join a waitlist')).toBeVisible();
     // "Your teachers" itself always renders (it's the section header, shown
     // even when empty) — declining is not accepting: no teacher CARD forms
-    // under it, so the name that headed the pending card above is gone from
-    // the whole page, not just out of the pending list.
-    await expect(page.getByRole('heading', { name: 'Invite Teacher' })).toHaveCount(0);
+    // under it, which is what the empty state asserted a line above says.
+    //
+    // The present branch of "Not connected" (#522). The teacher's name is
+    // back on the page after the decline, but exactly once and in this
+    // section — `toHaveCount(1)` is what says the card under "Your teachers"
+    // did not form, since a link would head one with the same name.
+    await expect(page.getByRole('heading', { name: 'Not connected' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Invite Teacher' })).toHaveCount(1);
+    const notConnected = page.locator('section').filter({ hasText: 'Invite Teacher' });
+    await expect(notConnected.getByRole('heading', { name: 'Invite Teacher' })).toBeVisible();
+    await expect(
+      notConnected.getByText("This teacher can't invite you again."),
+    ).toBeVisible();
+    // The route back the copy promises has to be reachable, so the link is
+    // checked by destination and not merely by its label: `/{pageSlug}` is
+    // the teacher's own public page.
+    await expect(
+      notConnected.getByRole('link', { name: 'View their classes' }),
+    ).toHaveAttribute('href', `/${teacherPageSlug}`);
 
     await signInAs(context, teacherToken);
     await page.goto('/students');
