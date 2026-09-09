@@ -44,7 +44,7 @@ below it**:
 
 | Where | Invocations | Notes |
 |---|---|---|
-| `.github/workflows/ci.yml` | 5 | one in each job that checks out the repo; the `test` aggregate gate installs nothing |
+| `.github/workflows/ci.yml` | 5 | one in each job that installs; `docker-build` checks out without installing, and the `test` aggregate gate does neither |
 | `.github/workflows/e2e-flake-repro.yml` | 1 | manual-dispatch only |
 | `Dockerfile` | 1 | in the `deps` stage; `build` and `migrate` are `FROM deps` and inherit the layer rather than re-running it |
 | `scripts/worktree-setup.ts` | 1 | the only one in imperative code, and the only one a test enforces |
