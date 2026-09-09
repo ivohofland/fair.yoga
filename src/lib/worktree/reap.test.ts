@@ -183,5 +183,33 @@ describe('reapOrphans', () => {
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_fix_517');
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_fix_517');
     });
+
+    it('handles a mixed registry — legacy-live, legacy-dead, and new-scheme-live rows in one call, the real transition shape', async () => {
+      // (a) fix_517: legacy-shaped row for a worktree that hasn't migrated
+      // yet but is still live under raw name "fix-517".
+      // (b) fix_520: legacy-shaped row for a worktree with no live claimant.
+      // (c) "fix-525": already rawName-keyed (post-fix scheme) and live.
+      const registry: Registry = {
+        fix_517: { port: 3100, pid: 1111, dbSlug: 'fix_517' },
+        fix_520: { port: 3101, pid: 2222, dbSlug: 'fix_520' },
+        'fix-525': { port: 3102, pid: 3333, dbSlug: 'fix_525' },
+      };
+      const dropDatabase = vi.fn().mockResolvedValue(undefined);
+      const killPid = vi.fn();
+
+      const result = await reapOrphans(registry, new Set(['fix-517', 'fix-525']), { dropDatabase, killPid });
+
+      expect(result.registry).toEqual({
+        'fix-517': { port: 3100, pid: 1111, dbSlug: 'fix_517' }, // (a) rekeyed
+        'fix-525': { port: 3102, pid: 3333, dbSlug: 'fix_525' }, // (c) untouched
+      });
+      expect(result.migrated).toEqual([{ from: 'fix_517', to: 'fix-517' }]);
+      expect(result.reaped).toEqual(['fix_520']); // (b) fully reaped
+      expect(killPid).toHaveBeenCalledTimes(1);
+      expect(killPid).toHaveBeenCalledWith(2222);
+      expect(dropDatabase).toHaveBeenCalledTimes(2);
+      expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_fix_520');
+      expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_fix_520');
+    });
   });
 });
