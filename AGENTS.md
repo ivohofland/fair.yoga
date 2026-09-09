@@ -53,18 +53,20 @@ still calls by their old names. `middleware.ts` is now `proxy.ts` (here:
 `src/proxy.ts`, exporting `proxy`, not `middleware`) — issue #539's own
 reachability table concluded "No middleware file exists" by running
 `ls src/middleware.ts middleware.ts`, and was wrong about a file that enforces
-the signed-out redirect. The rename is documented in the bundled docs at
-`node_modules/next/dist/docs/01-app/02-guides/upgrading/version-16.md`.
+the signed-out redirect. The rename is documented in the bundled docs — under
+`01-app/02-guides/upgrading/` as of Next 16; the directory is the stable part
+of that path, the rest will move.
 
 **Version-matched docs ship with the package: `node_modules/next/dist/docs/`.**
 Read them before writing framework code, and prefer them over anything you
 recall about Next.
 
-`next dev` offers to write this reminder into this file itself, and
-`next.config.ts` sets `agentRules: false` to decline it — that block's text is
-Next's to reword, and a file this repo maintains should not churn on a patch
-release. This section is the repo-owned replacement; the pointer above is the
-part worth keeping.
+`next dev` writes a reminder of its own into this file — silently, with no
+prompt — unless declined, and `next.config.ts` sets `agentRules: false` to
+decline it. That block's text is Next's to reword, and a file this repo
+maintains should not churn on a patch release. This section is the repo-owned
+replacement; the pointer above is the part worth keeping.
+`src/lib/next-agent-rules.test.ts` fails if the block ever lands here.
 
 ## Build output directories
 

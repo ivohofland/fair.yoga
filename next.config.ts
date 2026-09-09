@@ -40,12 +40,11 @@ const nextConfig: NextConfig = {
   output: "standalone",
   // `next dev` otherwise writes a managed block into AGENTS.md or CLAUDE.md —
   // the flag governs both — whenever it detects an AI coding agent, leaving an
-  // uncommitted change in every such session. Off
-  // because the block's text is owned by Next, not by this repo: committing it
-  // would put a string that a future patch release can reword into a file
-  // whose claims this project maintains deliberately. AGENTS.md keeps a
-  // repo-owned pointer to the version-matched docs the block existed to
-  // advertise.
+  // uncommitted change in every such session. Off because the block's text is
+  // owned by Next, not by this repo: committing it would put a string that a
+  // future patch release can reword into a file whose claims this project
+  // maintains deliberately. The pointer it advertised is kept in AGENTS.md,
+  // and src/lib/next-agent-rules.test.ts fails if the block ever lands.
   agentRules: false,
   // Production builds get their own directory: `next build` writing into
   // the dev server's `.next` corrupts its compiler state, which then
