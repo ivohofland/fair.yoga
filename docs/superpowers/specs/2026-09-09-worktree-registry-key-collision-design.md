@@ -174,27 +174,47 @@ for each [key, entry] in registry:
     reap it (kill pid, drop both databases, remove) — rawName-keyed and dead
 ```
 
-The `key === entry.dbSlug` gate is what keeps this safe rather than
-reopening the issue: it only ever applies the dbSlug-based rescue to rows
-that are *structurally* pre-migration (or coincidentally clean). Every row
-created by the new `allocatePort` collision guard (§2) is verified
-dbSlug-unique at creation time, so for those rows this branch can only ever
-be a no-op — `liveDbSlugToRawName.get(dbSlug)` can only resolve to that
-row's own live rawName (which already took the first branch) or to nothing.
-The rescue does real work only during the one-time transition, for exactly
-the rows the guard did not exist to protect when they were created. Once
-every pre-existing worktree has run `worktree:setup`/`worktree:up`/
+The `key === entry.dbSlug` gate restricts the dbSlug-based rescue to rows
+that are *structurally* pre-migration (or coincidentally clean) — it only
+ever fires for a row whose own key already equals its own `dbSlug`. The
+lookup inside that branch (`liveRawNames.find(name => sanitizeSlug(name) ===
+key)` — a linear scan over live raw names, not a `Map` keyed by `dbSlug`)
+compares against `key`, which this gate has already established equals
+`entry.dbSlug` for any row that reaches it. These are two independent,
+redundant safeguards against the same failure — a rawName-keyed dead row
+being wrongly rescued via a `dbSlug` collision with a live worktree — verified
+by mutation testing: removing the gate alone, or changing the lookup's
+comparison target to `entry.dbSlug` alone, each still leaves that failure
+excluded by the other; only removing both together reopens it. This
+redundancy is intentional, not a sign either check is superfluous — a later
+refactor of the lookup (e.g. to a `Map<dbSlug, rawName>` for efficiency
+across many worktrees, which would naturally index by `dbSlug` instead of
+scanning and compare against it directly) must keep this gate rather than
+relying on the lookup's comparison target alone. Every row created by the
+new `allocatePort` collision guard (§2) is verified dbSlug-unique at
+creation time, so for those rows this branch can only ever be a no-op — the
+rescue does real work only during the one-time transition, for exactly the
+rows the guard did not exist to protect when they were created. Once every
+pre-existing worktree has run `worktree:setup`/`worktree:up`/
 `worktree:down` at least once post-merge, no legacy-keyed rows remain and
 this branch stops firing in practice (leaving it in place is harmless, not
 a maintenance burden — it's the same three-case shape either way).
 
-**Consequence accepted, not hidden**: a worktree that had already
-registered under the old scheme gets its port reassigned exactly once, at
-whichever of its own `worktree:setup`/`up`/`down` invocations happens to run
-after this merges but before any other worktree's reap sweep rekeys it out
-from under it. `INTEGRATION_BASE_URL` in that worktree's `.env` goes stale
-until it re-runs `worktree:setup`. This is a one-time, cosmetic cost — no
-database is dropped and no live dev-server pid is killed for a still-live
+**Consequence accepted, not hidden**: `worktree-setup.ts` and
+`worktree-up.ts` both run `runReap` before their own `allocatePort` call
+(§5), so for either of those commands the rekey always happens first —
+a worktree that had already registered under the old scheme keeps its port
+across the migration, it is not reassigned. `worktree-down.ts` does not run
+`runReap` (out of scope for that command — it only stops a tracked pid, and
+skipping the reap sweep there is non-destructive), and looks up
+`registry[rawName]` directly; a worktree still registered under its old,
+legacy key has no row at `rawName` yet, so running `worktree:down` before
+that worktree's own first post-merge `setup`/`up` prints "no registry entry
+— nothing to do" and leaves that worktree's dev server running. This
+self-corrects the next time that worktree runs `worktree:setup`/`worktree:up`
+(which rekeys it, or replaces the stale pid), or if the process is genuinely
+dead, the next time any worktree's `npm test` reap sweep reaps it outright.
+No database is dropped and no live dev-server pid is killed for a still-live
 worktree under this design, which is the property that matters.
 
 ### 5. `worktree-setup.ts` gains a reap call
@@ -248,8 +268,13 @@ tested today. New/updated unit coverage:
   rawName-keyed row with no live claimant; leaves a live rawName-keyed row
   untouched. Mutation check: a rawName-keyed dead row whose `dbSlug`
   happens to collide with a *different* live worktree's `dbSlug` must still
-  be reaped, not rescued — proves the `key === entry.dbSlug` gate is doing
-  real work, not merely present.
+  be reaped, not rescued — proves that the gate and the rescue lookup's
+  comparison-against-`key` are not both decorative (removing either alone
+  still passes; removing both together is what this check catches — see §4).
+  A further combined case mixes all three row shapes — a legacy-shaped live
+  row, a legacy-shaped dead row, and a new-scheme rawName-keyed live row —
+  in one registry and one `reapOrphans` call, the shape a real transition
+  sweep actually sees.
 - `listWorktreeAdminEntries` / `computeLiveWorktreeNames`: existing coverage
   ported to `rawName`, unchanged in intent — two worktrees whose raw names
   differ only by the characters `sanitizeSlug` used to collapse (e.g.
