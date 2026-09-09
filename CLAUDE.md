@@ -264,7 +264,7 @@ Calm utility, warm minimalism — a thoughtful yoga teacher who happens to be go
 | `docs/product-concept.md` | Full product concept — all 39 product questions resolved |
 | `docs/data-model.md` | Complete data model with all fields, types, relationships, and design notes |
 | `docs/technical-architecture.md` | Tech stack, project structure, services layer, auth flow, deployment |
-| `docs/supply-chain.md` | Where this repo installs dependencies and why every path is `npm ci`; what is enforced rather than merely correct, and the supply-chain controls not yet in place (#531) |
+| `docs/supply-chain.md` | Where this repo installs dependencies and why every path is `npm ci`; what is enforced rather than merely correct; which advisories currently stand and why CI's audit step does not block on them; and the supply-chain controls not yet in place (#531) |
 | `docs/information-architecture.md` | 4-tab IA, adaptive class detail, 5 user flows |
 | `docs/teacher-screens.md` | 36-screen teacher screen inventory by journey phase |
 | `docs/design-brief.md` | Working design brief — v2 tokens, navigation, components, screen patterns |
