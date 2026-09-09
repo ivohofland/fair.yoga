@@ -3,7 +3,6 @@ node_modules
 .next-build
 .git
 docs
-tests
 test-results
 playwright-report
 *.md
