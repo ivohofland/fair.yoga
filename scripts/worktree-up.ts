@@ -2,7 +2,7 @@
 import fs from 'fs';
 import { loadEnv } from 'vite';
 import { getWorktreeIdentity } from '../src/lib/worktree/identity';
-import { getRegistryPath, readRegistry, writeRegistryLocked, allocatePort, setPid } from '../src/lib/worktree/registry';
+import { getRegistryPath, writeRegistryLocked, allocatePort, setPid } from '../src/lib/worktree/registry';
 import { runReap } from '../src/lib/worktree/reap';
 import { provisionDatabase } from '../src/lib/db-provision';
 import { spawnDevServer, buildDevServerLogPath } from '../src/lib/worktree/dev-server';
@@ -47,19 +47,23 @@ async function main(): Promise<void> {
     console.warn('[worktree:up] reap sweep failed — continuing without it, this worktree is unaffected:', err);
   }
 
-  const registryBeforeUp = readRegistry(registryPath);
-  const existing = registryBeforeUp[slug];
-  if (existing?.pid != null && isPidAlive(existing.pid)) {
-    console.log(`[worktree:up] already running at http://localhost:${existing.port} (pid ${existing.pid})`);
-    return;
-  }
-
   let port = 0;
+  let alreadyRunning = null as { port: number; pid: number } | null;
   await writeRegistryLocked(registryPath, (registry) => {
+    const existing = registry[slug];
+    if (existing?.pid != null && isPidAlive(existing.pid)) {
+      alreadyRunning = { port: existing.port, pid: existing.pid };
+      return registry;
+    }
     const result = allocatePort(registry, slug);
     port = result.port;
     return result.registry;
   });
+
+  if (alreadyRunning) {
+    console.log(`[worktree:up] already running at http://localhost:${alreadyRunning.port} (pid ${alreadyRunning.pid})`);
+    return;
+  }
 
   await provisionDatabase(devUrl, { seed: true });
 
