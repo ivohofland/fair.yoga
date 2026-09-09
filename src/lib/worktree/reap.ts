@@ -74,22 +74,14 @@ export async function reapOrphans(
       continue; // already rawName-keyed, live
     }
 
-    // Only true for a row whose key IS already a bare dbSlug — every
-    // pre-migration row, plus any post-fix row whose raw name happened to
-    // need no sanitizing. Below, the rescue lookup compares each live raw
-    // name's sanitized form against `key`, not `entry.dbSlug` — matching
-    // this gate's own condition rather than an incidental choice of
-    // variable. Verified by mutation testing (see
+    // True for a row whose key IS already a bare dbSlug: every pre-migration
+    // row, plus any post-fix row whose raw name happens to need no
+    // sanitizing. The rescue lookup below compares live raw names against
+    // `key`, not `entry.dbSlug` — see
     // docs/superpowers/specs/2026-09-09-worktree-registry-key-collision-design.md
-    // §4): this gate and that comparison-against-`key` are two independent,
-    // redundant checks against the same failure — a rawName-keyed dead row
-    // being wrongly rescued via a dbSlug collision with a live worktree.
-    // Removing either one alone still leaves that failure excluded by the
-    // other; only removing both together reopens it. This redundancy is
-    // intentional defense-in-depth, not evidence that either check is
-    // superfluous — keep both. In particular, a future refactor of the
-    // lookup below (e.g. to a dbSlug-indexed `Map` for efficiency across
-    // many worktrees) must not drop this gate while doing so.
+    // §4 and the two mutation-check tests in reap.test.ts for why both this
+    // gate and that comparison target matter, and why a future refactor
+    // (e.g. a dbSlug-indexed `Map` for the lookup) must not drop either.
     if (key === entry.dbSlug) {
       const target = [...liveRawNames].find((name) => sanitizesTo(name, key));
       if (target !== undefined) {
