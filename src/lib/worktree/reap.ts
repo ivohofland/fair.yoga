@@ -14,6 +14,20 @@ export interface ReapResult {
   migrated: Array<{ from: string; to: string }>;
 }
 
+/**
+ * sanitizeSlug throws for a raw name with no safe characters. A raw name
+ * that fails to sanitize can never be the source of any dbSlug, so it's
+ * simply not a match here — one such live worktree must not abort the
+ * whole reap sweep.
+ */
+function sanitizesTo(rawName: string, dbSlug: string): boolean {
+  try {
+    return sanitizeSlug(rawName) === dbSlug;
+  } catch {
+    return false;
+  }
+}
+
 /** Kills the pid (if any), drops both of the entry's databases, and removes it from `registry`. */
 async function reapEntry(
   registry: Registry,
@@ -67,7 +81,7 @@ export async function reapOrphans(
     // different live worktree's dbSlug would wrongly take the legacy-rescue
     // path below instead of being reaped outright.
     if (key === entry.dbSlug) {
-      const target = [...liveRawNames].find((name) => sanitizeSlug(name) === key);
+      const target = [...liveRawNames].find((name) => sanitizesTo(name, key));
       if (target !== undefined) {
         if (registry[target] === undefined) {
           // Rekey: move this entry to the live worktree's real name, keep

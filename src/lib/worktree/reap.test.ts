@@ -135,21 +135,18 @@ describe('reapOrphans', () => {
 
     it('reaps, not rescues, a rawName-keyed dead row whose dbSlug happens to collide with a different live entry\'s dbSlug (mutation check for the key === entry.dbSlug gate)', async () => {
       // "old-name" is dead and rawName-keyed (its key "old-name" is NOT its
-      // own dbSlug), but its dbSlug field happens to equal "live-name"'s
-      // dbSlug — a pre-existing dbSlug collision the allocatePort guard
-      // cannot retroactively fix (see spec Non-goals). Because
+      // own dbSlug), but its dbSlug field happens to equal "live-worktree"'s
+      // dbSlug ("live_worktree", since sanitizeSlug('live-worktree') ===
+      // 'live_worktree') — a pre-existing dbSlug collision the allocatePort
+      // guard cannot retroactively fix (see spec Non-goals). Because
       // key !== entry.dbSlug for "old-name", the legacy-rescue branch must
       // never fire for it: it has to be reaped outright, not silently
-      // dropped as if it were a stale leftover of "live-name"'s own
+      // dropped as if it were a stale leftover of "live-worktree"'s own
       // migration. Removing the `key === entry.dbSlug` gate — and looking up
       // the rescue target by entry.dbSlug instead — makes this row match
-      // "live-name" (which already has its own row) and get silently
+      // "live-worktree" (which already has its own row) and get silently
       // dropped with no killPid/dropDatabase call, which is what this test
       // catches.
-      // "live-worktree" is live and legitimately owns dbSlug "live_worktree"
-      // (sanitizeSlug('live-worktree') === 'live_worktree'). "old-name" is
-      // dead and rawName-keyed, but its dbSlug field happens to equal that
-      // same "live_worktree" value.
       const registry: Registry = {
         'old-name': { port: 3100, pid: 4242, dbSlug: 'live_worktree' },
         'live-worktree': { port: 3200, pid: 111, dbSlug: 'live_worktree' },
@@ -165,6 +162,26 @@ describe('reapOrphans', () => {
       expect(killPid).toHaveBeenCalledWith(4242);
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_live_worktree');
       expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_live_worktree');
+    });
+
+    it('does not crash when a live raw name cannot be sanitized — skips it and still reaps the legacy row it was checking', async () => {
+      // sanitizeSlug throws for a raw name with no safe characters
+      // (identity.test.ts: sanitizeSlug('!!!') throws). One such live
+      // worktree must not abort the whole sweep — it simply cannot be the
+      // rescue target for any legacy row, so the legacy row here falls
+      // through to normal orphan handling.
+      const registry: Registry = { fix_517: { port: 3100, pid: 4242, dbSlug: 'fix_517' } };
+      const dropDatabase = vi.fn().mockResolvedValue(undefined);
+      const killPid = vi.fn();
+
+      const result = await reapOrphans(registry, new Set(['!!!']), { dropDatabase, killPid });
+
+      expect(result.reaped).toEqual(['fix_517']);
+      expect(result.migrated).toEqual([]);
+      expect(result.registry).toEqual({});
+      expect(killPid).toHaveBeenCalledWith(4242);
+      expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_fix_517');
+      expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_fix_517');
     });
   });
 });
