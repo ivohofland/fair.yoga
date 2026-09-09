@@ -12,7 +12,7 @@ describe('reapOrphans', () => {
       fix_520: { port: 3101, pid: 4242, dbSlug: 'fix_520' },
     };
     const dropDatabase = vi.fn().mockResolvedValue(undefined);
-    const killPid = vi.fn();
+    const killPid = vi.fn().mockReturnValue('signaled');
 
     const result = await reapOrphans(registry, new Set(['fix_517']), { dropDatabase, killPid });
 
@@ -24,6 +24,21 @@ describe('reapOrphans', () => {
     expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_fix_520');
     expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_dev_fix_520');
     expect(dropDatabase).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves the entry and its databases alone when killPid can't confirm the process was stopped (refused)", async () => {
+    const registry: Registry = {
+      fix_520: { port: 3101, pid: 4242, dbSlug: 'fix_520' },
+    };
+    const dropDatabase = vi.fn().mockResolvedValue(undefined);
+    const killPid = vi.fn().mockReturnValue('refused');
+
+    const result = await reapOrphans(registry, new Set(), { dropDatabase, killPid });
+
+    expect(result.reaped).toEqual([]);
+    expect(result.registry).toEqual(registry);
+    expect(killPid).toHaveBeenCalledWith(4242, 3101);
+    expect(dropDatabase).not.toHaveBeenCalled();
   });
 
   it('does not call killPid for an orphan with no recorded pid', async () => {

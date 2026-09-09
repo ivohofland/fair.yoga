@@ -6,7 +6,7 @@ import { getRegistryPath, writeRegistryLocked, allocatePort, setPid } from '../s
 import { runReap } from '../src/lib/worktree/reap';
 import { provisionDatabase } from '../src/lib/db-provision';
 import { spawnDevServer, buildDevServerLogPath } from '../src/lib/worktree/dev-server';
-import { killPidReal, isPidAlive } from '../src/lib/worktree/side-effects';
+import { killJustSpawnedPidReal, isPidAlive } from '../src/lib/worktree/side-effects';
 
 async function waitForServer(port: number, timeoutMs = 15000, intervalMs = 500): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -72,13 +72,13 @@ async function main(): Promise<void> {
   try {
     await writeRegistryLocked(registryPath, (registry) => setPid(registry, rawName, pid));
   } catch (err) {
-    killPidReal(pid, port);
+    killJustSpawnedPidReal(pid);
     throw err;
   }
 
   const up = await waitForServer(port);
   if (!up) {
-    killPidReal(pid, port);
+    killJustSpawnedPidReal(pid);
     await writeRegistryLocked(registryPath, (registry) => setPid(registry, rawName, null));
     let logTail = '(log unavailable)';
     try {

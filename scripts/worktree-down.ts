@@ -18,11 +18,25 @@ async function main(): Promise<void> {
       console.log(`[worktree:down] no registry entry for ${rawName} — nothing to do`);
       return registry;
     }
-    if (entry.pid !== null) {
-      const stopped = killPidReal(entry.pid, entry.port);
-      console.log(stopped ? `[worktree:down] stopped pid ${entry.pid}` : `[worktree:down] pid ${entry.pid} was already gone`);
+    if (entry.pid === null) {
+      return registry;
     }
-    return setPid(registry, rawName, null);
+    const result = killPidReal(entry.pid, entry.port);
+    switch (result) {
+      case 'signaled':
+        console.log(`[worktree:down] stopped pid ${entry.pid}`);
+        return setPid(registry, rawName, null);
+      case 'already-gone':
+        console.log(`[worktree:down] pid ${entry.pid} was already gone`);
+        return setPid(registry, rawName, null);
+      case 'refused':
+      case 'signal-failed':
+        // Leave the pid recorded — it may still be running, and clearing it
+        // here would let the next worktree:up spawn a second dev server on
+        // the same port.
+        console.warn(`[worktree:down] could not confirm pid ${entry.pid} was stopped (${result}) — leaving it recorded`);
+        return registry;
+    }
   });
 }
 
