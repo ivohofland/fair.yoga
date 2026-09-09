@@ -46,6 +46,20 @@ const nextConfig: NextConfig = {
   // maintains deliberately. The pointer it advertised is kept in AGENTS.md,
   // and src/lib/next-agent-rules.test.ts fails if the block ever lands.
   agentRules: false,
+  // Holds the pre-16.3.4 behaviour rather than taking a changed default: this
+  // was `undefined` and set true only under `cacheComponents` or
+  // `--debug-prerender`, neither of which applies here, and 16.3.4 makes true
+  // the base default. It puts `--enable-source-maps` in every prerender
+  // worker's NODE_OPTIONS, which Next's own memory guide names as the thing to
+  // turn off when a build runs short of memory — and this project builds its
+  // image on the 2 GB VPS it deploys to (DEPLOYMENT.md).
+  //
+  // Not a measured saving: three paired builds here disagreed on the sign
+  // (+66 MB, -56 MB, -29 MB against ~1.6-1.85 GB peaks), so the effect is
+  // below this machine's noise, and a machine with room to spare cannot
+  // measure one that has none — V8 sizes its heap to available memory. The
+  // cost of holding it is less readable prerender stack traces.
+  enablePrerenderSourceMaps: false,
   // Production builds get their own directory: `next build` writing into
   // the dev server's `.next` corrupts its compiler state, which then
   // silently serves stale pages until restarted (bit us repeatedly).
