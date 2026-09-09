@@ -565,9 +565,9 @@ export async function notifyInvitee(
     // for, and #412's gate creates real pending invitations for exactly this
     // pair rather than refuse them. "A teacher would like to connect" is
     // false here, and the decline it invites does not unlink —
-    // `declineInvitation` writes only the tombstone — so a student acting on
-    // it would stay linked and permanently block a re-invite they might
-    // later want.
+    // `declineInvitation` writes the declined row and a `TeacherBlock` and
+    // touches no roster link — so a student acting on it would stay linked
+    // and permanently block a re-invite they might later want.
     //
     // Structural, like the `TeacherBlock` re-check above and for the same
     // reason: `POST /api/invitations/[id]/resend` gates only on `declined`
@@ -957,10 +957,14 @@ export async function acceptInvitation(
  * Decline an invitation. Same ownership gate as `acceptInvitation` above,
  * and for the same reason — see its docblock.
  *
- * No link is created, and the row is not deleted. A declined `Invitation`
- * is the tombstone that stops the teacher re-inviting the same address;
- * `PUT`/`DELETE /api/invitations/[id]` already refuse to edit or remove a
- * declined row for that same reason.
+ * No link is created, and the row is not deleted. Two writes, saying two
+ * different things. The declined `Invitation` row is what makes a re-invite
+ * answer `DECLINED` — `PUT`/`DELETE /api/invitations/[id]` refuse to edit or
+ * remove it for that reason. The `TeacherBlock` is the refusal itself: a
+ * stored row rather than a key derived from an address the subject's own
+ * erasure rewrites, which is what keeps the refusal working after they erase.
+ * `unlinkTeacher` writes the same pair. `docs/data-model.md` (TeacherBlock)
+ * states that rule and the check a new refusal is held to.
  */
 export async function declineInvitation(
   db: PrismaClient,

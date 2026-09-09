@@ -321,10 +321,10 @@ export class AlreadyErasedError extends Error {
  * - privacy rows, roster links, waitlist entries, notifications, sessions,
  *   magic-link tokens: deleted
  * - `Invitation` rows naming this address anonymized in place, keeping the
- *   teacher's filing state without the identity behind it — but NOT their
- *   refusal, which this frees (#522)
- * - `TeacherBlock` rows left standing on purpose; the tension is written down
- *   at the site and in `docs/data-model.md`
+ *   teacher's filing state without the identity behind it
+ * - `TeacherBlock` rows left standing on purpose — they are what carries the
+ *   subject's refusal past that anonymization; the tension is written down at
+ *   the site and in `docs/data-model.md`
  * - upcoming registrations cancelled (teachers see the spot free up);
  *   charged/past registrations and payments remain, attributed to
  *   "Deleted Student"
@@ -553,10 +553,11 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // looks: what survives a scrub but not a delete is the teacher's own
     // filing state — `status` and `respondedAt` — not the refusal itself.
     // The write below frees `(teacherId, email)` exactly as a delete would,
-    // and `inviteContact` looks a tombstone up by the address the teacher
-    // types, so a plain decline's refusal does NOT survive this (#522, an
-    // open defect rather than a property of this design; the chain is in
-    // `docs/data-model.md`'s Invitation-erasure paragraph).
+    // and `inviteContact` looks that key up by the address the teacher types,
+    // so this address stops answering `DECLINED` to a re-invite. The refusal
+    // itself is not on this row — the `TeacherBlock` below holds it and this
+    // function leaves it standing (#522); `docs/data-model.md`'s
+    // Invitation-erasure paragraph has the chain.
     // `status` and `respondedAt` therefore
     // stay exactly as they are; the identity columns change, plus
     // `lastNotifiedEmail` wherever it still holds the subject's address —
@@ -633,7 +634,13 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
 
     // `TeacherBlock` is DELIBERATELY not touched here, and the omission is
     // undecided rather than settled — see `docs/data-model.md`
-    // (TeacherBlock). Scrubbing the address breaks the block, because every
+    // (TeacherBlock), which names every writer of this table and the rule
+    // they follow. These rows hold the subject's refusals whichever way they
+    // said no, so what to do with them here is one question rather than one
+    // per route. They are also what the scrub above leans on: that write
+    // frees `(teacherId, email)`, and this row is the whole of what still
+    // stands between the subject and mail from a teacher they refused.
+    // Scrubbing the address breaks that, because every
     // lookup is `teacherId` + exact `email` and the erased person's real
     // mailbox still exists in the world: the teacher could re-type that
     // address and the invitation would actually be delivered. Retaining it
