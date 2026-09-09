@@ -24,11 +24,12 @@ async function waitForServer(port: number, timeoutMs = 15000, intervalMs = 500):
 
 async function main(): Promise<void> {
   const identity = getWorktreeIdentity();
-  if (identity.isMainCheckout || !identity.slug) {
+  if (identity.isMainCheckout || !identity.rawName || !identity.dbSlug) {
     console.log('[worktree:up] main checkout — run `npm run dev` directly instead');
     return;
   }
-  const slug = identity.slug;
+  const rawName = identity.rawName;
+  const dbSlug = identity.dbSlug;
 
   const registryPath = getRegistryPath(identity.gitCommonDir);
 
@@ -50,12 +51,12 @@ async function main(): Promise<void> {
   let port = 0;
   let alreadyRunning = null as { port: number; pid: number } | null;
   await writeRegistryLocked(registryPath, (registry) => {
-    const existing = registry[slug];
+    const existing = registry[rawName];
     if (existing?.pid != null && isPidAlive(existing.pid)) {
       alreadyRunning = { port: existing.port, pid: existing.pid };
       return registry;
     }
-    const result = allocatePort(registry, slug);
+    const result = allocatePort(registry, rawName, dbSlug);
     port = result.port;
     return result.registry;
   });
@@ -69,7 +70,7 @@ async function main(): Promise<void> {
 
   const pid = spawnDevServer(process.cwd(), port);
   try {
-    await writeRegistryLocked(registryPath, (registry) => setPid(registry, slug, pid));
+    await writeRegistryLocked(registryPath, (registry) => setPid(registry, rawName, pid));
   } catch (err) {
     killPidReal(pid);
     throw err;
@@ -78,7 +79,7 @@ async function main(): Promise<void> {
   const up = await waitForServer(port);
   if (!up) {
     killPidReal(pid);
-    await writeRegistryLocked(registryPath, (registry) => setPid(registry, slug, null));
+    await writeRegistryLocked(registryPath, (registry) => setPid(registry, rawName, null));
     let logTail = '(log unavailable)';
     try {
       logTail = fs.readFileSync(buildDevServerLogPath(process.cwd()), 'utf8').split('\n').slice(-20).join('\n');
