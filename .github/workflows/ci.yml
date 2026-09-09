@@ -411,6 +411,22 @@ jobs:
           path: server.log
           retention-days: 7
 
+  # Builds the production image on every push/PR. Nothing else in this
+  # workflow does: test-integration/test-e2e build and run the standalone
+  # bundle directly, never through Docker, so a Dockerfile/.dockerignore
+  # regression here is invisible to every other job (#543 — twice, in
+  # fact: the tests/ context exclusion and the public/ copy were both
+  # unreachable by any other job in this file). Build-and-discard —
+  # nothing is pushed or run.
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build production image
+        run: docker build -t fairyoga .
+
   # This job exists so the branch ruleset's required status check named
   # `test` keeps reporting after the split: ruleset 19724469 requires the
   # contexts `checks` and `test` (re-derive:
@@ -436,7 +452,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [test-components, test-unit, test-integration, test-e2e]
+    needs: [test-components, test-unit, test-integration, test-e2e, docker-build]
     if: always()
     steps:
       - name: Verify every test job succeeded
