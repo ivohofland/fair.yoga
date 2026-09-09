@@ -78,8 +78,8 @@ async function main(): Promise<void> {
 
   const up = await waitForServer(port);
   if (!up) {
-    killJustSpawnedPidReal(pid);
-    await writeRegistryLocked(registryPath, (registry) => setPid(registry, rawName, null));
+    const confirmedStopped = killJustSpawnedPidReal(pid);
+    await writeRegistryLocked(registryPath, (registry) => setPid(registry, rawName, confirmedStopped ? null : pid));
     let logTail = '(log unavailable)';
     try {
       logTail = fs.readFileSync(buildDevServerLogPath(process.cwd()), 'utf8').split('\n').slice(-20).join('\n');
