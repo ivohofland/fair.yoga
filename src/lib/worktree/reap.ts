@@ -8,11 +8,16 @@ export interface ReapDeps {
   killPid: (pid: number, port: number) => KillPidResult;
 }
 
+export interface ReapFailure {
+  key: string;
+  error: unknown;
+}
+
 export interface ReapResult {
   registry: Registry;
   reaped: string[];
   migrated: Array<{ from: string; to: string }>;
-  failed: Array<{ key: string; error: unknown }>;
+  failed: ReapFailure[];
 }
 
 /**
@@ -44,7 +49,7 @@ async function reapEntry(
   entry: RegistryEntry,
   deps: ReapDeps,
   reaped: string[],
-  failed: Array<{ key: string; error: unknown }>,
+  failed: ReapFailure[],
 ): Promise<Registry> {
   try {
     if (entry.pid !== null) {
@@ -83,7 +88,7 @@ export async function reapOrphans(
   let next = registry;
   const reaped: string[] = [];
   const migrated: Array<{ from: string; to: string }> = [];
-  const failed: Array<{ key: string; error: unknown }> = [];
+  const failed: ReapFailure[] = [];
 
   for (const [key, entry] of Object.entries(registry)) {
     if (liveRawNames.has(key as RawName)) {
@@ -124,10 +129,7 @@ export async function reapOrphans(
   return { registry: next, reaped, migrated, failed };
 }
 
-export interface RunReapResult {
-  reaped: string[];
-  failed: Array<{ key: string; error: unknown }>;
-}
+export type RunReapResult = Pick<ReapResult, 'reaped' | 'failed'>;
 
 /** Real IO wired up: live git state in, dropped databases and a persisted registry out. */
 export async function runReap(
@@ -137,7 +139,7 @@ export async function runReap(
 ): Promise<RunReapResult> {
   const liveRawNames = getLiveWorktreeNames(gitCommonDir);
   let reapedKeys: string[] = [];
-  let failedEntries: Array<{ key: string; error: unknown }> = [];
+  let failedEntries: ReapFailure[] = [];
   await writeRegistryLocked(registryPath, async (registry) => {
     const { registry: next, reaped, migrated, failed } = await reapOrphans(registry, liveRawNames, {
       dropDatabase: (dbName) => dropDatabaseReal(dbName, anyDatabaseUrl),

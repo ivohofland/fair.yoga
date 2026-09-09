@@ -39,15 +39,18 @@ async function main(): Promise<void> {
     throw new Error('[worktree:up] DATABASE_URL not set — run `npm run worktree:setup` first');
   }
 
+  // reapFailed means the whole sweep threw (migration did not run this pass);
+  // result.failed names individual rows the sweep tried and failed to reap.
+  // Different failure modes — only reapFailed feeds explainCollision below.
   let reapFailed = false;
   try {
-    const result = await runReap(identity.gitCommonDir, registryPath, devUrl);
-    if (result.reaped.length > 0) {
-      console.log(`[worktree:up] reaped orphaned worktree resources: ${result.reaped.join(', ')}`);
+    const reapResult = await runReap(identity.gitCommonDir, registryPath, devUrl);
+    if (reapResult.reaped.length > 0) {
+      console.log(`[worktree:up] reaped orphaned worktree resources: ${reapResult.reaped.join(', ')}`);
     }
-    if (result.failed.length > 0) {
+    if (reapResult.failed.length > 0) {
       console.error(
-        `[worktree:up] FAILED to reap ${result.failed.length} orphaned worktree resource(s) — will retry on next sweep: ${result.failed.map((f) => f.key).join(', ')}`,
+        `[worktree:up] FAILED to reap ${reapResult.failed.length} orphaned worktree resource(s) — will retry on next sweep: ${reapResult.failed.map((f) => f.key).join(', ')}`,
       );
     }
   } catch (err) {

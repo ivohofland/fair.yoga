@@ -90,18 +90,18 @@ describe('allocatePort', () => {
 
 describe('explainCollision', () => {
   it('returns the original error unchanged when reap did not fail', () => {
-    const err = new RegistryCollisionError('fix-517', 'fix_517', 'fix_517');
+    const err = new RegistryCollisionError('fix-517' as RawName, 'fix_517' as DbSlug, 'fix_517');
     expect(explainCollision(err, false)).toBe(err);
   });
 
   it('returns the original error unchanged when the colliding key is not legacy-shaped, even if reap failed', () => {
-    const err = new RegistryCollisionError('fix_517', 'fix_517', 'fix-517');
+    const err = new RegistryCollisionError('fix_517' as RawName, 'fix_517' as DbSlug, 'fix-517');
     expect(err.collidingKeyIsLegacyShaped).toBe(false);
     expect(explainCollision(err, true)).toBe(err);
   });
 
   it('enriches the message when reap failed and the colliding key is legacy-shaped', () => {
-    const err = new RegistryCollisionError('fix-517', 'fix_517', 'fix_517');
+    const err = new RegistryCollisionError('fix-517' as RawName, 'fix_517' as DbSlug, 'fix_517');
     expect(err.collidingKeyIsLegacyShaped).toBe(true);
     const result = explainCollision(err, true);
     expect(result).not.toBe(err);
@@ -636,5 +636,3 @@ function _allocatePortArgsCannotBeSwapped(registry: Registry, rawName: RawName, 
   // @ts-expect-error rawName and dbSlug must not be swappable positionally
   allocatePort(registry, dbSlug, rawName);
 }
-
-
