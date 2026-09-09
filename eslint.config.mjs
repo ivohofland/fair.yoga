@@ -46,10 +46,12 @@ const eslintConfig = defineConfig([
   // JSX that is already ignored in the main tree — a gate failing for a reason
   // no diff can explain, which is how people learn to ignore the gate.
   //
-  // playwright-report/ and test-results/ are that same failure with a different
-  // source: Playwright writes minified trace bundles into them, so running the
-  // e2e suite and then `npm run verify` turned lint red on generated
-  // JavaScript no diff had touched. Both are build output, never authored.
+  // playwright-report/ is that same failure with a different source: Playwright
+  // writes minified trace bundles into it, so running the e2e suite and then
+  // `npm run verify` turned lint red on generated JavaScript no diff had
+  // touched. test-results/ holds no JavaScript today — screenshots, traces and
+  // JSON — so it is listed as the sibling output directory rather than a second
+  // measured cause. Both are build output, never authored.
   globalIgnores([
     '.next/**',
     '.next-build/**',
