@@ -91,6 +91,12 @@ describe('resolveIdentity', () => {
     const result = resolveIdentity('/repo/.git/', '/repo/.git');
     expect(result.isMainCheckout).toBe(true);
   });
+
+  it('throws an actionable error naming the raw name when it cannot be sanitized to any safe characters', () => {
+    expect(() => resolveIdentity('/repo/.git/worktrees/___', '/repo/.git')).toThrow(
+      /resolveIdentity:.*"___".*rename this worktree's directory/,
+    );
+  });
 });
 
 /**
