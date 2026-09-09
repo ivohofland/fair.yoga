@@ -934,19 +934,42 @@ export async function declineInvitation(
   const email = requireNormalised(input.accountEmail);
   const invitation = await db.invitation.findFirst({
     where: { id: input.invitationId, email },
-    select: { id: true },
+    select: { id: true, teacherId: true },
   });
   if (!invitation) return { ok: false, reason: 'NOT_FOUND' };
 
-  // Same reasoning as `acceptInvitation`: the pending check is the
-  // `where` on this write, not a separate read beforehand, so a
-  // concurrent accept from the same account can't slip past it.
-  const updated = await db.invitation.updateMany({
-    where: { id: invitation.id, status: 'pending' },
-    data: { status: 'declined', respondedAt: new Date() },
+  // The status write and the block are one transaction: a failure between
+  // them would leave a declined row whose refusal is once again derived from
+  // an `email` erasure can rewrite, and nothing downstream would say so.
+  return db.$transaction(async (tx) => {
+    // Same reasoning as `acceptInvitation`: the pending check is the `where`
+    // on this write, not a separate read beforehand, so a concurrent accept
+    // from the same account can't slip past it.
+    const updated = await tx.invitation.updateMany({
+      where: { id: invitation.id, status: 'pending' },
+      data: { status: 'declined', respondedAt: new Date() },
+    });
+    // No sentinel error, unlike `acceptInvitation`'s `NotPendingError`: that
+    // one exists because its roster-link write has already run by this point.
+    // Here nothing has been written yet, so returning commits nothing.
+    if (updated.count === 0) return { ok: false, reason: 'NOT_PENDING' } as const;
+
+    // `Invitation` before `TeacherBlock`, per `docs/lock-order.md`.
+    //
+    // `update: {}` is load-bearing, not laziness. An empty update keeps Prisma
+    // on the non-atomic path, which takes no row lock when the block already
+    // exists; `resolveInvitationOnLink` (services/link-consent.ts) takes these
+    // two tables in the opposite order, and that no-lock path is what keeps
+    // the pair from deadlocking. `docs/lock-order.md` carries the same warning
+    // for `unlinkTeacher`'s upsert, and `invitations-lock-order.test.ts`
+    // proves both directions.
+    await tx.teacherBlock.upsert({
+      where: { teacherId_email: { teacherId: invitation.teacherId, email } },
+      update: {},
+      create: { teacherId: invitation.teacherId, email },
+    });
+    return { ok: true } as const;
   });
-  if (updated.count === 0) return { ok: false, reason: 'NOT_PENDING' };
-  return { ok: true };
 }
 
 /**

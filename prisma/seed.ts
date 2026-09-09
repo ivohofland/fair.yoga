@@ -405,6 +405,12 @@ async function main() {
     ],
   });
 
+  // The declined fixture's suppression entry. A decline writes one (#522), so
+  // seeding the row without it would produce a state the app cannot reach.
+  await prisma.teacherBlock.create({
+    data: { teacherId: ivo.id, email: 'declined@example.com' },
+  });
+
   // ==========================================================================
   // ROOMS
   // ==========================================================================
