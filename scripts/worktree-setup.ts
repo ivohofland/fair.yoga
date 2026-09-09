@@ -22,9 +22,14 @@ async function main(): Promise<void> {
 
   let reapFailed = false;
   try {
-    const reaped = await runReap(identity.gitCommonDir, registryPath, `${DB_HOST}/postgres`);
-    if (reaped.length > 0) {
-      console.log(`[worktree:setup] reaped orphaned worktree resources: ${reaped.join(', ')}`);
+    const result = await runReap(identity.gitCommonDir, registryPath, `${DB_HOST}/postgres`);
+    if (result.reaped.length > 0) {
+      console.log(`[worktree:setup] reaped orphaned worktree resources: ${result.reaped.join(', ')}`);
+    }
+    if (result.failed.length > 0) {
+      console.error(
+        `[worktree:setup] FAILED to reap ${result.failed.length} orphaned worktree resource(s) — will retry on next sweep: ${result.failed.map((f) => f.key).join(', ')}`,
+      );
     }
   } catch (err) {
     reapFailed = true;
