@@ -1180,12 +1180,19 @@ lock.
 
 This still matters for the real `TeacherBlock` upserts in `invitations.ts` —
 `unlinkTeacher`'s and `declineInvitation`'s, every one of them `update: {}`
-and every one taking `Invitation` before `TeacherBlock`. Re-derive the set
-with:
+and every one taking `Invitation` before `TeacherBlock`. Re-derive both halves
+of that claim — the payload and the order — with:
 
 ```sh
-grep -rn "teacherBlock\.upsert" src/services/invitations.ts
+grep -nE -A3 'tx\.(invitation|teacherBlock)\.(update|updateMany|upsert)\(' \
+  src/services/invitations.ts
 ```
+
+Each `teacherBlock.upsert` carries its `update: {}` inside the printed window,
+and each is preceded within its own transaction by that transaction's
+`invitation` write — read off the ascending line numbers. `acceptInvitation`'s
+`invitation.updateMany` matches too; it upserts no block, so it is not one of
+these sites.
 
 `resolveInvitationOnLink` takes `TeacherBlock` and `Invitation` in the
 opposite order (see "Known safe by accident" below), and the reason racing

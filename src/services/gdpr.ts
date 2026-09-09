@@ -1375,8 +1375,9 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // so the rows have to survive a hypothetical restore. A restored
       // teacher whose contacts are gone simply re-types them; a restored
       // teacher whose blocks are gone has been silently un-refused by every
-      // student who walked away. Erring toward the refusal is the only
-      // direction that cannot hurt the person the block protects. The
+      // student who refused them, by either route — `docs/data-model.md`
+      // (TeacherBlock) has which acts write one. Erring toward the refusal is
+      // the only direction that cannot hurt the person the block protects. The
       // student-erasure side of the same question is genuinely open — see
       // `deleteStudentAccount` above.
       await tx.invitation.deleteMany({ where: { teacherId } });
