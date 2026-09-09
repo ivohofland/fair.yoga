@@ -4,7 +4,7 @@ import path from 'path';
 import { getWorktreeIdentity, dbNamesForSlug } from '../src/lib/worktree/identity';
 import { getRegistryPath, writeRegistryLocked, allocatePort } from '../src/lib/worktree/registry';
 import { runReap } from '../src/lib/worktree/reap';
-import { writeEnvIfMissing, findMismatchedEnvKeys, generateCronSecret, hasEmptyCronSecret } from '../src/lib/worktree/env-file';
+import { writeEnvIfMissing, generateCronSecret, findStaleEnvKeys } from '../src/lib/worktree/env-file';
 import { buildEnvOverrides } from '../src/lib/worktree/env-overrides';
 
 const DB_HOST = 'postgresql://yoga:yoga_dev_password@localhost:5432';
@@ -56,13 +56,13 @@ async function main(): Promise<void> {
   console.log(wrote ? '[worktree:setup] wrote .env' : '[worktree:setup] .env already exists — left untouched');
 
   if (!wrote) {
-    const mismatched = findMismatchedEnvKeys(envPath, overrides);
-    if (hasEmptyCronSecret(envPath)) {
-      mismatched.push('CRON_SECRET');
-    }
+    const mismatched = findStaleEnvKeys(envPath, overrides);
     if (mismatched.length > 0) {
       console.warn(`[worktree:setup] .env already exists and does not match this worktree's isolation settings for: ${mismatched.join(', ')}`);
       console.warn('[worktree:setup] if this .env was copied from elsewhere, delete it and re-run this command to regenerate it correctly');
+    }
+    if (mismatched.includes('CRON_SECRET')) {
+      console.warn('[worktree:setup] CRON_SECRET is blank — add a value yourself (e.g. `openssl rand -hex 24`) rather than deleting .env for it; /api/cron/* will 500 until it has one');
     }
   }
 

@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { generateEnvContent, writeEnvIfMissing, readEnvValue, findMismatchedEnvKeys, generateCronSecret, hasEmptyCronSecret } from './env-file';
+import { generateEnvContent, writeEnvIfMissing, readEnvValue, findMismatchedEnvKeys, generateCronSecret, hasEmptyCronSecret, findStaleEnvKeys } from './env-file';
 
 describe('generateEnvContent', () => {
   it('replaces an existing key in place', () => {
@@ -128,5 +128,43 @@ describe('hasEmptyCronSecret', () => {
   it('returns false when CRON_SECRET holds a value', () => {
     fs.writeFileSync(envPath, 'CRON_SECRET="abc123"');
     expect(hasEmptyCronSecret(envPath)).toBe(false);
+  });
+
+  it('returns true when CRON_SECRET is whitespace-only', () => {
+    fs.writeFileSync(envPath, 'CRON_SECRET="   "');
+    expect(hasEmptyCronSecret(envPath)).toBe(true);
+  });
+});
+
+describe('findStaleEnvKeys', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fairyoga-env-stale-test-'));
+  const envPath = path.join(dir, '.env');
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+  });
+
+  it('returns empty array when .env is fully healthy (deterministic keys match, CRON_SECRET populated)', () => {
+    fs.writeFileSync(envPath, 'DATABASE_URL="postgresql://a"\nCRON_SECRET="abc123xyz"');
+    expect(findStaleEnvKeys(envPath, { DATABASE_URL: 'postgresql://a' })).toEqual([]);
+  });
+
+  it('returns only CRON_SECRET when it is blank but deterministic keys match', () => {
+    fs.writeFileSync(envPath, 'DATABASE_URL="postgresql://a"\nCRON_SECRET=""');
+    expect(findStaleEnvKeys(envPath, { DATABASE_URL: 'postgresql://a' })).toEqual(['CRON_SECRET']);
+  });
+
+  it('returns only the mismatched deterministic key when CRON_SECRET is populated', () => {
+    fs.writeFileSync(envPath, 'DATABASE_URL="postgresql://stale"\nCRON_SECRET="abc123xyz"');
+    expect(findStaleEnvKeys(envPath, { DATABASE_URL: 'postgresql://new' })).toEqual(['DATABASE_URL']);
+  });
+
+  it('returns both mismatched deterministic keys and blank CRON_SECRET', () => {
+    fs.writeFileSync(envPath, 'DATABASE_URL="postgresql://stale"\nCRON_SECRET=""');
+    expect(findStaleEnvKeys(envPath, { DATABASE_URL: 'postgresql://new' })).toEqual([
+      'DATABASE_URL',
+      'CRON_SECRET',
+    ]);
   });
 });
