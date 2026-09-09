@@ -30,7 +30,7 @@ describe('reapOrphans', () => {
 
   it("leaves the entry and its databases alone when killPid can't confirm the process was stopped (refused)", async () => {
     const registry: Registry = {
-      fix_520: { port: 3101, pid: 4242, dbSlug: 'fix_520' },
+      fix_520: { port: 3101, pid: 4242, dbSlug: 'fix_520' as DbSlug },
     };
     const dropDatabase = vi.fn().mockResolvedValue(undefined);
     const killPid = vi.fn().mockReturnValue('refused');
@@ -45,7 +45,7 @@ describe('reapOrphans', () => {
 
   it("leaves the entry and its databases alone when killPid can't confirm the process was stopped (signal-failed)", async () => {
     const registry: Registry = {
-      fix_520: { port: 3101, pid: 4242, dbSlug: 'fix_520' },
+      fix_520: { port: 3101, pid: 4242, dbSlug: 'fix_520' as DbSlug },
     };
     const dropDatabase = vi.fn().mockResolvedValue(undefined);
     const killPid = vi.fn().mockReturnValue('signal-failed');
