@@ -109,18 +109,23 @@ describe('explainCollision', () => {
     expect(result.message).toMatch(/reap\/migration sweep failed/);
     expect(result.message).toMatch(/own not-yet-migrated legacy registry entry/);
   });
+
+  it('returns the original error unchanged when reap succeeded and the collision is not legacy-shaped', () => {
+    const err = new RegistryCollisionError('fix-517' as RawName, 'fix_520' as DbSlug, 'fix-520');
+    expect(explainCollision(err, false)).toBe(err);
+  });
 });
 
 describe('setPid', () => {
   it('updates only the given key', () => {
     const existing: Registry = { 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' as DbSlug } };
-    expect(setPid(existing, 'fix-517', 4242)).toEqual({
+    expect(setPid(existing, 'fix-517' as RawName, 4242)).toEqual({
       'fix-517': { port: 3100, pid: 4242, dbSlug: 'fix_517' },
     });
   });
 
   it('throws for an unregistered key', () => {
-    expect(() => setPid({}, 'fix-517', 4242)).toThrow();
+    expect(() => setPid({}, 'fix-517' as RawName, 4242)).toThrow();
   });
 });
 

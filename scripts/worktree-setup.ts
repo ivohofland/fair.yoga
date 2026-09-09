@@ -20,9 +20,9 @@ async function main(): Promise<void> {
 
   const registryPath = getRegistryPath(identity.gitCommonDir);
 
-  // reapFailed means the whole sweep threw (migration did not run this pass);
-  // result.failed names individual rows the sweep tried and failed to reap.
-  // Different failure modes — only reapFailed feeds explainCollision below.
+  // reapFailed means the whole runReap sweep threw; reapResult.failed names
+  // individual rows the sweep tried and failed to reap. Different failure
+  // modes — only reapFailed feeds explainCollision below.
   let reapFailed = false;
   try {
     const reapResult = await runReap(identity.gitCommonDir, registryPath, `${DB_HOST}/postgres`);

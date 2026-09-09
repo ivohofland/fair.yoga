@@ -41,6 +41,9 @@ describe('reapOrphans', () => {
     expect(result.registry).toEqual(registry);
     expect(killPid).toHaveBeenCalledWith(4242, 3101);
     expect(dropDatabase).not.toHaveBeenCalled();
+    expect(result.failed).toEqual([
+      { key: 'fix_520', error: new Error('could not confirm pid 4242 was stopped (refused) — leaving it recorded') },
+    ]);
   });
 
   it("leaves the entry and its databases alone when killPid can't confirm the process was stopped (signal-failed)", async () => {
@@ -56,6 +59,9 @@ describe('reapOrphans', () => {
     expect(result.registry).toEqual(registry);
     expect(killPid).toHaveBeenCalledWith(4242, 3101);
     expect(dropDatabase).not.toHaveBeenCalled();
+    expect(result.failed).toEqual([
+      { key: 'fix_520', error: new Error('could not confirm pid 4242 was stopped (signal-failed) — leaving it recorded') },
+    ]);
   });
 
   it('does not call killPid for an orphan with no recorded pid', async () => {
