@@ -281,10 +281,9 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
     // A second teacher for the same address as `makeTeacherAndInvitee`'s,
     // for the two discrimination tests below — each proves its filter
     // excludes one row while still returning a live sibling to the SAME
-    // address, the shape `invitations.pending.test.ts` uses for its own
-    // `deletedAt`/status exclusions, and for the same reason: asserting
-    // only that the excluded row is absent would pass just as well against
-    // a filter mistyped into matching nothing at all.
+    // address. Both halves are needed: asserting only that the excluded row
+    // is absent would pass just as well against a filter mistyped into
+    // matching nothing at all.
     async function makeTeacher(overrides: { deletedAt?: Date } = {}) {
       const teacherEmail = `teacher-${suffix}-${crypto.randomBytes(3).toString('hex')}@example.com`;
       const teacher = await prisma.teacher.create({
@@ -362,9 +361,10 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
       await declineInvitation(prisma, { invitationId: liveInvitation.id, accountEmail: email });
 
       // A second, soft-deleted teacher's declined invitation to the same
-      // address — erasure (`deleteTeacherAccount`, services/gdpr.ts) leaves
-      // `Invitation` standing, so a pre-erasure decline stays `declined`
-      // forever on a teacher renamed "Deleted Teacher".
+      // address. `deletedAt` is stamped by the fixture rather than reached
+      // through a real erasure: what is under test is the query's
+      // `deletedAt: null` filter, and the row it has to exclude is one that
+      // is otherwise indistinguishable from the live sibling above it.
       const erasedTeacher = await makeTeacher({ deletedAt: new Date() });
       const erasedInvitation = await invite(erasedTeacher.id, email);
       await declineInvitation(prisma, { invitationId: erasedInvitation.id, accountEmail: email });

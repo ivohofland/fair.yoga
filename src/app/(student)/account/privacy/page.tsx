@@ -118,9 +118,10 @@ export default async function PrivacySettingsPage() {
         </div>
       )}
 
-      {/* h2, matching "Pending invitations" above — the two sections were
-          otherwise indistinguishable to a screen reader, since the only
-          headings on the page were the card titles underneath (review F8). */}
+      {/* h2, matching the headings above — without one, a section is
+          indistinguishable to a screen reader from the one before it, since
+          the only other headings here are the card titles underneath
+          (review F8). */}
       <h2 className="type-subtitle mb-3">Your teachers</h2>
 
       {links.length === 0 ? (

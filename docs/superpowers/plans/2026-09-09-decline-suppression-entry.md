@@ -471,7 +471,9 @@ it('the same race deadlocks once the block upsert carries a real field — why u
 
 - [ ] **Step 2: Run them**
 
-Run: `npx vitest run --project unit src/services/invitations-lock-order.test.ts`
+Run: `npx vitest run --project unit-sweeps src/services/invitations-lock-order.test.ts`
+(this file is in `SERIAL_TESTS` (`vitest.tiers.ts`), which the `unit` project
+excludes — `--project unit` exits 1 with "No test files found")
 Expected: PASS. If the deadlock test passes without a `40P01`, the race is not
 being reproduced — check that both transactions are genuinely concurrent and
 that the block row already exists before the race starts (the no-lock path only
