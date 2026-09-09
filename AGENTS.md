@@ -46,6 +46,25 @@ npm run test:e2e            # Playwright (starts dev server if not running)
 - CI checks schema/migration drift — `schema.prisma` must match migration history.
 - `npm run db:seed` wipes and recreates all domain data (emergency reset).
 
+## Next.js version — check the installed docs, not recall
+
+This repo tracks Next closely, and Next 16 renamed things your training data
+still calls by their old names. `middleware.ts` is now `proxy.ts` (here:
+`src/proxy.ts`, exporting `proxy`, not `middleware`) — issue #539's own
+reachability table concluded "no middleware file exists" by running
+`ls src/middleware.ts`, and was wrong about a file that enforces the
+signed-out redirect.
+
+**Version-matched docs ship with the package: `node_modules/next/dist/docs/`.**
+Read them before writing framework code, and prefer them over anything you
+recall about Next.
+
+`next dev` offers to write this reminder into this file itself, and
+`next.config.ts` sets `agentRules: false` to decline it — that block's text is
+Next's to reword, and a file this repo maintains should not churn on a patch
+release. This section is the repo-owned replacement; the pointer above is the
+part worth keeping.
+
 ## Build output directories
 
 - Dev writes to `.next/`, production writes to `.next-build/`. This separation prevents stale pages when a `next build` runs while dev server is active. The split is in `next.config.ts` (`distDir`).
