@@ -1302,7 +1302,7 @@ describe('Invitation and TeacherBlock take one lock order (#522)', () => {
    * both signals that and waits for the booking's half. `declineHookFired`
    * guards the same vacuous pass the booking's `hook.fired` does.
    */
-  it('a real decline racing a booking-shaped resolve does not deadlock — the empty-update path holds', async () => {
+  it('a real decline racing the real resolve on a booking path does not deadlock — the empty-update path holds', async () => {
     const { teacherId, email, invitationId } = await makeBlockedPendingInvite();
 
     let signalBlockRowHeld!: () => void;

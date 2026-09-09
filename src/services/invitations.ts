@@ -455,11 +455,13 @@ async function revivePendingInvitation(
  * value, not the persisted `Invitation.delivered` column discussed below —
  * is computed once per `inviteContact` call, before either the create or
  * the revive branch, and can go stale before this function runs. The live
- * door is a `TeacherBlock` committed in between: `unlinkTeacher` writes one
+ * door is a `TeacherBlock` committed in between — the student's own refusal
+ * landing while the send is in flight. Every writer of that row commits it
  * inside its own transaction, and `POST /api/students` calls this
- * fire-and-forget (below), so the two are genuinely concurrent — the
- * student who unlinks a moment after the teacher clicks Send has an
- * `InviteResult.delivered: true` computed before their block existed. That
+ * fire-and-forget (below), so a refusal and the send it should stop are
+ * genuinely concurrent — the student who refuses a moment after the teacher
+ * clicks Send has an `InviteResult.delivered: true` computed before their
+ * block existed. That
  * window is the whole reason this function re-queries `TeacherBlock`
  * itself, below, rather than leaning on the caller's value: the guard
  * travels with the send rather than living only in whichever caller
@@ -741,12 +743,29 @@ export async function listPendingInvitations(
  * Reads the `declined` `Invitation` row, never `TeacherBlock`. The block is
  * what makes the refusal work and it deliberately outlives erasure (#522);
  * the invitation row is the only part that may be narrated back to anyone,
- * because erasure scrubs its `email` and a later account on the same address
- * therefore matches nothing here.
+ * because erasure rewrites its `email` and a later account on the same
+ * address therefore matches nothing here. What erasure does to each of these
+ * two rows is `docs/data-model.md`'s to state — `TeacherBlock` → "A refusal
+ * survives that anonymisation, because it does not live on the scrubbed row"
+ * — and nothing here re-derives it.
  *
- * Two exclusions, and their reasons are stated here rather than borrowed
- * from `listPendingInvitations` above, which happens to filter on the same
- * two columns. `deletedAt: null`: everything this returns exists to name a
+ * That choice leaves a gap, and it is accepted rather than overlooked: a
+ * student who unlinked a teacher whose invitation row is absent or
+ * `delivered: false` sees nothing here, while `inviteContact` above still
+ * answers that teacher `DECLINED`. It is the common case, not a corner —
+ * most links come from bookings and carry no invitation at all. There is no
+ * narrative row to read for those, and reading `TeacherBlock` instead is
+ * exactly the erased-history disclosure the paragraph above refuses. See
+ * `docs/superpowers/specs/2026-09-09-decline-suppression-entry-design.md`
+ * ("Known gap, accepted"). The converse is not a gap and is covered by
+ * `invitations.decline.test.ts`: where `unlinkTeacher` DOES find a
+ * `delivered: true` row it writes `declined` on it, and this lists that
+ * teacher — the section's copy names no route in, so it is true of a refusal
+ * made either way.
+ *
+ * The exclusions state their reasons here rather than borrowing them from
+ * `listPendingInvitations` above, which happens to filter on the same
+ * columns. `deletedAt: null`: everything this returns exists to name a
  * teacher and point at their classes, and an erased teacher has a name that
  * means nobody and no classes to point at — there is no route back to one,
  * so there is nothing to say. Already-linked: a teacher with this student on
@@ -826,11 +845,23 @@ class NotPendingError extends Error {}
  * here can hand a stranger the bit `inviteContact` above withholds. A
  * `pending` row on a blocked pair is one the student is never offered —
  * `listPendingInvitations` drops it — so `NOT_FOUND` is the true answer:
- * there is nothing here for them. An answered row is their own earlier act,
- * and `NOT_PENDING` says so accurately. Both refuse before the transaction
- * rather than leaving it to the CAS, because the CAS treats an already
- * `accepted` row as success — reaching it would commit the roster-link write
- * for a pair that is blocked.
+ * there is nothing here for them. Anything the CAS below would refuse to
+ * write over answers `NOT_PENDING` instead: the guard names the row's own
+ * state rather than the block, so it discloses nothing the caller does not
+ * already hold, and a new `InvitationStatus` member inherits that
+ * conservative answer without this paragraph having to be revisited. Both
+ * refuse before the transaction rather than leaving it to the CAS, because
+ * the CAS treats an already `accepted` row as success — reaching it would
+ * commit the roster-link write for a pair that is blocked.
+ *
+ * Which is also why only one of the two answered arms can be discriminated
+ * by a test. Delete this guard and a `declined` row still answers
+ * `NOT_PENDING` and still leaves no link: the CAS matches nothing, the
+ * re-read below throws `NotPendingError`, and the roster-link write rolls
+ * back with the transaction. An `accepted` row does not — that same re-read
+ * treats it as success, so without this guard the call returns `{ ok: true }`
+ * having committed a link for a blocked pair. `invitations.decline.test.ts`
+ * covers both arms; the `accepted` one is the arm that goes red.
  *
  * `teacher: { deletedAt: null }` is in the `where` for the same structural
  * reason the email match is (F7, #166 review): a condition the write depends
