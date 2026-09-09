@@ -84,9 +84,18 @@ describe('readRegistry / writeRegistryLocked', () => {
     expect(readRegistry(registryPath)).toEqual({});
   });
 
-  it('reads an empty registry for corrupt JSON rather than throwing', () => {
+  it('throws on a corrupt (non-JSON) registry file rather than silently returning empty', () => {
     fs.writeFileSync(registryPath, 'not json');
-    expect(readRegistry(registryPath)).toEqual({});
+    expect(() => readRegistry(registryPath)).toThrow();
+  });
+
+  it('throws when the registry file is valid JSON but not an object', () => {
+    fs.writeFileSync(registryPath, '[]');
+    expect(() => readRegistry(registryPath)).toThrow();
+  });
+
+  it('still returns {} when the file genuinely does not exist', () => {
+    expect(readRegistry(path.join(dir, 'does-not-exist.json'))).toEqual({});
   });
 
   it('writes what the mutate function returns and persists it', async () => {
@@ -100,6 +109,12 @@ describe('readRegistry / writeRegistryLocked', () => {
       return { ...registry, fix_520: { port: 3101, pid: null } };
     });
     expect(readRegistry(registryPath)).toEqual({ fix_520: { port: 3101, pid: null } });
+  });
+
+  it('writes atomically — no leftover temp file after a successful write', async () => {
+    await writeRegistryLocked(registryPath, () => ({ fix_517: { port: 3100, pid: null } }));
+    const files = fs.readdirSync(dir);
+    expect(files.filter((f) => f.includes('.tmp.'))).toEqual([]);
   });
 });
 

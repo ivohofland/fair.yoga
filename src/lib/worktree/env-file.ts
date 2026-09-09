@@ -41,3 +41,16 @@ export function writeEnvIfMissing(
   fs.writeFileSync(envPath, generateEnvContent(template, overrides));
   return true;
 }
+
+export function readEnvValue(envPath: string, key: string): string | undefined {
+  const content = fs.readFileSync(envPath, 'utf8');
+  const match = content.match(new RegExp(`^${key}="([^"]*)"`, 'm'));
+  return match?.[1];
+}
+
+/** The `overrides` keys whose value in the `.env` at `envPath` does not match. */
+export function findMismatchedEnvKeys(envPath: string, overrides: Record<string, string>): string[] {
+  return Object.entries(overrides)
+    .filter(([key, expected]) => readEnvValue(envPath, key) !== expected)
+    .map(([key]) => key);
+}

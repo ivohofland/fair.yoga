@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import type { ClassStatus, WaitlistStatus } from '@prisma/client';
 import { log } from '@/lib/log';
 import { FULFILLED_WAITLIST_STATUSES } from '@/lib/waitlist-status';
+import { isTestDatabaseName } from '@/lib/worktree/identity';
 import {
   reapClosedWaitlistEntries,
   RetentionFailedError,
@@ -220,7 +221,7 @@ beforeAll(async () => {
   const [row] =
     await prisma.$queryRaw<Array<{ current_database: string }>>`SELECT current_database()`;
   const dbName = row?.current_database ?? '';
-  if (!/_test(_[a-z0-9_]+)?$/.test(dbName)) {
+  if (!isTestDatabaseName(dbName)) {
     throw new Error(
       `[waitlist-retention.test] refusing to run an unscoped DELETE sweep against "${dbName}" — ` +
         'this suite calls reapClosedWaitlistEntries, which is not scoped to its own fixtures. ' +

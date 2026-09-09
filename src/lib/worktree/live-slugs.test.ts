@@ -53,4 +53,16 @@ describe('listWorktreeAdminEntries', () => {
 
     fs.rmSync(worktreeRoot, { recursive: true, force: true });
   });
+
+  it('returns workingDirExists: false when the worktree directory was actually deleted', () => {
+    const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fairyoga-live-slugs-worktree-'));
+    const adminDir = path.join(gitCommonDir, 'worktrees', 'gone-worktree');
+    fs.mkdirSync(adminDir, { recursive: true });
+    fs.writeFileSync(path.join(adminDir, 'gitdir'), path.join(worktreeRoot, '.git'));
+    fs.rmSync(worktreeRoot, { recursive: true, force: true }); // delete it BEFORE calling
+
+    const entries = listWorktreeAdminEntries(gitCommonDir);
+
+    expect(entries).toEqual([{ slug: 'gone_worktree', workingDirExists: false }]);
+  });
 });

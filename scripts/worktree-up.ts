@@ -2,11 +2,11 @@
 import fs from 'fs';
 import { loadEnv } from 'vite';
 import { getWorktreeIdentity } from '../src/lib/worktree/identity';
-import { getRegistryPath, writeRegistryLocked, allocatePort, setPid } from '../src/lib/worktree/registry';
+import { getRegistryPath, readRegistry, writeRegistryLocked, allocatePort, setPid } from '../src/lib/worktree/registry';
 import { runReap } from '../src/lib/worktree/reap';
 import { provisionDatabase } from '../src/lib/db-provision';
 import { spawnDevServer, buildDevServerLogPath } from '../src/lib/worktree/dev-server';
-import { killPidReal } from '../src/lib/worktree/side-effects';
+import { killPidReal, isPidAlive } from '../src/lib/worktree/side-effects';
 
 async function waitForServer(port: number, timeoutMs = 15000, intervalMs = 500): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -45,6 +45,13 @@ async function main(): Promise<void> {
     }
   } catch (err) {
     console.warn('[worktree:up] reap sweep failed — continuing without it, this worktree is unaffected:', err);
+  }
+
+  const registryBeforeUp = readRegistry(registryPath);
+  const existing = registryBeforeUp[slug];
+  if (existing?.pid != null && isPidAlive(existing.pid)) {
+    console.log(`[worktree:up] already running at http://localhost:${existing.port} (pid ${existing.pid})`);
+    return;
   }
 
   let port = 0;

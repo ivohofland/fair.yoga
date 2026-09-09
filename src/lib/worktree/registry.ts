@@ -63,16 +63,25 @@ export function getRegistryPath(gitCommonDir: string): string {
 }
 
 export function readRegistry(registryPath: string): Registry {
+  let raw: string;
   try {
-    const raw = fs.readFileSync(registryPath, 'utf8');
-    const parsed: unknown = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Registry;
+    raw = fs.readFileSync(registryPath, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return {};
     }
-    return {};
-  } catch {
-    return {};
+    throw new Error(`[registry] could not read ${registryPath}: ${err}`);
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`[registry] ${registryPath} contains invalid JSON — refusing to silently discard it: ${err}`);
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed as Registry;
+  }
+  throw new Error(`[registry] ${registryPath} does not contain a JSON object`);
 }
 
 function sleepSync(ms: number): void {
@@ -108,7 +117,9 @@ export async function writeRegistryLocked(
   try {
     const current = readRegistry(registryPath);
     const next = await mutate(current);
-    fs.writeFileSync(registryPath, `${JSON.stringify(next, null, 2)}\n`);
+    const tmpPath = `${registryPath}.tmp.${process.pid}`;
+    fs.writeFileSync(tmpPath, `${JSON.stringify(next, null, 2)}\n`);
+    fs.renameSync(tmpPath, registryPath);
     return next;
   } finally {
     releaseLock(lockDir);

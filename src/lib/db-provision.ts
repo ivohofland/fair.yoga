@@ -20,22 +20,23 @@ export interface ProvisionOptions {
 
 /**
  * Create-if-missing + `prisma migrate deploy` against `url`, optionally
- * seeding — but only on the run that actually creates the database, so a
- * re-run against an existing one never wipes data a developer put there.
+ * seeding — but only when the database is actually empty of seed data
+ * (checked by row count after a successful migrate), so a re-run against
+ * an existing, already-seeded database never wipes data a developer put
+ * there, and a database left empty by a prior failed migrate still gets
+ * seeded once migrate succeeds.
  */
 export async function provisionDatabase(url: string, options: ProvisionOptions): Promise<void> {
   const dbName = new URL(url).pathname.slice(1);
   assertSafeDatabaseName(dbName);
 
   const admin = new PrismaClient({ datasources: { db: { url: withDatabaseName(url, 'postgres') } } });
-  let created = false;
   try {
     const exists = await admin.$queryRaw<
       { one: number }[]
     >`SELECT 1 AS one FROM pg_database WHERE datname = ${dbName}`;
     if (exists.length === 0) {
       await admin.$executeRawUnsafe(`CREATE DATABASE "${dbName}"`);
-      created = true;
       console.log(`[db-provision] created database ${dbName}`);
     }
   } finally {
@@ -47,11 +48,21 @@ export async function provisionDatabase(url: string, options: ProvisionOptions):
     stdio: 'pipe',
   });
 
-  if (options.seed && created) {
-    execSync('npx prisma db seed', {
-      env: { ...process.env, DATABASE_URL: url },
-      stdio: 'pipe',
-    });
-    console.log(`[db-provision] seeded database ${dbName}`);
+  if (options.seed) {
+    const target = new PrismaClient({ datasources: { db: { url } } });
+    let alreadyHasData: boolean;
+    try {
+      const [row] = await target.$queryRaw<{ count: bigint }[]>`SELECT COUNT(*) as count FROM "Teacher"`;
+      alreadyHasData = (row?.count ?? BigInt(0)) > BigInt(0);
+    } finally {
+      await target.$disconnect();
+    }
+    if (!alreadyHasData) {
+      execSync('npx prisma db seed', {
+        env: { ...process.env, DATABASE_URL: url },
+        stdio: 'pipe',
+      });
+      console.log(`[db-provision] seeded database ${dbName}`);
+    }
   }
 }

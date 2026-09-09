@@ -23,13 +23,11 @@ import { hashToken } from '@/lib/auth/magic-link';
  * The app under test — the dev server locally, the built app in CI.
  *
  * `INTEGRATION_BASE_URL` overrides it for a worktree whose dev server holds
- * another port. `playwright.config.ts` and `vitest.config.ts` both read the
- * same variable for their own `integration` tiers — playwright for its
- * `baseURL` and `webServer.url`, vitest by injecting it into the
- * `integration` project's `env` — because this module mints the session
- * cookie for whatever origin this constant names: point one side elsewhere
- * and the other half of the suite runs unauthenticated. Unset in CI, where
- * the fallback is byte-identical to what stood here before.
+ * another port. This module mints the session cookie for whatever origin
+ * this constant names, so anything else in the `integration` tier that
+ * reaches the app must resolve `INTEGRATION_BASE_URL` to that same origin,
+ * or it runs unauthenticated against it. Unset in CI, where the fallback is
+ * byte-identical to what stood here before.
  */
 export const BASE_URL = process.env.INTEGRATION_BASE_URL ?? 'http://localhost:3000';
 
