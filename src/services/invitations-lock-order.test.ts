@@ -1171,10 +1171,13 @@ describe('Invitation and TeacherBlock take one lock order (#522)', () => {
    *
    * The standing block is the precondition, not scenery: it is the only state
    * in which `declineInvitation`'s `update: {}` does anything at all. A first
-   * decline for a pair finds no row to match and genuinely `INSERT`s, which
-   * takes the row lock whatever the payload says — so a fixture without the
-   * block would deadlock in both tests below and prove nothing about the
-   * payload.
+   * decline for a pair finds no row to match and `INSERT`s whatever the
+   * payload says. Deleting this one line makes both tests below agree —
+   * measured, with the two tests otherwise untouched: the deadlock test drops
+   * to zero rejections and fails, because the counterparty's
+   * `teacherBlock.deleteMany` then matches nothing, holds no lock, and leaves
+   * the decline's `INSERT` waiting on nobody. A fixture without it would prove
+   * nothing about the payload either way.
    *
    * Reachable, not contrived: `unlinkTeacher` (`invitations.ts`) scopes its
    * invitation write to `delivered: true` and then writes the block
@@ -1356,6 +1359,11 @@ describe('Invitation and TeacherBlock take one lock order (#522)', () => {
    * two statements are `declineInvitation`'s own, in its order, so what
    * differs between the two tests is the payload and nothing else. The
    * booking side is the same real function in both.
+   *
+   * That difference is measured, not assumed: put `update: {}` back into the
+   * hand-rolled transaction below, leaving every other line alone, and this
+   * test drops to zero rejections. The payload is what draws the arrow, not
+   * the hand-rolling and not the interleaving.
    *
    * So `update: {}` in `declineInvitation` is load-bearing, and this is the
    * test that says so out loud rather than leaving it to a comment: change it
