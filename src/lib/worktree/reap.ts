@@ -1,5 +1,5 @@
 import { removeEntry, writeRegistryLocked, type Registry, type RegistryEntry } from './registry';
-import { dbNamesForSlug, sanitizeSlug } from './identity';
+import { dbNamesForSlug, sanitizeSlug, type RawName, type DbSlug } from './identity';
 import { getLiveWorktreeNames } from './live-slugs';
 import { dropDatabaseReal, killPidReal, describeKillOutcome, type KillPidResult } from './side-effects';
 
@@ -20,7 +20,7 @@ export interface ReapResult {
  * simply not a match here — one such live worktree must not abort the
  * whole reap sweep.
  */
-function sanitizesTo(rawName: string, dbSlug: string): boolean {
+function sanitizesTo(rawName: RawName, dbSlug: DbSlug): boolean {
   try {
     return sanitizeSlug(rawName) === dbSlug;
   } catch {
@@ -74,7 +74,7 @@ async function reapEntry(
  */
 export async function reapOrphans(
   registry: Registry,
-  liveRawNames: ReadonlySet<string>,
+  liveRawNames: ReadonlySet<RawName>,
   deps: ReapDeps,
 ): Promise<ReapResult> {
   let next = registry;
@@ -82,7 +82,7 @@ export async function reapOrphans(
   const migrated: Array<{ from: string; to: string }> = [];
 
   for (const [key, entry] of Object.entries(registry)) {
-    if (liveRawNames.has(key)) {
+    if (liveRawNames.has(key as RawName)) {
       continue; // already rawName-keyed, live
     }
 
@@ -95,7 +95,7 @@ export async function reapOrphans(
     // gate and that comparison target matter, and why a future refactor
     // (e.g. a dbSlug-indexed `Map` for the lookup) must not drop either.
     if (key === entry.dbSlug) {
-      const target = [...liveRawNames].find((name) => sanitizesTo(name, key));
+      const target = [...liveRawNames].find((name) => sanitizesTo(name, key as DbSlug));
       if (target !== undefined) {
         if (registry[target] === undefined) {
           // Rekey: move this entry to the live worktree's real name, keep
