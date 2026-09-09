@@ -41,7 +41,7 @@ function sanitizesTo(rawName: RawName, dbSlug: DbSlug): boolean {
  * failure results) — anything short of that leaves the entry untouched
  * instead of dropping its databases out from under a process that may
  * still be running, retried on the next sweep, same as a thrown error
- * below.
+ * below — both paths also push onto `failed`, not just log a warning.
  */
 async function reapEntry(
   registry: Registry,
@@ -56,6 +56,7 @@ async function reapEntry(
       const outcome = describeKillOutcome(deps.killPid(entry.pid, entry.port), entry.pid);
       if (!outcome.confirmedStopped) {
         console.warn(`[reap] worktree "${key}": ${outcome.message} — leaving it and its databases alone, will retry on the next sweep`);
+        failed.push({ key, error: new Error(outcome.message) });
         return registry;
       }
     }

@@ -40,9 +40,7 @@ export function listWorktreeAdminEntries(gitCommonDir: string): WorktreeAdminEnt
         console.warn(`[live-slugs] could not read gitdir for "${rawName}" (${(err as NodeJS.ErrnoException).code ?? err}) — treating as still live rather than reaping it`);
       }
     }
-    // rawName here is the directory name read directly off disk under
-    // <gitCommonDir>/worktrees/ — the same value identity.ts's resolveIdentity
-    // computes as RawName for that worktree (docblock above).
+    // Cast justified by this function's own docblock above (the rawName/RawName equivalence).
     return { rawName: rawName as RawName, workingDirExists };
   });
 }

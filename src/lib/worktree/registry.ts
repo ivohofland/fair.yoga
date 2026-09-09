@@ -49,6 +49,7 @@ export class RegistryCollisionError extends Error {
  * rather than a genuinely different worktree — see
  * docs/superpowers/specs/2026-09-09-worktree-registry-followups-design.md §2.
  * Returns `err` unchanged otherwise.
+ * Note: the enriched return is a plain Error — instanceof RegistryCollisionError is false on it, though the original is reachable via .cause.
  */
 export function explainCollision(err: RegistryCollisionError, reapFailed: boolean): Error {
   if (!reapFailed || !err.collidingKeyIsLegacyShaped) {
@@ -88,7 +89,7 @@ export function allocatePort(
   throw new Error(`No free port in range ${range.min}-${range.max}`);
 }
 
-export function setPid(registry: Registry, key: string, pid: number | null): Registry {
+export function setPid(registry: Registry, key: RawName, pid: number | null): Registry {
   const existing = registry[key];
   if (!existing) {
     throw new Error(`setPid: no registry entry for key "${key}" — call allocatePort first`);

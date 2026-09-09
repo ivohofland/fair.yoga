@@ -39,9 +39,9 @@ async function main(): Promise<void> {
     throw new Error('[worktree:up] DATABASE_URL not set — run `npm run worktree:setup` first');
   }
 
-  // reapFailed means the whole sweep threw (migration did not run this pass);
-  // result.failed names individual rows the sweep tried and failed to reap.
-  // Different failure modes — only reapFailed feeds explainCollision below.
+  // reapFailed means the whole runReap sweep threw; reapResult.failed names
+  // individual rows the sweep tried and failed to reap. Different failure
+  // modes — only reapFailed feeds explainCollision below.
   let reapFailed = false;
   try {
     const reapResult = await runReap(identity.gitCommonDir, registryPath, devUrl);

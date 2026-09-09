@@ -7,7 +7,8 @@ declare const rawNameBrand: unique symbol;
 declare const dbSlugBrand: unique symbol;
 
 /** Git's own admin-dir basename — unique by git's own construction (see
- *  WorktreeIdentity.rawName's docblock). Obtained only from resolveIdentity. */
+ *  WorktreeIdentity.rawName's docblock). Obtained only from resolveIdentity
+ *  or a caller that reasons explicitly about the rawName/dbSlug distinction. */
 export type RawName = string & { readonly [rawNameBrand]: true };
 /** sanitizeSlug(rawName) — Postgres-identifier-safe, not guaranteed unique.
  *  Obtained only from resolveIdentity or a caller that reasons explicitly
@@ -80,7 +81,8 @@ export function resolveIdentity(gitDir: string, gitCommonDir: string): WorktreeI
     } catch (err) {
       throw new Error(
         `resolveIdentity: worktree admin-dir name "${rawName}" cannot be turned into a database slug ` +
-          `(${(err as Error).message}) — rename this worktree's directory to include at least one of [a-z0-9_]`,
+          `(${(err as Error).message}) — rename this worktree's directory to include at least one letter or digit`,
+        { cause: err },
       );
     }
   }
