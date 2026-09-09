@@ -38,9 +38,9 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   // Self-contained server bundle for the Docker image (see Dockerfile).
   output: "standalone",
-  // `next dev` otherwise writes a managed block into AGENTS.md — or into
-  // CLAUDE.md, if that is the one of the two present — whenever it detects an
-  // AI coding agent, leaving an uncommitted change in every such session. Off
+  // `next dev` otherwise writes a managed block into AGENTS.md or CLAUDE.md —
+  // the flag governs both — whenever it detects an AI coding agent, leaving an
+  // uncommitted change in every such session. Off
   // because the block's text is owned by Next, not by this repo: committing it
   // would put a string that a future patch release can reword into a file
   // whose claims this project maintains deliberately. AGENTS.md keeps a

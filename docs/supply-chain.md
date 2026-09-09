@@ -94,9 +94,12 @@ tooling.
 **`--omit=dev` is a proxy for "ships to production", not a description of any
 image this repo builds.** Neither Docker stage matches it:
 
-- The `runner` stage (`Dockerfile:32-43`) is **narrower**. It copies only
-  `.next-build/standalone`, whose `node_modules` Next populates by tracing
-  actual imports — so it holds far less than the production dependency tree.
+- The `runner` stage (`Dockerfile:32-46`) is **narrower**. The only
+  `node_modules` it gets is the one inside `.next-build/standalone`, which Next
+  populates by tracing actual imports — so it holds far less than the
+  production dependency tree. (It copies two other trees, `.next-build/static`
+  and `public`; neither carries dependencies. The `public` copy is why
+  `docker build` currently fails — #543.)
   Check what is really in it with
   `for p in <names>; do [ -d ".next-build/standalone/node_modules/$p" ] && echo "$p present" || echo "$p absent"; done`
   after a build.
@@ -111,8 +114,11 @@ the whole tree** (5 moderate, 7 high, 0 critical), of which **5 are in the
 production tree** (1 moderate, 4 high, 0 critical). The remaining 7 are
 therefore dev-only. `next` itself reports nothing.
 
-**In the production dependency tree** — none is a direct dependency; all five
-arrive through one:
+**In the production dependency tree** — none is a direct *production*
+dependency; all five arrive through one. (`prisma` is a direct
+**dev**Dependency, and `npm audit --omit=dev` reports it as `isDirect: true` —
+it is in this table because `@prisma/client` pulls it into the production tree
+as well.)
 
 | Package | Reached through | Forward fix |
 |---|---|---|
@@ -135,8 +141,10 @@ and `@vitest/coverage-v8` are direct devDependencies and `@vitest/mocker`
 comes with them. They run against this repo's own source on a developer's
 machine and on CI, and every advisory among them needs hostile input fed to
 the tool — which here would mean this repo's own files. Mostly
-denial-of-service and path traversal; `browserslist`'s GHSA-73wf-gq98-2v4g is
-the exception, a prototype write via an untrusted `browserslist-stats.json`.
+denial-of-service and path traversal, though not only: `browserslist`'s
+GHSA-73wf-gq98-2v4g is a prototype write via an untrusted
+`browserslist-stats.json`, and `@humanfs/node`'s is a symlink escape during a
+recursive copy.
 
 So the step reports real things, and none of them is a reason to stop a pull
 request that did not cause them. What would change that: an advisory against a

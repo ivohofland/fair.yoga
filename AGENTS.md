@@ -51,9 +51,10 @@ npm run test:e2e            # Playwright (starts dev server if not running)
 This repo tracks Next closely, and Next 16 renamed things your training data
 still calls by their old names. `middleware.ts` is now `proxy.ts` (here:
 `src/proxy.ts`, exporting `proxy`, not `middleware`) — issue #539's own
-reachability table concluded "no middleware file exists" by running
-`ls src/middleware.ts`, and was wrong about a file that enforces the
-signed-out redirect.
+reachability table concluded "No middleware file exists" by running
+`ls src/middleware.ts middleware.ts`, and was wrong about a file that enforces
+the signed-out redirect. The rename is documented in the bundled docs at
+`node_modules/next/dist/docs/01-app/02-guides/upgrading/version-16.md`.
 
 **Version-matched docs ship with the package: `node_modules/next/dist/docs/`.**
 Read them before writing framework code, and prefer them over anything you
