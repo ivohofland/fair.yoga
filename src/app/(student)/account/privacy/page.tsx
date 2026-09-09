@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
-import { listPendingInvitations } from '@/services/invitations';
+import { listPendingInvitations, listDeclinedTeachers } from '@/services/invitations';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
@@ -37,7 +37,7 @@ export default async function PrivacySettingsPage() {
     select: { email: true },
   });
 
-  const [links, privacyRows, pendingInvitations] = await Promise.all([
+  const [links, privacyRows, pendingInvitations, declinedTeachers] = await Promise.all([
     // Existence, not `isArchived: false` — the same choice
     // `students/[id]/privacy/route.ts` makes for the API that reads and
     // writes these settings, and for the same reason: archiving is the
@@ -56,6 +56,7 @@ export default async function PrivacySettingsPage() {
       where: { studentId: session.studentId },
     }),
     listPendingInvitations(prisma, { accountEmail: account.email }),
+    listDeclinedTeachers(prisma, { accountEmail: account.email }),
   ]);
 
   const privacyByTeacher = new Map(privacyRows.map((row) => [row.teacherId, row]));
@@ -88,6 +89,30 @@ export default async function PrivacySettingsPage() {
                 invitationId={invitation.id}
                 teacherName={`${invitation.teacher.firstName} ${invitation.teacher.lastName}`}
               />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {declinedTeachers.length > 0 && (
+        <div className="mb-6">
+          {/* h2, same reasoning as "Pending invitations" and "Your teachers"
+              below (review F8) — each card's own heading is an h3. */}
+          <h2 className="type-subtitle mb-3">Not connected</h2>
+          <div className="flex flex-col gap-4">
+            {declinedTeachers.map((row) => (
+              <section key={row.id} className="bg-sand-soft border border-border rounded-card p-5">
+                <h3 className="type-label text-ink font-semibold mb-2">
+                  {row.teacher.firstName} {row.teacher.lastName}
+                </h3>
+                <p className="type-body mb-3">
+                  This teacher can&apos;t invite you again. Booking one of their classes will
+                  connect you.
+                </p>
+                <Link href={`/${row.teacher.pageSlug}`} className="type-label text-teal no-underline">
+                  View their classes
+                </Link>
+              </section>
             ))}
           </div>
         </div>

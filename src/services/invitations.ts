@@ -735,6 +735,43 @@ export async function listPendingInvitations(
 }
 
 /**
+ * The teachers this account has a standing refusal against, for the student's
+ * own settings page.
+ *
+ * Reads the `declined` `Invitation` row, never `TeacherBlock`. The block is
+ * what makes the refusal work and it deliberately outlives erasure (#522);
+ * the invitation row is the only part that may be narrated back to anyone,
+ * because erasure scrubs its `email` and a later account on the same address
+ * therefore matches nothing here.
+ *
+ * The `deletedAt` and already-linked exclusions mirror
+ * `listPendingInvitations` above, and for the same reasons — a teacher who
+ * added this student to their roster is not someone to describe as not
+ * connected.
+ */
+export async function listDeclinedTeachers(
+  db: PrismaClient,
+  input: { accountEmail: string },
+): Promise<Array<{ id: string; teacher: { firstName: string; lastName: string; pageSlug: string } }>> {
+  const email = requireNormalised(input.accountEmail);
+  return db.invitation.findMany({
+    where: {
+      email,
+      status: 'declined',
+      teacher: {
+        deletedAt: null,
+        teacherStudents: { none: { student: { email } } },
+      },
+    },
+    select: {
+      id: true,
+      teacher: { select: { firstName: true, lastName: true, pageSlug: true } },
+    },
+    orderBy: { teacher: { firstName: 'asc' } },
+  });
+}
+
+/**
  * Rolls back `acceptInvitation`'s transaction when the invitation is no
  * longer pending. A plain `return false` would commit the roster-link write
  * taken above it — including, on the create path, a genuine
