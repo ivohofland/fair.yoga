@@ -56,12 +56,12 @@ export function findMismatchedEnvKeys(envPath: string, overrides: Record<string,
     .map(([key]) => key);
 }
 
-/** `openssl rand -hex 24`'s equivalent — matches DEPLOYMENT.md's production CRON_SECRET recipe. */
+/** 24 random bytes, hex-encoded. Production's own recipe is documented in DEPLOYMENT.md. */
 export function generateCronSecret(): string {
   return crypto.randomBytes(24).toString('hex');
 }
 
-/** True when `envPath`'s CRON_SECRET is missing or blank — the value `.env.example` ships, and what a pre-fix worktree's `.env` still carries. */
+/** True when `envPath`'s CRON_SECRET is absent or set to an empty string. */
 export function hasEmptyCronSecret(envPath: string): boolean {
   return !readEnvValue(envPath, 'CRON_SECRET');
 }
