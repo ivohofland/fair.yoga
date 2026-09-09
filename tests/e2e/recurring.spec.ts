@@ -2,7 +2,7 @@ import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import fs from 'fs';
 import { accountIdOfTeacher } from './account-helpers';
-import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { uniqueSuffix, seedSession, sessionCookie, BASE_URL } from '../helpers';
 import { timeToHHmm } from '@/lib/time-of-day';
 
 /**
@@ -162,7 +162,7 @@ test.describe('Recurring classes', () => {
   // later weeks and never duplicating what exists.
   test('the generation cron is idempotent over the already-filled window', async () => {
     const fire = () =>
-      fetch('http://localhost:3000/api/cron/generate-classes', {
+      fetch(`${BASE_URL}/api/cron/generate-classes`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${cronSecret()}` },
       });

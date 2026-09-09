@@ -2,7 +2,7 @@ import { test, expect } from './fixtures';
 import type { BrowserContext } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfStudent } from './account-helpers';
-import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
+import { uniqueSuffix, seedSession, sessionCookie, BASE_URL } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 
@@ -30,7 +30,7 @@ async function signIn(context: BrowserContext, token: string): Promise<void> {
 }
 
 async function bookViaApi(token: string): Promise<number> {
-  const res = await fetch('http://localhost:3000/api/registrations', {
+  const res = await fetch(`${BASE_URL}/api/registrations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Cookie: `fair_yoga_session=${token}` },
     body: JSON.stringify({ classId }),
