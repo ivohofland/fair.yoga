@@ -94,7 +94,7 @@ tooling.
 **`--omit=dev` is a proxy for "ships to production", not a description of any
 image this repo builds.** Neither of the two stages that ship matches it:
 
-- The `runner` stage (`Dockerfile:35-49`) is **narrower**. The only
+- The `runner` stage (`Dockerfile:36-50`) is **narrower**. The only
   `node_modules` it gets is the one inside `.next-build/standalone`, which Next
   populates by tracing actual imports — so it holds far less than the
   production dependency tree. (It copies two other trees, `.next-build/static`
@@ -109,7 +109,7 @@ image this repo builds.** Neither of the two stages that ship matches it:
   done
   ```
   after a build.
-- The `migrate` stage (`Dockerfile:29`) is **wider**. It is `FROM deps`, i.e. a
+- The `migrate` stage (`Dockerfile:30`) is **wider**. It is `FROM deps`, i.e. a
   plain `npm ci`, so it ships the entire tree — every devDependency included.
 
 Read `--omit=dev` as "could plausibly execute at runtime somewhere", and check
