@@ -819,9 +819,18 @@ class NotPendingError extends Error {}
  * student-side pending query (Task 11) already excludes a blocked pair, so
  * this id should never reach here for one. But the id travels in a URL, not
  * a secret, and this whole function exists because that can't be trusted.
- * It returns the same `NOT_FOUND` as an unknown id, not a distinct code: a
- * distinct code would tell a probing caller that a block exists, which is
- * the exact bit `inviteContact` above withholds.
+ *
+ * What it answers turns on the row's own status, and it may: the email match
+ * above has already proved the caller owns the address, so the only block
+ * anyone can reach this branch about is one on their own address. Nothing
+ * here can hand a stranger the bit `inviteContact` above withholds. A
+ * `pending` row on a blocked pair is one the student is never offered —
+ * `listPendingInvitations` drops it — so `NOT_FOUND` is the true answer:
+ * there is nothing here for them. An answered row is their own earlier act,
+ * and `NOT_PENDING` says so accurately. Both refuse before the transaction
+ * rather than leaving it to the CAS, because the CAS treats an already
+ * `accepted` row as success — reaching it would commit the roster-link write
+ * for a pair that is blocked.
  *
  * `teacher: { deletedAt: null }` is in the `where` for the same structural
  * reason the email match is (F7, #166 review): a condition the write depends
@@ -850,7 +859,7 @@ export async function acceptInvitation(
   const email = requireNormalised(input.accountEmail);
   const invitation = await db.invitation.findFirst({
     where: { id: input.invitationId, email, teacher: { deletedAt: null } },
-    select: { id: true, teacherId: true },
+    select: { id: true, teacherId: true, status: true },
   });
   if (!invitation) return { ok: false, reason: 'NOT_FOUND' };
 
@@ -858,7 +867,11 @@ export async function acceptInvitation(
     where: { teacherId_email: { teacherId: invitation.teacherId, email } },
     select: { id: true },
   });
-  if (blocked) return { ok: false, reason: 'NOT_FOUND' };
+  if (blocked) {
+    return invitation.status === 'pending'
+      ? { ok: false, reason: 'NOT_FOUND' }
+      : { ok: false, reason: 'NOT_PENDING' };
+  }
 
   const accepted = await db.$transaction(async (tx) => {
     // `TeacherStudent` BEFORE `Invitation`. `unlinkTeacher`,

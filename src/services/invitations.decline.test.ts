@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { inviteContact, declineInvitation, listDeclinedTeachers } from './invitations';
+import { inviteContact, declineInvitation, acceptInvitation, listDeclinedTeachers } from './invitations';
 import { deleteStudentAccount } from './gdpr';
 import { resolveInvitationOnLink } from './link-consent';
 
@@ -202,8 +202,9 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
     await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
 
     // What POST /api/registrations does inside `!isTeacher` on a booking that
-    // created the link — the student's own act, which is the only thing that
-    // lifts a block.
+    // created the link — the student's own act. `docs/data-model.md`
+    // ("What a student's own act resolves") owns the rule for which acts
+    // clear a block and which abstain.
     await prisma.$transaction(async (tx) => {
       await resolveInvitationOnLink(tx, {
         teacherId: teacher.id,
@@ -271,6 +272,61 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
       select: { id: true },
     });
     expect(block).toBeNull();
+  });
+
+  // Every decline now leaves a block standing in front of
+  // `acceptInvitation`'s own block re-check, so what that check answers is
+  // part of this write's surface. Its own nested `describe` for the same
+  // reason `listDeclinedTeachers` below has one: the outer name is about the
+  // write, and these are about a later read of what it wrote.
+  describe('acceptInvitation, with a block standing', () => {
+    it('answers NOT_PENDING to the rightful owner of a row they declined', async () => {
+      const { teacher, student, email } = await makeTeacherAndInvitee();
+      const invitation = await invite(teacher.id, email);
+      await declineInvitation(prisma, { invitationId: invitation.id, accountEmail: email });
+
+      const result = await acceptInvitation(prisma, {
+        invitationId: invitation.id,
+        studentId: student.id,
+        accountEmail: email,
+      });
+      expect(result).toEqual({ ok: false, reason: 'NOT_PENDING' });
+
+      // The code is not the whole refusal: no link, and the tombstone stands.
+      expect(await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId: teacher.id, studentId: student.id } },
+      })).toBeNull();
+      const row = await prisma.invitation.findUniqueOrThrow({
+        where: { id: invitation.id },
+        select: { status: true },
+      });
+      expect(row.status).toBe('declined');
+    });
+
+    it('answers NOT_FOUND for a still-pending row on a blocked pair', async () => {
+      const { teacher, student, email } = await makeTeacherAndInvitee();
+      const invitation = await invite(teacher.id, email);
+      // A block standing over a row nobody has answered. `listPendingInvitations`
+      // never offers such a row, so there is nothing here for this caller and
+      // the answer has to stay indistinguishable from an unknown id.
+      await prisma.teacherBlock.create({ data: { teacherId: teacher.id, email } });
+
+      const result = await acceptInvitation(prisma, {
+        invitationId: invitation.id,
+        studentId: student.id,
+        accountEmail: email,
+      });
+      expect(result).toEqual({ ok: false, reason: 'NOT_FOUND' });
+
+      expect(await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId: teacher.id, studentId: student.id } },
+      })).toBeNull();
+      const row = await prisma.invitation.findUniqueOrThrow({
+        where: { id: invitation.id },
+        select: { status: true },
+      });
+      expect(row.status).toBe('pending');
+    });
   });
 
   // `listDeclinedTeachers` is a sibling read to `listPendingInvitations`
