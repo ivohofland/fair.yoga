@@ -20,6 +20,7 @@ describe('reapOrphans', () => {
     expect(result.reaped).toEqual(['fix_520']);
     expect(result.registry).toEqual({ fix_517: { port: 3100, pid: null, dbSlug: 'fix_517' } });
     expect(result.migrated).toEqual([]);
+    expect(result.failed).toEqual([]);
     expect(killPid).toHaveBeenCalledTimes(1);
     expect(killPid).toHaveBeenCalledWith(4242, 3101);
     expect(dropDatabase).toHaveBeenCalledWith('ethical_yoga_test_fix_520');
@@ -95,7 +96,7 @@ describe('reapOrphans', () => {
     });
     const killPid = vi.fn().mockReturnValue('signaled');
 
-    const result = await reapOrphans(registry, new Set() as ReadonlySet<RawName>, { dropDatabase, killPid });
+    const result = await reapOrphans(registry, new Set(), { dropDatabase, killPid });
 
     expect(result.reaped).toEqual(['fix_520']);
     expect(result.registry).toEqual({ fix_517: { port: 3100, pid: null, dbSlug: 'fix_517' } });

@@ -30,7 +30,7 @@ export class RegistryCollisionError extends Error {
    *  genuinely different worktree. See explainCollision. */
   readonly collidingKeyIsLegacyShaped: boolean;
 
-  constructor(rawName: string, dbSlug: string, collidingKey: string) {
+  constructor(rawName: RawName, dbSlug: DbSlug, collidingKey: string) {
     super(
       `allocatePort: worktree "${rawName}" sanitizes to database slug "${dbSlug}", which is already claimed by ` +
         `registered worktree "${collidingKey}" — rename one of the two worktree directories to resolve the collision.`,
@@ -60,6 +60,7 @@ export function explainCollision(err: RegistryCollisionError, reapFailed: boolea
       "may be against this worktree's own not-yet-migrated legacy registry entry, not a genuinely different " +
       'worktree. Re-run this command: if the reap sweep succeeds, migration happens automatically and the ' +
       'collision should clear.',
+    { cause: err },
   );
 }
 

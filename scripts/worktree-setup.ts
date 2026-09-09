@@ -20,15 +20,18 @@ async function main(): Promise<void> {
 
   const registryPath = getRegistryPath(identity.gitCommonDir);
 
+  // reapFailed means the whole sweep threw (migration did not run this pass);
+  // result.failed names individual rows the sweep tried and failed to reap.
+  // Different failure modes — only reapFailed feeds explainCollision below.
   let reapFailed = false;
   try {
-    const result = await runReap(identity.gitCommonDir, registryPath, `${DB_HOST}/postgres`);
-    if (result.reaped.length > 0) {
-      console.log(`[worktree:setup] reaped orphaned worktree resources: ${result.reaped.join(', ')}`);
+    const reapResult = await runReap(identity.gitCommonDir, registryPath, `${DB_HOST}/postgres`);
+    if (reapResult.reaped.length > 0) {
+      console.log(`[worktree:setup] reaped orphaned worktree resources: ${reapResult.reaped.join(', ')}`);
     }
-    if (result.failed.length > 0) {
+    if (reapResult.failed.length > 0) {
       console.error(
-        `[worktree:setup] FAILED to reap ${result.failed.length} orphaned worktree resource(s) — will retry on next sweep: ${result.failed.map((f) => f.key).join(', ')}`,
+        `[worktree:setup] FAILED to reap ${reapResult.failed.length} orphaned worktree resource(s) — will retry on next sweep: ${reapResult.failed.map((f) => f.key).join(', ')}`,
       );
     }
   } catch (err) {
