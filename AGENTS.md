@@ -5,7 +5,7 @@
 ```bash
 docker compose up -d        # PostgreSQL on :5432
 cp .env.example .env        # required env vars (DATABASE_URL, PASSKEY_*, etc.)
-npm install                 # postinstall runs `prisma generate`
+npm ci                      # postinstall runs `prisma generate`
 npx prisma migrate dev      # apply migrations to dev DB
 EMAIL_DRY_RUN=1 npm run dev # start on :3000; dry-run logs magic links to stdout
 ```

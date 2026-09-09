@@ -18,7 +18,7 @@ A free, open-source toolkit for independent yoga teachers. Handles scheduling, i
 ```bash
 git clone <repo-url>
 cd fair.yoga
-npm install
+npm ci
 ```
 
 ### 2. Environment variables
