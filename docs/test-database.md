@@ -225,4 +225,8 @@ plus a private `next dev` on its own port, inside the same shared
 worktree:setup` once per worktree, then `npm run worktree:up` to boot the
 app; `integration`/e2e read `INTEGRATION_BASE_URL` for that port instead of
 `:3000`. Orphaned resources from a removed worktree are reaped
-automatically the next time any `npm test` runs anywhere.
+automatically the next time any `npm test` runs anywhere — unless the
+recorded dev-server pid can't be confirmed stopped (its process group no
+longer matches, or `lsof`/`ps` themselves fail), in which case the sweep
+leaves that entry alone and retries it on the next run rather than drop its
+databases out from under a process that may still be running.

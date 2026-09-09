@@ -1,7 +1,7 @@
 import { removeEntry, writeRegistryLocked, type Registry, type RegistryEntry } from './registry';
 import { dbNamesForSlug, sanitizeSlug } from './identity';
 import { getLiveWorktreeNames } from './live-slugs';
-import { dropDatabaseReal, killPidReal, type KillPidResult } from './side-effects';
+import { dropDatabaseReal, killPidReal, describeKillOutcome, type KillPidResult } from './side-effects';
 
 export interface ReapDeps {
   dropDatabase: (dbName: string) => Promise<void>;
@@ -30,10 +30,12 @@ function sanitizesTo(rawName: string, dbSlug: string): boolean {
 
 /**
  * Kills the pid (if any), drops both of the entry's databases, and removes
- * it from `registry`. A kill that couldn't be confirmed (`refused` or
- * `signal-failed`) leaves the entry untouched instead of dropping its
- * databases out from under a process that may still be running — retried on
- * the next sweep, same as a thrown error below.
+ * it from `registry`. `describeKillOutcome` decides whether the kill
+ * confirmed nothing is left running (an allowlist, not a denylist of known
+ * failure results) — anything short of that leaves the entry untouched
+ * instead of dropping its databases out from under a process that may
+ * still be running, retried on the next sweep, same as a thrown error
+ * below.
  */
 async function reapEntry(
   registry: Registry,
@@ -44,11 +46,9 @@ async function reapEntry(
 ): Promise<Registry> {
   try {
     if (entry.pid !== null) {
-      const result = deps.killPid(entry.pid, entry.port);
-      if (result === 'refused' || result === 'signal-failed') {
-        console.warn(
-          `[reap] worktree "${key}" pid ${entry.pid} could not be confirmed stopped (${result}) — leaving it and its databases alone, will retry on the next sweep`,
-        );
+      const outcome = describeKillOutcome(deps.killPid(entry.pid, entry.port), entry.pid);
+      if (!outcome.confirmedStopped) {
+        console.warn(`[reap] worktree "${key}": ${outcome.message} — leaving it and its databases alone, will retry on the next sweep`);
         return registry;
       }
     }

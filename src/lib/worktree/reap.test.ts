@@ -41,10 +41,25 @@ describe('reapOrphans', () => {
     expect(dropDatabase).not.toHaveBeenCalled();
   });
 
+  it("leaves the entry and its databases alone when killPid can't confirm the process was stopped (signal-failed)", async () => {
+    const registry: Registry = {
+      fix_520: { port: 3101, pid: 4242, dbSlug: 'fix_520' },
+    };
+    const dropDatabase = vi.fn().mockResolvedValue(undefined);
+    const killPid = vi.fn().mockReturnValue('signal-failed');
+
+    const result = await reapOrphans(registry, new Set(), { dropDatabase, killPid });
+
+    expect(result.reaped).toEqual([]);
+    expect(result.registry).toEqual(registry);
+    expect(killPid).toHaveBeenCalledWith(4242, 3101);
+    expect(dropDatabase).not.toHaveBeenCalled();
+  });
+
   it('does not call killPid for an orphan with no recorded pid', async () => {
     const registry: Registry = { fix_520: { port: 3101, pid: null, dbSlug: 'fix_520' } };
     const dropDatabase = vi.fn().mockResolvedValue(undefined);
-    const killPid = vi.fn();
+    const killPid = vi.fn().mockReturnValue('signaled');
 
     await reapOrphans(registry, new Set(), { dropDatabase, killPid });
 
@@ -54,7 +69,7 @@ describe('reapOrphans', () => {
   it('leaves a live rawName-keyed row untouched', async () => {
     const registry: Registry = { 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } };
     const dropDatabase = vi.fn().mockResolvedValue(undefined);
-    const killPid = vi.fn();
+    const killPid = vi.fn().mockReturnValue('signaled');
 
     const result = await reapOrphans(registry, new Set(['fix-517']), { dropDatabase, killPid });
 
@@ -76,7 +91,7 @@ describe('reapOrphans', () => {
       }
       return Promise.resolve();
     });
-    const killPid = vi.fn();
+    const killPid = vi.fn().mockReturnValue('signaled');
 
     const result = await reapOrphans(registry, new Set(), { dropDatabase, killPid });
 
@@ -90,7 +105,7 @@ describe('reapOrphans', () => {
       // admin-dir name is "fix-517" (sanitizeSlug('fix-517') === 'fix_517').
       const registry: Registry = { fix_517: { port: 3100, pid: 4242, dbSlug: 'fix_517' } };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
-      const killPid = vi.fn();
+      const killPid = vi.fn().mockReturnValue('signaled');
 
       const result = await reapOrphans(registry, new Set(['fix-517']), { dropDatabase, killPid });
 
@@ -109,7 +124,7 @@ describe('reapOrphans', () => {
         'fix-517': { port: 3105, pid: 555, dbSlug: 'fix_517' },
       };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
-      const killPid = vi.fn();
+      const killPid = vi.fn().mockReturnValue('signaled');
 
       const result = await reapOrphans(registry, new Set(['fix-517']), { dropDatabase, killPid });
 
@@ -123,7 +138,7 @@ describe('reapOrphans', () => {
     it('still reaps (kill + drop + remove) a legacy row with no live claimant', async () => {
       const registry: Registry = { fix_517: { port: 3100, pid: 4242, dbSlug: 'fix_517' } };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
-      const killPid = vi.fn();
+      const killPid = vi.fn().mockReturnValue('signaled');
 
       // No live raw name sanitizes to "fix_517".
       const result = await reapOrphans(registry, new Set(['some-other-worktree']), { dropDatabase, killPid });
@@ -139,7 +154,7 @@ describe('reapOrphans', () => {
     it('still reaps a rawName-keyed (non-legacy-shaped) dead row with no live claimant', async () => {
       const registry: Registry = { 'fix-517': { port: 3100, pid: 4242, dbSlug: 'fix_517' } };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
-      const killPid = vi.fn();
+      const killPid = vi.fn().mockReturnValue('signaled');
 
       const result = await reapOrphans(registry, new Set(), { dropDatabase, killPid });
 
@@ -170,7 +185,7 @@ describe('reapOrphans', () => {
         'live-worktree': { port: 3200, pid: 111, dbSlug: 'live_worktree' },
       };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
-      const killPid = vi.fn();
+      const killPid = vi.fn().mockReturnValue('signaled');
 
       const result = await reapOrphans(registry, new Set(['live-worktree']), { dropDatabase, killPid });
 
@@ -190,7 +205,7 @@ describe('reapOrphans', () => {
       // through to normal orphan handling.
       const registry: Registry = { fix_517: { port: 3100, pid: 4242, dbSlug: 'fix_517' } };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
-      const killPid = vi.fn();
+      const killPid = vi.fn().mockReturnValue('signaled');
 
       const result = await reapOrphans(registry, new Set(['!!!']), { dropDatabase, killPid });
 
@@ -213,7 +228,7 @@ describe('reapOrphans', () => {
         'fix-525': { port: 3102, pid: 3333, dbSlug: 'fix_525' },
       };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
-      const killPid = vi.fn();
+      const killPid = vi.fn().mockReturnValue('signaled');
 
       const result = await reapOrphans(registry, new Set(['fix-517', 'fix-525']), { dropDatabase, killPid });
 
@@ -245,7 +260,7 @@ describe('reapOrphans', () => {
         'live-worktree': { port: 3200, pid: 111, dbSlug: 'live_worktree' },
       };
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
-      const killPid = vi.fn();
+      const killPid = vi.fn().mockReturnValue('signaled');
 
       const result = await reapOrphans(registry, new Set(['live-worktree']), { dropDatabase, killPid });
 
@@ -275,7 +290,7 @@ describe('reapOrphans', () => {
 
       const registry = readRegistry(registryPath);
       const dropDatabase = vi.fn().mockResolvedValue(undefined);
-      const killPid = vi.fn();
+      const killPid = vi.fn().mockReturnValue('signaled');
 
       const result = await reapOrphans(registry, new Set(['fix-517']), { dropDatabase, killPid });
 
