@@ -12,6 +12,7 @@ export interface ReapResult {
   registry: Registry;
   reaped: string[];
   migrated: Array<{ from: string; to: string }>;
+  failed: Array<{ key: string; error: unknown }>;
 }
 
 /**
@@ -43,6 +44,7 @@ async function reapEntry(
   entry: RegistryEntry,
   deps: ReapDeps,
   reaped: string[],
+  failed: Array<{ key: string; error: unknown }>,
 ): Promise<Registry> {
   try {
     if (entry.pid !== null) {
@@ -59,6 +61,7 @@ async function reapEntry(
     return removeEntry(registry, key);
   } catch (err) {
     console.warn(`[reap] failed to reap orphaned worktree "${key}" — will retry on the next sweep:`, err);
+    failed.push({ key, error: err });
     return registry;
   }
 }
@@ -80,6 +83,7 @@ export async function reapOrphans(
   let next = registry;
   const reaped: string[] = [];
   const migrated: Array<{ from: string; to: string }> = [];
+  const failed: Array<{ key: string; error: unknown }> = [];
 
   for (const [key, entry] of Object.entries(registry)) {
     if (liveRawNames.has(key as RawName)) {
@@ -114,10 +118,15 @@ export async function reapOrphans(
       // else: no live worktree's dbSlug claims it — fall through to reap.
     }
 
-    next = await reapEntry(next, key, entry, deps, reaped);
+    next = await reapEntry(next, key, entry, deps, reaped, failed);
   }
 
-  return { registry: next, reaped, migrated };
+  return { registry: next, reaped, migrated, failed };
+}
+
+export interface RunReapResult {
+  reaped: string[];
+  failed: Array<{ key: string; error: unknown }>;
 }
 
 /** Real IO wired up: live git state in, dropped databases and a persisted registry out. */
@@ -125,15 +134,17 @@ export async function runReap(
   gitCommonDir: string,
   registryPath: string,
   anyDatabaseUrl: string,
-): Promise<string[]> {
+): Promise<RunReapResult> {
   const liveRawNames = getLiveWorktreeNames(gitCommonDir);
   let reapedKeys: string[] = [];
+  let failedEntries: Array<{ key: string; error: unknown }> = [];
   await writeRegistryLocked(registryPath, async (registry) => {
-    const { registry: next, reaped, migrated } = await reapOrphans(registry, liveRawNames, {
+    const { registry: next, reaped, migrated, failed } = await reapOrphans(registry, liveRawNames, {
       dropDatabase: (dbName) => dropDatabaseReal(dbName, anyDatabaseUrl),
       killPid: killPidReal,
     });
     reapedKeys = reaped;
+    failedEntries = failed;
     if (migrated.length > 0) {
       console.log(
         `[reap] migrated legacy registry entries to their live raw name: ${migrated
@@ -143,5 +154,5 @@ export async function runReap(
     }
     return next;
   });
-  return reapedKeys;
+  return { reaped: reapedKeys, failed: failedEntries };
 }

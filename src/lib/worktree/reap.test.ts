@@ -81,23 +81,25 @@ describe('reapOrphans', () => {
     expect(killPid).not.toHaveBeenCalled();
   });
 
-  it("does not let one orphan's failure prevent a later orphan in the same call from being reaped", async () => {
+  it("does not let one orphan's failure prevent a later orphan in the same call from being reaped, and records the failure in result.failed", async () => {
     const registry: Registry = {
       fix_517: { port: 3100, pid: null, dbSlug: 'fix_517' as DbSlug },
       fix_520: { port: 3101, pid: null, dbSlug: 'fix_520' as DbSlug },
     };
+    const failure = new Error('simulated drop failure');
     const dropDatabase = vi.fn().mockImplementation((dbName: string) => {
       if (dbName.includes('fix_517')) {
-        return Promise.reject(new Error('simulated drop failure'));
+        return Promise.reject(failure);
       }
       return Promise.resolve();
     });
     const killPid = vi.fn().mockReturnValue('signaled');
 
-    const result = await reapOrphans(registry, new Set(), { dropDatabase, killPid });
+    const result = await reapOrphans(registry, new Set() as ReadonlySet<RawName>, { dropDatabase, killPid });
 
     expect(result.reaped).toEqual(['fix_520']);
     expect(result.registry).toEqual({ fix_517: { port: 3100, pid: null, dbSlug: 'fix_517' } });
+    expect(result.failed).toEqual([{ key: 'fix_517', error: failure }]);
   });
 
   describe('migration awareness', () => {

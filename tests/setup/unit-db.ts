@@ -49,9 +49,14 @@ export default async function setup(): Promise<void> {
 
   try {
     const identity = getWorktreeIdentity();
-    const reaped = await runReap(identity.gitCommonDir, getRegistryPath(identity.gitCommonDir), testUrl);
-    if (reaped.length > 0) {
-      console.log(`[unit-db] reaped orphaned worktree resources: ${reaped.join(', ')}`);
+    const result = await runReap(identity.gitCommonDir, getRegistryPath(identity.gitCommonDir), testUrl);
+    if (result.reaped.length > 0) {
+      console.log(`[unit-db] reaped orphaned worktree resources: ${result.reaped.join(', ')}`);
+    }
+    if (result.failed.length > 0) {
+      console.error(
+        `[unit-db] FAILED to reap ${result.failed.length} orphaned worktree resource(s) — will retry on next sweep: ${result.failed.map((f) => f.key).join(', ')}`,
+      );
     }
   } catch (err) {
     console.warn('[unit-db] reap sweep failed — continuing without it, this worktree is unaffected:', err);

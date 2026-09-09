@@ -41,9 +41,14 @@ async function main(): Promise<void> {
 
   let reapFailed = false;
   try {
-    const reaped = await runReap(identity.gitCommonDir, registryPath, devUrl);
-    if (reaped.length > 0) {
-      console.log(`[worktree:up] reaped orphaned worktree resources: ${reaped.join(', ')}`);
+    const result = await runReap(identity.gitCommonDir, registryPath, devUrl);
+    if (result.reaped.length > 0) {
+      console.log(`[worktree:up] reaped orphaned worktree resources: ${result.reaped.join(', ')}`);
+    }
+    if (result.failed.length > 0) {
+      console.error(
+        `[worktree:up] FAILED to reap ${result.failed.length} orphaned worktree resource(s) — will retry on next sweep: ${result.failed.map((f) => f.key).join(', ')}`,
+      );
     }
   } catch (err) {
     reapFailed = true;
