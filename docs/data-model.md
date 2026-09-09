@@ -212,10 +212,10 @@ Written whenever a student refuses a teacher, by either route: `unlinkTeacher` w
 **A refusal is a row, never a derived key.** What stands between a student and a teacher they refused is a stored row, not a fact re-derived from a column somebody else can move. `deleteStudentAccount` (`src/services/gdpr.ts`) rewrites the identity columns a predicate could be keyed on — `Student.email`, `Account.email`, `Invitation.email`, `Invitation.lastNotifiedEmail` — so a refusal keyed on one of them is a refusal the subject's own erasure lifts, silently and in the direction that hurts them. Re-derive that list with:
 
 ```sh
-grep -n "@deleted.invalid" src/services/gdpr.ts
+grep -nE 'tx\.[a-zA-Z]+\.update|anonymizedEmail|@deleted\.invalid' src/services/gdpr.ts
 ```
 
-taking the hits inside `deleteStudentAccount` (the rest belong to `deleteTeacherAccount`). The scope of the check is those columns, not every mutable-key-derived predicate in the repo.
+Read down the hits inside `deleteStudentAccount` (the rest belong to `deleteTeacherAccount`, which is why the accessor lines are in the pattern — each anonymised write sits under the `tx.<model>.update…` that names its table). Matching the address literal alone is **not** enough: both `Invitation` columns are written through the `anonymizedEmail` variable and never carry the literal, so a grep for `@deleted.invalid` finds `Student.email` and `Account.email` and silently drops the two that #522 was actually about — the same grep-reads-syntax hazard the *Scrub or hash* bullet below hits with the `teacherBlocks` relation filter. The scope of the check is these columns, not every mutable-key-derived predicate in the repo.
 
 #522 was that defect on the decline path, and the same shape had already been found twice from other directions: `PUT` and `DELETE /api/invitations/[id]` each refuse a `declined` row precisely because moving or deleting it would free the `(teacher_id, email)` an answer hung on. Three doors, found one at a time, each with its own guard. The rule is what catches the fourth: a refusal that needs a guard on every door that can touch its key is stored wrong.
 

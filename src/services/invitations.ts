@@ -744,10 +744,14 @@ export async function listPendingInvitations(
  * because erasure scrubs its `email` and a later account on the same address
  * therefore matches nothing here.
  *
- * The `deletedAt` and already-linked exclusions mirror
- * `listPendingInvitations` above, and for the same reasons — a teacher who
- * added this student to their roster is not someone to describe as not
- * connected.
+ * Two exclusions, and their reasons are stated here rather than borrowed
+ * from `listPendingInvitations` above, which happens to filter on the same
+ * two columns. `deletedAt: null`: everything this returns exists to name a
+ * teacher and point at their classes, and an erased teacher has a name that
+ * means nobody and no classes to point at — there is no route back to one,
+ * so there is nothing to say. Already-linked: a teacher with this student on
+ * their roster is not someone to describe as not connected, whatever a
+ * `declined` row standing beside that link says about how they got there.
  */
 export async function listDeclinedTeachers(
   db: PrismaClient,
