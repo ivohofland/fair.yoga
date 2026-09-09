@@ -2,7 +2,7 @@
 import { execSync } from 'child_process';
 import path from 'path';
 import { getWorktreeIdentity, dbNamesForSlug } from '../src/lib/worktree/identity';
-import { getRegistryPath, writeRegistryLocked, allocatePort } from '../src/lib/worktree/registry';
+import { getRegistryPath, writeRegistryLocked, allocatePort, RegistryCollisionError, explainCollision } from '../src/lib/worktree/registry';
 import { runReap } from '../src/lib/worktree/reap';
 import { writeEnvIfMissing, generateCronSecret, findStaleEnvKeys } from '../src/lib/worktree/env-file';
 import { buildEnvOverrides } from '../src/lib/worktree/env-overrides';
@@ -20,21 +20,27 @@ async function main(): Promise<void> {
 
   const registryPath = getRegistryPath(identity.gitCommonDir);
 
+  let reapFailed = false;
   try {
     const reaped = await runReap(identity.gitCommonDir, registryPath, `${DB_HOST}/postgres`);
     if (reaped.length > 0) {
       console.log(`[worktree:setup] reaped orphaned worktree resources: ${reaped.join(', ')}`);
     }
   } catch (err) {
+    reapFailed = true;
     console.warn('[worktree:setup] reap sweep failed — continuing without it, this worktree is unaffected:', err);
   }
 
   let port = 0;
-  await writeRegistryLocked(registryPath, (registry) => {
-    const result = allocatePort(registry, rawName, dbSlug);
-    port = result.port;
-    return result.registry;
-  });
+  try {
+    await writeRegistryLocked(registryPath, (registry) => {
+      const result = allocatePort(registry, rawName, dbSlug);
+      port = result.port;
+      return result.registry;
+    });
+  } catch (err) {
+    throw err instanceof RegistryCollisionError ? explainCollision(err, reapFailed) : err;
+  }
 
   // A worktree is a checkout of committed versions, so `npm ci`: it installs
   // the lockfile exactly and fails when `package.json` disagrees with it.

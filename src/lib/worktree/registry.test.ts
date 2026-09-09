@@ -17,6 +17,8 @@ import {
   isPidAlive,
   readLockInfo,
   assertLockHeld,
+  RegistryCollisionError,
+  explainCollision,
   type Registry,
 } from './registry';
 import type { RawName, DbSlug } from './identity';
@@ -56,11 +58,56 @@ describe('allocatePort', () => {
     expect(() => allocatePort(existing, 'c' as RawName, 'c' as DbSlug, { min: 3100, max: 3101 })).toThrow();
   });
 
-  it('throws on a dbSlug collision between two different rawName keys, naming both', () => {
+  it('throws a RegistryCollisionError on a dbSlug collision between two different rawName keys, naming both', () => {
     const existing: Registry = { 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' as DbSlug } };
-    expect(() => allocatePort(existing, 'fix_517' as RawName, 'fix_517' as DbSlug, { min: 3100, max: 3102 })).toThrow(
-      /fix_517.*fix-517|fix-517.*fix_517/,
-    );
+    let thrown: unknown;
+    try {
+      allocatePort(existing, 'fix_517' as RawName, 'fix_517' as DbSlug, { min: 3100, max: 3102 });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(RegistryCollisionError);
+    const err = thrown as RegistryCollisionError;
+    expect(err.rawName).toBe('fix_517');
+    expect(err.dbSlug).toBe('fix_517');
+    expect(err.collidingKey).toBe('fix-517');
+    expect(err.collidingKeyIsLegacyShaped).toBe(false);
+    expect(err.message).toMatch(/fix_517.*fix-517|fix-517.*fix_517/);
+  });
+
+  it('flags collidingKeyIsLegacyShaped when the colliding row is legacy-shaped (its key equals its own dbSlug)', () => {
+    const existing: Registry = { fix_517: { port: 3100, pid: null, dbSlug: 'fix_517' as DbSlug } };
+    let thrown: unknown;
+    try {
+      allocatePort(existing, 'fix-517' as RawName, 'fix_517' as DbSlug, { min: 3100, max: 3102 });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(RegistryCollisionError);
+    expect((thrown as RegistryCollisionError).collidingKeyIsLegacyShaped).toBe(true);
+  });
+});
+
+describe('explainCollision', () => {
+  it('returns the original error unchanged when reap did not fail', () => {
+    const err = new RegistryCollisionError('fix-517', 'fix_517', 'fix_517');
+    expect(explainCollision(err, false)).toBe(err);
+  });
+
+  it('returns the original error unchanged when the colliding key is not legacy-shaped, even if reap failed', () => {
+    const err = new RegistryCollisionError('fix_517', 'fix_517', 'fix-517');
+    expect(err.collidingKeyIsLegacyShaped).toBe(false);
+    expect(explainCollision(err, true)).toBe(err);
+  });
+
+  it('enriches the message when reap failed and the colliding key is legacy-shaped', () => {
+    const err = new RegistryCollisionError('fix-517', 'fix_517', 'fix_517');
+    expect(err.collidingKeyIsLegacyShaped).toBe(true);
+    const result = explainCollision(err, true);
+    expect(result).not.toBe(err);
+    expect(result.message).toContain(err.message);
+    expect(result.message).toMatch(/reap\/migration sweep failed/);
+    expect(result.message).toMatch(/own not-yet-migrated legacy registry entry/);
   });
 });
 
