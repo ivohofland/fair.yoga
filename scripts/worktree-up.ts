@@ -2,7 +2,7 @@
 import fs from 'fs';
 import { loadEnv } from 'vite';
 import { getWorktreeIdentity } from '../src/lib/worktree/identity';
-import { getRegistryPath, writeRegistryLocked, allocatePort, setPid } from '../src/lib/worktree/registry';
+import { getRegistryPath, writeRegistryLocked, allocatePort, setPid, RegistryCollisionError, explainCollision } from '../src/lib/worktree/registry';
 import { runReap } from '../src/lib/worktree/reap';
 import { provisionDatabase } from '../src/lib/db-provision';
 import { spawnDevServer, buildDevServerLogPath } from '../src/lib/worktree/dev-server';
@@ -39,27 +39,33 @@ async function main(): Promise<void> {
     throw new Error('[worktree:up] DATABASE_URL not set — run `npm run worktree:setup` first');
   }
 
+  let reapFailed = false;
   try {
     const reaped = await runReap(identity.gitCommonDir, registryPath, devUrl);
     if (reaped.length > 0) {
       console.log(`[worktree:up] reaped orphaned worktree resources: ${reaped.join(', ')}`);
     }
   } catch (err) {
+    reapFailed = true;
     console.warn('[worktree:up] reap sweep failed — continuing without it, this worktree is unaffected:', err);
   }
 
   let port = 0;
   let alreadyRunning = null as { port: number; pid: number } | null;
-  await writeRegistryLocked(registryPath, (registry) => {
-    const existing = registry[rawName];
-    if (existing?.pid != null && isPidAlive(existing.pid)) {
-      alreadyRunning = { port: existing.port, pid: existing.pid };
-      return registry;
-    }
-    const result = allocatePort(registry, rawName, dbSlug);
-    port = result.port;
-    return result.registry;
-  });
+  try {
+    await writeRegistryLocked(registryPath, (registry) => {
+      const existing = registry[rawName];
+      if (existing?.pid != null && isPidAlive(existing.pid)) {
+        alreadyRunning = { port: existing.port, pid: existing.pid };
+        return registry;
+      }
+      const result = allocatePort(registry, rawName, dbSlug);
+      port = result.port;
+      return result.registry;
+    });
+  } catch (err) {
+    throw err instanceof RegistryCollisionError ? explainCollision(err, reapFailed) : err;
+  }
 
   if (alreadyRunning) {
     console.log(`[worktree:up] already running at http://localhost:${alreadyRunning.port} (pid ${alreadyRunning.pid})`);

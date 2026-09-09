@@ -20,6 +20,49 @@ export interface PortRange {
 
 export const DEFAULT_PORT_RANGE: PortRange = { min: 3100, max: 3999 };
 
+export class RegistryCollisionError extends Error {
+  readonly rawName: string;
+  readonly dbSlug: string;
+  readonly collidingKey: string;
+  /** True when the colliding row's own registry key textually equals this
+   *  run's dbSlug — i.e. that row is legacy-shaped (unmigrated), so it could
+   *  be this worktree's own not-yet-migrated past self rather than a
+   *  genuinely different worktree. See explainCollision. */
+  readonly collidingKeyIsLegacyShaped: boolean;
+
+  constructor(rawName: string, dbSlug: string, collidingKey: string) {
+    super(
+      `allocatePort: worktree "${rawName}" sanitizes to database slug "${dbSlug}", which is already claimed by ` +
+        `registered worktree "${collidingKey}" — rename one of the two worktree directories to resolve the collision.`,
+    );
+    this.name = 'RegistryCollisionError';
+    this.rawName = rawName;
+    this.dbSlug = dbSlug;
+    this.collidingKey = collidingKey;
+    this.collidingKeyIsLegacyShaped = collidingKey === dbSlug;
+  }
+}
+
+/**
+ * Enriches a RegistryCollisionError with a hint when the collision could
+ * plausibly be against this worktree's own not-yet-migrated legacy row
+ * rather than a genuinely different worktree — see
+ * docs/superpowers/specs/2026-09-09-worktree-registry-followups-design.md §2.
+ * Returns `err` unchanged otherwise.
+ */
+export function explainCollision(err: RegistryCollisionError, reapFailed: boolean): Error {
+  if (!reapFailed || !err.collidingKeyIsLegacyShaped) {
+    return err;
+  }
+  return new Error(
+    `${err.message}\n` +
+      'note: the reap/migration sweep failed earlier in this run (see the warning above) — this collision ' +
+      "may be against this worktree's own not-yet-migrated legacy registry entry, not a genuinely different " +
+      'worktree. Re-run this command: if the reap sweep succeeds, migration happens automatically and the ' +
+      'collision should clear.',
+  );
+}
+
 export function allocatePort(
   registry: Registry,
   rawName: RawName,
@@ -33,10 +76,7 @@ export function allocatePort(
   const collision = Object.entries(registry).find(([, entry]) => entry.dbSlug === dbSlug);
   if (collision) {
     const [collidingKey] = collision;
-    throw new Error(
-      `allocatePort: worktree "${rawName}" sanitizes to database slug "${dbSlug}", which is already claimed by ` +
-        `registered worktree "${collidingKey}" — rename one of the two worktree directories to resolve the collision.`,
-    );
+    throw new RegistryCollisionError(rawName, dbSlug, collidingKey);
   }
   const claimed = new Set(Object.values(registry).map((entry) => entry.port));
   for (let port = range.min; port <= range.max; port++) {
