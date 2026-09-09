@@ -37,8 +37,8 @@ async function main(): Promise<void> {
   });
 
   // A worktree is a checkout of committed versions, so `npm ci`: it installs
-  // the lockfile exactly and fails when `package.json` disagrees with it,
-  // where `npm install` would resolve afresh and rewrite the lockfile instead.
+  // the lockfile exactly and fails when `package.json` disagrees with it.
+  // Why that matters over `npm install`: `docs/supply-chain.md`.
   // Pinned by `src/lib/script-install-census.test.ts`.
   console.log('[worktree:setup] running npm ci...');
   execSync('npm ci', { stdio: 'inherit' });

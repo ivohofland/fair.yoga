@@ -23,20 +23,28 @@ invalidated by an edit its author never sees. Re-derive it with:
 ```bash
 grep -rnE 'npm +(ci|install|i|add|update|up)\b' \
   Dockerfile .github/workflows README.md AGENTS.md scripts src/lib \
-  --exclude='*.test.ts' | grep -vE ':[[:space:]]*(//|\*|#)'
+  --exclude='*.test.ts' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|\*|#)'
 ```
 
-The two filters are load-bearing, and both were added after the unfiltered
-command was checked against its own answer: without `--exclude` the census
-test file's fixtures and docblock dominate the output, and without the second
-`grep` every comment discussing a command counts as running one. Measured
-2026-09-09, the command above returns **11 lines — 10 invocations, plus the
-`console.log` on `scripts/worktree-setup.ts:43` that names the call on the
-line below it**:
+Both filters are load-bearing. Without `--exclude`, the census test file's
+fixtures and docblock dominate the output; without the second `grep`, every
+comment discussing a command counts as running one.
+
+**The second filter is anchored, and that anchor is the whole point.** An
+unanchored `:[[:space:]]*(//|\*|#)` matches a colon *anywhere* on the line, so
+`https://` matches it — and a real
+`RUN npm install --registry https://registry.npmjs.org` would vanish from the
+census meant to reveal it. That is not hypothetical: this file shipped the
+unanchored version first. Checking a filter against today's output only shows
+it keeps what is already there; feed it a line it must **not** drop.
+
+Measured 2026-09-09, the command returns **11 lines — 10 invocations, plus the
+`console.log` in `scripts/worktree-setup.ts` that names the call on the line
+below it**:
 
 | Where | Invocations | Notes |
 |---|---|---|
-| `.github/workflows/ci.yml` | 5 | one per job: `checks`, `test-components`, `test-unit`, `test-integration`, `test-e2e` |
+| `.github/workflows/ci.yml` | 5 | one in each job that checks out the repo; the `test` aggregate gate installs nothing |
 | `.github/workflows/e2e-flake-repro.yml` | 1 | manual-dispatch only |
 | `Dockerfile` | 1 | in the `deps` stage; `build` and `migrate` are `FROM deps` and inherit the layer rather than re-running it |
 | `scripts/worktree-setup.ts` | 1 | the only one in imperative code, and the only one a test enforces |
@@ -58,8 +66,8 @@ it cannot see — a renamed or injected callee, an interpolated command, a
 prefixed one, anything inside a shell script.
 
 Nothing enforces the declarative paths (`Dockerfile`, the workflows) or the
-documentation. They are read on every change and were correct when measured;
-the table above is what makes a regression visible to a reader.
+documentation — only a reviewer reads them. They were correct when measured;
+the table above and its command are what make a regression visible.
 
 ## Not yet in place
 
