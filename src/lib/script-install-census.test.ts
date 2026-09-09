@@ -11,20 +11,27 @@
  * WHAT IT READS. Call expressions under `scripts/` and `src/lib/`, parsed with
  * `ts.createSourceFile` as the sibling censuses do. A call counts when its
  * callee NAME is one of `EXEC_CALLEES`; the command is then rebuilt from the
- * first string argument plus, where the second argument is an array of string
- * literals, its elements. That second half matters: `spawnSync`, `spawn`,
- * `execFile` and `execFileSync` take the program and its arguments separately,
- * so `spawnSync('npm', ['install'])` — the shape `worktree/dev-server.ts`
- * already uses for `npx` — carries its subcommand outside the first argument.
- * Reading only the first would watch four functions that could never match.
+ * first string argument plus, where the second argument is an array literal,
+ * whichever of its elements are string literals — a non-literal element is
+ * dropped rather than disqualifying the call, so a part-computed command is
+ * judged on the part that can be read. That second half matters: `spawnSync`,
+ * `spawn`, `execFile` and `execFileSync` take the program and its arguments
+ * separately, so `spawnSync('npm', ['install'])` carries its subcommand
+ * outside the first argument. Reading only the first would leave those four
+ * matchable only in their `shell: true` form, where the whole command line is
+ * the first argument after all. The argv shape is this repo's own —
+ * `worktree/dev-server.ts` uses it for `npx` — though that particular call is
+ * doubly invisible here, its callee both renamed and injected.
  *
  * WHAT IT CANNOT SEE, measured rather than assumed:
  *   - a renamed or injected callee (`import { execSync as run }`, or an
  *     `execFn` parameter) — matching is by name, and nothing resolves the
  *     binding back to `child_process`, so a same-named helper counts too;
  *   - a command assembled by interpolation or held in a variable;
- *   - a command behind a prefix (`cd x && npm install`), because the pattern
- *     is anchored;
+ *   - a command whose `npm` is not immediately followed by the subcommand,
+ *     whether behind another command (`cd x && npm install`) or behind a
+ *     global flag (`npm --prefix x install`) — the pattern is anchored and
+ *     reads only the token after `npm`;
  *   - anything in a shell script, and any install a dependency performs itself.
  *
  * WHY THESE TWO DIRECTORIES. Imperative bootstrap code lives in both:
@@ -36,16 +43,14 @@
  * human-facing ones are inventoried in `docs/supply-chain.md`, with the
  * command that re-derives the list.
  *
- * TEST FILES ARE EXCLUDED, because a fixture asserting what the guard catches
- * has to contain the very shapes it catches — the cases at the bottom of this
- * file would otherwise fail it.
+ * `.test.ts` AND `.test.tsx` FILES ARE EXCLUDED, because a fixture asserting
+ * what the guard catches has to contain the very shapes it catches — the cases
+ * at the bottom of this file would otherwise fail it. Other test spellings
+ * (`.spec.ts`, a `.test.mjs`) are not excluded and none exists here.
  *
- * WHY THIS FILE LIVES IN `src/lib/`. `vitest.config.ts`'s `unit` project
- * collects `.test.ts` files under `src/` and nothing else; `components` takes
- * `.tsx`, and `integration` takes only `tests/integration`. Moved to
- * `scripts/` or the top of `tests/`,
- * this file is collected by no project — it would not fail, it would stop
- * running, and nothing would say so.
+ * WHY THIS FILE LIVES IN `src/lib/`. No project in `vitest.config.ts` collects
+ * `scripts/` or the top of `tests/`. Moved to either, this file is collected by
+ * nothing — it would not fail, it would stop running, and nothing would say so.
  *
  * THE DISCOVERY IS ASSERTED, NOT ASSUMED. A guard that finds no commands
  * reports no violations, which reads exactly like a healthy repository, so the
@@ -72,7 +77,7 @@ const INSTALL_FAMILY = ['ci', 'install', 'add', 'update', 'i', 'up'] as const;
 
 const INSTALL_COMMAND = new RegExp(`^npm\\s+(?:${INSTALL_FAMILY.join('|')})\\b`);
 
-/** Flags are permitted — the rule is "installs from the lockfile", not a 7-character string. */
+/** Flags are permitted — the rule is "installs from the lockfile", not an exact string. */
 const LOCKFILE_INSTALL = /^npm\s+ci\b/;
 
 const EXEC_CALLEES = new Set(['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync']);
@@ -191,8 +196,11 @@ describe('what the matcher does and does not treat as an invocation', () => {
     expect(installInvocationsIn('fixture.ts', source)).toEqual([]);
   });
 
-  it('does not see a command behind a prefix', () => {
-    const source = "execSync('cd packages/x && npm install');";
+  it('does not see a command whose npm is not immediately followed by the subcommand', () => {
+    const source = [
+      "execSync('cd packages/x && npm install');",
+      "execSync('npm --prefix packages/x install');",
+    ].join('\n');
     expect(installInvocationsIn('fixture.ts', source)).toEqual([]);
   });
 });
