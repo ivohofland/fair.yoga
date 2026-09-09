@@ -36,8 +36,12 @@ async function main(): Promise<void> {
     return result.registry;
   });
 
-  console.log('[worktree:setup] running npm install...');
-  execSync('npm install', { stdio: 'inherit' });
+  // A worktree is a checkout of committed versions, so `npm ci`: it installs
+  // the lockfile exactly and fails when `package.json` disagrees with it,
+  // where `npm install` would resolve afresh and rewrite the lockfile instead.
+  // `src/lib/script-install-census.test.ts` holds this to every script here.
+  console.log('[worktree:setup] running npm ci...');
+  execSync('npm ci', { stdio: 'inherit' });
 
   const { test, dev } = dbNamesForSlug(dbSlug);
   const envPath = path.resolve(process.cwd(), '.env');
