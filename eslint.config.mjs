@@ -41,7 +41,7 @@ const eslintConfig = defineConfig([
   // same defect one tier over. tests/helpers.ts is excluded: it's where
   // the fallback literal legitimately lives.
   {
-    files: ['tests/**/*.ts'],
+    files: ['tests/**/*.ts', 'tests/**/*.tsx'],
     ignores: ['tests/helpers.ts'],
     rules: {
       'no-restricted-syntax': [
@@ -50,7 +50,7 @@ const eslintConfig = defineConfig([
           selector:
             'Literal[value=/(localhost|127\\.0\\.0\\.1):[0-9]+/], TemplateElement[value.raw=/(localhost|127\\.0\\.0\\.1):[0-9]+/]',
           message:
-            "Don't hardcode a localhost/127.0.0.1 origin — import BASE_URL from '../helpers' and interpolate it instead, so tests work against any origin (e.g. a worktree's dev server on another port).",
+            "Don't hardcode a localhost/127.0.0.1 origin — import BASE_URL from tests/helpers.ts and interpolate it instead, so tests work against any origin (e.g. a worktree's dev server on another port).",
         },
       ],
     },
