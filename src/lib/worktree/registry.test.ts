@@ -11,6 +11,7 @@ import {
   getRegistryPath,
   readRegistry,
   writeRegistryLocked,
+  writeRegistryLockedOrExplain,
   acquireLock,
   releaseLock,
   isLockStale,
@@ -113,6 +114,79 @@ describe('explainCollision', () => {
   it('returns the original error unchanged when reap succeeded and the collision is not legacy-shaped', () => {
     const err = new RegistryCollisionError('fix-517' as RawName, 'fix_520' as DbSlug, 'fix-520');
     expect(explainCollision(err, false)).toBe(err);
+  });
+});
+
+describe('writeRegistryLockedOrExplain', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fairyoga-registry-test-'));
+  const registryPath = path.join(dir, 'fairyoga-worktrees.json');
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+  });
+
+  it('returns the mutate result and persists the mutated registry when there is no collision', async () => {
+    const result = await writeRegistryLockedOrExplain(registryPath, false, (registry) => ({
+      registry: { ...registry, 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' as DbSlug } },
+      result: 3100,
+    }));
+    expect(result).toBe(3100);
+    expect(readRegistry(registryPath)).toEqual({ 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } });
+  });
+
+  it('rethrows the original RegistryCollisionError unchanged when reapFailed is false', async () => {
+    fs.writeFileSync(registryPath, JSON.stringify({ 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } }));
+    let thrown: unknown;
+    try {
+      await writeRegistryLockedOrExplain(registryPath, false, (registry) => {
+        const result = allocatePort(registry, 'fix_517' as RawName, 'fix_517' as DbSlug);
+        return { registry: result.registry, result: result.port };
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(RegistryCollisionError);
+    const err = thrown as RegistryCollisionError;
+    expect(err.rawName).toBe('fix_517');
+    expect(err.dbSlug).toBe('fix_517');
+    expect(err.collidingKey).toBe('fix-517');
+  });
+
+  it('rethrows the explainCollision-enriched error when reapFailed is true and the colliding key is legacy-shaped', async () => {
+    fs.writeFileSync(registryPath, JSON.stringify({ fix_517: { port: 3100, pid: null, dbSlug: 'fix_517' } }));
+    let thrown: unknown;
+    try {
+      await writeRegistryLockedOrExplain(registryPath, true, (registry) => {
+        const result = allocatePort(registry, 'fix-517' as RawName, 'fix_517' as DbSlug);
+        return { registry: result.registry, result: result.port };
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).not.toBeInstanceOf(RegistryCollisionError);
+    const err = thrown as Error & { cause?: unknown };
+    expect(err.message).toMatch(/reap\/migration sweep failed/);
+    expect(err.cause).toBeInstanceOf(RegistryCollisionError);
+  });
+
+  it('propagates a non-collision error thrown from mutate unchanged, even when reapFailed is true and it happens to carry a truthy collidingKeyIsLegacyShaped', async () => {
+    // collidingKeyIsLegacyShaped: true + reapFailed: true is exactly the pair
+    // that makes explainCollision take its enriching branch — so this shape
+    // is the one case that actually distinguishes "the instanceof gate ran"
+    // from "explainCollision merely declined to enrich this error": a plain
+    // Error() (falsy collidingKeyIsLegacyShaped) would come back unchanged
+    // either way, hiding a dropped instanceof check.
+    const plainError = Object.assign(new Error('mutate blew up'), { collidingKeyIsLegacyShaped: true });
+    let thrown: unknown;
+    try {
+      await writeRegistryLockedOrExplain(registryPath, true, () => {
+        throw plainError;
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBe(plainError);
   });
 });
 

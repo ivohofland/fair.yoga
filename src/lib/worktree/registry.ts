@@ -65,6 +65,24 @@ export function explainCollision(err: RegistryCollisionError, reapFailed: boolea
   );
 }
 
+export async function writeRegistryLockedOrExplain<T>(
+  registryPath: string,
+  reapFailed: boolean,
+  mutate: (registry: Registry) => { registry: Registry; result: T },
+): Promise<T> {
+  let result: T;
+  try {
+    await writeRegistryLocked(registryPath, (registry) => {
+      const outcome = mutate(registry);
+      result = outcome.result;
+      return outcome.registry;
+    });
+  } catch (err) {
+    throw err instanceof RegistryCollisionError ? explainCollision(err, reapFailed) : err;
+  }
+  return result!;
+}
+
 export function allocatePort(
   registry: Registry,
   rawName: RawName,
