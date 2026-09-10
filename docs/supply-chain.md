@@ -665,30 +665,56 @@ unchosen one, are open work.
 **#533 (a release-age cooldown) is absorbed** — `minimumReleaseAge` above is
 exactly that control, so it leaves this list.
 
-**#534 remains open, scoped to the two of its four asks pnpm does not
-cover.** Its install-script half is absorbed and strengthened: `allowBuilds`
-+ `strictDepBuilds` is a committed allowlist that errors on every machine, not
-only in CI, which is more than #534 originally asked for. What is still
-missing: pinning every `resolved` entry to `registry.npmjs.org`, and checking
-every resolved entry carries an `integrity` hash.
+**#534 is now fully enforced.** `src/lib/lockfile-policy.ts` parses
+`pnpm-lock.yaml`'s two concatenated YAML documents (see *The two-document
+lockfile, and why Dependabot still reads it*, above) and flags any package
+whose resolution is missing
+`integrity` or carries a git/tarball/local-source marker instead of a plain
+registry one. `scripts/check-lockfile.ts` runs it as `pnpm run
+check-lockfile`, a blocking step in `ci.yml`'s `checks` job. The install-script
+half was already absorbed and strengthened by the pnpm migration:
+`allowBuilds` + `strictDepBuilds` is a committed allowlist that errors on
+every machine, not only in CI.
 
-**Signature verification is available and passes — it is a CI step away.**
-`pnpm audit` takes exactly one subcommand, and it is this one: *"The only
-supported subcommand is `signatures`, which verifies registry signatures for
-the installed packages"* (`pnpm audit --help`). Measured 2026-09-10 against
-the committed lockfile:
+**Why "pin to `registry.npmjs.org`" became "reject a non-registry resolution
+shape".** The issue's original ask was written against npm's
+`package-lock.json`, where every entry carries a literal `resolved:
+"https://registry.npmjs.org/..."` URL. `pnpm-lock.yaml` v9 has no such field
+for a plain registry entry — the registry is implicit, and the only way an
+entry can name a *different* source is via a `gitHosted`/`tarball`/`repo`/
+`directory` marker in its `resolution` block (measured by adding a
+`github:`-sourced dependency to a scratch project and reading what pnpm wrote
+for it — see `src/lib/lockfile-policy.ts`'s docblock). Banning every such
+marker is the exact structural proxy this lockfile format allows for "pinned
+to the registry".
 
-```bash
-pnpm audit signatures
-```
+Measured 2026-09-10 against the committed lockfile: **697 entries** (9 in the
+`packageManagerDependencies` document, 688 in the app-graph document — the
+same 697 total `pnpm audit signatures` reports), **zero violations**.
+Re-derive with `pnpm run check-lockfile`. The checker was mutation-tested
+against a copy of the lockfile with one entry's resolution replaced by a
+`tarball:` pointing off-registry — confirmed caught, reported as
+`non-registry-source` naming the mutated package.
 
-`audited 697 packages` / `697 packages have verified registry signatures`,
-**exit 0**. So #534's third ask needs a workflow step, not a replacement
-tool — and unlike `pnpm audit --audit-level=high` next to it, this one
-reports a property of the packages actually installed rather than the state
-of an advisory database, so it can block without stopping unrelated pull
-requests. Adding that step belongs to #534; this migration establishes only
-that the control exists and that the tree passes it today.
+**Signature verification is now a blocking CI step, not just an available
+capability.** `pnpm audit signatures` runs in `ci.yml`'s `checks` job.
+Measured 2026-09-10: `audited 697 packages` / `697 packages have verified
+registry signatures`, exit 0 — same count as above, since it audits every
+installed package. Unlike `pnpm audit --audit-level=high` next to it, this
+reports a property of the packages actually locked rather than the state of
+an advisory database, so it blocks without going red on a PR that didn't
+touch dependencies.
+
+**Not carried over from this investigation: `blockExoticSubdeps`.** pnpm 12
+recognises this `pnpm-workspace.yaml` setting and it blocks a *transitive*
+dependency from resolving to a git/tarball source — confirmed it does not
+error against this repo's current lockfile. It was found while researching
+this issue but left out here: it only covers the transitive case (a direct
+`github:`-sourced dependency in `package.json` still installs cleanly with it
+on, confirmed by testing), so it would complement rather than replace the
+check above, and this investigation did not construct a real transitive-exotic
+dependency to confirm it fails closed. Worth a follow-up issue, not a line
+added on unverified faith.
 
 **#535 (commit-pinned GitHub Actions)** is unaffected by this migration and
 stays open. See #531.
