@@ -2,7 +2,7 @@
 import fs from 'fs';
 import { loadEnv } from 'vite';
 import { getWorktreeIdentity } from '../src/lib/worktree/identity';
-import { getRegistryPath, writeRegistryLocked, allocatePort, setPid, RegistryCollisionError, explainCollision } from '../src/lib/worktree/registry';
+import { getRegistryPath, writeRegistryLocked, allocatePort, setPid, writeRegistryLockedOrExplain } from '../src/lib/worktree/registry';
 import { runReap } from '../src/lib/worktree/reap';
 import { provisionDatabase } from '../src/lib/db-provision';
 import { spawnDevServer, buildDevServerLogPath } from '../src/lib/worktree/dev-server';
@@ -41,7 +41,7 @@ async function main(): Promise<void> {
 
   // reapFailed means the whole runReap sweep threw; reapResult.failed names
   // individual rows the sweep tried and failed to reap. Different failure
-  // modes — only reapFailed feeds explainCollision below.
+  // modes — only reapFailed is threaded into the collision-explaining path below.
   let reapFailed = false;
   try {
     const reapResult = await runReap(identity.gitCommonDir, registryPath, devUrl);
@@ -58,27 +58,22 @@ async function main(): Promise<void> {
     console.warn('[worktree:up] reap sweep failed — continuing without it, this worktree is unaffected:', err);
   }
 
-  let port = 0;
-  let alreadyRunning = null as { port: number; pid: number } | null;
-  try {
-    await writeRegistryLocked(registryPath, (registry) => {
-      const existing = registry[rawName];
-      if (existing?.pid != null && isPidAlive(existing.pid)) {
-        alreadyRunning = { port: existing.port, pid: existing.pid };
-        return registry;
-      }
-      const result = allocatePort(registry, rawName, dbSlug);
-      port = result.port;
-      return result.registry;
-    });
-  } catch (err) {
-    throw err instanceof RegistryCollisionError ? explainCollision(err, reapFailed) : err;
-  }
+  const slot = await writeRegistryLockedOrExplain<
+    { kind: 'already-running'; port: number; pid: number } | { kind: 'allocated'; port: number }
+  >(registryPath, reapFailed, (registry) => {
+    const existing = registry[rawName];
+    if (existing?.pid != null && isPidAlive(existing.pid)) {
+      return { registry, result: { kind: 'already-running' as const, port: existing.port, pid: existing.pid } };
+    }
+    const result = allocatePort(registry, rawName, dbSlug);
+    return { registry: result.registry, result: { kind: 'allocated' as const, port: result.port } };
+  });
 
-  if (alreadyRunning) {
-    console.log(`[worktree:up] already running at http://localhost:${alreadyRunning.port} (pid ${alreadyRunning.pid})`);
+  if (slot.kind === 'already-running') {
+    console.log(`[worktree:up] already running at http://localhost:${slot.port} (pid ${slot.pid})`);
     return;
   }
+  const port = slot.port;
 
   await provisionDatabase(devUrl, { seed: true });
 

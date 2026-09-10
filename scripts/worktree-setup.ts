@@ -2,7 +2,7 @@
 import { execSync } from 'child_process';
 import path from 'path';
 import { getWorktreeIdentity, dbNamesForSlug } from '../src/lib/worktree/identity';
-import { getRegistryPath, writeRegistryLocked, allocatePort, RegistryCollisionError, explainCollision } from '../src/lib/worktree/registry';
+import { getRegistryPath, allocatePort, writeRegistryLockedOrExplain } from '../src/lib/worktree/registry';
 import { runReap } from '../src/lib/worktree/reap';
 import { writeEnvIfMissing, generateCronSecret, findStaleEnvKeys } from '../src/lib/worktree/env-file';
 import { buildEnvOverrides } from '../src/lib/worktree/env-overrides';
@@ -22,7 +22,7 @@ async function main(): Promise<void> {
 
   // reapFailed means the whole runReap sweep threw; reapResult.failed names
   // individual rows the sweep tried and failed to reap. Different failure
-  // modes — only reapFailed feeds explainCollision below.
+  // modes — only reapFailed is threaded into the collision-explaining path below.
   let reapFailed = false;
   try {
     const reapResult = await runReap(identity.gitCommonDir, registryPath, `${DB_HOST}/postgres`);
@@ -39,16 +39,10 @@ async function main(): Promise<void> {
     console.warn('[worktree:setup] reap sweep failed — continuing without it, this worktree is unaffected:', err);
   }
 
-  let port = 0;
-  try {
-    await writeRegistryLocked(registryPath, (registry) => {
-      const result = allocatePort(registry, rawName, dbSlug);
-      port = result.port;
-      return result.registry;
-    });
-  } catch (err) {
-    throw err instanceof RegistryCollisionError ? explainCollision(err, reapFailed) : err;
-  }
+  const port = await writeRegistryLockedOrExplain(registryPath, reapFailed, (registry) => {
+    const result = allocatePort(registry, rawName, dbSlug);
+    return { registry: result.registry, result: result.port };
+  });
 
   // A worktree is a checkout of committed versions, so `npm ci`: it installs
   // the lockfile exactly and fails when `package.json` disagrees with it.
