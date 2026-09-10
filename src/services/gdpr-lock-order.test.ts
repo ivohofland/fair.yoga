@@ -1045,25 +1045,21 @@ async function cleanupStudentWaitingInClass(
 
 /**
  * A student with a CLOSED waitlist entry in each of `classCount` classes, and
- * none `waiting`. The shape the old sized budget was worst at.
- *
- * `waitingCount` counted `waiting` entries only, so this student scored zero
- * and got the 5_000ms floor — against a pre-lock whose join carries no status
- * predicate and therefore asks for `classCount` row locks. That mismatch is
- * #240's first axis, and this fixture is the only thing in the suite that can
- * express it: `makeStudentWaitingInClass` builds exactly one class.
+ * none `waiting`. Exercises what `makeStudentWaitingInClass` cannot: that one
+ * builds exactly one class, and the pre-lock's join carries no status
+ * predicate, so proving it reaches every entry's class — not only `waiting`
+ * ones — across more than one row needs a fixture that can produce more
+ * than one.
  *
  * `status: 'open'` on the classes and `'expired'` on the entries, matching
- * `makeStudentWaitingInClass({ entryStatus: 'expired' })` rather than being
- * more realistic than it. A closed entry in production sits on a class that
- * has started, but nothing in this erasure reads class status for the
- * pre-lock, and consistency with the fixture already in this file is worth
- * more than the realism.
+ * `makeStudentWaitingInClass({ entryStatus: 'expired' })` at `classCount` 1
+ * rather than being more realistic than it. A closed entry in production
+ * sits on a class that has started, but nothing in this erasure reads class
+ * status for the pre-lock, and consistency with the fixture already in this
+ * file is worth more than the realism.
  *
- * `classIds` comes back SORTED. The pre-lock is `ORDER BY c.id` and ids are
- * UUIDs, so creation order is not lock order — a caller staggering holders by
- * creation order would have the erasure block once on whichever row is
- * released last, and that single wait would blow the 2s `lock_timeout`.
+ * `classIds` comes back SORTED, matching the pre-lock's `ORDER BY c.id` —
+ * the real-contention test below holds them in that order.
  *
  * Distinct `startTime` per class so nothing trips a same-slot constraint.
  */
@@ -1353,13 +1349,15 @@ it('bounds its wait even when the student is waiting in no classes at all', asyn
  * 5_000ms floor against a pre-lock covering every status.
  *
  * This used to be an end-to-end wall-clock test holding six locks across
- * 1.5s steps to cross the 5s boundary (~9s total). Under load (e.g. a
- * concurrent Docker build, #560) the tight ~497ms margin under Postgres's
- * 2s `lock_timeout` caused `55P03` query cancellations. Mirroring the
- * identical transition in `class-generator.test.ts` and
- * `studio-class-generator.test.ts`, this pins the options passed to
- * `$transaction` via a Proxy rather than burning wall-clock seconds
- * waiting out an artificial hold.
+ * 1.5s steps to cross the 5s boundary (~9s total). It failed once under
+ * machine load (#560) — the failing assertion was never captured, but the
+ * construction left only ~500ms of arithmetic headroom under the 2s
+ * `lock_timeout` (1.5s steps against a 2s bound), which makes a
+ * load-induced `55P03` plausible without confirming it happened. Mirroring
+ * the same transition already made in `studio-class-generator.test.ts`,
+ * this pins the options passed to `$transaction` via a Proxy instead.
+ * Genuine multi-row contention for this function is proven separately by
+ * the real-lock test below — this test's only job is the literal `20_000`.
  *
  * What survives: `spyingClient` intercepts `$transaction`, asserts
  * `{ timeout: 20_000 }`, and delegates to the real call so the erasure
@@ -1368,7 +1366,7 @@ it('bounds its wait even when the student is waiting in no classes at all', asyn
  * fails loudly.
  */
 it('opens the erasure transaction with { timeout: 20_000 }', async () => {
-  const fixture = await makeStudentWithClosedEntriesInClasses(1);
+  const fixture = await makeStudentWaitingInClass({ entryStatus: 'expired' });
   let recordedOptions: TransactionOptions | undefined;
   const spyingClient = new Proxy(prisma, {
     get(target, prop, receiver) {
@@ -1398,9 +1396,64 @@ it('opens the erasure transaction with { timeout: 20_000 }', async () => {
     });
     expect(erased.deletedAt).not.toBeNull();
   } finally {
-    await cleanupStudentWithClosedEntries(fixture);
+    await cleanupStudentWaitingInClass(fixture);
   }
 });
+
+/**
+ * The end-to-end proof #240 lost when the test above traded wall-clock
+ * timing for a Proxy: that the pre-lock's single `WHERE id IN (...) FOR
+ * UPDATE` statement really does wait for more than one row it does not
+ * hold, not only whichever one it reaches first. Two real holders release
+ * well inside their own `lock_timeout` — 300ms and 600ms against a 2s
+ * bound — so unlike the test this PR removed, nothing here is timed close
+ * enough to a boundary to flake under load; the assertions are causal
+ * (each lock was actually released before the erasure returned), not
+ * elapsed-time thresholds.
+ */
+it('completes after real contention on more than one Class row lock', async () => {
+  const fixture = await makeStudentWithClosedEntriesInClasses(2);
+  const [classIdA, classIdB] = fixture.classIds;
+  try {
+    let aReleased = false;
+    let bReleased = false;
+
+    const holderA = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classIdA} FOR UPDATE`;
+        await new Promise((r) => setTimeout(r, 300));
+        aReleased = true;
+      },
+      { timeout: 10_000 },
+    );
+    const holderB = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classIdB} FOR UPDATE`;
+        await new Promise((r) => setTimeout(r, 600));
+        bReleased = true;
+      },
+      { timeout: 10_000 },
+    );
+    // Both holders must be sitting on their rows before the erasure asks
+    // for either one.
+    await new Promise((r) => setTimeout(r, 150));
+
+    const erasing = deleteStudentAccount(prisma, fixture.studentId).then(() => ({
+      aReleasedAtReturn: aReleased,
+      bReleasedAtReturn: bReleased,
+    }));
+
+    await Promise.all([holderA, holderB]);
+    const { aReleasedAtReturn, bReleasedAtReturn } = await erasing;
+
+    // CAUSAL: the erasure could not have returned before either lock it
+    // took was released, regardless of how long the run happened to take.
+    expect(aReleasedAtReturn).toBe(true);
+    expect(bReleasedAtReturn).toBe(true);
+  } finally {
+    await cleanupStudentWithClosedEntries(fixture);
+  }
+}, 15_000);
 
 it('does not deadlock against a transaction that locks the class first and then writes the erased student\'s waiting entry', async () => {
   // Round 1 review, C1: the previous version of this fix took the row
