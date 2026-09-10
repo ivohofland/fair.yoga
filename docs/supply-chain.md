@@ -681,12 +681,18 @@ shape".** The issue's original ask was written against npm's
 `package-lock.json`, where every entry carries a literal `resolved:
 "https://registry.npmjs.org/..."` URL. `pnpm-lock.yaml` v9 has no such field
 for a plain registry entry — the registry is implicit, and the only way an
-entry can name a *different* source is via a `gitHosted`/`tarball`/`repo`/
-`directory` marker in its `resolution` block (measured by adding a
-`github:`-sourced dependency to a scratch project and reading what pnpm wrote
-for it — see `src/lib/lockfile-policy.ts`'s docblock). Banning every such
-marker is the exact structural proxy this lockfile format allows for "pinned
-to the registry".
+entry can name a *different* source is via one of the markers
+`NON_REGISTRY_MARKERS` checks for in `src/lib/lockfile-policy.ts` (a
+git-hosted, tarball-URL, or local-directory shape). Measured by adding a
+`github:`-sourced dependency to a scratch project; pnpm wrote:
+
+```yaml
+lodash@https://codeload.github.com/lodash/lodash/tar.gz/f299b52f39486275a9e6483b60a410e06520c538:
+  resolution: {gitHosted: true, integrity: sha512-efBiOJ+8VBM1YBhMBYwxS694ynOHtSIe8zadaogd9mpQ7NZ0m5wtGY1j2N2csRA26uVp7Kfuci1QIPP7HQZLZg==, tarball: https://codeload.github.com/lodash/lodash/tar.gz/f299b52f39486275a9e6483b60a410e06520c538}
+```
+
+Banning every such marker is the exact structural proxy this lockfile format
+allows for "pinned to the registry".
 
 Measured 2026-09-10 against the committed lockfile: **697 entries** (9 in the
 `packageManagerDependencies` document, 688 in the app-graph document — the

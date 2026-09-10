@@ -23,13 +23,14 @@ const TOP_LEVEL_KEY = /^[^\s]/;
 const PACKAGE_KEY_LINE = /^ {2}('.*'|[^\s'][^\s]*?):$/;
 const RESOLUTION_LINE = /^ {4}resolution: \{(.*)\}$/;
 
-/** The only shapes pnpm's lockfile format uses for a non-registry
- *  resolution — git-hosted (`gitHosted`, `tarball`), a plain tarball URL
- *  (`tarball` alone), or a local workspace/`file:` link (`directory`,
- *  `type`). A plain registry entry's resolution holds only `integrity`
- *  (`cpu`/`os`/`libc` for platform-specific optionals are sibling keys of
- *  `resolution`, not inside it, and never appear here). Measured shape for
- *  a git dependency: docs/supply-chain.md.
+/** The shapes pnpm's lockfile format uses for a non-registry resolution —
+ *  git-hosted, a plain tarball URL, or a local workspace/`file:` link. The
+ *  exact field names are the array below, not restated here, so this
+ *  comment can't drift from what the code actually checks. A plain
+ *  registry entry's resolution holds only `integrity` (`cpu`/`os`/`libc`
+ *  for platform-specific optionals are sibling keys of `resolution`, not
+ *  inside it, and never appear here). Measured shape for a git dependency,
+ *  and the rationale for banning every marker below: docs/supply-chain.md.
  */
 const NON_REGISTRY_MARKERS = ['tarball:', 'gitHosted:', 'repo:', 'commit:', 'type:', 'directory:'];
 
