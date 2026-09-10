@@ -220,9 +220,10 @@ pnpm's content-addressable store makes the marginal cost of one roughly
 `packageManager`.**
 
 `corepack use pnpm@12.3.4` writes
-`packageManager: "pnpm@12.3.4+sha512.961aa41f…"`, and that hash is
-load-bearing. Mutation-tested for this spec: flipping one hex digit of it,
-with `COREPACK_HOME` pointed at an empty directory so the download actually
+`packageManager: "pnpm@12.3.4+sha512.961aa41f…"`. **That hash is load-bearing
+on a cold cache and inert on a warm one** — see the correction below.
+Mutation-tested for this spec: flipping one hex digit of it, with
+`COREPACK_HOME` pointed at an empty directory so the download actually
 happens, gives **exit 1** and
 
 ```
@@ -239,6 +240,22 @@ already in corepack's cache, so no download occurred and no hash was
 checked. It is recorded here because the same trap will catch the next
 person: the cache lives at `~/.cache/node/corepack` on this machine, **not**
 the macOS `~/Library/Caches` path.
+
+**That warm-cache result was the real behaviour, and this spec first wrote it
+off as a broken test.** PR #561's silent-failure review found the mechanism:
+corepack keys its cache by name and version only, and the warm path returns
+early without ever comparing the stored hash to the requested one. Re-measured
+against the real repo with a 128-zero hash and a warm cache: `corepack pnpm
+--version` prints `12.3.4`, **exit 0**, no warning.
+
+So the honest claim is conditional. **The hash is a genuine gate on a cold
+`COREPACK_HOME` — every CI runner and every Docker build — and decoration on a
+developer laptop after its first install.** Corepack is still the right choice,
+because `pnpm/action-setup` and `npm i -g pnpm@x` verify nothing in *either*
+state and both drop the single source of truth; but the unconditional form this
+spec asserted, and which reached seven comments and the PR body, was false. The
+lesson is not about corepack: the evidence was in hand at the first mutation and
+was explained away rather than followed.
 
 Rejected, with reasons:
 
@@ -277,10 +294,22 @@ its shims into the active Node installation's bin directory. That ordering
 forfeits `setup-node`'s `cache: 'pnpm'` convenience. `actions/cache@v6` is
 already used twice in `ci.yml`, so this adds no new dependency.
 
-**A local composite action was considered and rejected.** It would remove a
-5× duplication, but `ci.yml` is deliberately explicit and heavily commented
-— it already repeats `setup-node` + `npm ci` five times — and a composite
-action hides those steps from the reader of that file.
+**A local composite action was considered, rejected, and then adopted after
+review.** The original argument was that `ci.yml` is deliberately explicit and
+heavily commented, and a composite hides those steps from its reader. That held
+while the duplicated block had **zero defects**.
+
+PR #561's review put three fixes into it at once — a false claim about hash
+verification, a shell bug that swallowed the bootstrap's exit status, and a new
+version check — across six copies. Eighteen edits that must stay in lockstep,
+where a partial fix leaves the weakest job setting the effective strength. The
+block moved to `.github/actions/setup-pnpm/action.yml`, with the explanatory
+comments moved into it (one home instead of six) and a pointer left at each call
+site.
+
+The original ruling optimised for the reader of one file; the failure mode was
+about the editor of six. Duplication is cheap right up until something in it is
+wrong.
 
 ## Design
 
