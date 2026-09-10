@@ -23,7 +23,7 @@ const TOP_LEVEL_KEY = /^[^\s]/;
 const PACKAGE_KEY_LINE = /^ {2}('.*'|[^\s'][^\s]*?):$/;
 const RESOLUTION_LINE = /^ {4}resolution: \{(.*)\}$/;
 
-/** The shapes pnpm's lockfile format uses for a non-registry resolution —
+/** The shapes pnpm is known to use for a non-registry resolution —
  *  git-hosted, a plain tarball URL, or a local workspace/`file:` link. The
  *  exact field names are the array below, not restated here, so this
  *  comment can't drift from what the code actually checks. A plain

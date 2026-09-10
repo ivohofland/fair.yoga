@@ -268,10 +268,83 @@ settings only from `pnpm-workspace.yaml`: moved into a `.npmrc` or under
 what a contributor who hits `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN` and relocates
 them plausibly does. So that test asserts presence, values, and the absence of
 both wrong homes, in one comparison that reports the whole object.
+`src/lib/lockfile-policy.test.ts` reads a real committed file the same way —
+see below for what it guards and why its own gap is different from the four
+settings here.
 
 Nothing enforces the declarative paths (`Dockerfile`, the workflows) or the
 documentation — only a reviewer reads them. They were correct when measured;
 the table above and its command are what make a regression visible.
+
+**`src/lib/lockfile-policy.ts` enforces #534's first two asks** — every
+`pnpm-lock.yaml` package resolves from the plain registry (no git/tarball/local
+source), and every resolution carries an integrity hash — by reading the
+lockfile directly rather than a `pnpm-workspace.yaml` setting. It parses the
+lockfile's two concatenated YAML documents (see *The two-document lockfile,
+and why Dependabot still reads it*, below) and flags any package whose
+resolution is missing `integrity` or carries a git/tarball/local-source
+marker instead of a plain registry one. `scripts/check-lockfile.ts` runs it
+as `pnpm run check-lockfile`, a blocking step in `ci.yml`'s `checks` job.
+
+**Why "pin to `registry.npmjs.org`" became "reject a non-registry resolution
+shape".** The issue's original ask was written against npm's
+`package-lock.json`, where every entry carries a literal `resolved:
+"https://registry.npmjs.org/..."` URL. `pnpm-lock.yaml` v9 has no such field
+for a plain registry entry — the registry is implicit, and the only way an
+entry can name a *different* source is via one of the markers
+`NON_REGISTRY_MARKERS` checks for in `src/lib/lockfile-policy.ts` (a
+git-hosted, tarball-URL, or local-directory shape). Measured by adding a
+`github:`-sourced dependency to a scratch project; pnpm wrote:
+
+```yaml
+lodash@https://codeload.github.com/lodash/lodash/tar.gz/f299b52f39486275a9e6483b60a410e06520c538:
+  resolution: {gitHosted: true, integrity: sha512-efBiOJ+8VBM1YBhMBYwxS694ynOHtSIe8zadaogd9mpQ7NZ0m5wtGY1j2N2csRA26uVp7Kfuci1QIPP7HQZLZg==, tarball: https://codeload.github.com/lodash/lodash/tar.gz/f299b52f39486275a9e6483b60a410e06520c538}
+```
+
+Banning every such marker is the exact structural proxy this lockfile format
+allows for "pinned to the registry".
+
+Measured 2026-09-10 against the committed lockfile: **697 entries** (9 in the
+`packageManagerDependencies` document, 688 in the app-graph document — the
+same 697 total `pnpm audit signatures` reports), **zero violations**.
+Re-derive with `pnpm run check-lockfile`. The checker was mutation-tested two
+ways: replacing one entry's resolution with a `tarball:` pointing
+off-registry (caught, reported as `non-registry-source` naming the mutated
+package), and reshaping the `packages:` section itself — renaming the header
+and, separately, reindenting one entry's key line — to simulate a future
+pnpm lockfile-format change the parser can no longer read. Both silently
+dropped entries rather than erroring, which is exactly the failure mode
+`scripts/check-lockfile.ts`'s raw-count tether exists to catch: it counts
+lines containing the literal string `resolution:` independently of the
+parser and fails loud (exit 1, naming the mismatch) whenever
+`parsePackageResolutions` returns fewer entries than that count, rather than
+passing vacuously with zero entries and zero violations found. The same gap
+applies one entry at a time — a `resolution:` line matched while no key is
+pending is dropped by the parser rather than counted — and the tether catches
+that too, for the same reason: the raw count still includes the orphaned
+line.
+
+`src/lib/lockfile-policy.test.ts` also reads this real lockfile directly (the
+same pattern `src/lib/pnpm-policy.test.ts` uses for `pnpm-workspace.yaml`,
+above) and asserts a floor on the entry count plus zero violations. Its gap
+is narrower than the four `pnpm-workspace.yaml` settings' guard, though:
+`check-lockfile` already runs as its own blocking CI step, so this test
+isn't covering something CI structurally can't reach. What it adds is
+permanence — the mutation testing above is what first proved the parser
+reads the real file's format correctly, and this test is what keeps that
+proof standing on every `pnpm test` rather than leaving it a claim about a
+run nobody can rerun.
+
+**Signature verification is a blocking CI step, not just an available
+capability.** `pnpm audit signatures` runs in `ci.yml`'s `checks` job —
+#534's third ask. Measured 2026-09-10: `audited 697 packages` / `697
+packages have verified registry signatures`, exit 0 — same count as above,
+since it audits every installed package. Unlike `pnpm audit
+--audit-level=high` next to it, this reports a property of the packages
+actually locked rather than the state of an advisory database, so it blocks
+without going red on a PR that didn't touch dependencies — barring a
+registry outage or rate-limit, since unlike the lockfile-shape check above,
+this step fetches signature data over the network.
 
 ## What pnpm enforces that nothing did before
 
@@ -520,7 +593,7 @@ schema validation (top-level keys) or fails safe by default (an unrecognised
 wrong file — is invisible to everyone. The mutation tests above are what
 prove any of this live; the file's mere existence proves nothing.
 
-## Known advisories, and why the audit step does not block
+## Known advisories, and why the advisory audit step does not block
 
 `ci.yml` runs `pnpm audit --audit-level=high` with `continue-on-error: true`.
 The census belongs here rather than beside that step for the same reason the
@@ -665,62 +738,21 @@ unchosen one, are open work.
 **#533 (a release-age cooldown) is absorbed** — `minimumReleaseAge` above is
 exactly that control, so it leaves this list.
 
-**#534 is now fully enforced.** `src/lib/lockfile-policy.ts` parses
-`pnpm-lock.yaml`'s two concatenated YAML documents (see *The two-document
-lockfile, and why Dependabot still reads it*, above) and flags any package
-whose resolution is missing
-`integrity` or carries a git/tarball/local-source marker instead of a plain
-registry one. `scripts/check-lockfile.ts` runs it as `pnpm run
-check-lockfile`, a blocking step in `ci.yml`'s `checks` job. The install-script
-half was already absorbed and strengthened by the pnpm migration:
-`allowBuilds` + `strictDepBuilds` is a committed allowlist that errors on
-every machine, not only in CI.
+**#534 is now absorbed** — enforced by `src/lib/lockfile-policy.ts` and two
+blocking `ci.yml` steps (`check-lockfile`, `pnpm audit signatures`); see
+*What is enforced, and what is not* above.
 
-**Why "pin to `registry.npmjs.org`" became "reject a non-registry resolution
-shape".** The issue's original ask was written against npm's
-`package-lock.json`, where every entry carries a literal `resolved:
-"https://registry.npmjs.org/..."` URL. `pnpm-lock.yaml` v9 has no such field
-for a plain registry entry — the registry is implicit, and the only way an
-entry can name a *different* source is via one of the markers
-`NON_REGISTRY_MARKERS` checks for in `src/lib/lockfile-policy.ts` (a
-git-hosted, tarball-URL, or local-directory shape). Measured by adding a
-`github:`-sourced dependency to a scratch project; pnpm wrote:
-
-```yaml
-lodash@https://codeload.github.com/lodash/lodash/tar.gz/f299b52f39486275a9e6483b60a410e06520c538:
-  resolution: {gitHosted: true, integrity: sha512-efBiOJ+8VBM1YBhMBYwxS694ynOHtSIe8zadaogd9mpQ7NZ0m5wtGY1j2N2csRA26uVp7Kfuci1QIPP7HQZLZg==, tarball: https://codeload.github.com/lodash/lodash/tar.gz/f299b52f39486275a9e6483b60a410e06520c538}
-```
-
-Banning every such marker is the exact structural proxy this lockfile format
-allows for "pinned to the registry".
-
-Measured 2026-09-10 against the committed lockfile: **697 entries** (9 in the
-`packageManagerDependencies` document, 688 in the app-graph document — the
-same 697 total `pnpm audit signatures` reports), **zero violations**.
-Re-derive with `pnpm run check-lockfile`. The checker was mutation-tested
-against a copy of the lockfile with one entry's resolution replaced by a
-`tarball:` pointing off-registry — confirmed caught, reported as
-`non-registry-source` naming the mutated package.
-
-**Signature verification is now a blocking CI step, not just an available
-capability.** `pnpm audit signatures` runs in `ci.yml`'s `checks` job.
-Measured 2026-09-10: `audited 697 packages` / `697 packages have verified
-registry signatures`, exit 0 — same count as above, since it audits every
-installed package. Unlike `pnpm audit --audit-level=high` next to it, this
-reports a property of the packages actually locked rather than the state of
-an advisory database, so it blocks without going red on a PR that didn't
-touch dependencies.
-
-**Not carried over from this investigation: `blockExoticSubdeps`.** pnpm 12
+**Not carried over from that work: `blockExoticSubdeps`.** pnpm 12
 recognises this `pnpm-workspace.yaml` setting and it blocks a *transitive*
 dependency from resolving to a git/tarball source — confirmed it does not
 error against this repo's current lockfile. It was found while researching
-this issue but left out here: it only covers the transitive case (a direct
+#534 but left out of that fix: it only covers the transitive case (a direct
 `github:`-sourced dependency in `package.json` still installs cleanly with it
-on, confirmed by testing), so it would complement rather than replace the
-check above, and this investigation did not construct a real transitive-exotic
-dependency to confirm it fails closed. Worth a follow-up issue, not a line
-added on unverified faith.
+on, confirmed by testing), so it would complement rather than replace
+`src/lib/lockfile-policy.ts`'s check, and that investigation did not
+construct a real transitive-exotic dependency to confirm it fails closed.
+Still open work — worth a follow-up issue, not a line added on unverified
+faith.
 
 **#535 (commit-pinned GitHub Actions)** is unaffected by this migration and
 stays open. See #531.
