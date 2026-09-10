@@ -63,14 +63,43 @@ answers, so the setting also turns "forgot to install" into a named error
 instead of a missing-binary one.
 
 The cost is that every `pnpm run`/`pnpm exec` now demands a `node_modules`
-consistent with `package.json`. Nothing in this repo pays it: every CI job
-installs before its first `pnpm run`/`pnpm exec` — *Where this repo
-installs* below derives that ordering with a command — the
-`Enable pnpm` step that precedes the install runs only `pnpm store path`,
-which is neither and stays exit 0, and `Dockerfile`'s `build` and `migrate`
-stages are `FROM deps`, which installed. What does pay it is a working tree
-someone shares `node_modules` into rather than installing — see
-`docs/mutation-testing.md` §3, where that recipe no longer holds.
+consistent with `package.json`. **CI does not pay it**: every job installs
+before its first `pnpm run`/`pnpm exec` — *Where this repo installs* below
+derives that ordering with a command — the bootstrap steps ahead of the
+install run only `pnpm --version` and `pnpm store path`, neither of which is
+`run` or `exec`, and `Dockerfile`'s `build` and `migrate` stages are
+`FROM deps`, which installed. That those two are ungated is measured, not
+assumed: against a checkout with no `node_modules` at all
+(`git archive HEAD | tar -x -C "$T"`), both answer exit 0 while
+`pnpm exec node -e 'console.log(1)'` in the same tree exits 1 with
+`ERR_PNPM_VERIFY_DEPS_BEFORE_RUN`.
+
+**A FRESH WORKTREE DOES PAY IT**, and that is the case worth knowing. It has
+no `node_modules`, so `pnpm run worktree:setup` — the script whose whole job
+is to create one — refuses to start:
+
+```
+Error: ERR_PNPM_VERIFY_DEPS_BEFORE_RUN
+
+  × Cannot check whether dependencies are outdated
+  help: Run "pnpm install"
+```
+
+exit 1. Under npm the same sequence worked by accident: `npm run` prepends
+every **ancestor** `node_modules/.bin` to PATH, and a worktree living inside
+the main checkout inherited the parent's binaries. pnpm's deps check fires
+first, before anything is on PATH to inherit. So `pnpm install
+--frozen-lockfile` is written as the explicit first step everywhere this repo
+records the sequence — `.claude/skills/verify/SKILL.md`,
+`.claude/skills/solve-issue/SKILL.md`, `docs/test-database.md` §5, and
+`AGENTS.md`'s mutation-probe recipe, which already had that shape. The
+install inside `scripts/worktree-setup.ts` stays: a second run is a 45ms
+no-op, and it is the only call site `src/lib/script-install-census.test.ts`
+enforces.
+
+The other tree that pays it is one someone shares `node_modules` into rather
+than installing — see `docs/mutation-testing.md` §3, where that recipe no
+longer holds.
 
 ## Where this repo installs
 
@@ -80,9 +109,18 @@ invalidated by an edit its author never sees. Re-derive it with:
 
 ```bash
 grep -rnE 'pnpm +(install|i|add|update|up|import)\b' \
-  Dockerfile .github/workflows README.md AGENTS.md scripts src/lib \
+  Dockerfile .github README.md AGENTS.md .claude/skills docs/test-database.md \
+  scripts src/lib \
   --exclude='*.test.ts' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|\*|#)'
 ```
+
+**The path list is `.github`, not `.github/workflows`.** The CI install moved
+out of the workflows and into `.github/actions/setup-pnpm/action.yml`, and a
+census scoped one directory too narrowly would have reported the install
+disappearing rather than moving. Same reason `.claude/skills` and
+`docs/test-database.md` are here: those three sites instruct the worktree
+install (*The door npm did not have*, above), so they run one as surely as
+`README.md` does.
 
 Both filters are load-bearing. Without `--exclude`, the census test file's
 fixtures and docblock dominate the output; without the second `grep`, every
@@ -97,44 +135,93 @@ unanchored version first, back when the command it protected was `npm`'s.
 Checking a filter against today's output only shows it keeps what is already
 there; feed it a line it must **not** drop.
 
-Measured 2026-09-10, the command returns **12 lines — 11 invocations, plus the
+Measured 2026-09-10, the command returns **10 lines — 9 invocations, plus the
 `console.log` in `scripts/worktree-setup.ts` that names the call on the line
 below it**:
 
 | Where | Invocations | Notes |
 |---|---|---|
-| `.github/workflows/ci.yml` | 5 | **one per job that installs at all** — `checks`, `test-components`, `test-unit`, `test-integration`, `test-e2e`. `docker-build` checks out without installing, and the `test` aggregate gate does neither |
-| `.github/workflows/e2e-flake-repro.yml` | 1 | manual-dispatch only |
-| `Dockerfile` | 1 | in the `deps` stage (lines 8-19); `build` and `migrate` are `FROM deps` and inherit the layer rather than re-running it |
+| `.github/actions/setup-pnpm/action.yml` | 1 | **the whole of CI's installing.** Six jobs call this composite action; it is one install written once, not six copies of one |
+| `Dockerfile` | 1 | in the `deps` stage; `build` and `migrate` are `FROM deps` and inherit the layer rather than re-running it |
 | `README.md` | 1 | step 1 of local setup |
 | `AGENTS.md` | 2 | the quick-start block, and the worktree probe recipe under *Mutation testing protocol* |
+| `.claude/skills/verify/SKILL.md` | 1 | the worktree bootstrap's mandatory first step |
+| `.claude/skills/solve-issue/SKILL.md` | 1 | the same step, in the issue workflow |
+| `docs/test-database.md` | 1 | the same step, in §5 |
 | `scripts/worktree-setup.ts` | 1 | the only one in imperative code, and the only one a test enforces |
 
 Which job owns which install is a separate claim from how many there are, and
 the census line above cannot answer it: an install carries no job name, only
-a line number a hundred lines below the `jobs:` key it belongs to. This does,
-and it answers the ordering question in the same pass:
+a line number a hundred lines below the `jobs:` key it belongs to. Since the
+install moved into a composite action, the thing to order per job is the call
+to that action. This does it, and it answers the ordering question in the
+same pass:
 
 ```bash
-awk '/^  [a-z][a-z0-9-]*:$/ { job = $1; sub(/:$/, "", job) }
-     /pnpm install/         { print FILENAME ":" FNR "\tINSTALL\t" job }
-     /pnpm (run|exec|dlx) / { print FILENAME ":" FNR "\trun/exec\t" job }' \
-  .github/workflows/ci.yml .github/workflows/e2e-flake-repro.yml
+awk 'FNR == 1                { job = "-" }
+     /^  [a-z][a-z0-9-]*:$/  { job = $1; sub(/:$/, "", job) }
+     /^[[:space:]]*#/        { next }
+     /uses: \.\/\.github\/actions\/setup-pnpm/ { print FILENAME ":" FNR "\tSETUP-ACTION\t" job }
+     /(^|[^[:alnum:]._-])pnpm[[:space:]]/ {
+       if ($0 ~ /pnpm[[:space:]]+(install|i|add|update|up|import)([[:space:]]|$)/) kind = "INSTALL"
+       else kind = "pnpm-call"
+       print FILENAME ":" FNR "\t" kind "\t" job
+     }' \
+  .github/workflows/ci.yml .github/workflows/e2e-flake-repro.yml \
+  .github/actions/setup-pnpm/action.yml
 ```
 
-Measured 2026-09-10: `ci.yml` lines 71, 139, 202, 302, 426, one apiece in
-`checks`, `test-components`, `test-unit`, `test-integration`, `test-e2e`, and
-`e2e-flake-repro.yml:140` in `repro` — and in every one of the six jobs the
-`INSTALL` line comes before that job's first `run/exec` line. That ordering
-is what makes `verifyDepsBeforeRun: error` (see *The rule*) cost CI nothing.
+**The pattern is every `pnpm ` call, not `pnpm (run|exec|dlx) `.** The
+narrower one was blind to the bootstrap's own `pnpm --version` and `pnpm
+store path` — which is to say, blind to exactly the two calls that decide
+whether the ordering argument below holds. A filter that cannot see the step
+it exempts is not evidence about that step. Comment lines are skipped
+instead, and the action file's own `description:` prose contributes one row
+of noise that is neither.
 
-**`README.md` and `AGENTS.md` are in this table now.** #540 converted both to
-`pnpm install --frozen-lockfile`, so the grep above finds them the same way
-it finds every other path. Nothing checks the two documentation sites
-mechanically, though — a `grep` in a contributor's head is what maintains
-them, which is why the command above is here rather than the number alone,
-and why this file said `npm install` (not even `npm ci`) until #532 the last
-time the two drifted apart.
+Measured 2026-09-10: `SETUP-ACTION` at `ci.yml` lines 49, 95, 136, 214 and
+316 — `checks`, `test-components`, `test-unit`, `test-integration`,
+`test-e2e` — and `e2e-flake-repro.yml:118` in `repro`; in every one of the
+six it precedes that job's first `pnpm-call` row. Inside the action itself
+the only `INSTALL` row is line 88, and every `pnpm-call` row above it is the
+`pnpm --version` / `pnpm store path` bootstrap or one of the two shell guards
+quoting them. That ordering is what makes `verifyDepsBeforeRun: error` (see
+*The rule*) cost CI nothing.
+
+**The documentation sites are in this table too.** #540 converted `README.md`
+and `AGENTS.md` to `pnpm install --frozen-lockfile`, and the worktree
+bootstrap added three more, so the grep above finds them all the same way it
+finds every other path. Nothing checks them mechanically, though — a `grep`
+in a contributor's head is what maintains them, which is why the command is
+here rather than the number alone, and why this file said `npm install` (not
+even `npm ci`) until #532 the last time the two drifted apart. A line-wrapped
+instruction is the failure mode to watch: `docs/test-database.md`'s went
+missing from this census the moment `pnpm` and `install` landed on separate
+lines.
+
+## What pnpm's node_modules layout changes
+
+**A top-level `node_modules` now resolves only DIRECT dependencies.** pnpm
+links just what `package.json` declares into `node_modules/`; everything
+transitive lives in `node_modules/.pnpm` and is reachable only from the
+package that asked for it. npm hoisted the lot, so a bare `require('x')`
+against the repo's `node_modules` used to work for packages nothing here
+declares.
+
+This bites scripts run from outside the repo with
+`NODE_PATH=<repo>/node_modules`. Measured 2026-09-10 from `/tmp`:
+
+```bash
+for m in playwright @playwright/test @prisma/client typescript; do
+  NODE_PATH=/path/to/fair.yoga/node_modules \
+    node -e "try{require.resolve('$m');console.log('$m RESOLVES')}catch(e){console.log('$m '+e.code)}"
+done
+```
+
+`@playwright/test`, `@prisma/client` and `typescript` resolve — all three are
+in `package.json`. Bare `playwright` answers `MODULE_NOT_FOUND`: it is
+`@playwright/test`'s dependency, not this repo's. Spell the direct package,
+or install the tool where the script lives.
 
 ## What is enforced, and what is not
 
@@ -151,14 +238,36 @@ as a `pnpm add` would.
 It parses each file and reads the command out of `child_process`-shaped
 calls, including the argv form — `spawnSync('pnpm', ['install',
 '--frozen-lockfile'])`, where the subcommand sits outside the first argument.
-Matching is by callee **name**, though, and that bounds the coverage: the one
-argv-shaped call this repo actually has, in
-`src/lib/worktree/dev-server.ts:17`, is invisible to the guard, because its
-callee is an injected `spawnFn` parameter rather than a name on the list. The
-test's own docblock says so and is the authority on the rest of the blind
-spots — a renamed or injected callee, an interpolated command, a command whose
-`pnpm` is not immediately followed by the subcommand, anything inside a shell
-script, and any install a dependency performs itself.
+Matching is by callee **name**, though, and that bounds the coverage. The one
+argv-shaped **`pnpm`** call this repo has is invisible to the guard:
+
+```bash
+grep -rnE "(exec|execSync|execFile|execFileSync|spawn|spawnSync|[A-Za-z]+Fn)\('[^']+', \[" \
+  scripts src/lib --include='*.ts' --exclude='*.test.ts'
+```
+
+Measured 2026-09-10, three hits. Two are `side-effects.ts`'s `execFileSync`
+calls to `lsof` and `ps` — argv-shaped, but their callee **is** on the list,
+so the guard sees them fine and drops them only because `lsof` is not an
+install. The third, `dev-server.ts:17`, is the invisible one, and it escapes
+three separate ways: its callee is an injected `spawnFn` parameter, that
+parameter's default is a renamed import, and `pnpm exec` is not
+install-family in the first place. The test's own docblock is the authority
+on the rest of the blind spots — a renamed or injected callee, an
+interpolated command, a command whose `pnpm` is not immediately followed by
+the subcommand, `pnpm dlx`, anything inside a shell script, and any install a
+dependency performs itself.
+
+`src/lib/pnpm-policy.test.ts` is the second guard, and it covers what CI
+cannot. Three of the four settings below are gated by CI as a by-product of
+what CI does; `verifyDepsBeforeRun` is not and structurally cannot be, because
+every job installs before its first `pnpm run` — the very ordering that makes
+the setting free. Delete the line and CI stays green. Worse, pnpm reads these
+settings only from `pnpm-workspace.yaml`: moved into a `.npmrc` or under
+`package.json`'s `pnpm` key they are ignored with no diagnostic, which is
+what a contributor who hits `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN` and relocates
+them plausibly does. So that test asserts presence, values, and the absence of
+both wrong homes, in one comparison that reports the whole object.
 
 Nothing enforces the declarative paths (`Dockerfile`, the workflows) or the
 documentation — only a reviewer reads them. They were correct when measured;
@@ -166,11 +275,11 @@ the table above and its command are what make a regression visible.
 
 ## What pnpm enforces that nothing did before
 
-Three settings, all of them living only in `pnpm-workspace.yaml` and read
+Four settings, all of them living only in `pnpm-workspace.yaml` and read
 **nowhere else** — not in `.npmrc` (kebab-case or camelCase), not under
 `package.json`'s `pnpm` key. Nothing under `npm ci` had an equivalent to any
-of them. `verifyDepsBeforeRun: error` is the third and is covered under
-[The rule](#the-rule) above, beside the hazard it closes; the other two are
+of them. `verifyDepsBeforeRun: error` is covered under
+[The rule](#the-rule) above, beside the hazard it closes; the other three are
 here.
 
 **`minimumReleaseAge: 10080`** (seven days, in minutes) rejects a lockfile
@@ -182,9 +291,13 @@ every resolved version violates it (`minimumReleaseAge: 5256000`, ~10 years)
 and running `rm -rf node_modules && pnpm install --frozen-lockfile`: pnpm
 prints `Verifying lockfile against supply-chain policies (688 entries)...`,
 clones every package into the content-addressable virtual store
-(`node_modules/.pnpm` — 574 directories, hundreds of megabytes, confirmed
-on disk), and only *then* fails with `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`,
-naming all 677 rejected entries. Crucially, the root-level `node_modules/`
+(`node_modules/.pnpm` — 572 directories, hundreds of megabytes, confirmed on
+disk with `ls node_modules/.pnpm | wc -l` in exactly that blocked state), and
+only *then* fails with `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`:
+`677 lockfile entries failed verification`, of which it prints **20 by name
+and then `…and 657 more`**. The count is diagnostic; the listing is not, so
+a real violation is read off the twenty that happen to sort first. Crucially,
+the root-level `node_modules/`
 never gets its package symlinks (`node_modules/next` etc. do not exist
 afterward) and no lifecycle script runs — so nothing is *importable*, but the
 package contents themselves are already unpacked on disk before the command
@@ -192,12 +305,33 @@ exits 1. Sufficient for a CI gate, which only reads the exit code; **not**
 what stops a fresh dependency's install-time code from executing on a
 contributor's own machine.
 
-**`strictDepBuilds` (default `true`) + `allowBuilds`** is what stops that.
-Any dependency that reaches this repo with a build/install script and no
-entry in `allowBuilds` **errors the install** — on a laptop, not only in CI.
-`allowBuilds` currently grants six packages — five of them live today, see
-below: `@prisma/client`, `@prisma/engines`, `esbuild`, `fsevents`, `prisma`,
-`unrs-resolver`.
+**`strictDepBuilds: true` + `allowBuilds`** is what stops that. Any
+dependency that reaches this repo with a build/install script and no entry in
+`allowBuilds` **errors the install** — on a laptop, not only in CI.
+`allowBuilds` grants five packages, and every one of them is live:
+`@prisma/client`, `@prisma/engines`, `esbuild`, `prisma`, `unrs-resolver`.
+
+**`strictDepBuilds` is written out rather than left to the default**, for the
+reason the census guard's docblock gives about `--frozen-lockfile`: a default
+is a claim about pnpm's behaviour that nothing in this repo tethers. Were it
+ever false, `Ignored build scripts: …` would be a warning, the install would
+exit 0, and `allowBuilds` would quietly become an advisory list. Writing it
+costs nothing and fails loudly in the other direction too — because
+`packageManager` is pinned, a key pnpm later renames or drops is a hard
+`ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS` rather than a silent no-op. That
+it is a recognised key today is measured the same way: a clean tree carrying
+the line loads its config and installs, exit 0.
+
+**`fsevents` is deliberately not in that list.** It was there — inherited
+from the npm-era `hasInstallScript` census below, which counts declarations
+rather than what pnpm blocks. Entries here are asymmetric: a *missing* one
+fails closed
+(`ERR_PNPM_IGNORED_BUILDS`, exit 1, naming the package), while a *stale* one
+is a standing silent grant — pnpm emits no "unused `allowBuilds` entry"
+diagnostic, so nothing would ever retire it. The day some future `fsevents`
+adds a `postinstall`, an entry left in place executes it with no prompt, no
+error and no diff. Removed, that same day is a failed install that names the
+package and asks a person. So the list is kept to what pnpm actually blocks.
 
 Re-derive the set pnpm actually requires — not the same as reading the
 allowlist back to itself — with a clean install against an emptied map
@@ -208,26 +342,39 @@ built, so `node_modules` must go first):
 rm -rf node_modules && pnpm install --frozen-lockfile
 ```
 
-Measured against today's lockfile, this blocks **five** packages, reported
-both in the error (`Ignored build scripts: @prisma/client@6.19.3,
+Measured 2026-09-10 against today's lockfile, this blocks **five** packages,
+reported both in the error (`Ignored build scripts: @prisma/client@6.19.3,
 @prisma/engines@6.19.3, esbuild@0.28.1, prisma@6.19.3, unrs-resolver@1.11.1`)
-and afterward in `node_modules/.modules.yaml`'s `ignoredBuilds` array.
-**`fsevents` is not among them.** Both versions this lockfile resolves
-(`2.3.2`, `2.3.3`) declare no `install`/`preinstall`/`postinstall` script and
-ship a prebuilt native binary, so pnpm's own build-script detector does not
-gate it on this platform — its `allowBuilds` entry is a harmless no-op today,
-not a live requirement.
+and afterward in `node_modules/.modules.yaml`'s `ignoredBuilds` array —
+exactly the five `allowBuilds` grants, and `fsevents` among neither. Both
+`fsevents` versions this lockfile resolves (`2.3.2`, `2.3.3`) declare no
+`install`/`preinstall`/`postinstall` script and ship a prebuilt native binary,
+so pnpm's own build-script detector never gates it on this platform.
 
-The six-package figure traces back to npm's `package-lock.json`, whose
-`hasInstallScript` census this repo used before the migration. **It was six,
-not the seven #534's body claims** (`sharp` was in that count but declares no
-install script): `package-lock.json` had 9 `hasInstallScript` entries, minus
-1 for this repo's own root (`postinstall: prisma generate`), minus 2 for
-`fsevents`'s nested duplicate resolutions, leaves 6. That census has no
-direct pnpm equivalent — `pnpm-lock.yaml` does not carry a per-package
-install-script marker the way `package-lock.json` did — which is why the
-re-derivation above runs the install itself rather than reading a lockfile
-field.
+Run this against a scratch tree (`git archive HEAD | tar -x -C "$T"`), not
+the working checkout: `rm -rf node_modules` there takes down whatever is
+running out of it, and a blocked install rewrites `pnpm-workspace.yaml` (see
+below).
+
+An earlier **six**-package figure traces back to npm's `package-lock.json`,
+whose `hasInstallScript` census this repo used before the migration. **It was
+six, not the seven #534's body claims** (`sharp` was in that count but
+declares no install script). That lockfile is deleted at HEAD, so re-derive
+it from the last commit that carried one:
+
+```bash
+git show a6758edc:package-lock.json | node -e 'let s="";process.stdin.on("data",d=>s+=d)
+  .on("end",()=>{const p=JSON.parse(s).packages;
+  const hits=Object.keys(p).filter(k=>p[k].hasInstallScript);
+  console.log(hits.length); for (const h of hits) console.log("  ", h || "(root)");});'
+```
+
+9 entries, minus 1 for this repo's own root (`postinstall: prisma generate`),
+minus 2 for `fsevents`'s nested duplicate resolutions under `tsx` and `vite`,
+leaves 6. That census has no direct pnpm equivalent — `pnpm-lock.yaml` does
+not carry a per-package install-script marker the way `package-lock.json`
+did — which is why the re-derivation above runs the install itself rather
+than reading a lockfile field.
 
 Placeholder values fail closed, and there is no filesystem check that can
 substitute for actually running the install. Setting a single package's
@@ -246,12 +393,12 @@ proves nothing.
 `pnpm install --frozen-lockfile` with `allowBuilds` emptied does not just
 fail — it rewrites `pnpm-workspace.yaml`, inserting a placeholder line per
 blocked package: `<pkg>: set this to true or false`. A reader unfamiliar
-with this will reasonably read the diff as tampering; it is pnpm's own
+with this will reasonably read the diff as tampering — an unexplained edit to
+the supply-chain policy file, arriving during an install. It is pnpm's own
 prompt for a decision, surfacing every implicated package by name so the
 maintainer only has to change `set this to true or false` to `true` or
-`false`. (One implementer on this migration saw exactly this diff and
-raised it as a suspected injection — the caution was right, the conclusion
-was not.)
+`false`. Restore the file and decide deliberately; do not commit the
+placeholders.
 
 **No setting here is fully tethered, but not in the way that might be
 assumed.** A setting placed in the **wrong file** gets nothing at all:
@@ -290,6 +437,42 @@ pnpm version on purpose — a bare `pnpm` there runs a *different* pnpm
 would confound the version with the pin and prove nothing. This repo pins
 `packageManager`, so its key names are tethered: a typo is a failing build,
 not a silent no-op.
+
+**The pin also decides WHICH pnpm reads this file at all, and that is the
+larger stake.** Measured 2026-09-10 on a two-package scratch project carrying
+`minimumReleaseAge: 5256000` and a lockfile that violates it:
+`pnpm@12.3.4 install --frozen-lockfile` prints `Verifying lockfile against
+supply-chain policies` and exits **1**; `pnpm@10.33.2` — corepack's own
+fallback default on this machine — performs no lockfile policy verification
+at all and exits **0**. (pnpm 10 does honour `minimumReleaseAge` while
+*resolving* a fresh install; it is the frozen path, the one CI and every
+contributor take, where it checks nothing.) The lockfile format is no
+backstop either: pnpm 10 read the pnpm-12 two-document lockfile without
+complaint. Nobody has to delete anything to reach that state — a standalone
+or global pnpm ahead of the corepack shim on PATH will do, and its
+`pnpm install --frozen-lockfile` still succeeds, so the census guard is
+satisfied too. What a maintainer observes is a fully green run.
+`.github/actions/setup-pnpm` therefore compares `pnpm --version` against the
+pin and fails the job on a mismatch, and `src/lib/pnpm-policy.test.ts` pins
+the field's shape for laptops, where no runner is checking anything.
+
+**The integrity hash is verified on first download, not on every run.**
+Corepack keys its cache by name and version; a `COREPACK_HOME` that already
+holds the version is reused without re-comparing the hash. Measured against a
+`packageManager` field whose hash was replaced with 128 zeros: with the warm
+default cache, `corepack pnpm --version` prints `12.3.4`, **exit 0**, no
+warning; with `COREPACK_HOME` pointed at an empty directory, the same command
+fails with `Error: Mismatch hashes. Expected 000…, got 961aa41f…`, **exit
+1**. CI runners and Docker build stages are always cold, so there the hash is
+a real gate; a developer laptop after its first install is not. Corepack is
+still the right bootstrap — `pnpm/action-setup` and `npm i -g pnpm` verify
+nothing on any path.
+
+Three environment variables switch corepack's checks off with no other
+signal, which is worth knowing when reading a runner log that looks fine:
+`COREPACK_ENABLE_PROJECT_SPEC=0` (ignore `packageManager` entirely — the
+fallback-version path above), `COREPACK_ENABLE_STRICT=0` and
+`COREPACK_INTEGRITY_KEYS=0`.
 
 A mistyped **package name inside `allowBuilds`** (`esbulid` for
 `esbuild`) gets no such diagnostic — pnpm doesn't recognise it as an unused
@@ -331,9 +514,13 @@ Add `--prod` for the production dependency tree (pnpm's equivalent of npm's
 different things — confirmed, not assumed.** Measured 2026-09-10: the whole
 tree returns `{moderate:4, high:11, critical:0}`, summing to **15**, which is
 exactly `Object.values(advisories).length`. pnpm's count is **one entry per
-(package, advisory) pair** — `brace-expansion` alone contributes 5 of the 15,
-one for each distinct GHSA against it across two resolved major versions, and
-`js-yaml` and `browserslist` each contribute 2. npm v7+'s `vulnerabilities`
+(vulnerable version range, advisory) pair** — `brace-expansion` alone
+contributes 5 of the 15 against just **3** distinct GHSAs, because two of
+those three are reported once per resolved major version; `js-yaml` and
+`browserslist` contribute 2 apiece, there from two distinct GHSAs each. So
+the pairs are what the total counts, and the GHSAs are fewer — group the
+`--json` output by `module_name` and by `github_advisory_id` to see both.
+npm v7+'s `vulnerabilities`
 object, by contrast, is *keyed by package name* (`Object.entries` over it, as
 this file's previous one-liner did) — structurally one entry per distinct
 vulnerable package, however many advisories affect it. This is why this
@@ -356,7 +543,7 @@ high), even though the whole-tree number moved.
 a description of any image this repo builds.** Neither of the two stages
 that ship matches it:
 
-- The `runner` stage (`Dockerfile:43-57`) is **narrower**. The only
+- The `runner` stage (`Dockerfile:45-59`) is **narrower**. The only
   `node_modules` it gets is the one inside `.next-build/standalone`, which
   Next populates by tracing actual imports — so it holds far less than the
   production dependency tree. (It copies two other trees,
@@ -372,7 +559,7 @@ that ship matches it:
   ```
   after a build — every one of them, `browserslist` and `@babel/core`
   included, comes back `absent`.
-- The `migrate` stage (`Dockerfile:37`) is **wider**. It is `FROM deps`, i.e.
+- The `migrate` stage (`Dockerfile:39`) is **wider**. It is `FROM deps`, i.e.
   the same frozen `pnpm install --frozen-lockfile` as the `deps` stage with
   nothing filtered out, so it ships the entire tree — every devDependency
   included.
@@ -418,10 +605,12 @@ three and is the wrong tool regardless: heavier, and pinned against a range
 that will drift.
 
 **Dev-only** — `brace-expansion` (two resolved major versions, both entirely
-inside the eslint/typescript-eslint toolchain), `js-yaml` and `@humanfs/node`
-(both through `eslint` directly), `vitest` and `@vitest/mocker` (direct
-devDependencies, sharing one advisory — a path-traversal / arbitrary-file-read
-via `@vitest/mocker`'s redirect mock, GHSA-82fw-gwwq-j7x9). They run against
+inside the eslint/typescript-eslint toolchain), `@humanfs/node` (through
+`eslint` directly) and `js-yaml` (through `@eslint/eslintrc` → `eslint`),
+`vitest` (a direct devDependency) and `@vitest/mocker` (not one: it arrives
+through `vitest` and `@vitest/coverage-v8`, which are), the last two sharing
+one advisory — a path-traversal / arbitrary-file-read via `@vitest/mocker`'s
+redirect mock, GHSA-82fw-gwwq-j7x9. They run against
 this repo's own source on a developer's machine and on CI, and every advisory
 among them needs hostile input fed to the tool — which here would mean this
 repo's own files. Mostly denial-of-service, though not only:
@@ -441,14 +630,30 @@ unchosen one, are open work.
 **#533 (a release-age cooldown) is absorbed** — `minimumReleaseAge` above is
 exactly that control, so it leaves this list.
 
-**#534 remains open, scoped to the three of its four asks pnpm does not
+**#534 remains open, scoped to the two of its four asks pnpm does not
 cover.** Its install-script half is absorbed and strengthened: `allowBuilds`
 + `strictDepBuilds` is a committed allowlist that errors on every machine, not
 only in CI, which is more than #534 originally asked for. What is still
-missing: pinning every `resolved` entry to `registry.npmjs.org`, checking
-every resolved entry carries an `integrity` hash, and running
-`npm audit signatures` (or an equivalent) as a blocking CI step — no pnpm
-equivalent to that last one was found during this migration.
+missing: pinning every `resolved` entry to `registry.npmjs.org`, and checking
+every resolved entry carries an `integrity` hash.
+
+**Signature verification is available and passes — it is a CI step away.**
+`pnpm audit` takes exactly one subcommand, and it is this one: *"The only
+supported subcommand is `signatures`, which verifies registry signatures for
+the installed packages"* (`pnpm audit --help`). Measured 2026-09-10 against
+the committed lockfile:
+
+```bash
+pnpm audit signatures
+```
+
+`audited 697 packages` / `697 packages have verified registry signatures`,
+**exit 0**. So #534's third ask needs a workflow step, not a replacement
+tool — and unlike `pnpm audit --audit-level=high` next to it, this one
+reports a property of the packages actually installed rather than the state
+of an advisory database, so it can block without stopping unrelated pull
+requests. Adding that step belongs to #534; this migration establishes only
+that the control exists and that the tree passes it today.
 
 **#535 (commit-pinned GitHub Actions)** is unaffected by this migration and
 stays open. See #531.

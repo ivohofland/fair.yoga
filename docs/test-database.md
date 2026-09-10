@@ -221,7 +221,13 @@ Implemented — `docs/superpowers/specs/2026-09-08-worktree-db-isolation-design.
 Every linked worktree gets its own `ethical_yoga_test_<slug>` (this section's
 `unit`/`unit-sweeps` databases) and its own seeded `ethical_yoga_dev_<slug>`
 plus a private `next dev` on its own port, inside the same shared
-`fairyoga-db-1` container — no per-worktree Docker container. Run `pnpm run
+`fairyoga-db-1` container — no per-worktree Docker container.
+Run `pnpm install --frozen-lockfile` in the new worktree first —
+`verifyDepsBeforeRun: error`
+(`pnpm-workspace.yaml`) refuses every `pnpm run`/`pnpm exec` until
+`node_modules` matches `package.json`, so without it `worktree:setup` exits 1
+with `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN` rather than creating the
+`node_modules` it is asking for. Then `pnpm run
 worktree:setup` once per worktree, then `pnpm run worktree:up` to boot the
 app; `integration`/e2e read `INTEGRATION_BASE_URL` for that port instead of
 `:3000`. Orphaned resources from a removed worktree are reaped
