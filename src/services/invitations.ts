@@ -795,14 +795,16 @@ export async function listDeclinedTeachers(
 }
 
 /**
- * Rolls back `acceptInvitation`'s transaction when the invitation is no
- * longer pending. A plain `return false` would commit the roster-link write
- * taken above it — including, on the create path, a genuine
- * `INSERT` — so the link would exist for an invitation nobody accepted.
- * Only a throw, caught outside `$transaction`, rolls that write back with
- * everything else. `invitations-lock-order.test.ts` proves the negative
- * directly: a NOT_PENDING refusal leaves no `TeacherStudent` row even though
- * that write already ran by the time this fires.
+ * Rolls back `acceptInvitation`'s transaction whenever it must give up
+ * after the roster-link write has already run — the invitation is no
+ * longer pending, or a `TeacherBlock` has landed in the gap between the
+ * outside pre-check and this transaction (#537). A plain `return false`
+ * would commit that write regardless — including, on the create path, a
+ * genuine `INSERT` — so the link would exist for a pair that never should
+ * have gotten one. Only a throw, caught outside `$transaction`, rolls that
+ * write back with everything else. `invitations-lock-order.test.ts` proves
+ * the negative directly: a NOT_PENDING refusal leaves no `TeacherStudent`
+ * row even though that write already ran by the time this fires.
  *
  * Declared ABOVE `acceptInvitation`'s docblock, not between it and the
  * function. It sat between them until #174's four-specialist review, which
@@ -834,7 +836,7 @@ class NotPendingError extends Error {}
  * (#170) — so `requireNormalised` has a real invariant to check, not a
  * difference to paper over.
  *
- * The block check below is defence in depth, not the primary gate — the
+ * The block check below is defence in depth for the pending case — the
  * student-side pending query (Task 11) already excludes a blocked pair, so
  * this id should never reach here for one. But the id travels in a URL, not
  * a secret, and this whole function exists because that can't be trusted.
@@ -849,19 +851,31 @@ class NotPendingError extends Error {}
  * write over answers `NOT_PENDING` instead: the guard names the row's own
  * state rather than the block, so it discloses nothing the caller does not
  * already hold, and a new `InvitationStatus` member inherits that
- * conservative answer without this paragraph having to be revisited. Both
- * refuse before the transaction rather than leaving it to the CAS, because
- * the CAS treats an already `accepted` row as success — reaching it would
- * commit the roster-link write for a pair that is blocked.
+ * conservative answer without this paragraph having to be revisited.
  *
- * Which is also why only one of the two answered arms can be discriminated
- * by a test. Delete this guard and a `declined` row still answers
- * `NOT_PENDING` and still leaves no link: the CAS matches nothing, the
- * re-read below throws `NotPendingError`, and the roster-link write rolls
- * back with the transaction. An `accepted` row does not — that same re-read
- * treats it as success, so without this guard the call returns `{ ok: true }`
- * having committed a link for a blocked pair. `invitations.decline.test.ts`
- * covers both arms; the `accepted` one is the arm that goes red.
+ * This guard alone is NOT what keeps the roster-link write from committing
+ * for a blocked pair — it reads `TeacherBlock` once, before the transaction
+ * opens, and a block `unlinkTeacher` commits in the gap between that read
+ * and the transaction's own writes is invisible to it. `unlinkTeacher`'s own
+ * Invitation write is scoped to `delivered: true` (#412), so on a
+ * `delivered: false` row it can commit a block while leaving this row's
+ * status untouched — pending, if nobody has answered it yet, or `accepted`,
+ * if a prior call already had. Either way the CAS below (or its idempotent
+ * re-read, for the `accepted` case) would go on to succeed against a pair
+ * that is, by then, blocked. Closing that window is the in-transaction
+ * re-check's job (#537), not this guard's — see it in the `$transaction`
+ * callback below, and `NotPendingError`'s own docblock. Delete THIS guard
+ * (the one below, not the in-transaction one) and every case in
+ * `invitations.decline.test.ts` still passes — the in-transaction re-check
+ * now refuses each of them independently. What changes is that a
+ * still-pending, still-blocked row gets the less conservative `NOT_PENDING`
+ * this function otherwise avoids for a row nobody has answered (see the
+ * paragraph above), and this function opens, then rolls back, a transaction
+ * it would otherwise have skipped. `declineInvitation` cannot reach this
+ * hole at all: its own `TeacherBlock` write is gated behind its own CAS
+ * moving this same row to `declined` in the same transaction, so a block it
+ * writes is never visible without that status change alongside it — which
+ * the CAS/re-read below already catches on its own.
  *
  * `teacher: { deletedAt: null }` is in the `where` for the same structural
  * reason the email match is (F7, #166 review): a condition the write depends
@@ -949,6 +963,21 @@ export async function acceptInvitation(
     // `return false`).
     //
     await linkTeacherStudent(tx, { teacherId: invitation.teacherId, studentId: input.studentId });
+
+    // The outside pre-check above reads TeacherBlock before this transaction
+    // opens; a block `unlinkTeacher` commits in the gap between that read
+    // and here is invisible to it. `unlinkTeacher`'s own Invitation write is
+    // scoped to `delivered: true` (#412), so on a `delivered: false` row it
+    // can commit a block while leaving this row's status untouched — the CAS
+    // below (or its idempotent re-read, when this row is already `accepted`)
+    // would otherwise go on to succeed against a pair that is, by now,
+    // blocked. Re-reading here, after the roster-link write and before
+    // either success return, closes that window (#537).
+    const blockedNow = await tx.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId: invitation.teacherId, email } },
+      select: { id: true },
+    });
+    if (blockedNow) throw new NotPendingError();
 
     // The pending check lives in this `updateMany`'s `where`, not in a read
     // beforehand — a concurrent accept and decline from the same account
