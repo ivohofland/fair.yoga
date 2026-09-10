@@ -618,9 +618,9 @@ describe('reapClosedWaitlistEntries', () => {
       const holder = holderDb.$transaction(
         async (tx) => {
           await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${HELD} FOR UPDATE`;
-          // Longer than lockClassRow's 2s bound. Cast to ::text so the result
-          // shape does not reject with P2010 — the same fix f25a1ad applied to
-          // the erasure's holder transactions.
+          // Longer than lockClassRow's 2s bound. Cast to ::text because
+          // `pg_sleep` returns `void`, which Prisma cannot deserialize —
+          // without the cast this query rejects with P2010.
           await tx.$queryRaw`SELECT pg_sleep(4)::text`;
         },
         { timeout: 30_000, maxWait: 10_000 },
