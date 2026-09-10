@@ -27,7 +27,7 @@ compile errors and the contract survives a caller who never read this file.
 to write a new one are in `docs/technical-architecture.md` (The Services
 Layer → Work that must not be awaited).
 
-**Database changes require migrations.** When modifying `prisma/schema.prisma`, always create a migration with `npx prisma migrate dev --name <description>`. Never apply schema changes with raw SQL or `db push` alone — migrations must be tracked so other environments can reproduce the change. Once applied, a migration file is immutable — comments included; see *Comment Discipline*.
+**Database changes require migrations.** When modifying `prisma/schema.prisma`, always create a migration with `pnpm exec prisma migrate dev --name <description>`. Never apply schema changes with raw SQL or `db push` alone — migrations must be tracked so other environments can reproduce the change. Once applied, a migration file is immutable — comments included; see *Comment Discipline*.
 
 **Working a backlog issue?** Invoke the `solve-issue` skill (`.claude/skills/solve-issue/`) before anything else. It carries the whole arc — verify the issue's premise, brainstorm, spec (for difficult issues), plan, subagent build, multi-agent PR review, rebase-merge — plus the review gates and the failure modes this project keeps hitting. Written to run from an empty context, one issue per session. `.claude/skills/verify/` covers driving the running app.
 
@@ -264,7 +264,7 @@ Calm utility, warm minimalism — a thoughtful yoga teacher who happens to be go
 | `docs/product-concept.md` | Full product concept — all 39 product questions resolved |
 | `docs/data-model.md` | Complete data model with all fields, types, relationships, and design notes |
 | `docs/technical-architecture.md` | Tech stack, project structure, services layer, auth flow, deployment |
-| `docs/supply-chain.md` | Where this repo installs dependencies and why every path is `npm ci`; what is enforced rather than merely correct; which advisories currently stand and why CI's audit step does not block on them; and the supply-chain controls not yet in place (#531) |
+| `docs/supply-chain.md` | Where this repo installs dependencies and why every path is `pnpm install --frozen-lockfile`; what is enforced rather than merely correct; which advisories currently stand and why CI's audit step does not block on them; and the supply-chain controls not yet in place (#531) |
 | `docs/information-architecture.md` | 4-tab IA, adaptive class detail, 5 user flows |
 | `docs/teacher-screens.md` | 36-screen teacher screen inventory by journey phase |
 | `docs/design-brief.md` | Working design brief — v2 tokens, navigation, components, screen patterns |

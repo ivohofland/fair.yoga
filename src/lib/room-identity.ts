@@ -22,7 +22,7 @@
  *
  * Import-free by requirement. `share-room-button.tsx` is a client component
  * and value-imports this; a transitive edge to `@/lib/log` (pino, server-only)
- * would break `npm run build` while still passing `npm run verify`. Same
+ * would break `pnpm run build` while still passing `pnpm run verify`. Same
  * reason `src/lib/tiers.ts` and `src/lib/class-fields.ts` ship no RUNTIME
  * imports. `import type` is safe — it erases entirely — which is why
  * `tiers.ts` carries one and this module may too.

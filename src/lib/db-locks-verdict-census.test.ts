@@ -65,7 +65,7 @@
  *
  * The census also assumes its files parse. `ts.createSourceFile` does not throw
  * and reports no diagnostics here, so a syntax error that swallows a call
- * censuses zero calls quietly. `npm run typecheck` in CI's `checks` job is what
+ * censuses zero calls quietly. `pnpm run typecheck` in CI's `checks` job is what
  * holds that, which makes this defence in depth rather than a hole.
  *
  * THE MARKER IS A RESERVED TOKEN. Any occurrence of it in a searched file counts

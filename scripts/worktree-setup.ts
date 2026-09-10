@@ -75,7 +75,7 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log('[worktree:setup] next: npm run worktree:up');
+  console.log('[worktree:setup] next: pnpm run worktree:up');
 }
 
 main().catch((err: unknown) => {

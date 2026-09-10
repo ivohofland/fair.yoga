@@ -231,11 +231,11 @@ rather than leaving it silently wrong.
 
 ## Project hazards that have actually bitten
 
-- **Run `npm run verify` before pushing** — typecheck, lint, and the whole suite, needing the
+- **Run `pnpm run verify` before pushing** — typecheck, lint, and the whole suite, needing the
   app live on :3000. Green `verify` is strong but **not** a CI substitute: CI also runs
-  `prisma validate`, a migration-drift check, `npm run build`, and Playwright, so a
+  `prisma validate`, a migration-drift check, `pnpm run build`, and Playwright, so a
   build-only defect can pass `verify` and fail CI. Fast inner loop:
-  `npx vitest run --project integration <path>`.
+  `pnpm exec vitest run --project integration <path>`.
 - **Do not hand-list integration files in a plan** — the sweep covers them, and the suite is
   cheap to re-run (`freshIp()` in `tests/helpers.ts` gives every request its own
   `x-forwarded-for`). Name a file only when its order matters.
@@ -245,11 +245,11 @@ rather than leaving it silently wrong.
   stale build is not a reason to touch it — work around it (`verify` skill) or ask the
   user. Start one yourself only if it's genuinely absent.
 - **In a worktree, integration and e2e run against the worktree's own isolated
-  app, not `:3000`.** Run `npm run worktree:setup` once, then `npm run
+  app, not `:3000`.** Run `pnpm run worktree:setup` once, then `pnpm run
   worktree:up` before `--project integration` or `playwright test` — both
-  read `INTEGRATION_BASE_URL` automatically. `npm run worktree:down` stops
+  read `INTEGRATION_BASE_URL` automatically. `pnpm run worktree:down` stops
   the dev server when done; forgetting it is not a resource leak, an
-  opportunistic reap on the next `npm test` anywhere cleans it up.
+  opportunistic reap on the next `pnpm test` anywhere cleans it up.
   `docs/superpowers/specs/2026-09-08-worktree-db-isolation-design.md` has
   the mechanism.
 - **`@/lib/log` is pino and server-only** — check the whole transitive import chain before it
@@ -287,14 +287,14 @@ which inherited claims held; show the arithmetic behind every number; name what 
 by path which `integration` files this branch touched — a worktree can run that tier locally
 now (see the hazard list); cite whichever run you actually have, local or CI's.
 
-**A green `npm run verify` is the whole integration suite**, since it runs every vitest
+**A green `pnpm run verify` is the whole integration suite**, since it runs every vitest
 project — say so with the arithmetic that proves it (`105 = 46 unit + 32 components + 27
 integration`).
 
-**The word "green" is load-bearing.** `npm test` chains two invocations with `&&`; one red
+**The word "green" is load-bearing.** `pnpm test` chains two invocations with `&&`; one red
 unit test means the second (`unit-sweeps`+`integration`) never runs, and `integration`
 reports *nothing*, not zero failures. While anything earlier is failing, run
-`npx vitest run --project integration` directly rather than reading a red `verify` as
+`pnpm exec vitest run --project integration` directly rather than reading a red `verify` as
 evidence about that tier.
 
 → `docs/solve-issue-lessons.md#the-pr-body`

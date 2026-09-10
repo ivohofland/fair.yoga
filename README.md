@@ -9,7 +9,7 @@ A free, open-source toolkit for independent yoga teachers. Handles scheduling, i
 
 - [Node.js](https://nodejs.org/) 22+ (LTS recommended)
 - [Docker](https://www.docker.com/) and Docker Compose
-- npm (comes with Node.js)
+- pnpm, via Corepack (ships with Node.js — run `corepack enable` once)
 
 ## Setup
 
@@ -18,7 +18,8 @@ A free, open-source toolkit for independent yoga teachers. Handles scheduling, i
 ```bash
 git clone <repo-url>
 cd fair.yoga
-npm ci
+corepack enable
+pnpm install --frozen-lockfile
 ```
 
 ### 2. Environment variables
@@ -40,8 +41,8 @@ This starts PostgreSQL 16 on `localhost:5432`. Data persists across restarts via
 ### 4. Run migrations and seed
 
 ```bash
-npx prisma migrate dev
-npm run db:seed
+pnpm exec prisma migrate dev
+pnpm run db:seed
 ```
 
 The seed script creates test data: 2 teachers, 10 students across 5 income tiers, rooms, classes in every lifecycle state, registrations, payments, and notifications.
@@ -49,7 +50,7 @@ The seed script creates test data: 2 teachers, 10 students across 5 income tiers
 ### 5. Start the dev server
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). Go to `/login` and enter `ivo@fairyoga.dev` (seed teacher). The magic link URL will be printed in your terminal — copy the `/verify?token=...` URL and open it in your browser.
@@ -58,17 +59,17 @@ Open [http://localhost:3000](http://localhost:3000). Go to `/login` and enter `i
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start Next.js dev server |
-| `npm run build` | Production build |
-| `npm run lint` | Run ESLint |
-| `npm run verify` | Typecheck + lint + all tests — run before pushing. Needs the app running on :3000 (the integration tests call it over HTTP) |
-| `npm test` | Run all tests (Vitest) |
-| `npm run test:watch` | Run tests in watch mode |
-| `npm run test:coverage` | Run tests with coverage report |
-| `npm run db:migrate` | Apply pending migrations |
-| `npm run db:seed` | Run seed script |
-| `npm run db:studio` | Open Prisma Studio (database GUI) |
-| `npm run db:reset` | Drop all tables, re-migrate, re-seed |
+| `pnpm run dev` | Start Next.js dev server |
+| `pnpm run build` | Production build |
+| `pnpm run lint` | Run ESLint |
+| `pnpm run verify` | Typecheck + lint + all tests — run before pushing. Needs the app running on :3000 (the integration tests call it over HTTP) |
+| `pnpm test` | Run all tests (Vitest) |
+| `pnpm run test:watch` | Run tests in watch mode |
+| `pnpm run test:coverage` | Run tests with coverage report |
+| `pnpm run db:migrate` | Apply pending migrations |
+| `pnpm run db:seed` | Run seed script |
+| `pnpm run db:studio` | Open Prisma Studio (database GUI) |
+| `pnpm run db:reset` | Drop all tables, re-migrate, re-seed |
 
 ## Project structure
 
@@ -97,9 +98,9 @@ docs/               Product specs, design brief, architecture docs
 Most tests run against the real PostgreSQL database (no mocks); the `components` project is the exception — it mocks `fetch` and `next/navigation` and touches no database. The database must be running and migrations applied before the rest will work:
 
 ```bash
-docker compose up -d    # start PostgreSQL
-npx prisma migrate dev  # apply migrations (first time only)
-npm test                # run all tests
+docker compose up -d          # start PostgreSQL
+pnpm exec prisma migrate dev  # apply migrations (first time only)
+pnpm test                     # run all tests
 ```
 
 Tests create their own data (with unique timestamps to avoid conflicts) and clean up after themselves. The seed data is not required for tests to pass, but is useful for manual testing.
@@ -107,7 +108,7 @@ Tests create their own data (with unique timestamps to avoid conflicts) and clea
 To reset everything to a clean state:
 
 ```bash
-npm run db:reset
+pnpm run db:reset
 ```
 
 ## Seed accounts

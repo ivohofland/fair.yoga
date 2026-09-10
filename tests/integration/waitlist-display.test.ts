@@ -214,7 +214,7 @@ beforeAll(async () => {
   // 2. That the ENTRY-status half of the predicate still bites. Delete
   //    `status: 'waiting'` and this student's `removed` entry on the OPEN class
   //    starts rendering, so the empty state disappears. Otherwise that half is
-  //    pinned only by Playwright, which `npm run verify` does not run.
+  //    pinned only by Playwright, which `pnpm run verify` does not run.
   const onlyDead = await makeStudent('only-dead');
   onlyDeadToken = await seedSession(prisma, onlyDead.accountId);
 
@@ -366,7 +366,7 @@ describe('GET /bookings (page) — the waitlist strip', () => {
     // This student's other entry is `removed` on the OPEN class, so the
     // entry-status half of the predicate is the only thing hiding it. Without
     // that half the row renders and the empty state disappears — otherwise
-    // that half is pinned only by Playwright, which `npm run verify` never runs.
+    // that half is pinned only by Playwright, which `pnpm run verify` never runs.
     expect(html).not.toContain(openType);
   });
 });

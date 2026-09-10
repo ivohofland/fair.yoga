@@ -3,21 +3,21 @@
 ## Quick start
 
 ```bash
-docker compose up -d        # PostgreSQL on :5432
-cp .env.example .env        # required env vars (DATABASE_URL, PASSKEY_*, etc.)
-npm ci                      # postinstall runs `prisma generate`
-npx prisma migrate dev      # apply migrations to dev DB
-EMAIL_DRY_RUN=1 npm run dev # start on :3000; dry-run logs magic links to stdout
+docker compose up -d                     # PostgreSQL on :5432
+cp .env.example .env                     # required env vars (DATABASE_URL, PASSKEY_*, etc.)
+pnpm install --frozen-lockfile           # postinstall runs `prisma generate`
+pnpm exec prisma migrate dev             # apply migrations to dev DB
+EMAIL_DRY_RUN=1 pnpm run dev             # start on :3000; dry-run logs magic links to stdout
 ```
 
 ## Verify commands (CI order matters)
 
 ```bash
-npm run verify              # typecheck → lint → test (all three must pass)
-npm run typecheck           # tsc --noEmit, strict mode, no `any`
-npm run lint                # ESLint (next/core-web-vitals + typescript + prettier)
-npm test                    # vitest, every project, in two sequenced passes
-npm run test:e2e            # Playwright (starts dev server if not running)
+pnpm run verify              # typecheck → lint → test (all three must pass)
+pnpm run typecheck           # tsc --noEmit, strict mode, no `any`
+pnpm run lint                # ESLint (next/core-web-vitals + typescript + prettier)
+pnpm test                    # vitest, every project, in two sequenced passes
+pnpm run test:e2e            # Playwright (starts dev server if not running)
 ```
 
 - Local e2e is serialized (`workers: 1` in `playwright.config.ts`) — every test shares the one dev server on :3000; fan-out once failed four different tests across four parallel runs (#290).
@@ -41,10 +41,10 @@ npm run test:e2e            # Playwright (starts dev server if not running)
 
 - Always create a migration after editing `prisma/schema.prisma`:
   ```bash
-  npx prisma migrate dev --name <description>
+  pnpm exec prisma migrate dev --name <description>
   ```
 - CI checks schema/migration drift — `schema.prisma` must match migration history.
-- `npm run db:seed` wipes and recreates all domain data (emergency reset).
+- `pnpm run db:seed` wipes and recreates all domain data (emergency reset).
 
 ## Next.js version — check the installed docs, not recall
 
@@ -76,7 +76,7 @@ replacement; the pointer above is the part worth keeping.
 ## Auth quirks for testing
 
 - Sessions are DB rows. Cookie: `fair_yoga_session=<raw token>`, row `id` = SHA-256 hex of the token.
-- Seed data includes teacher `ivo@fairyoga.dev`. Use Prisma studio (`npm run db:studio`) or craft a session directly to log in without email.
+- Seed data includes teacher `ivo@fairyoga.dev`. Use Prisma studio (`pnpm run db:studio`) or craft a session directly to log in without email.
 - Helper: `tests/helpers.ts` exports `seedSession(db, accountId)`.
 
 ## Service layer principle
@@ -112,7 +112,7 @@ In-process job scheduler starts with the server. Set `CRON_SCHEDULER="off"` to d
     cd "$WT_DIR"
     # <apply mutation to target file>
     git diff <modified-file>
-    npx vitest run --project <tier> <files>
+    pnpm exec vitest run --project <tier> <files>
   ) || true
   git worktree remove --force "$WT_DIR"
   ```

@@ -10,7 +10,7 @@ import { BASE_URL, freshIp } from '../helpers';
  * the `<Suspense>` fallback and `VerifyContent`'s fall-through — and the
  * route is prerenderable, so:
  *
- *   - against `next dev` (the local `npm run verify`), the route renders per
+ *   - against `next dev` (the local `pnpm run verify`), the route renders per
  *     request and the fall-through produces this HTML;
  *   - against a build (CI's `test-integration` job builds and serves the
  *     standalone bundle), the route is prerendered and the fallback does.

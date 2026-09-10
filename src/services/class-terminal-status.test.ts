@@ -38,7 +38,7 @@ import { createClassFixture, slotDate } from '../../tests/class-fixtures';
  *
  *   docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
  *     -c 'DROP TRIGGER class_terminal_status_guard ON "Class";'
- *   npx vitest run --project unit src/services/class-terminal-status.test.ts
+ *   pnpm exec vitest run --project unit src/services/class-terminal-status.test.ts
  *   # first test fails: `caught` stays undefined, no exception to catch
  *
  * To restore, recreate the trigger by hand. Replaying its migration is not an

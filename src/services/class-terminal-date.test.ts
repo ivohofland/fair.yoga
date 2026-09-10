@@ -52,7 +52,7 @@ import { createClassFixture, slotDate } from '../../tests/class-fixtures';
  *
  *   docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
  *     -c 'DROP TRIGGER entry_frozen_schedule_guard ON "CalendarEntry";'
- *   npx vitest run --project unit src/services/class-terminal-date.test.ts
+ *   pnpm exec vitest run --project unit src/services/class-terminal-date.test.ts
  *   # the rejection case fails: `caughtRaw` stays undefined, no exception to
  *   # catch. The allow-cases and the drift pin stay green — with no trigger
  *   # everything is allowed, and the pin reads a file, not the database.

@@ -1,8 +1,9 @@
 # This repo's supply-chain policy. pnpm reads these settings HERE AND
 # NOWHERE ELSE: in `.npmrc` (kebab or camel case) or under package.json's
-# `pnpm` key they are silently ignored. A mistyped key in this file is one
-# step better — pnpm 12 prints a [WARN] naming it — but still exits 0 with
-# the control off, so neither mistake fails a build.
+# `pnpm` key they are silently ignored, with no diagnostic at all. A mistyped
+# key in this file is the opposite: because this repo pins `packageManager`,
+# it is a hard `ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS` — exit 1, not a
+# [WARN].
 #
 # Rationale, the measured behaviour of both settings, and the mutation tests
 # that prove them live: docs/supply-chain.md.
