@@ -7,15 +7,16 @@
  */
 
 export interface LockfilePackageEntry {
-  key: string;
-  resolution: string | null;
+  readonly key: string;
+  readonly resolution: string | null;
 }
 
-export type LockfileViolationReason = 'missing-integrity' | 'non-registry-source' | 'unparseable-entry';
+export type LockfileViolationReason =
+  'missing-integrity' | 'non-registry-source' | 'unparseable-entry';
 
 export interface LockfileViolation {
-  key: string;
-  reason: LockfileViolationReason;
+  readonly key: string;
+  readonly reason: LockfileViolationReason;
 }
 
 const PACKAGES_HEADER = /^packages:\s*$/;
@@ -32,7 +33,23 @@ const RESOLUTION_LINE = /^ {4}resolution: \{(.*)\}$/;
  *  inside it, and never appear here). Measured shape for a git dependency,
  *  and the rationale for banning every marker below: docs/supply-chain.md.
  */
-const NON_REGISTRY_MARKERS = ['tarball:', 'gitHosted:', 'repo:', 'commit:', 'type:', 'directory:'];
+export const NON_REGISTRY_MARKERS = [
+  'tarball:',
+  'gitHosted:',
+  'repo:',
+  'commit:',
+  'type:',
+  'directory:',
+];
+
+/**
+ * Floor for parsePackageResolutions' entry count, used by
+ * checkParserCoverage below. Chosen well under today's real count (697,
+ * docs/supply-chain.md) but far above zero, so an empty, truncated, or
+ * packages:-less lockfile can't slip past the coverage check by chance —
+ * see checkParserCoverage's docblock.
+ */
+export const MIN_EXPECTED_LOCKFILE_ENTRIES = 100;
 
 /**
  * Extracts every `packages:` entry's key and inlined `resolution: {...}`
@@ -59,7 +76,8 @@ export function parsePackageResolutions(lockfileText: string): LockfilePackageEn
     }
   };
 
-  for (const line of lockfileText.split('\n')) {
+  for (const rawLine of lockfileText.split('\n')) {
+    const line = rawLine.replace(/\r$/, '');
     if (PACKAGES_HEADER.test(line)) {
       flushPending();
       inPackages = true;
@@ -99,12 +117,15 @@ function hasIntegrity(resolution: string): boolean {
 }
 
 /**
- * One violation per bad entry, prioritising `non-registry-source` over
- * `missing-integrity` when both would apply — the source is the more
- * specific diagnosis, and a caller only needs one reason to fail the build
- * and name the package.
+ * One violation per bad entry. `unparseable-entry` (a null resolution) is
+ * checked first, ahead of both other reasons; when both of the remaining
+ * reasons would apply, `non-registry-source` is prioritised over
+ * `missing-integrity` — the source is the more specific diagnosis, and a
+ * caller only needs one reason to fail the build and name the package.
  */
-export function findLockfileViolations(entries: LockfilePackageEntry[]): LockfileViolation[] {
+export function findLockfileViolations(
+  entries: readonly LockfilePackageEntry[],
+): LockfileViolation[] {
   const violations: LockfileViolation[] = [];
   for (const entry of entries) {
     if (entry.resolution === null) {
@@ -120,4 +141,34 @@ export function findLockfileViolations(entries: LockfilePackageEntry[]): Lockfil
     }
   }
   return violations;
+}
+
+export interface ParserCoverageCheck {
+  readonly ok: boolean;
+  readonly parsedEntries: number;
+  readonly rawResolutionLines: number;
+}
+
+/**
+ * A second, independent tripwire beside findLockfileViolations: counts
+ * `resolution:` occurrences in the raw text and compares against how many
+ * entries the parser actually recognized, then floors that count at
+ * MIN_EXPECTED_LOCKFILE_ENTRIES. If pnpm ever changes the `packages:`
+ * section's format in a way parsePackageResolutions stops recognizing, this
+ * catches the resulting silent under-count — including the
+ * all-the-way-to-zero case (an empty, truncated, or `packages:`-less
+ * lockfile), where entries.length and a naive raw count would otherwise
+ * agree at zero and hide a real failure. scripts/check-lockfile.ts calls
+ * this and fails the build when `ok` is false.
+ */
+export function checkParserCoverage(
+  lockfileText: string,
+  entries: readonly LockfilePackageEntry[],
+): ParserCoverageCheck {
+  const rawResolutionLines = lockfileText
+    .split('\n')
+    .filter((line) => line.includes('resolution:')).length;
+  const ok =
+    entries.length >= MIN_EXPECTED_LOCKFILE_ENTRIES && entries.length >= rawResolutionLines;
+  return { ok, parsedEntries: entries.length, rawResolutionLines };
 }
