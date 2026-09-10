@@ -378,16 +378,18 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
         accountEmail: email,
       })).toEqual({ ok: true });
 
-      // The in-transaction re-check #537 added (see `acceptInvitation`'s own
-      // docblock, and `NotPendingError`'s) is what actually refuses this arm
-      // now: it reads `TeacherBlock` again right before either success
-      // return, so it catches an already-`accepted` row on a blocked pair
-      // whether or not the outside guard above ever ran first.
-      // `invitations-lock-order.test.ts`'s "#537" describe races that
-      // in-transaction check directly, without needing this test's
-      // sequential setup. The `declined` case above stays safe either way,
-      // because `NotPendingError` rolls the link write back regardless of
-      // which guard reaches it.
+      // Still the outside guard's answer, exactly as before #537: the block
+      // is written here, sequentially, before the second `acceptInvitation`
+      // call's own outside pre-check ever runs, so that pre-check alone
+      // finds it and refuses before any transaction opens — the
+      // in-transaction re-check #537 added never gets a turn in this test.
+      // What #537 changes is the RACY version of this same row shape, where
+      // the block instead lands AFTER that pre-check has already read "no
+      // block" — `invitations-lock-order.test.ts`'s "#537" describe stages
+      // that directly, and it is the in-transaction re-check, not this
+      // guard, that catches it there. The `declined` case above stays safe
+      // either way, because `NotPendingError` rolls the link write back
+      // regardless of which guard reaches it.
       const result = await acceptInvitation(prisma, {
         invitationId: invitation.id,
         studentId: student.id,
