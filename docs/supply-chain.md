@@ -16,6 +16,61 @@ environment variable is set — relying on that default would give one
 command two behaviours: frozen on a runner, reconciling on a contributor's
 laptop, with nothing in the command line to tell them apart.
 
+### The door npm did not have
+
+**pnpm installs as a side effect of running something.** `npm run` and `npx`
+installed nothing, ever. `pnpm run` and `pnpm exec` first reconcile
+`node_modules` against `package.json` whenever the two disagree, and that
+reconcile is a plain install — not `--frozen-lockfile` unless `CI` is set. So
+a contributor who pulls a branch that bumps a dependency and types `pnpm run
+dev`, `pnpm test` or `pnpm exec prisma migrate dev --name x` resolves against
+the registry and **rewrites the committed `pnpm-lock.yaml`**, silently, with
+`RAN`-style success output and exit 0 — past `minimumReleaseAge`, past the
+explicit flag above, and into their next commit. It is exactly the hazard the
+explicit `--frozen-lockfile` exists to prevent, arriving through a door no
+`npm` command had.
+
+`verifyDepsBeforeRun: error` in `pnpm-workspace.yaml` closes it: pnpm compares
+the two, refuses to run, and installs nothing. Reproduce both halves against a
+clean tree — `git archive HEAD | tar -x -C "$T"`, then `pnpm install
+--frozen-lockfile` in `$T` — and drop a devDependency:
+
+```bash
+node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));
+  delete p.devDependencies["pino-pretty"];
+  fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
+grep -c pino-pretty pnpm-lock.yaml     # 3 before either run
+pnpm exec node -e 'console.log("RAN")'; echo "exit=$?"
+grep -c pino-pretty pnpm-lock.yaml
+```
+
+Measured 2026-09-10 under pnpm 12.3.4. **Without the setting**: pnpm
+reconciles, reruns `postinstall` (`prisma generate`), prints `RAN`, **exit
+0** — and the count goes `3 → 0`, the lockfile rewritten. **With
+`verifyDepsBeforeRun: error`**: nothing runs and nothing installs, the count
+stays `3`, and the output is
+
+```
+Error: ERR_PNPM_VERIFY_DEPS_BEFORE_RUN
+
+  × a modified manifest is no longer satisfied by the lockfile
+  help: Run "pnpm install"
+```
+
+**exit 1**. The other spelling of the same refusal — `× Cannot check whether
+dependencies are outdated` — is what a checkout with no `node_modules` at all
+answers, so the setting also turns "forgot to install" into a named error
+instead of a missing-binary one.
+
+The cost is that every `pnpm run`/`pnpm exec` now demands a `node_modules`
+consistent with `package.json`. Nothing in this repo pays it: every CI job
+installs before its first `pnpm run`/`pnpm exec` (see the table below), the
+`Enable pnpm` step that precedes the install runs only `pnpm store path`,
+which is neither and stays exit 0, and `Dockerfile`'s `build` and `migrate`
+stages are `FROM deps`, which installed. What does pay it is a working tree
+someone shares `node_modules` into rather than installing — see
+`docs/mutation-testing.md` §3, where that recipe no longer holds.
+
 ## Where this repo installs
 
 This census lives here rather than in a comment because it spans files that
@@ -88,9 +143,12 @@ the table above and its command are what make a regression visible.
 
 ## What pnpm enforces that nothing did before
 
-Two settings, both live only in `pnpm-workspace.yaml` and read **nowhere
-else** — not in `.npmrc` (kebab-case or camelCase), not under `package.json`'s
-`pnpm` key. Nothing under `npm ci` had an equivalent to either.
+Three settings, all of them living only in `pnpm-workspace.yaml` and read
+**nowhere else** — not in `.npmrc` (kebab-case or camelCase), not under
+`package.json`'s `pnpm` key. Nothing under `npm ci` had an equivalent to any
+of them. `verifyDepsBeforeRun: error` is the third and is covered under
+[The rule](#the-rule) above, beside the hazard it closes; the other two are
+here.
 
 **`minimumReleaseAge: 10080`** (seven days, in minutes) rejects a lockfile
 that resolves any package to a version published more recently than the
@@ -171,7 +229,7 @@ maintainer only has to change `set this to true or false` to `true` or
 raised it as a suspected injection — the caution was right, the conclusion
 was not.)
 
-**Neither setting is fully tethered, but not in the way that might be
+**No setting here is fully tethered, but not in the way that might be
 assumed.** A setting placed in the **wrong file** gets nothing at all:
 `.npmrc`'s `strict-dep-builds=false`, sitting next to a repo that also has
 `esbuild` unapproved in `pnpm-workspace.yaml`, changes nothing — the install
