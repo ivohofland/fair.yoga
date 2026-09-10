@@ -62,7 +62,7 @@ function primeCredential(accountId: string) {
     id: 'cred-1',
     accountId,
     publicKey: Buffer.from('pk'),
-    counter: 0n,
+    counter: BigInt(0),
   });
   passkeyCredentialUpdate.mockResolvedValue({});
   verifyPasskeyAuthentication.mockResolvedValue({ verified: true, newCounter: 1 });
