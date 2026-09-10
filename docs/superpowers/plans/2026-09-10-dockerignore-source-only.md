@@ -19,12 +19,16 @@ verified empirically before writing this plan:
   `include` array (`**/*.ts`, `**/*.tsx`, among other entries) doesn't match `tsconfig.tsbuildinfo`
   at all — it isn't a `.ts`/`.tsx` file — so it sits inert in the context for the type-check
   regardless of whether `include` is scoped or not (the unscoped `include` is actually why #543's
-  bug was possible and why `tests/` must stay in the context — the opposite point). `tsconfig.json`
-  also sets `"incremental": true`, so `tsconfig.tsbuildinfo` is tsc's incremental-build cache; a
-  host-generated one landing in the image would be a real hazard if the image ever ran typecheck.
-  It doesn't — the `build` stage runs only `pnpm exec prisma generate && pnpm run build`, no
-  typecheck step — so excluding it is a small correctness improvement as well as a size one, not
-  pure bloat with no correctness angle.
+  bug was possible and why `tests/` must stay in the context — the opposite point). Verified
+  directly (`pnpm run build` in this worktree, then inspected the output): `next build` *does* run
+  a typecheck step ("Running TypeScript ... Finished TypeScript in 2.7s"), but it writes its own
+  incremental cache to `<distDir>/cache/.tsbuildinfo` (`.next-build/cache/.tsbuildinfo` here, per
+  this repo's `distDir` override in `next.config.ts`) — a different file from the project-root
+  `tsconfig.tsbuildinfo` this fix excludes, which is `tsc --noEmit`'s own output (`pnpm run
+  typecheck`) and is never written by `next build` at all (confirmed absent from the repo root
+  after a build). So excluding the root `tsconfig.tsbuildinfo` from the build context has no
+  demonstrated effect on `next build`'s typecheck either way — it's bloat removal, not a
+  correctness fix.
 - Baseline measured from the main checkout (real worktrees present, same methodology as #559):
   `docker build --target deps` reports **37.56 MB** (issue quotes 37.55 MB; 0.01 MB drift is
   worktree churn since the issue was filed, not a discrepancy).
