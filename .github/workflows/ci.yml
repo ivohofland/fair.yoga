@@ -84,6 +84,13 @@ jobs:
       - name: Lockfile supply-chain policy (registry source + integrity)
         run: pnpm run check-lockfile
 
+      # #534's third ask. Unlike the two steps above, this checks the
+      # packages actually installed against the registry's own signatures —
+      # a property neither the advisory audit nor the lockfile-shape check
+      # covers. docs/supply-chain.md has the measurement.
+      - name: Verify package registry signatures
+        run: pnpm audit signatures
+
   # No database, no build: the components project is jsdom only
   # (vitest.config.ts). This job exists because it used to queue behind
   # container init and a build it never touched.
