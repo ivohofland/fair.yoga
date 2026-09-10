@@ -32,6 +32,8 @@ import { createClassFixture } from '../../tests/class-fixtures';
 import { FORCED_PLAN_SETTINGS } from '../../tests/forced-plan-settings';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
 
+type TransactionOptions = NonNullable<Parameters<PrismaClient['$transaction']>[1]>;
+
 /**
  * The `Class` pre-lock, identified by the statement's own shape.
  *
@@ -1344,152 +1346,49 @@ it('bounds its wait even when the student is waiting in no classes at all', asyn
 }, 30_000);
 
 /**
- * #240. The erasure's transaction budget used to be sized from a count of
- * `waiting` entries only, so a student with none scored zero and got the
- * 5_000ms floor — against a pre-lock that still asks for one row lock per
- * class the student holds an entry in, of any status.
+ * #240 regression guard: `deleteStudentAccount` carries a flat
+ * `{ timeout: 20_000 }` budget rather than one sized from a count of
+ * `waiting` entries (`Math.min(5_000 + waitingCount * 2_000, 20_000)`).
+ * A student with zero waiting entries previously scored 0 and got the
+ * 5_000ms floor against a pre-lock covering every status.
  *
- * The construction is fiddly for reasons worth stating, because a simpler
- * version of it proves nothing:
+ * This used to be an end-to-end wall-clock test holding six locks across
+ * 1.5s steps to cross the 5s boundary (~9s total). Under load (e.g. a
+ * concurrent Docker build, #560) the tight ~497ms margin under Postgres's
+ * 2s `lock_timeout` caused `55P03` query cancellations. Mirroring the
+ * identical transition in `class-generator.test.ts` and
+ * `studio-class-generator.test.ts`, this pins the options passed to
+ * `$transaction` via a Proxy rather than burning wall-clock seconds
+ * waiting out an artificial hold.
  *
- * - Six holders releasing 1.5s apart, NOT all at once. Simultaneous
- *   releases produce one ~1.5s wait, not six; the statement then finishes
- *   inside 5s and the old budget passes.
- * - Staggered by SORTED class id, because the pre-lock is `ORDER BY c.id`.
- *   Stagger by creation order and the erasure blocks once on whatever is
- *   released last, that single wait exceeds the 2s `lock_timeout`, and the
- *   FIXED code fails with `55P03`.
- * - `pg_sleep` inside the holding transaction, on an ABSOLUTE schedule
- *   computed from `t0`, rather than a JS timer per holder. The two margins
- *   pull against each other — total elapsed must clear 5_000ms or the old
- *   budget survives, and no single wait may reach 2_000ms or the new one
- *   dies — and a JS timer firing late spends the second margin directly.
- *   1.5s steps leave 500ms of headroom under the bound and ≈3.7s over the
- *   old budget.
- * - A DEDICATED client with an explicit `connection_limit`. Prisma's
- *   default pool is `physical_cores * 2 + 1`; on a two-core CI runner that
- *   is five, and six holders plus the erasure would deadlock waiting for
- *   connections rather than for locks — a failure that looks nothing like
- *   what this test is about.
- *
- * What it proves, precisely: an erasure whose lock waits total more than
- * the old floor now completes. Restore
- * `Math.min(5_000 + waitingCount * 2_000, 20_000)` and it fails with
- * `P2028`, which is #240 reproduced.
- *
- * And it proves that by asserting it, not by finishing. Two assertions
- * carry the whole test — elapsed above the old floor, and the erasure
- * returning after the last hold ended — because the outcome assertions
- * (entries gone, `deletedAt` set) are equally true of an erasure that
- * contended for nothing. See their comments in the body for the two
- * realistic paths to that vacuous pass; the point of both assertions is
- * that this test fails loudly on the day it stops exercising #240 instead
- * of quietly continuing to pass.
+ * What survives: `spyingClient` intercepts `$transaction`, asserts
+ * `{ timeout: 20_000 }`, and delegates to the real call so the erasure
+ * runs for real against a fixture student with zero waiting entries.
+ * Restoring the old sized budget or dropping to Prisma's default
+ * fails loudly.
  */
-it('completes when its lock waits total more than the old 5s budget', async () => {
-  const CLASSES = 6;
-  const HOLD_STEP_MS = 1_500;
-  const fixture = await makeStudentWithClosedEntriesInClasses(CLASSES);
-  const baseUrl = process.env.DATABASE_URL ?? '';
-  const holderDb = new PrismaClient({
-    datasources: {
-      db: { url: `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}connection_limit=10` },
+it('opens the erasure transaction with { timeout: 20_000 }', async () => {
+  const fixture = await makeStudentWithClosedEntriesInClasses(1);
+  let recordedOptions: TransactionOptions | undefined;
+  const spyingClient = new Proxy(prisma, {
+    get(target, prop, receiver) {
+      if (prop === '$transaction') {
+        return (
+          fn: (tx: Prisma.TransactionClient) => Promise<unknown>,
+          options?: TransactionOptions,
+        ) => {
+          recordedOptions = options;
+          return target.$transaction(fn, options);
+        };
+      }
+      return Reflect.get(target, prop, receiver);
     },
   });
+
   try {
-    let lastHolderReleased = false;
-    const t0 = Date.now();
-    const holders = fixture.classIds.map((classId, i) =>
-      holderDb.$transaction(
-        async (tx) => {
-          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
-          const seconds = Math.max(0, (t0 + (i + 1) * HOLD_STEP_MS - Date.now()) / 1000);
-          // Computed, never input — `$queryRawUnsafe` because a bound
-          // parameter into `pg_sleep` needs an explicit cast to resolve.
-          // The trailing `::text` is load-bearing, not decorative:
-          // `pg_sleep` returns `void`, which Prisma cannot deserialize.
-          // Without the cast every holder's `$transaction` REJECTS with
-          // P2010 right after its sleep completes — invisible today,
-          // because the erasure throws P2028 first and `Promise.all`
-          // below is never reached, but fatal once the budget is fixed:
-          // the erasure would then succeed, execution would reach
-          // `Promise.all(holders)`, and it would reject with P2010,
-          // failing this test against the very fix it exists to confirm.
-          await tx.$queryRawUnsafe(`SELECT pg_sleep(${seconds.toFixed(3)})::text`);
-          // `fixture.classIds` is sorted and the pre-lock is `ORDER BY c.id`,
-          // so the highest index is both the last row the erasure can reach
-          // and the last hold to end — the one whose release the erasure's
-          // return has to follow. Set inside the callback, i.e. just before
-          // the COMMIT that actually drops the lock, exactly as the sibling
-          // test's `holderReleased` is; that is conservative in the right
-          // direction, because the flag turns true slightly BEFORE the lock
-          // is free, so a false reading below cannot be an artefact of the
-          // flag arriving late.
-          if (i === CLASSES - 1) lastHolderReleased = true;
-        },
-        { timeout: 30_000, maxWait: 10_000 },
-      ),
-    );
+    await deleteStudentAccount(spyingClient, fixture.studentId);
 
-    // Every holder must be sitting on its row before the erasure asks for
-    // any of them, or the pre-lock sails through the ones not yet taken.
-    await new Promise((r) => setTimeout(r, 300));
-
-    // The two assertions after this call are the test. Everything else it
-    // checks — entries gone, `deletedAt` set — is equally true of an erasure
-    // that contended for NOTHING and returned in 40ms, so "it passed" is
-    // worthless evidence here: such a run would also have passed against the
-    // 5_000ms budget this test exists to bury, and would have reported
-    // nothing about it. Two realistic paths lead there. `holderDb` is a
-    // freshly constructed `PrismaClient`, so its first six queries pay
-    // engine start plus connect; if that ever outruns the 300ms settle, the
-    // pre-lock reaches rows nobody is holding yet. And `Math.max(0, …)`
-    // above collapses a hold to zero whenever its `FOR UPDATE` came back
-    // late, degrading the stagger from the front. Both fail green unless the
-    // properties that distinguish a real run are asserted outright.
-    const tStart = Date.now();
-    const erasure = deleteStudentAccount(prisma, fixture.studentId).then(() => ({
-      elapsedMs: Date.now() - tStart,
-      afterLastHolder: lastHolderReleased,
-    }));
-    // Marks a rejection handled at the moment it can occur, nine seconds
-    // before `await erasure` below gets to it. A regression of #240 makes
-    // this call reject with `P2028`, and without this line that rejection
-    // sits unhandled across the `Promise.all` and surfaces as an unhandled
-    // rejection — attributable to any file — instead of as this test failing
-    // on the await. The await still throws it; only the reporting changes.
-    void erasure.catch(() => undefined);
-
-    await Promise.all(holders);
-    const { elapsedMs, afterLastHolder } = await erasure;
-
-    // CAUSAL, mirroring the `erasedAfterHolder` resolution in "waits for a
-    // class row another transaction holds when the erased entry is %s" —
-    // named rather than counted, because a relative count rots the moment
-    // anyone inserts a test between the two, which is exactly how this
-    // branch's other cross-references died. The erasure returned only after
-    // the last hold ended. That is ORDER, which is the property a lock
-    // provides and which a duration on its own — a loaded runner can spend
-    // 6s on anything — does not establish.
-    expect(afterLastHolder).toBe(true);
-
-    // ELAPSED, and this is the assertion that is specifically about #240,
-    // because it is the literal claim "this run would have failed under the
-    // old budget". The threshold is that old floor, 5_000ms, and the margin
-    // is stated rather than hoped for: six holds 1.5s apart end at
-    // t0 + 9_000ms while the erasure starts at t0 + ~300ms, so observed
-    // elapsed has been 8666-8821ms across runs — 3.7-3.8s of headroom over
-    // the threshold, matching the ≈3.7s the construction notes above
-    // predict. The window measured here is a superset of the transaction's
-    // own (it includes the pre-transaction `student.findUniqueOrThrow` and
-    // the post-commit `handleSpotFreed` loop), which is milliseconds against
-    // that margin and errs toward passing; the causal assertion above is
-    // what rules out an elapsed figure earned by anything other than waiting
-    // for locks. Mutation-checked rather than assumed: `HOLD_STEP_MS = 500`
-    // makes the whole run finish in 2780ms and this line fails with
-    // "expected 2780 to be greater than 5000" instead of passing green.
-    expect(elapsedMs).toBeGreaterThan(5_000);
-
+    expect(recordedOptions).toEqual({ timeout: 20_000 });
     expect(
       await prisma.waitlistEntry.count({ where: { studentId: fixture.studentId } }),
     ).toBe(0);
@@ -1499,10 +1398,9 @@ it('completes when its lock waits total more than the old 5s budget', async () =
     });
     expect(erased.deletedAt).not.toBeNull();
   } finally {
-    await holderDb.$disconnect();
     await cleanupStudentWithClosedEntries(fixture);
   }
-}, 40_000);
+});
 
 it('does not deadlock against a transaction that locks the class first and then writes the erased student\'s waiting entry', async () => {
   // Round 1 review, C1: the previous version of this fix took the row
