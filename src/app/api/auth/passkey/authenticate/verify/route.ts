@@ -9,7 +9,7 @@ import {
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import type { AuthenticationResponseJSON } from '@simplewebauthn/types';
-import { passkeyAuthVerifySchema } from '@/lib/schemas';
+import { passkeyAuthVerifySchema, TEACHER_PROFILE_PATH } from '@/lib/schemas';
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, passkeyAuthVerifySchema);
@@ -47,15 +47,22 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
 
   const sessionToken = await createSession(prisma, credential.accountId);
-  // Prefer the caller's destination (booking flow) — schema-validated to a
-  // relative path — over the role default, mirroring magic-link verify.
-  // Dual-role accounts default to the teacher home.
   const account = await prisma.account.findUnique({
     where: { id: credential.accountId },
     select: { teacher: { select: { deletedAt: true } } },
   });
-  const fallback = account?.teacher && !account.teacher.deletedAt ? '/schedule' : '/bookings';
-  const redirectTo = body.redirect ?? fallback;
+  const hasTeacherProfile = account?.teacher != null && !account.teacher.deletedAt;
+  const fallback = hasTeacherProfile ? '/schedule' : '/bookings';
+  // Prefer the caller's destination (booking flow) — schema-validated to a
+  // relative path — over the role default; dual-role accounts default to
+  // the teacher home. One destination is refused rather than honoured
+  // (#439, the guard `magic-link/verify` got in #431): the teacher profile
+  // form, for an account that already has a live teacher profile. That
+  // page's own first line would bounce such a browser to `/schedule`
+  // anyway. Scoped to `hasTeacherProfile`, not to the destination alone —
+  // a student-only account's second-hat flow still reaches this path.
+  const bouncedTeacherForm = body.redirect === TEACHER_PROFILE_PATH && hasTeacherProfile;
+  const redirectTo = body.redirect && !bouncedTeacherForm ? body.redirect : fallback;
 
   const apiResponse = respondOk({
     accountId: credential.accountId,
