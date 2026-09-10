@@ -12,7 +12,7 @@
     "test:watch": "vitest --project unit --project components",
     "test:coverage": "vitest run --coverage --no-file-parallelism",
     "test:e2e": "playwright test",
-    "verify": "npm run typecheck && npm run lint && npm test",
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm test",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
@@ -23,7 +23,7 @@
     "worktree:down": "tsx scripts/worktree-down.ts"
   },
   "prisma": {
-    "seed": "npx tsx prisma/seed.ts"
+    "seed": "pnpm exec tsx prisma/seed.ts"
   },
   "dependencies": {
     "@oslojs/crypto": "^1.0.1",

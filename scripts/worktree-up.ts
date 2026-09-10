@@ -25,7 +25,7 @@ async function waitForServer(port: number, timeoutMs = 15000, intervalMs = 500):
 async function main(): Promise<void> {
   const identity = getWorktreeIdentity();
   if (identity.isMainCheckout || !identity.rawName || !identity.dbSlug) {
-    console.log('[worktree:up] main checkout — run `npm run dev` directly instead');
+    console.log('[worktree:up] main checkout — run `pnpm run dev` directly instead');
     return;
   }
   const rawName = identity.rawName;
@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   const fileEnv = loadEnv('', process.cwd(), '');
   const devUrl = process.env.DATABASE_URL ?? fileEnv.DATABASE_URL;
   if (!devUrl) {
-    throw new Error('[worktree:up] DATABASE_URL not set — run `npm run worktree:setup` first');
+    throw new Error('[worktree:up] DATABASE_URL not set — run `pnpm run worktree:setup` first');
   }
 
   // reapFailed means the whole runReap sweep threw; reapResult.failed names

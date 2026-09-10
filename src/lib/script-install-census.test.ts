@@ -26,7 +26,7 @@
  * its subcommand outside the first argument. Reading only the first would
  * leave those four matchable only in their `shell: true` form, where the
  * whole command line is the first argument after all. The argv shape is this
- * repo's own — `worktree/dev-server.ts` uses it for `npx` — though that
+ * repo's own — `worktree/dev-server.ts` uses it for `pnpm exec` — though that
  * particular call is doubly invisible here, its callee both renamed and
  * injected.
  *

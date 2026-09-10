@@ -43,7 +43,7 @@ export async function provisionDatabase(url: string, options: ProvisionOptions):
     await admin.$disconnect();
   }
 
-  execSync('npx prisma migrate deploy', {
+  execSync('pnpm exec prisma migrate deploy', {
     env: { ...process.env, DATABASE_URL: url },
     stdio: 'pipe',
   });
@@ -58,7 +58,7 @@ export async function provisionDatabase(url: string, options: ProvisionOptions):
       await target.$disconnect();
     }
     if (!alreadyHasData) {
-      execSync('npx prisma db seed', {
+      execSync('pnpm exec prisma db seed', {
         env: { ...process.env, DATABASE_URL: url },
         stdio: 'pipe',
       });
