@@ -396,14 +396,11 @@ describe('GET /settings/reporting (reporting page)', () => {
     /**
      * `instant`'s Pacific wall-clock minute-of-day, `marginMinutes` later,
      * clamped to `23:59` — never rolls into the next Pacific calendar day.
+     * Upper bound only: `marginMinutes` is assumed non-negative.
      *
-     * A fixed clock target (e.g. always `23:59`) is a race against real time:
-     * once a day, whatever `now` this runs at converges on the target, and the
-     * safety margin between "fixture built" and "server reads its own `now`"
-     * shrinks to zero and then goes negative (#558). Anchoring to `now` instead
-     * keeps that margin at a constant `marginMinutes` for all but the last
-     * `marginMinutes` of the Pacific day, where it shrinks the same way the
-     * fixed target always did — but only in that window, not every run.
+     * Anchored to `instant` rather than a fixed clock value, so the margin
+     * between fixture-build time and assertion time stays `marginMinutes`
+     * except within `marginMinutes` of Pacific midnight (#558).
      */
     function pacificHHmmAfter(instant: Date, marginMinutes: number): string {
       const parts = new Intl.DateTimeFormat('en-US', {
@@ -417,6 +414,14 @@ describe('GET /settings/reporting (reporting page)', () => {
       const clamped = Math.min(hour * 60 + minute + marginMinutes, 23 * 60 + 59);
       return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`;
     }
+
+    it('pacificHHmmAfter adds the margin unclamped when it stays within the Pacific day', () => {
+      expect(pacificHHmmAfter(new Date('2026-07-15T15:00:00Z'), 10)).toBe('08:10'); // unclamped: 08:00 PDT + 10min
+    });
+
+    it('pacificHHmmAfter clamps to 23:59 when the margin would roll into the next Pacific day', () => {
+      expect(pacificHHmmAfter(new Date('2026-07-16T06:55:00Z'), 10)).toBe('23:59'); // clamped: 23:55 PDT + 10min -> 24:05, clamped
+    });
 
     it('includes studio classes on or before local today and excludes tomorrow or cancelled ones', async () => {
       const now = new Date();
