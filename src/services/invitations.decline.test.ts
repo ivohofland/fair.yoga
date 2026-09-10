@@ -387,9 +387,15 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
       // the block instead lands AFTER that pre-check has already read "no
       // block" — `invitations-lock-order.test.ts`'s "#537" describe stages
       // that directly, and it is the in-transaction re-check, not this
-      // guard, that catches it there. The `declined` case above stays safe
-      // either way, because `NotPendingError` rolls the link write back
-      // regardless of which guard reaches it.
+      // guard, that catches it there.
+      //
+      // The `declined` case above is this same outside guard's answer too,
+      // and #537 leaves it alone: `declineInvitation` writes that row's
+      // block and its `declined` status in ONE commit, so the pre-check
+      // meets both at once and never opens a transaction either. Nor is
+      // there a raced version of it to worry about — a block that function
+      // writes is never visible without the status change beside it, which
+      // `acceptInvitation`'s CAS refuses on its own.
       const result = await acceptInvitation(prisma, {
         invitationId: invitation.id,
         studentId: student.id,

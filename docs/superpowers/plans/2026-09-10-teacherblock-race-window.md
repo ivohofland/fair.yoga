@@ -223,34 +223,25 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
 });
 ```
 
-Run `pnpm exec vitest run --project integration src/services/invitations-lock-order.test.ts` (this file lives in the `integration` tier per its own top-of-file docblock, despite the name — needs the worktree's dev server up via `pnpm run worktree:up` first, per this repo's hazards doc). Confirm both new tests fail against the unmodified source — and confirm they fail because `acceptResult` is `{ ok: true }` with a live `TeacherStudent` row (the actual bug), not because of a typo or a broken fixture. `calls` will be `1`, not `2`, at this point (no in-transaction re-check exists yet to be the second call).
+Run `pnpm exec vitest run --project unit-sweeps src/services/invitations-lock-order.test.ts` (**corrected during implementation** — this plan originally said `--project integration`, on a backwards reading of the file's own top-of-file docblock, which says these tests do *not* run against `:3000`. It is in `LOCK_CONTENTION_TESTS` and carries `@serial-tier lock-contention`, so it is `unit-sweeps`, on the isolated `DATABASE_URL_TEST`; no dev server needed. `invitations.decline.test.ts` is plain `unit`.) Confirm both new tests fail against the unmodified source — and confirm they fail because `acceptResult` is `{ ok: true }` with a live `TeacherStudent` row (the actual bug), not because of a typo or a broken fixture. `calls` will be `1`, not `2`, at this point (no in-transaction re-check exists yet to be the second call).
 
 #### Step 2: The fix
 
-In `acceptInvitation`, inside its `$transaction` callback, immediately after the `linkTeacherStudent` call and before `tx.invitation.updateMany`:
+In `acceptInvitation`, inside its `$transaction` callback, re-read `TeacherBlock` and throw the existing `NotPendingError` when one is standing:
 
 ```typescript
-    await linkTeacherStudent(tx, { teacherId: invitation.teacherId, studentId: input.studentId });
-
-    // The outside pre-check above reads TeacherBlock before this transaction
-    // opens; a block `unlinkTeacher` commits in the gap between that read
-    // and here is invisible to it. `unlinkTeacher`'s own Invitation write is
-    // scoped to `delivered: true` (#412), so on a `delivered: false` row it
-    // can commit a block while leaving this row's status untouched — the CAS
-    // below (or its idempotent re-read, when this row is already `accepted`)
-    // would otherwise go on to succeed against a pair that is, by now,
-    // blocked. Re-reading here, after the roster-link write and before
-    // either success return, closes that window (#537).
     const blockedNow = await tx.teacherBlock.findUnique({
       where: { teacherId_email: { teacherId: invitation.teacherId, email } },
       select: { id: true },
     });
     if (blockedNow) throw new NotPendingError();
-
-    const updated = await tx.invitation.updateMany({
 ```
 
 Run the two new tests again; confirm both pass.
+
+> **Where it landed is not where this plan put it.** This plan prescribed the statement immediately after `linkTeacherStudent` and before `tx.invitation.updateMany`. PR review found that position still leaks: a block committing between the re-check and the CAS is missed, and the CAS then flips the row to `accepted` and answers `{ ok: true }` — measured, and now pinned by `'a block committed between the roster-link write and the CAS is not missed'`. It shipped instead as the LAST statement before the callback's `return true`, after the `updated.count === 0` branch closes. That is the smallest gap an unlocked read can leave, and it still covers the idempotent already-`accepted` return, because it runs before the callback returns on either path. Two tests beyond the two prescribed above shipped with it: neither of those two proves the re-check runs *inside* the transaction at all (both stage their race on the OUTSIDE pre-check, which has fully resolved before `$transaction` opens).
+>
+> The re-check NARROWS that window; it does not close it. A plain non-locking `SELECT` under READ COMMITTED can only ever report "no block as of now", so a block committing between it and the transaction's own commit is still missed, at any position. The shipped comments say "narrows" for that reason; an earlier draft of them said "closes".
 
 #### Step 3: Prove the guard bites (mutation test)
 
@@ -285,49 +276,53 @@ with:
  * row even though that write already ran by the time this fires.
 ```
 
-**`acceptInvitation`'s own docblock** — the three paragraphs from "The block check below is defence in depth..." through "...the `accepted` one is the arm that goes red." need replacing (everything from the "The block check below" paragraph to the end of the "Which is also why only one of the two answered arms..." paragraph, inclusive). Replace with:
+**`acceptInvitation`'s own docblock** — the three paragraphs from "The block check below is defence in depth..." through "...the `accepted` one is the arm that goes red." need replacing (everything from the "The block check below" paragraph to the end of the "Which is also why only one of the two answered arms..." paragraph, inclusive). **Synced to what shipped**, after PR review deleted the counterfactual "Delete THIS guard and..." paragraph outright rather than patching it a third time:
 
 ```
- * The block check below is defence in depth for the pending case — the
- * student-side pending query (Task 11) already excludes a blocked pair, so
- * this id should never reach here for one. But the id travels in a URL, not
- * a secret, and this whole function exists because that can't be trusted.
+ * The block check below is defence in depth about REACHABILITY, not about
+ * the answer it gives: the student-side pending query (Task 11) already
+ * excludes a blocked pair, so a `pending` id should never arrive here for
+ * one at all. But the id travels in a URL, not a secret, and this whole
+ * function exists because that can't be trusted.
  *
- * What it answers turns on the row's own status, and it may: the email match
- * above has already proved the caller owns the address, so the only block
- * anyone can reach this branch about is one on their own address. Nothing
- * here can hand a stranger the bit `inviteContact` above withholds. A
- * `pending` row on a blocked pair is one the student is never offered —
- * `listPendingInvitations` drops it — so `NOT_FOUND` is the true answer:
- * there is nothing here for them. Anything the CAS below would refuse to
- * write over answers `NOT_PENDING` instead: the guard names the row's own
- * state rather than the block, so it discloses nothing the caller does not
- * already hold, and a new `InvitationStatus` member inherits that
- * conservative answer without this paragraph having to be revisited.
+ * What it answers turns on the row's own status, and it may: the email
+ * match above has already proved the caller owns the address, so the only
+ * block anyone can reach this branch about is one on their own address.
+ * Nothing here can hand a stranger the bit `inviteContact` above
+ * withholds. A `pending` row on a blocked pair is one the student is never
+ * offered — `listPendingInvitations` drops it — so `NOT_FOUND` is the true
+ * answer: there is nothing here for them. That holds when THIS guard is
+ * the one that sees the block; a block landing after this read leaves the
+ * same `pending` row answering `NOT_PENDING` from inside the transaction
+ * instead (staged directly by `invitations-lock-order.test.ts`'s "#537"
+ * describe). Anything the CAS below would refuse to write over answers
+ * `NOT_PENDING` instead: the guard names the row's own state rather than
+ * the block, so it discloses nothing the caller does not already hold, and
+ * a new `InvitationStatus` member inherits that conservative answer
+ * without this paragraph having to be revisited.
  *
  * This guard alone is NOT what keeps the roster-link write from committing
- * for a blocked pair — it reads `TeacherBlock` once, before the transaction
- * opens, and a block `unlinkTeacher` commits in the gap between that read
- * and the transaction's own writes is invisible to it. `unlinkTeacher`'s own
- * Invitation write is scoped to `delivered: true` (#412), so on a
- * `delivered: false` row it can commit a block while leaving this row's
- * status untouched — pending, if nobody has answered it yet, or `accepted`,
- * if a prior call already had. Either way the CAS below (or its idempotent
- * re-read, for the `accepted` case) would go on to succeed against a pair
- * that is, by then, blocked. Closing that window is the in-transaction
- * re-check's job (#537), not this guard's — see it in the `$transaction`
- * callback below, and `NotPendingError`'s own docblock. Delete THIS guard
- * (the one below, not the in-transaction one) and every case in
- * `invitations.decline.test.ts` still passes — the in-transaction re-check
- * now refuses each of them independently. What changes is that a
- * still-pending, still-blocked row gets the less conservative `NOT_PENDING`
- * this function otherwise avoids for a row nobody has answered (see the
- * paragraph above), and this function opens, then rolls back, a transaction
- * it would otherwise have skipped. `declineInvitation` cannot reach this
+ * for a blocked pair — it reads `TeacherBlock` once, before the
+ * transaction opens, and a block `unlinkTeacher` commits after that read
+ * is invisible to it. `unlinkTeacher`'s own Invitation write is scoped to
+ * `delivered: true` (#412), so on a `delivered: false` row it can commit a
+ * block while leaving this row's status untouched — pending, if nobody has
+ * answered it yet, or `accepted`, if a prior call already had. Either way
+ * the CAS below (or its idempotent re-read, for the `accepted` case) would
+ * go on to succeed against a pair that is, by then, blocked. NARROWING
+ * that window — no unlocked read can close it — is the in-transaction
+ * re-check's job (#537), not this guard's; see it in the `$transaction`
+ * callback below, and `NotPendingError`'s own docblock. What this guard is
+ * for is the ANSWER, not the rollback: the more conservative `NOT_FOUND`
+ * for a `pending` row nobody has answered (see the paragraph above).
+ * Rolling the roster-link write back is done inside the transaction, by
+ * whichever statement gets there first — the CAS and its re-read, for a
+ * row whose status has moved, or the re-check, for a block — and neither
+ * depends on this guard having run. `declineInvitation` cannot reach this
  * hole at all: its own `TeacherBlock` write is gated behind its own CAS
- * moving this same row to `declined` in the same transaction, so a block it
- * writes is never visible without that status change alongside it — which
- * the CAS/re-read below already catches on its own.
+ * moving this same row to `declined` in the same transaction, so a block
+ * it writes is never visible without that status change alongside it —
+ * which the CAS/re-read below already catches on its own.
 ```
 
 Then verify the sweep: `grep -n "arm that goes red\|Delete this guard" src/services/invitations.ts` should return nothing once this is applied (both phrases were only ever in this one docblock).
@@ -341,27 +336,35 @@ Then verify the sweep: `grep -n "arm that goes red\|Delete this guard" src/servi
       // blocked pair. The `declined` case above answers NOT_PENDING either
       // way, because `NotPendingError` rolls that link write back.
 ```
-with:
+with — **synced to what shipped**, after PR review found the `declined` sentence false (that case never opens a transaction at all, so `NotPendingError` never fires there):
 ```
-      // The in-transaction re-check #537 added (see `acceptInvitation`'s own
-      // docblock, and `NotPendingError`'s) is what actually refuses this arm
-      // now: it reads `TeacherBlock` again right before either success
-      // return, so it catches an already-`accepted` row on a blocked pair
-      // whether or not the outside guard above ever ran first.
-      // `invitations-lock-order.test.ts`'s "#537" describe races that
-      // in-transaction check directly, without needing this test's
-      // sequential setup. The `declined` case above stays safe either way,
-      // because `NotPendingError` rolls the link write back regardless of
-      // which guard reaches it.
+      // Still the outside guard's answer, exactly as before #537: the block
+      // is written here, sequentially, before the second `acceptInvitation`
+      // call's own outside pre-check ever runs, so that pre-check alone
+      // finds it and refuses before any transaction opens — the
+      // in-transaction re-check #537 added never gets a turn in this test.
+      // What #537 changes is the RACY version of this same row shape, where
+      // the block instead lands AFTER that pre-check has already read "no
+      // block" — `invitations-lock-order.test.ts`'s "#537" describe stages
+      // that directly, and it is the in-transaction re-check, not this
+      // guard, that catches it there.
+      //
+      // The `declined` case above is this same outside guard's answer too,
+      // and #537 leaves it alone: `declineInvitation` writes that row's
+      // block and its `declined` status in ONE commit, so the pre-check
+      // meets both at once and never opens a transaction either. Nor is
+      // there a raced version of it to worry about — a block that function
+      // writes is never visible without the status change beside it, which
+      // `acceptInvitation`'s CAS refuses on its own.
 ```
 
 Verify the sweep for this one too: `grep -n "load-bearing for, and the" src/services/invitations.decline.test.ts` should return nothing once applied.
 
 #### Step 5: Full verification
 
-- `pnpm exec vitest run --project integration src/services/invitations-lock-order.test.ts src/services/invitations.decline.test.ts` — both files green, including every pre-existing test (the docblock edits touch no code, but the mutation-test step in Step 3 modified and restored the source, so re-run to confirm no residual mutation survived).
-- `pnpm run verify` — full suite, typecheck, lint. Needs the worktree's dev server up (`pnpm run worktree:up`, already running per this repo's worktree hazard).
+- `pnpm exec vitest run --project unit-sweeps src/services/invitations-lock-order.test.ts` and `pnpm exec vitest run --project unit src/services/invitations.decline.test.ts` — both files green, including every pre-existing test (the docblock edits touch no code, but the mutation-test step in Step 3 modified and restored the source, so re-run to confirm no residual mutation survived).
+- `pnpm run verify` — full suite, typecheck, lint. Needs the worktree's dev server up (`pnpm run worktree:up`, already running per this repo's worktree hazard) for the `integration` project it chains; neither of the two files above is in it.
 - Confirm the two grep sweeps in Step 4 both return nothing.
 - Confirm `docs/lock-order.md` needs no edit (per the spec's reasoning) — this is a decision to record in the PR body, not a file to touch.
 
-**Review focus for this task:** does the in-transaction re-check actually sit between `linkTeacherStudent` and `tx.invitation.updateMany` (not after the CAS, where it would miss the `count === 0` idempotent-success return)? Do both new tests' `calls` assertions actually distinguish "fix present" from "fix absent" (i.e., would genuinely go red under the Step 3 mutation, not just under a broken fixture)? Do the three corrected docblocks/comments read as internally consistent with the code as it now stands, not merely "not wrong" in isolation?
+**Review focus for this task:** does the in-transaction re-check cover BOTH of the callback's success paths — the CAS writing the row, and the `count === 0` branch's idempotent already-`accepted` return? (This plan asserted that only a position between `linkTeacherStudent` and `tx.invitation.updateMany` does. That was wrong on both halves: as the last statement before `return true` it covers both paths, and the position this plan prescribed leaves a live window the shipped one does not — see the note under Step 2.) Do both new tests' `calls` assertions actually distinguish "fix present" from "fix absent" (i.e., would genuinely go red under the Step 3 mutation, not just under a broken fixture)? Do the three corrected docblocks/comments read as internally consistent with the code as it now stands, not merely "not wrong" in isolation?
