@@ -233,4 +233,20 @@ describe('checkParserCoverage', () => {
     expect(result.parsedEntries).toBe(5);
     expect(result.rawResolutionLines).toBe(5);
   });
+
+  // Both counts comfortably clear MIN_EXPECTED_LOCKFILE_ENTRIES here — this
+  // is the original failure mode the raw-count tether exists to catch (a
+  // format drift where the parser silently recognizes fewer entries than
+  // the file actually holds), distinct from the floor check above.
+  it('fails when parsed entries fall short of raw resolution lines, both comfortably above the floor', () => {
+    const entries = Array.from({ length: 200 }, (_, i) => ({
+      key: `pkg-${i}@1.0.0`,
+      resolution: 'integrity: sha512-x',
+    }));
+    const text = Array.from({ length: 210 }, () => '    resolution: {integrity: sha512-x}').join('\n');
+    const result = checkParserCoverage(text, entries);
+    expect(result.ok).toBe(false);
+    expect(result.parsedEntries).toBe(200);
+    expect(result.rawResolutionLines).toBe(210);
+  });
 });
