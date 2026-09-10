@@ -72,6 +72,11 @@ const eslintConfig = defineConfig([
   // touched. test-results/ holds no JavaScript today — screenshots, traces and
   // JSON — so it is listed as the sibling output directory rather than a second
   // measured cause. Both are build output, never authored.
+  //
+  // coverage/ is the third, and the same shape: the lcov reporter writes an
+  // HTML report whose bundled scripts carry an eslint-disable this config has
+  // nothing to disable, so `--coverage` in the test run made the warning count
+  // depend on whether an untracked artifact happened to be on disk.
   globalIgnores([
     '.next/**',
     '.next-build/**',
@@ -82,6 +87,7 @@ const eslintConfig = defineConfig([
     '.claude/**',
     'playwright-report/**',
     'test-results/**',
+    'coverage/**',
   ]),
 ]);
 
