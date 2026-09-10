@@ -7,5 +7,8 @@ docs
 **/test-results
 **/playwright-report
 *.md
-.env*
-!.env.example
+.superpowers
+coverage
+tsconfig.tsbuildinfo
+**/.env*
+!**/.env.example
