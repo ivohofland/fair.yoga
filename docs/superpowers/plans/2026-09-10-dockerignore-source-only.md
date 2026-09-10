@@ -4,7 +4,11 @@
 
 **Goal:** `docker build --target deps` from the repo root no longer sends `.superpowers/` (24 MB),
 `coverage/` (4.8 MB), or `tsconfig.tsbuildinfo` (324 KB) into the build context, and `.env*`
-exclusion no longer depends incidentally on the `.claude` bare-directory prune.
+exclusion no longer depends incidentally on the `.claude` bare-directory prune. (Component sizes:
+`du -sh .superpowers coverage tsconfig.tsbuildinfo`, re-run during this plan's own premise
+verification. `.superpowers`/`coverage` match PR #566's body exactly; `tsconfig.tsbuildinfo` reads
+324 KB here versus PR #566's 330 KB — expected drift, the file is `tsc`'s incremental cache and
+changes size on every typecheck run, not a discrepancy to chase.)
 
 **Architecture:** Issue #567 is a follow-up from #559/PR #566's whole-branch review. Premise
 verified empirically before writing this plan:
@@ -61,15 +65,20 @@ verified empirically before writing this plan:
 
 **Tech Stack:** Docker (multi-stage build, legacy builder — `docker buildx version` still reports
 `unknown command`, confirmed unchanged since #559), no other component touched. CI's
-`docker-build` job (`.github/workflows/ci.yml`) runs on `ubuntu-latest` under BuildKit/buildx — a
-materially different builder than the one every measurement and repro in this plan used — though
-both parse `.dockerignore` through the same underlying pattern-matching library
-(`moby/patternmatcher`). The risk here is nil regardless: three of the four new exclusion lines
-(`.superpowers`, `coverage`, `tsconfig.tsbuildinfo`) target untracked/local-only paths that don't
-exist at all in CI's fresh `actions/checkout` workspace and so are no-ops there, and the only
-tracked file the new patterns touch, `.env.example`, is treated identically by
-`**/.env*`/`!**/.env.example` and the old `.env*`/`!.env.example` because `**/` never matches zero
-path segments in either builder. CI's `docker-build` job can therefore neither regress from nor
+`docker-build` job (`.github/workflows/ci.yml:405-406`, confirmed by reading the file directly)
+runs on `ubuntu-latest` — plausibly a different builder than the one every measurement and repro
+in this plan used, though which builder GitHub's hosted runner actually invokes wasn't checked
+here, so that specific claim is left unmade rather than asserted unverified. The risk here is nil
+regardless of which builder CI uses: three of the four new exclusion lines (`.superpowers`,
+`coverage`, `tsconfig.tsbuildinfo`) target untracked/local-only paths that don't exist at all in
+CI's fresh `actions/checkout` workspace and so are no-ops there, and the only tracked file the new
+patterns touch, `.env.example`, is treated identically at the root by `**/.env*`/`!**/.env.example`
+and the old `.env*`/`!.env.example` — **not** because `**/` fails to reach depth zero (it does:
+Task 1's own Step 1/3 repro two sections above shows the shipped pattern excluding root `.env` and
+preserving root `.env.example`, which is only possible if `**/` matches zero path segments, same
+as `.gitignore`'s documented `**/foo` semantics), but because the exclude and its negation were
+widened *together* — a pair that cancels out identically at every depth, including depth zero,
+whether or not `**/`-prefixed. CI's `docker-build` job can therefore neither regress from nor
 validate this specific change — the safety net for a *future* `.dockerignore` change is still a
 human running a build on a different builder than CI's.
 
