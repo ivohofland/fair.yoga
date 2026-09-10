@@ -7,9 +7,16 @@
 # ---------------------------------------------------------------------------
 FROM node:22-alpine AS deps
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY prisma ./prisma
-RUN npm ci
+# corepack reads `packageManager` from package.json and VERIFIES the pinned
+# integrity hash before running pnpm — the reason this repo bootstraps here
+# rather than with `npm i -g pnpm`. Corepack ships with Node "from 14.19.0
+# up to (but not including) 25.0.0"; node:22-alpine and node:24-alpine both
+# have it. Bumping this base image past 24 fails loudly here with
+# `corepack: not found`, and the fix is `RUN npm i -g corepack` above.
+RUN corepack enable
+RUN pnpm install --frozen-lockfile
 
 # ---------------------------------------------------------------------------
 FROM deps AS build
@@ -23,14 +30,14 @@ RUN mkdir -p public
 # needs the env var to EXIST (no connection is made). Runtime env from
 # compose overrides this dummy completely.
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build"
-RUN npx prisma generate && npm run build
+RUN pnpm exec prisma generate && pnpm run build
 
 # ---------------------------------------------------------------------------
 # Migration runner: `docker compose run migrate` / compose service.
 FROM deps AS migrate
 WORKDIR /app
 COPY prisma ./prisma
-CMD ["npx", "prisma", "migrate", "deploy"]
+CMD ["pnpm", "exec", "prisma", "migrate", "deploy"]
 
 # ---------------------------------------------------------------------------
 FROM node:22-alpine AS runner

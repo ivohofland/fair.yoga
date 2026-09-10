@@ -59,14 +59,14 @@ export default defineConfig({
   ],
   webServer: {
     // In a worktree (INTEGRATION_BASE_URL set), the dev server is expected
-    // to already be running — `npm run worktree:up` starts it. This command
+    // to already be running — `pnpm run worktree:up` starts it. This command
     // only runs when `reuseExistingServer`'s health check against `url`
     // fails, i.e. it was NOT started: fail fast with an actionable message
     // instead of silently booting an unparameterized `next dev` on :3000,
     // using the worktree's isolated database on the wrong port.
     command: process.env.INTEGRATION_BASE_URL
-      ? `node -e "console.error('INTEGRATION_BASE_URL is set to ${process.env.INTEGRATION_BASE_URL} but nothing is listening there. Run: npm run worktree:up'); process.exit(1)"`
-      : 'npm run dev',
+      ? `node -e "console.error('INTEGRATION_BASE_URL is set to ${process.env.INTEGRATION_BASE_URL} but nothing is listening there. Run: pnpm run worktree:up'); process.exit(1)"`
+      : 'pnpm run dev',
     url: process.env.INTEGRATION_BASE_URL ?? 'http://localhost:3000',
     // CI pre-starts the production build on :3000 before the e2e step;
     // locally this reuses the running dev server.

@@ -29,8 +29,8 @@ describe('spawnDevServer', () => {
     expect(pid).toBe(4242);
     expect(unref).toHaveBeenCalledOnce();
     expect(spawnFn).toHaveBeenCalledWith(
-      'npx',
-      ['next', 'dev', '-p', '3100'],
+      'pnpm',
+      ['exec', 'next', 'dev', '-p', '3100'],
       expect.objectContaining({ cwd: '/worktree', detached: true }),
     );
     expect(vi.mocked(fs.openSync)).toHaveBeenCalledWith(

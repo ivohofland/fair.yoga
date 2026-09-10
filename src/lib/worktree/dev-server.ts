@@ -14,7 +14,7 @@ export function spawnDevServer(
   const logPath = buildDevServerLogPath(cwd);
   const logFd = fs.openSync(logPath, 'a');
   try {
-    const child = spawnFn('npx', ['next', 'dev', '-p', String(port)], {
+    const child = spawnFn('pnpm', ['exec', 'next', 'dev', '-p', String(port)], {
       cwd,
       detached: true,
       stdio: ['ignore', logFd, logFd],

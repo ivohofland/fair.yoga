@@ -116,24 +116,42 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
-          cache: 'npm'
+          # No `cache:` key. `cache: 'pnpm'` needs pnpm resolvable when this
+          # step runs, but `corepack enable` must come AFTER it — corepack
+          # installs its shims into the active Node's bin directory. The
+          # store is cached explicitly below instead.
+
+      # `packageManager` in package.json pins the version AND its integrity
+      # hash; corepack verifies the hash before running pnpm.
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          echo "PNPM_STORE=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.PNPM_STORE }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
 
       - name: Install dependencies # postinstall runs prisma generate
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Run migrations
-        run: npx prisma migrate deploy
+        run: pnpm exec prisma migrate deploy
 
       # NO BUILD CACHE, unlike `ci.yml`. A cold build is part of the condition
       # under test — hydration timing on a first-served route is the suspected
       # variable, and a warm `.next-build/cache` is the local condition that
       # already fails to reproduce.
       - name: Build
-        run: npm run build
+        run: pnpm run build
 
       - name: Start app
         run: |
-          npm run start > server.log 2>&1 &
+          pnpm run start > server.log 2>&1 &
           for i in {1..30}; do
             curl -sf http://localhost:3000/api/health > /dev/null && exit 0
             sleep 1
@@ -143,7 +161,7 @@ jobs:
           exit 1
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium
 
       # Inputs arrive as env vars, never interpolated into the script — a
       # `${{ }}` inside `run:` is a shell injection from whoever dispatched.
@@ -161,10 +179,10 @@ jobs:
         run: |
           set -o pipefail
           if [ -n "$GREP" ]; then
-            npx playwright test "$SPEC" --project="$PROJECT" -g "$GREP" \
+            pnpm exec playwright test "$SPEC" --project="$PROJECT" -g "$GREP" \
               --repeat-each="$REPEAT" --retries=0 --trace=on --reporter=list
           else
-            npx playwright test "$SPEC" --project="$PROJECT" \
+            pnpm exec playwright test "$SPEC" --project="$PROJECT" \
               --repeat-each="$REPEAT" --retries=0 --trace=on --reporter=list
           fi
 
