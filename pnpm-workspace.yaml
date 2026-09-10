@@ -5,11 +5,18 @@
 # it is a hard `ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS` — exit 1, not a
 # [WARN].
 #
-# Rationale, the measured behaviour of both settings, and the mutation tests
-# that prove them live: docs/supply-chain.md.
+# Rationale, the measured behaviour of every setting below, and the mutation
+# tests that prove them live: docs/supply-chain.md.
 
 # Seven days, in minutes. Verified at lockfile-check time, not download time.
 minimumReleaseAge: 10080
+
+# `pnpm run` and `pnpm exec` install on their own when `node_modules` and
+# `package.json` disagree, and that install is not `--frozen-lockfile` unless
+# `CI` is set — so without this line a plain `pnpm test` can resolve against
+# the registry and rewrite `pnpm-lock.yaml`. `error` makes the mismatch an
+# exit-1 refusal that installs nothing. Reproduction: docs/supply-chain.md.
+verifyDepsBeforeRun: error
 
 # Dependencies permitted to run install scripts. `strictDepBuilds` defaults
 # to true, so anything reaching this repo with a build script and no entry
