@@ -94,9 +94,20 @@ WT=/tmp/probe-timing && git worktree add -f "$WT" HEAD
 git worktree remove --force "$WT"
 ```
 
-**6.9s** for the install (exit 0), **4.2s** for the probe run that followed
-(9 tests, green). The primary checkout's `node_modules/.modules.yaml` is
-byte-identical before and after — `shasum` it either side to confirm.
+**6.9s** for the install (exit 0), **4.2s** for the probe run that followed.
+The primary checkout's `node_modules/.modules.yaml` is byte-identical before
+and after — `shasum` it either side to confirm.
+
+**THE ISOLATION IS OF INSTALL STATE, NOT OF FILE CONTENT.** Hard-linking is
+what makes the second install cheap, and it is the same mechanism either way:
+the worktree's `node_modules` files are hard links to the content-addressable
+store, which the primary checkout's `node_modules` also links to. A probe
+that mutates a file *inside* `node_modules` therefore writes through — to the
+store, and to every checkout on this machine linked to it. In a document
+about deliberately breaking things that is not hypothetical. Mutate the
+repo's own source, never a dependency's; if a dependency really is the
+target, copy the package out of `node_modules` first and point the probe at
+the copy.
 
 ### B. Single-Agent In-Place Probes
 
@@ -111,6 +122,6 @@ When running in a confirmed single-agent context where no other agent is active:
 
 | Context | Protocol | Overhead | Safety Guarantee |
 |---|---|---|---|
-| **Parallel Review Agents** | Separate git worktrees per agent, each with its own `node_modules` | ~7s (`pnpm install --frozen-lockfile`, warm store) | Nothing is shared with the primary checkout; 0 false reds / false greens |
+| **Parallel Review Agents** | Separate git worktrees per agent, each with its own `node_modules` | ~7s (`pnpm install --frozen-lockfile`, warm store) | The primary checkout's install state is untouched (`.modules.yaml` byte-identical, measured); 0 false reds / false greens — but see the hard-link caveat below |
 | **Mutation Testing Probes** | Temporary worktree in `/tmp/` | ~7s | Primary working tree remains clean at all times |
 | **Single-Agent Inline Probe** | In-place edit + `git diff` check | 0s | Safe only when no other agent is active |

@@ -20,11 +20,15 @@ updates:
         update-types: ['minor', 'patch']
     # Majors arrive as individual PRs so breaking changes get read alone.
     # pnpm refuses a lockfile entry younger than `minimumReleaseAge`
-    # (pnpm-workspace.yaml, 10080 minutes = 7 days) and CI installs with
-    # --frozen-lockfile, so a PR proposing a fresher version fails the merge
-    # gate. Eight days, not seven: pnpm counts minutes from publish, this
-    # counts days at PR-creation time, and two clocks computing "7 days"
-    # eventually disagree at the boundary. The cost of the margin is one
-    # extra day of staleness; the cost of the boundary is a red PR.
+    # (`pnpm-workspace.yaml`; docs/supply-chain.md carries its value and the
+    # measurement) and CI installs with --frozen-lockfile, so a PR proposing a
+    # fresher version fails the merge gate.
+    #
+    # THIS COOLDOWN IS DELIBERATELY ONE DAY LONGER THAN THAT SETTING, and the
+    # margin is the point: pnpm counts minutes from publish, Dependabot counts
+    # days at PR-creation time, and two clocks computing the same window
+    # eventually disagree at the boundary. The cost of the margin is one extra
+    # day of staleness; the cost of the boundary is a red PR. Change this only
+    # together with `minimumReleaseAge`, and keep it ahead.
     cooldown:
       default-days: 8

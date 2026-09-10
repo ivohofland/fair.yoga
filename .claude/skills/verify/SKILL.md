@@ -16,8 +16,14 @@ description: Build/launch/drive recipe for verifying fair.yoga changes in the ru
   email* below instead — it never touches the server at all.
 - Only if :3000 is genuinely empty: `EMAIL_DRY_RUN=1 pnpm run dev` — dry-run logs magic links
   to stdout instead of Resend (`.env` only has a placeholder Resend key, so real sends fail).
-- **In a worktree:** `pnpm run worktree:setup` (once), then `pnpm run worktree:up` —
+- **In a worktree:** `pnpm install --frozen-lockfile` FIRST, then `pnpm run worktree:setup`
+  (once), then `pnpm run worktree:up` —
   boots a private `next dev` on its own port against its own seeded database.
+  The install cannot be skipped: `verifyDepsBeforeRun: error` (`pnpm-workspace.yaml`)
+  gates every `pnpm run`/`pnpm exec` on a `node_modules` consistent with `package.json`,
+  and a fresh worktree has none — so `pnpm run worktree:setup`, the script whose job is
+  to create it, exits 1 with `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN` before it runs a line.
+  The install inside `worktree:setup` stays, and is a no-op second run.
   The "never kill or restart :3000" rule above is about the *main checkout's*
   server and doesn't apply to a worktree's own instance; stop it with `pnpm run
   worktree:down` when done.
@@ -50,7 +56,7 @@ unchanged.
 ## Drive (Playwright)
 
 - `@playwright/test` is a dev dep; drive with a plain `chromium.launch()` script via `pnpm exec tsx`.
-- Scripts outside the repo (scratchpad) need `NODE_PATH=<repo>/node_modules` to resolve `@prisma/client`/Playwright.
+- Scripts outside the repo (scratchpad) need `NODE_PATH=<repo>/node_modules` to resolve `@prisma/client` and `@playwright/test`. **Spell `@playwright/test`, not bare `playwright`** — under pnpm a top-level `node_modules` resolves only the packages `package.json` declares, and `playwright` is `@playwright/test`'s dependency, not this repo's. `require('playwright')` answers `MODULE_NOT_FOUND`; `chromium` comes off `@playwright/test`. General form and the measurement: `docs/supply-chain.md`.
 - **Never wait for `networkidle`** — the app holds an SSE connection (LiveUpdates) open forever. Use `waitUntil: 'load'` + wait for a concrete locator.
 - `pnpm exec tsx -e "..."` is CJS: no top-level await; use `.then()` or an async `run()`.
 
