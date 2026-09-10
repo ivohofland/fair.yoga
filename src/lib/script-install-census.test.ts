@@ -8,11 +8,8 @@
  * behaviour — the versions someone committed, or a loud failure — and this
  * file is what makes that a failing build rather than a review note.
  *
- * THE FLAG IS DEMANDED EXPLICITLY even though pnpm turns it on by default
- * when `CI` is set. Leaning on that default would leave one command frozen
- * on a runner and reconciling on a laptop — the same class of failure as a
- * setting that is accepted and quietly not applied, which is what this
- * repo's supply-chain rule exists to prevent (docs/supply-chain.md).
+ * THE FLAG IS DEMANDED EXPLICITLY rather than left to pnpm's `CI` default.
+ * The reasoning sits on `isLockfileInstall` below, where the flag is enforced.
  *
  * WHAT IT READS. Call expressions under `scripts/` and `src/lib/`, parsed with
  * `ts.createSourceFile` as the sibling censuses do. A call counts when its
@@ -27,8 +24,10 @@
  * leave those four matchable only in their `shell: true` form, where the
  * whole command line is the first argument after all. The argv shape is this
  * repo's own — `worktree/dev-server.ts` uses it for `pnpm exec` — though that
- * particular call is doubly invisible here, its callee both renamed and
- * injected.
+ * particular call escapes this census three times over: its callee is an
+ * injected parameter (`spawnFn`); the default that parameter takes is a
+ * renamed import (`spawn as spawnReal`); and `pnpm exec` is not install-family,
+ * so `INSTALL_COMMAND` drops the command whatever the callee is called.
  *
  * WHAT IT CANNOT SEE, measured rather than assumed:
  *   - a renamed or injected callee (`import { execSync as run }`, or an
@@ -39,6 +38,9 @@
  *     whether behind another command (`cd x && pnpm install`) or behind a
  *     global flag (`pnpm --dir x install`) — the pattern is anchored and
  *     reads only the token after `pnpm`;
+ *   - `pnpm dlx`, which is not install-family and never will be: it fetches
+ *     and executes a package straight from the registry, outside the lockfile
+ *     entirely, so there is no `--frozen-lockfile` for this guard to demand;
  *   - anything in a shell script, and any install a dependency performs itself.
  *
  * WHY THESE TWO DIRECTORIES. Imperative bootstrap code lives in both:
@@ -52,8 +54,8 @@
  *
  * `.test.ts` AND `.test.tsx` FILES ARE EXCLUDED, because a fixture asserting
  * what the guard catches has to contain the very shapes it catches — the cases
- * at the bottom of this file would otherwise fail it. Other test spellings
- * (`.spec.ts`, a `.test.mjs`) are not excluded and none exists here.
+ * at the bottom of this file would otherwise fail it. `watchedFiles`'s
+ * `/\.test\.tsx?$/` filter is the whole of that exclusion.
  *
  * WHY THIS FILE LIVES IN `src/lib/`. No project in `vitest.config.ts` collects
  * `scripts/` or the top of `tests/`. Moved to either, this file is collected by
@@ -86,16 +88,23 @@ const INSTALL_COMMAND = new RegExp(`^pnpm\\s+(?:${INSTALL_FAMILY.join('|')})\\b`
 /**
  * pnpm's lockfile-exact install is `pnpm install --frozen-lockfile` — a
  * FLAG, not a subcommand, so unlike `npm ci` no anchored prefix can express
- * it. Both halves are required: the install family at the front, and the
- * flag somewhere after it.
+ * it. Both halves are required: the install family at the front, narrowed
+ * further to `install`/`i` (a flagged `pnpm add` still resolves a new range),
+ * and the flag itself somewhere after it.
  *
  * THE FLAG IS DEMANDED EXPLICITLY even though pnpm turns it on by default
  * when `CI` is set. Leaning on that default would leave one command frozen
  * on a runner and reconciling on a laptop — the same class of failure as a
  * setting that is accepted and quietly not applied, which is what this
  * repo's supply-chain rule exists to prevent (docs/supply-chain.md).
+ *
+ * The flag match is bounded on both sides on purpose: unbounded, it accepts
+ * the flag's own negation (`--no-frozen-lockfile`) and its near-misses
+ * (`--frozen-lockfile=false`, `--frozen-lockfile-ish`). Contradictory spellings
+ * of the flag on one command line are judged permissive here, as pnpm's own
+ * last-flag-wins would not be — nobody writes that, and the tests below say so.
  */
-function isLockfileInstall(command: string): boolean {
+export function isLockfileInstall(command: string): boolean {
   return (
     /^pnpm\s+(?:install|i)\b/.test(command) &&
     /(?:^|\s)--frozen-lockfile(?=\s|$)/.test(command)
@@ -164,10 +173,13 @@ describe('every install this repo runs installs from the lockfile', () => {
     // Names the file rather than asserting a non-empty set: a count is
     // satisfied forever by whichever install already passes, so it would stop
     // saying anything the day a second one is added. Reports lists, so a
-    // failure says which half broke.
+    // failure says which half broke. Sorted because `readdirSync`'s order is
+    // the filesystem's, which is not a property this assertion is about.
     expect({
       filesSearched: watchedFiles().length > 0,
-      filesRunningAnInstall: installInvocations().map(({ file }) => file),
+      filesRunningAnInstall: installInvocations()
+        .map(({ file }) => file)
+        .sort(),
     }).toEqual({
       filesSearched: true,
       filesRunningAnInstall: ['scripts/worktree-setup.ts'],
@@ -178,6 +190,55 @@ describe('every install this repo runs installs from the lockfile', () => {
     // Reports the offending invocations rather than a count, so a failure
     // names the file and the command it found.
     expect(installInvocations().filter(({ command }) => !isLockfileInstall(command))).toEqual([]);
+  });
+});
+
+describe('the predicate demands both halves, and the flag exactly', () => {
+  // A truth table rather than one assertion per row: a failure reports the
+  // whole map, so it names which spelling changed verdict. Every row here is
+  // load-bearing against a specific loosening — dropping the family half or
+  // widening it to `INSTALL_FAMILY` admits the `add`/`update` rows; dropping
+  // either boundary on the flag match admits the negation and near-miss rows.
+  it('accepts the lockfile-exact spellings and nothing adjacent to them', () => {
+    const commands = [
+      'pnpm install --frozen-lockfile',
+      'pnpm i --frozen-lockfile',
+      'pnpm install --frozen-lockfile --ignore-scripts',
+      'pnpm install --ignore-scripts --frozen-lockfile',
+      'pnpm install',
+      'pnpm install --no-frozen-lockfile',
+      'pnpm install --frozen-lockfile=false',
+      'pnpm install --frozen-lockfile-ish',
+      'pnpm add lodash --frozen-lockfile',
+      'pnpm update --frozen-lockfile',
+      'pnpm up --frozen-lockfile',
+      'pnpm import --frozen-lockfile',
+    ];
+    expect(Object.fromEntries(commands.map((command) => [command, isLockfileInstall(command)]))).toEqual({
+      'pnpm install --frozen-lockfile': true,
+      'pnpm i --frozen-lockfile': true,
+      'pnpm install --frozen-lockfile --ignore-scripts': true,
+      'pnpm install --ignore-scripts --frozen-lockfile': true,
+      'pnpm install': false,
+      'pnpm install --no-frozen-lockfile': false,
+      'pnpm install --frozen-lockfile=false': false,
+      'pnpm install --frozen-lockfile-ish': false,
+      'pnpm add lodash --frozen-lockfile': false,
+      'pnpm update --frozen-lockfile': false,
+      'pnpm up --frozen-lockfile': false,
+      'pnpm import --frozen-lockfile': false,
+    });
+  });
+
+  it('reports a flagged pnpm add as a violation, not as an install it may skip', () => {
+    // The two halves are separately reachable: `INSTALL_COMMAND` has to FIND
+    // this call for `isLockfileInstall` to get the chance to reject it. A
+    // family half narrowed on the discovery side instead would make the same
+    // command vanish rather than fail, which reads identically to a clean repo.
+    const source = "execSync('pnpm add lodash --frozen-lockfile');";
+    expect(
+      installInvocationsIn('fixture.ts', source).filter(({ command }) => !isLockfileInstall(command)),
+    ).toEqual([{ file: 'fixture.ts', command: 'pnpm add lodash --frozen-lockfile' }]);
   });
 });
 
@@ -203,9 +264,11 @@ describe('what the matcher does and does not treat as an invocation', () => {
 
   it('permits further flags alongside --frozen-lockfile', () => {
     const source = "execSync('pnpm install --frozen-lockfile --ignore-scripts');";
-    expect(
-      installInvocationsIn('fixture.ts', source).filter(({ command }) => !isLockfileInstall(command)),
-    ).toEqual([]);
+    const found = installInvocationsIn('fixture.ts', source);
+    // The length assertion first: an empty `found` satisfies the filter below
+    // vacuously, so without it this passes when the matcher stops matching.
+    expect(found).toHaveLength(1);
+    expect(found.filter(({ command }) => !isLockfileInstall(command))).toEqual([]);
   });
 
   // The assertion npm's shape could not need: `npm ci` was lockfile-exact by
@@ -220,13 +283,16 @@ describe('what the matcher does and does not treat as an invocation', () => {
   });
 
   it('does not read a command assembled by interpolation', () => {
-    const source = 'execSync(`pnpm install --frozen-lockfile ${extra}`);';
+    const source = 'execSync(`pnpm install ${extra}`);';
     expect(installInvocationsIn('fixture.ts', source)).toEqual([]);
   });
 
-  // The two below pin blind spots rather than behaviour, which is the point:
-  // the docblock claims them, and a matcher widened to catch either must
-  // update that list in the same commit or turn this file red.
+  // The three below pin blind spots rather than behaviour, which is the point:
+  // the docblock claims them, and a matcher widened to catch any of them must
+  // update that list in the same commit or turn this file red. Their fixtures
+  // are BARE installs deliberately — the hazard is a reconciling install
+  // hiding behind one of these shapes, and a fixture carrying
+  // `--frozen-lockfile` would demonstrate only that a correct install escapes.
   it('does not see a renamed or injected callee', () => {
     const source = ["run('pnpm install');", "installFn('pnpm install');"].join('\n');
     expect(installInvocationsIn('fixture.ts', source)).toEqual([]);
@@ -234,9 +300,14 @@ describe('what the matcher does and does not treat as an invocation', () => {
 
   it('does not see a command whose pnpm is not immediately followed by the subcommand', () => {
     const source = [
-      "execSync('cd packages/x && pnpm install --frozen-lockfile');",
-      "execSync('pnpm --dir packages/x install --frozen-lockfile');",
+      "execSync('cd packages/x && pnpm install');",
+      "execSync('pnpm --dir packages/x install');",
     ].join('\n');
+    expect(installInvocationsIn('fixture.ts', source)).toEqual([]);
+  });
+
+  it('does not see pnpm dlx, which installs nothing the lockfile describes', () => {
+    const source = "execSync('pnpm dlx some-tool --write');";
     expect(installInvocationsIn('fixture.ts', source)).toEqual([]);
   });
 });
