@@ -44,12 +44,13 @@ async function main(): Promise<void> {
     return { registry: result.registry, result: result.port };
   });
 
-  // A worktree is a checkout of committed versions, so `npm ci`: it installs
-  // the lockfile exactly and fails when `package.json` disagrees with it.
-  // Why that matters over `npm install`: `docs/supply-chain.md`.
-  // Pinned by `src/lib/script-install-census.test.ts`.
-  console.log('[worktree:setup] running npm ci...');
-  execSync('npm ci', { stdio: 'inherit' });
+  // A worktree is a checkout of committed versions, so the frozen install:
+  // it installs the lockfile exactly and fails when `package.json` disagrees
+  // with it. Why that matters over a bare `pnpm install` — which resolves,
+  // and which pnpm freezes only when `CI` is set — is in
+  // `docs/supply-chain.md`. Pinned by `src/lib/script-install-census.test.ts`.
+  console.log('[worktree:setup] running pnpm install --frozen-lockfile...');
+  execSync('pnpm install --frozen-lockfile', { stdio: 'inherit' });
 
   const { test, dev } = dbNamesForSlug(dbSlug);
   const envPath = path.resolve(process.cwd(), '.env');
