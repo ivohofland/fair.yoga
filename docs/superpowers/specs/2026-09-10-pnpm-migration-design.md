@@ -97,17 +97,32 @@ spec was written. All four survive the major bump:
 |---|---|---|
 | `strictDepBuilds` defaults true | install `esbuild` with no config at all | `ERR_PNPM_IGNORED_BUILDS`, **exit 1** |
 | `allowBuilds` is a boolean map in `pnpm-workspace.yaml` | the spike's exact file | accepted, `esbuild postinstall` ran, **exit 0** |
-| a mistyped key is surfaced, not enforced | append `minimumReleaseAgeTYPO: 10080` | `[WARN] … not recognized by this version of pnpm and were ignored: "minimumReleaseAgeTYPO" (did you mean "minimumReleaseAge"?)`, **exit 0** |
+| a mistyped key is enforced **when `packageManager` is pinned** | append `minimumReleaseAgeTYPO: 10080` | with the pin: `ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS`, **exit 1**. Without it: `[WARN] … were ignored: "minimumReleaseAgeTYPO" (did you mean "minimumReleaseAge"?)`, **exit 0** |
 | lockfile format | `head -3 pnpm-lock.yaml` | `lockfileVersion: '9.0'` — unchanged, so Dependabot still reads it |
 
-The third row corrects a claim this spec carried in draft. pnpm 12's release
-notes say "a project's `pnpm-workspace.yaml` may no longer carry a setting
-pnpm does not recognize", which reads like a hard gate; the measured
-behaviour is a warning and **exit 0**. So the key names are *surfaced*, not
-tethered — a typo leaves the control off and the install green. That is the
-#533 failure mode (a setting believed on but silently inert) surviving in
-attenuated form, and it is why mutation 1 in §Testing, not the config file's
-existence, is what proves the allowlist is live.
+The third row was measured twice and read wrongly the first time, which is
+worth recording because the second reading is a stronger result. pnpm 12's
+release notes say "a project's `pnpm-workspace.yaml` may no longer carry a
+setting pnpm does not recognize". A first probe saw only a `[WARN]` and exit
+0 and concluded the key names were surfaced but not tethered. That probe had
+no `packageManager` field. **`packageManager` is the switch**: isolated by
+adding it to the same probe and changing nothing else, the identical
+mistyped key goes from `[WARN]`/exit 0 to
+`ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS`/exit 1.
+
+The behaviour is coherent: with a version pin, pnpm knows exactly which
+version is authoritative, so an unrecognised key can only be a typo and is
+safe to hard-error; without one, the key might belong to a pnpm version that
+does recognise it, so warning is the only honest response.
+
+**This repo pins `packageManager`, so its key names ARE tethered** — a typo
+is a failing build, not a silent no-op. So the pin buys two controls, not
+one: the integrity hash on the pnpm binary, and strict validation of the
+settings file. The #533 failure mode — a setting believed on but silently
+inert — is closed for key *names*. It remains open for the file's
+*location*: a setting written into `.npmrc` or `package.json`'s `pnpm` key is
+ignored with no diagnostic at all, which is why mutation 1 in §Testing, not
+the config file's existence, is still what proves the allowlist live.
 
 pnpm 12 also prints the release-age check explicitly
 (`✓ Lockfile passes supply-chain policies (27 entries in 222ms)`), which
@@ -264,11 +279,12 @@ exists to prevent:
   `pnpm approve-builds --all` writes the correct shape.
 - **These settings are read from `pnpm-workspace.yaml` and nowhere else.**
   In `.npmrc` (kebab or camel case) or under `package.json`'s `pnpm` key
-  they are silently ignored. A *mistyped key in the right file* is one step
-  better — pnpm 12 prints a `[WARN]` naming it and suggesting the correct
-  spelling — but still exits 0 with the control off. Neither mistake fails a
-  build, so neither is tethered; both are found by mutation-testing the
-  behaviour instead.
+  they are silently ignored — no warning, no error, control off. A *mistyped
+  key in the right file* is a different matter: because this repo pins
+  `packageManager`, pnpm hard-errors with
+  `ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS` and exit 1. So the key names are
+  tethered and the file's location is not, and it is the location mistake
+  that mutation-testing the behaviour has to catch.
 
 `fsevents` is darwin-only and optional; it is in the list because it is in
 the tree on this machine, and an entry for an absent package is inert.
