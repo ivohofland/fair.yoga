@@ -113,31 +113,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          # No `cache:` key. `cache: 'pnpm'` needs pnpm resolvable when this
-          # step runs, but `corepack enable` must come AFTER it — corepack
-          # installs its shims into the active Node's bin directory. The
-          # store is cached explicitly below instead.
-
-      # `packageManager` in package.json pins the version AND its integrity
-      # hash; corepack verifies the hash before running pnpm.
-      - name: Enable pnpm
-        run: |
-          corepack enable
-          echo "PNPM_STORE=$(pnpm store path)" >> "$GITHUB_ENV"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v6
-        with:
-          path: ${{ env.PNPM_STORE }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-${{ runner.os }}-
-
-      - name: Install dependencies # postinstall runs prisma generate
-        run: pnpm install --frozen-lockfile
+      # Node, the corepack-pinned pnpm, the store cache and the frozen install.
+      # The steps and the reasoning for each live in .github/actions/setup-pnpm.
+      - uses: ./.github/actions/setup-pnpm
 
       - name: Run migrations
         run: pnpm exec prisma migrate deploy

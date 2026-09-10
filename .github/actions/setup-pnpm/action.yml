@@ -1,0 +1,88 @@
+name: Set up Node and pnpm
+description: >-
+  Installs Node, bootstraps the pinned pnpm through corepack, caches the pnpm
+  store and installs from the lockfile. Every job in this repo that installs
+  anything starts here.
+
+# WHY THIS IS A COMPOSITE ACTION AND NOT SIX COPIES. `ci.yml` is otherwise
+# deliberately explicit — a reader should be able to see what a job does
+# without opening another file. This block is the exception because it is a
+# supply-chain gate repeated in six jobs, and a gate is only as strong as its
+# weakest copy: a fix applied to five of six leaves the sixth job setting the
+# effective strength, and nothing reports the difference. Six copies of three
+# corrections is eighteen edits that have to stay in lockstep; this is one.
+# Local, not third-party, deliberately: #535 exists to commit-pin the actions
+# already here, and adding another unpinned third-party action to a
+# supply-chain PR would be self-defeating.
+
+inputs:
+  node-version:
+    description: >-
+      Node major to install. Corepack ships with Node from 14.19.0 up to (but
+      not including) 25.0.0; above that range this action needs an explicit
+      `npm i -g corepack` first.
+    required: false
+    default: '22'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+        # No `cache:` key. `cache: 'pnpm'` needs pnpm resolvable when this
+        # step runs, but `corepack enable` must come AFTER it — corepack
+        # installs its shims into the active Node's bin directory. The
+        # store is cached explicitly below instead.
+
+    # `packageManager` in package.json pins pnpm's version AND its integrity
+    # hash. Corepack verifies that hash when it first downloads the version
+    # into a given `COREPACK_HOME`, and reuses a cache already holding that
+    # version without re-checking it. A runner's `COREPACK_HOME` is always
+    # cold and a Docker build stage always starts empty, so the hash is a real
+    # gate in both — on a laptop after its first install it is not.
+    # `docs/supply-chain.md` measures both paths, and lists the environment
+    # variables that switch corepack's checks off entirely.
+    #
+    # Corepack is still why this repo bootstraps pnpm this way rather than
+    # with `pnpm/action-setup` or `npm i -g pnpm`: neither of those verifies
+    # anything at all, on any path.
+    #
+    # WHICH pnpm runs is what decides whether `pnpm-workspace.yaml` means
+    # anything. Its settings are read by the pinned pnpm; corepack's own
+    # fallback default is a different major, and under that one a
+    # `--frozen-lockfile` install performs no lockfile policy verification at
+    # all and exits 0 — a fully green run with every setting inert. So the
+    # version is asserted here rather than assumed: a standalone or global
+    # pnpm ahead of the corepack shim on PATH, or `COREPACK_ENABLE_PROJECT_SPEC=0`,
+    # reaches this state without anyone editing a file.
+    #
+    # Each `$(…)` is assigned on its own line rather than written straight
+    # into `$GITHUB_ENV`. `echo "X=$(cmd)" >> f` takes *echo*'s exit status,
+    # so a failed `cmd` leaves the step GREEN with an empty variable — and the
+    # first real pnpm invocation, therefore the entire corepack download and
+    # hash check, happens inside such a substitution. A standalone assignment
+    # does propagate the substitution's status under `set -e`, which is what
+    # `shell: bash` runs with.
+    - name: Enable pnpm
+      shell: bash
+      run: |
+        corepack enable
+        WANT="$(node -p "require('./package.json').packageManager.split('+')[0].split('@')[1]")"
+        GOT="$(pnpm --version)"
+        [ "$WANT" = "$GOT" ] || { echo "::error::pnpm $GOT is running but package.json pins $WANT — pnpm-workspace.yaml's policies may be inert"; exit 1; }
+        PNPM_STORE="$(pnpm store path)"
+        [ -n "$PNPM_STORE" ] || { echo "::error::pnpm store path produced nothing — the corepack/pnpm bootstrap failed"; exit 1; }
+        echo "PNPM_STORE=$PNPM_STORE" >> "$GITHUB_ENV"
+
+    - name: Cache pnpm store
+      uses: actions/cache@v6
+      with:
+        path: ${{ env.PNPM_STORE }}
+        key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-${{ runner.os }}-
+
+    - name: Install dependencies # postinstall runs prisma generate
+      shell: bash
+      run: pnpm install --frozen-lockfile

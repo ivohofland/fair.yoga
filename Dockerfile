@@ -9,12 +9,14 @@ FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY prisma ./prisma
-# corepack reads `packageManager` from package.json and VERIFIES the pinned
-# integrity hash before running pnpm — the reason this repo bootstraps here
-# rather than with `npm i -g pnpm`. Corepack ships with Node "from 14.19.0
-# up to (but not including) 25.0.0"; node:22-alpine and node:24-alpine both
-# have it. Bumping this base image past 24 fails loudly here with
-# `corepack: not found`, and the fix is `RUN npm i -g corepack` above.
+# corepack reads `packageManager` from package.json and verifies the pinned
+# integrity hash when it first downloads that pnpm into a `COREPACK_HOME`,
+# reusing a cache that already holds the version without re-checking it. A
+# build stage starts with an empty one, so the hash is a real gate here.
+# That, plus `npm i -g pnpm` verifying nothing on any path, is why this repo
+# bootstraps pnpm this way; `docs/supply-chain.md` measures both paths.
+# Corepack ships with Node "from 14.19.0 up to (but not including) 25.0.0",
+# so a base image outside that range needs `RUN npm i -g corepack` first.
 RUN corepack enable
 RUN pnpm install --frozen-lockfile
 
