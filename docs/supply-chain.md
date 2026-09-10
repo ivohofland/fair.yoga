@@ -64,7 +64,8 @@ instead of a missing-binary one.
 
 The cost is that every `pnpm run`/`pnpm exec` now demands a `node_modules`
 consistent with `package.json`. Nothing in this repo pays it: every CI job
-installs before its first `pnpm run`/`pnpm exec` (see the table below), the
+installs before its first `pnpm run`/`pnpm exec` — *Where this repo
+installs* below derives that ordering with a command — the
 `Enable pnpm` step that precedes the install runs only `pnpm store path`,
 which is neither and stays exit 0, and `Dockerfile`'s `build` and `migrate`
 stages are `FROM deps`, which installed. What does pay it is a working tree
@@ -96,18 +97,36 @@ unanchored version first, back when the command it protected was `npm`'s.
 Checking a filter against today's output only shows it keeps what is already
 there; feed it a line it must **not** drop.
 
-Measured 2026-09-10, the command returns **11 lines — 10 invocations, plus the
+Measured 2026-09-10, the command returns **12 lines — 11 invocations, plus the
 `console.log` in `scripts/worktree-setup.ts` that names the call on the line
 below it**:
 
 | Where | Invocations | Notes |
 |---|---|---|
-| `.github/workflows/ci.yml` | 5 | one each in `checks`, `test-components`, `test-unit`; `test-integration` has two — one before its integration-test phase, one before its end-to-end phase; `docker-build` checks out without installing, and the `test` aggregate gate does neither |
+| `.github/workflows/ci.yml` | 5 | **one per job that installs at all** — `checks`, `test-components`, `test-unit`, `test-integration`, `test-e2e`. `docker-build` checks out without installing, and the `test` aggregate gate does neither |
 | `.github/workflows/e2e-flake-repro.yml` | 1 | manual-dispatch only |
 | `Dockerfile` | 1 | in the `deps` stage (lines 8-19); `build` and `migrate` are `FROM deps` and inherit the layer rather than re-running it |
 | `README.md` | 1 | step 1 of local setup |
-| `AGENTS.md` | 1 | quick-start block |
+| `AGENTS.md` | 2 | the quick-start block, and the worktree probe recipe under *Mutation testing protocol* |
 | `scripts/worktree-setup.ts` | 1 | the only one in imperative code, and the only one a test enforces |
+
+Which job owns which install is a separate claim from how many there are, and
+the census line above cannot answer it: an install carries no job name, only
+a line number a hundred lines below the `jobs:` key it belongs to. This does,
+and it answers the ordering question in the same pass:
+
+```bash
+awk '/^  [a-z][a-z0-9-]*:$/ { job = $1; sub(/:$/, "", job) }
+     /pnpm install/         { print FILENAME ":" FNR "\tINSTALL\t" job }
+     /pnpm (run|exec|dlx) / { print FILENAME ":" FNR "\trun/exec\t" job }' \
+  .github/workflows/ci.yml .github/workflows/e2e-flake-repro.yml
+```
+
+Measured 2026-09-10: `ci.yml` lines 71, 139, 202, 302, 426, one apiece in
+`checks`, `test-components`, `test-unit`, `test-integration`, `test-e2e`, and
+`e2e-flake-repro.yml:140` in `repro` — and in every one of the six jobs the
+`INSTALL` line comes before that job's first `run/exec` line. That ordering
+is what makes `verifyDepsBeforeRun: error` (see *The rule*) cost CI nothing.
 
 **`README.md` and `AGENTS.md` are in this table now.** #540 converted both to
 `pnpm install --frozen-lockfile`, so the grep above finds them the same way
@@ -130,12 +149,16 @@ Either half missing is a violation — a bare `pnpm install` fails it exactly
 as a `pnpm add` would.
 
 It parses each file and reads the command out of `child_process`-shaped
-calls, including the argv form (`spawnSync('pnpm', ['install',
-'--frozen-lockfile'])`, which `worktree/dev-server.ts` uses for `pnpm exec`).
-Its own docblock states what it cannot see — a renamed or injected callee, an
-interpolated command, a command whose `pnpm` is not immediately followed by
-the subcommand, anything inside a shell script, and any install a dependency
-performs itself.
+calls, including the argv form — `spawnSync('pnpm', ['install',
+'--frozen-lockfile'])`, where the subcommand sits outside the first argument.
+Matching is by callee **name**, though, and that bounds the coverage: the one
+argv-shaped call this repo actually has, in
+`src/lib/worktree/dev-server.ts:17`, is invisible to the guard, because its
+callee is an injected `spawnFn` parameter rather than a name on the list. The
+test's own docblock says so and is the authority on the rest of the blind
+spots — a renamed or injected callee, an interpolated command, a command whose
+`pnpm` is not immediately followed by the subcommand, anything inside a shell
+script, and any install a dependency performs itself.
 
 Nothing enforces the declarative paths (`Dockerfile`, the workflows) or the
 documentation — only a reviewer reads them. They were correct when measured;
@@ -172,8 +195,9 @@ contributor's own machine.
 **`strictDepBuilds` (default `true`) + `allowBuilds`** is what stops that.
 Any dependency that reaches this repo with a build/install script and no
 entry in `allowBuilds` **errors the install** — on a laptop, not only in CI.
-`allowBuilds` currently grants six packages: `@prisma/client`,
-`@prisma/engines`, `esbuild`, `fsevents`, `prisma`, `unrs-resolver`.
+`allowBuilds` currently grants six packages — five of them live today, see
+below: `@prisma/client`, `@prisma/engines`, `esbuild`, `fsevents`, `prisma`,
+`unrs-resolver`.
 
 Re-derive the set pnpm actually requires — not the same as reading the
 allowlist back to itself — with a clean install against an emptied map
@@ -240,7 +264,34 @@ near-miss (`minimumReleaseAg`) and a nonsense key
 (`totallyMadeUpSetting`) make pnpm refuse to run at all —
 `ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS`, naming the key and, for the
 near-miss, suggesting the correct spelling — exit 1, before any install
-step runs. A mistyped **package name inside `allowBuilds`** (`esbulid` for
+step runs.
+
+**`packageManager` is what makes that a hard error rather than a `[WARN]`**,
+and pnpm says so itself in the `help:` line it prints — *"The project pins
+pnpm to a version the running pnpm satisfies, so these settings cannot be
+meant for a different pnpm version."* Without a pin the key might belong to
+some other pnpm version, and warning is the only honest answer. Isolate it on
+a clean tree (`git archive HEAD | tar -x -C "$T"`), changing that one field
+and nothing else:
+
+```bash
+printf '\nminimumReleaseAgeTYPO: 10080\n' >> pnpm-workspace.yaml
+pnpm install --frozen-lockfile; echo "pinned exit=$?"
+node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));
+  delete p.packageManager; fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
+corepack pnpm@12.3.4 install --frozen-lockfile; echo "unpinned exit=$?"
+```
+
+Measured 2026-09-10: pinned, `ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS`,
+**exit 1**; unpinned, `[WARN] … were ignored: "minimumReleaseAgeTYPO" (did
+you mean "minimumReleaseAge"?)`, **exit 0**. The second command names its
+pnpm version on purpose — a bare `pnpm` there runs a *different* pnpm
+(corepack falls back to its own default, 10.33.2 on this machine), which
+would confound the version with the pin and prove nothing. This repo pins
+`packageManager`, so its key names are tethered: a typo is a failing build,
+not a silent no-op.
+
+A mistyped **package name inside `allowBuilds`** (`esbulid` for
 `esbuild`) gets no such diagnostic — pnpm doesn't recognise it as an unused
 key, it just never grants the real package permission, which still fails
 closed (`ERR_PNPM_IGNORED_BUILDS` naming `esbuild`), just without a hint that
