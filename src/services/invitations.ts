@@ -863,7 +863,7 @@ class NotPendingError extends Error {}
  * for a blocked pair — it reads `TeacherBlock` once, before the
  * transaction opens, and a block `unlinkTeacher` commits after that read
  * is invisible to it. `unlinkTeacher`'s own Invitation write is scoped to
- * `delivered: true` (#412), so on a `delivered: false` row it can commit a
+ * `delivered: true` (#502), so on a `delivered: false` row it can commit a
  * block while leaving this row's status untouched — pending, if nobody has
  * answered it yet, or `accepted`, if a prior call already had. Either way
  * the CAS below (or its idempotent re-read, for the `accepted` case) would
@@ -1014,7 +1014,7 @@ export async function acceptInvitation(
     // The outside pre-check reads TeacherBlock before this transaction opens,
     // and a block `unlinkTeacher` commits after that read is invisible to it —
     // invisible to the CAS above as well, because `unlinkTeacher`'s own
-    // Invitation write is scoped to `delivered: true` (#412) and so commits a
+    // Invitation write is scoped to `delivered: true` (#502) and so commits a
     // block on a `delivered: false` row while leaving that row's status
     // untouched (#537).
     //

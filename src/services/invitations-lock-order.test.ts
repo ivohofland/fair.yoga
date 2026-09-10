@@ -1512,7 +1512,7 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
    * The race #537 measured: `acceptInvitation`'s outside pre-check reads
    * `TeacherBlock` before its transaction opens, sees nothing, and proceeds
    * — then `unlinkTeacher` commits, in the gap, a block AND deletes the
-   * roster link, but (scoped to `delivered: true`, #412) leaves this
+   * roster link, but (scoped to `delivered: true`, #502) leaves this
    * `pending` invitation's status untouched. Without an in-transaction
    * re-check, the roster-link write (`linkTeacherStudent`, now a genuine
    * `INSERT` since unlink just deleted the row) and the CAS after it both go

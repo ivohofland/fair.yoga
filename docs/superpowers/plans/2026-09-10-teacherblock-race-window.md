@@ -105,7 +105,7 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
    * The race #537 measured: the outside pre-check reads `TeacherBlock`
    * before this transaction opens, sees nothing, and proceeds — then
    * `unlinkTeacher` commits, in the gap, a block AND deletes the roster
-   * link, but (scoped to `delivered: true`, #412) leaves this `pending`
+   * link, but (scoped to `delivered: true`, #502) leaves this `pending`
    * invitation's status untouched. Without an in-transaction re-check, the
    * roster-link write (`linkTeacherStudent`, now a genuine `INSERT` since
    * unlink just deleted the row) and the CAS below both go on to succeed
@@ -305,7 +305,7 @@ with:
  * for a blocked pair — it reads `TeacherBlock` once, before the
  * transaction opens, and a block `unlinkTeacher` commits after that read
  * is invisible to it. `unlinkTeacher`'s own Invitation write is scoped to
- * `delivered: true` (#412), so on a `delivered: false` row it can commit a
+ * `delivered: true` (#502), so on a `delivered: false` row it can commit a
  * block while leaving this row's status untouched — pending, if nobody has
  * answered it yet, or `accepted`, if a prior call already had. Either way
  * the CAS below (or its idempotent re-read, for the `accepted` case) would
