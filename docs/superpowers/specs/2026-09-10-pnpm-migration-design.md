@@ -81,6 +81,19 @@ command (`execSync(\`npm ${sub}\`)`) is invisible to any grep. `package-lock.jso
 is excluded because it is deleted by this migration; it contains `"npm": ">=6"`
 engine fields that are not call sites.
 
+**The command above is valid only on a PRE-migration tree, and the figure was
+measured there.** `pnpm` contains `npm` as a substring, so after the migration
+every `pnpm run` matches the `npm (run|…)` alternation and the same command
+returns a large, meaningless number. Confirmed harmless for the figure quoted
+here: at `a6758ed` the repo contained zero `pnpm <subcommand>` occurrences
+outside `docs/superpowers/`, so nothing was double-counted. To re-run it after
+the migration, anchor the alternation against the preceding character:
+
+```bash
+git ls-files | grep -vE '^docs/superpowers/' \
+  | xargs grep -lPE "(?<!p)npm (run|ci|install|test|exec)|(?<!p)npx |['\"](npm|npx)['\"]"
+```
+
 Inherited from the spike without re-measurement, because re-measuring means
 re-running it: the standalone-build result, the full-suite and Playwright
 parity numbers, the Docker image results, and the disk measurements
