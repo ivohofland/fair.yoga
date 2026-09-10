@@ -23,7 +23,7 @@ It cannot be, and the asymmetry is structural, not incidental:
 
 - `unlinkTeacher` writes `TeacherBlock` **unconditionally** — regardless of the
   paired `Invitation` row's status — and its own `Invitation` write is scoped to
-  `delivered: true` (#412). On a `delivered: false` row, `unlinkTeacher` commits a
+  `delivered: true` (#502). On a `delivered: false` row, `unlinkTeacher` commits a
   block while leaving that row's `status` exactly as it was. That decoupling is what
   makes the race possible: a block can exist while the row still reads `pending` (or
   `accepted`, from an earlier successful accept), because the writer that landed the
@@ -84,6 +84,24 @@ write, before either success return (the CAS's own `count > 0` path, and the
 `count === 0` + idempotent-re-read path) — one statement closes both of the branches
 named above, because both currently return success further down from this exact
 point.
+
+> **Where it landed is not where this section puts it.** PR review found this
+> position still leaks: a block committing between the re-check and the CAS is
+> missed, and the CAS then flips the row to `accepted` and answers `{ ok: true }` —
+> measured, and now pinned by `'a block committed between the roster-link write and
+> the CAS is not missed'` (`invitations-lock-order.test.ts`). It shipped instead as
+> the LAST statement before the callback's `return true`, after the
+> `updated.count === 0` branch closes — still before either success return, just
+> later than this section says. And it **narrows** that window rather than
+> **closing** it: a plain non-locking `SELECT` under READ COMMITTED can only ever
+> report "no block as of now", so a block committing between it and the
+> transaction's own commit is still missed, at any position — this section's
+> "closes" above is the claim to revise if you're reading this alongside the code.
+> Two tests beyond the two this document's Acceptance section names shipped with
+> it, discriminating "inside the transaction" and "before the CAS specifically" —
+> neither of the two originally planned proves the re-check runs inside the
+> transaction at all, since both stage their race on the outside pre-check, fully
+> resolved before `$transaction` opens.
 
 Reusing `NotPendingError` rather than a new class: the disclosure reasoning
 `acceptInvitation`'s docblock already gives for mapping every mid-transaction give-up
