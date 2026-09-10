@@ -865,13 +865,16 @@ class NotPendingError extends Error {}
  * that is, by then, blocked. Closing that window is the in-transaction
  * re-check's job (#537), not this guard's — see it in the `$transaction`
  * callback below, and `NotPendingError`'s own docblock. Delete THIS guard
- * (the one below, not the in-transaction one) and every case in
- * `invitations.decline.test.ts` still passes — the in-transaction re-check
- * now refuses each of them independently. What changes is that a
- * still-pending, still-blocked row gets the less conservative `NOT_PENDING`
- * this function otherwise avoids for a row nobody has answered (see the
- * paragraph above), and this function opens, then rolls back, a transaction
- * it would otherwise have skipped. `declineInvitation` cannot reach this
+ * (the one below, not the in-transaction one) and the
+ * in-transaction re-check still refuses every one of the three cases
+ * `invitations.decline.test.ts`'s `'acceptInvitation, with a block
+ * standing'` describe exercises — a `pending`, `declined`, or `accepted`
+ * row on a blocked pair all still fail to leave a link. What changes is
+ * the answer, not the outcome: the `pending` case's `NOT_FOUND` becomes
+ * `NOT_PENDING`, because only this guard tells a row nobody has answered
+ * apart from one the CAS below would already refuse (see the paragraph
+ * above) — and this function opens, then rolls back, a transaction it
+ * would otherwise have skipped. `declineInvitation` cannot reach this
  * hole at all: its own `TeacherBlock` write is gated behind its own CAS
  * moving this same row to `declined` in the same transaction, so a block it
  * writes is never visible without that status change alongside it — which
