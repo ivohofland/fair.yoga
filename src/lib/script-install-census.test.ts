@@ -1,12 +1,18 @@
 /**
  * Every install this repo's own code runs installs from the lockfile.
  *
- * `npm ci` installs `package-lock.json` exactly and fails when `package.json`
- * disagrees with it. `npm install` reconciles instead: it may resolve a range
- * afresh against the registry, and it may rewrite the lockfile. Code that
- * bootstraps a checkout wants the first behaviour — the versions someone
- * committed, or a loud failure — and this file is what makes that a failing
- * build rather than a review note.
+ * `pnpm install --frozen-lockfile` installs the lockfile exactly and fails
+ * when `package.json` disagrees with it. A bare `pnpm install` reconciles
+ * instead: it may resolve a range afresh against the registry, and it may
+ * rewrite the lockfile. Code that bootstraps a checkout wants the first
+ * behaviour — the versions someone committed, or a loud failure — and this
+ * file is what makes that a failing build rather than a review note.
+ *
+ * THE FLAG IS DEMANDED EXPLICITLY even though pnpm turns it on by default
+ * when `CI` is set. Leaning on that default would leave one command frozen
+ * on a runner and reconciling on a laptop — the same class of failure as a
+ * setting that is accepted and quietly not applied, which is what this
+ * repo's supply-chain rule exists to prevent (docs/supply-chain.md).
  *
  * WHAT IT READS. Call expressions under `scripts/` and `src/lib/`, parsed with
  * `ts.createSourceFile` as the sibling censuses do. A call counts when its
@@ -16,22 +22,23 @@
  * dropped rather than disqualifying the call, so a part-computed command is
  * judged on the part that can be read. That second half matters: `spawnSync`,
  * `spawn`, `execFile` and `execFileSync` take the program and its arguments
- * separately, so `spawnSync('npm', ['install'])` carries its subcommand
- * outside the first argument. Reading only the first would leave those four
- * matchable only in their `shell: true` form, where the whole command line is
- * the first argument after all. The argv shape is this repo's own —
- * `worktree/dev-server.ts` uses it for `npx` — though that particular call is
- * doubly invisible here, its callee both renamed and injected.
+ * separately, so `spawnSync('pnpm', ['install', '--frozen-lockfile'])` carries
+ * its subcommand outside the first argument. Reading only the first would
+ * leave those four matchable only in their `shell: true` form, where the
+ * whole command line is the first argument after all. The argv shape is this
+ * repo's own — `worktree/dev-server.ts` uses it for `npx` — though that
+ * particular call is doubly invisible here, its callee both renamed and
+ * injected.
  *
  * WHAT IT CANNOT SEE, measured rather than assumed:
  *   - a renamed or injected callee (`import { execSync as run }`, or an
  *     `execFn` parameter) — matching is by name, and nothing resolves the
  *     binding back to `child_process`, so a same-named helper counts too;
  *   - a command assembled by interpolation or held in a variable;
- *   - a command whose `npm` is not immediately followed by the subcommand,
- *     whether behind another command (`cd x && npm install`) or behind a
- *     global flag (`npm --prefix x install`) — the pattern is anchored and
- *     reads only the token after `npm`;
+ *   - a command whose `pnpm` is not immediately followed by the subcommand,
+ *     whether behind another command (`cd x && pnpm install`) or behind a
+ *     global flag (`pnpm --dir x install`) — the pattern is anchored and
+ *     reads only the token after `pnpm`;
  *   - anything in a shell script, and any install a dependency performs itself.
  *
  * WHY THESE TWO DIRECTORIES. Imperative bootstrap code lives in both:
@@ -68,17 +75,32 @@ const WATCHED_DIRS = ['scripts', 'src/lib'] as const;
 const SOURCE_EXTENSIONS = ['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs'] as const;
 
 /**
- * The install-family spellings this guard recognises — NOT npm's full alias
- * set, which also has `in`, `ins`, `inst`, `isntall`, `upgrade` and a dozen
- * more. npm's namespace has no type to tether a roster against, so this is a
+ * The install-family spellings this guard recognises — NOT pnpm's full alias
+ * set. pnpm's namespace has no type to tether a roster against, so this is a
  * floor rather than a census: it covers what a contributor plausibly writes.
  */
-const INSTALL_FAMILY = ['ci', 'install', 'add', 'update', 'i', 'up'] as const;
+const INSTALL_FAMILY = ['install', 'i', 'add', 'update', 'up', 'import'] as const;
 
-const INSTALL_COMMAND = new RegExp(`^npm\\s+(?:${INSTALL_FAMILY.join('|')})\\b`);
+const INSTALL_COMMAND = new RegExp(`^pnpm\\s+(?:${INSTALL_FAMILY.join('|')})\\b`);
 
-/** Flags are permitted — the rule is "installs from the lockfile", not an exact string. */
-const LOCKFILE_INSTALL = /^npm\s+ci\b/;
+/**
+ * pnpm's lockfile-exact install is `pnpm install --frozen-lockfile` — a
+ * FLAG, not a subcommand, so unlike `npm ci` no anchored prefix can express
+ * it. Both halves are required: the install family at the front, and the
+ * flag somewhere after it.
+ *
+ * THE FLAG IS DEMANDED EXPLICITLY even though pnpm turns it on by default
+ * when `CI` is set. Leaning on that default would leave one command frozen
+ * on a runner and reconciling on a laptop — the same class of failure as a
+ * setting that is accepted and quietly not applied, which is what this
+ * repo's supply-chain rule exists to prevent (docs/supply-chain.md).
+ */
+function isLockfileInstall(command: string): boolean {
+  return (
+    /^pnpm\s+(?:install|i)\b/.test(command) &&
+    /(?:^|\s)--frozen-lockfile(?=\s|$)/.test(command)
+  );
+}
 
 const EXEC_CALLEES = new Set(['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync']);
 
@@ -152,10 +174,10 @@ describe('every install this repo runs installs from the lockfile', () => {
     });
   });
 
-  it('runs npm ci, never a command that resolves', () => {
+  it('runs pnpm install --frozen-lockfile, never a command that resolves', () => {
     // Reports the offending invocations rather than a count, so a failure
     // names the file and the command it found.
-    expect(installInvocations().filter(({ command }) => !LOCKFILE_INSTALL.test(command))).toEqual([]);
+    expect(installInvocations().filter(({ command }) => !isLockfileInstall(command))).toEqual([]);
   });
 });
 
@@ -163,28 +185,42 @@ describe('what the matcher does and does not treat as an invocation', () => {
   // These pin the properties the docblock claims. Without them the claims are
   // prose, and the loosening that breaks one of them passes the suite.
   it('reads the argv form, where the subcommand is not the first argument', () => {
-    const source = "spawnSync('npm', ['install'], { stdio: 'inherit' });";
+    const source = "spawnSync('pnpm', ['install', '--frozen-lockfile'], { stdio: 'inherit' });";
     expect(installInvocationsIn('fixture.ts', source)).toEqual([
-      { file: 'fixture.ts', command: 'npm install' },
+      { file: 'fixture.ts', command: 'pnpm install --frozen-lockfile' },
     ]);
   });
 
   it('does not treat prose quoting a call as an invocation', () => {
-    const source = ["// Never write execSync('npm install') here.", "execSync('npm ci');"].join('\n');
+    const source = [
+      "// Never write execSync('pnpm install') here.",
+      "execSync('pnpm install --frozen-lockfile');",
+    ].join('\n');
     expect(installInvocationsIn('fixture.ts', source)).toEqual([
-      { file: 'fixture.ts', command: 'npm ci' },
+      { file: 'fixture.ts', command: 'pnpm install --frozen-lockfile' },
     ]);
   });
 
-  it('permits flags on npm ci', () => {
-    const source = "execSync('npm ci --ignore-scripts');";
-    expect(installInvocationsIn('fixture.ts', source).filter(({ command }) => !LOCKFILE_INSTALL.test(command))).toEqual(
-      [],
-    );
+  it('permits further flags alongside --frozen-lockfile', () => {
+    const source = "execSync('pnpm install --frozen-lockfile --ignore-scripts');";
+    expect(
+      installInvocationsIn('fixture.ts', source).filter(({ command }) => !isLockfileInstall(command)),
+    ).toEqual([]);
+  });
+
+  // The assertion npm's shape could not need: `npm ci` was lockfile-exact by
+  // its own name, so there was nothing to omit. A bare `pnpm install`
+  // resolves, and is frozen only by an environment variable this repo does
+  // not control on a contributor's machine.
+  it('treats a bare pnpm install as a violation', () => {
+    const source = "execSync('pnpm install');";
+    expect(
+      installInvocationsIn('fixture.ts', source).filter(({ command }) => !isLockfileInstall(command)),
+    ).toEqual([{ file: 'fixture.ts', command: 'pnpm install' }]);
   });
 
   it('does not read a command assembled by interpolation', () => {
-    const source = 'execSync(`npm install ${extra}`);';
+    const source = 'execSync(`pnpm install --frozen-lockfile ${extra}`);';
     expect(installInvocationsIn('fixture.ts', source)).toEqual([]);
   });
 
@@ -192,14 +228,14 @@ describe('what the matcher does and does not treat as an invocation', () => {
   // the docblock claims them, and a matcher widened to catch either must
   // update that list in the same commit or turn this file red.
   it('does not see a renamed or injected callee', () => {
-    const source = ["run('npm install');", "installFn('npm install');"].join('\n');
+    const source = ["run('pnpm install');", "installFn('pnpm install');"].join('\n');
     expect(installInvocationsIn('fixture.ts', source)).toEqual([]);
   });
 
-  it('does not see a command whose npm is not immediately followed by the subcommand', () => {
+  it('does not see a command whose pnpm is not immediately followed by the subcommand', () => {
     const source = [
-      "execSync('cd packages/x && npm install');",
-      "execSync('npm --prefix packages/x install');",
+      "execSync('cd packages/x && pnpm install --frozen-lockfile');",
+      "execSync('pnpm --dir packages/x install --frozen-lockfile');",
     ].join('\n');
     expect(installInvocationsIn('fixture.ts', source)).toEqual([]);
   });
