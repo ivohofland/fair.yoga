@@ -477,7 +477,13 @@ test.describe('Teacher journey', () => {
     await expect(page.getByRole('heading', { name: 'Not charged' })).toBeVisible();
 
     await page.getByRole('button', { name: /Mark unpaid — Walkin g\./ }).click();
+    // Wait for the POST, then reload (see the previous test): the row's
+    // "Updating..." state clears only via the refresh the router can drop.
+    const unpaid = page.waitForResponse(
+      (resp) => resp.url().includes('/unpaid') && resp.ok(),
+    );
     await page.getByRole('button', { name: /Confirm unpaid — Walkin g\./ }).click();
+    await unpaid;
     await page.reload();
     await expect(page.getByRole('heading', { name: 'Not charged' })).toBeHidden();
   });
