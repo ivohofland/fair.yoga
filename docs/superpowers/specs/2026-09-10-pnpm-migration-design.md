@@ -62,6 +62,21 @@ so the delta is auditable: `157 + 5` (`cache: 'npm'` in `ci.yml`) `+ 1`
 `+ 2` (the census test's docblock and one fixture) `+ 1 + 1`
 (the two new files) `= 169`.
 
+**And 169 is itself pattern-dependent — report the count with its pattern or
+do not report it.** The widened pattern above still omits the rest of npm's
+install family (`i`, `add`, `up`, `update`). Adding them finds two more, both
+in `docs/supply-chain.md`: `npm update nanoid` and
+`npm update baseline-browser-mapping`. A pattern covering the whole family
+returns **36 files / 173 occurrences** at the same commit.
+
+So three patterns give **157 / 169 / 173** on one unchanged tree. The
+**file count is the stable figure** — 34 under the issue's pattern, then 36
+under both widenings, because every further occurrence found was in a file
+already counted. That is the number this migration works from, and the
+occurrence count is quoted only alongside the pattern that produced it.
+Nothing was missed in the *work*: `docs/supply-chain.md` was rewritten whole,
+so both `npm update` lines are already `pnpm update`.
+
 The two files #540's command misses are **both executable**:
 
 - `src/lib/worktree/dev-server.ts:17` — `spawnFn('npx', ['next', 'dev',
