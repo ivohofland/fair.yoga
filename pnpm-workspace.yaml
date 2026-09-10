@@ -1,0 +1,23 @@
+# This repo's supply-chain policy. pnpm reads these settings HERE AND
+# NOWHERE ELSE: in `.npmrc` (kebab or camel case) or under package.json's
+# `pnpm` key they are silently ignored. A mistyped key in this file is one
+# step better — pnpm 12 prints a [WARN] naming it — but still exits 0 with
+# the control off, so neither mistake fails a build.
+#
+# Rationale, the measured behaviour of both settings, and the mutation tests
+# that prove them live: docs/supply-chain.md.
+
+# Seven days, in minutes. Verified at lockfile-check time, not download time.
+minimumReleaseAge: 10080
+
+# Dependencies permitted to run install scripts. `strictDepBuilds` defaults
+# to true, so anything reaching this repo with a build script and no entry
+# here ERRORS the install — on a contributor's laptop, not only in CI.
+# Re-derive the set with the command in docs/supply-chain.md.
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  esbuild: true
+  fsevents: true
+  prisma: true
+  unrs-resolver: true
