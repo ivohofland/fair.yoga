@@ -5,6 +5,7 @@
 ```bash
 docker compose up -d                     # PostgreSQL on :5432
 cp .env.example .env                     # required env vars (DATABASE_URL, PASSKEY_*, etc.)
+corepack enable                          # pnpm, via Corepack (ships with Node.js) — once per machine
 pnpm install --frozen-lockfile           # postinstall runs `prisma generate`
 pnpm exec prisma migrate dev             # apply migrations to dev DB
 EMAIL_DRY_RUN=1 pnpm run dev             # start on :3000; dry-run logs magic links to stdout
@@ -102,12 +103,12 @@ In-process job scheduler starts with the server. Set `CRON_SCHEDULER="off"` to d
 
 "A guard that cannot fail certifies nothing." When executing mutation probes (breaking a guard to watch tests go red, then restoring) or running concurrent review agents:
 
-- **Parallel agents must use isolated worktrees**: Mutating agents sharing a checkout cause false greens and false reds (#178, #282). Use git worktrees or branched agent workspaces with symlinked `node_modules`.
+- **Parallel agents must use isolated worktrees**: Mutating agents sharing a checkout cause false greens and false reds (#178, #282). Use git worktrees or branched agent workspaces, each with its own `node_modules`.
 - **Worktree probe recipe**:
   ```bash
   WT_DIR="/tmp/mutation-probe-$$"
   git worktree add -f "$WT_DIR" HEAD
-  ln -s "$(pwd)/node_modules" "$WT_DIR/node_modules"
+  (cd "$WT_DIR" && pnpm install --frozen-lockfile)   # ~7s on a warm store
   (
     cd "$WT_DIR"
     # <apply mutation to target file>
@@ -116,6 +117,7 @@ In-process job scheduler starts with the server. Set `CRON_SCHEDULER="off"` to d
   ) || true
   git worktree remove --force "$WT_DIR"
   ```
+  A symlinked `node_modules` is refused, not shared: `pnpm exec` in such a worktree exits 1 with `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN`. `docs/mutation-testing.md` §3 has the mechanism and the timings.
 - **Single-agent runs**: Safe in-place because no background non-agent writers exist. Always verify `git diff` before measuring and use `git restore <file>` immediately after measuring.
 - Full details & empirical findings: `docs/mutation-testing.md`.
 
