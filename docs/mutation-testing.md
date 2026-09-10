@@ -18,6 +18,9 @@ The primary method used to prove that a guard, filter, or constraint actually pr
 
 ## 2. Empirical Research Findings (#178)
 
+*A dated record, measured under npm in 2026-08. Q2's `node_modules`
+mechanics no longer hold under pnpm — §3 is the live protocol.*
+
 ### Q1 — Is there a non-agent background writer?
 **Verdict: No.** Extensive empirical investigation across single-agent and multi-agent runs found zero evidence of background daemons, Next.js dev server watchers, or editor auto-save altering tracked source files unexpectedly. All observed file changes and phantom revert notices were entirely explained by concurrent agents sharing a single working tree.
 
@@ -44,8 +47,8 @@ To measure a mutation probe without touching the primary checkout:
 WT_DIR="/tmp/mutation-probe-$$"
 git worktree add -f "$WT_DIR" HEAD
 
-# 2. Symlink node_modules from the primary checkout (instant, 0 install overhead)
-ln -s "$(pwd)/node_modules" "$WT_DIR/node_modules"
+# 2. Give the worktree its OWN node_modules. Not a symlink — see below.
+(cd "$WT_DIR" && pnpm install --frozen-lockfile)
 
 # 3. Subshell preserves caller's PWD; `|| true` ensures cleanup runs even when tests fail (the expected probe outcome)
 (
@@ -58,6 +61,42 @@ ln -s "$(pwd)/node_modules" "$WT_DIR/node_modules"
 # 4. Clean up the worktree
 git worktree remove --force "$WT_DIR"
 ```
+
+**Step 2 installs rather than symlinking, and the difference is isolation, not
+speed.** pnpm keeps its install state *inside* `node_modules`:
+`node_modules/.pnpm-workspace-state-v1.json` keys its `projects` map by the
+**absolute path** of the checkout that installed. A second checkout pointed at
+that same directory is therefore reading state that names someone else's root,
+and `verifyDepsBeforeRun: error` (`pnpm-workspace.yaml`) refuses to run — the
+worktree's first `pnpm exec` exits 1 in ~0.1s with
+
+```
+Error: ERR_PNPM_VERIFY_DEPS_BEFORE_RUN
+
+  × The workspace structure has changed since last install
+  help: Run "pnpm install"
+```
+
+and installs nothing. That refusal is the protection: `pnpm run` and `pnpm exec`
+otherwise reconcile a mismatched tree on their own, which for a shared
+`node_modules` means a mutation agent writing into the very checkout the
+worktree exists to keep clean. `docs/supply-chain.md` (§ *The door npm did not
+have*) has that setting's own measurement.
+
+**The install is not the overhead the symlink was avoiding.** pnpm hard-links
+from its content-addressable store, so a warm store makes a second copy cheap.
+Measured 2026-09-10 on this repo, pnpm 12.3.4:
+
+```bash
+WT=/tmp/probe-timing && git worktree add -f "$WT" HEAD
+( cd "$WT" && time pnpm install --frozen-lockfile )
+( cd "$WT" && time pnpm exec vitest run --project unit src/lib/script-install-census.test.ts )
+git worktree remove --force "$WT"
+```
+
+**6.9s** for the install (exit 0), **4.2s** for the probe run that followed
+(9 tests, green). The primary checkout's `node_modules/.modules.yaml` is
+byte-identical before and after — `shasum` it either side to confirm.
 
 ### B. Single-Agent In-Place Probes
 
@@ -72,6 +111,6 @@ When running in a confirmed single-agent context where no other agent is active:
 
 | Context | Protocol | Overhead | Safety Guarantee |
 |---|---|---|---|
-| **Parallel Review Agents** | Separate git worktrees per agent | ~0.5s (`ln -s node_modules`) | 100% isolation; 0 false reds / false greens |
-| **Mutation Testing Probes** | Temporary worktree in `/tmp/` | ~0.5s | Primary working tree remains clean at all times |
+| **Parallel Review Agents** | Separate git worktrees per agent, each with its own `node_modules` | ~7s (`pnpm install --frozen-lockfile`, warm store) | Nothing is shared with the primary checkout; 0 false reds / false greens |
+| **Mutation Testing Probes** | Temporary worktree in `/tmp/` | ~7s | Primary working tree remains clean at all times |
 | **Single-Agent Inline Probe** | In-place edit + `git diff` check | 0s | Safe only when no other agent is active |
