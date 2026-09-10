@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { storeChallenge } from '@/lib/auth';
 
@@ -69,6 +69,10 @@ function primeCredential(accountId: string) {
   createSession.mockResolvedValue('session-token');
 }
 
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
 describe('POST /api/auth/passkey/authenticate/verify — teacher-signup destination for an existing account', () => {
   it('sends an account that already teaches to its schedule, not to a page it would be bounced from', async () => {
     primeCredential('acc-teacher');
@@ -94,6 +98,21 @@ describe('POST /api/auth/passkey/authenticate/verify — teacher-signup destinat
     // The second-hat flow: a student becoming a teacher too. This is what a
     // guard written as `redirect === TEACHER_PROFILE_PATH ? fallback : redirect`
     // would destroy while the case above still passed.
+    expect(body.data.redirectTo).toBe('/signup/profile');
+  });
+
+  it('sends an account whose teacher profile was soft-deleted to the profile form', async () => {
+    primeCredential('acc-former-teacher');
+    accountFindUnique.mockResolvedValue({ teacher: { deletedAt: new Date() } });
+    storeChallenge('authentication', 'chal-former-teacher', 'expected-challenge');
+
+    const res = await POST(verify('chal-former-teacher', '/signup/profile'));
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { redirectTo: string } };
+    // A soft-deleted teacher profile has no live profile to be bounced
+    // from — `hasTeacherProfile` must treat this the same as no profile
+    // at all.
     expect(body.data.redirectTo).toBe('/signup/profile');
   });
 });
