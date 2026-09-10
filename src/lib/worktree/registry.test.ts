@@ -166,12 +166,13 @@ describe('writeRegistryLockedOrExplain', () => {
   });
 
   it('propagates a non-collision error thrown from mutate unchanged, even when reapFailed is true and it happens to carry a truthy collidingKeyIsLegacyShaped', async () => {
-    // collidingKeyIsLegacyShaped: true + reapFailed: true is exactly the pair
-    // that makes explainCollision take its enriching branch — so this shape
-    // is the one case that actually distinguishes "the instanceof gate ran"
-    // from "explainCollision merely declined to enrich this error": a plain
-    // Error() (falsy collidingKeyIsLegacyShaped) would come back unchanged
-    // either way, hiding a dropped instanceof check.
+    // collidingKeyIsLegacyShaped: true + reapFailed: true is the one
+    // combination where explainCollision (see its own condition in
+    // registry.ts) treats a non-RegistryCollisionError object differently
+    // from an unchanged pass-through — so this shape is what actually
+    // distinguishes "the instanceof gate ran" from "explainCollision merely
+    // declined to enrich this error": a plain Error() would come back
+    // unchanged either way, hiding a dropped instanceof check.
     const plainError = Object.assign(new Error('mutate blew up'), { collidingKeyIsLegacyShaped: true });
     let thrown: unknown;
     try {
