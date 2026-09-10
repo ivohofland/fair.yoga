@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "check-lockfile": "tsx scripts/check-lockfile.ts",
     "test": "vitest run --project unit --project components && vitest run --project unit-sweeps --project integration",
     "test:watch": "vitest --project unit --project components",
     "test:coverage": "vitest run --coverage --no-file-parallelism",

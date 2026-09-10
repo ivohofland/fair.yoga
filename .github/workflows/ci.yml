@@ -76,6 +76,14 @@ jobs:
         run: pnpm audit --audit-level=high
         continue-on-error: true
 
+      # Blocking, unlike the advisory audit above: this reports a property of
+      # the packages actually locked (registry source + integrity), not the
+      # state of an advisory database, so it cannot go red on a PR that
+      # didn't touch dependencies. #534. docs/supply-chain.md has the
+      # measurements and the mutation test that proves it catches a bad entry.
+      - name: Lockfile supply-chain policy (registry source + integrity)
+        run: pnpm run check-lockfile
+
   # No database, no build: the components project is jsdom only
   # (vitest.config.ts). This job exists because it used to queue behind
   # container init and a build it never touched.
