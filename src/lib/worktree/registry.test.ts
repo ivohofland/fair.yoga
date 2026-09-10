@@ -136,21 +136,16 @@ describe('writeRegistryLockedOrExplain', () => {
   });
 
   it('rethrows the original RegistryCollisionError unchanged when reapFailed is false', async () => {
-    fs.writeFileSync(registryPath, JSON.stringify({ 'fix-517': { port: 3100, pid: null, dbSlug: 'fix_517' } }));
+    const err = new RegistryCollisionError('fix_517' as RawName, 'fix_517' as DbSlug, 'fix-517');
     let thrown: unknown;
     try {
-      await writeRegistryLockedOrExplain(registryPath, false, (registry) => {
-        const result = allocatePort(registry, 'fix_517' as RawName, 'fix_517' as DbSlug);
-        return { registry: result.registry, result: result.port };
+      await writeRegistryLockedOrExplain(registryPath, false, () => {
+        throw err;
       });
-    } catch (err) {
-      thrown = err;
+    } catch (caught) {
+      thrown = caught;
     }
-    expect(thrown).toBeInstanceOf(RegistryCollisionError);
-    const err = thrown as RegistryCollisionError;
-    expect(err.rawName).toBe('fix_517');
-    expect(err.dbSlug).toBe('fix_517');
-    expect(err.collidingKey).toBe('fix-517');
+    expect(thrown).toBe(err);
   });
 
   it('rethrows the explainCollision-enriched error when reapFailed is true and the colliding key is legacy-shaped', async () => {
