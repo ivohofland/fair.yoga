@@ -11,11 +11,20 @@ verified empirically before writing this plan:
 
 - `.superpowers`, `coverage`, `tsconfig.tsbuildinfo` are all git-untracked (`git ls-files` on
   each returns nothing; `.gitignore` covers `/coverage` and `*.tsbuildinfo`; `.superpowers/sdd/*`
-  self-ignores) and referenced by no `Dockerfile` `COPY` — confirmed via `grep -n COPY Dockerfile`
-  (only `package.json`/`pnpm-lock.yaml`/`pnpm-workspace.yaml`, `prisma`, and a blanket
-  `COPY . .` in the `build` stage). `tsconfig.json`'s `include` is `**/*.ts`/`**/*.tsx`
-  (unscoped), so `tsconfig.tsbuildinfo` sitting in the context is inert either way for the
-  type-check — it's pure bloat, not a correctness risk the way #543's unscoped `.ts` reach was.
+  self-ignores) and referenced by no context-consuming `Dockerfile` `COPY` — confirmed via
+  `grep -n COPY Dockerfile` (the only `COPY`s that read from the build context, as opposed to
+  `COPY --from=build`, which reads from a prior stage, not the context, are
+  `package.json`/`pnpm-lock.yaml`/`pnpm-workspace.yaml` and `prisma` in the `deps` stage, `prisma`
+  again in the `migrate` stage, and a blanket `COPY . .` in the `build` stage). `tsconfig.json`'s
+  `include` array (`**/*.ts`, `**/*.tsx`, among other entries) doesn't match `tsconfig.tsbuildinfo`
+  at all — it isn't a `.ts`/`.tsx` file — so it sits inert in the context for the type-check
+  regardless of whether `include` is scoped or not (the unscoped `include` is actually why #543's
+  bug was possible and why `tests/` must stay in the context — the opposite point). `tsconfig.json`
+  also sets `"incremental": true`, so `tsconfig.tsbuildinfo` is tsc's incremental-build cache; a
+  host-generated one landing in the image would be a real hazard if the image ever ran typecheck.
+  It doesn't — the `build` stage runs only `pnpm exec prisma generate && pnpm run build`, no
+  typecheck step — so excluding it is a small correctness improvement as well as a size one, not
+  pure bloat with no correctness angle.
 - Baseline measured from the main checkout (real worktrees present, same methodology as #559):
   `docker build --target deps` reports **37.56 MB** (issue quotes 37.55 MB; 0.01 MB drift is
   worktree churn since the issue was filed, not a discrepancy).
@@ -23,11 +32,14 @@ verified empirically before writing this plan:
   ... neither has a nested-copy source the way #559's five patterns did, so no `**/` needed."
   That's imprecise — a `find` sweep from the main checkout
   (`find . \( -name node_modules -o -name .git \) -prune -o -type d -name .superpowers -print`,
-  same shape query for `coverage` and `tsconfig.tsbuildinfo`) shows nested copies of all three
+  same shape query for `coverage`; for `tsconfig.tsbuildinfo` the same shape but with `-type f` in
+  place of `-type d`, since it's a file, not a directory) shows nested copies of all three
   **do** exist, one per worktree under `.claude/worktrees/*/`. The issue's practical conclusion
   (bare patterns suffice, no `**/` needed) is still correct, but for a different reason: those
   nested copies all live under `.claude/`, which #559's fix already excludes as a *bare* pattern
-  — Docker excludes a matched directory outright and never descends into it, so the nested
+  — Docker skips a matched directory without descending into it, unless some negation pattern's
+  own text starts with that directory's path (not the case here — nothing in the shipped file
+  negates anything under `.claude/`), so the nested
   copies are pruned regardless of whether `.superpowers`/`coverage`/`tsconfig.tsbuildinfo` are
   bare or `**/`-prefixed. Outside `.claude/`, the sweep found zero nested copies of any of the
   three, so a bare pattern is sufficient today. This plan carries the corrected reasoning; the
@@ -44,7 +56,18 @@ verified empirically before writing this plan:
   both lines. (Full repro output in Task 1, Step 1.)
 
 **Tech Stack:** Docker (multi-stage build, legacy builder — `docker buildx version` still reports
-`unknown command`, confirmed unchanged since #559), no other component touched.
+`unknown command`, confirmed unchanged since #559), no other component touched. CI's
+`docker-build` job (`.github/workflows/ci.yml`) runs on `ubuntu-latest` under BuildKit/buildx — a
+materially different builder than the one every measurement and repro in this plan used — though
+both parse `.dockerignore` through the same underlying pattern-matching library
+(`moby/patternmatcher`). The risk here is nil regardless: three of the four new exclusion lines
+(`.superpowers`, `coverage`, `tsconfig.tsbuildinfo`) target untracked/local-only paths that don't
+exist at all in CI's fresh `actions/checkout` workspace and so are no-ops there, and the only
+tracked file the new patterns touch, `.env.example`, is treated identically by
+`**/.env*`/`!**/.env.example` and the old `.env*`/`!.env.example` because `**/` never matches zero
+path segments in either builder. CI's `docker-build` job can therefore neither regress from nor
+validate this specific change — the safety net for a *future* `.dockerignore` change is still a
+human running a build on a different builder than CI's.
 
 **Spec:** None — single-file fix, direction fixed by the issue's acceptance criteria (as
 corrected above), no design choice left open.
@@ -148,6 +171,13 @@ missing today. `tsconfig.tsbuildinfo` is a bare filename pattern for the same re
 its negation both gain `**/` so nested `.env` is excluded — and nested `.env.example` survives —
 everywhere, not only incidentally under `.claude/`.
 
+This asymmetry — `.env*` widened to `**/`, the other three left bare — is deliberate, not an
+oversight: `.env*` needs `**/` because a leaked secret is a materially worse failure mode than a
+bloated build context, justifying defense-in-depth even though today's sweep found no nested
+source outside `.claude/`. `.superpowers`/`coverage`/`tsconfig.tsbuildinfo` are bloat-only (no
+security consequence), so matching the issue's own acceptance criteria — bare patterns — is fine
+as-is; the shipped `.dockerignore` doesn't add `**/` to these three.
+
 - [ ] **Step 3: Confirm GREEN in the same isolated repros**
 
 Re-run Repro A with the new `.dockerignore` lines added: none of `.superpowers/`, `coverage/`,
@@ -171,8 +201,10 @@ tree with real sibling worktrees on disk):
    since the 37.56 MB baseline was taken).
 4. `docker build --target runner .` and `docker build --target migrate .` both still succeed;
    confirm `server.js` present in the runner image (same check PR #566 ran).
-5. Confirm `.env.example` at the repo root is present in the `deps`-stage image (the `!**/.env*`
-   exception still works for the one example file that actually exists in this repo today).
+5. Confirm `.env.example` at the repo root is present in the `build`-stage image (the `deps`
+   stage never runs `COPY . .`, so `.env.example` can only appear once the `build` stage's blanket
+   copy runs; the `!**/.env.example` exception still works for the one example file that actually
+   exists in this repo today).
 
 - [ ] **Step 5: `grep -rln dockerignore docs/`**
 
