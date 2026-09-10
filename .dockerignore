@@ -1,10 +1,11 @@
-node_modules
-.next
-.next-build
+**/node_modules
+**/.next
+**/.next-build
+.claude
 .git
 docs
-test-results
-playwright-report
+**/test-results
+**/playwright-report
 *.md
 .env*
 !.env.example
