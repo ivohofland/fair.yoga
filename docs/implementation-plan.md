@@ -19,7 +19,7 @@ Built by Ivo + Claude Code. Technical foundation first, then layer on UI and fea
 1.7 — Set up GitHub Actions CI: type check, lint, test, build
 1.8 — Create project folder structure matching `technical-architecture.md`
 
-**Done when:** `npm run dev` starts, Prisma Studio shows seeded data, CI passes on a clean push.
+**Done when:** `pnpm run dev` starts, Prisma Studio shows seeded data, CI passes on a clean push.
 
 ---
 
@@ -61,7 +61,7 @@ Built by Ivo + Claude Code. Technical foundation first, then layer on UI and fea
   - Rolling 4-week instance generation from active templates
   - Idempotent (safe to run multiple times)
 
-**Done when:** All services have passing test suites covering happy paths and edge cases. `npm test` shows green across the board.
+**Done when:** All services have passing test suites covering happy paths and edge cases. `pnpm test` shows green across the board.
 
 ---
 

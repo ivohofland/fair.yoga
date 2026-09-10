@@ -17,7 +17,7 @@ import { hhmmToTime } from './time-of-day';
  *
  *   docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
  *     -c 'DROP TRIGGER entry_rule_kind_mismatch_guard ON "CalendarEntry";'
- *   npx vitest run --project unit src/lib/entry-rule-kind-guard.test.ts
+ *   pnpm exec vitest run --project unit src/lib/entry-rule-kind-guard.test.ts
  *   # First test fails: mismatch is silently accepted without throwing 23514
  *
  * To restore:

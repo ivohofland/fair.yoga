@@ -17,7 +17,7 @@ import { createClassFixture } from '../class-fixtures';
  *
  * Baselines are platform-suffixed (-darwin/-linux). When a platform has
  * no baselines (currently CI/linux), the suite skips itself rather than
- * failing — regenerate with:  npx playwright test visual --update-snapshots
+ * failing — regenerate with:  pnpm exec playwright test visual --update-snapshots
  */
 
 const snapshotDir = path.join(__dirname, 'visual.spec.ts-snapshots');

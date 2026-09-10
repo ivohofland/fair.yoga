@@ -41,7 +41,7 @@ unanchored version first, back when the command it protected was `npm`'s.
 Checking a filter against today's output only shows it keeps what is already
 there; feed it a line it must **not** drop.
 
-Measured 2026-09-10, the command returns **9 lines — 8 invocations, plus the
+Measured 2026-09-10, the command returns **11 lines — 10 invocations, plus the
 `console.log` in `scripts/worktree-setup.ts` that names the call on the line
 below it**:
 
@@ -50,18 +50,17 @@ below it**:
 | `.github/workflows/ci.yml` | 5 | one each in `checks`, `test-components`, `test-unit`; `test-integration` has two — one before its integration-test phase, one before its end-to-end phase; `docker-build` checks out without installing, and the `test` aggregate gate does neither |
 | `.github/workflows/e2e-flake-repro.yml` | 1 | manual-dispatch only |
 | `Dockerfile` | 1 | in the `deps` stage (lines 8-19); `build` and `migrate` are `FROM deps` and inherit the layer rather than re-running it |
+| `README.md` | 1 | step 1 of local setup |
+| `AGENTS.md` | 1 | quick-start block |
 | `scripts/worktree-setup.ts` | 1 | the only one in imperative code, and the only one a test enforces |
 
-**`README.md` and `AGENTS.md` are absent from this table, and not because
-they stopped installing anything.** Both still instruct `npm ci` — this
-migration has not reached them yet, so as written today they would fail
-outright: `package-lock.json` no longer exists in this tree. That conversion
-is separate, ongoing work under #540; this table only re-derives the
-automated and imperative paths, which are already pnpm-only. Nothing checks
-the two documentation sites mechanically — a `grep` in a contributor's head
-is what maintains them, which is why the command above is here rather than
-the number alone, and why this file said `npm install` (not even `npm ci`)
-until #532 the last time the two drifted apart.
+**`README.md` and `AGENTS.md` are in this table now.** #540 converted both to
+`pnpm install --frozen-lockfile`, so the grep above finds them the same way
+it finds every other path. Nothing checks the two documentation sites
+mechanically, though — a `grep` in a contributor's head is what maintains
+them, which is why the command above is here rather than the number alone,
+and why this file said `npm install` (not even `npm ci`) until #532 the last
+time the two drifted apart.
 
 ## What is enforced, and what is not
 

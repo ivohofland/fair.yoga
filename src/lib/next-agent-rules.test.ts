@@ -10,7 +10,7 @@
  * WHY A TEST AND NOT ONLY THE CONFIG LINE. A *renamed* or removed upstream key
  * is already caught: `next.config.ts` annotates its object as `NextConfig`
  * rather than casting, and `tsconfig.json` includes it, so excess-property
- * checking makes `npm run typecheck` fail. A *deleted* line is not caught by
+ * checking makes `pnpm run typecheck` fail. A *deleted* line is not caught by
  * anything — typecheck, lint and the whole suite stay green, and the next
  * `next dev` writes the block back. That failure is silent and it argues for
  * itself: the block's own text tells the reader that committing it "keeps the

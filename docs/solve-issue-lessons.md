@@ -173,7 +173,7 @@ which issues it silently touched.
 
 ## Project hazards
 
-**`npm run verify` before pushing.** Per-diff review cannot see a defect that exists only in the
+**`pnpm run verify` before pushing.** Per-diff review cannot see a defect that exists only in the
 union of several diffs, which is how #170 shipped both a dark test file and a red lint to a
 pushed branch past nine reviews — 20 of 26 integration files were left unobserved because the
 plan hand-listed files instead of relying on the sweep.
@@ -225,6 +225,6 @@ On #191, "every integration file ran" turned from a reassurance into a checkable
 as arithmetic: `105 = 46 unit + 32 components + 27 integration`.
 
 On #315, the `&&` trap masked 519 integration tests for most of a branch — 16 red unit tests kept
-`npm test`'s second invocation from ever running, so `integration` reported nothing, not zero
+the test run's second invocation from ever running, so `integration` reported nothing, not zero
 failures. The 63 real integration failures hiding behind them only appeared once the unit tier
 went green.

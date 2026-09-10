@@ -23,7 +23,7 @@ The primary method used to prove that a guard, filter, or constraint actually pr
 
 ### Q2 — What is the safe mutation protocol?
 **Verdict: Git worktree isolation with symlinked `node_modules` and pre/post disk validation.**
-A git worktree creates an isolated filesystem tree pointing to the same git repository. Symlinking `node_modules` eliminates npm install overhead, allowing the test suite to execute in ~3s.
+A git worktree creates an isolated filesystem tree pointing to the same git repository. Symlinking `node_modules` eliminates install overhead, allowing the test suite to execute in ~3s.
 
 ### Q3 — Should parallel mutating agents be structurally prevented from sharing a checkout?
 **Verdict: Yes.** Any agent, reviewer, or automated probe that mutates source code must execute inside an isolated git worktree or isolated subagent workspace (`Workspace: 'branch'` or `Workspace: 'share'`).
@@ -52,7 +52,7 @@ ln -s "$(pwd)/node_modules" "$WT_DIR/node_modules"
   cd "$WT_DIR"
   # <apply mutation to target file>
   git diff <modified-file>
-  npx vitest run --project <tier> <files>
+  pnpm exec vitest run --project <tier> <files>
 ) || true
 
 # 4. Clean up the worktree

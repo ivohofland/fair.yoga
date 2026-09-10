@@ -62,13 +62,13 @@ const eslintConfig = defineConfig([
   // sees it — but a git worktree under .claude/worktrees/ puts a *second* copy
   // of the whole repo on disk, and `docs/**` above is resolved relative to this
   // config's directory, so it does not reach that copy. Without this line one
-  // parked worktree turns `npm run verify` red with eleven errors from vendored
+  // parked worktree turns `pnpm run verify` red with eleven errors from vendored
   // JSX that is already ignored in the main tree — a gate failing for a reason
   // no diff can explain, which is how people learn to ignore the gate.
   //
   // playwright-report/ is that same failure with a different source: Playwright
   // writes minified trace bundles into it, so running the e2e suite and then
-  // `npm run verify` turned lint red on generated JavaScript no diff had
+  // `pnpm run verify` turned lint red on generated JavaScript no diff had
   // touched. test-results/ holds no JavaScript today — screenshots, traces and
   // JSON — so it is listed as the sibling output directory rather than a second
   // measured cause. Both are build output, never authored.

@@ -204,7 +204,7 @@ test.describe('Recurring classes', () => {
   // four had been rewritten to 10:00 and that the form said "Applied to 4
   // upcoming classes."
   //
-  // Worth more than the test it replaces: `npm run verify` is
+  // Worth more than the test it replaces: `pnpm run verify` is
   // `typecheck && lint && vitest` (`package.json`), so Playwright runs only
   // under `test:e2e`. Nothing else in the toolchain proves that the form, the
   // route and the service agree about what an edit does — the vitest suites

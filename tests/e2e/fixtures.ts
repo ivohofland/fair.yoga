@@ -14,7 +14,7 @@ import { test as base, expect } from '@playwright/test';
  * That silence is PRODUCTION, not a gap in the trace format. Playwright does
  * record `console` entries; a local trace of the same test carries two, and
  * both are development-only (React's DevTools banner and `[HMR] connected`).
- * CI runs `npm run start`, so neither exists there and nothing else logs. A
+ * CI runs `pnpm run start`, so neither exists there and nothing else logs. A
  * page error thrown during a transition therefore reaches no one: the run goes
  * red on a timeout whose cause left no evidence.
  *

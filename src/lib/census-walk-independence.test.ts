@@ -102,7 +102,7 @@
  *
  * A file that parses is assumed. `ts.createSourceFile` does not throw and no
  * diagnostics are read here, so a syntax error that swallows a call reports
- * nothing; `npm run typecheck` in CI's `checks` job is what holds that.
+ * nothing; `pnpm run typecheck` in CI's `checks` job is what holds that.
  *
  * THIS FILE STAYS OUT OF BOTH CENSUSES, and not only by the `*.test.ts`
  * exclusion each of them applies. It makes no call to any helper either

@@ -8,7 +8,7 @@ half followed in #321 (see §2)
 All test tiers currently share the developer's database (`ethical_yoga`)
 with the dev server and the seed data. This bit us concretely: the
 class-transition service tests inject a far-future clock (2099) into
-sweep functions that scan the *whole* database — a `npm test` run marched
+sweep functions that scan the *whole* database — a test run marched
 the seed's future Sunday class through `open → in_progress → completed`,
 created real payments, and sent "class completed" notifications that
 surfaced in the teacher's inbox two days before the class.
@@ -25,7 +25,7 @@ The interference runs both ways:
 
 **Goals**
 
-1. `npm test` never mutates the dev database's seed/exploration data.
+1. `pnpm test` never mutates the dev database's seed/exploration data.
 2. Service/unit tests run against a deterministic, empty-by-default
    database.
 3. Zero changes to CI (its database is already throwaway). **Superseded
@@ -46,7 +46,7 @@ The interference runs both ways:
   per-project, not global: `unit` and `components` run their files in
   parallel; `unit-sweeps` never does. `integration`'s project config is also
   `fileParallelism: false`, but that is only its LOCAL default: a bare
-  `vitest run --project integration`, or `npm run verify`, both still run it
+  `vitest run --project integration`, or `pnpm run verify`, both still run it
   serially. CI's own integration step passes `--file-parallelism` on the
   command line (#325), and a CLI flag overrides a project's own setting —
   re-derive on vitest **4.1.10** with
@@ -126,16 +126,16 @@ names the main-checkout database for each tier — in a worktree, `unit` and
 | `integration` | `tests/integration/**/*.test.ts` | dev `ethical_yoga` in the main checkout, `ethical_yoga_dev_<slug>` in a worktree — must match whichever app is running |
 | `components` | `src/**/*.test.tsx` | none (jsdom) |
 
-`--project <name>` selects one tier. A bare `npx vitest run` runs all of
+`--project <name>` selects one tier. A bare `pnpm exec vitest run` runs all of
 them, `integration` included, which needs the app up on `:3000` (or the
-worktree's own port) — use `npm test`, which sequences the tiers, rather
+worktree's own port) — use `pnpm test`, which sequences the tiers, rather
 than running vitest directly.
 The dangerous tests — everything that calls a service sweep with an injected
 clock — are all in the `unit-sweeps` roster, but no longer all of it: that tier
 also carries the lock-contention files, which are there for a different reason
 (`vitest.tiers.ts` states each).
 
-**`npm test` is two invocations joined by `&&`, so a red first half means the
+**`pnpm test` is two invocations joined by `&&`, so a red first half means the
 second half never runs at all.**
 
 ```
@@ -150,12 +150,12 @@ real integration failures nobody could see, because 16 unit tests were red.
 
 Two consequences worth stating separately, because they are easy to conflate:
 
-- **A green `npm run verify` genuinely is the whole suite.** The `&&` cannot
+- **A green `pnpm run verify` genuinely is the whole suite.** The `&&` cannot
   produce a false green — if the second invocation did not run, the exit code
   is non-zero. So "green verify ⇒ every project ran" holds.
 - **A red one tells you nothing about the projects after the failure.** Do not
   read a red `verify` as "integration passed" or as a count of what is broken.
-  Run `npx vitest run --project integration` directly to see that tier while
+  Run `pnpm exec vitest run --project integration` directly to see that tier while
   anything earlier is failing.
 
 ### 3.2 URL convention
@@ -198,7 +198,7 @@ benefit from an empty database — assertion scoping becomes trivial.
 
 Accepted trade-off: these two tiers can still *see* seed rows (they
 already scope their assertions) and a crash mid-suite can leave fixture
-rows behind (`npx prisma db seed` restores a pristine playground).
+rows behind (`pnpm exec prisma db seed` restores a pristine playground).
 
 ## 4. Implementation steps
 
@@ -208,10 +208,10 @@ rows behind (`npx prisma db seed` restores a pristine playground).
    `env.DATABASE_URL` override + `globalSetup`.
 3. `tests/setup/unit-db.ts`: create-if-missing + `migrate deploy` +
    safety assertion (≈30 lines, uses `pg` via Prisma's raw driver or
-   `child_process` → `npx prisma migrate deploy`).
+   `child_process` → `pnpm exec prisma migrate deploy`).
 4. Docs: note in `docs/technical-architecture.md` testing section;
    README quick-start unchanged (setup is automatic).
-5. Verify: `npm test` twice locally (second run proves idempotency),
+5. Verify: `pnpm test` twice locally (second run proves idempotency),
    then reseed dev and confirm the seed's future classes stay untouched
    after a full unit run.
 
@@ -221,11 +221,11 @@ Implemented — `docs/superpowers/specs/2026-09-08-worktree-db-isolation-design.
 Every linked worktree gets its own `ethical_yoga_test_<slug>` (this section's
 `unit`/`unit-sweeps` databases) and its own seeded `ethical_yoga_dev_<slug>`
 plus a private `next dev` on its own port, inside the same shared
-`fairyoga-db-1` container — no per-worktree Docker container. Run `npm run
-worktree:setup` once per worktree, then `npm run worktree:up` to boot the
+`fairyoga-db-1` container — no per-worktree Docker container. Run `pnpm run
+worktree:setup` once per worktree, then `pnpm run worktree:up` to boot the
 app; `integration`/e2e read `INTEGRATION_BASE_URL` for that port instead of
 `:3000`. Orphaned resources from a removed worktree are reaped
-automatically the next time any `npm test` runs anywhere — unless the
+automatically the next time any `pnpm test` runs anywhere — unless the
 recorded dev-server pid can't be confirmed stopped (its process group no
 longer matches, or `lsof`/`ps` themselves fail), in which case the sweep
 leaves that entry alone and retries it on the next run rather than drop its
