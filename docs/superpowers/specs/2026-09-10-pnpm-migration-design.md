@@ -513,23 +513,28 @@ Verified by this migration:
    dev`, matching what CI's merge gate runs (#127).
 4. `pnpm exec playwright test`.
 
-Three mutation tests, each: break it, record the exact error text, restore,
-re-verify. Two are already done and their results are quoted above; they are
-listed here because the plan must re-run them against the *committed*
-configuration, not the probe.
+Four mutation tests, each: break it, record the exact error text, restore,
+re-verify. Mutations 1 and 2 are already done and their results are quoted
+above; they are listed here because they must be re-run against the
+*committed* configuration, not the probe.
 
 | # | Mutation | Expected |
 |---|---|---|
 | 1 | drop `esbuild: true` from `allowBuilds`, install clean | `ERR_PNPM_IGNORED_BUILDS`, exit 1 |
 | 2 | flip one hex digit of the `packageManager` hash, with `COREPACK_HOME` pointed at an empty directory | `Mismatch hashes`, exit 1 |
-| 3 | remove `dotenv` from `devDependencies`, reinstall, then `pnpm run build` **and** `docker build` | `Cannot find module 'dotenv'` in both |
+| 3 | change `worktree-setup.ts`'s install to a bare `pnpm install` | the census guard fails, naming that file and command |
+| 4 | remove `dotenv` from `devDependencies`, reinstall, then `pnpm run build` **and** `docker build` | `Cannot find module 'dotenv'` in both |
+
+Mutation 3 is what makes acceptance criterion 7 checkable: a guard that has
+never been broken certifies nothing, and this one's predicate changed shape
+rather than spelling, so passing tests are especially weak evidence.
 
 Mutation 2 **must** use a cold `COREPACK_HOME`. Run warm, it passes while
 proving nothing — as it did on the first attempt for this spec. The cache
 is at `~/.cache/node/corepack` on this machine, not the macOS
 `~/Library/Caches` path.
 
-Mutation 3 proves the phantom-dependency fix is load-bearing. Because this
+Mutation 4 proves the phantom-dependency fix is load-bearing. Because this
 work happens in the main checkout it is expected to fail **locally as well
 as** in Docker; a local pass here would mean the checkout is resolving
 `dotenv` from somewhere unexpected, and is itself a finding worth chasing
