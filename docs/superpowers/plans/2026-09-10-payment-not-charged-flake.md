@@ -2,7 +2,7 @@
 
 ## Premise verification
 
-Issue #553 reports `tests/e2e/teacher-journey.spec.ts:470` ("a payment can be
+Issue #553 reports `tests/e2e/teacher-journey.spec.ts:471` ("a payment can be
 marked not charged and put back", chromium) failing intermittently in CI,
 reproduced on unmodified `main` twice and on an unrelated Docker/CI-only PR
 once — all three at the same assertion:
@@ -16,7 +16,7 @@ Received: visible
 
 Confirmed by reading the test and its dependencies:
 
-- The failing test (`teacher-journey.spec.ts:475-482`) clicks "Mark unpaid",
+- The failing test (`teacher-journey.spec.ts:471-491`) clicks "Mark unpaid",
   then "Confirm unpaid", then calls `page.reload()` immediately — no wait
   between the click and the reload.
 - `MarkUnpaidButton` (`src/components/class/mark-unpaid-button.tsx:35`) fires
@@ -24,7 +24,7 @@ Confirmed by reading the test and its dependencies:
   server write (payment status `not_charged → pending`) is what makes the
   "Not charged" heading disappear on reload.
 - The test *immediately above it in the same file*
-  (`teacher-journey.spec.ts:461-469`, "the payments overview offers the
+  (`teacher-journey.spec.ts:412-469`, "the payments overview offers the
   permanent correction") performs the identical
   click-Mark-unpaid-then-Confirm-unpaid-then-reload sequence, and does not
   have this problem — because it waits for the mutation's response before
@@ -58,7 +58,7 @@ in-file precedent exactly — no spec needed per `solve-issue`'s spec gate.
 
 Apply the same `waitForResponse` pattern to the second `page.reload()` call
 in "a payment can be marked not charged and put back"
-(`teacher-journey.spec.ts:480-482`), keyed on the same `/unpaid` URL
+(`teacher-journey.spec.ts:481-489`), keyed on the same `/unpaid` URL
 substring and `resp.ok()`, matching the sibling test's style (including its
 short explanatory comment, adapted to point at the sibling rather than
 duplicate prose).
