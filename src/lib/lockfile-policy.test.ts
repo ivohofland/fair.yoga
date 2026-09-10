@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { findLockfileViolations, parsePackageResolutions } from './lockfile-policy';
 
@@ -86,6 +88,19 @@ describe('parsePackageResolutions', () => {
   it('flushes a trailing pending key with no resolution at end of input', () => {
     const text = ['packages:', '', '  trailing@1.0.0:'].join('\n');
     expect(parsePackageResolutions(text)).toEqual([{ key: 'trailing@1.0.0', resolution: null }]);
+  });
+
+  // Every other test above is an inline fixture, so none of them would
+  // notice if pnpm ever changed the real packages: section's shape. This
+  // reads the real committed lockfile the same way src/lib/pnpm-policy.test.ts
+  // reads the real pnpm-workspace.yaml — it covers what an inline fixture
+  // cannot. A floor, not an exact count, so it doesn't rot as dependencies
+  // are added or removed.
+  it('parses the real committed lockfile and finds it compliant', () => {
+    const text = readFileSync(path.join(process.cwd(), 'pnpm-lock.yaml'), 'utf8');
+    const entries = parsePackageResolutions(text);
+    expect(entries.length).toBeGreaterThan(100);
+    expect(findLockfileViolations(entries)).toEqual([]);
   });
 });
 
