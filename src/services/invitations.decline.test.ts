@@ -378,12 +378,16 @@ describe('a decline writes a suppression entry that survives erasure (#522)', ()
         accountEmail: email,
       })).toEqual({ ok: true });
 
-      // The arm `acceptInvitation`'s block guard is load-bearing for, and the
-      // only one a test can tell apart from its absence: delete the guard and
-      // the CAS's own re-read treats an already-`accepted` row as success, so
-      // the call returns `{ ok: true }` having committed a roster link for a
-      // blocked pair. The `declined` case above answers NOT_PENDING either
-      // way, because `NotPendingError` rolls that link write back.
+      // The in-transaction re-check #537 added (see `acceptInvitation`'s own
+      // docblock, and `NotPendingError`'s) is what actually refuses this arm
+      // now: it reads `TeacherBlock` again right before either success
+      // return, so it catches an already-`accepted` row on a blocked pair
+      // whether or not the outside guard above ever ran first.
+      // `invitations-lock-order.test.ts`'s "#537" describe races that
+      // in-transaction check directly, without needing this test's
+      // sequential setup. The `declined` case above stays safe either way,
+      // because `NotPendingError` rolls the link write back regardless of
+      // which guard reaches it.
       const result = await acceptInvitation(prisma, {
         invitationId: invitation.id,
         studentId: student.id,

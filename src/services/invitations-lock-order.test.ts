@@ -1406,3 +1406,198 @@ describe('Invitation and TeacherBlock take one lock order (#522)', () => {
     expect(String((rejections[0] as PromiseRejectedResult).reason)).toMatch(/40P01|deadlock/i);
   }, 30_000);
 });
+
+describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)', () => {
+  const raceTeacherIds: string[] = [];
+  const raceTeacherAccountIds: string[] = [];
+  const raceStudentIds: string[] = [];
+  const raceStudentAccountIds: string[] = [];
+
+  afterAll(async () => {
+    if (raceTeacherIds.length) {
+      await prisma.invitation.deleteMany({ where: { teacherId: { in: raceTeacherIds } } });
+      await prisma.teacherBlock.deleteMany({ where: { teacherId: { in: raceTeacherIds } } });
+      await prisma.teacherStudent.deleteMany({ where: { teacherId: { in: raceTeacherIds } } });
+    }
+    if (raceStudentIds.length) {
+      await prisma.studentPrivacy.deleteMany({ where: { studentId: { in: raceStudentIds } } });
+      await prisma.student.deleteMany({ where: { id: { in: raceStudentIds } } });
+    }
+    if (raceTeacherIds.length) {
+      await prisma.teacher.deleteMany({ where: { id: { in: raceTeacherIds } } });
+    }
+    const accountIds = [...raceTeacherAccountIds, ...raceStudentAccountIds];
+    if (accountIds.length) {
+      await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+    }
+  });
+
+  /**
+   * A teacher and student already linked, with a `pending`,
+   * `delivered: false` invitation between them — #412's gate for
+   * re-inviting an already-linked pair, the same reachability
+   * `makeBlockedPendingInvite` above names for `unlinkTeacher`'s
+   * `delivered: true` scoping.
+   */
+  async function makeLinkedUndeliveredInvite() {
+    const local = uniqueSuffix();
+    const email = `block-race-${local}@test.local`;
+
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Block', lastName: 'Race',
+        email: `block-race-teacher-${local}@test.local`,
+        account: { create: { email: `block-race-teacher-${local}@test.local` } },
+        bio: '#537 acceptInvitation/TeacherBlock race fixture teacher',
+        pageSlug: `block-race-${local}`,
+      },
+      select: { id: true, accountId: true },
+    });
+    raceTeacherIds.push(teacher.id);
+    raceTeacherAccountIds.push(teacher.accountId);
+
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Block', lastName: 'Race', email, claimedAt: new Date(),
+        account: { create: { email } },
+      },
+      select: { id: true, accountId: true },
+    });
+    raceStudentIds.push(student.id);
+    raceStudentAccountIds.push(student.accountId as string);
+
+    await prisma.teacherStudent.create({
+      data: { teacherId: teacher.id, studentId: student.id },
+    });
+
+    const invitation = await prisma.invitation.create({
+      data: {
+        teacherId: teacher.id, email, firstName: 'Block', lastName: 'Race',
+        delivered: false,
+      },
+      select: { id: true },
+    });
+
+    return { teacherId: teacher.id, studentId: student.id, email, invitationId: invitation.id };
+  }
+
+  /**
+   * The race #537 measured: the outside pre-check reads `TeacherBlock`
+   * before this transaction opens, sees nothing, and proceeds — then
+   * `unlinkTeacher` commits, in the gap, a block AND deletes the roster
+   * link, but (scoped to `delivered: true`, #412) leaves this `pending`
+   * invitation's status untouched. Without an in-transaction re-check, the
+   * roster-link write (`linkTeacherStudent`, now a genuine `INSERT` since
+   * unlink just deleted the row) and the CAS below both go on to succeed
+   * against a pair that is, by the time either runs, blocked.
+   *
+   * Forced via a handshake on the outside `teacherBlock.findUnique`, not
+   * left to timing. `calls` pins that the hook sees exactly two
+   * `teacherBlock.findUnique`s: the outside pre-check (which triggers
+   * `unlinkTeacher`) and the in-transaction re-check this fix adds. Remove
+   * the fix and only the first ever fires — `calls` would stay at 1 and the
+   * result would be `{ ok: true }`.
+   */
+  it('a TeacherBlock unlinkTeacher commits after the outside pre-check is not missed inside the transaction', async () => {
+    const { teacherId, studentId, email, invitationId } = await makeLinkedUndeliveredInvite();
+
+    let calls = 0;
+    let handshakeFired = false;
+    const accepting = prisma.$extends({
+      query: {
+        teacherBlock: {
+          async findUnique({ args, query }) {
+            calls += 1;
+            const result = await query(args);
+            if (calls === 1) {
+              handshakeFired = true;
+              const unlinkResult = await unlinkTeacher(prisma, {
+                teacherId, studentId, accountEmail: email,
+              });
+              expect(unlinkResult).toEqual({ ok: true });
+            }
+            return result;
+          },
+        },
+      },
+      // Same cast rationale as the tests above.
+    }) as unknown as PrismaClient;
+
+    const acceptResult = await acceptInvitation(accepting, {
+      invitationId, studentId, accountEmail: email,
+    });
+
+    expect(handshakeFired).toBe(true);
+    expect(calls).toBe(2);
+    expect(acceptResult).toEqual({ ok: false, reason: 'NOT_PENDING' });
+    expect(await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    })).toBeNull();
+    const row = await prisma.invitation.findUniqueOrThrow({
+      where: { id: invitationId },
+      select: { status: true },
+    });
+    expect(row.status).toBe('pending');
+  }, 15_000);
+
+  /**
+   * The same window, reached by the OTHER pre-existing branch the CAS below
+   * can take. `invitations.decline.test.ts`'s "answers NOT_PENDING for an
+   * accepted row on a blocked pair" pins this same row shape WITHOUT a
+   * race — there, the block already stands before the second
+   * `acceptInvitation` call's outside pre-check ever runs, so that
+   * pre-check alone refuses it. Here the block lands AFTER that pre-check
+   * instead, so it's the pre-existing CAS-miss + idempotent-re-read branch
+   * — which, on its own, treats an `accepted` row as success — that would
+   * otherwise leak.
+   *
+   * The first accept below is real and sequential, not part of the race —
+   * it is what makes this row `accepted, delivered: false` the way the
+   * codebase actually reaches it, the same construction
+   * `invitations.decline.test.ts` uses.
+   */
+  it('the same block is not missed when a retried accept hits the idempotent already-accepted branch instead', async () => {
+    const { teacherId, studentId, email, invitationId } = await makeLinkedUndeliveredInvite();
+
+    expect(await acceptInvitation(prisma, { invitationId, studentId, accountEmail: email }))
+      .toEqual({ ok: true });
+
+    let calls = 0;
+    let handshakeFired = false;
+    const accepting = prisma.$extends({
+      query: {
+        teacherBlock: {
+          async findUnique({ args, query }) {
+            calls += 1;
+            const result = await query(args);
+            if (calls === 1) {
+              handshakeFired = true;
+              const unlinkResult = await unlinkTeacher(prisma, {
+                teacherId, studentId, accountEmail: email,
+              });
+              expect(unlinkResult).toEqual({ ok: true });
+            }
+            return result;
+          },
+        },
+      },
+      // Same cast rationale as the tests above.
+    }) as unknown as PrismaClient;
+
+    const acceptResult = await acceptInvitation(accepting, {
+      invitationId, studentId, accountEmail: email,
+    });
+
+    expect(handshakeFired).toBe(true);
+    expect(calls).toBe(2);
+    expect(acceptResult).toEqual({ ok: false, reason: 'NOT_PENDING' });
+    expect(await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    })).toBeNull();
+    const row = await prisma.invitation.findUniqueOrThrow({
+      where: { id: invitationId },
+      select: { status: true },
+    });
+    expect(row.status).toBe('accepted');
+  }, 15_000);
+});
