@@ -14,13 +14,15 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 
 /**
- * Lock-ORDER invariants for the table pairs the describes below name, each
- * in its own title.
+ * Concurrency invariants for the table pairs the describes below name, each
+ * in its own title. Lock ORDER is what most of them pin; where a describe
+ * pins something else, its own docblock says so and says why it lives here.
  *
  * These are database invariants, not HTTP ones — nothing here calls the app
- * on `:3000`, there is no `BASE_URL`, no session, no `fetch`. They provoke
- * real `40P01` deadlocks, hold transactions open for hundreds of
- * milliseconds, and create and delete `Teacher`/`Student`/`Account` rows.
+ * on `:3000`, there is no `BASE_URL`, no session, no `fetch`. They hold
+ * transactions open for hundreds of milliseconds, provoke real `40P01`
+ * deadlocks where that is the point, and create and delete
+ * `Teacher`/`Student`/`Account` rows.
  *
  * That is why they live here rather than in `tests/integration/`, where they
  * first landed. The `integration` project deliberately runs against the
@@ -1407,6 +1409,23 @@ describe('Invitation and TeacherBlock take one lock order (#522)', () => {
   }, 30_000);
 });
 
+/**
+ * Not a lock-ORDER describe, unlike the ones above it: nothing here provokes a
+ * `40P01`, and both sides of every race below take `TeacherStudent` ->
+ * `Invitation` -> `TeacherBlock`, the one direction `docs/lock-order.md`
+ * names. What these pin is snapshot VISIBILITY — a `TeacherBlock` committed
+ * after `acceptInvitation`'s unlocked pre-check has already read "no block".
+ * The tests differ only in when that commit lands: those hooked on the
+ * pre-check itself land it before the transaction opens, and those hooked on
+ * a statement INSIDE the transaction land it while that transaction is open,
+ * where no read taken outside it could ever see it.
+ *
+ * They live in this file for what the tier marker at the top buys rather than
+ * for what it describes: the isolated `DATABASE_URL_TEST`, plus a serial slot
+ * for the inside-the-transaction ones, which hold `acceptInvitation`'s own
+ * transaction open across a second transaction's full commit on another
+ * connection.
+ */
 describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)', () => {
   const raceTeacherIds: string[] = [];
   const raceTeacherAccountIds: string[] = [];
@@ -1433,11 +1452,19 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
   });
 
   /**
-   * A teacher and student already linked, with a `pending`,
-   * `delivered: false` invitation between them — #412's gate for
-   * re-inviting an already-linked pair, the same reachability
-   * `makeBlockedPendingInvite` above names for `unlinkTeacher`'s
-   * `delivered: true` scoping.
+   * A teacher and student already LINKED, with a `pending`,
+   * `delivered: false` invitation between them and no block — the state
+   * #412 produces when a teacher re-invites a pair that is already linked:
+   * `inviteContact` computes `delivered = blocked === null && !link.linked`,
+   * false on `link.linked` alone.
+   *
+   * NOT the reachability `makeBlockedPendingInvite` above names, despite the
+   * shared column value. There `delivered: false` is CONSUMED: it is what
+   * makes `unlinkTeacher`'s status write skip the row, leaving it `pending`
+   * beside the block that unlink wrote. Here it is PRODUCED, at invite time,
+   * with no unlink and no block anywhere in the story — the live roster link
+   * is this fixture's own precondition, and the block arrives later, mid-race,
+   * from the `unlinkTeacher` each test below fires by hand.
    */
   async function makeLinkedUndeliveredInvite() {
     const local = uniqueSuffix();
@@ -1482,14 +1509,14 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
   }
 
   /**
-   * The race #537 measured: the outside pre-check reads `TeacherBlock`
-   * before this transaction opens, sees nothing, and proceeds — then
-   * `unlinkTeacher` commits, in the gap, a block AND deletes the roster
-   * link, but (scoped to `delivered: true`, #412) leaves this `pending`
-   * invitation's status untouched. Without an in-transaction re-check, the
-   * roster-link write (`linkTeacherStudent`, now a genuine `INSERT` since
-   * unlink just deleted the row) and the CAS below both go on to succeed
-   * against a pair that is, by the time either runs, blocked.
+   * The race #537 measured: `acceptInvitation`'s outside pre-check reads
+   * `TeacherBlock` before its transaction opens, sees nothing, and proceeds
+   * — then `unlinkTeacher` commits, in the gap, a block AND deletes the
+   * roster link, but (scoped to `delivered: true`, #412) leaves this
+   * `pending` invitation's status untouched. Without an in-transaction
+   * re-check, the roster-link write (`linkTeacherStudent`, now a genuine
+   * `INSERT` since unlink just deleted the row) and the CAS after it both go
+   * on to succeed against a pair that is, by the time either runs, blocked.
    *
    * Forced via a handshake on the outside `teacherBlock.findUnique`, not
    * left to timing. `calls` pins that the hook sees exactly two
@@ -1528,7 +1555,6 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
     });
 
     expect(handshakeFired).toBe(true);
-    expect(calls).toBe(2);
     expect(acceptResult).toEqual({ ok: false, reason: 'NOT_PENDING' });
     expect(await prisma.teacherStudent.findUnique({
       where: { teacherId_studentId: { teacherId, studentId } },
@@ -1538,23 +1564,27 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
       select: { status: true },
     });
     expect(row.status).toBe('pending');
+    expect(calls).toBe(2);
   }, 15_000);
 
   /**
-   * The same window, reached by the OTHER pre-existing branch the CAS below
-   * can take. `invitations.decline.test.ts`'s "answers NOT_PENDING for an
-   * accepted row on a blocked pair" pins this same row shape WITHOUT a
-   * race — there, the block already stands before the second
-   * `acceptInvitation` call's outside pre-check ever runs, so that
-   * pre-check alone refuses it. Here the block lands AFTER that pre-check
-   * instead, so it's the pre-existing CAS-miss + idempotent-re-read branch
-   * — which, on its own, treats an `accepted` row as success — that would
-   * otherwise leak.
+   * The same window, reached by the OTHER branch `acceptInvitation`'s CAS can
+   * take. The same row shape is pinned WITHOUT a race by
+   * `invitations.decline.test.ts`'s
+   * 'answers NOT_PENDING for an accepted row on a blocked pair, and commits no link'
+   * — there the block already stands before the second `acceptInvitation`
+   * call's outside pre-check ever runs, so that pre-check alone refuses it.
+   * Here the block lands AFTER that pre-check instead, so what would
+   * otherwise leak is the pre-existing CAS-miss + idempotent-re-read branch,
+   * which on its own treats an `accepted` row as success.
    *
-   * The first accept below is real and sequential, not part of the race —
-   * it is what makes this row `accepted, delivered: false` the way the
-   * codebase actually reaches it, the same construction
-   * `invitations.decline.test.ts` uses.
+   * The first accept below is real and sequential, not part of the race: a
+   * genuine `acceptInvitation` call is how this row reaches `accepted`, and
+   * that much the decline-test case above does share. The `delivered: false`
+   * beside it does not: each fixture writes that column itself, but for a
+   * different documented reason — there it stands in for `PUT
+   * /api/invitations/[id]`'s re-address reset (#502 Fix #3), here for #412's
+   * invite-time gate on an already-linked pair.
    */
   it('the same block is not missed when a retried accept hits the idempotent already-accepted branch instead', async () => {
     const { teacherId, studentId, email, invitationId } = await makeLinkedUndeliveredInvite();
@@ -1589,7 +1619,6 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
     });
 
     expect(handshakeFired).toBe(true);
-    expect(calls).toBe(2);
     expect(acceptResult).toEqual({ ok: false, reason: 'NOT_PENDING' });
     expect(await prisma.teacherStudent.findUnique({
       where: { teacherId_studentId: { teacherId, studentId } },
@@ -1599,5 +1628,121 @@ describe('acceptInvitation re-checks TeacherBlock inside its transaction (#537)'
       select: { status: true },
     });
     expect(row.status).toBe('accepted');
+    expect(calls).toBe(2);
+  }, 15_000);
+
+  /**
+   * The same refusal, staged without touching the outside pre-check at all —
+   * which is what makes this a different proof from the tests above that hook
+   * `teacherBlock.findUnique`. In those, the pre-check has fully resolved
+   * before `$transaction` even opens, so an implementation that merely read
+   * `TeacherBlock` a second time on the OUTSIDE would satisfy every one of
+   * them. Here the hook sits on `linkTeacherStudent`'s own
+   * `teacherStudent.createMany` (`roster-link.ts`), a statement that runs
+   * inside the transaction — so the block commits, on a second connection,
+   * while this transaction is open. Only a read that is itself inside can
+   * see it.
+   *
+   * `unlinkTeacher` gets to commit from in there because the roster-link
+   * write ahead of it met the fixture's ALREADY-COMMITTED link row: `INSERT
+   * ... ON CONFLICT DO NOTHING` (#181) takes no lock on a committed
+   * conflicting tuple, so the unlink's own delete of that row waits on
+   * nothing this transaction holds. (Against an UNCOMMITTED one it would
+   * wait — see `acceptInvitation`'s own comment on that statement.)
+   */
+  it('a block committed inside the open transaction, after the roster-link write, is not missed', async () => {
+    const { teacherId, studentId, email, invitationId } = await makeLinkedUndeliveredInvite();
+
+    let handshakeFired = false;
+    const accepting = prisma.$extends({
+      query: {
+        teacherStudent: {
+          async createMany({ args, query }) {
+            const result = await query(args);
+            if (!handshakeFired) {
+              handshakeFired = true;
+              const unlinkResult = await unlinkTeacher(prisma, {
+                teacherId, studentId, accountEmail: email,
+              });
+              expect(unlinkResult).toEqual({ ok: true });
+            }
+            return result;
+          },
+        },
+      },
+      // Same cast rationale as the tests above.
+    }) as unknown as PrismaClient;
+
+    const acceptResult = await acceptInvitation(accepting, {
+      invitationId, studentId, accountEmail: email,
+    });
+
+    expect(handshakeFired).toBe(true);
+    expect(acceptResult).toEqual({ ok: false, reason: 'NOT_PENDING' });
+    expect(await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    })).toBeNull();
+    const row = await prisma.invitation.findUniqueOrThrow({
+      where: { id: invitationId },
+      select: { status: true },
+    });
+    expect(row.status).toBe('pending');
+  }, 15_000);
+
+  /**
+   * The narrowest interleaving in this describe, and the one that pins the
+   * re-check's POSITION rather than which side of the transaction boundary
+   * it sits on: the block commits after the roster-link write and before the
+   * CAS's own statement reaches Postgres. A re-check between those two —
+   * where #537's first attempt put it — has already read "no block" by the
+   * time this block lands, so the CAS goes on to flip the row to `accepted`
+   * over a standing block and the call answers `{ ok: true }`. Measured in
+   * exactly that arrangement before the statement was moved; with the
+   * re-check as the last statement before the transaction returns, this
+   * answers NOT_PENDING and the CAS's write rolls back with everything else,
+   * leaving the row `pending`.
+   *
+   * Hooking `invitation.updateMany` BEFORE delegating to `query(args)` is
+   * what fixes that ordering — the unlink commits first, and only then does
+   * the real CAS run. `unlinkTeacher`'s own `invitation.updateMany` cannot
+   * re-enter this hook: it runs on the plain `prisma` client, not this
+   * extended one, and `handshakeFired` would stop it anyway.
+   */
+  it('a block committed between the roster-link write and the CAS is not missed', async () => {
+    const { teacherId, studentId, email, invitationId } = await makeLinkedUndeliveredInvite();
+
+    let handshakeFired = false;
+    const accepting = prisma.$extends({
+      query: {
+        invitation: {
+          async updateMany({ args, query }) {
+            if (!handshakeFired) {
+              handshakeFired = true;
+              const unlinkResult = await unlinkTeacher(prisma, {
+                teacherId, studentId, accountEmail: email,
+              });
+              expect(unlinkResult).toEqual({ ok: true });
+            }
+            return query(args);
+          },
+        },
+      },
+      // Same cast rationale as the tests above.
+    }) as unknown as PrismaClient;
+
+    const acceptResult = await acceptInvitation(accepting, {
+      invitationId, studentId, accountEmail: email,
+    });
+
+    expect(handshakeFired).toBe(true);
+    expect(acceptResult).toEqual({ ok: false, reason: 'NOT_PENDING' });
+    expect(await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    })).toBeNull();
+    const row = await prisma.invitation.findUniqueOrThrow({
+      where: { id: invitationId },
+      select: { status: true },
+    });
+    expect(row.status).toBe('pending');
   }, 15_000);
 });
