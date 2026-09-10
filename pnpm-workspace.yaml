@@ -2,7 +2,15 @@
 # NOWHERE ELSE: in `.npmrc` (kebab or camel case) or under package.json's
 # `pnpm` key they are silently ignored, with no diagnostic at all. A mistyped
 # key in this file is the opposite: a hard
-# `ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS` — exit 1, not a [WARN].
+# `ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS` — exit 1, not a [WARN]. That
+# hardness comes from `package.json`'s `packageManager` pin, not from this
+# file: unpinned, an unknown key might belong to some other pnpm version and
+# a warning is the only honest answer. docs/supply-chain.md measures both.
+#
+# `src/lib/pnpm-policy.test.ts` pins that these settings are present and in
+# THIS file — the one property CI cannot catch, because every job installs
+# before its first `pnpm run`, which is exactly what makes them cost CI
+# nothing.
 #
 # Rationale, the measured behaviour of every setting below, and the mutation
 # tests that prove them live: docs/supply-chain.md.
@@ -15,16 +23,34 @@ minimumReleaseAge: 10080
 # `CI` is set — so without this line a plain `pnpm test` can resolve against
 # the registry and rewrite `pnpm-lock.yaml`. `error` makes the mismatch an
 # exit-1 refusal that installs nothing. Reproduction: docs/supply-chain.md.
+#
+# The cost lands on a fresh checkout, which has no `node_modules` at all:
+# `pnpm install --frozen-lockfile` must come before any `pnpm run`, the
+# worktree bootstrap included.
 verifyDepsBeforeRun: error
 
-# Dependencies permitted to run install scripts. `strictDepBuilds` defaults
-# to true, so anything reaching this repo with a build script and no entry
-# here ERRORS the install — on a contributor's laptop, not only in CI.
+# Written explicitly rather than left to pnpm's default, which is a claim
+# about pnpm's behaviour that nothing here tethers. Were the default ever
+# false, `Ignored build scripts: …` would be a warning, the install would
+# exit 0, and `allowBuilds` below would be an advisory list. Because
+# `packageManager` is pinned, a key a future pnpm renames or removes is a
+# hard `ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS` instead of a silent
+# weakening — this line cannot rot quietly in either direction.
+strictDepBuilds: true
+
+# Dependencies permitted to run install scripts. Anything reaching this repo
+# with a build script and no entry here ERRORS the install — on a
+# contributor's laptop, not only in CI.
+#
+# EVERY ENTRY IS A PACKAGE PNPM ACTUALLY BLOCKS. pnpm emits no diagnostic for
+# an entry it never needed, so a stale one is a standing silent grant: the day
+# that package adds a `postinstall` it runs with no prompt, no error and no
+# diff. A missing entry fails closed and names the package, which is the
+# design — so the list is kept minimal rather than generous.
 # Re-derive the set with the command in docs/supply-chain.md.
 allowBuilds:
   '@prisma/client': true
   '@prisma/engines': true
   esbuild: true
-  fsevents: true
   prisma: true
   unrs-resolver: true
