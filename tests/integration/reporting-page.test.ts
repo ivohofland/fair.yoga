@@ -391,9 +391,36 @@ describe('GET /settings/reporting (reporting page)', () => {
   });
 
   describe('timezone boundary discrimination for west-of-UTC teacher', () => {
+    const PACIFIC_TZ = 'America/Los_Angeles';
+
+    /**
+     * `instant`'s Pacific wall-clock minute-of-day, `marginMinutes` later,
+     * clamped to `23:59` — never rolls into the next Pacific calendar day.
+     *
+     * A fixed clock target (e.g. always `23:59`) is a race against real time:
+     * once a day, whatever `now` this runs at converges on the target, and the
+     * safety margin between "fixture built" and "server reads its own `now`"
+     * shrinks to zero and then goes negative (#558). Anchoring to `now` instead
+     * keeps that margin at a constant `marginMinutes` for all but the last
+     * `marginMinutes` of the Pacific day, where it shrinks the same way the
+     * fixed target always did — but only in that window, not every run.
+     */
+    function pacificHHmmAfter(instant: Date, marginMinutes: number): string {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: PACIFIC_TZ,
+        hourCycle: 'h23',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).formatToParts(instant);
+      const hour = Number(parts.find((p) => p.type === 'hour')!.value);
+      const minute = Number(parts.find((p) => p.type === 'minute')!.value);
+      const clamped = Math.min(hour * 60 + minute + marginMinutes, 23 * 60 + 59);
+      return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`;
+    }
+
     it('includes studio classes on or before local today and excludes tomorrow or cancelled ones', async () => {
       const now = new Date();
-      const localToday = startOfLocalDay(now, 'America/Los_Angeles');
+      const localToday = startOfLocalDay(now, PACIFIC_TZ);
 
       // Tomorrow in Pacific local calendar
       const localTomorrow = new Date(localToday);
@@ -457,16 +484,17 @@ describe('GET /settings/reporting (reporting page)', () => {
 
     it('excludes a studio class dated today whose start instant is in the future (issue 278)', async () => {
       const now = new Date();
-      const localToday = startOfLocalDay(now, 'America/Los_Angeles');
+      const localToday = startOfLocalDay(now, PACIFIC_TZ);
 
-      // Studio Class D: Dated TODAY in America/Los_Angeles, but in the future (23:59) -> EXCLUDED
+      // Studio Class D: Dated TODAY in America/Los_Angeles, but in the future
+      // (10 minutes ahead of now, Pacific wall clock) -> EXCLUDED
       // Hourly rate: 60.00, 60 min -> 60.00
       await createStudioClassFixture(prisma, {
         teacherId: pacificTeacherId,
         classType: 'Pacific Late Today Class',
         location: 'Portland Studio',
         date: localToday,
-        startTime: hhmmToTime('23:59'),
+        startTime: hhmmToTime(pacificHHmmAfter(now, 10)),
         durationMinutes: 60,
         hourlyRate: new Prisma.Decimal('60.00'),
         studentCount: 7,
