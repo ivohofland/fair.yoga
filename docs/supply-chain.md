@@ -456,6 +456,41 @@ satisfied too. What a maintainer observes is a fully green run.
 pin and fails the job on a mismatch, and `src/lib/pnpm-policy.test.ts` pins
 the field's shape for laptops, where no runner is checking anything.
 
+**The two-document lockfile, and why Dependabot still reads it.** With
+`packageManager` set, pnpm 12 writes `pnpm-lock.yaml` as *two* YAML documents:
+the first holds `packageManagerDependencies` (pnpm itself and its `@pnpm/exe.*`
+binaries), the second the real graph. pnpm 11 wrote one. That shape decides
+whether an outside tool sees this repo's dependencies at all, and the failure
+mode is silence rather than an error, so it is measured here rather than
+assumed. Measured 2026-09-10 against the committed lockfile:
+
+| Reader | Result |
+|---|---|
+| `js-yaml` `load()` (single-document) | **throws** — `expected a single document in the stream, but found more` |
+| Ruby `YAML.load_file` (Psych) | **silently returns document 0** — 0 dependencies, 0 devDependencies, no error |
+| `js-yaml` `loadAll()` | both; document 1 holds 12 dependencies, 24 devDependencies, 688 packages |
+| pnpm's own reader (`pnpm list --depth 0 --json`) | 12 dependencies, 24 devDependencies |
+
+Re-derive the middle two with:
+
+```bash
+ruby -ryaml -e 'd=YAML.load_file("pnpm-lock.yaml"); i=d["importers"]["."]; \
+  puts "deps=#{(i["dependencies"]||{}).size} dev=#{(i["devDependencies"]||{}).size}"'
+pnpm list --depth 0 --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{ \
+  const j=JSON.parse(s)[0]; console.log(Object.keys(j.dependencies||{}).length, Object.keys(j.devDependencies||{}).length)});'
+```
+
+The Ruby row is the one that would have mattered, because dependabot-core is
+Ruby: a parser taking document 0 reports zero dependencies with no error,
+which is indistinguishable from "nothing to update" and would go unnoticed at
+`interval: monthly`. **It does not take that path.**
+`npm_and_yarn/lib/dependabot/npm_and_yarn/file_parser/pnpm_lock.rb` shells out
+to a JavaScript helper — `SharedHelpers.run_helper_subprocess(function:
+"pnpm:parseLockfile", …)` — so the file is read by pnpm's own reader, the one
+that wrote the format. No Ruby YAML is involved. That is why this repo does
+not need a manual Dependabot trigger after a pnpm major bump; re-check the
+parser, not the calendar, if the format changes again.
+
 **The integrity hash is verified on first download, not on every run.**
 Corepack keys its cache by name and version; a `COREPACK_HOME` that already
 holds the version is reused without re-comparing the hash. Measured against a
