@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import { ClassStatus, Prisma } from '@prisma/client';
 
 /**
@@ -14,8 +13,7 @@ import { ClassStatus, Prisma } from '@prisma/client';
  * reads can still be wrong on a bare client, by reading around its caller's
  * uncommitted writes. Decided per site, not uniformly:
  *
- *   adopt  `lockClassRow`, `lockClassRowsOrdered`, `setLockTimeout` and
- *          `lockAnnouncementSlot` below.
+ *   adopt  `lockClassRow`, `lockClassRowsOrdered` and `setLockTimeout` below.
  *   adopt  `claimRuleForGeneration` (`entry-generation.ts`) — issues
  *          `LOCK_TIMEOUT_SQL` and then a `FOR UPDATE`, for either template
  *          family from the one statement.
@@ -51,8 +49,8 @@ import { ClassStatus, Prisma } from '@prisma/client';
  *          and a bus emit, no transaction-scoped statement, so the rule says
  *          leave it unbranded. Named here rather than left out because this
  *          register is read as complete: it takes `PrismaClient |
- *          Prisma.TransactionClient` and is called BOTH ways — inside the
- *          announcement transaction beside `lockAnnouncementSlot` (#196) and
+ *          Prisma.TransactionClient` and is called BOTH ways — inside
+ *          `sendAnnouncement` (`services/announcements.ts`, #196, #215) and
  *          on the bare client elsewhere — so its absence would read as an
  *          oversight rather than a decision. Branding it would break every
  *          bare-client caller for no protection gained.
@@ -626,119 +624,5 @@ export async function lockClassRowsOrdered(
   return ids;
 }
 
-/**
- * How long an identical announcement suppresses a second send of itself.
- *
- * Two minutes: long enough to absorb a double-click and a retried request from
- * a flaky connection, short enough that a teacher who genuinely wants to say
- * the same thing again is not told no. The same quantity as
- * `MANUAL_REMIND_COOLDOWN_MS` (`services/payments.ts`), deliberately — one
- * concept, not two.
- *
- * It lives here, beside the lock that makes it enforceable, rather than in the
- * route: `tests/integration/announcements-api.test.ts` backdates a first send
- * by exactly this to prove a later identical one still goes out, and a test
- * that hard-codes `120000` drifts silently the day the window changes. This
- * module is safe to import from a test because it pulls in only `crypto`
- * and `@prisma/client` — never `@/lib/log`, which is pino and server-only. The
- * `Prisma` import became a VALUE import in #237 (`Prisma.empty`, spliced by
- * `lockClassRowsOrdered`), so this module now pulls the generated client into
- * whatever imports it. Checked at that time: no `'use client'` component
- * imports `@/lib/db-locks` — every importer is a service, an API route or a
- * test. Re-check before importing this module from a client component; a
- * bundled Prisma client is the same class of failure as a bundled pino.
- */
-export const ANNOUNCEMENT_DEDUPE_WINDOW_MS = 2 * 60 * 1000;
-
-/**
- * Namespace for this project's advisory locks — the first argument of
- * Postgres's two-int `pg_advisory_xact_lock(int4, int4)`, which exists for
- * exactly this.
- *
- * Advisory locks share one global key space per database, so an unnamespaced
- * key is a key every future advisory lock in this codebase can collide with by
- * accident. Namespacing means a collision is only ever possible between two
- * users of the SAME namespace, where the consequence is understood.
- */
-const ADVISORY_NAMESPACE = { announcement: 196 } as const;
-
-/**
- * The LEADING 32 bits of a SHA-256, read big-endian and signed, so it fits
- * Postgres's `int4`. Bytes 0-3, not the low end — which matters only to
- * someone recomputing the key by hand to look a lock up in `pg_locks`.
- */
-function hash32(value: string): number {
-  return createHash('sha256').update(value).digest().readInt32BE(0);
-}
-
-/**
- * Serialises concurrent sends of one `(teacher, class, message)` for the rest
- * of the calling transaction.
- *
- * `pg_advisory_xact_lock`, never `pg_advisory_lock`: the transaction-scoped
- * variant releases on commit or rollback however the transaction ends, while
- * the session-scoped one would leak a held lock onto a pooled connection and
- * eventually wedge an unrelated request that never asked for it.
- *
- * The hash is used ONLY for mutual exclusion — the caller compares the real
- * message text afterwards — so a collision inside the namespace costs a few
- * milliseconds of needless serialisation and nothing else. That is the whole
- * reason this is a lock and not a unique index on a hashed column.
- * `Announcement.message` is `@db.Text` — indexable in principle, but a btree
- * entry cannot exceed roughly 2704 bytes and `createAnnouncementSchema`
- * (`lib/schemas.ts`) sets no maximum length, so a long announcement would fail
- * to index at insert time. An index-based design would therefore have to key
- * on a hash, where a collision silently rejects a legitimate announcement
- * instead of merely serialising it. A time-bucketed index leaks differently
- * again — two sends straddling a bucket edge both pass.
- *
- * Branded `TransactionClientOnly` per this module's rule: on a bare client the
- * lock would be taken and released by its own autocommit transaction before
- * the caller's next statement ran, protecting nothing.
- *
- * It is NOT free of the ordering obligation in `docs/lock-order.md`, and the
- * plan for #196 predicted it would be. Its transaction goes on to insert a
- * `Notification` carrying `relatedClassId` and an `Announcement` carrying
- * `classId`, each of which takes `FOR KEY SHARE` on the parent `Class` row —
- * that document's "fourth path". So this lock sits ABOVE `Class` in the order,
- * and it is safe only because it has exactly one PRODUCTION call site
- * (`api/announcements/route.ts`; `db-locks.test.ts` holds the rest, and none
- * of those takes a `Class` lock): nothing else can hold a `Class` lock and
- * then wait here. See "The announcement advisory lock" there before adding a
- * second one.
- *
- * The `FOR KEY SHARE` reasoning covers the worst case, which is the
- * class-scoped send. An all-students announcement carries `classId === null`
- * on both inserts and takes no `Class` lock at all.
- *
- * The lock call is wrapped in a subselect and the outer projection is a
- * literal, which is not styling: `pg_advisory_xact_lock` returns `void`, and
- * selecting that column directly fails at the client with
- * `P2010 … Failed to deserialize column of type 'void'` — measured, not
- * guessed. A tagged `$queryRaw` is still the right tool (the two ints are
- * bound parameters, so nothing here is interpolated); only the column it
- * hands back had to change.
- *
- * `slot` is the tuple, not a pre-composed key, and that is the point of the
- * signature. The caller's dedupe compare is a `findFirst` on exactly these
- * three columns, so the key and that predicate have to describe the same
- * thing — and when the caller composed the key itself, nothing said so.
- * Changing the composition without changing the predicate would have given
- * two identical sends two DIFFERENT locks: neither waits, each reads an empty
- * compare, and both fan out — the exact failure this lock exists to prevent,
- * reintroduced by an edit that looks local. Composing it here puts the
- * coupling in one place. The separator makes the key ambiguous for a message
- * containing `|`, which costs nothing: the key is only ever a mutual-exclusion
- * hash (see above), and the caller still compares the real column values.
- */
-export async function lockAnnouncementSlot(
-  tx: TransactionClientOnly,
-  slot: { teacherId: string; classId: string | null; message: string },
-): Promise<void> {
-  const key = `${slot.teacherId}|${slot.classId ?? ''}|${slot.message}`;
-  await tx.$queryRaw`
-    SELECT 1 AS locked
-    FROM (
-      SELECT pg_advisory_xact_lock(${ADVISORY_NAMESPACE.announcement}::int4, ${hash32(key)}::int4)
-    ) AS taken`;
-}
+// Exported from @/services/announcements; re-exported here for existing consumers (#215).
+export { ANNOUNCEMENT_DEDUPE_WINDOW_MS } from '@/services/announcements';

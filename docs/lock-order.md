@@ -528,7 +528,8 @@ Against each, the class its notifications carry:
 > lock. The other three still take none: `sendPaymentReminder`
 > (`payments.ts`) and `sendPaymentReminders` (`payment-reminders.ts`), both
 > payment-scoped and reaching a class only through the `relatedClassId` on the
-> notification they write; and `POST /api/announcements`, whose
+> notification they write; and `sendAnnouncement` (`services/announcements.ts`,
+> called by `POST /api/announcements`), whose
 > `lockAnnouncementSlot` is an **advisory** lock, not a `Class` row lock — as
 > the #196 section of this document already says 300 lines below. It now takes `lockClassRow` and then inserts
 > notifications carrying `relatedClassId` — a `FOR KEY SHARE` on the row it
@@ -1090,16 +1091,16 @@ under any ordering discipline this document could add. The branch above
 answers "what does the client see", not "does this still happen" — it still
 does, at the rates measured above (32/100, 1/120).
 
-## The advisory lock, which is not a row in the line above (#196)
+## The advisory lock, which is not a row in the line above (#196, #215)
 
-`lockAnnouncementSlot` (`src/lib/db-locks.ts`) is the first and so far only
+`lockAnnouncementSlot` (`src/services/announcements.ts`) is the first and so far only
 advisory lock in this project. It takes
 `pg_advisory_xact_lock(196, hash32("<teacherId>|<classId ?? ''>|<message>"))`
 — note the empty middle segment for an all-students send — the
 two-int form, first argument a constant namespace — as the **first statement**
-of the transaction in `POST /api/announcements`, so that two identical sends
-cannot both read an empty duplicate check and both fan out one `Notification`
-per recipient.
+of the transaction in `sendAnnouncement` (`src/services/announcements.ts`), so that two
+identical sends cannot both read an empty duplicate check and both fan out one
+`Notification` per recipient.
 
 It is not a row of any table, so nothing about the canonical line applies to it
 directly. What does apply:
@@ -1113,21 +1114,21 @@ already in this document: the transaction holding this lock goes on to insert
 `createBulkNotifications` table above had to change its `POST /api/announcements`
 row from "outside any transaction" to inside one for the same reason.
 
-**It cannot be half of a cycle today, and the reason is a property of the call
-graph, not of the lock.** A cycle needs some other transaction to hold a `Class`
-row lock and then wait on this advisory lock. Nothing can: `lockAnnouncementSlot`
-has exactly one call site in `src/` (`api/announcements/route.ts` — a `grep` also
-returns `db-locks.test.ts`, none of whose holders takes a `Class` lock), and
-that call site takes it before it touches `Class` at all. Two announcement sends
-racing each other take the two locks in the same order, which is not a cycle
-either.
+**It cannot be half of a cycle today, and the reason is structural at the service boundary (#215).**
+A cycle needs some other transaction to hold a `Class` row lock and then wait on this advisory lock.
+Nothing can: `lockAnnouncementSlot` is **module-private** to `src/services/announcements.ts` (issue #215)
+and called only as the first statement of `sendAnnouncement`. Because it is not exported, another
+transaction (such as a notification sweep or cancellation path that already holds a `Class` row lock)
+cannot invoke `lockAnnouncementSlot` and create an inversion without explicitly breaking the service module
+boundary. Two announcement sends racing each other take the two locks in the same order (`advisory → Class`),
+which is not a cycle either.
 
-**So the thing to check is a second call site, not a reordering.** Add one
-inside a transaction that already holds a `Class` row lock — a notification
-sweep, a cancellation path — and the inversion is immediate and will not
-announce itself, exactly like `ScheduleRule_teacher_slot_excl` (formerly
-`ClassTemplate_teacher_slot_unique`) quietly holding another pairing shut in
-"The slot key is a wait edge" above.
+**The single-call-site invariant is now enforced by the module boundary, not a comment.**
+Originally (#196), `lockAnnouncementSlot` lived in `src/lib/db-locks.ts` as an exported helper,
+relying on a warning in this document asking contributors to check for a second call site before
+calling it. Issue #215 resolved this by encapsulating the advisory lock inside `sendAnnouncement`
+in `src/services/announcements.ts`. "First statement in transaction" and "exactly one call site"
+are now facts about the service boundary rather than conventions a reader has to remember.
 
 **Not bounded by `LOCK_TIMEOUT_SQL`, and the wait really is unbounded in wall
 clock. This paragraph has now been wrong twice, in opposite directions, and the
