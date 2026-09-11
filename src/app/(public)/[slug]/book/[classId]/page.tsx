@@ -4,10 +4,11 @@ import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
-import { estimateTierPrices, estimateAttendanceSpread } from '@/lib/tier-estimates';
+import { estimateTierPrices } from '@/lib/tier-estimates';
 import { formatRoomLocation, formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
-import { PriceRange, PersonalPriceRange } from '@/components/booking/price-range';
+import { ClassPriceLine } from '@/components/booking/price-range';
+import { resolvePriceLine } from '@/lib/price-line';
 import { BookingFlow } from '@/components/booking/booking-flow';
 import { BookingSignIn } from '@/components/booking/booking-sign-in';
 import { BookingNameStep } from '@/components/booking/booking-name-step';
@@ -109,15 +110,6 @@ export default async function BookClassPage({
     viewer && !alreadyBooked
       ? await countOutstandingPaymentsForStudent(prisma, viewer.id, entry.teacher.id)
       : 0;
-  // The tier the personal line would quote: a booked viewer is billed at the
-  // tier stamped on their registration, anyone else would join at their
-  // profile one. Null from either read means the line may not claim the tier
-  // is settled, and the anonymous range says so instead.
-  const quotedTier = viewer
-    ? alreadyBooked && ownRegistration
-      ? readIncomeTier(ownRegistration.tierAtBooking, { registrationId: ownRegistration.id })
-      : viewer.tier
-    : null;
   // A signed-in teacher without a student side gets the join panel, not a
   // sign-in form they can't use.
   const guestTeacher =
@@ -154,25 +146,18 @@ export default async function BookClassPage({
       <p className="type-caption mt-0.5">
         {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
       </p>
-      {viewer && viewer.tierSelectedAt && quotedTier !== null ? (
-        // Their tier is settled — turnout is the remaining uncertainty.
-        <PersonalPriceRange
-          spread={estimateAttendanceSpread({
-            roomCost: Number(cls.roomCost),
-            minRate: Number(cls.minRate),
-            targetRate: Number(cls.targetRate),
-            minStudents: cls.minStudents,
-            maxStudents: cls.maxStudents,
-            registeredTiers: cls.registrations
-              .filter((r) => r !== ownRegistration)
-              .map((r) => toIncomeTier(r.tierAtBooking, { registrationId: r.id })),
-            viewerTier: quotedTier,
-          })}
-          className="mt-2 mb-6"
-        />
-      ) : (
-        <PriceRange estimates={estimates} className="mt-2 mb-6" />
-      )}
+      <ClassPriceLine
+        line={resolvePriceLine({
+          roomCost: Number(cls.roomCost),
+          minRate: Number(cls.minRate),
+          targetRate: Number(cls.targetRate),
+          minStudents: cls.minStudents,
+          maxStudents: cls.maxStudents,
+          registrations: cls.registrations,
+          viewer: viewer ? { studentId: viewer.id, tier: viewer.tier, tierSelectedAt: viewer.tierSelectedAt } : null,
+        })}
+        className="mt-2 mb-6"
+      />
 
       {viewer ? (
         <BookingFlow
