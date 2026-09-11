@@ -3,7 +3,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { createClassFixture, createStudioClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { startOfLocalDay } from '@/lib/timezone';
+import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
 import { formatMonthLabel } from '@/lib/format';
 
 const prisma = new PrismaClient();
@@ -436,12 +436,58 @@ describe('GET /settings/reporting (reporting page)', () => {
       return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`;
     }
 
+    /**
+     * Minimum millisecond margin required between fixture creation and request
+     * execution so a future-dated fixture does not race the server's clock and
+     * become past (#558, #579).
+     */
+    const MIN_FUTURE_MARGIN_MS = 5_000;
+
+    /**
+     * True when `instant` has sufficient margin before Pacific midnight for a
+     * today-dated fixture with a start time from `pacificHHmmAfter(instant, marginMinutes)`
+     * to have a start instant strictly in the future when the server evaluates it (#579).
+     *
+     * In the last minute of the Pacific day (23:59:00–23:59:59), the latest possible start
+     * time today (23:59:00) has already arrived or passed (startInstant <= now), so no
+     * today-dated class can have a future start instant.
+     */
+    function hasFutureStartMargin(
+      instant: Date,
+      marginMinutes = 10,
+      minMarginMs = MIN_FUTURE_MARGIN_MS,
+    ): boolean {
+      const localToday = startOfLocalDay(instant, PACIFIC_TZ);
+      const startTime = hhmmToTime(pacificHHmmAfter(instant, marginMinutes));
+      const startInstant = classStartInstant({ date: localToday, startTime }, PACIFIC_TZ);
+      return startInstant.getTime() - instant.getTime() >= minMarginMs;
+    }
+
     it('pacificHHmmAfter adds the margin unclamped when it stays within the Pacific day', () => {
       expect(pacificHHmmAfter(new Date('2026-07-15T15:00:00Z'), 10)).toBe('08:10'); // unclamped: 08:00 PDT + 10min
     });
 
     it('pacificHHmmAfter clamps to 23:59 when the margin would roll into the next Pacific day', () => {
       expect(pacificHHmmAfter(new Date('2026-07-16T06:55:00Z'), 10)).toBe('23:59'); // clamped: 23:55 PDT + 10min -> 24:05, clamped
+    });
+
+    it('pacificHHmmAfter clamps to 23:59 when instant is in the last minute of the Pacific day', () => {
+      expect(pacificHHmmAfter(new Date('2026-07-16T06:59:30Z'), 10)).toBe('23:59'); // 23:59:30 PDT -> 23:59
+    });
+
+    it('hasFutureStartMargin reports true during daytime and false at the end-of-day boundary', () => {
+      // Daytime: 08:00 PDT -> start is 08:10 PDT (10 min ahead)
+      expect(hasFutureStartMargin(new Date('2026-07-15T15:00:00Z'), 10)).toBe(true);
+      // Late evening: 23:55 PDT -> start is 23:59 PDT (4 min ahead)
+      expect(hasFutureStartMargin(new Date('2026-07-16T06:55:00Z'), 10)).toBe(true);
+      // 6 seconds before 23:59:00 PDT -> 6s margin >= 5s threshold
+      expect(hasFutureStartMargin(new Date('2026-07-16T06:58:54Z'), 10)).toBe(true);
+      // 3 seconds before 23:59:00 PDT -> 3s margin < 5s threshold (unsafe race against server clock)
+      expect(hasFutureStartMargin(new Date('2026-07-16T06:58:57Z'), 10)).toBe(false);
+      // At 23:59:00 PDT -> 0s margin (start instant is now, already started)
+      expect(hasFutureStartMargin(new Date('2026-07-16T06:59:00Z'), 10)).toBe(false);
+      // Within 23:59:00–23:59:59 PDT -> negative margin (start instant in past)
+      expect(hasFutureStartMargin(new Date('2026-07-16T06:59:30Z'), 10)).toBe(false);
     });
 
     it('includes studio classes on or before local today and excludes tomorrow or cancelled ones', async () => {
@@ -508,8 +554,13 @@ describe('GET /settings/reporting (reporting page)', () => {
       expect(html).not.toContain('230.00');
     });
 
-    it('excludes a studio class dated today whose start instant is in the future (issue 278)', async () => {
+    it('excludes a studio class dated today whose start instant is in the future (issue 278)', async (ctx) => {
       const now = new Date();
+      if (!hasFutureStartMargin(now)) {
+        ctx.skip('Pacific day has insufficient margin before midnight for a future start instant today (#579)');
+        return;
+      }
+
       const localToday = startOfLocalDay(now, PACIFIC_TZ);
 
       // Studio Class Past: Dated YESTERDAY in America/Los_Angeles -> INCLUDED
