@@ -13,7 +13,6 @@ import { createAnnouncementSchema } from '@/lib/schemas';
 import { sendAnnouncement } from '@/services/announcements';
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
-  console.log("REQUEST ARRIVED AT", Date.now());
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 

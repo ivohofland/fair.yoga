@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
-import { ANNOUNCEMENT_DEDUPE_WINDOW_MS } from '@/lib/db-locks';
+import { ANNOUNCEMENT_DEDUPE_WINDOW_MS } from '@/services/announcements';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 
