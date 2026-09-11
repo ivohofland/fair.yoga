@@ -240,7 +240,7 @@ export const PUT = withErrorHandler(async (
       data: {
         ...rest,
         ...(email !== undefined ? { email } : {}),
-        ...(readdressed ? { delivered: false } : {}),
+        ...(readdressed ? { delivered: false, lastNotifyFailedAt: null } : {}),
       },
     });
   } catch (err) {
