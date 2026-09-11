@@ -2,12 +2,10 @@ import Link from 'next/link';
 import { SignOutButton } from '@/components/account/sign-out-button';
 
 /**
- * What `/signup` tells a teacher, instead of moving them (#431).
+ * Explains that the signed-in address already has a teacher page (#431, #442).
  *
- * The refusal is the same one the redirect made — a teacher is still not
- * offered a second signup form. What changes is that it happens on the page
- * they asked for, in words, with both ways out: their schedule, and the
- * sign-out that makes a different address reachable.
+ * Offers both ways out: the teacher's schedule, and the sign-out that makes
+ * a different address reachable.
  */
 export function AlreadyTeachingPanel({ email }: { email: string }) {
   return (
