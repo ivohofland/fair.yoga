@@ -28,7 +28,7 @@ export default async function ContactDetailPage({
     select: {
       id: true, firstName: true, lastName: true, email: true,
       status: true, isArchived: true,
-      lastNotifiedAt: true, lastNotifiedEmail: true,
+      lastNotifiedAt: true, lastNotifiedEmail: true, lastNotifyFailedAt: true,
     },
   });
 
@@ -48,7 +48,9 @@ export default async function ContactDetailPage({
         <p className="type-caption">{STATUS_LABEL[invitation.status]}</p>
         {delivery && (
           <p className="type-caption">
-            {delivery.sent ? `Last invited ${timeAgo(delivery.at)}` : 'Not yet sent to this address'}
+            {delivery.state === 'sent' && `Last invited ${timeAgo(delivery.at)}`}
+            {delivery.state === 'failed' && `Last attempt failed ${timeAgo(delivery.at)}`}
+            {delivery.state === 'not-sent' && 'Not yet sent to this address'}
           </p>
         )}
       </div>
