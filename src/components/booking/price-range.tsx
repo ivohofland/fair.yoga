@@ -1,4 +1,5 @@
 import type { TierPrices, AttendanceSpread } from '@/lib/tier-estimates';
+import type { PriceLineResult } from '@/lib/price-line';
 
 interface PriceRangeProps {
   /** Estimated price per tier 1..5 if the class ran with today's sign-ups plus you. */
@@ -41,4 +42,17 @@ export function PersonalPriceRange({ spread, className }: PersonalPriceRangeProp
       depending on how many join
     </p>
   );
+}
+
+interface ClassPriceLineProps {
+  line: PriceLineResult;
+  className?: string;
+}
+
+// Renders whichever variant resolvePriceLine picked — the one place that
+// switches on `line.kind`, so no page duplicates the branch.
+export function ClassPriceLine({ line, className }: ClassPriceLineProps) {
+  return line.kind === 'personal'
+    ? <PersonalPriceRange spread={line.spread} className={className} />
+    : <PriceRange estimates={line.estimates} className={className} />;
 }
