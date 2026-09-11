@@ -12,6 +12,23 @@ const STATUS_LABEL: Record<'pending' | 'declined', string> = {
   declined: 'Declined',
 };
 
+// Exhaustive over `Delivery['state']` via the `never` default: a fourth
+// state added to `invitationDeliveryStatus` (src/lib/contacts.ts) fails this
+// build instead of silently rendering nothing (#392 review, Important #6).
+type Delivery = ReturnType<typeof invitationDeliveryStatus>;
+function deliveryLabel(delivery: Delivery): string {
+  switch (delivery.state) {
+    case 'sent':
+      return `Last invited ${timeAgo(delivery.at)}`;
+    case 'failed':
+      return `Last attempt failed ${timeAgo(delivery.at)}`;
+    case 'not-sent':
+      return 'Not yet sent to this address';
+    default:
+      return delivery satisfies never;
+  }
+}
+
 export default async function ContactDetailPage({
   params,
 }: {
@@ -47,10 +64,8 @@ export default async function ContactDetailPage({
       <div className="mb-6">
         <p className="type-caption">{STATUS_LABEL[invitation.status]}</p>
         {delivery && (
-          <p className="type-caption">
-            {delivery.state === 'sent' && `Last invited ${timeAgo(delivery.at)}`}
-            {delivery.state === 'failed' && `Last attempt failed ${timeAgo(delivery.at)}`}
-            {delivery.state === 'not-sent' && 'Not yet sent to this address'}
+          <p className={`type-caption${delivery.state === 'failed' ? ' text-danger' : ''}`}>
+            {deliveryLabel(delivery)}
           </p>
         )}
       </div>
