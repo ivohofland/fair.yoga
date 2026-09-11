@@ -3,17 +3,23 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
 import { StatusBadge, deriveBadgeVariant } from '@/components/ui/status-badge';
+import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { EmptyState } from '@/components/ui/empty-state';
 import { CancelBookingButton } from '@/components/student/cancel-booking-button';
 import { UpdatesStrip } from '@/components/student/updates-strip';
 import { WaitlistEntryActions } from '@/components/student/waitlist-entry-actions';
 import { PaymentQr } from '@/components/student/payment-qr';
+import { ClassPriceLine } from '@/components/booking/price-range';
 import { formatRoomLocation, paymentStateText, formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { getWaitlistWindow } from '@/services/waitlist';
 import { studentNotificationHref } from '@/lib/notification-links';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { isOutstanding } from '@/lib/payment-status';
+import { resolvePriceLine } from '@/lib/price-line';
+import { readIncomeTier } from '@/lib/tiers.server';
+import type { IncomeTier } from '@/lib/tiers';
+import { CHARGED_STATUSES } from '@/services/class-lifecycle';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +29,7 @@ export default async function StudentBookingsPage() {
   const session = await getSession();
   if (!session?.studentId) redirectNonStudent(session);
 
-  const [registrations, waitlistEntries, unreadNotifications, notificationCount] = await Promise.all([
+  const [registrations, waitlistEntries, unreadNotifications, notificationCount, student] = await Promise.all([
     prisma.registration.findMany({
       where: { studentId: session.studentId, status: { not: 'cancelled' } },
       orderBy: { class: { calendarEntry: { date: 'desc' } } },
@@ -44,7 +50,10 @@ export default async function StudentBookingsPage() {
               },
             },
             teacherRoom: { include: { room: true } },
-            _count: { select: { registrations: true } },
+            registrations: {
+              where: { status: { in: [...CHARGED_STATUSES] } },
+              select: { id: true, studentId: true, tierAtBooking: true, status: true },
+            },
           },
         },
         payment: true,
@@ -106,6 +115,10 @@ export default async function StudentBookingsPage() {
                 },
               },
             },
+            registrations: {
+              where: { status: { in: [...CHARGED_STATUSES] } },
+              select: { id: true, studentId: true, tierAtBooking: true, status: true },
+            },
             _count: {
               select: {
                 registrations: {
@@ -138,7 +151,17 @@ export default async function StudentBookingsPage() {
     prisma.notification.count({
       where: { recipientType: 'student', recipientId: session.studentId },
     }),
+    prisma.student.findUniqueOrThrow({
+      where: { id: session.studentId },
+      select: { incomeTier: true, tierSelectedAt: true },
+    }),
   ]);
+
+  const viewer: { studentId: string; tier: IncomeTier | null; tierSelectedAt: Date | null } = {
+    studentId: session.studentId,
+    tier: readIncomeTier(student.incomeTier, { studentId: session.studentId }),
+    tierSelectedAt: student.tierSelectedAt,
+  };
 
   // Same targets /updates uses — see `studentNotificationHref`.
   const updates = unreadNotifications.map((n) => ({
@@ -203,6 +226,30 @@ export default async function StudentBookingsPage() {
                   {formatDayHeader(cls.calendarEntry.date)} · {timeToHHmm(cls.calendarEntry.startTime)} · position {entry.position} ·{' '}
                   with {cls.calendarEntry.teacher.firstName} {cls.calendarEntry.teacher.lastName}
                 </p>
+                <RegistrationProgress
+                  registered={cls._count.registrations}
+                  min={cls.minStudents}
+                  max={cls.maxStudents}
+                  className="mt-2"
+                />
+                <ClassPriceLine
+                  line={resolvePriceLine({
+                    roomCost: Number(cls.roomCost),
+                    minRate: Number(cls.minRate),
+                    targetRate: Number(cls.targetRate),
+                    minStudents: cls.minStudents,
+                    maxStudents: cls.maxStudents,
+                    registrations: cls.registrations,
+                    viewer,
+                  })}
+                  className="mt-1"
+                />
+                <Link
+                  href={`/${cls.calendarEntry.teacher.pageSlug}/book/${cls.id}`}
+                  className="type-label text-teal no-underline inline-block mt-1"
+                >
+                  View class &rarr;
+                </Link>
                 <WaitlistEntryActions entryId={entry.id} classId={cls.id} canClaim={canClaim} />
               </div>
             );
@@ -217,10 +264,17 @@ export default async function StudentBookingsPage() {
             {upcoming.map((reg) => {
               const cls = reg.class;
               const cancelled = cls.calendarEntry.cancelledAt !== null;
+              // `late_cancel` bills (it's in CHARGED_STATUSES, the set this
+              // query filters on) but frees the seat — excluded here so a
+              // cancelled row can't inflate the badge/progress bar, which is
+              // the bug this task fixes.
+              const activeCount = cls.registrations.filter(
+                (r) => r.status !== 'late_cancel',
+              ).length;
               const variant = deriveBadgeVariant(
                 cls.status,
                 cancelled,
-                cls._count.registrations,
+                activeCount,
                 cls.minStudents,
                 cls.maxStudents,
               );
@@ -237,6 +291,30 @@ export default async function StudentBookingsPage() {
                     {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
                     {' · '}with {cls.calendarEntry.teacher.firstName} {cls.calendarEntry.teacher.lastName}
                   </p>
+                  <RegistrationProgress
+                    registered={activeCount}
+                    min={cls.minStudents}
+                    max={cls.maxStudents}
+                    className="mt-3"
+                  />
+                  <ClassPriceLine
+                    line={resolvePriceLine({
+                      roomCost: Number(cls.roomCost),
+                      minRate: Number(cls.minRate),
+                      targetRate: Number(cls.targetRate),
+                      minStudents: cls.minStudents,
+                      maxStudents: cls.maxStudents,
+                      registrations: cls.registrations,
+                      viewer,
+                    })}
+                    className="mt-2"
+                  />
+                  <Link
+                    href={`/${cls.calendarEntry.teacher.pageSlug}/book/${cls.id}`}
+                    className="type-label text-teal no-underline inline-block mt-2"
+                  >
+                    View class &rarr;
+                  </Link>
                   {reg.status === 'late_cancel' ? (
                     <p className="type-caption mt-2">
                       Cancelled after the deadline — this class is still charged.
