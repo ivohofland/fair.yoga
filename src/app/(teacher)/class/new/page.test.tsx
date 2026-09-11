@@ -15,10 +15,12 @@ const ROOM = {
 
 /**
  * #136. This wizard restates its thirteen fields three times — the `FormData`
- * interface, `INITIAL_FORM`, and the POST body — and nothing checked that the
- * three agreed with each other or with `createClassSchema`. The compile-time
- * pins in the source file hold `FormData` against the schema; this test holds
- * what a pin cannot see, which is what actually reaches the API.
+ * interface, `INITIAL_FORM`, and the POST body (the last derived from `form`
+ * with `description` normalized at submit — see `page.tsx`) — and nothing
+ * checked that the three agreed with each other or with `createClassSchema`.
+ * The compile-time pins in the source file hold `FormData` against the
+ * schema; this test holds what a pin cannot see, which is what actually
+ * reaches the API.
  *
  * The wizard fetches the teacher's rooms on mount, so `fetch` is stubbed with
  * room-shaped data for every test, and the submit call is the *second* fetch
@@ -179,6 +181,33 @@ describe('NewClassPage', () => {
     fireEvent.change(roomSelect, { target: { value: ROOM_ID } });
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Description'), { target: { value: '   ' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+    // Step 2: Pricing
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+
+    // Step 3: Policies
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+
+    // Step 4: Review - description row should not be rendered
+    expect(await screen.findByText('Review your class')).toBeInTheDocument();
+    expect(screen.queryByText('Description')).toBeNull();
+
+    const { body } = await submit();
+    expect(body.description).toBeNull();
+  });
+
+  it('sends empty-string description as null', async () => {
+    stubFetch();
+    render(<CreateClassPage />);
+
+    // Step 1: Basics
+    const roomSelect = await screen.findByLabelText('Room');
+    fireEvent.change(roomSelect, { target: { value: ROOM_ID } });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
     fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
     fireEvent.click(screen.getByRole('button', { name: /next/i }));

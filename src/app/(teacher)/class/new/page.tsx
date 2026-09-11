@@ -58,9 +58,14 @@ interface FormData {
 type CreateClassWire = z.infer<typeof createClassSchema>;
 
 /**
- * #136. `FormData` is the list; the body is `form` itself, so the two cannot
- * drift. These pins tie that list to the schema in both directions, with no
- * exclusions (#147 added description).
+ * #136. `FormData` is the list; the body is `form` spread with `description`
+ * normalized at submit (`trim() || null`), so the *key* list cannot drift —
+ * the value transform is what `page.test.tsx` pins. These pins tie the key
+ * list to the schema in both directions, with no exclusions.
+ *
+ * `templateId` (server-set, #146) and `description` (#147) were earlier
+ * excluded; an exclusion here needs its own reason *and* a non-vacuity pin
+ * (see the studio-class wizard's history for the lesson).
  *
  * What this pin enforces, exactly: every key `createClassSchema` declares
  * is a key of `FormData`, this form's own value type. Not that the field is
@@ -116,6 +121,15 @@ function formatAutoCancelLabel(value: string): string {
  */
 function classPath(id: string): string {
   return `/class/${id}`;
+}
+
+/**
+ * Shared between the POST payload and the Step 4 preview so the two cannot
+ * disagree on what the server receives. Whitespace-only input collapses to
+ * `null`; non-empty values are trimmed.
+ */
+function normalizeDescription(value: string): string | null {
+  return value.trim() || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,7 +290,7 @@ export default function CreateClassPage() {
     try {
       const payload = {
         ...form,
-        description: form.description.trim() || null,
+        description: normalizeDescription(form.description),
       };
 
       const res = await fetch('/api/classes', {
@@ -305,8 +319,9 @@ export default function CreateClassPage() {
       // 409 instead of a silent duplicate.
       setCreatedId(json.data.id);
       router.push(classPath(json.data.id));
-    } catch {
-      setSubmitError('Network error. Please try again.');
+    } catch (err) {
+      console.error('class create failed', err);
+      setSubmitError('Could not reach the server, or it sent something unreadable. Try again.');
     } finally {
       setSubmitting(false);
     }
@@ -602,10 +617,10 @@ export default function CreateClassPage() {
             <p className="text-base text-ink">{form.classType}</p>
           </div>
 
-          {form.description.trim() ? (
+          {normalizeDescription(form.description) ? (
             <div className="py-2 border-b border-border">
               <span className="type-label">Description</span>
-              <p className="text-base text-ink whitespace-pre-wrap">{form.description.trim()}</p>
+              <p className="text-base text-ink whitespace-pre-wrap">{normalizeDescription(form.description)}</p>
             </div>
           ) : null}
 
