@@ -142,11 +142,30 @@ describe('ProfileSetupForm', () => {
   });
 
   it('shows the ALREADY_TEACHER state with a schedule link and sign-out in session mode', async () => {
-    stubFetch(() => ({
-      ok: false,
-      status: 409,
-      json: async () => ({ error: { code: 'ALREADY_TEACHER', message: 'Account already has a teacher profile' } }),
-    }));
+    // A dedicated mock, not `stubFetch`: that helper's catch-all would also
+    // answer the sign-out button's own DELETE with the ALREADY_TEACHER
+    // payload, which happens to still redirect (`SignOutButton` pushes in
+    // `finally` regardless of the response) but exercises the wrong path.
+    const mock = vi.fn((input: unknown) => {
+      const url = String(input);
+      if (url.startsWith('/api/teachers/slug-available')) {
+        return Promise.resolve({ ok: true, json: async () => ({ data: { available: true } }) });
+      }
+      if (url === '/api/account/teacher-profile') {
+        return Promise.resolve({
+          ok: false,
+          status: 409,
+          json: async () => ({
+            error: { code: 'ALREADY_TEACHER', message: 'Account already has a teacher profile' },
+          }),
+        });
+      }
+      if (url === '/api/auth/session') {
+        return Promise.resolve({ ok: true });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', mock);
     render(<ProfileSetupForm email="anna@example.com" mode="session" />);
 
     fillForm();
@@ -161,6 +180,9 @@ describe('ProfileSetupForm', () => {
     expect(screen.getByText('Setting up a page for a different address?')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await waitFor(() =>
+      expect(mock).toHaveBeenCalledWith('/api/auth/session', { method: 'DELETE' }),
+    );
     await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/signup'));
   });
 
