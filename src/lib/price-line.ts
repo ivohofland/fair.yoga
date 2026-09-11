@@ -71,13 +71,19 @@ export function resolvePriceLine(input: ResolvePriceLineInput): PriceLineResult 
     return { kind: 'personal', spread };
   }
 
+  // Same pool rule as the personal branch above: the viewer's own
+  // registration, if any, is already a person in the room and must not
+  // also be the +1 estimateTierPrices appends internally for a
+  // hypothetical joiner.
   const estimates = estimateTierPrices({
     roomCost,
     minRate,
     targetRate,
     minStudents,
     maxStudents,
-    registeredTiers: registrations.map((r) => toIncomeTier(r.tierAtBooking, { registrationId: r.id })),
+    registeredTiers: registrations
+      .filter((r) => r !== ownRegistration)
+      .map((r) => toIncomeTier(r.tierAtBooking, { registrationId: r.id })),
   });
   return { kind: 'anonymous', estimates };
 }

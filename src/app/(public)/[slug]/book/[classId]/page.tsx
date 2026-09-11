@@ -94,11 +94,9 @@ export default async function BookClassPage({
   const viewer = student
     ? { ...student, tier: readIncomeTier(student.incomeTier, { studentId: student.id }) }
     : null;
-  // The viewer's own charged row, if any. They are already in the pool,
-  // so the personal spread must quote them from that row — not append a
-  // second copy of them ("+1 joining"). A late_cancel row also stays
-  // out of the pool here: rebooking reactivates that same row, so the
-  // viewer re-enters as themselves, not as an extra body.
+  // The viewer's own charged row, if any — feeds only `alreadyBooked` and
+  // `openPaymentsCount` below (pool exclusion for the price line lives in
+  // `resolvePriceLine`, price-line.ts).
   const ownRegistration = student
     ? (cls.registrations.find((r) => r.studentId === student.id) ?? null)
     : null;
