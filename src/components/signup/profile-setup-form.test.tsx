@@ -141,7 +141,7 @@ describe('ProfileSetupForm', () => {
     expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull();
   });
 
-  it('shows the ALREADY_TEACHER state with a schedule link in session mode', async () => {
+  it('shows the ALREADY_TEACHER state with a schedule link and sign-out in session mode', async () => {
     stubFetch(() => ({
       ok: false,
       status: 409,
@@ -152,8 +152,16 @@ describe('ProfileSetupForm', () => {
     fillForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create my page' }));
 
-    expect(await screen.findByText('You already teach here')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to your schedule' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'You already have a page.' })).toBeInTheDocument();
+    expect(screen.getByText('anna@example.com')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go to your schedule' })).toHaveAttribute(
+      'href',
+      '/schedule',
+    );
+    expect(screen.getByText('Setting up a page for a different address?')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/signup'));
   });
 
   it('shows a SLUG_TAKEN rejection keyed to the address it was about, and drops it once the address changes', async () => {

@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { PageAddressField, slugFromName } from './page-address-field';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 import { SignOutButton } from '@/components/account/sign-out-button';
+import { AlreadyTeachingPanel } from './already-teaching-panel';
 
 const BIO_MAX = 250;
 
@@ -313,23 +314,18 @@ export function ProfileSetupForm({ email, mode }: ProfileSetupFormProps) {
   }
 
   if (status === 'already-teacher') {
+    if (mode === 'session') {
+      return <AlreadyTeachingPanel email={email} />;
+    }
     return (
       <div className="py-4">
         <p className="type-subtitle">You already teach here</p>
         <p className="type-body mt-2 max-w-[420px]">
           There is already a teacher page for {email}.{' '}
-          {mode === 'session' ? (
-            <Link href="/schedule" className="text-teal">
-              Go to your schedule
-            </Link>
-          ) : (
-            <>
-              <Link href="/login" className="text-teal">
-                Sign in
-              </Link>{' '}
-              and you are back where you left off.
-            </>
-          )}
+          <Link href="/login" className="text-teal">
+            Sign in
+          </Link>{' '}
+          and you are back where you left off.
         </p>
       </div>
     );
