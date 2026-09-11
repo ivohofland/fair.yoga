@@ -13,6 +13,8 @@ import { ClassPriceLine } from '@/components/booking/price-range';
 import { PricingExplainer } from '@/components/booking/pricing-explainer';
 import { readIncomeTier } from '@/lib/tiers.server';
 import { resolvePriceLine, type PriceLineViewer } from '@/lib/price-line';
+import { CHARGED_STATUSES } from '@/services/class-lifecycle';
+import { log } from '@/lib/log';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,7 +62,7 @@ export default async function TeacherBookingPage({
       calendarEntry: true,
       teacherRoom: { include: { room: true } },
       registrations: {
-        where: { status: { in: ['registered', 'attended', 'no_show', 'late_cancel'] } },
+        where: { status: { in: [...CHARGED_STATUSES] } },
         select: { id: true, tierAtBooking: true, status: true, studentId: true },
       },
     },
@@ -93,6 +95,12 @@ export default async function TeacherBookingPage({
     // A hard-delete racing this request between session validation and this
     // query — this is a public page, so it falls back to the signed-out
     // view of itself rather than 500ing a teacher's front door.
+    if (!student) {
+      log.warn(
+        { studentId: session.studentId },
+        'session.studentId has no matching Student row; falling back to signed-out view',
+      );
+    }
     viewer = student
       ? {
           studentId: session.studentId,

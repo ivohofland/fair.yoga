@@ -16,6 +16,7 @@ import { JoinAsStudent } from '@/components/booking/join-as-student';
 import { peekSignupTicket, ticketTokenFrom } from '@/lib/auth';
 import { readIncomeTier, toIncomeTier } from '@/lib/tiers.server';
 import { countOutstandingPaymentsForStudent } from '@/services/payments';
+import { CHARGED_STATUSES } from '@/services/class-lifecycle';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,7 +40,7 @@ export default async function BookClassPage({
       },
       teacherRoom: { include: { room: true } },
       registrations: {
-        where: { status: { in: ['registered', 'attended', 'no_show', 'late_cancel'] } },
+        where: { status: { in: [...CHARGED_STATUSES] } },
         select: { id: true, tierAtBooking: true, status: true, studentId: true },
       },
     },
