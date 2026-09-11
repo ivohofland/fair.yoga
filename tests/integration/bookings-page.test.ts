@@ -292,10 +292,16 @@ describe('GET /bookings (page) — upcoming registration count', () => {
     // hardcoding where React happens to place them.
     const html = (await res.text()).replace(/<!-- -->/g, '');
     // One active registration (the viewer's own) against a min of 2 — the
-    // cancelled row must not count toward it. The rendered count is "1"
-    // paired with "/ 2–6"; asserting the pair together rules out a
-    // coincidental "1" elsewhere in the page.
-    expect(html).toMatch(/1[\s\S]{0,80}\/ 2–6/);
+    // cancelled row must not count toward it. A proximity check (e.g. "1"
+    // within N chars of "/ 2–6") is not enough: RegistrationProgress's own
+    // static className "text-[12px]" contains the digit "1", sitting closer
+    // to "/ 2–6" than the real count ever could, so any such regex passes
+    // whether the count is 1 or 2. This anchors structurally instead —
+    // RegistrationProgress renders the count as the entire content of one
+    // span, immediately followed by a sibling span whose entire content is
+    // "/ min–max" — which the false-positive "1" (inside a class attribute,
+    // never between a "</span>" and the next "<span") cannot satisfy.
+    expect(html).toMatch(/<span[^>]*>1<\/span><span[^>]*>\/ 2–6<\/span>/);
   });
 
   it('shows the price line and a link to the booking page', async () => {
