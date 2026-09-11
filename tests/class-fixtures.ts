@@ -195,6 +195,13 @@ export async function createStudioClassFixture(
  * generators and the template lifecycles read week occupancy off it. Those
  * space their fixtures in time instead, with a gap at least as wide as the
  * fixture's own duration.
+ *
+ * Neither offset works when a fixture's start time is derived from the wall
+ * clock rather than a literal — unknown until the fixture runs, so it can't
+ * be spaced deterministically against a sibling on the same teacher. The only
+ * sound guarantee there is a dedicated teacher fixture for that one class:
+ * the constraint's `teacherId WITH =` scoping rules out overlap outright,
+ * independent of either fixture's date or time (#575).
  */
 export function slotDate(base: Date | string, counter: number): Date {
   const d = new Date(base);

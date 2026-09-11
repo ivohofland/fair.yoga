@@ -25,7 +25,7 @@ const suffix = uniqueSuffix();
  *   - Today's studio class is counted
  *   - Tomorrow's studio class is excluded
  *   - Cancelled studio class is excluded
- *   - Non-completed regular classes (draft/open/cancelled) are excluded
+ *   - A today-dated studio class whose start instant is still in the future is excluded (issue 278)
  */
 describe('GET /settings/reporting (reporting page)', () => {
   let emptyTeacherId: string;
@@ -513,8 +513,9 @@ describe('GET /settings/reporting (reporting page)', () => {
       const localToday = startOfLocalDay(now, PACIFIC_TZ);
 
       // Studio Class Past: Dated YESTERDAY in America/Los_Angeles -> INCLUDED
-      // Uses a distinct teacher fixture and yesterday's date so it cannot conflict
-      // with Studio Class A or Class D at any time of day (#575).
+      // Its own teacher fixture (futurePacificTeacherId) rules out conflict with
+      // the preceding test's fixtures regardless of date; yesterday's date is what
+      // rules out conflict with this test's own future-dated fixture below (#575).
       // Hourly rate: 50.00, 60 min -> 50.00
       const localYesterday = new Date(localToday);
       localYesterday.setUTCDate(localYesterday.getUTCDate() - 1);
