@@ -437,24 +437,32 @@ describe('GET /settings/reporting (reporting page)', () => {
     }
 
     /**
-     * Minimum millisecond margin required between fixture creation and request
-     * execution so a future-dated fixture does not race the server's clock and
-     * become past (#558, #579).
+     * Minimum gap, measured from the `now` snapshot taken before fixture
+     * creation, that a future fixture's start instant must stay ahead of
+     * `now` by — sized to outlast fixture creation plus the request round
+     * trip, so the class hasn't already started by the time the server reads
+     * its own clock (#558, #579).
      */
     const MIN_FUTURE_MARGIN_MS = 5_000;
 
+    // Shared with the issue-278 fixture below, so the guard's default margin
+    // can never drift out of sync with the margin the fixture actually uses.
+    const FUTURE_FIXTURE_MARGIN_MINUTES = 10;
+
     /**
-     * True when `instant` has sufficient margin before Pacific midnight for a
-     * today-dated fixture with a start time from `pacificHHmmAfter(instant, marginMinutes)`
-     * to have a start instant strictly in the future when the server evaluates it (#579).
+     * True when a today-dated fixture with a start time from
+     * `pacificHHmmAfter(instant, marginMinutes)` has a start instant at least
+     * `minMarginMs` ahead of `instant` (#579).
      *
-     * In the last minute of the Pacific day (23:59:00–23:59:59), the latest possible start
-     * time today (23:59:00) has already arrived or passed (startInstant <= now), so no
-     * today-dated class can have a future start instant.
+     * False whenever it isn't: most often within `marginMinutes` of Pacific
+     * midnight, where `pacificHHmmAfter` clamps to 23:59 and that clamp sits
+     * closer to `instant` as the day runs out — but also during a Pacific
+     * DST-transition hour, where the derived wall-clock time is ambiguous or
+     * doesn't exist and can resolve to an instant well in the past.
      */
     function hasFutureStartMargin(
       instant: Date,
-      marginMinutes = 10,
+      marginMinutes = FUTURE_FIXTURE_MARGIN_MINUTES,
       minMarginMs = MIN_FUTURE_MARGIN_MS,
     ): boolean {
       const localToday = startOfLocalDay(instant, PACIFIC_TZ);
@@ -484,10 +492,20 @@ describe('GET /settings/reporting (reporting page)', () => {
       expect(hasFutureStartMargin(new Date('2026-07-16T06:58:54Z'), 10)).toBe(true);
       // 3 seconds before 23:59:00 PDT -> 3s margin < 5s threshold (unsafe race against server clock)
       expect(hasFutureStartMargin(new Date('2026-07-16T06:58:57Z'), 10)).toBe(false);
-      // At 23:59:00 PDT -> 0s margin (start instant is now, already started)
+      // At 23:59:00 PDT -> 0s margin (start instant equals now, not future)
       expect(hasFutureStartMargin(new Date('2026-07-16T06:59:00Z'), 10)).toBe(false);
       // Within 23:59:00–23:59:59 PDT -> negative margin (start instant in past)
       expect(hasFutureStartMargin(new Date('2026-07-16T06:59:30Z'), 10)).toBe(false);
+    });
+
+    it('classStartInstant <= now — the production filter at reporting/page.tsx:74 — is exact at the 23:59 boundary', () => {
+      const boundaryDay = startOfLocalDay(new Date('2026-07-16T06:59:00Z'), PACIFIC_TZ);
+      const startAt2359 = classStartInstant({ date: boundaryDay, startTime: hhmmToTime('23:59') }, PACIFIC_TZ);
+
+      // now == start instant (23:59:00 PDT): production's inclusive `<=` counts it as completed.
+      expect(startAt2359 <= new Date('2026-07-16T06:59:00Z')).toBe(true);
+      // now 6s before start instant: production excludes it as not yet started.
+      expect(startAt2359 <= new Date('2026-07-16T06:58:54Z')).toBe(false);
     });
 
     it('includes studio classes on or before local today and excludes tomorrow or cancelled ones', async () => {
@@ -556,10 +574,11 @@ describe('GET /settings/reporting (reporting page)', () => {
 
     it('excludes a studio class dated today whose start instant is in the future (issue 278)', async (ctx) => {
       const now = new Date();
-      if (!hasFutureStartMargin(now)) {
-        ctx.skip('Pacific day has insufficient margin before midnight for a future start instant today (#579)');
-        return;
-      }
+      ctx.skip(
+        !hasFutureStartMargin(now),
+        `derived start instant is not ${MIN_FUTURE_MARGIN_MS}ms ahead of ${now.toISOString()} ` +
+          '— Pacific midnight clamp or DST-transition wall-clock ambiguity (#579)',
+      );
 
       const localToday = startOfLocalDay(now, PACIFIC_TZ);
 
@@ -590,7 +609,7 @@ describe('GET /settings/reporting (reporting page)', () => {
         classType: 'Pacific Late Today Class',
         location: 'Portland Studio',
         date: localToday,
-        startTime: hhmmToTime(pacificHHmmAfter(now, 10)),
+        startTime: hhmmToTime(pacificHHmmAfter(now, FUTURE_FIXTURE_MARGIN_MINUTES)),
         durationMinutes: 60,
         hourlyRate: new Prisma.Decimal('60.00'),
         studentCount: 7,
