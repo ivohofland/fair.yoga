@@ -7,6 +7,7 @@ import type { createClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Select } from '@/components/ui/select';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -39,6 +40,7 @@ interface FormData {
   // Step 1: Basics
   teacherRoomId: string;
   classType: string;
+  description: string;
   date: string;
   startTime: string;
   durationMinutes: number;
@@ -57,42 +59,18 @@ type CreateClassWire = z.infer<typeof createClassSchema>;
 
 /**
  * #136. `FormData` is the list; the body is `form` itself, so the two cannot
- * drift. These pins tie that list to the schema.
- *
- * One key is excluded from the forward pin. `description` — `createClassSchema`
- * accepts it and `POST /api/classes` writes it, but this wizard renders no
- * input for it, so a teacher can only describe a class by editing it
- * afterwards. That is a real gap, filed as #147, not something to paper over by
- * adding a field inside an unrelated change.
- *
- * `templateId` used to be excluded here too. It is gone from the schema as of
- * #146 — it was server-set, reached `prisma.class.create` from the request body
- * with no ownership check, and appeared in no UI.
+ * drift. These pins tie that list to the schema in both directions, with no
+ * exclusions (#147 added description).
  *
  * What this pin enforces, exactly: every key `createClassSchema` declares
- * except `description` is a key of `FormData`, this form's own value type. Not
- * that the field is *rendered* — `FormData` is a TypeScript interface, and
- * adding a key to it with no matching input keeps both pins green. What catches
- * that is `page.test.tsx`, which drives the rendered inputs and asserts the
- * whole POST body.
+ * is a key of `FormData`, this form's own value type. Not that the field is
+ * *rendered* — `FormData` is a TypeScript interface, and adding a key to it
+ * with no matching input keeps both pins green. What catches that is
+ * `page.test.tsx`, which drives the rendered inputs and asserts the whole
+ * POST body.
  */
-type ClassFormExclusion = 'description';
-
-/**
- * The exclusion's own pin. Without it the exclusion is unfalsifiable in the
- * direction that matters: measured — removing `description` from
- * `createClassSchema` produces no error here, the exclusion silently becomes a
- * no-op, and it then survives forever looking like protection while protecting
- * nothing. When #147 is fixed by adding a description input, this is what fails
- * and tells whoever adds it to delete the exclusion. Same rot the pins in
- * `class-lifecycle.ts` guard against one file over.
- */
-const _exclusionsAreRealKeys: NoneOf<Exclude<ClassFormExclusion, keyof CreateClassWire>> = true;
-const _formCoversCreate: NoneOf<
-  Exclude<Exclude<keyof CreateClassWire, ClassFormExclusion>, keyof FormData>
-> = true;
+const _formCoversCreate: NoneOf<Exclude<keyof CreateClassWire, keyof FormData>> = true;
 const _formHasNoExtras: NoneOf<Exclude<keyof FormData, keyof CreateClassWire>> = true;
-void _exclusionsAreRealKeys;
 void _formCoversCreate;
 void _formHasNoExtras;
 
@@ -105,6 +83,7 @@ type StepErrors = Record<string, string>;
 const INITIAL_FORM: FormData = {
   teacherRoomId: '',
   classType: '',
+  description: '',
   date: '',
   startTime: '',
   durationMinutes: 60,
@@ -295,10 +274,15 @@ export default function CreateClassPage() {
     setSubmitError('');
 
     try {
+      const payload = {
+        ...form,
+        description: form.description.trim() || null,
+      };
+
       const res = await fetch('/api/classes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -433,6 +417,14 @@ export default function CreateClassPage() {
             value={form.classType}
             onChange={(e) => updateField('classType', e.target.value)}
             error={errors.classType}
+          />
+
+          <Textarea
+            id="description"
+            label="Description"
+            value={form.description}
+            onChange={(e) => updateField('description', e.target.value)}
+            rows={3}
           />
 
           <Input
@@ -609,6 +601,13 @@ export default function CreateClassPage() {
             <span className="type-label">Class type</span>
             <p className="text-base text-ink">{form.classType}</p>
           </div>
+
+          {form.description.trim() ? (
+            <div className="py-2 border-b border-border">
+              <span className="type-label">Description</span>
+              <p className="text-base text-ink whitespace-pre-wrap">{form.description.trim()}</p>
+            </div>
+          ) : null}
 
           <div className="py-2 border-b border-border">
             <span className="type-label">Date &amp; time</span>
