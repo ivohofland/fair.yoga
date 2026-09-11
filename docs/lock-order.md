@@ -531,7 +531,8 @@ Against each, the class its notifications carry:
 > notification they write; and `sendAnnouncement` (`services/announcements.ts`,
 > called by `POST /api/announcements`), whose
 > `lockAnnouncementSlot` is an **advisory** lock, not a `Class` row lock — as
-> the #196 section of this document already says 300 lines below. It now takes `lockClassRow` and then inserts
+> the #196/#215 section of this document says below. `handleSpotFreed`'s broadcast takes `lockClassRow`
+> and then inserts
 > notifications carrying `relatedClassId` — a `FOR KEY SHARE` on the row it
 > already holds `FOR UPDATE`, exactly as `deleteTeacherAccount`'s named
 > exception above. One class per transaction, so it adds no edge.
@@ -1117,7 +1118,7 @@ row from "outside any transaction" to inside one for the same reason.
 **It cannot be half of a cycle today, and the reason is structural at the service boundary (#215).**
 A cycle needs some other transaction to hold a `Class` row lock and then wait on this advisory lock.
 Nothing can: `lockAnnouncementSlot` is **module-private** to `src/services/announcements.ts` (issue #215)
-and called only as the first statement of `sendAnnouncement`. Because it is not exported, another
+and is called from only one place — the first statement of `sendAnnouncement`'s transaction. Because it is not exported, another
 transaction (such as a notification sweep or cancellation path that already holds a `Class` row lock)
 cannot invoke `lockAnnouncementSlot` and create an inversion without explicitly breaking the service module
 boundary. Two announcement sends racing each other take the two locks in the same order (`advisory → Class`),

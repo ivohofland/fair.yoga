@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { sendAnnouncement, ANNOUNCEMENT_DEDUPE_WINDOW_MS } from './announcements';
+import { sendAnnouncement, ANNOUNCEMENT_DEDUPE_WINDOW_MS, type SendAnnouncementInput } from './announcements';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 import type { CreateNotificationInput } from './notifications';
@@ -115,6 +115,10 @@ describe('Announcement Service', () => {
   });
 
   afterAll(async () => {
+    const studentIds = [student1Id, student2Id].filter(Boolean);
+    if (studentIds.length) {
+      await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
+    }
     if (teacherId) await prisma.announcement.deleteMany({ where: { teacherId } });
     if (otherTeacherId) await prisma.announcement.deleteMany({ where: { teacherId: otherTeacherId } });
     await prisma.$disconnect();
@@ -309,6 +313,44 @@ describe('Announcement Service', () => {
     expect(allStudents.announcement.id).not.toBe(classScoped.announcement.id);
   });
 
+  it('deduplicates a second identical all-students send (both classId null)', async () => {
+    const message = `All-students dedupe test ${suffix}`;
+    const recipients: CreateNotificationInput[] = [
+      {
+        recipientType: 'student',
+        recipientId: student1Id,
+        type: 'announcement',
+        title: 'New announcement',
+        body: message,
+      },
+    ];
+
+    const first = await sendAnnouncement(prisma, {
+      teacherId,
+      classId: null,
+      message,
+      recipients,
+    });
+    expect(first.deduped).toBe(false);
+
+    // The positive case for the `classId IS NULL` predicate: the findFirst on
+    // a null `classId` must find the earlier all-students send, not only the
+    // class-scoped ones.
+    const second = await sendAnnouncement(prisma, {
+      teacherId,
+      classId: null,
+      message,
+      recipients,
+    });
+    expect(second.deduped).toBe(true);
+    expect(second.announcement.id).toBe(first.announcement.id);
+
+    const notifications = await prisma.notification.findMany({
+      where: { type: 'announcement', body: message },
+    });
+    expect(notifications).toHaveLength(1);
+  });
+
   it('does not deduplicate when message differs', async () => {
     const recipients: CreateNotificationInput[] = [
       {
@@ -440,6 +482,71 @@ describe('Announcement Service', () => {
     await other.$disconnect();
 
     expect(order).toEqual(['first released', 'sending resolved']);
+  });
+
+  it('does not make a send wait on a slot differing in any one field (lock-key composition)', async () => {
+    const other = new PrismaClient();
+    const message = `Key neighbour test ${suffix}`;
+    const recipients: CreateNotificationInput[] = [
+      {
+        recipientType: 'student',
+        recipientId: student1Id,
+        type: 'announcement',
+        title: 'New announcement',
+        body: message,
+        relatedClassId: class1Id,
+      },
+    ];
+    // Each neighbour shares two of the held slot's three fields. A key
+    // composition that dropped a field would put a neighbour on the held key,
+    // and its send would park below instead of passing.
+    const held: SendAnnouncementInput = { teacherId, classId: class1Id, message, recipients };
+    const neighbours: SendAnnouncementInput[] = [
+      { teacherId: otherTeacherId, classId: class1Id, message, recipients },
+      { teacherId, classId: null, message, recipients },
+      { teacherId, classId: class1Id, message: `Key neighbour test ${suffix} two`, recipients },
+    ];
+
+    const key = `${held.teacherId}|${held.classId}|${held.message}`;
+    const hash = crypto.createHash('sha256').update(key).digest().readInt32BE(0);
+
+    let release!: () => void;
+    let locked!: () => void;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    const parked = new Promise<void>((r) => {
+      locked = r;
+    });
+
+    const holding = other.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`
+          SELECT 1 FROM (
+            SELECT pg_advisory_xact_lock(196::int4, ${hash}::int4)
+          ) AS taken`;
+        locked();
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+    await parked;
+
+    try {
+      // Each neighbour must complete while the held key is still taken; the
+      // race turns a regression that parks a neighbour into a red, not a hang.
+      for (const slot of neighbours) {
+        const result = await Promise.race([
+          sendAnnouncement(prisma, slot).then(() => 'sent' as const),
+          new Promise<'parked'>((resolve) => setTimeout(() => resolve('parked'), 3000)),
+        ]);
+        expect(result).toBe('sent');
+      }
+    } finally {
+      release();
+      await holding;
+    }
+    await other.$disconnect();
   });
 
   it('serialises concurrent sends with the same slot so only one creates and the other dedupes', async () => {

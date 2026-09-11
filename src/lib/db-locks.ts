@@ -623,6 +623,3 @@ export async function lockClassRowsOrdered(
   }
   return ids;
 }
-
-// Exported from @/services/announcements; re-exported here for existing consumers (#215).
-export { ANNOUNCEMENT_DEDUPE_WINDOW_MS } from '@/services/announcements';
