@@ -781,6 +781,7 @@ describe('POST /api/invitations/[id]/resend (#173)', () => {
       const after = await prisma.invitation.findUniqueOrThrow({ where: { id: blockedInvitation.id } });
       expect(after.lastNotifiedAt).not.toBeNull();
       expect(after.lastNotifiedEmail).toBe(blockedEmail);
+      expect(after.lastNotifyFailedAt).toBeNull();
 
       // Bracketing control, same technique as "creates no notification for
       // an address with no Student row" above: a second, unblocked resend
@@ -927,9 +928,10 @@ describe('resend does not touch delivered, so a genuine decoy stays tombstone-pr
 
       const afterResend = await prisma.invitation.findUniqueOrThrow({
         where: { id: invitationId },
-        select: { delivered: true },
+        select: { delivered: true, lastNotifyFailedAt: true },
       });
       expect(afterResend.delivered).toBe(false);
+      expect(afterResend.lastNotifyFailedAt).toBeNull();
 
       const result = await unlinkTeacher(prisma, {
         teacherId, studentId, accountEmail: email,

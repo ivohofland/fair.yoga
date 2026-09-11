@@ -640,7 +640,9 @@ const DELIVERY_FAILURE_MESSAGE = {
  * `source` are parameters rather than anything this function could derive —
  * they are what makes the log line name WHICH delivery failed, and from
  * which route (#166 review, F4). The invitee's address is deliberately not
- * logged.
+ * logged. `lastNotifyFailedAt` is persisted here on the same `.catch` path
+ * (#392) — scoped by `invitationId` only, so it carries nothing the
+ * `TeacherBlock`/roster re-checks inside `notifyInvitee` don't already gate.
  *
  * Fire-and-forget is safe here specifically: this is a long-lived Node
  * process on a single VPS, not a serverless function that could be frozen
@@ -669,6 +671,22 @@ export function deliverInvitation(
       { err, teacherId: input.teacherId, invitationId: input.invitationId },
       DELIVERY_FAILURE_MESSAGE[input.source],
     );
+    // Scoped by id alone, matching every other background write in this
+    // file — the row may already be gone (a concurrent DELETE), and a
+    // zero-count match here is not an error. Best-effort: a failure to
+    // record the failure is logged, not thrown, since there is still no
+    // promise for anything to await this on.
+    db.invitation
+      .updateMany({
+        where: { id: input.invitationId },
+        data: { lastNotifyFailedAt: new Date() },
+      })
+      .catch((writeErr: unknown) => {
+        log.error(
+          { err: writeErr, invitationId: input.invitationId },
+          'failed to record notify failure',
+        );
+      });
   });
 }
 
