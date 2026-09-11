@@ -2,7 +2,8 @@ import type { BrowserContext } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { uniqueSuffix, hashToken, freshIp, teardownTeacher } from '../helpers';
+import { uniqueSuffix, hashToken, freshIp, sessionCookie, teardownTeacher } from '../helpers';
+import { SESSION_COOKIE_NAME } from '@/lib/auth/session';
 
 const prisma = new PrismaClient();
 
@@ -44,14 +45,15 @@ async function asOriginBrowser(context: BrowserContext, nonce: string): Promise<
 test.describe('Teacher signup', () => {
   test.describe.configure({ mode: 'serial' });
 
-  const createdEmails: string[] = [];
-  const createdSlugs: string[] = [];
+  let signupEmail: string;
+  let pageSlug: string;
+  let sessionToken: string;
 
   test.afterAll(async () => {
-    for (const email of createdEmails) {
-      await prisma.magicLinkToken.deleteMany({ where: { email } });
+    if (signupEmail) {
+      await prisma.magicLinkToken.deleteMany({ where: { email: signupEmail } });
     }
-    for (const pageSlug of createdSlugs) {
+    if (pageSlug) {
       const teacher = await prisma.teacher.findUnique({
         where: { pageSlug },
         select: { id: true, accountId: true },
@@ -63,13 +65,11 @@ test.describe('Teacher signup', () => {
     await prisma.$disconnect();
   });
 
-  test('an address with no account signs up, verifies, sets up a profile, lands on the schedule, and signing out from /signup restores the form', async ({ page, context }) => {
+  test('an address with no account signs up, verifies, sets up a profile, and lands on the schedule', async ({ page, context }) => {
     await context.setExtraHTTPHeaders(freshIp());
     const suffix = uniqueSuffix();
-    const signupEmail = `e2e-signup-${suffix}@test.local`;
-    const pageSlug = `e2e-signup-${suffix}`;
-    createdEmails.push(signupEmail);
-    createdSlugs.push(pageSlug);
+    signupEmail = `e2e-signup-${suffix}@test.local`;
+    pageSlug = `e2e-signup-${suffix}`;
 
     // Step one: the email form on /signup, driven for real — this is the one
     // piece of the flow that was previously untested at every layer, and it
@@ -112,11 +112,22 @@ test.describe('Teacher signup', () => {
     expect(teacher.firstName).toBe('Anna');
     expect(teacher.email).toBe(signupEmail);
 
-    // Step four (#443): the signed-in teacher visits /signup.
-    // Confirm the "Already teaching" panel renders with their address and schedule link.
-    // Clicking "Sign out" pushes back to the same route (/signup) and triggers
-    // router.refresh(), which must invalidate the same-route RSC cache so that
-    // the plain email signup form is revealed instead of the panel.
+    // Handed to the next test so it signs out of the session this flow
+    // actually created, rather than a fixture standing in for it.
+    const cookies = await context.cookies();
+    const cookie = cookies.find((c) => c.name === SESSION_COOKIE_NAME);
+    if (!cookie) throw new Error('expected the profile-creation response to set a session cookie');
+    sessionToken = cookie.value;
+  });
+
+  test('signing out from /signup restores the form and deletes the session (#443)', async ({ page, context }) => {
+    await context.addCookies([sessionCookie(sessionToken)]);
+
+    // A signed-in teacher who revisits /signup is met with
+    // AlreadyTeachingPanel instead of a second signup form, with a way out
+    // via sign-out (#431). This pins the observable outcome of that
+    // sign-out: the plain form comes back on this same route, and no
+    // session survives — not which of SignOutButton's own calls produces it.
     await page.goto('/signup');
     await expect(page.getByRole('heading', { name: 'You already have a page.' })).toBeVisible();
     await expect(page.getByText(signupEmail)).toBeVisible();
@@ -125,15 +136,23 @@ test.describe('Teacher signup', () => {
 
     const signOutButton = page.getByRole('button', { name: 'Sign out' });
     await expect(signOutButton).toBeVisible();
-    await signOutButton.click();
 
-    // router.refresh() invalidates the same-route RSC cache:
-    await expect(page.getByRole('heading', { name: 'Start teaching on fair.yoga' })).toBeVisible();
+    // /signup has no SSE stream for hydrationSignal to wait on (that helper
+    // only fires on teacher pages), so a click straight after goto can race
+    // hydration the same way a click after page.reload() does. Retrying is
+    // safe: DELETE /api/auth/session is idempotent.
+    await expect(async () => {
+      if (await signOutButton.isVisible()) await signOutButton.click();
+      await expect(page.getByRole('heading', { name: 'Start teaching on fair.yoga' })).toBeVisible({
+        timeout: 2_000,
+      });
+    }).toPass({ timeout: 15_000 });
+
     await expect(page.getByLabel('Email')).toBeVisible();
     await expect(page.getByRole('button', { name: /send me the link/i })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'You already have a page.' })).not.toBeVisible();
 
-    // The session row was deleted by the sign-out endpoint:
+    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { pageSlug } });
     const sessions = await prisma.session.findMany({ where: { accountId: teacher.accountId } });
     expect(sessions).toHaveLength(0);
   });
