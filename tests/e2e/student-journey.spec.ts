@@ -216,6 +216,9 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     await page.goto(`/${slug}`);
     await expect(page.getByText('On the waitlist')).toBeVisible();
     await expect(page.getByText(/depending on your income tier/)).toHaveCount(0);
+    // Bram's tier is already known (fixture, line ~104) — the personal
+    // range shows alongside the waitlist label now, not nothing (#433).
+    await expect(page.getByText(/depending on how many join/)).toBeVisible();
     await page.goto('/bookings');
 
     // Leave — the section empties.
@@ -224,11 +227,12 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
       timeout: 10_000,
     });
 
-    // A removed entry is not "on the waitlist" — the card quotes the
-    // price again.
+    // A removed entry is not "on the waitlist" — the card quotes a price
+    // again. Bram's tier is known, so it's the personal range, not the
+    // tier-spread one (#433).
     await page.goto(`/${slug}`);
     await expect(page.getByText('On the waitlist')).toHaveCount(0);
-    await expect(page.getByText(/depending on your income tier/)).toBeVisible();
+    await expect(page.getByText(/depending on how many join/)).toBeVisible();
 
     // Rejoin — the removed entry reactivates instead of hitting the
     // unique constraint.
@@ -251,10 +255,11 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     });
 
     // Her card drops the booked line the moment the registration is
-    // cancelled — the price range is the honest state again.
+    // cancelled — the price range is the honest state again. Alice's tier
+    // is known, so it's the personal range (#433).
     await page.goto(`/${slug}`);
     await expect(page.getByText('✓ Booked')).toHaveCount(0);
-    await expect(page.getByText(/depending on your income tier/)).toBeVisible();
+    await expect(page.getByText(/depending on how many join/)).toBeVisible();
 
     // Bram now holds the seat: booked, no longer waitlisted.
     await context.clearCookies();

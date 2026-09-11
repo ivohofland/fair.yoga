@@ -434,9 +434,13 @@ test.describe('Public booking flow', () => {
 
     // The teacher page tells this student what they already did: the
     // booked card says so, the unbooked card still quotes the range.
+    // The teacher page now shows a price line on every card, personal or
+    // anonymous depending on the viewer's own tier — booked/unbooked no
+    // longer decides which line renders (#433).
     await page.goto(`/${slug}`);
     await expect(page.getByText('✓ Booked')).toHaveCount(1);
-    await expect(page.getByText(/depending on your income tier/)).toHaveCount(1);
+    await expect(page.getByText(/depending on your income tier/)).toHaveCount(0);
+    await expect(page.getByText(/depending on how many join/).first()).toBeVisible();
 
     // A fresh signed-out visitor while these bookings exist: nobody's
     // booked state leaks into the anonymous view.
