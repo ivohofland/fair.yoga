@@ -29,27 +29,40 @@ describe('canRemoveContact', () => {
 });
 
 describe('invitationDeliveryStatus', () => {
-  it('is sent when the last notified address matches the current one', () => {
+  it('is sent when the last notified address matches the current one and no failure is recorded', () => {
     const at = new Date('2026-08-01T00:00:00.000Z');
     const result = invitationDeliveryStatus({
       email: 'lena@example.com', lastNotifiedAt: at, lastNotifiedEmail: 'lena@example.com',
+      lastNotifyFailedAt: null,
     });
-    expect(result).toEqual({ sent: true, at });
+    expect(result).toEqual({ state: 'sent', at });
   });
 
-  it('is not sent when the address was corrected after the last attempt', () => {
+  it('is failed when the last attempt against the current address is recorded as failed', () => {
+    const notifiedAt = new Date('2026-08-01T00:00:00.000Z');
+    const failedAt = new Date('2026-08-01T00:05:00.000Z');
+    const result = invitationDeliveryStatus({
+      email: 'lena@example.com', lastNotifiedAt: notifiedAt, lastNotifiedEmail: 'lena@example.com',
+      lastNotifyFailedAt: failedAt,
+    });
+    expect(result).toEqual({ state: 'failed', at: failedAt });
+  });
+
+  it('is not-sent when the address was corrected after the last attempt, even with a stale failure recorded', () => {
     const result = invitationDeliveryStatus({
       email: 'lena@example.com',
       lastNotifiedAt: new Date('2026-08-01T00:00:00.000Z'),
       lastNotifiedEmail: 'lena-old-typo@example.com',
+      lastNotifyFailedAt: new Date('2026-08-01T00:05:00.000Z'),
     });
-    expect(result).toEqual({ sent: false });
+    expect(result).toEqual({ state: 'not-sent' });
   });
 
-  it('is not sent when no attempt has ever been made', () => {
+  it('is not-sent when no attempt has ever been made', () => {
     const result = invitationDeliveryStatus({
       email: 'lena@example.com', lastNotifiedAt: null, lastNotifiedEmail: null,
+      lastNotifyFailedAt: null,
     });
-    expect(result).toEqual({ sent: false });
+    expect(result).toEqual({ state: 'not-sent' });
   });
 });
