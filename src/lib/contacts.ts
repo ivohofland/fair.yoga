@@ -23,24 +23,39 @@ export function canRemoveContact(status: InvitationStatus): boolean {
 
 /**
  * Whether a pending invitation's most recent notify attempt reached the
- * address the row currently holds (#173). Pulled out of
- * `/students/contacts/[id]/page.tsx` for the same reason `canRemoveContact`
- * above was: that page is a server component, so no component test can
- * reach the comparison directly.
+ * address the row currently holds, and whether that attempt is known to
+ * have failed (#392). Pulled out of `/students/contacts/[id]/page.tsx` for
+ * the same reason `canRemoveContact` above was: that page is a server
+ * component, so no component test can reach the comparison directly.
  *
  * `lastNotifiedEmail` is written unconditionally on every attempt by both
  * writers — `POST /api/students` (route.ts) and `POST
- * /api/invitations/[id]/resend` (route.ts, #173) — see either route's own
- * docblock for why — so `sent: false` here means only "not sent to the
- * CURRENT address",
- * never "blocked". A teacher must not be able to tell those two apart from
- * this result.
+ * /api/invitations/[id]/resend` (route.ts, #173) — so `state: 'not-sent'`
+ * here means only "not sent to the CURRENT address," never "blocked."
+ * `lastNotifyFailedAt` is set only inside `deliverInvitation`'s own
+ * `.catch` (services/invitations.ts), which never fires for a blocked or
+ * already-linked address either (both `notifyInvitee` early returns
+ * resolve without throwing) — so `state: 'failed'` carries the same
+ * non-disclosure property `state: 'sent'` always has. Checked only once
+ * `lastNotifiedEmail === email` already holds: both `POST` routes clear
+ * `lastNotifyFailedAt` on every fresh attempt and `PUT` clears it on every
+ * readdress, so a stale failure from a superseded attempt or an old
+ * address should never reach this branch — the email-match gate is kept
+ * as a second, independent check anyway, not load-bearing on the clearing
+ * writes alone.
  */
 export function invitationDeliveryStatus(
-  invitation: { email: string; lastNotifiedAt: Date | null; lastNotifiedEmail: string | null },
-): { sent: true; at: Date } | { sent: false } {
+  invitation: {
+    email: string;
+    lastNotifiedAt: Date | null;
+    lastNotifiedEmail: string | null;
+    lastNotifyFailedAt: Date | null;
+  },
+): { state: 'sent'; at: Date } | { state: 'failed'; at: Date } | { state: 'not-sent' } {
   if (invitation.lastNotifiedAt && invitation.lastNotifiedEmail === invitation.email) {
-    return { sent: true, at: invitation.lastNotifiedAt };
+    return invitation.lastNotifyFailedAt
+      ? { state: 'failed', at: invitation.lastNotifyFailedAt }
+      : { state: 'sent', at: invitation.lastNotifiedAt };
   }
-  return { sent: false };
+  return { state: 'not-sent' };
 }
