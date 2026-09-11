@@ -6,13 +6,14 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
-import { estimateTierPrices } from '@/lib/tier-estimates';
 import { formatRoomLocation, formatDayHeader } from '@/lib/format';
 import { startOfLocalDay } from '@/lib/timezone';
 import { timeToHHmm } from '@/lib/time-of-day';
-import { PriceRange } from '@/components/booking/price-range';
+import { ClassPriceLine } from '@/components/booking/price-range';
 import { PricingExplainer } from '@/components/booking/pricing-explainer';
-import { toIncomeTier } from '@/lib/tiers.server';
+import { readIncomeTier } from '@/lib/tiers.server';
+import type { IncomeTier } from '@/lib/tiers';
+import { resolvePriceLine } from '@/lib/price-line';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,7 +62,7 @@ export default async function TeacherBookingPage({
       teacherRoom: { include: { room: true } },
       registrations: {
         where: { status: { in: ['registered', 'attended', 'no_show', 'late_cancel'] } },
-        select: { id: true, tierAtBooking: true, status: true },
+        select: { id: true, tierAtBooking: true, status: true, studentId: true },
       },
     },
   });
@@ -71,9 +72,10 @@ export default async function TeacherBookingPage({
   const session = await getSession();
   let bookedClassIds = new Set<string>();
   let waitingClassIds = new Set<string>();
+  let viewer: { studentId: string; tier: IncomeTier | null; tierSelectedAt: Date | null } | null = null;
   if (session?.studentId && classes.length > 0) {
     const classIds = classes.map((c) => c.id);
-    const [own, waiting] = await Promise.all([
+    const [own, waiting, student] = await Promise.all([
       prisma.registration.findMany({
         where: { studentId: session.studentId, classId: { in: classIds }, status: 'registered' },
         select: { classId: true },
@@ -82,9 +84,18 @@ export default async function TeacherBookingPage({
         where: { studentId: session.studentId, classId: { in: classIds }, status: 'waiting' },
         select: { classId: true },
       }),
+      prisma.student.findUniqueOrThrow({
+        where: { id: session.studentId },
+        select: { incomeTier: true, tierSelectedAt: true },
+      }),
     ]);
     bookedClassIds = new Set(own.map((r) => r.classId));
     waitingClassIds = new Set(waiting.map((w) => w.classId));
+    viewer = {
+      studentId: session.studentId,
+      tier: readIncomeTier(student.incomeTier, { studentId: session.studentId }),
+      tierSelectedAt: student.tierSelectedAt,
+    };
   }
 
   return (
@@ -108,16 +119,6 @@ export default async function TeacherBookingPage({
           {classes.map((cls) => {
             const activeCount = cls.registrations.filter((r) => r.status !== 'late_cancel').length;
             const isFull = activeCount >= cls.maxStudents;
-            const estimates = estimateTierPrices({
-              roomCost: Number(cls.roomCost),
-              minRate: Number(cls.minRate),
-              targetRate: Number(cls.targetRate),
-              minStudents: cls.minStudents,
-              maxStudents: cls.maxStudents,
-              registeredTiers: cls.registrations.map((r) =>
-                toIncomeTier(r.tierAtBooking, { registrationId: r.id }),
-              ),
-            });
 
             return (
               <Link
@@ -147,13 +148,23 @@ export default async function TeacherBookingPage({
                   max={cls.maxStudents}
                   className="mt-3"
                 />
-                {bookedClassIds.has(cls.id) ? (
-                  <p className="type-label text-teal mt-2">✓ Booked</p>
-                ) : waitingClassIds.has(cls.id) ? (
-                  <p className="type-label text-teal mt-2">On the waitlist</p>
-                ) : (
-                  <PriceRange estimates={estimates} className="mt-2" />
+                {(bookedClassIds.has(cls.id) || waitingClassIds.has(cls.id)) && (
+                  <p className="type-label text-teal mt-2">
+                    {bookedClassIds.has(cls.id) ? '✓ Booked' : 'On the waitlist'}
+                  </p>
                 )}
+                <ClassPriceLine
+                  line={resolvePriceLine({
+                    roomCost: Number(cls.roomCost),
+                    minRate: Number(cls.minRate),
+                    targetRate: Number(cls.targetRate),
+                    minStudents: cls.minStudents,
+                    maxStudents: cls.maxStudents,
+                    registrations: cls.registrations,
+                    viewer,
+                  })}
+                  className={bookedClassIds.has(cls.id) || waitingClassIds.has(cls.id) ? 'mt-1' : 'mt-2'}
+                />
               </Link>
             );
           })}
