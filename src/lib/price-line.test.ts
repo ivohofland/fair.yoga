@@ -32,7 +32,7 @@ describe('resolvePriceLine', () => {
     const result = resolvePriceLine({
       ...BASE,
       registrations: [
-        { id: 'r1', studentId: 'other', tierAtBooking: 3 },
+        { id: 'r1', studentId: 'other', tierAtBooking: 3, status: 'registered' },
       ],
       viewer: { studentId: 's1', tier: 4, tierSelectedAt: new Date() },
     });
@@ -43,7 +43,7 @@ describe('resolvePriceLine', () => {
     const bookedAtTier1 = resolvePriceLine({
       ...BASE,
       registrations: [
-        { id: 'own', studentId: 's1', tierAtBooking: 1 },
+        { id: 'own', studentId: 's1', tierAtBooking: 1, status: 'registered' },
       ],
       // Profile tier has since changed to 5 — must not leak into the quote.
       viewer: { studentId: 's1', tier: 5, tierSelectedAt: new Date() },
@@ -67,10 +67,35 @@ describe('resolvePriceLine', () => {
     const result = resolvePriceLine({
       ...BASE,
       registrations: [
-        { id: 'own', studentId: 's1', tierAtBooking: 99 },
+        { id: 'own', studentId: 's1', tierAtBooking: 99, status: 'registered' },
       ],
       viewer: { studentId: 's1', tier: 3, tierSelectedAt: new Date() },
     });
     expect(result.kind).toBe('anonymous');
+  });
+
+  it('quotes the current profile tier, not the stale stamped one, when the own registration is late_cancel', () => {
+    const lateCancelled = resolvePriceLine({
+      ...BASE,
+      registrations: [
+        { id: 'own', studentId: 's1', tierAtBooking: 1, status: 'late_cancel' },
+      ],
+      // Profile tier has since changed to 5 — a late-cancelled row is not a
+      // billed booking, so it must not leak its stale tier into the quote.
+      viewer: { studentId: 's1', tier: 5, tierSelectedAt: new Date() },
+    });
+    const neverBookedAtTier5 = resolvePriceLine({
+      ...BASE,
+      registrations: [],
+      viewer: { studentId: 's1', tier: 5, tierSelectedAt: new Date() },
+    });
+    expect(lateCancelled.kind).toBe('personal');
+    expect(neverBookedAtTier5.kind).toBe('personal');
+    if (lateCancelled.kind === 'personal' && neverBookedAtTier5.kind === 'personal') {
+      // Same viewer tier (5), same otherwise-empty pool -> same spread,
+      // proving the late-cancelled row was excluded from the pool AND its
+      // stale stamped tier (1) was not quoted — the profile tier (5) was.
+      expect(lateCancelled.spread).toEqual(neverBookedAtTier5.spread);
+    }
   });
 });
