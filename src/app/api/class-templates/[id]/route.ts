@@ -217,6 +217,13 @@ export const PUT = withErrorHandler(async (
               where: { id: data.teacherRoomId },
               select: { isArchived: true },
             });
+      if (data.teacherRoomId !== undefined && room === null) {
+        log.warn(
+          { err: e, templateId: id, teacherRoomId: data.teacherRoomId },
+          'template move target room vanished',
+        );
+        return respondError('Invalid teacher room', 400);
+      }
       if (room === null || room.isArchived) {
         log.warn({ err: e, templateId: id }, 'template move lost the room-archive race');
         return roomArchivedResponse('move');

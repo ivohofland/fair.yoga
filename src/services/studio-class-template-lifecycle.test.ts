@@ -1639,7 +1639,7 @@ describe('updateStudioClassTemplate (DB)', () => {
    * point about this branch is that a future statement inside the transaction
    * turns a genuine bug into a silent 404, and only a test makes that visible.
    */
-  it('maps a delete landing between the read and the write to not_found', async () => {
+  it('maps a delete landing between the read and the write to not_found and logs it', async () => {
     const t = await makeTemplate(teacherId, 'P2025 Write');
 
     let deleted = false;
@@ -1666,13 +1666,22 @@ describe('updateStudioClassTemplate (DB)', () => {
       },
     }) as unknown as PrismaClient;
 
-    const result = await updateStudioClassTemplate(interposing, t.id, teacherId, {
-      classType: 'Renamed',
-    });
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    try {
+      const result = await updateStudioClassTemplate(interposing, t.id, teacherId, {
+        classType: 'Renamed',
+      });
 
-    expect(result).toEqual({ ok: false, reason: 'not_found' });
-    // The assertion that makes the one above mean the `catch` arm.
-    expect(updateAttempted, 'the write must have been reached and raised P2025').toBe(true);
+      expect(result).toEqual({ ok: false, reason: 'not_found' });
+      // The assertion that makes the one above mean the `catch` arm.
+      expect(updateAttempted, 'the write must have been reached and raised P2025').toBe(true);
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ templateId: t.id, teacherId }),
+        'studio template vanished between the ownership read and the write — nothing committed',
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   /**
