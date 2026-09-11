@@ -19,6 +19,7 @@ import { isOutstanding } from '@/lib/payment-status';
 import { resolvePriceLine, type PriceLineViewer } from '@/lib/price-line';
 import { readIncomeTier } from '@/lib/tiers.server';
 import { CHARGED_STATUSES } from '@/services/class-lifecycle';
+import { log } from '@/lib/log';
 
 export const dynamic = 'force-dynamic';
 
@@ -151,7 +152,13 @@ export default async function StudentBookingsPage() {
 
   // A hard-delete racing this page's own session validation — same
   // "no student to show this page to" outcome as the guard above.
-  if (!student) redirectNonStudent(session);
+  if (!student) {
+    log.warn(
+      { studentId: session.studentId },
+      'session.studentId has no matching Student row; redirecting',
+    );
+    redirectNonStudent(session);
+  }
 
   const viewer: PriceLineViewer = {
     studentId: session.studentId,
@@ -263,10 +270,9 @@ export default async function StudentBookingsPage() {
             {upcoming.map((reg) => {
               const cls = reg.class;
               const cancelled = cls.calendarEntry.cancelledAt !== null;
-              // `late_cancel` bills (it's in CHARGED_STATUSES, the set this
-              // query filters on) but frees the seat — excluded here so a
-              // cancelled row can't inflate the badge/progress bar, which is
-              // the bug this task fixes.
+              // `late_cancel` is in `CHARGED_STATUSES` (it bills) but not in
+              // `ACTIVE_REGISTRATION_STATUSES` (it frees the seat) — excluded
+              // here so it can't inflate the badge/progress bar.
               const activeCount = cls.registrations.filter((r) =>
                 ACTIVE_REGISTRATION_STATUSES.includes(r.status),
               ).length;

@@ -432,9 +432,9 @@ test.describe('Public booking flow', () => {
     await expect(page.getByText("You're in Tier 3")).toBeVisible();
     await expect(page.getByRole('radio')).toHaveCount(0);
 
-    // The teacher page now shows a price line on every card, personal or
-    // anonymous depending on the viewer's own tier — booked/unbooked no
-    // longer decides which line renders (#433).
+    // The teacher page shows a price line on every card — personal or
+    // anonymous depending on the viewer's own tier — regardless of whether
+    // they're booked or waitlisted (#433).
     await page.goto(`/${slug}`);
     await expect(page.getByText('✓ Booked')).toHaveCount(1);
     await expect(page.getByText(/depending on your income tier/)).toHaveCount(0);

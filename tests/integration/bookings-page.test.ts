@@ -164,9 +164,10 @@ describe('GET /bookings (page) — payment status gate', () => {
 /**
  * `/bookings` — the Upcoming section's registration-progress count.
  *
- * The progress bar's count must come from active registrations only: a
- * cancelled row must not inflate it. This also covers the price line and
- * "View class" link that Task 3 adds alongside the progress bar.
+ * The progress bar's count must come from active registrations only: neither
+ * a cancelled row nor a late-cancelled one may inflate it. This also covers
+ * the price line and "View class" link this issue adds alongside the
+ * progress bar (#433).
  */
 describe('GET /bookings (page) — upcoming registration count', () => {
   const suffix2 = uniqueSuffix();
@@ -176,6 +177,7 @@ describe('GET /bookings (page) — upcoming registration count', () => {
   let studentAccountId = '';
   let studentToken = '';
   let cancelledAccountId = '';
+  let lateCancelAccountId = '';
   let roomId = '';
   let classId = '';
 
@@ -260,6 +262,27 @@ describe('GET /bookings (page) — upcoming registration count', () => {
     await prisma.registration.create({
       data: { classId, studentId: cancelledStudent.id, tierAtBooking: 2, status: 'cancelled' },
     });
+    // A third student who cancelled after the deadline — still billed
+    // (`late_cancel` is in `CHARGED_STATUSES`, so the Prisma query above
+    // returns this row to the page), but it freed its seat and must NOT
+    // inflate the progress bar either. Unlike the plain `cancelled` row
+    // above, this one is the only fixture member that actually reaches the
+    // page's JS-level `ACTIVE_REGISTRATION_STATUSES` filter — `cancelled` is
+    // excluded earlier, by the Prisma `where` clause itself.
+    const lateCancelEmail = `bookings-count-late-cancel-${suffix2}@test.local`;
+    const lateCancelStudent = await prisma.student.create({
+      data: {
+        firstName: 'LateCancel', lastName: 'Student', email: lateCancelEmail,
+        claimedAt: new Date(),
+        incomeTier: 4,
+        account: { create: { email: lateCancelEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    lateCancelAccountId = lateCancelStudent.accountId as string;
+    await prisma.registration.create({
+      data: { classId, studentId: lateCancelStudent.id, tierAtBooking: 4, status: 'late_cancel' },
+    });
 
     // Warm the route before the assertions score anything (next dev compiles
     // a page lazily on its first hit).
@@ -272,17 +295,17 @@ describe('GET /bookings (page) — upcoming registration count', () => {
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
     await prisma.session.deleteMany({
-      where: { accountId: { in: [teacherAccountId, studentAccountId, cancelledAccountId] } },
+      where: { accountId: { in: [teacherAccountId, studentAccountId, cancelledAccountId, lateCancelAccountId] } },
     });
     await prisma.student.deleteMany({ where: { email: { contains: suffix2 } } });
     await prisma.teacher.deleteMany({ where: { id: teacherId } });
     await prisma.account.deleteMany({
-      where: { id: { in: [teacherAccountId, studentAccountId, cancelledAccountId] } },
+      where: { id: { in: [teacherAccountId, studentAccountId, cancelledAccountId, lateCancelAccountId] } },
     });
     await prisma.$disconnect();
   });
 
-  it('counts only active registrations, not cancelled ones, in the progress bar', async () => {
+  it('counts only active registrations, not cancelled or late-cancelled ones, in the progress bar', async () => {
     const res = await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) });
     expect(res.status).toBe(200);
     // React's SSR HTML inserts `<!-- -->` hydration markers between adjacent
@@ -291,8 +314,9 @@ describe('GET /bookings (page) — upcoming registration count', () => {
     // Stripping them makes the assertion below robust to that, without
     // hardcoding where React happens to place them.
     const html = (await res.text()).replace(/<!-- -->/g, '');
-    // One active registration (the viewer's own) against a min of 2 — the
-    // cancelled row must not count toward it. A proximity check (e.g. "1"
+    // One active registration (the viewer's own) against a min of 2 — neither
+    // the cancelled row nor the late-cancelled one may count toward it. A
+    // proximity check (e.g. "1"
     // within N chars of "/ 2–6") is not enough: RegistrationProgress's own
     // static className "text-[12px]" contains the digit "1", sitting closer
     // to "/ 2–6" than the real count ever could, so any such regex passes
@@ -319,7 +343,7 @@ describe('GET /bookings (page) — upcoming registration count', () => {
  * page itself 404s both (`[slug]/book/[classId]/page.tsx` refuses whenever
  * `cancelledAt !== null` or `status !== 'open'`), so a link there is dead —
  * and nobody is charged for a cancelled class, so a price quote beside its
- * "Cancelled" badge is a contradiction (#433 final review, finding 1).
+ * "Cancelled" badge is a contradiction (#433).
  */
 describe('GET /bookings (page) — price line and link gated on bookable state', () => {
   const suffix3 = uniqueSuffix();
@@ -465,5 +489,170 @@ describe('GET /bookings (page) — price line and link gated on bookable state',
     // The in-progress class: same reasoning — the booking page 404s it too.
     expect(html).toContain('In progress');
     expect(html).not.toContain(`/bookings-gate-teacher-${suffix3}/book/${inProgressClassId}`);
+  });
+});
+
+/**
+ * `/bookings` — the Waitlist section's price line for a signed-in student
+ * who has not yet chosen an income tier. `resolvePriceLine` returns its
+ * anonymous branch whenever `viewer.tierSelectedAt` is null; every other
+ * fixture student in this file already has a tier, so this is the only
+ * coverage of that branch through an actual page request on any of the
+ * three `resolvePriceLine` call sites (#433).
+ */
+describe('GET /bookings (page) — waitlist section, viewer has not chosen a tier', () => {
+  const suffix4 = uniqueSuffix();
+  let teacherId = '';
+  let teacherAccountId = '';
+  let studentId = '';
+  let studentAccountId = '';
+  let studentToken = '';
+  let activeAccountId = '';
+  let lateCancelAccountId = '';
+  let roomId = '';
+  let classId = '';
+
+  beforeAll(async () => {
+    await prisma.$connect();
+
+    const teacherEmail = `bookings-wl-teacher-${suffix4}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Waitlist', lastName: 'Teacher', email: teacherEmail,
+        bio: 'Waitlist fixture teacher',
+        pageSlug: `bookings-wl-teacher-${suffix4}`,
+        account: { create: { email: teacherEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Waitlist Studio',
+        address: `${suffix4} Waitlist St`,
+        city: 'Amsterdam',
+        postcode: '1000AA',
+        roomName: 'Hall',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 5, rentalRate: 15 },
+    });
+
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId: teacherRoom.id,
+      classType: 'Waitlist Test Class',
+      date: new Date('2099-09-01'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 10,
+      targetRate: 30,
+      minStudents: 2,
+      maxStudents: 5,
+      status: 'open',
+    });
+    classId = cls.id;
+
+    // The viewer: signed in, waitlisted, but has never chosen an income
+    // tier — `tierSelectedAt: null` is what should trigger the anonymous
+    // branch here, exactly as it does in the unit tests of resolvePriceLine.
+    const studentEmail = `bookings-wl-student-${suffix4}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Undecided', lastName: 'Student', email: studentEmail,
+        claimedAt: new Date(),
+        account: { create: { email: studentEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentId = student.id;
+    studentAccountId = student.accountId as string;
+    studentToken = await seedSession(prisma, studentAccountId);
+
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId, position: 1, status: 'waiting' },
+    });
+
+    // A registered student, filling the pool the anonymous estimate is
+    // built from.
+    const activeEmail = `bookings-wl-active-${suffix4}@test.local`;
+    const activeStudent = await prisma.student.create({
+      data: {
+        firstName: 'Active', lastName: 'Student', email: activeEmail,
+        claimedAt: new Date(),
+        incomeTier: 3,
+        account: { create: { email: activeEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    activeAccountId = activeStudent.accountId as string;
+    await prisma.registration.create({
+      data: { classId, studentId: activeStudent.id, tierAtBooking: 3, status: 'registered' },
+    });
+
+    // A late-cancelled student — billed, but must not inflate the Waitlist
+    // section's progress-bar count either (same rule the Upcoming section
+    // enforces, `bookings/page.tsx`).
+    const lateCancelEmail = `bookings-wl-late-cancel-${suffix4}@test.local`;
+    const lateCancelStudent = await prisma.student.create({
+      data: {
+        firstName: 'LateCancel', lastName: 'Student', email: lateCancelEmail,
+        claimedAt: new Date(),
+        incomeTier: 5,
+        account: { create: { email: lateCancelEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    lateCancelAccountId = lateCancelStudent.accountId as string;
+    await prisma.registration.create({
+      data: { classId, studentId: lateCancelStudent.id, tierAtBooking: 5, status: 'late_cancel' },
+    });
+
+    // Warm the route before the assertions score anything.
+    await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) }).catch(() => {});
+  }, 20_000);
+
+  afterAll(async () => {
+    await prisma.waitlistEntry.deleteMany({ where: { classId } });
+    await prisma.registration.deleteMany({ where: { classId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.session.deleteMany({
+      where: {
+        accountId: {
+          in: [teacherAccountId, studentAccountId, activeAccountId, lateCancelAccountId],
+        },
+      },
+    });
+    await prisma.student.deleteMany({ where: { email: { contains: suffix4 } } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({
+      where: {
+        id: { in: [teacherAccountId, studentAccountId, activeAccountId, lateCancelAccountId] },
+      },
+    });
+    await prisma.$disconnect();
+  });
+
+  it('shows the anonymous price line, not the personal one, and excludes the late-cancelled row from the count', async () => {
+    const res = await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) });
+    expect(res.status).toBe(200);
+    const html = (await res.text()).replace(/<!-- -->/g, '');
+
+    expect(html).toContain('depending on your income tier');
+    expect(html).not.toContain('depending on how many join');
+
+    // One active registration (the other student's) against a min of 2 —
+    // the late-cancelled row must not count toward it. Same structural
+    // anchor as the Upcoming section's count test above.
+    expect(html).toMatch(/<span[^>]*>1<\/span><span[^>]*>\/ 2–5<\/span>/);
   });
 });

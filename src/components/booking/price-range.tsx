@@ -8,8 +8,8 @@ interface PriceRangeProps {
 }
 
 // The public price line — tier 1 to tier 5 estimate with the income-tier
-// disclaimer. Shared so the public teacher page's class list and the
-// booking page never drift.
+// disclaimer. Rendered via `ClassPriceLine` below, never imported directly
+// by a page.
 export function PriceRange({ estimates, className }: PriceRangeProps) {
   const low = Math.min(...estimates);
   const high = Math.max(...estimates);
