@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { notifyInvitee } from './invitations';
+import { notifyInvitee, deliverInvitation } from './invitations';
 
 // `notifyInvitee`'s dry-run branch (src/lib/email.ts) can't tell "sent" from
 // "not reached" — a dry run just logs either way. Proving the registered
@@ -222,6 +222,113 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       // a teacher they already have.
       expect(sendMock).not.toHaveBeenCalled();
     } finally {
+      if (studentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId } });
+        await prisma.notification.deleteMany({ where: { recipientId: studentId } });
+        await prisma.student.delete({ where: { id: studentId } });
+      }
+    }
+  });
+
+  it('sets no failure signal when an already-linked pair is resent via deliverInvitation (#392 review, Important #7)', async () => {
+    // Spec Tests item 3, dropped from the original plan: this asserted the
+    // already-linked branch at the `notifyInvitee`-unit level only via the
+    // test above. Going one layer out to `deliverInvitation` — the shape
+    // `POST /api/invitations/[id]/resend` actually calls, with no `delivered`
+    // gate of its own — additionally proves the dispatch's own
+    // failure-recording never fires for this path.
+    const email = `notify-linked-deliver-${suffix}@test.local`;
+    const controlEmail = `notify-linked-deliver-control-${suffix}@test.local`;
+    let studentId: string | undefined;
+    let invitationId: string | undefined;
+    let controlStudentId: string | undefined;
+    let controlInvitationId: string | undefined;
+    try {
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Notify', lastName: 'LinkedDeliver', email,
+          teacherStudents: { create: { teacherId } },
+        },
+        select: { id: true },
+      });
+      studentId = student.id;
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email, firstName: 'Notify', lastName: 'LinkedDeliver' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
+
+      // `student.findUnique` is `notifyInvitee`'s second query on both the
+      // already-linked and the ordinary registered path, and its resolution
+      // is the direct synchronization point this test needs — NOT relative
+      // timing between the two dispatches below. An earlier version of this
+      // test bracketed the already-linked dispatch by waiting for a SECOND,
+      // "ordinary" dispatch's own notification to land, reasoning that the
+      // already-linked path (early return) does less work than the
+      // ordinary one and so must finish first. That reasoning doesn't hold
+      // under connection-pool contention: both dispatches are fire-and-
+      // forget and run concurrently, competing for the same pool with no
+      // ordering guarantee, so the "faster" path can still resolve its own
+      // query AFTER the "slower" one's — and if it resolves after this
+      // test's own `finally` has already deleted the row, `student.findUnique`
+      // finds nothing and falls through to the stranger email path,
+      // polluting whichever later test in this file next asserts on
+      // `sendMock`. Spying on the query itself and awaiting every call's own
+      // result removes the ordering assumption entirely.
+      const studentFindSpy = vi.spyOn(prisma.student, 'findUnique');
+
+      deliverInvitation(prisma, {
+        teacherId, email, invitationId: invitation.id, source: 'resend', dispatchedAt: new Date(),
+      });
+
+      const controlStudent = await prisma.student.create({
+        data: { firstName: 'Notify', lastName: 'LinkedDeliverControl', email: controlEmail },
+        select: { id: true },
+      });
+      controlStudentId = controlStudent.id;
+      const controlInvitation = await prisma.invitation.create({
+        data: { teacherId, email: controlEmail, firstName: 'Notify', lastName: 'Control' },
+        select: { id: true },
+      });
+      controlInvitationId = controlInvitation.id;
+      deliverInvitation(prisma, {
+        teacherId, email: controlEmail, invitationId: controlInvitation.id,
+        source: 'resend', dispatchedAt: new Date(),
+      });
+
+      await vi.waitFor(() => expect(studentFindSpy.mock.calls.length).toBeGreaterThanOrEqual(2));
+      await Promise.all(studentFindSpy.mock.results.map((r) => r.value));
+
+      // The control's own `createNotification` write is a further async
+      // step after ITS `student.findUnique` resolves — wait for that
+      // specifically too, so the notification-count assertion below isn't
+      // itself racing a write still in flight.
+      await vi.waitFor(
+        () =>
+          prisma.notification.findFirst({
+            where: { recipientType: 'student', recipientId: controlStudent.id, type: 'teacher_invitation' },
+          }),
+        { timeout: 2000 },
+      );
+
+      const after = await prisma.invitation.findUniqueOrThrow({
+        where: { id: invitationId },
+        select: { lastNotifyFailedAt: true },
+      });
+      expect(after.lastNotifyFailedAt).toBeNull();
+
+      const notifications = await prisma.notification.findMany({
+        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
+      });
+      expect(notifications).toHaveLength(0);
+      expect(sendMock).not.toHaveBeenCalled();
+    } finally {
+      if (controlInvitationId) await prisma.invitation.deleteMany({ where: { id: controlInvitationId } });
+      if (controlStudentId) {
+        await prisma.notification.deleteMany({ where: { recipientId: controlStudentId } });
+        await prisma.student.delete({ where: { id: controlStudentId } });
+      }
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       if (studentId) {
         await prisma.teacherStudent.deleteMany({ where: { studentId } });
         await prisma.notification.deleteMany({ where: { recipientId: studentId } });

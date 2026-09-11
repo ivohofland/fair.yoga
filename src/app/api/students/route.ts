@@ -118,9 +118,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // `createInvitationSchema`'s `emailField` at HTTP ingress — so this is not
   // a second normalisation, the same value `inviteContact` was already
   // called with above.
+  //
+  // `dispatchedAt` captured once and reused below: `deliverInvitation`'s own
+  // failure write is scoped to a row still holding this exact value, so a
+  // superseded attempt's late failure can't overwrite a newer one's state
+  // (#392 review, Critical #3).
+  const dispatchedAt = new Date();
   await prisma.invitation.updateMany({
     where: { id: result.value.id },
-    data: { lastNotifiedAt: new Date(), lastNotifiedEmail: parsed.data.email, lastNotifyFailedAt: null },
+    data: { lastNotifiedAt: dispatchedAt, lastNotifiedEmail: parsed.data.email, lastNotifyFailedAt: null },
   });
 
   // `result.value.delivered` is false when delivery must be withheld: either
@@ -145,6 +151,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       email: parsed.data.email,
       invitationId: result.value.id,
       source: 'create',
+      dispatchedAt,
     });
   }
 
