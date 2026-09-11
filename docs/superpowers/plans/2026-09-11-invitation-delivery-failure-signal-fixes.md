@@ -260,4 +260,9 @@ from `tests/helpers.ts` (the helper `main`'s `d7733c74` standardized on).
   `lastNotifyFailedEmail` column).
 - Building a real UI affordance beyond the caption + color (no banner, no retry button, no
   "delivery degraded" indicator) — the circuit breaker's suppression is invisible to the
-  teacher by design (falls back to `'not-sent'`, which is honest and requires no new UI state).
+  teacher by design. **Correction, found in the first re-review**: this originally said
+  suppression "falls back to `'not-sent'`" — false. `lastNotifiedAt`/`lastNotifiedEmail` are
+  already written by the time suppression is even decided, so a suppressed row reads
+  `'sent'`, identical to pre-#392 behaviour for every failure. Not a new UI lie, just the old
+  one, and still a deliberate no-new-UI-state choice — but the plan's own justification for it
+  was wrong on the day it shipped.

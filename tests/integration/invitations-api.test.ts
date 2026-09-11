@@ -823,11 +823,24 @@ describe('POST /api/invitations/[id]/resend (#173)', () => {
       // `blockedRes` (as this test did before #392's review) races the
       // fire-and-forget dispatch and was proven vacuous by mutation —
       // temporarily making `notifyInvitee` throw on a blocked address left
-      // this assertion green. The blocked dispatch does strictly less work
-      // than the control's (an early return vs. a full registered-student
-      // notify) and started strictly earlier, so by the time the control's
-      // own notification — awaited below — has landed, the blocked
-      // dispatch's async tail is guaranteed to have already resolved too.
+      // this assertion green.
+      //
+      // This bracket rests on relative timing (the blocked dispatch does
+      // strictly less work than the control's and started strictly
+      // earlier), not a hard guarantee the way `student.findUnique`-spy
+      // synchronization in `invitations.notify.test.ts` is — that file's own
+      // docblock documents this exact style of reasoning failing under
+      // connection-pool contention for a race it found. It's still sound
+      // *here* specifically: `lastNotifyFailedAt` is written only from a
+      // genuine throw, so reading this row early can only ever under-report
+      // a failure that later lands, never fabricate one — unlike the
+      // `sendMock`-pollution bug the other file found, where a late,
+      // orphaned dispatch corrupted a DIFFERENT, shared assertion after this
+      // test's own cleanup had already run. A false pass here would need
+      // the blocked path's own two-query tail to outlast the control's
+      // (two queries plus a full notification insert) under the SAME
+      // connection pool — re-verified by mutation five repeated runs in a
+      // row with no flake (#392 review, second re-review pass).
       const controlStudent = await prisma.student.create({
         data: { firstName: 'Resend', lastName: 'BlockedControl', email: controlEmail },
         select: { id: true },
@@ -1041,8 +1054,11 @@ describe('resend does not touch delivered, so a genuine decoy stays tombstone-pr
       // review, Critical #2) — temporarily making `notifyInvitee` throw on an
       // already-linked pair left this assertion green. A second, ordinary
       // resend issued strictly after, whose own notification is awaited,
-      // guarantees the decoy's faster dispatch has already settled by the
-      // time its row is re-read below.
+      // is how the decoy's faster dispatch is expected to have already
+      // settled by the time its row is re-read below — relative timing, not
+      // a hard synchronization guarantee (see the identical caveat on the
+      // blocked-address test above for why that's acceptable specifically
+      // for this column).
       const controlEmail = `resend-decoy-control-${suffix}@test.local`;
       let controlStudentId: string | undefined;
       let controlInvitationId: string | undefined;

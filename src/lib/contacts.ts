@@ -35,7 +35,11 @@ export function canRemoveContact(status: InvitationStatus): boolean {
  * not zero — a burst of failures is suppressed rather than persisted; see
  * `deliverInvitation`, `src/services/invitations.ts`), are cross-file facts
  * this function doesn't own: see the `last_notify_failed_at` row in
- * `docs/data-model.md`.
+ * `docs/data-model.md`. One consequence worth stating here since it's easy
+ * to assume the opposite: a suppressed failure does NOT read as
+ * `'not-sent'` — `lastNotifiedAt`/`lastNotifiedEmail` are already written by
+ * the time suppression is even decided, so a suppressed row reads
+ * `'sent'`, same as pre-#392 behaviour for every failure.
  */
 export function invitationDeliveryStatus(
   invitation: {
