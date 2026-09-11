@@ -14,6 +14,7 @@ import { withdrawWaitingEntriesForTeacher } from './waitlist';
 import { linkTeacherStudent } from './roster-link';
 import { createNotification } from './notifications';
 import { sendInvitationEmail } from '@/lib/email';
+import { recordDispatchFailure } from '@/lib/notify-health';
 import { isRecordNotFound } from '@/lib/api-errors';
 import { privacyIsBypassed } from '@/lib/student-visibility';
 import { requireNormalised } from '@/lib/schemas';
@@ -641,8 +642,25 @@ const DELIVERY_FAILURE_MESSAGE = {
  * they are what makes the log line name WHICH delivery failed, and from
  * which route (#166 review, F4). The invitee's address is deliberately not
  * logged. `lastNotifyFailedAt` is persisted here on the same `.catch` path
- * (#392) — scoped by `invitationId` only, so it carries nothing the
- * `TeacherBlock`/roster re-checks inside `notifyInvitee` don't already gate.
+ * (#392), behind two guards a PR review (#583) found this column needs that
+ * an earlier version of this function did not have:
+ *
+ * - **`recordDispatchFailure` (`@/lib/notify-health`)** — a burst of recent
+ *   dispatch failures suppresses the write. Scoping the write by
+ *   `invitationId` alone said nothing about WHICH failures are safe to
+ *   surface: only the stranger path (`sendInvitationEmail`, an HTTPS call)
+ *   can throw under normal operation — the registered-student path
+ *   (`createNotification`, a local insert) essentially never does — and a
+ *   Resend outage or a lapsed API key fails every stranger send alike, so an
+ *   unguarded write turns this column into a proxy for "does this address
+ *   have a fair.yoga account," reopening #166 through a side door. See
+ *   `notify-health.ts`'s own docblock.
+ * - **`dispatchedAt` CAS** — the write's `where` is scoped to the row still
+ *   holding the `lastNotifiedAt` value THIS dispatch wrote synchronously
+ *   before calling this function, not `invitationId` alone. Without it, a
+ *   superseded attempt's late failure could overwrite a newer, successful
+ *   attempt's row state — the teacher told "failed" about an invitation that
+ *   went out.
  *
  * Fire-and-forget is safe here specifically: this is a long-lived Node
  * process on a single VPS, not a serverless function that could be frozen
@@ -654,7 +672,14 @@ const DELIVERY_FAILURE_MESSAGE = {
  */
 export function deliverInvitation(
   db: PrismaClient,
-  input: { teacherId: string; email: string; invitationId: string; source: DeliverySource },
+  input: {
+    teacherId: string;
+    email: string;
+    invitationId: string;
+    source: DeliverySource;
+    /** The `Date` this dispatch's own synchronous pre-write set on `lastNotifiedAt`. */
+    dispatchedAt: Date;
+  },
 ): FireAndForget {
   void (async () => {
     const teacher = await db.teacher.findUniqueOrThrow({
@@ -671,14 +696,23 @@ export function deliverInvitation(
       { err, teacherId: input.teacherId, invitationId: input.invitationId },
       DELIVERY_FAILURE_MESSAGE[input.source],
     );
-    // Scoped by id alone, matching every other background write in this
-    // file — the row may already be gone (a concurrent DELETE), and a
-    // zero-count match here is not an error. Best-effort: a failure to
-    // record the failure is logged, not thrown, since there is still no
-    // promise for anything to await this on.
+
+    // #392 review, Critical #1: a burst of failures looks systemic, and a
+    // systemic failure hits every stranger send alike — see this function's
+    // own docblock and notify-health.ts.
+    const { looksSystemic } = recordDispatchFailure();
+    if (looksSystemic) return;
+
+    // Best-effort: a failure to record the failure is logged, not thrown,
+    // since there is still no promise for anything to await this on.
     db.invitation
       .updateMany({
-        where: { id: input.invitationId },
+        // Scoped by `id` AND the dispatch-time `lastNotifiedAt` — not `id`
+        // alone. `id` alone tolerates the row being gone (a concurrent
+        // DELETE); the added `lastNotifiedAt` clause additionally makes a
+        // superseded attempt's late failure a no-op once a newer attempt has
+        // already moved that column on (#392 review, Critical #3).
+        where: { id: input.invitationId, lastNotifiedAt: input.dispatchedAt },
         data: { lastNotifyFailedAt: new Date() },
       })
       .catch((writeErr: unknown) => {

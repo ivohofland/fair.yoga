@@ -18,16 +18,19 @@ import { ownedInvitation, NOT_FOUND, DECLINED, NOT_PENDING } from '../shared';
  * still does not notify (see `notifyInvitee`'s docblock, services/
  * invitations.ts); this route is the actual send.
  *
- * The marker write below (`lastNotifiedAt`/`lastNotifiedEmail`) is
- * unconditional — written before `deliverInvitation` is even called, and
- * regardless of whether a `TeacherBlock` ends up withholding the actual
- * send. If it were written only on a successful, unblocked dispatch, a
- * blocked contact's "last invited" display would never advance while every
- * otherwise-identical unblocked one does — a second, silent way for a
- * teacher to learn a specific student blocked them, exactly what
- * `TeacherBlock` exists to prevent from surfacing (see `inviteContact`'s own
- * docblock, services/invitations.ts, for the same property on the create
- * path).
+ * The marker write below (`lastNotifiedAt`/`lastNotifiedEmail`, and since
+ * #392 `lastNotifyFailedAt: null`) is unconditional — written before
+ * `deliverInvitation` is even called, and regardless of whether a
+ * `TeacherBlock` ends up withholding the actual send. If it were written
+ * only on a successful, unblocked dispatch, a blocked contact's "last
+ * invited" display would never advance while every otherwise-identical
+ * unblocked one does — a second, silent way for a teacher to learn a
+ * specific student blocked them, exactly what `TeacherBlock` exists to
+ * prevent from surfacing (see `inviteContact`'s own docblock, services/
+ * invitations.ts, for the same property on the create path). The same
+ * reasoning is why `lastNotifyFailedAt` is cleared here too: a blocked
+ * contact's failure state must advance identically to an unblocked one's,
+ * never lag behind it as a second tell.
  *
  * No CAS on the `status === 'pending'` check below: a decline landing in
  * the gap between the read and the write could let a stale send through,
@@ -79,21 +82,26 @@ export const POST = withErrorHandler(async (
   // this route already answers for the same row being gone. A zero-count
   // match means exactly that: the row is gone, and 404 is the honest
   // answer.
+  const dispatchedAt = new Date();
   const updated = await prisma.invitation.updateMany({
     where: { id },
-    data: { lastNotifiedAt: new Date(), lastNotifiedEmail: invitation.email, lastNotifyFailedAt: null },
+    data: { lastNotifiedAt: dispatchedAt, lastNotifiedEmail: invitation.email, lastNotifyFailedAt: null },
   });
   if (updated.count === 0) return NOT_FOUND();
 
   // Fire-and-forget by signature, same as `POST /api/students` — this route's
   // response must not vary in status or latency with whether the address is
   // registered, blocked, or unknown, and `FireAndForget` is what stops a
-  // future edit here from coupling them (#391).
+  // future edit here from coupling them (#391). `dispatchedAt` is reused
+  // from the write above, not a fresh `new Date()` — see `deliverInvitation`'s
+  // own docblock for why its failure write needs the exact value this
+  // dispatch wrote.
   deliverInvitation(prisma, {
     teacherId: session.teacherId,
     email: invitation.email,
     invitationId: id,
     source: 'resend',
+    dispatchedAt,
   });
 
   return respondOk({ id });

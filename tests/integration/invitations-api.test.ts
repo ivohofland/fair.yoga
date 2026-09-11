@@ -813,13 +813,21 @@ describe('POST /api/invitations/[id]/resend (#173)', () => {
       const after = await prisma.invitation.findUniqueOrThrow({ where: { id: blockedInvitation.id } });
       expect(after.lastNotifiedAt).not.toBeNull();
       expect(after.lastNotifiedEmail).toBe(blockedEmail);
-      expect(after.lastNotifyFailedAt).toBeNull();
 
       // Bracketing control, same technique as "creates no notification for
       // an address with no Student row" above: a second, unblocked resend
       // issued strictly after the blocked one, whose own notification is
       // awaited before the final count — proving the blocked send, if it
-      // existed, would have landed too.
+      // existed, would have landed too. `lastNotifyFailedAt` below rides the
+      // same bracket, for the same reason: reading it immediately after
+      // `blockedRes` (as this test did before #392's review) races the
+      // fire-and-forget dispatch and was proven vacuous by mutation —
+      // temporarily making `notifyInvitee` throw on a blocked address left
+      // this assertion green. The blocked dispatch does strictly less work
+      // than the control's (an early return vs. a full registered-student
+      // notify) and started strictly earlier, so by the time the control's
+      // own notification — awaited below — has landed, the blocked
+      // dispatch's async tail is guaranteed to have already resolved too.
       const controlStudent = await prisma.student.create({
         data: { firstName: 'Resend', lastName: 'BlockedControl', email: controlEmail },
         select: { id: true },
@@ -846,6 +854,12 @@ describe('POST /api/invitations/[id]/resend (#173)', () => {
         where: { recipientType: 'student', recipientId: blockedStudent.id, type: 'teacher_invitation' },
       });
       expect(blockedNotifications).toHaveLength(0);
+
+      const afterSettled = await prisma.invitation.findUniqueOrThrow({
+        where: { id: blockedInvitation.id },
+        select: { lastNotifyFailedAt: true },
+      });
+      expect(afterSettled.lastNotifyFailedAt).toBeNull();
     } finally {
       if (blockedInvitationId) await prisma.invitation.deleteMany({ where: { id: blockedInvitationId } });
       if (controlInvitationId) await prisma.invitation.deleteMany({ where: { id: controlInvitationId } });
@@ -1018,6 +1032,49 @@ describe('resend does not touch delivered, so a genuine decoy stays tombstone-pr
         method: 'POST', headers: cookie(teacherToken),
       });
       expect(res.status).toBe(200);
+
+      // Bracketing control (same technique as "still writes the marker for a
+      // blocked address" above): the decoy's own dispatch resolves via
+      // `notifyInvitee`'s already-linked early return — fast, no throw — but
+      // reading `lastNotifyFailedAt` immediately after `res` races that
+      // fire-and-forget dispatch and was proven vacuous by mutation (#392
+      // review, Critical #2) — temporarily making `notifyInvitee` throw on an
+      // already-linked pair left this assertion green. A second, ordinary
+      // resend issued strictly after, whose own notification is awaited,
+      // guarantees the decoy's faster dispatch has already settled by the
+      // time its row is re-read below.
+      const controlEmail = `resend-decoy-control-${suffix}@test.local`;
+      let controlStudentId: string | undefined;
+      let controlInvitationId: string | undefined;
+      try {
+        const controlStudent = await prisma.student.create({
+          data: { firstName: 'Resend', lastName: 'DecoyControl', email: controlEmail },
+          select: { id: true },
+        });
+        controlStudentId = controlStudent.id;
+        const controlInvitation = await prisma.invitation.create({
+          data: { teacherId, email: controlEmail, firstName: 'Resend', lastName: 'Control' },
+          select: { id: true },
+        });
+        controlInvitationId = controlInvitation.id;
+        const controlRes = await fetch(`${BASE_URL}/api/invitations/${controlInvitation.id}/resend`, {
+          method: 'POST', headers: cookie(teacherToken),
+        });
+        expect(controlRes.status).toBe(200);
+        await waitFor(
+          () =>
+            prisma.notification.findFirst({
+              where: { recipientType: 'student', recipientId: controlStudent.id, type: 'teacher_invitation' },
+            }),
+          { description: 'decoy-bracket control teacher_invitation notification (#392)' },
+        );
+      } finally {
+        if (controlInvitationId) await prisma.invitation.deleteMany({ where: { id: controlInvitationId } });
+        if (controlStudentId) {
+          await prisma.notification.deleteMany({ where: { recipientId: controlStudentId } });
+          await prisma.student.delete({ where: { id: controlStudentId } });
+        }
+      }
 
       const afterResend = await prisma.invitation.findUniqueOrThrow({
         where: { id: invitationId },
