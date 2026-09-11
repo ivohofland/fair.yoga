@@ -882,6 +882,67 @@ describe('POST /api/invitations/[id]/resend (#173)', () => {
   }, 30_000);
 });
 
+describe('a fresh attempt clears a stale failure marker (#392)', () => {
+  it('POST /api/students clears lastNotifyFailedAt on a revived invitation', async () => {
+    const email = `clear-create-392-${suffix}@test.local`;
+    let invitationId: string | undefined;
+    try {
+      const stale = await prisma.invitation.create({
+        data: {
+          teacherId, email, firstName: 'Stale', lastName: 'Failure',
+          status: 'accepted', respondedAt: new Date(),
+          lastNotifyFailedAt: new Date('2020-01-01T00:00:00.000Z'),
+        },
+        select: { id: true },
+      });
+      invitationId = stale.id;
+
+      const res = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { ...cookie(teacherToken), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, firstName: 'Stale', lastName: 'Failure' }),
+      });
+      expect(res.status).toBe(201);
+
+      const after = await prisma.invitation.findUniqueOrThrow({
+        where: { id: invitationId },
+        select: { lastNotifyFailedAt: true },
+      });
+      expect(after.lastNotifyFailedAt).toBeNull();
+    } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
+    }
+  });
+
+  it('POST /api/invitations/[id]/resend clears lastNotifyFailedAt', async () => {
+    const email = `clear-resend-392-${suffix}@test.local`;
+    let invitationId: string | undefined;
+    try {
+      const stale = await prisma.invitation.create({
+        data: {
+          teacherId, email, firstName: 'Stale', lastName: 'Resend',
+          lastNotifyFailedAt: new Date('2020-01-01T00:00:00.000Z'),
+        },
+        select: { id: true },
+      });
+      invitationId = stale.id;
+
+      const res = await fetch(`${BASE_URL}/api/invitations/${invitationId}/resend`, {
+        method: 'POST', headers: cookie(teacherToken),
+      });
+      expect(res.status).toBe(200);
+
+      const after = await prisma.invitation.findUniqueOrThrow({
+        where: { id: invitationId },
+        select: { lastNotifyFailedAt: true },
+      });
+      expect(after.lastNotifyFailedAt).toBeNull();
+    } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
+    }
+  });
+});
+
 describe('resend does not touch delivered, so a genuine decoy stays tombstone-proof (#502 regression)', () => {
   // `resend`'s route does not write `delivered` at all today — safe, since
   // it never learns a fresh answer worth persisting (see the spec's Fix #3

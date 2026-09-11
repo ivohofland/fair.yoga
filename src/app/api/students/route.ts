@@ -120,7 +120,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // called with above.
   await prisma.invitation.updateMany({
     where: { id: result.value.id },
-    data: { lastNotifiedAt: new Date(), lastNotifiedEmail: parsed.data.email },
+    data: { lastNotifiedAt: new Date(), lastNotifiedEmail: parsed.data.email, lastNotifyFailedAt: null },
   });
 
   // `result.value.delivered` is false when delivery must be withheld: either

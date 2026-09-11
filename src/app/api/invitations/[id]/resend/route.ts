@@ -81,7 +81,7 @@ export const POST = withErrorHandler(async (
   // answer.
   const updated = await prisma.invitation.updateMany({
     where: { id },
-    data: { lastNotifiedAt: new Date(), lastNotifiedEmail: invitation.email },
+    data: { lastNotifiedAt: new Date(), lastNotifiedEmail: invitation.email, lastNotifyFailedAt: null },
   });
   if (updated.count === 0) return NOT_FOUND();
 
