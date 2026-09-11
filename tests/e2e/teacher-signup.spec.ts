@@ -2,7 +2,7 @@ import type { BrowserContext } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { uniqueSuffix, hashToken } from '../helpers';
+import { uniqueSuffix, hashToken, freshIp, teardownTeacher } from '../helpers';
 
 const prisma = new PrismaClient();
 
@@ -41,28 +41,36 @@ async function asOriginBrowser(context: BrowserContext, nonce: string): Promise<
   ]);
 }
 
-const suffix = uniqueSuffix();
-const signupEmail = `e2e-signup-${suffix}@test.local`;
-const pageSlug = `e2e-signup-${suffix}`;
-
 test.describe('Teacher signup', () => {
   test.describe.configure({ mode: 'serial' });
 
+  const createdEmails: string[] = [];
+  const createdSlugs: string[] = [];
+
   test.afterAll(async () => {
-    await prisma.magicLinkToken.deleteMany({ where: { email: signupEmail } });
-    const teacher = await prisma.teacher.findUnique({
-      where: { pageSlug },
-      select: { id: true, accountId: true },
-    });
-    if (teacher) {
-      await prisma.session.deleteMany({ where: { accountId: teacher.accountId } });
-      await prisma.teacher.deleteMany({ where: { id: teacher.id } });
-      await prisma.account.deleteMany({ where: { id: teacher.accountId } });
+    for (const email of createdEmails) {
+      await prisma.magicLinkToken.deleteMany({ where: { email } });
+    }
+    for (const pageSlug of createdSlugs) {
+      const teacher = await prisma.teacher.findUnique({
+        where: { pageSlug },
+        select: { id: true, accountId: true },
+      });
+      if (teacher) {
+        await teardownTeacher(prisma, teacher.id, teacher.accountId);
+      }
     }
     await prisma.$disconnect();
   });
 
-  test('an address with no account signs up, verifies, sets up a profile, and lands on the schedule', async ({ page }) => {
+  test('an address with no account signs up, verifies, sets up a profile, lands on the schedule, and signing out from /signup restores the form', async ({ page, context }) => {
+    await context.setExtraHTTPHeaders(freshIp());
+    const suffix = uniqueSuffix();
+    const signupEmail = `e2e-signup-${suffix}@test.local`;
+    const pageSlug = `e2e-signup-${suffix}`;
+    createdEmails.push(signupEmail);
+    createdSlugs.push(pageSlug);
+
     // Step one: the email form on /signup, driven for real — this is the one
     // piece of the flow that was previously untested at every layer, and it
     // exercises the actual POST /api/auth/teacher-signup route end to end.
@@ -103,5 +111,30 @@ test.describe('Teacher signup', () => {
     const teacher = await prisma.teacher.findUniqueOrThrow({ where: { pageSlug } });
     expect(teacher.firstName).toBe('Anna');
     expect(teacher.email).toBe(signupEmail);
+
+    // Step four (#443): the signed-in teacher visits /signup.
+    // Confirm the "Already teaching" panel renders with their address and schedule link.
+    // Clicking "Sign out" pushes back to the same route (/signup) and triggers
+    // router.refresh(), which must invalidate the same-route RSC cache so that
+    // the plain email signup form is revealed instead of the panel.
+    await page.goto('/signup');
+    await expect(page.getByRole('heading', { name: 'You already have a page.' })).toBeVisible();
+    await expect(page.getByText(signupEmail)).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Go to your schedule' })).toBeVisible();
+    await expect(page.getByText('Setting up a page for a different address?')).toBeVisible();
+
+    const signOutButton = page.getByRole('button', { name: 'Sign out' });
+    await expect(signOutButton).toBeVisible();
+    await signOutButton.click();
+
+    // router.refresh() invalidates the same-route RSC cache:
+    await expect(page.getByRole('heading', { name: 'Start teaching on fair.yoga' })).toBeVisible();
+    await expect(page.getByLabel('Email')).toBeVisible();
+    await expect(page.getByRole('button', { name: /send me the link/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'You already have a page.' })).not.toBeVisible();
+
+    // The session row was deleted by the sign-out endpoint:
+    const sessions = await prisma.session.findMany({ where: { accountId: teacher.accountId } });
+    expect(sessions).toHaveLength(0);
   });
 });
