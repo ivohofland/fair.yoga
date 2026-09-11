@@ -40,6 +40,10 @@ describe('GET /settings/reporting (reporting page)', () => {
   let pacificTeacherAccountId: string;
   let pacificTeacherToken: string;
 
+  let futurePacificTeacherId: string;
+  let futurePacificTeacherAccountId: string;
+  let futurePacificTeacherToken: string;
+
   let roomId: string;
   let reportTeacherRoomId: string;
 
@@ -98,6 +102,23 @@ describe('GET /settings/reporting (reporting page)', () => {
     pacificTeacherAccountId = pacificTeacher.accountId;
     pacificTeacherToken = await seedSession(prisma, pacificTeacherAccountId);
 
+    // 4. Pacific teacher for issue-278 future class discrimination (distinct to avoid timeslot conflicts, #575)
+    const futurePacificEmail = `report-pacific-future-${suffix}@test.local`;
+    const futurePacificTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'FuturePacific',
+        lastName: 'Teacher',
+        email: futurePacificEmail,
+        account: { create: { email: futurePacificEmail } },
+        bio: 'Pacific timezone future reporting test',
+        pageSlug: `report-pacific-future-${suffix}`,
+        defaultTimezone: 'America/Los_Angeles',
+      },
+    });
+    futurePacificTeacherId = futurePacificTeacher.id;
+    futurePacificTeacherAccountId = futurePacificTeacher.accountId;
+    futurePacificTeacherToken = await seedSession(prisma, futurePacificTeacherAccountId);
+
     const room = await prisma.room.create({
       data: {
         venueName: 'Reporting Hall',
@@ -121,8 +142,8 @@ describe('GET /settings/reporting (reporting page)', () => {
   }, 20_000);
 
   afterAll(async () => {
-    const teacherIds = [emptyTeacherId, reportTeacherId, pacificTeacherId].filter(Boolean);
-    const accountIds = [emptyTeacherAccountId, reportTeacherAccountId, pacificTeacherAccountId].filter(Boolean);
+    const teacherIds = [emptyTeacherId, reportTeacherId, pacificTeacherId, futurePacificTeacherId].filter(Boolean);
+    const accountIds = [emptyTeacherAccountId, reportTeacherAccountId, pacificTeacherAccountId, futurePacificTeacherAccountId].filter(Boolean);
 
     await prisma.payment.deleteMany({
       where: { registration: { class: { calendarEntry: { teacherId: { in: teacherIds } } } } },
@@ -491,11 +512,29 @@ describe('GET /settings/reporting (reporting page)', () => {
       const now = new Date();
       const localToday = startOfLocalDay(now, PACIFIC_TZ);
 
+      // Studio Class Past: Dated YESTERDAY in America/Los_Angeles -> INCLUDED
+      // Uses a distinct teacher fixture and yesterday's date so it cannot conflict
+      // with Studio Class A or Class D at any time of day (#575).
+      // Hourly rate: 50.00, 60 min -> 50.00
+      const localYesterday = new Date(localToday);
+      localYesterday.setUTCDate(localYesterday.getUTCDate() - 1);
+
+      await createStudioClassFixture(prisma, {
+        teacherId: futurePacificTeacherId,
+        classType: 'Pacific Past Class',
+        location: 'Portland Studio',
+        date: localYesterday,
+        startTime: hhmmToTime('10:00'),
+        durationMinutes: 60,
+        hourlyRate: new Prisma.Decimal('50.00'),
+        studentCount: 5,
+      });
+
       // Studio Class D: Dated TODAY in America/Los_Angeles, but in the future
       // (10 minutes ahead of now, Pacific wall clock) -> EXCLUDED
       // Hourly rate: 60.00, 60 min -> 60.00
       await createStudioClassFixture(prisma, {
-        teacherId: pacificTeacherId,
+        teacherId: futurePacificTeacherId,
         classType: 'Pacific Late Today Class',
         location: 'Portland Studio',
         date: localToday,
@@ -505,11 +544,11 @@ describe('GET /settings/reporting (reporting page)', () => {
         studentCount: 7,
       });
 
-      const res = await reportingPage(pacificTeacherToken);
+      const res = await reportingPage(futurePacificTeacherToken);
       expect(res.status).toBe(200);
       const html = await res.text();
 
-      // Total must still be 50.00 from Class A (not 110.00), class count still 1 (not 2)
+      // Total must still be 50.00 from past class (not 110.00), class count still 1 (not 2)
       expect(html).toContain('Total charged for teaching');
       expect(html).toContain('50.00');
       expect(html).not.toContain('60.00');
