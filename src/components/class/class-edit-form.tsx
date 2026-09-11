@@ -110,7 +110,7 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
       // `ClassEditInitial`'s statically declared keys — it can't
       // see an own-enumerable property `form` happens to carry at runtime that
       // isn't declared on the type.
-      const payload: UpdateClassWire = { ...form, description: form.description || null };
+      const payload: UpdateClassWire = { ...form, description: form.description.trim() || null };
       if (settingsLocked) {
         for (const f of ECONOMIC_FIELDS) delete payload[f];
       }
