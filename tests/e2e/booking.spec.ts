@@ -432,8 +432,6 @@ test.describe('Public booking flow', () => {
     await expect(page.getByText("You're in Tier 3")).toBeVisible();
     await expect(page.getByRole('radio')).toHaveCount(0);
 
-    // The teacher page tells this student what they already did: the
-    // booked card says so, the unbooked card still quotes the range.
     // The teacher page now shows a price line on every card, personal or
     // anonymous depending on the viewer's own tier — booked/unbooked no
     // longer decides which line renders (#433).
