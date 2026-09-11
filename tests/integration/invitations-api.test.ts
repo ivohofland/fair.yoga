@@ -562,6 +562,38 @@ describe('PUT /api/invitations/[id]', () => {
       if (other) await prisma.invitation.deleteMany({ where: { id: other.id } });
     }
   });
+
+  it('clears a stale failure marker when the address changes (#392)', async () => {
+    const oldEmail = `readdress-old-392-${suffix}@test.local`;
+    const newEmail = `readdress-new-392-${suffix}@test.local`;
+    let invitationId: string | undefined;
+    try {
+      const stale = await prisma.invitation.create({
+        data: {
+          teacherId, email: oldEmail, firstName: 'Readdress', lastName: 'Stale',
+          lastNotifyFailedAt: new Date('2020-01-01T00:00:00.000Z'),
+        },
+        select: { id: true },
+      });
+      invitationId = stale.id;
+
+      const res = await fetch(`${BASE_URL}/api/invitations/${invitationId}`, {
+        method: 'PUT',
+        headers: { ...cookie(teacherToken), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: newEmail, firstName: 'Readdress', lastName: 'Stale' }),
+      });
+      expect(res.status).toBe(200);
+
+      const after = await prisma.invitation.findUniqueOrThrow({
+        where: { id: invitationId },
+        select: { lastNotifyFailedAt: true, delivered: true },
+      });
+      expect(after.lastNotifyFailedAt).toBeNull();
+      expect(after.delivered).toBe(false);
+    } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
+    }
+  });
 });
 
 describe('PATCH /api/invitations/[id]', () => {
