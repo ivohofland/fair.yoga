@@ -387,13 +387,25 @@ export default function CreateClassPage() {
         </button>
         <h1 className="type-display">New class</h1>
         <p className="type-caption mt-1">Step {step} of 4</p>
-        <button
-          type="button"
-          onClick={() => router.push('/studio-class/new')}
-          className="type-caption mt-2 inline-block"
-        >
-          Or log a studio class
-        </button>
+        <p className="type-caption mt-2">
+          Looking for something else?{' '}
+          <button
+            type="button"
+            onClick={() => router.push('/settings/recurring/new')}
+            className="type-caption text-teal no-underline"
+          >
+            Set up a recurring class
+          </button>{' '}
+          or{' '}
+          <button
+            type="button"
+            onClick={() => router.push('/studio-class/new')}
+            className="type-caption text-teal no-underline"
+          >
+            log a studio class
+          </button>
+          .
+        </p>
       </div>
 
       {/* Step 1: Basics */}
