@@ -88,7 +88,7 @@ Setting min rate and target rate to the same value collapses the scaling to a fl
 - Quotes from yoga texts (e.g., on Satya/truthfulness, Asteya/non-stealing) are shown during the income selection process to encourage honest self-reporting
 - Tiers described in accessible, non-judgmental language rather than salary brackets
 
-**Tier visibility:** Teachers can see the aggregate tier distribution of their class (e.g., "3 students in tier 1, 5 in tier 3, 2 in tier 5") but not which individual student is in which tier. This builds trust without breaking student privacy. Students do not see the tier distribution — only the total number of students, room cost, teacher earnings, and their own tier adjustment framed in plain language (e.g., "your tier contributes a bit more to keep prices fair for everyone").
+**Tier visibility:** Teachers can see the aggregate tier distribution of their class (e.g., "3 students in tier 1, 5 in tier 3, 2 in tier 5"), and the app never puts a tier next to a student's name. That is a display rule, not a secrecy guarantee: a student's price is proportional to their tier ratio, so the amounts a teacher collects — in the app's payment lists, and eventually on their bank statement — tell them each student's tier. This is accepted; it cannot be designed away while students pay the teacher directly. Between students the same holds in a weaker form: pre-class estimates are computed from the tiers already booked, so comparing the public price range just before and just after a known person books can reveal that person's tier — judged low risk, since it needs a known booker, a before-and-after view and no other booking in between (#433). Students do not see the tier distribution — only the total number of students, room cost, teacher earnings, and their own tier adjustment framed in plain language (e.g., "your tier contributes a bit more to keep prices fair for everyone").
 
 **Tier is global:** A student's income tier is set once and applies across all teachers. Income doesn't change depending on who teaches the class.
 
@@ -182,7 +182,7 @@ Lightweight teacher-facing tools for managing their student community.
 **Student information:**
 - First name + first letter of last name (always visible)
 - Additional info only visible based on student's privacy preferences
-- Income tier: teacher sees aggregate distribution per class (e.g., "3 in tier 1, 5 in tier 3") but not individual student tiers
+- Income tier: the app shows the teacher the aggregate distribution per class (e.g., "3 in tier 1, 5 in tier 3") and never a tier beside a name — though each student's payment amount reveals it (see Tier visibility)
 
 **Student fields:**
 - Required: first name, last name, email
