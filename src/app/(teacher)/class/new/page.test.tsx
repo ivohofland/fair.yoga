@@ -318,6 +318,24 @@ describe('NewClassPage', () => {
   });
 
   /**
+   * #436. The single studio create page already links up to its recurring
+   * template flow; this wizard had no equivalent, only the sideways link to
+   * the studio flow. Both links now render together, so this pins the studio
+   * link's destination alongside the new one rather than trusting it stayed
+   * unchanged by the same edit that added its neighbor.
+   */
+  it('offers both a recurring class and a studio class as alternatives to the wizard (#436)', async () => {
+    stubFetch();
+    render(<CreateClassPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /set up a recurring class/i }));
+    expect(routerPush).toHaveBeenCalledWith('/settings/recurring/new');
+
+    fireEvent.click(screen.getByRole('button', { name: /log a studio class/i }));
+    expect(routerPush).toHaveBeenCalledWith('/studio-class/new');
+  });
+
+  /**
    * Issue 76, added at PR review. `TemplateForm` got three tests for the
    * identical picker change; this wizard got none, and deleting BOTH the
    * `!tr.isArchived` filter and the `allRoomsCount > 0` branch left all 235
