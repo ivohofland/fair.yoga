@@ -28,6 +28,7 @@ const suffix = uniqueSuffix();
 const TZ = 'Europe/Amsterdam';
 
 let teacherId: string;
+let teacherAccountId: string;
 let token: string;
 
 /**
@@ -79,6 +80,7 @@ beforeAll(async () => {
     },
   });
   teacherId = teacher.id;
+  teacherAccountId = teacher.accountId;
   token = await seedSession(prisma, teacher.accountId);
 });
 
@@ -87,6 +89,29 @@ afterAll(async () => {
   // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
   // 298) — deleting the rules removes the templates with them.
   await prisma.scheduleRule.deleteMany({ where: { teacherId, kind: 'studio' } });
+  if (teacherAccountId) {
+    await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
+  }
+  if (teacherId) {
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+  }
+  if (teacherAccountId) {
+    await prisma.account.deleteMany({ where: { id: teacherAccountId } });
+  }
+  // Fallback cleanup in case any nested describe block failed before its afterAll
+  const leftoverTeachers = await prisma.teacher.findMany({
+    where: { email: { contains: `-${suffix}@test.local` } },
+    select: { id: true, accountId: true },
+  });
+  if (leftoverTeachers.length > 0) {
+    const leftoverTeacherIds = leftoverTeachers.map((t) => t.id);
+    const leftoverAccountIds = leftoverTeachers.map((t) => t.accountId);
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: leftoverTeacherIds } } });
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: leftoverTeacherIds } } });
+    await prisma.session.deleteMany({ where: { accountId: { in: leftoverAccountIds } } });
+    await prisma.teacher.deleteMany({ where: { id: { in: leftoverTeacherIds } } });
+    await prisma.account.deleteMany({ where: { id: { in: leftoverAccountIds } } });
+  }
   await prisma.$disconnect();
 });
 
@@ -331,6 +356,7 @@ describe('the studio class page: what the removal claims it costs', () => {
  */
 describe('the studio class page: which classes offer editing', () => {
   let otherId: string;
+  let otherAccountId: string;
   let otherToken: string;
 
   beforeAll(async () => {
@@ -346,11 +372,21 @@ describe('the studio class page: which classes offer editing', () => {
       },
     });
     otherId = teacher.id;
+    otherAccountId = teacher.accountId;
     otherToken = await seedSession(prisma, teacher.accountId);
   });
 
   afterAll(async () => {
     await prisma.calendarEntry.deleteMany({ where: { teacherId: otherId } });
+    if (otherAccountId) {
+      await prisma.session.deleteMany({ where: { accountId: otherAccountId } });
+    }
+    if (otherId) {
+      await prisma.teacher.deleteMany({ where: { id: otherId } });
+    }
+    if (otherAccountId) {
+      await prisma.account.deleteMany({ where: { id: otherAccountId } });
+    }
   });
 
   it('offers editing on a live non-past row', async () => {
@@ -423,6 +459,7 @@ describe('the studio class page: which classes offer editing', () => {
  */
 describe('the reporting page, which is where the income claim is settled', () => {
   let soloId: string;
+  let soloAccountId: string;
   let soloToken: string;
 
   beforeAll(async () => {
@@ -438,11 +475,21 @@ describe('the reporting page, which is where the income claim is settled', () =>
       },
     });
     soloId = teacher.id;
+    soloAccountId = teacher.accountId;
     soloToken = await seedSession(prisma, teacher.accountId);
   });
 
   afterAll(async () => {
     await prisma.calendarEntry.deleteMany({ where: { teacherId: soloId } });
+    if (soloAccountId) {
+      await prisma.session.deleteMany({ where: { accountId: soloAccountId } });
+    }
+    if (soloId) {
+      await prisma.teacher.deleteMany({ where: { id: soloId } });
+    }
+    if (soloAccountId) {
+      await prisma.account.deleteMany({ where: { id: soloAccountId } });
+    }
   });
 
   it('loses the removed class earnings, which a cancelled class never had', async () => {
@@ -488,6 +535,8 @@ describe('the reporting page, which is where the income claim is settled', () =>
  * shape, one door over.
  */
 describe('the studio class edit page', () => {
+  let strangerTeacherId: string;
+  let strangerAccountId: string;
   let strangerToken: string;
   let templateScheduleRuleId: string;
 
@@ -521,6 +570,8 @@ describe('the studio class edit page', () => {
         pageSlug: `studioedit-stranger-${suffix}`,
       },
     });
+    strangerTeacherId = teacher.id;
+    strangerAccountId = teacher.accountId;
     strangerToken = await seedSession(prisma, teacher.accountId);
 
     // Thursday 07:15 — a slot no other fixture in this file holds, since the
@@ -553,6 +604,15 @@ describe('the studio class edit page', () => {
     // `StudioClassTemplate` is `onDelete: Cascade` from `ScheduleRule` (issue
     // 298) — deleting the child directly here would orphan its rule row.
     await prisma.scheduleRule.deleteMany({ where: { id: templateScheduleRuleId } });
+    if (strangerAccountId) {
+      await prisma.session.deleteMany({ where: { accountId: strangerAccountId } });
+    }
+    if (strangerTeacherId) {
+      await prisma.teacher.deleteMany({ where: { id: strangerTeacherId } });
+    }
+    if (strangerAccountId) {
+      await prisma.account.deleteMany({ where: { id: strangerAccountId } });
+    }
   });
 
   it('renders the editor for a manual future row, date picker open', async () => {
