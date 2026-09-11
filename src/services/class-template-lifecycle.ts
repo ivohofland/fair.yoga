@@ -856,6 +856,7 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
     if (!teacherRoom || teacherRoom.teacherId !== teacherId) return { ok: false };
     return { ok: true, isArchived: teacherRoom.isArchived };
   },
+  roomForeignKeyConstraint: 'ClassTemplate_teacherRoomId_roomArchived_fkey',
   updateChild: async (tx, templateId, childData, roomResult, template, data) => {
     const writeData: Prisma.ClassTemplateUncheckedUpdateManyInput &
       Partial<Record<PlainUpdateForbiddenTemplateField, never>> =

@@ -945,7 +945,7 @@ describe('updateClassTemplate (DB)', () => {
    * alone, deliberately — no `teacherRoomId`, so the room lookup is skipped
    * and nothing at all runs between the hooked read and the write.
    */
-  it('maps a delete landing between the read and the write to not_found', async () => {
+  it('maps a delete landing between the read and the write to not_found and logs it', async () => {
     const t = await makeTemplate('P2025 Write');
 
     let deleted = false;
@@ -967,8 +967,8 @@ describe('updateClassTemplate (DB)', () => {
             if (!deleted) {
               deleted = true;
               await prisma.calendarEntry.deleteMany({
-      where: { scheduleRule: { classTemplates: { some: { id: t.id } } } },
-    });
+                where: { scheduleRule: { classTemplates: { some: { id: t.id } } } },
+              });
               await prisma.classTemplate.delete({ where: { id: t.id } });
             }
             return row;
@@ -977,11 +977,88 @@ describe('updateClassTemplate (DB)', () => {
       },
     }) as unknown as PrismaClient;
 
-    const result = await updateClassTemplate(interposing, t.id, teacherId, {
-      classType: 'Renamed',
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    try {
+      const result = await updateClassTemplate(interposing, t.id, teacherId, {
+        classType: 'Renamed',
+      });
+
+      expect(result).toEqual({ ok: false, reason: 'not_found' });
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ templateId: t.id, teacherId }),
+        'recurring class vanished between the ownership read and the write — nothing committed',
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  /**
+   * A room deleted between the validation read and the write trips the room
+   * mirror's foreign key constraint (`ClassTemplate_teacherRoomId_roomArchived_fkey`).
+   * The catch re-reads, finds the room missing, logs `warn`, and maps the P2003
+   * to `{ ok: false, reason: 'invalid_room' }` rather than letting it escape as
+   * a 500 (#231).
+   */
+  it('maps a room delete landing between validation and the write to invalid_room and logs it', async () => {
+    const t = await makeTemplate('Room Delete Race');
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Target Venue',
+        address: 'Test Addr',
+        city: 'Testville',
+        postcode: '1234TP',
+        floor: '2',
+        roomName: 'Target Room',
+        maxCapacity: 10,
+        createdById: teacherId,
+      },
+    });
+    const targetRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 20 },
     });
 
-    expect(result).toEqual({ ok: false, reason: 'not_found' });
+    let deleted = false;
+    const interposing = prisma.$extends({
+      query: {
+        teacherRoom: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            if (!deleted && (args.where as { id?: string }).id === targetRoom.id) {
+              deleted = true;
+              await prisma.teacherRoom.delete({ where: { id: targetRoom.id } });
+            }
+            return row;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    try {
+      const result = await updateClassTemplate(interposing, t.id, teacherId, {
+        teacherRoomId: targetRoom.id,
+      });
+
+      expect(result).toEqual({ ok: false, reason: 'invalid_room' });
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ templateId: t.id, teacherId, teacherRoomId: targetRoom.id }),
+        'teacher room vanished between validation and write — nothing committed',
+      );
+
+      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+      expect(after.teacherRoomId).toBe(teacherRoomId);
+    } finally {
+      warn.mockRestore();
+      await prisma.teacherRoom.deleteMany({ where: { id: targetRoom.id } });
+      await prisma.room.deleteMany({ where: { id: room.id } });
+      await prisma.calendarEntry.deleteMany({
+        where: { scheduleRule: { classTemplates: { some: { id: t.id } } } },
+      });
+      await prisma.scheduleRule.deleteMany({
+        where: { classTemplates: { some: { id: t.id } } },
+      });
+    }
   });
 
 });

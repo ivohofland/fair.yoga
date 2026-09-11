@@ -14,7 +14,7 @@ import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
 import { countSkipReasons, type GenerationResult, type SkipCounts } from '@/lib/generation';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
-import { isRecordNotFound, isTransientDbError } from '@/lib/api-errors';
+import { isRecordNotFound, isTransientDbError, isRestrictViolationOn } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import {
   type JoinedRule,
@@ -261,6 +261,10 @@ export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = Ge
     teacherId: string,
   ) => Promise<{ ok: true; isArchived: boolean } | { ok: false }>) | null;
   /**
+   * Foreign key constraint for the room relation, if this family has one (#231).
+   */
+  roomForeignKeyConstraint?: string;
+  /**
    * Write the child row inside the transaction, with family-specific typing.
    *
    * Each family implements this with its own `Prisma.…UncheckedUpdateManyInput
@@ -357,6 +361,8 @@ export async function archiveOrUnarchiveRule<TChild>(
   target: 'archived' | 'unarchived',
 ): Promise<ArchiveRuleResult<TChild>> {
   const template = await family.readChild(db, templateId);
+  // Deliberately silent, both returns: a 404 for an unknown template or a 403
+  // for a template the caller never owned is unlogged by design (#231).
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.scheduleRule.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
@@ -1038,6 +1044,8 @@ export async function pauseOrResumeRule<TChild>(
   target: 'active' | 'paused',
 ): Promise<PauseRuleResult<TChild>> {
   const template = await family.readChild(db, templateId);
+  // Deliberately silent, both returns: a 404 for an unknown template or a 403
+  // for a template the caller never owned is unlogged by design (#231).
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.scheduleRule.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
@@ -1061,6 +1069,9 @@ export async function pauseOrResumeRule<TChild>(
   // Also a fast path only, for the same reason: a concurrent archive can
   // commit between this read and the transaction's CAS. That race is closed by
   // the CAS's disambiguation below, not by this check.
+  //
+  // Deliberately silent: attempting to resume an archived template is refused by
+  // state inspection (409) without changing server state (#231).
   if (template.scheduleRule.isArchived) return { ok: false, reason: 'archived' };
 
   let result: PauseRuleOutcome<TChild>;
@@ -1180,6 +1191,7 @@ export async function pauseOrResumeRule<TChild>(
               template: family.withSlot(current, current.scheduleRule),
             };
           }
+          // Deliberately silent, matching the pre-transaction check above (#231).
           if (current.scheduleRule.isArchived) return { outcome: 'archived' };
           // Residual, and REACHABLE — measured, not conceded. The CAS's
           // `where` is `isArchived: false AND isActive: !desiredActive`; a miss
@@ -1539,16 +1551,23 @@ export async function updateRule<TChild>(
   data: Record<string, unknown>,
 ): Promise<UpdateRuleResult<TChild>> {
   const template = await family.readChild(db, templateId);
+  // Deliberately silent, both returns: a 404 for an unknown template or a 403
+  // for a template the caller never owned is unlogged by design (#231).
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.scheduleRule.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
   // Defined-value scan: a key present with value `undefined` is not an edit.
   // A key-count check would let `{ description: undefined }` through and issue
   // a no-op `update` that takes the row lock for nothing and still reports `ok: true`.
+  //
+  // Deliberately silent: a request with no editable fields is a client-side 400 (#231).
   const hasEdit = Object.values(data).some((v) => v !== undefined);
   if (!hasEdit) return { ok: false, reason: 'no_fields' };
 
   // Room validation for families with room relations (class family).
+  //
+  // Deliberately silent: non-existent room or cross-tenant room is a client
+  // validation failure (400) (#231).
   let roomResult: { isArchived: boolean } | null = null;
   if (family.validateRoom !== null && data.teacherRoomId !== undefined) {
     if (typeof data.teacherRoomId !== 'string') {
@@ -1650,6 +1669,28 @@ export async function updateRule<TChild>(
         `${family.editNoun} edit refused: that slot is taken`,
       );
       return { ok: false, reason: 'slot_conflict', heldBy };
+    }
+
+    // A room deleted between the validation read above and the write trips the
+    // foreign key constraint (P2003). Without this catch it escapes to a 500
+    // at error level; mapped here to invalid_room (400) and logged at warn (#231).
+    if (
+      family.roomForeignKeyConstraint !== undefined &&
+      data.teacherRoomId !== undefined &&
+      typeof data.teacherRoomId === 'string' &&
+      isRestrictViolationOn(err, [family.roomForeignKeyConstraint])
+    ) {
+      const room = await db.teacherRoom.findUnique({
+        where: { id: data.teacherRoomId },
+        select: { id: true },
+      });
+      if (!room) {
+        log.warn(
+          { err, templateId, teacherId, teacherRoomId: data.teacherRoomId },
+          'teacher room vanished between validation and write — nothing committed',
+        );
+        return { ok: false, reason: 'invalid_room' };
+      }
     }
 
     throw err;
