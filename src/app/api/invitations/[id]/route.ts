@@ -237,6 +237,9 @@ export const PUT = withErrorHandler(async (
       // invitation exists — closing the second door #502's decoy-invitation
       // leak could otherwise reopen through a re-address. See "Fix #3" in
       // `docs/superpowers/specs/2026-09-08-invitation-erasure-tombstone-design.md`.
+      // `lastNotifyFailedAt: null` rides along for the same reason: whatever
+      // this row's failure state was, it described the OLD address, and no
+      // attempt has been made against the new one either (#392).
       data: {
         ...rest,
         ...(email !== undefined ? { email } : {}),

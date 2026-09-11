@@ -28,21 +28,14 @@ export function canRemoveContact(status: InvitationStatus): boolean {
  * the same reason `canRemoveContact` above was: that page is a server
  * component, so no component test can reach the comparison directly.
  *
- * `lastNotifiedEmail` is written unconditionally on every attempt by both
- * writers — `POST /api/students` (route.ts) and `POST
- * /api/invitations/[id]/resend` (route.ts, #173) — so `state: 'not-sent'`
- * here means only "not sent to the CURRENT address," never "blocked."
- * `lastNotifyFailedAt` is set only inside `deliverInvitation`'s own
- * `.catch` (services/invitations.ts), which never fires for a blocked or
- * already-linked address either (both `notifyInvitee` early returns
- * resolve without throwing) — so `state: 'failed'` carries the same
- * non-disclosure property `state: 'sent'` always has. Checked only once
- * `lastNotifiedEmail === email` already holds: both `POST` routes clear
- * `lastNotifyFailedAt` on every fresh attempt and `PUT` clears it on every
- * readdress, so a stale failure from a superseded attempt or an old
- * address should never reach this branch — the email-match gate is kept
- * as a second, independent check anyway, not load-bearing on the clearing
- * writes alone.
+ * This function only checks `lastNotifiedEmail === email` before trusting
+ * `lastNotifyFailedAt` at all — `state: 'not-sent'` means "not sent to the
+ * CURRENT address," never "blocked." Which writers set or clear either
+ * column, and the oracle-safety property `state: 'failed'` carries (bounded,
+ * not zero — a burst of failures is suppressed rather than persisted; see
+ * `deliverInvitation`, `src/services/invitations.ts`), are cross-file facts
+ * this function doesn't own: see the `last_notify_failed_at` row in
+ * `docs/data-model.md`.
  */
 export function invitationDeliveryStatus(
   invitation: {
