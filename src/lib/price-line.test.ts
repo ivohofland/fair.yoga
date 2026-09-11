@@ -98,4 +98,34 @@ describe('resolvePriceLine', () => {
       expect(lateCancelled.spread).toEqual(neverBookedAtTier5.spread);
     }
   });
+
+  it('excludes a booked-but-tier-unknown viewer\'s own row from the anonymous pool', () => {
+    // Booked (present in `registrations`) but `tierSelectedAt` is null — a
+    // teacher-added roster entry the student hasn't picked a tier for yet.
+    // `resolvePriceLine` must not count this viewer twice: once as their own
+    // row already in `registrations`, again as the hypothetical joiner
+    // `estimateTierPrices` appends internally.
+    const bookedTierUnknown = resolvePriceLine({
+      ...BASE,
+      registrations: [
+        { id: 'other', studentId: 'other', tierAtBooking: 3, status: 'registered' },
+        { id: 'own', studentId: 's1', tierAtBooking: 2, status: 'registered' },
+      ],
+      viewer: { studentId: 's1', tier: null, tierSelectedAt: null },
+    });
+    const unbookedSamePool = resolvePriceLine({
+      ...BASE,
+      registrations: [
+        { id: 'other', studentId: 'other', tierAtBooking: 3, status: 'registered' },
+      ],
+      viewer: { studentId: 's2', tier: null, tierSelectedAt: null },
+    });
+    expect(bookedTierUnknown.kind).toBe('anonymous');
+    expect(unbookedSamePool.kind).toBe('anonymous');
+    if (bookedTierUnknown.kind === 'anonymous' && unbookedSamePool.kind === 'anonymous') {
+      // Same other registrant, own row excluded either way -> same estimates,
+      // proving the viewer's own row was not double-counted.
+      expect(bookedTierUnknown.estimates).toEqual(unbookedSamePool.estimates);
+    }
+  });
 });

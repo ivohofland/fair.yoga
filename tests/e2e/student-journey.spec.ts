@@ -211,6 +211,14 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     // Bram has no notifications yet: no Updates section at all — not
     // even an empty header.
     await expect(page.getByRole('heading', { name: 'Updates' })).not.toBeVisible();
+    // The waitlist row gets the same price line and "View class" link as
+    // an Upcoming row (#433). Bram's tier is already known (fixture, line
+    // ~104), so it's the personal range.
+    await expect(page.getByText(/depending on how many join/)).toBeVisible();
+    await expect(page.getByRole('link', { name: 'View class →' })).toHaveAttribute(
+      'href',
+      `/${slug}/book/${classId}`,
+    );
 
     await page.goto(`/${slug}`);
     await expect(page.getByText('On the waitlist')).toBeVisible();

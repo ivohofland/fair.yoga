@@ -311,3 +311,159 @@ describe('GET /bookings (page) — upcoming registration count', () => {
     expect(html).toContain(`/bookings-count-teacher-${suffix2}/book/${classId}`);
   });
 });
+
+/**
+ * `/bookings` — the Upcoming section must not quote a price or link to the
+ * booking page for a class the student can no longer actually book: a
+ * cancelled one, or one that has already gone `in_progress`. The booking
+ * page itself 404s both (`[slug]/book/[classId]/page.tsx` refuses whenever
+ * `cancelledAt !== null` or `status !== 'open'`), so a link there is dead —
+ * and nobody is charged for a cancelled class, so a price quote beside its
+ * "Cancelled" badge is a contradiction (#433 final review, finding 1).
+ */
+describe('GET /bookings (page) — price line and link gated on bookable state', () => {
+  const suffix3 = uniqueSuffix();
+  let teacherId = '';
+  let teacherAccountId = '';
+  let studentId = '';
+  let studentAccountId = '';
+  let studentToken = '';
+  let roomId = '';
+  let openClassId = '';
+  let cancelledClassId = '';
+  let inProgressClassId = '';
+
+  beforeAll(async () => {
+    await prisma.$connect();
+
+    const teacherEmail = `bookings-gate-teacher-${suffix3}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Gate', lastName: 'Teacher', email: teacherEmail,
+        bio: 'Gating fixture teacher',
+        pageSlug: `bookings-gate-teacher-${suffix3}`,
+        account: { create: { email: teacherEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Gate Studio',
+        address: `${suffix3} Gate St`,
+        city: 'Amsterdam',
+        postcode: '1000AA',
+        roomName: 'Hall',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 10, rentalRate: 15 },
+    });
+
+    const studentEmail = `bookings-gate-student-${suffix3}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Gated', lastName: 'Student', email: studentEmail,
+        claimedAt: new Date(),
+        incomeTier: 3, tierSelectedAt: new Date(),
+        account: { create: { email: studentEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentId = student.id;
+    studentAccountId = student.accountId as string;
+    studentToken = await seedSession(prisma, studentAccountId);
+
+    const commonFields = {
+      teacherId,
+      teacherRoomId: teacherRoom.id,
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 10,
+      targetRate: 40,
+      minStudents: 1,
+      maxStudents: 6,
+    };
+
+    const openClass = await createClassFixture(prisma, {
+      ...commonFields,
+      classType: 'Gate Open Class',
+      date: new Date('2099-08-01'),
+      status: 'open',
+    });
+    openClassId = openClass.id;
+
+    const cancelledClass = await createClassFixture(prisma, {
+      ...commonFields,
+      classType: 'Gate Cancelled Class',
+      date: new Date('2099-08-02'),
+      status: 'open',
+      cancelledAt: new Date(),
+    });
+    cancelledClassId = cancelledClass.id;
+
+    const inProgressClass = await createClassFixture(prisma, {
+      ...commonFields,
+      classType: 'Gate In Progress Class',
+      date: new Date('2099-08-03'),
+      status: 'in_progress',
+    });
+    inProgressClassId = inProgressClass.id;
+
+    await Promise.all(
+      [openClassId, cancelledClassId, inProgressClassId].map((classId) =>
+        prisma.registration.create({
+          data: { classId, studentId, tierAtBooking: 3, status: 'registered' },
+        }),
+      ),
+    );
+
+    // Warm the route before the assertions score anything.
+    await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) }).catch(() => {});
+  }, 20_000);
+
+  afterAll(async () => {
+    await prisma.registration.deleteMany({ where: { studentId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.session.deleteMany({
+      where: { accountId: { in: [teacherAccountId, studentAccountId] } },
+    });
+    await prisma.student.deleteMany({ where: { id: studentId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [teacherAccountId, studentAccountId] } },
+    });
+    await prisma.$disconnect();
+  });
+
+  it('shows the price line and link for a bookable open class, but not for a cancelled or in-progress one', async () => {
+    const res = await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+
+    // The open class: bookable, gets the price line and the link. The link
+    // and the price line are siblings under one `{cls.status === 'open' &&
+    // !cancelled && (...)}` gate (`bookings/page.tsx`), so the link's
+    // presence/absence below stands for the whole gated block.
+    expect(html).toContain('depending on how many join');
+    expect(html).toContain(`/bookings-gate-teacher-${suffix3}/book/${openClassId}`);
+
+    // The cancelled class: badge shows, but no dead link to a page that
+    // would 404 it, and (by the same gate) no price quote beside a
+    // "Cancelled" badge.
+    expect(html).toContain('Cancelled');
+    expect(html).not.toContain(`/bookings-gate-teacher-${suffix3}/book/${cancelledClassId}`);
+
+    // The in-progress class: same reasoning — the booking page 404s it too.
+    expect(html).toContain('In progress');
+    expect(html).not.toContain(`/bookings-gate-teacher-${suffix3}/book/${inProgressClassId}`);
+  });
+});

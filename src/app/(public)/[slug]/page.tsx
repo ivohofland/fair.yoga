@@ -12,8 +12,7 @@ import { timeToHHmm } from '@/lib/time-of-day';
 import { ClassPriceLine } from '@/components/booking/price-range';
 import { PricingExplainer } from '@/components/booking/pricing-explainer';
 import { readIncomeTier } from '@/lib/tiers.server';
-import type { IncomeTier } from '@/lib/tiers';
-import { resolvePriceLine } from '@/lib/price-line';
+import { resolvePriceLine, type PriceLineViewer } from '@/lib/price-line';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,7 +71,7 @@ export default async function TeacherBookingPage({
   const session = await getSession();
   let bookedClassIds = new Set<string>();
   let waitingClassIds = new Set<string>();
-  let viewer: { studentId: string; tier: IncomeTier | null; tierSelectedAt: Date | null } | null = null;
+  let viewer: PriceLineViewer | null = null;
   if (session?.studentId && classes.length > 0) {
     const classIds = classes.map((c) => c.id);
     const [own, waiting, student] = await Promise.all([
@@ -84,18 +83,23 @@ export default async function TeacherBookingPage({
         where: { studentId: session.studentId, classId: { in: classIds }, status: 'waiting' },
         select: { classId: true },
       }),
-      prisma.student.findUniqueOrThrow({
+      prisma.student.findUnique({
         where: { id: session.studentId },
         select: { incomeTier: true, tierSelectedAt: true },
       }),
     ]);
     bookedClassIds = new Set(own.map((r) => r.classId));
     waitingClassIds = new Set(waiting.map((w) => w.classId));
-    viewer = {
-      studentId: session.studentId,
-      tier: readIncomeTier(student.incomeTier, { studentId: session.studentId }),
-      tierSelectedAt: student.tierSelectedAt,
-    };
+    // A hard-delete racing this request between session validation and this
+    // query — this is a public page, so it falls back to the signed-out
+    // view of itself rather than 500ing a teacher's front door.
+    viewer = student
+      ? {
+          studentId: session.studentId,
+          tier: readIncomeTier(student.incomeTier, { studentId: session.studentId }),
+          tierSelectedAt: student.tierSelectedAt,
+        }
+      : null;
   }
 
   return (
