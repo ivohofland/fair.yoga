@@ -14,7 +14,7 @@ const ROOM = {
 };
 
 /**
- * #136. This wizard restates its twelve fields three times — the `FormData`
+ * #136. This wizard restates its thirteen fields three times — the `FormData`
  * interface, `INITIAL_FORM`, and the POST body — and nothing checked that the
  * three agreed with each other or with `createClassSchema`. The compile-time
  * pins in the source file hold `FormData` against the schema; this test holds
@@ -105,7 +105,7 @@ describe('NewClassPage', () => {
   /**
    * A key-set assertion alone cannot see a value transposed between two
    * same-typed fields — e.g. `minRate` and `targetRate` swapped — because
-   * both are still numbers, in a body with the same twelve keys. That matters
+   * both are still numbers, in a body with the same thirteen keys. That matters
    * more here than anywhere else in this batch: this is the one form in scope
    * carrying pricing fields, and `createClassSchema`'s refinements
    * (`minRate <= targetRate`, `minRate >= -roomCost`) reject some wrong
@@ -120,7 +120,7 @@ describe('NewClassPage', () => {
    * above — and everything else is `INITIAL_FORM`'s default, untouched by
    * step 2 and step 3's no-op "Next" clicks.
    */
-  it('sends exactly these twelve fields, with the values the wizard actually produces', async () => {
+  it('sends exactly these thirteen fields, with the values the wizard actually produces', async () => {
     stubFetch();
     const { url, method, body } = await fillAndSubmit();
     expect(url).toBe('/api/classes');
@@ -128,6 +128,7 @@ describe('NewClassPage', () => {
     expect(body).toEqual({
       teacherRoomId: ROOM_ID,
       classType: 'Vinyasa',
+      description: null,
       date: '2026-08-10',
       startTime: '09:00',
       durationMinutes: 60,
@@ -139,6 +140,61 @@ describe('NewClassPage', () => {
       cancelDeadline: 'HOURS_24',
       autoCancelCheck: 'HOURS_2',
     });
+  });
+
+  it('sends description when entered and renders it in step 4 review', async () => {
+    stubFetch();
+    render(<CreateClassPage />);
+
+    // Step 1: Basics
+    const roomSelect = await screen.findByLabelText('Room');
+    fireEvent.change(roomSelect, { target: { value: ROOM_ID } });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: '  Bring a yoga mat and water.  ' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+    // Step 2: Pricing
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+
+    // Step 3: Policies
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+
+    // Step 4: Review
+    expect(await screen.findByText('Review your class')).toBeInTheDocument();
+    expect(screen.getByText('Description')).toBeInTheDocument();
+    expect(screen.getByText('Bring a yoga mat and water.')).toBeInTheDocument();
+
+    const { body } = await submit();
+    expect(body.description).toBe('Bring a yoga mat and water.');
+  });
+
+  it('sends whitespace-only description as null', async () => {
+    stubFetch();
+    render(<CreateClassPage />);
+
+    // Step 1: Basics
+    const roomSelect = await screen.findByLabelText('Room');
+    fireEvent.change(roomSelect, { target: { value: ROOM_ID } });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: '   ' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+    // Step 2: Pricing
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+
+    // Step 3: Policies
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+
+    // Step 4: Review - description row should not be rendered
+    expect(await screen.findByText('Review your class')).toBeInTheDocument();
+    expect(screen.queryByText('Description')).toBeNull();
+
+    const { body } = await submit();
+    expect(body.description).toBeNull();
   });
 
   it('renders formatted date, time, and class summary on the step 4 review screen', async () => {
@@ -165,6 +221,7 @@ describe('NewClassPage', () => {
     expect(screen.getByText(/10 Aug 2026 at 09:00 · 60 min/)).toBeInTheDocument();
     expect(screen.getByText('Vinyasa')).toBeInTheDocument();
     expect(screen.getByText('Studio A at Main Venue')).toBeInTheDocument();
+    expect(screen.queryByText('Description')).toBeNull();
   });
 
   /**

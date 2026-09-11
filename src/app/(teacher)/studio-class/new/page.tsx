@@ -41,9 +41,8 @@ type CreateStudioClassWire = z.infer<typeof createStudioClassSchema>;
  * reason written down. An exclusion is not itself how the last two hid — the
  * previous revision carried `templateId`'s exclusion *and* named the mechanism
  * and #148 beside it, which is what exposed them. What hides a key is a false
- * reason attached to the exclusion, and an exclusion nothing pins (see the
- * sibling wizard, where `description` is excluded deliberately, with its own
- * non-vacuity pin).
+ * reason attached to the exclusion, and an exclusion nothing pins (as the
+ * sibling wizard previously did before #147, with its own non-vacuity pin).
  */
 const _formCoversCreate: NoneOf<
   Exclude<keyof CreateStudioClassWire, keyof StudioClassFormValues>
