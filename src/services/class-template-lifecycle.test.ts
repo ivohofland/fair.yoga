@@ -5,8 +5,10 @@ import {
   updateClassTemplate,
   archiveOrUnarchiveTemplate,
   pauseOrResumeTemplate,
+  CLASS_TEMPLATE_ROOM_FK,
   type ClassTemplateUpdateData,
 } from './class-template-lifecycle';
+import { isRestrictViolationOn } from '@/lib/api-errors';
 import { startOfLocalDay, classStartInstant, mondayOf } from '@/lib/timezone';
 import { getNextOccurrences } from './entry-generation';
 import { formatDayHeader } from '@/lib/format';
@@ -994,11 +996,12 @@ describe('updateClassTemplate (DB)', () => {
   });
 
   /**
-   * A room deleted between the validation read and the write trips the room
-   * mirror's foreign key constraint (`ClassTemplate_teacherRoomId_roomArchived_fkey`).
+   * When a room is deleted between the validation read and the write, the subsequent
+   * write trips the room mirror's foreign key constraint (`ClassTemplate_teacherRoomId_roomArchived_fkey`).
+   * Without this arm the route's catch answered a gone room with the archive-race 409 —
+   * the wrong sentence for a deleted room (#231).
    * The catch re-reads, finds the room missing, logs `warn`, and maps the P2003
-   * to `{ ok: false, reason: 'invalid_room' }` rather than letting it escape as
-   * a 500 (#231).
+   * to `{ ok: false, reason: 'invalid_room' }`.
    */
   it('maps a room delete landing between validation and the write to invalid_room and logs it', async () => {
     const t = await makeTemplate('Room Delete Race');
@@ -1019,6 +1022,7 @@ describe('updateClassTemplate (DB)', () => {
     });
 
     let deleted = false;
+    let writeAttempted = false;
     const interposing = prisma.$extends({
       query: {
         teacherRoom: {
@@ -1031,6 +1035,12 @@ describe('updateClassTemplate (DB)', () => {
             return row;
           },
         },
+        classTemplate: {
+          async update({ args, query }) {
+            writeAttempted = true;
+            return query(args);
+          },
+        },
       },
     }) as unknown as PrismaClient;
 
@@ -1041,6 +1051,7 @@ describe('updateClassTemplate (DB)', () => {
       });
 
       expect(result).toEqual({ ok: false, reason: 'invalid_room' });
+      expect(writeAttempted, 'the write must have been reached and raised P2003').toBe(true);
       expect(warn).toHaveBeenCalledWith(
         expect.objectContaining({ templateId: t.id, teacherId, teacherRoomId: targetRoom.id }),
         'teacher room vanished between validation and write — nothing committed',
@@ -1050,14 +1061,107 @@ describe('updateClassTemplate (DB)', () => {
       expect(after.teacherRoomId).toBe(teacherRoomId);
     } finally {
       warn.mockRestore();
-      await prisma.teacherRoom.deleteMany({ where: { id: targetRoom.id } });
-      await prisma.room.deleteMany({ where: { id: room.id } });
       await prisma.calendarEntry.deleteMany({
         where: { scheduleRule: { classTemplates: { some: { id: t.id } } } },
       });
       await prisma.scheduleRule.deleteMany({
         where: { classTemplates: { some: { id: t.id } } },
       });
+      await prisma.teacherRoom.deleteMany({ where: { id: targetRoom.id } });
+      await prisma.room.deleteMany({ where: { id: room.id } });
+    }
+  });
+
+  /**
+   * When a room is archived between the validation read and the write, the subsequent
+   * write trips the room mirror foreign key constraint (`ClassTemplate_teacherRoomId_roomArchived_fkey`).
+   * The catch re-reads, finds the room still exists (isArchived: true), and rethrows
+   * the P2003 rather than swallowing it — leaving the route to answer the archive race (#231).
+   */
+  it('rethrows P2003 when a room is archived (not deleted) between validation and write', async () => {
+    const t = await prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'regular',
+            classType: 'Room Archive Race',
+            dayOfWeek: 4,
+            startTime: hhmmToTime('10:00'),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoomId } },
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+      },
+      include: { scheduleRule: true },
+    });
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Target Venue',
+        address: 'Test Addr',
+        city: 'Testville',
+        postcode: '1234TP',
+        floor: '2',
+        roomName: 'Target Room 2',
+        maxCapacity: 10,
+        createdById: teacherId,
+      },
+    });
+    const targetRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 20 },
+    });
+
+    let archived = false;
+    let writeAttempted = false;
+    const interposing = prisma.$extends({
+      query: {
+        teacherRoom: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            if (!archived && (args.where as { id?: string }).id === targetRoom.id) {
+              archived = true;
+              await prisma.teacherRoom.update({
+                where: { id: targetRoom.id },
+                data: { isArchived: true },
+              });
+            }
+            return row;
+          },
+        },
+        classTemplate: {
+          async update({ args, query }) {
+            writeAttempted = true;
+            return query(args);
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    try {
+      await expect(
+        updateClassTemplate(interposing, t.id, teacherId, {
+          teacherRoomId: targetRoom.id,
+        }),
+      ).rejects.toSatisfy((err) => isRestrictViolationOn(err, [CLASS_TEMPLATE_ROOM_FK]));
+
+      expect(writeAttempted, 'the write must have been reached and raised P2003').toBe(true);
+
+      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+      expect(after.teacherRoomId).toBe(teacherRoomId);
+    } finally {
+      await prisma.calendarEntry.deleteMany({
+        where: { scheduleRule: { classTemplates: { some: { id: t.id } } } },
+      });
+      await prisma.scheduleRule.deleteMany({
+        where: { classTemplates: { some: { id: t.id } } },
+      });
+      await prisma.teacherRoom.deleteMany({ where: { id: targetRoom.id } });
+      await prisma.room.deleteMany({ where: { id: room.id } });
     }
   });
 

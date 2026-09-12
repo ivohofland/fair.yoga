@@ -115,6 +115,19 @@ export type WithdrawHook = {
   ) => Promise<void>;
 };
 
+export type RoomDescriptor = Readonly<{
+  validate: (
+    db: PrismaClient,
+    roomId: string,
+    teacherId: string,
+  ) => Promise<{ ok: true; isArchived: boolean } | { ok: false }>;
+  /**
+   * Foreign key constraint for the room relation, matching the live migration.
+   * Scoped to the room mirror relation (e.g. ClassTemplate_teacherRoomId_roomArchived_fkey) (#231).
+   */
+  foreignKeyConstraint: string;
+}>;
+
 /**
  * Everything the shared lifecycle functions below need in order to run over one
  * family, BEYOND what generation already needs. `GeneratorFamily`
@@ -251,19 +264,14 @@ export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = Ge
    */
   editNoun: FamilyMetadataMap[TKind]['editNoun'];
   /**
-   * Room validation for the class family; `null` for studio.
-   * Called BEFORE the transaction, outside the lock — same position the
-   * ownership check currently occupies in `updateClassTemplate`.
+   * Room validation and foreign key constraint for families with a room relation (class family);
+   * `null` for families without one (studio).
+   *
+   * Bundled rather than separate optional fields so that validate and foreignKeyConstraint cannot
+   * come apart: a family either has a room relation with both validation and FK constraint,
+   * or has neither (#231).
    */
-  validateRoom: ((
-    db: PrismaClient,
-    roomId: string,
-    teacherId: string,
-  ) => Promise<{ ok: true; isArchived: boolean } | { ok: false }>) | null;
-  /**
-   * Foreign key constraint for the room relation, if this family has one (#231).
-   */
-  roomForeignKeyConstraint?: string;
+  room: RoomDescriptor | null;
   /**
    * Write the child row inside the transaction, with family-specific typing.
    *
@@ -272,7 +280,7 @@ export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = Ge
    * forbidden-field exclusion survives the generic boundary rather than being
    * erased by `Record<string, unknown>`.
    *
-   * The room result (from `validateRoom`) is passed in so the class family
+   * The room result (from `room.validate`) is passed in so the class family
    * can write `roomArchived` onto the child row without a second read.
    */
   updateChild: (
@@ -1569,11 +1577,11 @@ export async function updateRule<TChild>(
   // Deliberately silent: non-existent room or cross-tenant room is a client
   // validation failure (400) (#231).
   let roomResult: { isArchived: boolean } | null = null;
-  if (family.validateRoom !== null && data.teacherRoomId !== undefined) {
+  if (family.room !== null && data.teacherRoomId !== undefined) {
     if (typeof data.teacherRoomId !== 'string') {
       return { ok: false, reason: 'invalid_room' };
     }
-    const validated = await family.validateRoom(db, data.teacherRoomId, teacherId);
+    const validated = await family.room.validate(db, data.teacherRoomId, teacherId);
     if (!validated.ok) {
       return { ok: false, reason: 'invalid_room' };
     }
@@ -1671,20 +1679,26 @@ export async function updateRule<TChild>(
       return { ok: false, reason: 'slot_conflict', heldBy };
     }
 
-    // A room deleted between the validation read above and the write trips the
-    // foreign key constraint (P2003). Without this catch it escapes to a 500
-    // at error level; mapped here to invalid_room (400) and logged at warn (#231).
+    // When a room is deleted between the validation read above and the write,
+    // the subsequent write trips the room mirror foreign key constraint (P2003).
+    // Without this arm the route's catch answered a gone room with the
+    // archive-race 409 — the wrong sentence for a deleted room (#231).
     if (
-      family.roomForeignKeyConstraint !== undefined &&
+      family.room !== null &&
       data.teacherRoomId !== undefined &&
-      typeof data.teacherRoomId === 'string' &&
-      isRestrictViolationOn(err, [family.roomForeignKeyConstraint])
+      isRestrictViolationOn(err, [family.room.foreignKeyConstraint])
     ) {
-      const room = await db.teacherRoom.findUnique({
-        where: { id: data.teacherRoomId },
-        select: { id: true },
-      });
-      if (!room) {
+      let room: { ok: true; isArchived: boolean } | { ok: false };
+      try {
+        room = await family.room.validate(db, data.teacherRoomId as string, teacherId);
+      } catch (probeErr) {
+        log.warn(
+          { err, probeErr, templateId, teacherId, teacherRoomId: data.teacherRoomId },
+          'teacher room FK constraint violated, but diagnostic probe failed',
+        );
+        throw err;
+      }
+      if (!room.ok) {
         log.warn(
           { err, templateId, teacherId, teacherRoomId: data.teacherRoomId },
           'teacher room vanished between validation and write — nothing committed',

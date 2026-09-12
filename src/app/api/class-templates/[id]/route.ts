@@ -15,6 +15,7 @@ import { log } from '@/lib/log';
 import { updateClassTemplateSchema, templateStateQuerySchema } from '@/lib/schemas';
 import {
   updateClassTemplate,
+  CLASS_TEMPLATE_ROOM_FK,
   type ClassTemplateUpdateData,
   type UpdateClassTemplateResult,
   type PauseTemplateResult,
@@ -183,6 +184,12 @@ export const PUT = withErrorHandler(async (
         select: { isArchived: true, teacherId: true },
       });
       if (!targetRoom || targetRoom.teacherId !== session.teacherId) {
+        if (!targetRoom) {
+          log.warn(
+            { templateId: id, teacherId: session.teacherId, teacherRoomId: data.teacherRoomId },
+            'template move target room not found',
+          );
+        }
         return respondError('Invalid teacher room', 400);
       }
       if (targetRoom.isArchived && moving.ruleLive) {
@@ -197,7 +204,7 @@ export const PUT = withErrorHandler(async (
   } catch (e) {
     if (
       isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room') ||
-      isRestrictViolationOn(e, ['ClassTemplate_teacherRoomId_roomArchived_fkey'])
+      isRestrictViolationOn(e, [CLASS_TEMPLATE_ROOM_FK])
     ) {
       // WHICH WAY THE MIRROR DISAGREED, because the constraint name does not
       // say. `updateClassTemplate` writes `roomArchived` from a room read taken
@@ -208,28 +215,63 @@ export const PUT = withErrorHandler(async (
       // is already open, with no action that satisfies the message and no hint
       // that a retry would simply work.
       //
-      // The re-read is not raceable in a way that matters: it decides only
-      // which true sentence to print, and both outcomes refuse the write.
-      const room =
-        data.teacherRoomId === undefined
-          ? null
-          : await prisma.teacherRoom.findUnique({
-              where: { id: data.teacherRoomId },
-              select: { isArchived: true },
-            });
+      // In addition to state flips, the room can be DELETED (#231). The service
+      // swallows the single race and answers invalid_room (400) directly; this
+      // route-level deletion arm is REACHABLE — measured, not conceded — in a
+      // double race where the room was still present during updateRule's probe
+      // but vanished before this re-read, or when updateClassTemplate rethrows.
+      // This changes the wire contract from a misleading 409 ("This room is
+      // archived — unarchive it to move" about a vanished room) to a clean 400.
+      //
+      // The re-read is guarded so a failure of the diagnostic query itself
+      // cannot erase the original constraint violation error.
+      let room: { isArchived: boolean } | null = null;
+      if (data.teacherRoomId !== undefined) {
+        try {
+          room = await prisma.teacherRoom.findUnique({
+            where: { id: data.teacherRoomId },
+            select: { isArchived: true },
+          });
+        } catch (probeErr) {
+          log.warn(
+            {
+              err: e,
+              probeErr,
+              templateId: id,
+              teacherId: session.teacherId,
+              teacherRoomId: data.teacherRoomId,
+            },
+            'room constraint violated, but diagnostic probe failed',
+          );
+          throw e;
+        }
+      }
       if (data.teacherRoomId !== undefined && room === null) {
         log.warn(
-          { err: e, templateId: id, teacherRoomId: data.teacherRoomId },
+          {
+            err: e,
+            templateId: id,
+            teacherId: session.teacherId,
+            teacherRoomId: data.teacherRoomId,
+          },
           'template move target room vanished',
         );
         return respondError('Invalid teacher room', 400);
       }
       if (room === null || room.isArchived) {
-        log.warn({ err: e, templateId: id }, 'template move lost the room-archive race');
+        log.warn(
+          { err: e, templateId: id, teacherId: session.teacherId },
+          'template move lost the room-archive race',
+        );
         return roomArchivedResponse('move');
       }
       log.warn(
-        { err: e, templateId: id, teacherRoomId: data.teacherRoomId },
+        {
+          err: e,
+          templateId: id,
+          teacherId: session.teacherId,
+          teacherRoomId: data.teacherRoomId,
+        },
         'template move lost a room-state race the other way; the room is open again',
       );
       return templateEditBusyResponse();
