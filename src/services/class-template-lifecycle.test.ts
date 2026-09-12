@@ -998,7 +998,7 @@ describe('updateClassTemplate (DB)', () => {
   /**
    * When a room is deleted between the validation read and the write, the subsequent
    * write trips the room mirror's foreign key constraint (`ClassTemplate_teacherRoomId_roomArchived_fkey`).
-   * Without this arm the route's catch answered a gone room with the archive-race 409 —
+   * Before the route had a vanished-room branch, a gone room fell through to the archive-race 409 —
    * the wrong sentence for a deleted room (#231).
    * The catch re-reads, finds the room missing, logs `warn`, and maps the P2003
    * to `{ ok: false, reason: 'invalid_room' }`.
@@ -1154,6 +1154,115 @@ describe('updateClassTemplate (DB)', () => {
       const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
       expect(after.teacherRoomId).toBe(teacherRoomId);
     } finally {
+      await prisma.calendarEntry.deleteMany({
+        where: { scheduleRule: { classTemplates: { some: { id: t.id } } } },
+      });
+      await prisma.scheduleRule.deleteMany({
+        where: { classTemplates: { some: { id: t.id } } },
+      });
+      await prisma.teacherRoom.deleteMany({ where: { id: targetRoom.id } });
+      await prisma.room.deleteMany({ where: { id: room.id } });
+    }
+  });
+
+  /**
+   * When the constraint tripped but the diagnostic re-read itself fails (DB
+   * drop, pool exhaustion), the catch logs BOTH errors and rethrows the
+   * ORIGINAL P2003 — a probe error must not replace the constraint error the
+   * route matches on (#231). The rethrow is pinned by rejecting to
+   * `isRestrictViolationOn`, which only the P2003 can satisfy: had the plain
+   * `probeErr` escaped instead, this assertion fails red.
+   *
+   * Created manually rather than via `makeTemplate`: the counter's slot
+   * budget is exhausted by the time this test runs, and this test needs no
+   * exclusivity anyway — the write only changes `teacherRoomId`.
+   */
+  it('rethrows the original P2003 when the room re-read probe itself fails', async () => {
+    const t = await prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'regular',
+            classType: 'Room Probe Failure',
+            dayOfWeek: 4,
+            startTime: hhmmToTime('10:00'),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoomId } },
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+      },
+      include: { scheduleRule: true },
+    });
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Target Venue',
+        address: 'Test Addr',
+        city: 'Testville',
+        postcode: '1234TP',
+        floor: '2',
+        roomName: 'Target Room 3',
+        maxCapacity: 10,
+        createdById: teacherId,
+      },
+    });
+    const targetRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 20 },
+    });
+
+    let deleted = false;
+    let writeAttempted = false;
+    const interposing = prisma.$extends({
+      query: {
+        teacherRoom: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            if ((args.where as { id?: string }).id !== targetRoom.id) return row;
+            if (!deleted) {
+              deleted = true;
+              await prisma.teacherRoom.delete({ where: { id: targetRoom.id } });
+              return row;
+            }
+            throw new Error('pool exhausted');
+          },
+        },
+        classTemplate: {
+          async update({ args, query }) {
+            writeAttempted = true;
+            return query(args);
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    try {
+      await expect(
+        updateClassTemplate(interposing, t.id, teacherId, {
+          teacherRoomId: targetRoom.id,
+        }),
+      ).rejects.toSatisfy((err) => isRestrictViolationOn(err, [CLASS_TEMPLATE_ROOM_FK]));
+
+      expect(writeAttempted, 'the write must have been reached and raised P2003').toBe(true);
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          probeErr: expect.objectContaining({ message: 'pool exhausted' }),
+          templateId: t.id,
+          teacherId,
+          teacherRoomId: targetRoom.id,
+        }),
+        'teacher room FK constraint violated, but diagnostic probe failed',
+      );
+
+      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+      expect(after.teacherRoomId).toBe(teacherRoomId);
+    } finally {
+      warn.mockRestore();
       await prisma.calendarEntry.deleteMany({
         where: { scheduleRule: { classTemplates: { some: { id: t.id } } } },
       });
