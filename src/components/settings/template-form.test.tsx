@@ -184,6 +184,44 @@ describe('TemplateForm', () => {
   });
 
   /**
+   * #317. The classType refusal guard in handleSubmit was wholly unpinned —
+   * deleting the guard or altering the copy left the file green.
+   *
+   * The guard order matters — `teacherRoomId` runs first, so a room must be
+   * picked for the missing class type to be the reason the request never
+   * leaves. And unlike its studio twin, this form fetches `/api/teacher-rooms`
+   * on mount, so `expect(fetchMock).not.toHaveBeenCalled()` will not work;
+   * use the `callsBeforeSubmit` delta shape.
+   *
+   * Expected copy is bare ('Class type is required', no trailing period)
+   * matching the class family's unpunctuated refusals. The second submit
+   * with whitespace verifies `.trim()`. Editing the field clears the banner,
+   * so the second submit re-raises the complaint afresh.
+   */
+  it('refuses a blank class type before any request, with product copy', async () => {
+    stubFetch();
+    render(<TemplateForm mode="create" />);
+    // The room guard runs first, so a room must be picked for the missing
+    // class type to be the reason the request never leaves.
+    fireEvent.change(await screen.findByLabelText('Room'), {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    const button = await screen.findByRole('button', { name: /create/i });
+    const callsBeforeSubmit = fetchMock.mock.calls.length;
+    fireEvent.click(button);
+
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
+    expect(screen.getByText('Class type is required')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: '   ' } });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    fireEvent.click(button);
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
+    expect(screen.getByText('Class type is required')).toBeInTheDocument();
+  });
+
+  /**
    * `createClassTemplateSchema`'s and `updateClassTemplateSchema`'s
    * minRate/targetRate refine (schemas.ts) is mirrored by hand in
    * `handleSubmit`, because a client form cannot value-import zod without
