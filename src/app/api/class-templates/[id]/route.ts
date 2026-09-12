@@ -217,14 +217,17 @@ export const PUT = withErrorHandler(async (
       //
       // In addition to state flips, the room can be DELETED (#231). The service
       // swallows the single race and answers invalid_room (400) directly; this
-      // route-level deletion arm is REACHABLE — measured, not conceded — in a
-      // double race where the room was still present during updateRule's probe
-      // but vanished before this re-read, or when updateClassTemplate rethrows.
-      // This changes the wire contract from a misleading 409 ("This room is
-      // archived — unarchive it to move" about a vanished room) to a clean 400.
+      // route-level deletion arm is REACHABLE — measured, not conceded — only
+      // when the room was still present at updateRule's own re-read but is gone
+      // by the time this re-read runs. This changes the wire contract from a
+      // misleading 409 ("This room is archived — unarchive it to move" about a
+      // vanished room) to a clean 400.
       //
       // The re-read is guarded so a failure of the diagnostic query itself
-      // cannot erase the original constraint violation error.
+      // cannot erase the original constraint violation error. It is a raw
+      // prisma read rather than the descriptor's `validate`: the pre-check
+      // above already established ownership, so only existence (gone → 400)
+      // and `isArchived` (409 vs the open-again 503) remain to distinguish.
       let room: { isArchived: boolean } | null = null;
       if (data.teacherRoomId !== undefined) {
         try {
@@ -260,7 +263,12 @@ export const PUT = withErrorHandler(async (
       }
       if (room === null || room.isArchived) {
         log.warn(
-          { err: e, templateId: id, teacherId: session.teacherId },
+          {
+            err: e,
+            templateId: id,
+            teacherId: session.teacherId,
+            ...(data.teacherRoomId !== undefined ? { teacherRoomId: data.teacherRoomId } : {}),
+          },
           'template move lost the room-archive race',
         );
         return roomArchivedResponse('move');
@@ -451,7 +459,10 @@ export const PATCH = withErrorHandler(async (
     result = await pauseOrResumeTemplate(prisma, id, session.teacherId, state);
   } catch (e) {
     if (isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room')) {
-      log.warn({ err: e, templateId: id }, 'template resume lost the room-archive race');
+      log.warn(
+        { err: e, templateId: id, teacherId: session.teacherId },
+        'template resume lost the room-archive race',
+      );
       return roomArchivedResponse('resume');
     }
     throw e;

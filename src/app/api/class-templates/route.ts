@@ -15,6 +15,7 @@ import { createClassTemplateSchema } from '@/lib/schemas';
 import {
   withSlot,
   createClassTemplate,
+  CLASS_TEMPLATE_ROOM_FK,
   type CreateTemplateResult,
 } from '@/services/class-template-lifecycle';
 import type { WithSlot } from '@/services/rule-lifecycle';
@@ -106,7 +107,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // pre-check — the probe is for the sentence, the constraint does the work.
     if (
       isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room') ||
-      isRestrictViolationOn(e, ['ClassTemplate_teacherRoomId_roomArchived_fkey'])
+      isRestrictViolationOn(e, [CLASS_TEMPLATE_ROOM_FK])
     ) {
       log.warn(
         { err: e, teacherRoomId: body.teacherRoomId, teacherId: session.teacherId },

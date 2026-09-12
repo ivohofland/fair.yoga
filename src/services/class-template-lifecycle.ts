@@ -544,6 +544,12 @@ const scheduledWhere = (
   }) satisfies Prisma.CalendarEntryWhereInput;
 
 /**
+ * Foreign key constraint linking ClassTemplate to TeacherRoom on (teacherRoomId, roomArchived).
+ * Trips when the room is deleted or when roomArchived drifts out of sync with TeacherRoom.isArchived (#231).
+ */
+export const CLASS_TEMPLATE_ROOM_FK = 'ClassTemplate_teacherRoomId_roomArchived_fkey';
+
+/**
  * The recurring-class family's `TemplateFamily` entry (`rule-lifecycle.ts`).
  *
  * `CLASS_GENERATOR` (`class-generator.ts`) spread rather than restated: it is
@@ -551,12 +557,6 @@ const scheduledWhere = (
  * intersected with the fields only the lifecycle verbs need. Everything below
  * the spread is one of those.
  */
-/**
- * Foreign key constraint linking ClassTemplate to TeacherRoom on (teacherRoomId, roomArchived).
- * Trips when the room is deleted or when roomArchived drifts out of sync with TeacherRoom.isArchived (#231).
- */
-export const CLASS_TEMPLATE_ROOM_FK = 'ClassTemplate_teacherRoomId_roomArchived_fkey';
-
 export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
   ...CLASS_GENERATOR,
   readChild: (client, templateId) =>

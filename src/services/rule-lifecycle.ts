@@ -115,6 +115,17 @@ export type WithdrawHook = {
   ) => Promise<void>;
 };
 
+/**
+ * A family's room relation: the pre-transaction validation hook and the foreign
+ * key constraint the write trips when that validation read goes stale (#231).
+ *
+ * Bundled into one required-or-null field so the two cannot come apart — a
+ * family has a room in both senses or in neither. The shared lifecycle reads
+ * the room id from the `data.teacherRoomId` wire key, narrowed once in
+ * `updateRule` (#587): a family carrying a `room` descriptor must use that
+ * key, which the schema enforces today (the class family is the app's only
+ * room relation).
+ */
 export type RoomDescriptor = Readonly<{
   validate: (
     db: PrismaClient,
@@ -122,8 +133,12 @@ export type RoomDescriptor = Readonly<{
     teacherId: string,
   ) => Promise<{ ok: true; isArchived: boolean } | { ok: false }>;
   /**
-   * Foreign key constraint for the room relation, matching the live migration.
-   * Scoped to the room mirror relation (e.g. ClassTemplate_teacherRoomId_roomArchived_fkey) (#231).
+   * The constraint `isRestrictViolationOn` must match on, named as Prisma
+   * reports it in `meta.constraint`. A migration renames it at its own peril:
+   * the provoked-delete tests (`class-template-lifecycle.test.ts`,
+   * `template-room-constraint.test.ts`) pin this value red when it drifts from
+   * the live migration. The class family's value is the single scalar
+   * `CLASS_TEMPLATE_ROOM_FK` (#231).
    */
   foreignKeyConstraint: string;
 }>;
@@ -1574,14 +1589,17 @@ export async function updateRule<TChild>(
 
   // Room validation for families with room relations (class family).
   //
-  // Deliberately silent: non-existent room or cross-tenant room is a client
-  // validation failure (400) (#231).
+  // Deliberately silent: a non-string, non-existent, or cross-tenant room is a
+  // client validation failure (400) (#231). `teacherRoomId` is narrowed once
+  // here; the FK catch below re-reads through the same narrowed value, so the
+  // two sites cannot diverge (#587).
+  const teacherRoomId = typeof data.teacherRoomId === 'string' ? data.teacherRoomId : undefined;
   let roomResult: { isArchived: boolean } | null = null;
   if (family.room !== null && data.teacherRoomId !== undefined) {
-    if (typeof data.teacherRoomId !== 'string') {
+    if (teacherRoomId === undefined) {
       return { ok: false, reason: 'invalid_room' };
     }
-    const validated = await family.room.validate(db, data.teacherRoomId, teacherId);
+    const validated = await family.room.validate(db, teacherRoomId, teacherId);
     if (!validated.ok) {
       return { ok: false, reason: 'invalid_room' };
     }
@@ -1681,26 +1699,26 @@ export async function updateRule<TChild>(
 
     // When a room is deleted between the validation read above and the write,
     // the subsequent write trips the room mirror foreign key constraint (P2003).
-    // Without this arm the route's catch answered a gone room with the
-    // archive-race 409 — the wrong sentence for a deleted room (#231).
+    // Before the route had a vanished-room branch, a gone room fell through to
+    // the archive-race 409 — the wrong sentence for a deleted room (#231).
     if (
       family.room !== null &&
-      data.teacherRoomId !== undefined &&
+      teacherRoomId !== undefined &&
       isRestrictViolationOn(err, [family.room.foreignKeyConstraint])
     ) {
       let room: { ok: true; isArchived: boolean } | { ok: false };
       try {
-        room = await family.room.validate(db, data.teacherRoomId as string, teacherId);
+        room = await family.room.validate(db, teacherRoomId, teacherId);
       } catch (probeErr) {
         log.warn(
-          { err, probeErr, templateId, teacherId, teacherRoomId: data.teacherRoomId },
+          { err, probeErr, templateId, teacherId, teacherRoomId },
           'teacher room FK constraint violated, but diagnostic probe failed',
         );
         throw err;
       }
       if (!room.ok) {
         log.warn(
-          { err, templateId, teacherId, teacherRoomId: data.teacherRoomId },
+          { err, templateId, teacherId, teacherRoomId },
           'teacher room vanished between validation and write — nothing committed',
         );
         return { ok: false, reason: 'invalid_room' };
