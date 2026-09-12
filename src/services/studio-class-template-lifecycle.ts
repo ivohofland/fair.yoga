@@ -606,7 +606,7 @@ export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate, 'studio'> = {
   // entries the shared delete already removes.
   withdraw: null,
   editNoun: 'studio template',
-  validateRoom: null,
+  room: null,
   updateChild: async (tx, templateId, childData) => {
     const writeData: Prisma.StudioClassTemplateUncheckedUpdateManyInput &
       Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>> =

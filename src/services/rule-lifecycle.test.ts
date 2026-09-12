@@ -10,7 +10,7 @@ import {
   type TemplateFamily,
   type WithSlot,
 } from './rule-lifecycle';
-import { CLASS_FAMILY } from './class-template-lifecycle';
+import { CLASS_FAMILY, CLASS_TEMPLATE_ROOM_FK } from './class-template-lifecycle';
 import { STUDIO_FAMILY } from './studio-class-template-lifecycle';
 import { CLASS_GENERATOR } from './class-generator';
 import { STUDIO_GENERATOR } from './studio-class-generator';
@@ -73,6 +73,13 @@ describe('rule-lifecycle family descriptors', () => {
     // asserting that is present is what actually distinguishes "declared a
     // hook" from "declared nothing".
     expect(CLASS_FAMILY.withdraw).toHaveProperty('around');
+  });
+
+  it('the family without a room descriptor says so explicitly rather than omitting it', () => {
+    expect(STUDIO_FAMILY.room).toBeNull();
+    expect(CLASS_FAMILY.room).not.toBeNull();
+    expect(CLASS_FAMILY.room).toHaveProperty('validate');
+    expect(CLASS_FAMILY.room).toHaveProperty('foreignKeyConstraint', CLASS_TEMPLATE_ROOM_FK);
   });
 
   /**
