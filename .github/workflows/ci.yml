@@ -43,10 +43,18 @@ jobs:
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       # Node, the corepack-pinned pnpm, the store cache and the frozen install.
       # The steps and the reasoning for each live in .github/actions/setup-pnpm.
       - uses: ./.github/actions/setup-pnpm
+
+      # Blocking: ensures applied migrations are never modified, deleted, or renamed.
+      # Prisma migrations are immutable; amendments corrupt existing databases.
+      # Runs statically against the merge base in milliseconds without needing a database (#302).
+      - name: Check migration immutability
+        run: pnpm run check-migrations
 
       - name: Validate Prisma schema
         run: pnpm exec prisma validate
@@ -158,9 +166,11 @@ jobs:
         run: pnpm exec prisma migrate deploy
 
       # Fails when schema.prisma and the migration history disagree —
-      # catches migrations amended after being applied, and schema edits
-      # committed without a migration. Lives here because it needs a live
-      # database and this is the cheapest job that has one.
+      # catches schema edits committed without a migration. Lives here
+      # because it needs a live database and this is the cheapest job that has one.
+      # (Catching amended applied migrations is handled statically in `checks` via
+      # `check-migrations` (#302) — `migrate diff` runs against a freshly deployed DB,
+      # so it cannot detect when an already-applied migration file was edited.)
       - name: Check schema/migration drift
         run: pnpm exec prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
 
