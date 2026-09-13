@@ -184,6 +184,45 @@ describe('TemplateForm', () => {
   });
 
   /**
+   * #590. The teacherRoomId refusal guard in handleSubmit was wholly unpinned.
+   * Mutation-proved: deleting the guard, or altering the copy, left the file
+   * green.
+   *
+   * Submitting with no room selected proves the missing room is the reason the
+   * request never leaves. Like #317, uses the `callsBeforeSubmit` delta shape
+   * because the mount `/api/teacher-rooms` fetch makes
+   * `expect(fetchMock).not.toHaveBeenCalled()` unusable.
+   *
+   * Expected copy is bare ('Select a room', no trailing period) matching the
+   * class family's unpunctuated refusals and the placeholder `<option>`.
+   * Asserted as role plus anchored full-string textContent.
+   * Selecting a room clears the error banner. Setting the selection back to blank
+   * re-raises the refusal on subsequent submit.
+   */
+  it('refuses a blank room before any request, with product copy and alert role', async () => {
+    stubFetch();
+    render(<TemplateForm mode="create" />);
+    const roomSelect = await screen.findByLabelText('Room');
+    const callsBeforeSubmit = fetchMock.mock.calls.length;
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Select a room$/);
+
+    expect(roomSelect.querySelector('option[value=""]')).toHaveTextContent(/^Select a room$/);
+
+    fireEvent.change(roomSelect, {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    fireEvent.change(roomSelect, { target: { value: '' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Select a room$/);
+  });
+
+  /**
    * #317. The classType refusal guard in handleSubmit was wholly unpinned.
    * Mutation-proved: deleting the guard, or altering the copy, left the file
    * green.
@@ -222,6 +261,30 @@ describe('TemplateForm', () => {
   });
 
   /**
+   * #590. The minStudents > maxStudents refusal guard in handleSubmit was unpinned.
+   *
+   * While the edit UI prevents typing minStudents > maxStudents directly through
+   * clamp-on-change, an initial state (or future UI variation) where minStudents
+   * exceeds maxStudents must be rejected before sending a request.
+   */
+  it('rejects min students exceeding max students before any request is sent', async () => {
+    stubFetch();
+    render(
+      <TemplateForm
+        mode="edit"
+        templateId="tpl-1"
+        initial={{ ...initial, minStudents: 10, maxStudents: 5 }}
+      />,
+    );
+    const button = await screen.findByRole('button', { name: /save|create/i });
+    const callsBeforeSubmit = fetchMock.mock.calls.length;
+    fireEvent.click(button);
+
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Min students cannot exceed max students$/);
+  });
+
+  /**
    * `createClassTemplateSchema`'s and `updateClassTemplateSchema`'s
    * minRate/targetRate refine (schemas.ts) is mirrored by hand in
    * `handleSubmit`, because a client form cannot value-import zod without
@@ -247,6 +310,35 @@ describe('TemplateForm', () => {
     fireEvent.click(button);
     expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
     expect(await screen.findByText(/min rate cannot exceed target rate/i)).toBeInTheDocument();
+  });
+
+  /**
+   * #590. The create-only room subsidy guard in handleSubmit mirrors
+   * `createClassTemplateSchema`'s refine (schemas.ts). It ensures minRate cannot
+   * subsidize more than the room cost (prices going negative).
+   */
+  it('rejects min rate subsidizing more than room cost on create before any request is sent', async () => {
+    stubFetch();
+    render(<TemplateForm mode="create" />);
+    // Pick room (roomCost becomes 20 from stubFetch rentalRate: 20)
+    fireEvent.change(await screen.findByLabelText('Room'), {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    fireEvent.change(screen.getByLabelText('Class type'), {
+      target: { value: 'Vinyasa' },
+    });
+    // Set minRate to -25 (below -roomCost of -20)
+    fireEvent.change(screen.getByLabelText('Min rate'), {
+      target: { value: '-25' },
+    });
+
+    const callsBeforeSubmit = fetchMock.mock.calls.length;
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /^Min rate cannot subsidize more than the room cost — prices would go negative$/,
+    );
   });
 
   /**
