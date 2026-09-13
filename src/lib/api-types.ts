@@ -91,9 +91,17 @@ export type StudioTemplateCreateResponse = TemplateCreateResponse;
  *
  * `firstEffective` is an ISO string on the wire (Monday of the first week the
  * new schedule reaches), or `null` when there is no such week to name (#194/#284).
- * `null` has two distinct causes (represented alongside via `generationState`):
- * either no free week is inside the probe's horizon, or the template is not
- * currently eligible to generate (e.g. paused or archived).
+ * `null` has three distinct causes (#287):
+ *   1. No free week is inside the probe's horizon;
+ *   2. The template is not currently eligible to generate (represented alongside
+ *      via `generationState`: `'paused'` or `'archived'`);
+ *   3. The first-effective probe encountered an error (read failure or arithmetic
+ *      error) and caught it, logging a warning on the server.
+ *
+ * For an active template, causes (1) and (3) both result in `null` on the wire:
+ * the mutation has already committed, saying nothing beats saying something
+ * unfounded, and the UI drops the prediction clause for both while the server
+ * log records the failure.
  */
 export interface TemplateEditResponse {
   firstEffective: string | null;

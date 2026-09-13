@@ -644,7 +644,12 @@ describe('templateUpdatedMessage', () => {
     );
   });
 
-  it('drops the middle clause when no free week is in view', () => {
+  it('drops the middle clause when firstEffective is null (honest no free week or failed probe, #287)', () => {
+    // Both causes of `firstEffective: null` on an active template — no free week
+    // inside the probe's horizon, or a probe failure caught and logged by
+    // `probeFirstEffectiveWeek` — intentionally converge on the same sentence:
+    // the mutation committed, saying nothing beats saying something unfounded,
+    // and the server log records the diagnostic failure (#287).
     expect(templateUpdatedMessage(null, 'active', 'recurring class')).toBe(
       'Template updated. It takes effect for newly generated classes. Change or cancel existing classes individually if needed.',
     );

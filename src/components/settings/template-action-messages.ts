@@ -353,12 +353,12 @@ export type TemplateCopyNoun = 'recurring class' | 'template';
  * `firstEffective` is the Monday of the first week the new schedule reaches —
  * computed by `probeFirstEffectiveWeek` (`services/entry-generation.ts`) from
  * the same `isWeekHeld` the generator decides with, so the sentence cannot
- * claim a week the sweep will not fill. `null` has TWO meanings there, not
- * one: no free week inside the probe's horizon, or the probe's own reads
- * failed. Both drop the clause rather than invent a date — this file's rule
- * that saying nothing beats saying something unfounded holds either way — and
- * only the probe's `warn` tells them apart, so do not read a dropped clause as
- * evidence that the horizon was full.
+ * claim a week the sweep will not fill. `null` from that probe has two meanings
+ * (#287): no free week inside the probe's horizon, or the probe failed (read
+ * fault or arithmetic fault). Both drop the clause rather than invent a date —
+ * this file's rule that saying nothing beats saying something unfounded holds
+ * either way — and only the probe's `warn` tells them apart, so do not read a
+ * dropped clause as evidence that the horizon was full.
  *
  * A MONDAY, not the candidate class date, and the conversion deliberately
  * happens in the service rather than here — `mondayOf` lives in
@@ -384,9 +384,9 @@ export type TemplateCopyNoun = 'recurring class' | 'template';
  *
  * ## Why `generationState` is a second argument and not an inference
  *
- * `firstEffective` alone cannot carry this. `null` from a live template means
- * either "no free week inside the probe's horizon" or "the probe failed", and
- * drops the clause on both; `null` from a paused or archived one means the
+ * `firstEffective` alone cannot carry this (#287). `null` from a live template
+ * means either "no free week inside the probe's horizon" or "the probe failed",
+ * and drops the clause on both; `null` from a paused or archived one means the
  * sweep will not run at all. Rendering the dated sentence for the second case
  * is the failure this argument exists to end — a confirmation naming a week
  * that would never be filled, for 100% of edits to a paused or archived
