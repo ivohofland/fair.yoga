@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   findMigrationViolations,
@@ -162,6 +165,32 @@ describe('resolveBaseRef', () => {
       execGit,
     );
     expect(ref).toBe('commit_before_resolved');
+  });
+
+  it('resolves base commit from GITHUB_EVENT_PATH on push events when GITHUB_BEFORE is not explicitly set', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'event-test-'));
+    const eventFile = join(tmpDir, 'event.json');
+    writeFileSync(eventFile, JSON.stringify({ before: 'payload_before_sha' }));
+
+    const execGit = vi.fn().mockImplementation((cmd: string) => {
+      if (cmd === 'git rev-parse --verify payload_before_sha^{commit}') {
+        return 'payload_before_resolved\n';
+      }
+      throw new Error(`Unexpected command: ${cmd}`);
+    });
+
+    try {
+      const ref = resolveBaseRef(
+        {
+          GITHUB_EVENT_NAME: 'push',
+          GITHUB_EVENT_PATH: eventFile,
+        },
+        execGit,
+      );
+      expect(ref).toBe('payload_before_resolved');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it('treats an all-zero GITHUB_BEFORE on an initial push as unresolvable', () => {

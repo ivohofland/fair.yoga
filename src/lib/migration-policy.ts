@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 export type MigrationViolationType =
   | 'modified'
@@ -132,7 +133,17 @@ export function resolveBaseRef(
 
   // 2. CI Push event with a previous commit SHA
   if (env.GITHUB_EVENT_NAME === 'push') {
-    const before = env.GITHUB_BEFORE;
+    let before = env.GITHUB_BEFORE;
+    if (!before && env.GITHUB_EVENT_PATH) {
+      try {
+        const payload = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'));
+        if (typeof payload.before === 'string') {
+          before = payload.before;
+        }
+      } catch {
+        // GITHUB_EVENT_PATH unreadable or malformed
+      }
+    }
     if (before && !/^0+$/.test(before)) {
       try {
         const rev = execGit(`git rev-parse --verify ${before}^{commit}`).trim();

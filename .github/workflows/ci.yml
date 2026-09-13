@@ -61,6 +61,8 @@ jobs:
       # the PR's merge base or the previous commit (pushes), in milliseconds,
       # without needing a database (#302).
       - name: Check migration immutability
+        env:
+          GITHUB_BEFORE: ${{ github.event.before }}
         run: pnpm run check-migrations
 
       - name: Validate Prisma schema
