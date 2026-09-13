@@ -152,10 +152,13 @@ describe('findMigrationViolations against real git', () => {
       encoding: 'utf8',
     }).trim();
 
-    // Simulate a force-push: rewrite the branch so the original tip becomes an
-    // orphan, point origin/main at the new tip, and prune the old objects so
-    // GITHUB_BEFORE is genuinely unresolvable (a CI fetch never receives
-    // objects that were pushed away).
+    // Simulate a force-push: push main to a bare remote, rewrite it as an
+    // orphan tip (amended applied migration), force-push again.
+    const bare = mkdtempSync(join(tmpdir(), 'migration-policy-bare-'));
+    TEMP_DIRS.push(bare);
+    git(dir, ['init', '--bare', '-q', bare]);
+    git(dir, ['remote', 'add', 'origin', bare]);
+    git(dir, ['push', '-q', 'origin', 'HEAD:main']);
     git(dir, ['checkout', '-q', '--orphan', 'rewritten']);
     git(dir, ['rm', '-rqf', '--ignore-unmatch', '.']);
     mkdirSync(join(dir, 'prisma/migrations/20260403092044_init'), { recursive: true });
@@ -164,14 +167,20 @@ describe('findMigrationViolations against real git', () => {
       'CREATE TABLE "MigrationsTest" ("id" INTEGER);\nALTER TABLE "MigrationsTest" ADD COLUMN "amended" INTEGER;\n',
     );
     commitAll(dir, 'rewritten tip contains an amended applied migration');
-    git(dir, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
-    git(dir, ['update-ref', 'refs/heads/main', 'HEAD']);
-    git(dir, ['reflog', 'expire', '--expire=now', '--all']);
-    git(dir, ['gc', '--prune=now', '-q']);
+    git(dir, ['push', '-qf', 'origin', 'HEAD:main']);
+
+    // A fresh checkout (as CI does) only ever receives reachable objects, so
+    // the orphaned before-SHA cannot be resolved there. file:// is deliberate:
+    // a plain local clone hardlinks the whole object store, unreachable objects
+    // included.
+    const freshParent = mkdtempSync(join(tmpdir(), 'migration-policy-fresh-'));
+    TEMP_DIRS.push(freshParent);
+    const fresh = join(freshParent, 'checkout');
+    git(freshParent, ['clone', '-q', '--no-checkout', `file://${bare}`, 'checkout']);
 
     expect(() =>
       findMigrationViolations({
-        cwd: dir,
+        cwd: fresh,
         env: { GITHUB_EVENT_NAME: 'push', GITHUB_BEFORE: before },
       }),
     ).toThrow(/refusing to pass/);
