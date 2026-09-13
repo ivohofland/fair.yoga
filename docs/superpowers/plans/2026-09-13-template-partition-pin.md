@@ -48,9 +48,9 @@
      - Record the verbatim seven unclassified names: `"teacherRoomId" | "templateId" | "cancelDeadline" | "autoCancelCheck" | "createdAt" | "updatedAt" | "spotBroadcastAt"`.
      - Note that issue #327 split `Class` and `CalendarEntry` (adding `calendarEntryId`, `kind`, `entryLive`, `roomArchived`), leaving `Class` unpartitioned today as well.
 
-- [ ] **Step 1: Apply the code and docblock updates across the three files**
-- [ ] **Step 2: Run `pnpm run typecheck` and `pnpm test` to verify clean pass**
-- [ ] **Step 3: Commit Task 1 changes**
+- [x] **Step 1: Apply the code and docblock updates across the three files**
+- [x] **Step 2: Run `pnpm run typecheck` and `pnpm test` to verify clean pass**
+- [x] **Step 3: Commit Task 1 changes**
 
 ---
 
@@ -89,9 +89,9 @@ Execute and record each mutation using `tsc --noEmit` and/or test runner, loggin
    - `_scheduleRuleAllowlistHasNoForbiddenFields`: Add forbidden field to `TeacherEditableScheduleRuleField` -> fails RED.
    - Call-site parameter guard (`class-template-lifecycle.test.ts`): Remove `& Partial<Record<PlainUpdateForbiddenTemplateField, never>>` from `updateClassTemplate` -> `@ts-expect-error` in test goes unused, `tsc` fails RED.
 
-- [ ] **Step 1: Run and log each mutation in the mutation record document**
-- [ ] **Step 2: Ensure all mutations are fully reverted and `pnpm run typecheck` is clean (exit 0)**
-- [ ] **Step 3: Commit Task 2 mutation record**
+- [x] **Step 1: Run and log each mutation in the mutation record document**
+- [x] **Step 2: Ensure all mutations are fully reverted and `pnpm run typecheck` is clean (exit 0)**
+- [x] **Step 3: Commit Task 2 mutation record**
 
 ---
 
@@ -104,5 +104,5 @@ Execute and record each mutation using `tsc --noEmit` and/or test runner, loggin
    - `pnpm test`
 2. Verify git status has no uncommitted leftovers.
 
-- [ ] **Step 1: Execute `pnpm run verify`**
-- [ ] **Step 2: Confirm all tests green**
+- [x] **Step 1: Execute `pnpm run verify`**
+- [x] **Step 2: Confirm all tests green**
