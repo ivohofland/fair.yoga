@@ -1061,6 +1061,17 @@ type PlainUpdateForbiddenClassField =
  * component's form-coverage pin, which a contributor clears by adding the
  * field to the form. Duplication is the price; it turns a silent deletion into
  * a two-place edit, which is the visibility the docblock above says it wants.
+ *
+ * Why the partition pin form (`_templateListsPartitionTheModel`) is unavailable
+ * for `Class`: Issue #270 measured the census across the `Class` model:
+ *   Class: 10 allowlist + 7 forbidden = 17, plus 7 unclassified = 24 columns.
+ * The verbatim seven unclassified names were:
+ *   "teacherRoomId" | "templateId" | "cancelDeadline" | "autoCancelCheck" |
+ *   "createdAt" | "updatedAt" | "spotBroadcastAt".
+ * Later, issue #327 split `Class` and `CalendarEntry`, adding foreign keys and
+ * mirrors (`calendarEntryId`, `kind`, `entryLive`, `roomArchived`), so `Class`
+ * remains unpartitioned today. Applying a partition pin here would require
+ * per-column design decisions rather than a mechanical substitution.
  */
 const _classForbiddenListIsComplete: NoneOf<
   Exclude<
