@@ -5,18 +5,18 @@ try {
   const violations = findMigrationViolations();
 
   if (violations.length > 0) {
-    console.error(
-      `\n❌ Applied migrations have been modified, deleted, or renamed (${violations.length} violation(s)):`,
-    );
+    console.error(`\n❌ Applied migrations have been amended (${violations.length} violation(s)):`);
     for (const v of violations) {
-      if (v.type === 'renamed' && v.oldPath) {
+      if (v.type === 'renamed') {
         console.error(`  [${v.status}] ${v.oldPath} → ${v.path}`);
       } else {
         console.error(`  [${v.status}] ${v.path}`);
       }
     }
     console.error(
-      `\nApplied migrations are checksummed and immutable. Modifying an applied migration\ncorrupts existing databases and triggers destructive reset prompts.\n\nTo change the schema, add a new migration via \`pnpm exec prisma migrate dev\`.\n`,
+      `\nApplied migrations are checksummed and immutable. Amending one leaves existing\n` +
+        `databases out of sync with the migration history and triggers destructive reset\n` +
+        `prompts (or blocked deploys).\n\nTo change the schema, add a new migration via \`pnpm exec prisma migrate dev\`.\n`,
     );
     process.exit(1);
   }
