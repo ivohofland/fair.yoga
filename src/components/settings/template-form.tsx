@@ -634,6 +634,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
               maxStudents: max,
               minStudents: Math.min(prev.minStudents, max),
             }));
+            setError('');
             setSuccess('');
           }}
         />
