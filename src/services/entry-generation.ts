@@ -1051,11 +1051,14 @@ export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
  * disagree with anything else about which dates are in play.
  *
  * Answers `null` rather than throwing, on both of the ways it can fail: a read
- * that raises, and the week arithmetic that runs on what the reads returned.
- * The edit has already committed by the time this runs, so a probe failure
+ * that raises, and the week arithmetic that runs on what the reads returned
+ * (#287). The edit has already committed by the time this runs, so a probe failure
  * must not turn a saved template into a 500 — and `templateUpdatedMessage`
  * already has a `null` branch that says nothing about weeks rather than
- * something unfounded.
+ * something unfounded. Downstream in `UpdateRuleResult`, this probe failure is
+ * one of three causes of `firstEffective: null` (beside an honest full horizon
+ * and an ineligible template state), collapsed at the copy layer while remaining
+ * observable in server logs via the two warnings below.
  *
  * TWO GUARDS RATHER THAN ONE, and two different warn lines. A failed read is a
  * question about the database; a throw from the arithmetic is a bug in this

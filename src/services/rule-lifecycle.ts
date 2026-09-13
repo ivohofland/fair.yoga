@@ -1499,13 +1499,30 @@ export type UpdateRuleResult<TChild> =
        * The **Monday of the first week the new schedule reaches**, or `null`
        * when there is no such week to name (#194/#284).
        *
-       * `null` has TWO causes and they are not the same fact, which is why
-       * `generationState` sits beside it rather than being left for the copy
-       * layer to infer: either no free week is inside the probe's horizon, or
-       * the template is not eligible to generate at all and the probe was
-       * never run. Reading `null` alone as "no free week" is what produced a
-       * confirmation naming a week the sweep would never fill for every edit
-       * to a paused or archived template.
+       * `null` has THREE causes (#287):
+       *
+       *   1. No free week inside the probe's horizon (the next 8 occurrences
+       *      are all occupied by this template or blocked by slot conflicts);
+       *   2. The template is not eligible to generate at all (`generationState`
+       *      is `'paused'` or `'archived'`), so `probeFirstEffectiveWeek` was
+       *      never run;
+       *   3. The probe failed — a database read rejected, the week arithmetic
+       *      threw, or the candidate horizon bounds were empty.
+       *
+       * `generationState` sits beside this field to separate cause (2) from
+       * (1) and (3). Reading `null` alone as "no free week" was what produced
+       * a confirmation naming a week the sweep would never fill for every
+       * edit to a paused or archived template.
+       *
+       * For an `active` template, causes (1) and (3) both yield `null`.
+       * Collapsing them is intentional (#287): the edit transaction has
+       * already committed by the time the probe runs, and in the copy layer
+       * saying nothing about the week beats saying something unfounded. Both
+       * drop the prediction clause and render the confirmed truth ("Template
+       * updated. It takes effect for newly generated classes. Change or
+       * cancel existing classes individually if needed."). The failure in (3)
+       * is observable in server logs via `probeFirstEffectiveWeek`'s structured
+       * warning line, which records the underlying error and template id.
        *
        * Named as a week rather than as a date on purpose. `firstFreeWeek`
        * answers with a candidate *occurrence* — a Thursday, say — and the
