@@ -66,6 +66,28 @@ describe('parseMigrationDiff', () => {
     ]);
   });
 
+  it('surfaces unrecognized statuses as unknown violations', () => {
+    const diff = 'U\tprisma/migrations/20260403092044_init/migration.sql';
+    expect(parseMigrationDiff(diff)).toEqual([
+      {
+        type: 'unknown',
+        status: 'U',
+        path: 'prisma/migrations/20260403092044_init/migration.sql',
+      },
+    ]);
+  });
+
+  it('treats a rename line missing its destination path as unknown', () => {
+    const diff = 'R100\tprisma/migrations/20260403092044_init/migration.sql';
+    expect(parseMigrationDiff(diff)).toEqual([
+      {
+        type: 'unknown',
+        status: 'R100',
+        path: 'prisma/migrations/20260403092044_init/migration.sql',
+      },
+    ]);
+  });
+
   it('filters added files while capturing all violations in a mixed diff', () => {
     const diff = [
       'A\tprisma/migrations/20260912120000_new_feature/migration.sql',
@@ -124,7 +146,7 @@ describe('resolveBaseRef', () => {
     expect(ref).toBe('fallback_merge_base');
   });
 
-  it('resolves push event before SHA if valid commit SHA', () => {
+  it('resolves GITHUB_BEFORE on push events when it is a valid commit SHA', () => {
     const execGit = vi.fn().mockImplementation((cmd: string) => {
       if (cmd === 'git rev-parse --verify commit_before^{commit}') {
         return 'commit_before_resolved\n';
@@ -142,8 +164,13 @@ describe('resolveBaseRef', () => {
     expect(ref).toBe('commit_before_resolved');
   });
 
-  it('skips all-zero GITHUB_BEFORE on initial push and falls back', () => {
+  it('treats an all-zero GITHUB_BEFORE on an initial push as unresolvable', () => {
+    // rev-parse resolves to a value, so if the /^0+$/ guard is ever removed
+    // the zeros SHA is "successfully" resolved and the assertion below fails.
     const execGit = vi.fn().mockImplementation((cmd: string) => {
+      if (cmd.startsWith('git rev-parse')) {
+        return 'zero_before_resolved\n';
+      }
       if (cmd === 'git merge-base origin/main HEAD') {
         return 'main_merge_base\n';
       }
@@ -157,10 +184,33 @@ describe('resolveBaseRef', () => {
       },
       execGit,
     );
-    expect(ref).toBe('main_merge_base');
+    expect(ref).toBe('HEAD');
+    expect(execGit).not.toHaveBeenCalledWith(expect.stringContaining('rev-parse'));
+    expect(execGit).not.toHaveBeenCalledWith(expect.stringContaining('merge-base'));
   });
 
-  it('resolves local development merge-base against origin/main or main', () => {
+  it('returns HEAD and skips merge-base when GITHUB_BEFORE cannot resolve on a push', () => {
+    // After a push origin/main points at HEAD itself, so a merge-base fallback
+    // would silently compare HEAD to HEAD; the push branch must never consult it.
+    const execGit = vi.fn().mockImplementation((cmd: string) => {
+      if (cmd.startsWith('git rev-parse')) {
+        throw new Error('unreachable commit');
+      }
+      if (cmd === 'git merge-base origin/main HEAD') {
+        return 'HEAD_sha\n';
+      }
+      throw new Error(`Unexpected command: ${cmd}`);
+    });
+
+    const ref = resolveBaseRef(
+      { GITHUB_EVENT_NAME: 'push', GITHUB_BEFORE: 'abc123def' },
+      execGit,
+    );
+    expect(ref).toBe('HEAD');
+    expect(execGit).not.toHaveBeenCalledWith(expect.stringContaining('merge-base'));
+  });
+
+  it('resolves local development merge-base against origin/main', () => {
     const execGit = vi.fn().mockImplementation((cmd: string) => {
       if (cmd === 'git merge-base origin/main HEAD') {
         return 'local_origin_main_base\n';
@@ -170,6 +220,20 @@ describe('resolveBaseRef', () => {
 
     const ref = resolveBaseRef({}, execGit);
     expect(ref).toBe('local_origin_main_base');
+  });
+
+  it('falls back to the local main branch when origin/main is missing locally', () => {
+    const execGit = vi.fn().mockImplementation((cmd: string) => {
+      if (cmd === 'git merge-base origin/main HEAD') {
+        throw new Error('Not a valid object name origin/main');
+      }
+      if (cmd === 'git merge-base main HEAD') {
+        return 'local_main_base\n';
+      }
+      throw new Error(`Unexpected command: ${cmd}`);
+    });
+
+    expect(resolveBaseRef({}, execGit)).toBe('local_main_base');
   });
 
   it('falls back to HEAD when no candidates resolve', () => {
@@ -183,24 +247,113 @@ describe('resolveBaseRef', () => {
 });
 
 describe('findMigrationViolations', () => {
-  it('invokes git diff with --diff-filter=a and parses violations', () => {
+  it('invokes git diff scoped to prisma/migrations and parses violations', () => {
     const execGit = vi.fn().mockImplementation((cmd: string) => {
-      if (cmd.startsWith('git diff --name-status --diff-filter=a base123 --')) {
+      if (cmd === 'git diff --name-status base123 -- prisma/migrations/') {
         return 'M\tprisma/migrations/20260403092044_init/migration.sql\n';
       }
       return '';
     });
 
-    const violations = findMigrationViolations({
-      baseRef: 'base123',
-      execGit,
+    const violations = findMigrationViolations({ env: {}, baseRef: 'base123', execGit });
+
+    expect(execGit).toHaveBeenCalledWith(
+      'git diff --name-status base123 -- prisma/migrations/',
+    );
+    expect(violations).toEqual([
+      {
+        type: 'modified',
+        status: 'M',
+        path: 'prisma/migrations/20260403092044_init/migration.sql',
+      },
+    ]);
+  });
+
+  it('ignores changes to non-migration files under prisma/migrations', () => {
+    const execGit = vi.fn().mockImplementation((cmd: string) => {
+      if (cmd === 'git diff --name-status base123 -- prisma/migrations/') {
+        return [
+          'M\tprisma/migrations/migration_lock.toml',
+          'M\tprisma/migrations/20260403092044_init/README.md',
+          'M\tprisma/migrations/20260403092044_init/migration.sql',
+          'D\tprisma/migrations/20260403092044_init/migration.sql',
+          'R100\tprisma/migrations/old/README.md\tprisma/migrations/new/README.md',
+          'R100\tprisma/migrations/20260403092044_init/migration.sql\tprisma/migrations/20260403092044_init/schema.txt',
+        ].join('\n');
+      }
+      return '';
     });
 
-    expect(violations).toHaveLength(1);
-    expect(violations[0]).toEqual({
-      type: 'modified',
-      status: 'M',
-      path: 'prisma/migrations/20260403092044_init/migration.sql',
+    expect(findMigrationViolations({ env: {}, baseRef: 'base123', execGit })).toEqual([
+      {
+        type: 'modified',
+        status: 'M',
+        path: 'prisma/migrations/20260403092044_init/migration.sql',
+      },
+      {
+        type: 'deleted',
+        status: 'D',
+        path: 'prisma/migrations/20260403092044_init/migration.sql',
+      },
+      {
+        type: 'renamed',
+        status: 'R100',
+        oldPath: 'prisma/migrations/20260403092044_init/migration.sql',
+        path: 'prisma/migrations/20260403092044_init/schema.txt',
+      },
+    ]);
+  });
+
+  it('fails closed when base resolution degrades to HEAD under CI env vars', () => {
+    const execGit = vi.fn().mockImplementation(() => {
+      throw new Error('no refs available');
     });
+
+    expect(() =>
+      findMigrationViolations({
+        env: { GITHUB_BASE_REF: 'main', GITHUB_EVENT_NAME: 'pull_request' },
+        execGit,
+      }),
+    ).toThrow(/refusing to pass/);
+  });
+
+  it('fails closed on a push event whose GITHUB_BEFORE cannot be resolved', () => {
+    // Push events resolve a base only from GITHUB_BEFORE. This test pins the
+    // fail-closed path for a degraded push resolution (no GITHUB_BASE_REF).
+    const execGit = vi.fn().mockImplementation((cmd: string) => {
+      if (cmd.startsWith('git merge-base') || cmd.startsWith('git rev-parse')) {
+        throw new Error('unreachable before');
+      }
+      throw new Error(`Unexpected command: ${cmd}`);
+    });
+
+    expect(() =>
+      findMigrationViolations({ env: { GITHUB_EVENT_NAME: 'push' }, execGit }),
+    ).toThrow(/refusing to pass/);
+  });
+
+  it('compares against HEAD when no base resolves outside CI', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const execGit = vi.fn().mockImplementation((cmd: string) => {
+      if (cmd.startsWith('git merge-base') || cmd.startsWith('git rev-parse')) {
+        throw new Error('missing refs');
+      }
+      if (cmd === 'git diff --name-status HEAD -- prisma/migrations/') {
+        return '';
+      }
+      throw new Error(`Unexpected command: ${cmd}`);
+    });
+
+    try {
+      const violations = findMigrationViolations({ env: {}, execGit });
+
+      expect(execGit).toHaveBeenCalledWith(
+        'git diff --name-status HEAD -- prisma/migrations/',
+      );
+      expect(warn).toHaveBeenCalled();
+      expect(violations).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

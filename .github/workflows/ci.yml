@@ -44,15 +44,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # fetch-depth: 0 is load-bearing for the migration check below: it
+          # needs refs/remotes/origin/main (PRs) and the full history so
+          # GITHUB_BEFORE resolves on pushes. Without it the base cannot be
+          # resolved and the migration check fails the job rather than passing
+          # — it deliberately refuses to compare HEAD to HEAD.
           fetch-depth: 0
 
       # Node, the corepack-pinned pnpm, the store cache and the frozen install.
       # The steps and the reasoning for each live in .github/actions/setup-pnpm.
       - uses: ./.github/actions/setup-pnpm
 
-      # Blocking: ensures applied migrations are never modified, deleted, or renamed.
-      # Prisma migrations are immutable; amendments corrupt existing databases.
-      # Runs statically against the merge base in milliseconds without needing a database (#302).
+      # Blocking: ensures applied migrations are never amended. Prisma checksums
+      # every applied migration.sql, and an amendment corrupts the migration
+      # history and triggers destructive reset prompts. Runs statically against
+      # the PR's merge base or the previous commit (pushes), in milliseconds,
+      # without needing a database (#302).
       - name: Check migration immutability
         run: pnpm run check-migrations
 
@@ -170,7 +177,8 @@ jobs:
       # because it needs a live database and this is the cheapest job that has one.
       # (Catching amended applied migrations is handled statically in `checks` via
       # `check-migrations` (#302) — `migrate diff` runs against a freshly deployed DB,
-      # so it cannot detect when an already-applied migration file was edited.)
+      # so it cannot detect an amendment that leaves the deployed schema consistent
+      # with schema.prisma, which is precisely the case #302 demonstrated.)
       - name: Check schema/migration drift
         run: pnpm exec prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
 
