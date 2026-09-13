@@ -228,17 +228,22 @@ type PlainUpdateForbiddenTemplateField =
 /**
  * Compile-time pin (completeness): every `ClassTemplate` column must be
  * claimed by the allowlist or the forbidden list above — checked against the
- * live Prisma type, so a migration that adds an unclassified column reddens
- * this rather than passing silently, matching the rule-level and
- * studio-family pins beside this one.
+ * live Prisma `ClassTemplateUncheckedUpdateManyInput`.
+ *
+ * Unlike the old duplicate-union form (which only caught deletions from the
+ * union), the partition form catches newly added columns from migrations that
+ * nobody classified. The motivating incident was issue #111, where
+ * `archivedAt` and `withdrawnCount` were added to `ClassTemplate` without the
+ * old pin firing. Matching the rule-level and studio-family pins beside this
+ * one, this reddens immediately when an unclassified column is introduced.
  */
-const _templateForbiddenListIsComplete: NoneOf<
+const _templateListsPartitionTheModel: NoneOf<
   Exclude<
     keyof Prisma.ClassTemplateUncheckedUpdateManyInput,
     TeacherEditableClassTemplateField | PlainUpdateForbiddenTemplateField
   >
 > = true;
-void _templateForbiddenListIsComplete;
+void _templateListsPartitionTheModel;
 
 /**
  * Compile-time pin: every name above must be a real `ClassTemplate` column.

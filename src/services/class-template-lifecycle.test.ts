@@ -20,7 +20,7 @@ import { log } from '@/lib/log';
  * The forbidden-field GUARD is required on `updateClassTemplate`'s `data`
  * parameter, and this is what enforces it.
  *
- * `_templateForbiddenListIsComplete` and `_templateForbiddenColumnsExist`
+ * `_templateListsPartitionTheModel` and `_templateForbiddenColumnsExist`
  * prove the list's CONTENT — every column is classified, and no name on it is
  * absent from the model. Neither proves the list is APPLIED. Dropping
  * `& Partial<Record<PlainUpdateForbiddenTemplateField, never>>` from the
