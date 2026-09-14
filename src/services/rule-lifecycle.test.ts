@@ -92,7 +92,7 @@ describe('rule-lifecycle family descriptors', () => {
    * A claim about what the compiler refuses is worth only the pin that makes
    * the compiler refuse it.
    *
-   * The 7 `@ts-expect-error` property assignment checks below are verified by
+   * The `@ts-expect-error` property assignment checks below are verified by
    * `npm run typecheck` only (`tsc --noEmit`) and are invisible to Vitest runtime test
    * execution (tests do not typecheck or transpile types).
    */
@@ -182,7 +182,7 @@ describe('rule-lifecycle family descriptors', () => {
  * the schema's own columns into a test about assignability.
  */
 describe("the two families' lifecycle results are not interchangeable", () => {
-  it('rejects each family archive result where the other family is required', () => {
+  it('exercises type shapes for each family archive result', () => {
     const takesStudio = (r: ArchiveRuleResult<StudioClassTemplate>) => r.ok;
     const takesClass = (r: ArchiveRuleResult<ClassTemplate>) => r.ok;
 
@@ -203,7 +203,7 @@ describe("the two families' lifecycle results are not interchangeable", () => {
     expect(takesClass(classResult)).toBe(true);
   });
 
-  it('rejects each family pause result where the other family is required', () => {
+  it('exercises type shapes for each family pause result', () => {
     const takesStudio = (r: PauseRuleResult<StudioClassTemplate>) => r.ok;
     const takesClass = (r: PauseRuleResult<ClassTemplate>) => r.ok;
 
@@ -225,7 +225,7 @@ describe("the two families' lifecycle results are not interchangeable", () => {
     expect(takesClass(classResult)).toBe(true);
   });
 
-  it('rejects each family update result where the other family is required', () => {
+  it('exercises type shapes for each family update result', () => {
     const takesStudio = (r: UpdateRuleResult<StudioClassTemplate>) => r.ok;
     const takesClass = (r: UpdateRuleResult<ClassTemplate>) => r.ok;
 
