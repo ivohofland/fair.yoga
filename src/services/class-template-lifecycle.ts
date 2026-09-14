@@ -677,20 +677,24 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
       // binds a `date` parameter, so Postgres compares `date > date`. A
       // `$queryRaw` binds a JS `Date` as `timestamptz`, so this statement
       // compares `date > timestamptz`, which promotes `e.date` to an instant
-      // at midnight IN THE SESSION `TimeZone`. Measured, both directions:
+      // at midnight IN THE SESSION `TimeZone`. Measured, all directions:
       //
       //   TimeZone=UTC               '2026-08-15'::date > '2026-08-15T00:00:00Z' → f
       //   TimeZone=America/New_York  same comparison                             → t
-      //                              (Prisma's `date > date` stays f in both)
+      //   TimeZone=Asia/Tokyo        same comparison                             → f
+      //                              (Prisma's `date > date` stays f in all)
       //
-      // So under UTC the two forms select exactly the same rows, and west
-      // of UTC this raw form additionally matches TODAY-dated rows that the
-      // `deleteMany` below will never delete. That is a SUPERSET, never a
+      // So under UTC and east of it the two forms select exactly the same rows,
+      // and west of UTC this raw form additionally matches TODAY-dated rows that
+      // the `deleteMany` below will never delete. That is a SUPERSET, never a
       // subset — which is the only thing lock ⊇ delete (below) actually
       // needs, and it holds under every session `TimeZone`, not just this
       // deployment's. Do not restate it as "the same set" and do not use
       // that as licence to narrow either side to match the other: equality
-      // is a UTC-only accident, containment is the guarantee.
+      // is a UTC-only accident, containment is the guarantee. Pinned by three
+      // tests in `class-template-lifecycle.test.ts` (SQL property across 6
+      // session zones, UTC-midnight parameter binding, and an end-to-end
+      // archive run under a non-UTC session `TimeZone`).
       //
       // This deployment runs UTC — the `postgres:16-alpine` default, since
       // neither `docker-compose.yml` nor `docker-compose.prod.yml` sets
