@@ -1,195 +1,131 @@
-# Test & Mutation Coverage Analysis: PR #592 (`solve_issue_270`)
+# PR Test Analysis: PR #597 (Issue #207)
 
-- **PR:** #592 (branch `solve_issue_270` against `origin/main`)
-- **Issue:** #270 (ClassTemplate Partition Pin & Completeness Alignment)
-- **Review Date:** 2026-09-13
-- **Review Scope:**
-  - `src/services/class-template-lifecycle.test.ts`
-  - `docs/superpowers/plans/2026-09-13-template-partition-pin-mutations.md`
-  - `docs/superpowers/plans/2026-09-13-template-partition-pin.md`
-  - Related implementations: `src/services/class-template-lifecycle.ts`, `src/services/class-lifecycle.ts`
-- **Verdict:** **APPROVED** ✅
-
----
-
-## 1. Executive Summary
-
-This report provides an in-depth evaluation of the test suite and mutation testing protocol implemented in PR #592. The PR addresses Issue #270 by:
-1. Renaming `_templateForbiddenListIsComplete` to `_templateListsPartitionTheModel` in `src/services/class-template-lifecycle.ts` to reflect partition semantics across `ClassTemplate` update inputs.
-2. Documenting the mechanism difference between partition pins and legacy duplicate-union pins, specifically citing incident #111 (unclassified columns added during schema migrations without failing the pin).
-3. Preserving the historical census measurement of the `Class` model in `src/services/class-lifecycle.ts` and explaining why `Class` remains unpartitioned after Issue #327.
-4. Implementing a complete 14-mutation verification protocol proving that all compile-time pins and call-site parameter guards bite when violated.
-
-Automated verification confirmed that `pnpm run typecheck` passes with exit code 0, all linter rules pass, and the entire test suite passes without regressions.
+- **PR:** #597 (`fix/207-toggle-payload-type-pins` against `main`)
+- **Issue:** #207 (Toggle-Payload & Result Type Pins: Replace `@ts-expect-error` with `NoneOf` Pins)
+- **Review Skill:** `.agents/skills/pr-test-analyzer/SKILL.md`
+- **Plan Reference:** `docs/superpowers/plans/2026-09-14-toggle-payload-type-pins.md`
+- **Mutation Ledger:** `docs/superpowers/plans/2026-09-14-toggle-payload-type-pins-mutations.md`
+- **Reviewer:** PR Test Analyzer
+- **Date:** 2026-09-14
+- **Verification Fact:** `pnpm run verify` passes cleanly (249 test files, 3,227 passed tests, exit code 0).
 
 ---
 
-## 2. Behavioral Coverage Analysis (`src/services/class-template-lifecycle.test.ts`)
+## 1. Test Coverage Summary
 
-`src/services/class-template-lifecycle.test.ts` spans 3,063 lines and provides rigorous unit and lifecycle integration testing across the three primary service operations: `updateClassTemplate`, `archiveOrUnarchiveTemplate`, and `pauseOrResumeTemplate`.
+This pull request completes Issue #207 by modernizing how type invariants and negative type contracts are tested across the codebase:
 
-### A. Evaluated Behavioral Vectors
+1. **Compile-Time `NoneOf` Pins at Definition Sites**:
+   - Replaces opaque `Assert<Equals<..., false>>` in `src/lib/api-types.ts` with self-naming `NoneOf` pins (`_classIsNotStudio`, `_studioIsNotClass`).
+   - Introduces bidirectional compile-time `NoneOf` pins in `src/services/rule-lifecycle.ts` for all three generic rule lifecycle results:
+     - `ArchiveRuleResult<TChild>` (`_classArchiveIsNotStudio`, `_studioArchiveIsNotClass`)
+     - `PauseRuleResult<TChild>` (`_classPauseIsNotStudio`, `_studioPauseIsNotClass`)
+     - `UpdateRuleResult<TChild>` (`_classUpdateIsNotStudio`, `_studioUpdateIsNotClass`)
+   - Elevates the verdict state invariant in `src/services/studio-class-editability.ts` into a compile-time `NoneOf` pin (`_illegalVerdictCannotStand`), asserting that `{ scheduleEditable: false; dateEditable: true }` cannot satisfy `StudioClassEditVerdict`.
 
-1. **Input Validation & Ownership Boundary (`updateClassTemplate`):**
-   - Non-existent template UUID -> returns `{ ok: false, reason: 'not_found' }`.
-   - Cross-teacher access attempts -> returns `{ ok: false, reason: 'forbidden' }` and verifies zero DB writes.
-   - Empty input payload `{}` -> returns `{ ok: false, reason: 'no_fields' }`.
-   - Undefined-only payload `{ description: undefined }` -> returns `{ ok: false, reason: 'no_fields' }`, ensuring no redundant row locks are taken.
-   - Non-existent room and other-teacher room assignments -> return `{ ok: false, reason: 'invalid_room' }` with write preservation verified.
+2. **Elimination of Tautological Test-Level Type Checks**:
+   - In `src/components/settings/template-action-messages.test.ts`, removes lines 741–764 which wrapped `@ts-expect-error` calls inside a runtime test that concluded with `expect(true).toBe(true)`. The underlying type non-assignability contract is now pinned at the declaration site in `src/lib/api-types.ts`.
+   - In `src/services/rule-lifecycle.test.ts`, removes redundant call-site `@ts-expect-error` invocations (`takesStudio(classResult)` and `takesClass(studioResult)`) while retaining the positive runtime assertions.
+   - In `src/services/studio-class-editability.test.ts`, removes the uncalled `@ts-expect-error const _illegalVerdict: StudioClassEditVerdict` assignment.
 
-2. **Concurrency & Exclusion Constraint Handling:**
-   - Same-family slot collision with a live sibling recurring class -> returns `{ ok: false, reason: 'slot_conflict', heldBy: 'regular' }` and verifies audit warning logging.
-   - Cross-family slot collision with a studio recurring class (`StudioClassTemplate`) -> returns `{ ok: false, reason: 'slot_conflict', heldBy: 'studio' }` and verifies warning logging.
-   - Foreign key violation on room archiving (`CLASS_TEMPLATE_ROOM_FK`) tested against concurrency races.
+3. **Exhaustive Documentation of Call-Site Parameter Guards**:
+   - Systematically documents 15 test files containing call-site `@ts-expect-error` directives, explaining that these parameter-narrowing guards are enforced exclusively by `npm run typecheck` (`tsc --noEmit` exit code) and are invisible to Vitest runtime test execution.
 
-3. **Horizon Prediction & Generation State:**
-   - Active update -> computes `firstEffective` week (aligned to UTC Monday) and reports `generationState: 'active'`.
-   - Paused template update -> successfully applies update, sets `generationState: 'paused'`, and ensures `firstEffective: null`.
-   - Archived template update -> successfully applies update, distinguishes from paused state (`isArchived: true, isActive: false`), sets `generationState: 'archived'`, and sets `firstEffective: null`.
-   - Past-start filter -> verifies candidate start instants in the past are excluded from prediction horizon.
-   - Cross-family overlap & cancellation -> live studio class blocks occurrence and advances prediction by one week; cancelled studio class (`cancelledAt != null`) does not block occurrence.
-   - Spanning interval overlap -> overlapping classes with non-identical start times properly trip the overlap detector.
+### Suite Verification Status
 
-4. **Lifecycle Transitions (`archiveOrUnarchiveTemplate` & `pauseOrResumeTemplate`):**
-   - Archiving cascade -> unbooked instances window withdrawn, booked instances preserved.
-   - Idempotent state toggles -> verified against repeated calls.
-
-### B. Behavioral Gaps & Observations
-
-- **Observation 1 (`createClassTemplate` Unit Tests):** `createClassTemplate` is exported from `src/services/class-template-lifecycle.ts`, but its behavioral test coverage resides in `tests/integration/class-templates-api.test.ts` and `src/services/template-room-constraint.test.ts` rather than `class-template-lifecycle.test.ts`. This was introduced in PR #331 (deadlock-free slot insert) and is orthogonal to PR #592, but is noted for completeness.
-- **Observation 2 (Runtime Enforcement of Forbidden Fields):** `updateClassTemplate` does not perform runtime stripping or error throwing for forbidden keys; protection is enforced entirely at compile-time via TypeScript intersection types and at the boundary via Zod parsing. This architecture is intentional and explicitly documented in `class-template-lifecycle.test.ts:20-41`.
-
----
-
-## 3. Compiler Pin Coverage Analysis
-
-`src/services/class-template-lifecycle.ts` implements a two-model partition discipline separating `ClassTemplate` economics from `ScheduleRule` scheduling data.
-
-### A. Inventory of Compile-Time Pins
-
-| # | Pin Identifier | Model / Scope | Invariant Enforced |
+| Check | Tool / Runner | Result | Details |
 |---|---|---|---|
-| 1 | `_templateUpdateColumnsExist` | `ClassTemplate` | Every wire update slice key exists on Prisma input |
-| 2 | `_templateFieldsArePermitted` | `ClassTemplate` | Forward pin: wire keys ⊆ `TeacherEditableClassTemplateField` |
-| 3 | `_templateAllowlistHasNoStaleFields` | `ClassTemplate` | Reverse pin: `TeacherEditableClassTemplateField` ⊆ wire keys |
-| 4 | `_templateListsPartitionTheModel` | `ClassTemplate` | Completeness: Allowlist ∪ Forbidden = `keyof Prisma.ClassTemplateUncheckedUpdateManyInput` |
-| 5 | `_templateForbiddenColumnsExist` | `ClassTemplate` | Every forbidden name exists on Prisma model |
-| 6 | `_templateAllowlistHasNoForbiddenFields` | `ClassTemplate` | Disjointness: Allowlist ∩ Forbidden = ∅ |
-| 7 | `_scheduleRuleUpdateColumnsExist` | `ScheduleRule` | Every wire rule slice key exists on Prisma input |
-| 8 | `_scheduleRuleFieldsArePermitted` | `ScheduleRule` | Forward pin: wire rule keys ⊆ `TeacherEditableScheduleRuleField` |
-| 9 | `_scheduleRuleAllowlistHasNoStaleFields` | `ScheduleRule` | Reverse pin: `TeacherEditableScheduleRuleField` ⊆ wire rule keys |
-| 10 | `_scheduleRuleListsPartitionTheModel` | `ScheduleRule` | Completeness: Rule Allowlist ∪ Forbidden = `keyof Prisma.ScheduleRuleUncheckedUpdateManyInput` |
-| 11 | `_scheduleRuleForbiddenColumnsExist` | `ScheduleRule` | Every forbidden rule name exists on Prisma model |
-| 12 | `_scheduleRuleAllowlistHasNoForbiddenFields` | `ScheduleRule` | Disjointness: Rule Allowlist ∩ Forbidden = ∅ |
+| **Typecheck** | `tsc --noEmit` | **PASS (Exit 0)** | 0 errors |
+| **Linter** | `eslint` | **PASS (Exit 0)** | 0 errors |
+| **Test Pass 1** | Vitest (`unit`, `components`) | **PASS (Exit 0)** | 178 test files, 2,299 passed tests |
+| **Test Pass 2** | Vitest (`unit-sweeps`, `integration`) | **PASS (Exit 0)** | 71 test files, 928 passed tests |
+| **Total Test Suite** | `pnpm test` | **PASS (Exit 0)** | **249 test files, 3,227 passed tests** |
 
-### B. Call-Site Parameter Guard (`class-template-lifecycle.test.ts:43-61`)
-
-The function `_templateForbiddenFieldsAreRejected` verifies that the parameter type of `updateClassTemplate`:
-```ts
-data: ClassTemplateUpdateData &
-  Partial<Record<PlainUpdateForbiddenTemplateField, never>> &
-  Partial<Record<PlainUpdateForbiddenScheduleRuleField, never>>
-```
-is enforced on callers.
-- **Instrument Design:** Variables (rather than object literals) are used to bypass TypeScript's excess-property checking, ensuring only the intersection type enforces rejection.
-- **Directives:** Uses `@ts-expect-error` so that weakening the signature causes `tsc --noEmit` to fail with `error TS2578: Unused '@ts-expect-error' directive`.
-
-### C. Pin Coverage Gaps & Observations
-
-- **Observation 3 (Representative vs. Exhaustive Call-Site Assertions):**
-  - `_templateForbiddenFieldsAreRejected` tests 3 of 7 template forbidden fields (`scheduleRuleId`, `roomArchived`, `ruleLive`) and 2 of 10 schedule rule forbidden fields (`isActive`, `isArchived`).
-  - Untested at the call-site guard: `id`, `kind`, `createdAt`, `updatedAt`, `teacherId`, `archivedAt`, `withdrawnCount`, `live`.
-  - **Assessment:** Because TypeScript's `Record<Union, never>` constructs a homogenous mapped type over the union, asserting multiple representative members proves that both intersection records are applied to the signature. While testing all 17 fields would provide exhaustive proof, testing 5 key representatives across both unions is mathematically and practically sound.
+Coverage adequacy for the modified functionality is **exceptional**. Behavioral runtime coverage remains 100% intact, and compile-time negative guarantees are now certified by deterministic, self-describing compiler pins backed by an empirical mutation testing ledger.
 
 ---
 
-## 4. Mutation Testing Protocol Completeness (`2026-09-13-template-partition-pin-mutations.md`)
+## 2. 🚨 Critical Gaps (Rating 8–10)
 
-The mutation protocol recorded in `docs/superpowers/plans/2026-09-13-template-partition-pin-mutations.md` was analyzed against the protocol defined in `AGENTS.md` and `docs/mutation-testing.md`.
+**None.**
 
-### A. Protocol Audit by Component
-
-1. **Both-Halves Verification (Mutations 1A & 1B):**
-   - **Mutation 1A (Simulated Added Column - Partition Form):**
-     - Target: `_templateListsPartitionTheModel` in `src/services/class-template-lifecycle.ts:240-245`.
-     - Injection: `& { simulatedUnclassifiedColumn?: string }` onto `Prisma.ClassTemplateUncheckedUpdateManyInput`.
-     - Result: Failed RED with `error TS2322: Type 'true' is not assignable to type '"simulatedUnclassifiedColumn"'` (Exit code 2).
-   - **Mutation 1B (Contrast with Legacy Duplicate-Union Form):**
-     - Target: Old `_templateForbiddenListIsComplete` duplicate-union form.
-     - Injection: Evaluated against the same simulated column.
-     - Result: Remained GREEN (Exit code 0, no errors).
-   - **Conclusion:** Conclusively demonstrates the vulnerability of the legacy duplicate-union pin and proves why the partition pin prevents incident #111 from recurring.
-
-2. **Deleted Forbidden Entry (Mutation 2):**
-   - Target: `PlainUpdateForbiddenTemplateField`.
-   - Mutation: Removed `'roomArchived'`.
-   - Result: Failed RED. Caught by both `_templateListsPartitionTheModel` (`error TS2322`) and the test call-site guard (`error TS2578: Unused '@ts-expect-error' directive`).
-
-3. **Typo'd Forbidden Column (Mutation 3):**
-   - Target: `PlainUpdateForbiddenTemplateField`.
-   - Mutation: Renamed `'roomArchived'` to `'roomArchive'`.
-   - Result: Failed RED. Caught by `_templateForbiddenColumnsExist` (TS2322 naming `'roomArchive'`), `_templateListsPartitionTheModel` (TS2322 naming `'roomArchived'`), and the test call-site guard (TS2578).
-
-4. **Re-proving of All Remaining Pins (Mutations 4–13):**
-   - All remaining 10 pins in `src/services/class-template-lifecycle.ts` were systematically broken and proven to fail RED with exact TS error codes, target names, and exit code 2:
-     - Mutation 4 (`_templateUpdateColumnsExist`): Invalid column `notAColumn` -> TS2322.
-     - Mutation 5 (`_templateFieldsArePermitted`): Unpermitted column `roomArchived` -> TS2322.
-     - Mutation 6 (`_templateAllowlistHasNoStaleFields`): Stale field `staleField` -> TS2322.
-     - Mutation 7 (`_templateAllowlistHasNoForbiddenFields`): Overlapping forbidden field `roomArchived` -> TS2322.
-     - Mutation 8 (`_scheduleRuleUpdateColumnsExist`): Invalid rule column `notARuleColumn` -> TS2322.
-     - Mutation 9 (`_scheduleRuleFieldsArePermitted`): Unpermitted field `isActive` -> TS2322.
-     - Mutation 10 (`_scheduleRuleAllowlistHasNoStaleFields`): Stale field `staleRuleField` -> TS2322.
-     - Mutation 11 (`_scheduleRuleListsPartitionTheModel`): Deleted rule forbidden entry `isActive` -> TS2322 & TS2578.
-     - Mutation 12 (`_scheduleRuleForbiddenColumnsExist`): Typo `isActiv` -> TS2322 & TS2578.
-     - Mutation 13 (`_scheduleRuleAllowlistHasNoForbiddenFields`): Overlapping forbidden field `isActive` -> TS2322.
-
-5. **Call-Site Parameter Guard Mutation (Mutation 14):**
-   - Target: `updateClassTemplate` parameter signature in `src/services/class-template-lifecycle.ts:457-460`.
-   - Mutation: Removed `& Partial<Record<PlainUpdateForbiddenTemplateField, never>>`.
-   - Result: Failed RED with TS2578 on test lines 51, 53, 55 (`scheduleRuleId`, `roomArchived`, `ruleLive`).
-
-### B. Mutation Protocol Gaps & Observations
-
-- **Observation 4 (Independent Mutation of Schedule Rule Parameter Guard):**
-  - In Mutation 14, only the `ClassTemplate` forbidden parameter guard was stripped.
-  - The second parameter guard, `& Partial<Record<PlainUpdateForbiddenScheduleRuleField, never>>`, was not independently removed in an explicit "Mutation 14B" to observe test lines 57 and 59 failing with TS2578 in isolation.
-  - **Assessment:** While Mutation 11 demonstrated that deleting an entry from `PlainUpdateForbiddenScheduleRuleField` triggers TS2578 on line 57, an isolated deletion of the schedule rule parameter guard would complete total symmetry.
+There are zero critical test gaps:
+- No runtime execution paths are left untested.
+- No financial, payment, scheduling, or authorization logic was loosened.
+- All negative invariant boundaries are strictly defended at compile time and verified via mutation testing.
 
 ---
 
-## 5. Gap Severity & Quality Rating (1–10 Scale)
+## 3. ⚠️ Important Improvements (Rating 5–7)
 
-To avoid ambiguity between "gap severity" (where higher means worse) and "quality score" (where higher means better), both metrics are explicitly stated:
+### Gap 1 (Rating 5/10 — Test Title Alignment): Align `it(...)` titles in `src/services/rule-lifecycle.test.ts` with remaining runtime assertions
 
-### A. Gap Severity Score: **1.5 / 10** (Negligible Gaps)
-*Scale: 1 = Zero/negligible gaps; 10 = Critical architectural/safety flaws.*
-- **Identified Gaps:**
-  1. Call-site parameter guard tests 5 of 17 forbidden fields (representative rather than exhaustive).
-  2. Call-site parameter guard mutation tested removal of the template record slice, omitting an independent single-line removal of the rule record slice.
-  3. `createClassTemplate` unit tests are in integration/constraint suites rather than the primary lifecycle test file.
-- **Impact:** None of these gaps compromise type safety, build integrity, or runtime behavior.
-
-### B. Coverage & Rigor Quality Score: **9.5 / 10** (Outstanding)
-*Scale: 1 = Completely untested; 10 = Flawless, textbook-grade execution.*
-- **Breakdown:**
-  - Behavioral Test Coverage: **9.5 / 10** (Comprehensive coverage of errors, concurrency, horizon prediction, and lifecycle transitions).
-  - Compile-Time Pin Coverage: **9.8 / 10** (Total partition coverage across two Prisma models; bi-directional forward/reverse/disjointness pins).
-  - Mutation Protocol Completeness: **9.6 / 10** (All 14 mutations verified with verbatim compiler output, both-halves proof executed, clean revert state confirmed).
-  - Documentation & Historical Preservation: **10 / 10** (Exact citation of #111, preservation of #270 census and #327 architectural evolution in `class-lifecycle.ts`).
-
----
-
-## 6. Verification Audit
-
-- **Typecheck:** `pnpm run typecheck` (`tsc --noEmit`) -> **Exit code 0** (Clean pass).
-- **Linter:** `pnpm run lint` -> **Exit code 0** (No lint errors introduced).
-- **Test Suites:** `pnpm test` -> **71 test files, 927 tests passed** (Clean pass).
-- **Working Tree State:** Clean, isolated, no leftover test artifacts or uncommitted changes.
+- **Location:** `src/services/rule-lifecycle.test.ts:184-248`
+- **Scenario:** In `describe("the two families' lifecycle results are not interchangeable")`, the three tests are titled:
+  - `it('rejects each family archive result where the other family is required', ...)`
+  - `it('rejects each family pause result where the other family is required', ...)`
+  - `it('rejects each family update result where the other family is required', ...)`
+- **Why it matters:** Previously, these tests contained negative `@ts-expect-error` invocations (`takesStudio(classResult)` / `takesClass(studioResult)`). Those negative calls were correctly removed because the rejection is now proven by the `NoneOf` compile-time pins in `src/services/rule-lifecycle.ts:370, 999, 1613`. The test bodies now exclusively execute positive assertions (`expect(takesStudio(studioResult)).toBe(true)` and `expect(takesClass(classResult)).toBe(true)`). Although the block's JSDoc header accurately explains this migration, the individual `it(...)` titles still claim to "reject" the foreign family, describing the compile-time invariant rather than the runtime test execution.
+- **Suggested Improvement:**
+  In a future cleanup pass, adjust the test titles to reflect their active runtime verification, for example:
+  ```ts
+  it('accepts family-specific archive results at their respective family consumers', () => {
+    // ...
+    expect(takesStudio(studioResult)).toBe(true);
+    expect(takesClass(classResult)).toBe(true);
+  });
+  ```
 
 ---
 
-## 7. Final Verdict
+## 4. 🔧 Test Quality Issues
 
-**APPROVED** ✅
+### 4.1 Behavioral Coverage over Line Coverage
+The changes rigorously prioritize behavioral and contract coverage over superficial metrics:
+- In `src/components/settings/template-action-messages.test.ts`, removing `expect(true).toBe(true)` eliminates a tautological line without diminishing behavioral coverage. The module still retains comprehensive tests for all message resolvers (`resolveTemplateConfirmation`, `resolveStudioConfirmation`, `templateUpdatedMessage`, `resumeStudioMessage`) across every action discriminator (`'paused'`, `'archived'`, `'active'`, `'unchanged'`, `'unarchived'`) and input permutation.
+- In `src/services/studio-class-editability.test.ts`, the full behavioral matrix evaluating past vs. future dates and generated vs. manual studio classes remains untouched and active.
 
-PR #592 completely satisfies all acceptance criteria for Issue #270. The compile-time partition pin `_templateListsPartitionTheModel` provides robust, regression-proof defense against unclassified schema additions, and the mutation testing record stands as a benchmark for rigorous both-halves verification.
+### 4.2 Test Resilience & DAMP over DRY
+- **DAMP Setup**: In `src/services/rule-lifecycle.test.ts:189-198`, the test fixtures use explicit, descriptive inline setup (`{} as WithSlot<ClassTemplate>`, `{} as WithSlot<StudioClassTemplate>`) rather than complex shared factories. This keeps the tests independent, isolated, and readable.
+- **Decoupling from Private Implementation**: The compile-time pins check public exported types (`TemplateToggleResponse`, `ArchiveRuleResult`, `StudioClassEditVerdict`). If internal implementation helpers change, the pins will not experience false failures as long as the public contract holds.
+
+### 4.3 Appropriate Mocking Strategy
+- No new mocks were introduced.
+- Tests in `src/services/` run against clean domain types without mock leakage.
+- Component tests in `src/components/settings/` run in `jsdom` without artificial network interceptors since `template-action-messages` is a pure function layer.
+
+### 4.4 Tier Placement Accuracy
+- All modified and audited tests are located in their appropriate tiers:
+  - `src/services/*.test.ts`: `unit` tier (parallel, fast Node execution).
+  - `src/components/**/*.test.ts`: `components` tier (`jsdom` environment).
+  - None of the modified tests perform wide DB sweeps or row lock contention, so none belong in `unit-sweeps`.
+
+---
+
+## 5. ✨ Positive Observations
+
+### 5.1 Thorough Mutation Testing Protocol (`docs/superpowers/plans/2026-09-14-toggle-payload-type-pins-mutations.md`)
+The mutation testing ledger demonstrates exemplary discipline complying with `AGENTS.md` ("A guard that cannot fail certifies nothing"):
+- **6 distinct mutation scenarios** covering **9 compile-time pins** were executed in-place:
+  1. `_classIsNotStudio`: Mutated `TemplateToggleResponse` `templateKind` to `'studio'`.
+     - *Result:* Failed `tsc --noEmit` (exit 2) naming `"TemplateToggleResponse extends StudioTemplateToggleResponse"`.
+  2. `_studioIsNotClass`: Mutated `StudioTemplateToggleResponse` `templateKind` to `'class'`.
+     - *Result:* Failed `tsc --noEmit` (exit 2) naming `"StudioTemplateToggleResponse extends TemplateToggleResponse"`.
+  3. `_classArchiveIsNotStudio` & `_studioArchiveIsNotClass`: Collapsed `template: WithSlot<TChild>` to `{ id: string }`.
+     - *Result:* Failed `tsc --noEmit` (exit 2) naming both offending conditions verbatim.
+  4. `_classPauseIsNotStudio` & `_studioPauseIsNotClass`: Collapsed `template` in `PauseRuleResult`.
+     - *Result:* Failed `tsc --noEmit` (exit 2) naming both offending conditions verbatim.
+  5. `_classUpdateIsNotStudio` & `_studioUpdateIsNotClass`: Collapsed `template` in `UpdateRuleResult`.
+     - *Result:* Failed `tsc --noEmit` (exit 2) naming both offending conditions verbatim.
+  6. `_illegalVerdictCannotStand`: Widened `StudioClassEditVerdict` to `{ scheduleEditable: boolean; dateEditable: boolean }`.
+     - *Result:* Failed `tsc --noEmit` (exit 2) naming `"{ scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict"`.
+- Every mutation produced the expected compiler diagnostic naming the offender, and all files were restored cleanly.
+
+### 5.2 Crisp Distinction Between Type Pins and Parameter Guards
+The PR establishes an important architectural boundary:
+- **Type Invariants** (e.g. non-interchangeability of response types or invalid union states) belong beside the type declarations in `src/` using `NoneOf`. They fail `tsc` immediately upon definition and name the exact offending condition.
+- **Function Parameter Guards** (e.g. ensuring a service function refuses excess properties or unpermitted fields passed via variables) must remain at call sites in `src/**/*.test.ts` using `@ts-expect-error`, because they test the assignability constraint imposed by the function signature.
+- Adding explicit docblocks across all 15 test files with `@ts-expect-error` call-site guards protects these tests from being deleted as "dead code" and clarifies that their verification happens during `tsc --noEmit`, not Vitest runtime execution.
+
+### 5.3 Zero Test Regressions Across Full Suite
+All 249 test files and 3,227 tests in the repo pass cleanly without flakes or regressions.
