@@ -106,6 +106,11 @@ describe('respondTyped', () => {
     expect(body).toEqual({ data: { ok: true } });
   });
 
+  /**
+   * The `@ts-expect-error` compile-time type assertions below are verified by
+   * `npm run typecheck` only (`tsc --noEmit`) and are invisible to Vitest runtime
+   * test execution (tests do not typecheck or transpile types).
+   */
   it('enforces compile-time type requirements', () => {
     // Valid explicit call compiles clean
     const res = respondTyped<SampleContract>({ id: 'valid', count: 1 });
@@ -447,6 +452,10 @@ describe('withErrorHandler', () => {
    * `ApiLogDetail` now rejects such a `detail` outright, hence the directive.
    * The two guards invert each other: relax the type and the directive goes
    * unused and `tsc` fails; move the spread and this assertion fails.
+   *
+   * The `@ts-expect-error` parameter check below is verified by `npm run typecheck`
+   * only (`tsc --noEmit`) and is invisible to Vitest runtime test execution (tests do
+   * not typecheck or transpile types).
    */
   it('keeps the real request context even when classifyApiError returns a clobbering detail', async () => {
     const thrown = new Error('kaboom');
@@ -565,6 +574,9 @@ describe('withErrorHandler', () => {
    * @ts-expect-error only suppresses errors on the line directly after it. An
    * inline multi-line arrow would put the error on a different line than the
    * directive, and the directive would read as unused.
+   *
+   * This check is verified by `npm run typecheck` only (`tsc --noEmit`) and is
+   * invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
    */
   const paramsFirstHandler = async (
     _ctx: { params: Promise<{ id: string }> },

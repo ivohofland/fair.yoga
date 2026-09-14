@@ -9,6 +9,9 @@ import {
 
 /**
  * Compile-time pin asserting updateStudioClassTemplate rejects forbidden fields.
+ *
+ * This check is verified by `npm run typecheck` only (`tsc --noEmit`) and is
+ * invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _studioTemplateForbiddenFieldsAreRejected(

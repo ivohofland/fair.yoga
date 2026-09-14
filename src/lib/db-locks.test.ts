@@ -50,6 +50,9 @@ afterAll(async () => {
  * function's own line — which is the regression each of these is here to
  * catch. They live together because the brand does, not because one of them
  * covers the rest.
+ *
+ * These checks are verified by `npm run typecheck` only (`tsc --noEmit`) and
+ * are invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _theBrandRejectsABareClient(client: PrismaClient): Promise<void> {

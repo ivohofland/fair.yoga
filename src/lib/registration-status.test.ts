@@ -28,6 +28,9 @@ import { ACTIVE_REGISTRATION_STATUSES, isRegistrationStatus } from './registrati
  * three sites that would need re-widening, which is the useful signal. Kept
  * because a guard whose observed failure differs from its documented one is
  * how a later reader concludes it does not work.
+ *
+ * This check is verified by `npm run typecheck` only (`tsc --noEmit`) and is
+ * invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function _theListRejectsAForeignEnum(status: WaitlistStatus): void {

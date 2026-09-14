@@ -11,6 +11,9 @@ import { getNextOccurrences, isWeekHeld, firstFreeWeek, probeFirstEffectiveWeek 
  * `tsconfig.json` includes every `.ts` file in the repo, so loosening `WeekKey`
  * back to `number` makes `tsc --noEmit` fail on the unused `@ts-expect-error`
  * directives below (issue #286). Mirrors `src/lib/db-locks.test.ts`.
+ *
+ * These checks are verified by `npm run typecheck` only (`tsc --noEmit`) and
+ * are invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function _theBrandRejectsUnbrandedEpochMs(

@@ -33,6 +33,9 @@ import { createClassFixture, slotDate } from '../../tests/class-fixtures';
  * repo, so weakening the signature fails the build on this line rather than
  * leaving a green suite. Same instrument, same reason, as
  * `_theBrandRejectsABareClient` in `lib/db-locks.test.ts`.
+ *
+ * This check is verified by `npm run typecheck` only (`tsc --noEmit`) and is
+ * invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _completionTimingIsRequired(db: PrismaClient): Promise<void> {
@@ -103,6 +106,9 @@ function localWallClockMinutesAgo(minutes: number, timeZone: string) {
  * Each line names a reason the OTHER function returns, which is the confusion
  * worth catching: the two share a result type and differ only in which
  * refusals they can reach.
+ *
+ * These checks are verified by `npm run typecheck` only (`tsc --noEmit`) and
+ * are invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _transitionRangesAreNarrow(db: PrismaClient): Promise<void> {
@@ -2096,6 +2102,10 @@ describe('updateClass — the count === 0 branches', () => {
 });
 
 describe("updateClass's non-empty tuple guarantee", () => {
+  /**
+   * Pinned compile-time check verified by `npm run typecheck` only (`tsc --noEmit`)
+   * and invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
+   */
   it('depends on noUncheckedIndexedAccess, which is pinned here', () => {
     const [first] = [] as EconomicField[];
     // @ts-expect-error `first` is `EconomicField | undefined` under

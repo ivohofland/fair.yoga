@@ -270,6 +270,9 @@ describe('probeConflictingEntry', () => {
  * `tsconfig.json` includes every `.ts` file in the repo, so weakening the
  * parameter makes `tsc --noEmit` fail on an unused `@ts-expect-error` rather
  * than leaving a green suite. Never called, so it costs nothing at runtime.
+ *
+ * This check is verified by `npm run typecheck` only (`tsc --noEmit`) and is
+ * invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _theProbeRejectsATransactionClient(tx: Prisma.TransactionClient): Promise<void> {
