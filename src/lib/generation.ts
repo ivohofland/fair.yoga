@@ -76,12 +76,11 @@
  *   (`already_this_week`): a template's own class on the candidate date itself
  *   must be classified as idempotency or a cancelled-date block, rather than
  *   falling through to "already this week on a different date".
- * - `pre-check` before `post-insert` probe: the pre-check classifies
- *   `slot_taken` and standing same-day `blocked_by_overlap` before
- *   `ON CONFLICT DO NOTHING`; only un-pre-checked short dates reach the
- *   post-insert probe (`probeOverlappingCandidates`), classifying standing
- *   midnight spills as `blocked_by_overlap` and transient contention as
- *   `raced`.
+ * - `pre-check` before `post-insert` probe: the generator loop classifies
+ *   `slot_taken` and same-day `blocked_by_overlap` before insertion; candidate dates
+ *   refused by constraints at insert time are probed to distinguish standing
+ *   midnight spills (`blocked_by_overlap`) from transient contention (`raced`).
+ *   See `services/entry-generation.ts` for implementation.
  *
  * Reporting preferences:
  * - `already_this_week` before `slot_taken`: when a candidate date is both held
@@ -242,14 +241,15 @@ export type SkipCounts = {
  * Total compiler-checked mapping from each `SkipReason` to the `SkipCounts` field
  * that surfaces it to a teacher/caller, or `null` if the reason is deliberately dropped.
  */
-export const SKIP_REASON_COUNT_MAP: Readonly<Record<SkipReason, keyof SkipCounts | null>> = {
-  blocked_by_cancelled: 'blockedByCancelled',
-  slot_taken: 'slotTaken',
-  already_this_week: 'alreadyThisWeek',
-  blocked_by_overlap: 'blockedByOverlap',
-  already_generated: null,
-  raced: null,
-};
+export const SKIP_REASON_COUNT_MAP: Readonly<Record<SkipReason, keyof SkipCounts | null>> =
+  Object.freeze({
+    blocked_by_cancelled: 'blockedByCancelled',
+    slot_taken: 'slotTaken',
+    already_this_week: 'alreadyThisWeek',
+    blocked_by_overlap: 'blockedByOverlap',
+    already_generated: null,
+    raced: null,
+  });
 
 /**
  * True when any count in the window is a date the teacher should be told about.
@@ -331,17 +331,12 @@ export function anyBlocked(counts: SkipCounts): boolean {
  * number rather than recounting it — the one site that spells the ordinal
  * out.
  *
- * #296 added the sixth member — `blocked_by_overlap`, named
- * `blocked_by_other_family` until #327's rename — and the fourth count, and
- * both halves of this paragraph's warning played out as written.
  * `SKIP_REASON_COUNT_MAP` enforces completeness at compile time (omitting a
- * member fails the `Record<SkipReason, ...>` type check) — which is the half
- * that works. The COUNT reached the wire, both routes, both forms and the copy
- * layer without a single one of them failing, and that is NOT this guard
- * working: it is #296's task 4a, which had already made every one of those
- * hops carry `SkipCounts` whole rather than its members by name. Before that
- * task the new count would have vanished at all four, exactly as this
- * paragraph predicts.
+ * member fails the `Record<SkipReason, ...>` type check). The COUNT reached
+ * the wire, both routes, both forms and the copy layer without a single one of
+ * them failing, and that is NOT this mapping working: it is #296's task 4a,
+ * which had already made every one of those hops carry `SkipCounts` whole
+ * rather than its members by name.
  */
 export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
   const counts: SkipCounts = {
@@ -352,6 +347,9 @@ export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
   };
   for (const { reason } of skipped) {
     const field = SKIP_REASON_COUNT_MAP[reason];
+    if (field === undefined) {
+      throw new Error(`countSkipReasons: unhandled SkipReason ${String(reason)}`);
+    }
     if (field !== null) {
       counts[field] += 1;
     }

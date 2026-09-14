@@ -749,9 +749,8 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
 
     // AFTER `slot_taken`, deliberately: when this teacher holds the slot in
     // BOTH families, the same-family cause is the one worth reporting. A
-    // reporting preference like the week-versus-slot one above — but unlike
-    // that one it costs nothing to state, since both branches `continue` and
-    // no row is created either way.
+    // reporting preference like the week-versus-slot one above: both branches
+    // `continue` and no row is created either way.
     //
     // Any live entry of this teacher whose span overlaps the candidate blocks
     // it here — a studio class at the same time, and equally a class of
@@ -994,14 +993,12 @@ export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
  *
  * ## Which of the generator's refusals this reproduces, and which it does not
  *
- * The generator declines a candidate date on six named grounds (`SkipReason`,
- * `@/lib/generation`, whose own header documents the ordered first-match
- * classification — one number, derived from the type, not two conventions counting
- * the same union). Stated one at a time rather than as a parity claim, because
+ * The generator declines a candidate date on grounds named by `SkipReason`
+ * (`@/lib/generation`, whose own header documents the ordered first-match
+ * classification). Stated one at a time rather than as a parity claim, because
  * the parity claim is what this docblock said before `slot_taken` was found
- * missing — and a reader who trusted it had no way to check it. Named rather
- * than numbered, because "the Nth ground" resolves against no ordering anyone
- * has written down:
+ * missing — and a reader who trusted it had no way to check it. Named by member
+ * rather than by ordinal:
  *
  *   - `already_generated` and `blocked_by_cancelled` — this template's own row
  *     on the date itself, live or cancelled. Both reproduced by the FIRST read:
