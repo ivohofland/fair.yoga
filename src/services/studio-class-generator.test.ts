@@ -1406,6 +1406,52 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
         'already_generated',
       ]);
     });
+
+    it('reports already_this_week over slot_taken when a candidate date is both week-held and slot-taken', async () => {
+      // Preference pin (#288): week-before-slot_taken in entry-generation.ts.
+      // When a studio template changes weekday (Tuesday -> Thursday), candidate
+      // Thursdays are week-held by the Tuesday classes. If an unrelated manual studio
+      // class ALSO occupies the exact slot on one of those Thursdays, both reasons apply.
+      // The generator prefers the systematic schedule shift (already_this_week)
+      // over the local slot collision (slot_taken).
+      const takenThursday = new Date('2026-04-09T00:00:00.000Z');
+      const manual = await createStudioClassFixture(prisma, {
+        teacherId: eastTeacherId,
+        scheduleRuleId: null,
+        classType: 'Studio Vinyasa',
+        date: takenThursday,
+        startTime: hhmmToTime('18:45'),
+        durationMinutes: 60,
+        location: 'Studio Collide',
+        hourlyRate: 45,
+      });
+
+      try {
+        await prisma.scheduleRule.update({
+          where: { id: weekRuleId },
+          data: { dayOfWeek: THURSDAY },
+        });
+
+        const result = await generateStudioInstancesForTemplate(
+          prisma,
+          await withZone(weekTemplateId),
+          from,
+        );
+
+        expect(result.created).toBe(0);
+        expect(result.skipped).toHaveLength(4);
+
+        const takenEntry = result.skipped.find(
+          (s) => s.date.getTime() === takenThursday.getTime(),
+        );
+        expect(takenEntry).toBeDefined();
+        expect(takenEntry?.reason).toBe('already_this_week');
+        expect(result.skipped.every((s) => s.reason === 'already_this_week')).toBe(true);
+      } finally {
+        await prisma.studioClass.delete({ where: { id: manual.id } });
+        await prisma.calendarEntry.delete({ where: { id: manual.calendarEntryId } });
+      }
+    });
   });
 });
 

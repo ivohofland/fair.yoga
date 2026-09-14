@@ -850,7 +850,7 @@ interface SkipCounts {
 
 /**
  * Reduces skip reasons to counts for the log payload, with the exhaustive
- * `switch` + `never` idiom: a fourth `SkipReason` member becomes a compile
+ * `switch` + `never` idiom: an unhandled `SkipReason` member becomes a compile
  * error here rather than vanishing silently from the one line an operator reads.
  */
 function countSkipReasons(skipped: readonly SkippedClass[]): SkipCounts {

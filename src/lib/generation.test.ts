@@ -102,6 +102,12 @@ describe('countSkipReasons', () => {
       blockedByOverlap: 0,
     });
   });
+
+  it('throws an error on unhandled or unknown skip reasons', () => {
+    expect(() =>
+      countSkipReasons([at('2026-09-21T00:00:00.000Z', 'unknown_reason' as any)]),
+    ).toThrow('countSkipReasons: unhandled SkipReason unknown_reason');
+  });
 });
 
 describe('SKIP_REASON_COUNT_MAP', () => {
