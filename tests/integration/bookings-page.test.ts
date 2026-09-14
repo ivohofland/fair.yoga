@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { formatDayHeader } from '@/lib/format';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -654,5 +655,209 @@ describe('GET /bookings (page) — waitlist section, viewer has not chosen a tie
     // the late-cancelled row must not count toward it. Same structural
     // anchor as the Upcoming section's count test above.
     expect(html).toMatch(/<span[^>]*>1<\/span><span[^>]*>\/ 2–5<\/span>/);
+  });
+});
+
+/**
+ * `/bookings` — the past-class payment breakdown (#576).
+ *
+ * Each class carries snapshot values no other row on the page renders, so a
+ * value's presence or absence is attributable to that class's disclosure. The
+ * accessible name carries the class type for the same reason.
+ */
+describe('GET /bookings (page) — past-class payment breakdown', () => {
+  const suffixB = uniqueSuffix();
+
+  let teacherId = '';
+  let teacherAccountId = '';
+  let studentId = '';
+  let studentAccountId = '';
+  let studentToken = '';
+  let roomId = '';
+
+  const pendingClass = { classType: `Breakdown Pending ${suffixB}`, date: new Date('2026-06-02T00:00:00.000Z') };
+  const paidClass = { classType: `Breakdown Paid ${suffixB}`, date: new Date('2026-06-03T00:00:00.000Z') };
+  const waivedClass = { classType: `Breakdown Waived ${suffixB}`, date: new Date('2026-06-04T00:00:00.000Z') };
+  const unsnapshottedClass = {
+    classType: `Breakdown Unsnapshotted ${suffixB}`,
+    date: new Date('2026-06-05T00:00:00.000Z'),
+  };
+
+  const breakdownLabel = (c: { classType: string; date: Date }) =>
+    `Where your payment goes — ${c.classType}, ${formatDayHeader(c.date)}`;
+
+  beforeAll(async () => {
+    await prisma.$connect();
+
+    const teacherEmail = `breakdown-teacher-${suffixB}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Breakdown',
+        lastName: 'Teacher',
+        email: teacherEmail,
+        bio: 'Breakdown fixture teacher',
+        pageSlug: `breakdown-teacher-${suffixB}`,
+        account: { create: { email: teacherEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Breakdown Studio',
+        address: `${suffixB} Breakdown St`,
+        city: 'Amsterdam',
+        postcode: '1000AA',
+        roomName: 'Hall',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 25 },
+    });
+
+    const studentEmail = `breakdown-student-${suffixB}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Breakdown',
+        lastName: 'Student',
+        email: studentEmail,
+        claimedAt: new Date(),
+        account: { create: { email: studentEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentId = student.id;
+    studentAccountId = student.accountId as string;
+    studentToken = await seedSession(prisma, studentAccountId);
+
+    const completedClassWithPayment = async (
+      c: { classType: string; date: Date },
+      economics: {
+        roomCost: number;
+        minRate: number;
+        targetRate: number;
+        minStudents: number;
+        maxStudents: number;
+        effectiveTeacherRate: number | null;
+        totalStudents: number | null;
+        totalRevenue: number | null;
+      },
+      payment: { amount: number; status: 'pending' | 'paid' | 'not_charged' },
+    ) => {
+      const cls = await createClassFixture(prisma, {
+        teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: c.classType,
+        date: c.date,
+        startTime: hhmmToTime('09:00'),
+        durationMinutes: 60,
+        status: 'completed',
+        ...economics,
+      });
+      const registration = await prisma.registration.create({
+        data: { classId: cls.id, studentId, status: 'attended', tierAtBooking: 3 },
+      });
+      await prisma.payment.create({
+        data: {
+          registrationId: registration.id,
+          amount: payment.amount,
+          status: payment.status,
+          paidAt: payment.status === 'paid' ? new Date() : null,
+          notChargedAt: payment.status === 'not_charged' ? new Date() : null,
+        },
+      });
+    };
+
+    // 7 students at maxStudents: rate = targetRate 16.25; 41.30 + 16.25 = 57.55.
+    await completedClassWithPayment(
+      pendingClass,
+      { roomCost: 41.3, minRate: 10, targetRate: 16.25, minStudents: 3, maxStudents: 7,
+        effectiveTeacherRate: 16.25, totalStudents: 7, totalRevenue: 57.55 },
+      { amount: 8.15, status: 'pending' },
+    );
+    // 5 students at minStudents: rate = minRate -4.00; 42.60 - 4.00 = 38.60.
+    await completedClassWithPayment(
+      paidClass,
+      { roomCost: 42.6, minRate: -4, targetRate: 20, minStudents: 5, maxStudents: 10,
+        effectiveTeacherRate: -4, totalStudents: 5, totalRevenue: 38.6 },
+      { amount: 7.7, status: 'paid' },
+    );
+    // 6 students at maxStudents: rate = targetRate 17.35; 43.90 + 17.35 = 61.25.
+    await completedClassWithPayment(
+      waivedClass,
+      { roomCost: 43.9, minRate: 10, targetRate: 17.35, minStudents: 3, maxStudents: 6,
+        effectiveTeacherRate: 17.35, totalStudents: 6, totalRevenue: 61.25 },
+      { amount: 10.2, status: 'not_charged' },
+    );
+    // A state `completeClass` cannot produce: completed with no snapshot.
+    await completedClassWithPayment(
+      unsnapshottedClass,
+      { roomCost: 44.7, minRate: 10, targetRate: 20, minStudents: 3, maxStudents: 10,
+        effectiveTeacherRate: null, totalStudents: null, totalRevenue: null },
+      { amount: 9.35, status: 'pending' },
+    );
+
+    // Warm the route: `next dev` compiles a page lazily on its first request.
+    await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) }).catch(() => {});
+  }, 20_000);
+
+  afterAll(async () => {
+    await prisma.payment.deleteMany({ where: { registration: { studentId } } });
+    await prisma.registration.deleteMany({ where: { studentId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.session.deleteMany({
+      where: { accountId: { in: [teacherAccountId, studentAccountId] } },
+    });
+    await prisma.student.deleteMany({ where: { id: studentId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [teacherAccountId, studentAccountId] } },
+    });
+    await prisma.$disconnect();
+  });
+
+  async function bookingsHtml(): Promise<string> {
+    const res = await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) });
+    expect(res.status).toBe(200);
+    return res.text();
+  }
+
+  it('shows a pending payment the room, teacher and class total behind it', async () => {
+    const html = await bookingsHtml();
+    expect(html).toContain(breakdownLabel(pendingClass));
+    expect(html).toContain('€41.30');
+    expect(html).toContain('€16.25');
+    expect(html).toContain('€57.55');
+  });
+
+  it('shows a paid payment its breakdown, with a negative teacher line when the teacher covered part of the room', async () => {
+    const html = await bookingsHtml();
+    expect(html).toContain(breakdownLabel(paidClass));
+    expect(html).toContain('€42.60');
+    expect(html).toContain('−€4.00');
+    expect(html).toContain('€38.60');
+  });
+
+  it('shows a not_charged payment no breakdown', async () => {
+    const html = await bookingsHtml();
+    // The row itself renders, so the absences below are about its disclosure.
+    expect(html).toContain(waivedClass.classType);
+    expect(html).not.toContain(breakdownLabel(waivedClass));
+    expect(html).not.toContain('€43.90');
+    expect(html).not.toContain('€61.25');
+  });
+
+  it('renders a completed class with no snapshot without a breakdown, and the page still loads', async () => {
+    const html = await bookingsHtml();
+    expect(html).toContain(unsnapshottedClass.classType);
+    expect(html).not.toContain(breakdownLabel(unsnapshottedClass));
+    expect(html).not.toContain('€44.70');
   });
 });

@@ -20,6 +20,8 @@ import { resolvePriceLine, type PriceLineViewer } from '@/lib/price-line';
 import { readIncomeTier } from '@/lib/tiers.server';
 import { CHARGED_STATUSES } from '@/services/class-lifecycle';
 import { log } from '@/lib/log';
+import { PaymentBreakdown } from '@/components/student/payment-breakdown';
+import { resolvePaymentBreakdown } from '@/lib/payment-breakdown';
 
 export const dynamic = 'force-dynamic';
 
@@ -352,6 +354,19 @@ export default async function StudentBookingsPage() {
             const cls = reg.class;
             const payment = reg.payment;
             const outstanding = payment ? isOutstanding(payment.status) : false;
+            const breakdown = resolvePaymentBreakdown({
+              classStatus: cls.status,
+              roomCost: cls.roomCost,
+              totalRevenue: cls.totalRevenue,
+              totalStudents: cls.totalStudents,
+              payment,
+            });
+            if (breakdown.kind === 'snapshot_missing') {
+              log.warn(
+                { classId: cls.id, registrationId: reg.id },
+                'completed class has no pricing snapshot; payment breakdown not rendered',
+              );
+            }
             return (
               <div key={reg.id} className="min-h-14 py-3 border-b border-border last:border-b-0">
                 <div className="flex items-center justify-between gap-3">
@@ -412,6 +427,13 @@ export default async function StudentBookingsPage() {
                       )}
                     </div>
                   </details>
+                )}
+                {breakdown.kind === 'shown' && (
+                  <PaymentBreakdown
+                    lines={breakdown.lines}
+                    classType={cls.calendarEntry.classType}
+                    date={cls.calendarEntry.date}
+                  />
                 )}
               </div>
             );
