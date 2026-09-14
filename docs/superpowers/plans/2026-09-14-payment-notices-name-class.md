@@ -126,7 +126,7 @@
    - Assert `note.body` contains `'PayRem Hatha'`, `formatDayHeader(cls.calendarEntry.date)`, `'09:00'`, and `'is still open. Pay your teacher directly.'`.
 2. Run test to verify RED:
    ```bash
-   pnpm exec vitest run --project unit src/services/payment-reminders.test.ts -t 'sendPaymentReminders sends reminders'
+   pnpm exec vitest run --project unit-sweeps src/services/payment-reminders.test.ts -t 'sendPaymentReminders sends reminders'
    ```
    Expect FAIL on day assertion.
 3. In `src/services/payment-reminders.ts`:
@@ -135,7 +135,7 @@
    - Update reminder `body` at line 90.
 4. Run test to verify GREEN:
    ```bash
-   pnpm exec vitest run --project unit src/services/payment-reminders.test.ts -t 'sendPaymentReminders sends reminders'
+   pnpm exec vitest run --project unit-sweeps src/services/payment-reminders.test.ts -t 'sendPaymentReminders sends reminders'
    ```
 5. Prove guards bite (mutations 7-8):
    - Mutation 7: Automated reminder reverted to old text -> test fails on day substring.
