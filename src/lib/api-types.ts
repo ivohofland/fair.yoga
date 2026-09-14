@@ -14,7 +14,7 @@
 
 import type { SkipCounts } from '@/lib/generation';
 import type { TemplateGenerationState } from '@/lib/template-selection';
-import type { Assert, Equals } from '@/lib/type-pins';
+import type { NoneOf } from '@/lib/type-pins';
 
 /**
  * The `data` payload of a successful PATCH on a class template (#206).
@@ -109,7 +109,18 @@ export interface TemplateEditResponse {
 }
 
 // Compile-time pins asserting that the class and studio toggle response types
-// remain non-interchangeable via `templateKind` (#93, #119, #206).
-type _classIsNotStudio = Assert<Equals<TemplateToggleResponse extends StudioTemplateToggleResponse ? true : false, false>>;
-type _studioIsNotClass = Assert<Equals<StudioTemplateToggleResponse extends TemplateToggleResponse ? true : false, false>>;
-void 0 as unknown as [_classIsNotStudio, _studioIsNotClass];
+// remain mutually non-interchangeable via `templateKind` (#93, #119, #206, #207).
+// Expressed with NoneOf so a broken invariant names the offending direction.
+const _classIsNotStudio: NoneOf<
+  TemplateToggleResponse extends StudioTemplateToggleResponse
+    ? 'TemplateToggleResponse extends StudioTemplateToggleResponse'
+    : never
+> = true;
+void _classIsNotStudio;
+
+const _studioIsNotClass: NoneOf<
+  StudioTemplateToggleResponse extends TemplateToggleResponse
+    ? 'StudioTemplateToggleResponse extends TemplateToggleResponse'
+    : never
+> = true;
+void _studioIsNotClass;

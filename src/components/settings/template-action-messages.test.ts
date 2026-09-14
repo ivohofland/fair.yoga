@@ -737,28 +737,3 @@ describe('templateUpdatedMessage', () => {
     );
   });
 });
-
-describe('the two toggle payloads are not interchangeable', () => {
-  it('rejects a studio payload at the class resolver', () => {
-    const studio: StudioTemplateToggleResponse = {
-      action: 'active',
-      templateKind: 'studio',
-      scheduled: 4,
-      added: 0,
-      counts: { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOverlap: 0 },
-    };
-    // @ts-expect-error studio payloads must never satisfy the class resolver
-    resolveTemplateConfirmation(studio);
-    // and the reverse
-    const cls: TemplateToggleResponse = {
-      action: 'active',
-      templateKind: 'class',
-      scheduled: 4,
-      added: 0,
-      counts: { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOverlap: 0 },
-    };
-    // @ts-expect-error class payloads must never satisfy the studio resolver
-    resolveStudioConfirmation(cls);
-    expect(true).toBe(true);
-  });
-});
