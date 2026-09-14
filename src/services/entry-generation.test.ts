@@ -163,4 +163,15 @@ describe('probeFirstEffectiveWeek failure handling', () => {
     expect(message).toContain("probe's own week arithmetic threw");
     expect(message).not.toContain('the first-effective-week probe failed');
   });
+
+  it('answers null without querying the database when candidate horizon is empty', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const findMany = vi.fn();
+    const db = { calendarEntry: { findMany } } as unknown as PrismaClient;
+
+    await expect(probeFirstEffectiveWeek(db, TEMPLATE, [], 'recurring class')).resolves.toBeNull();
+
+    expect(findMany).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
 });
