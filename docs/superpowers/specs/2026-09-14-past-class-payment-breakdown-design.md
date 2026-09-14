@@ -39,8 +39,9 @@ walk-ins — are charged and counted, so "Students" is true for all of them.
 ### What the issue did not say, or said wrong
 
 1. **Cancelled classes never reach Past classes today.** A cancelled class
-   keeps the status it was cancelled in (`open`, or `in_progress` on teacher
-   erasure), and the page's split treats both as upcoming whatever the date.
+   keeps the status it was cancelled in (a class holding a registration is
+   `open` or `in_progress`; `draft` holds none), and the page's split treats
+   both as upcoming whatever the date.
    The issue's "cancelled classes get no breakdown" is therefore moot on the
    current page — and the split itself is a defect, filed as **#598**. This
    design gates on `completed`, so it is correct wherever #598 moves cancelled

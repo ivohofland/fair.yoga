@@ -19,8 +19,8 @@ function formatCents(cents: number): string {
 }
 
 /**
- * Where a student's payment for a completed class went. Whether a row renders
- * this at all is `resolvePaymentBreakdown`'s decision.
+ * Where a student's payment for a completed class went. Renders
+ * unconditionally; the caller decides whether a row shows it.
  */
 export function PaymentBreakdown({ lines, classType, date }: PaymentBreakdownProps) {
   const rows: ReadonlyArray<{ label: string; value: string; emphasis: boolean }> = [
