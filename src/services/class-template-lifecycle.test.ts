@@ -2555,6 +2555,34 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       }
     }
   });
+
+  it('binds the pre-lock to UTC midnight, not the raw instant', async () => {
+    const t = await makeTemplate('Pre-lock UTC midnight bound');
+
+    let boundToday: unknown;
+    const interposing = prisma.$extends({
+      query: {
+        async $queryRaw({ args, query }) {
+          if (args.values?.includes(t.scheduleRuleId)) {
+            boundToday = args.values.find((v): v is Date => v instanceof Date);
+          }
+          return query(args);
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived');
+    expect(result.ok).toBe(true);
+
+    expect(boundToday).toBeInstanceOf(Date);
+    const d = boundToday as Date;
+    expect([
+      d.getUTCHours(),
+      d.getUTCMinutes(),
+      d.getUTCSeconds(),
+      d.getUTCMilliseconds(),
+    ]).toEqual([0, 0, 0, 0]);
+  });
 });
 
 describe('pauseOrResumeTemplate (DB)', () => {

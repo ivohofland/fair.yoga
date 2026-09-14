@@ -1,43 +1,134 @@
-# Task 2 Completion Report: Mutation Testing Protocol
+# Task 2 Report: Pin the pre-lock bound parameter to UTC midnight (#289)
 
-**Plan:** [2026-09-13-template-partition-pin.md](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_270/docs/superpowers/plans/2026-09-13-template-partition-pin.md)  
-**Mutation Record:** [2026-09-13-template-partition-pin-mutations.md](file:///Users/ivohofland/.gemini/antigravity/worktrees/fair.yoga/solve_issue_270/docs/superpowers/plans/2026-09-13-template-partition-pin-mutations.md)  
-**Date:** 2026-09-13  
+**Plan:** [2026-09-14-pre-lock-superset-timezone.md](file:///Users/ivohofland/Projects/fair.yoga/docs/superpowers/plans/2026-09-14-pre-lock-superset-timezone.md)  
+**Date:** 2026-09-14  
 **Status:** Complete ✅
 
 ---
 
-## Overview
+## 1. Summary of Changes
 
-Task 2 executed the mutation testing protocol across all compile-time pins in `src/services/class-template-lifecycle.ts` and its call-site test in `src/services/class-template-lifecycle.test.ts`.
+In [`src/services/class-template-lifecycle.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/class-template-lifecycle.test.ts), under `describe('archiveOrUnarchiveTemplate (DB)', () => ...)`, added the unit test:
+`'binds the pre-lock to UTC midnight, not the raw instant'`.
 
-In total, **14 mutations** were executed in-place, tested with `pnpm exec tsc --noEmit`, recorded with exact compiler error output, and immediately restored.
-
-## Executed Mutations
-
-### Part 1: Partition Pin Both-Halves Proof
-- **Mutation 1A (Simulated added column):** Simulated `simulatedUnclassifiedColumn` on `Prisma.ClassTemplateUncheckedUpdateManyInput`. `_templateListsPartitionTheModel` failed RED (`error TS2322: Type 'true' is not assignable to type '"simulatedUnclassifiedColumn"'`).
-- **Mutation 1B (Contrast with old duplicate-union form):** Under the exact same simulated column, tested the old duplicate-union form (`Exclude<'id' | ... , PlainUpdateForbiddenTemplateField>`). `tsc --noEmit` stayed GREEN (exit code 0), demonstrating how the old duplicate-union form failed to catch new unclassified columns in incident #111.
-- **Mutation 2 (Deleted forbidden entry):** Removed `'roomArchived'` from `PlainUpdateForbiddenTemplateField`. `_templateListsPartitionTheModel` failed RED naming `'roomArchived'`, and `@ts-expect-error` in test line 53 went unused (`error TS2578`).
-- **Mutation 3 (Typo'd forbidden column):** Changed `'roomArchived'` to `'roomArchive'`. `_templateForbiddenColumnsExist` failed RED naming `'roomArchive'`, `_templateListsPartitionTheModel` failed RED naming `'roomArchived'`, and `@ts-expect-error` went unused.
-
-### Part 2: Re-proving All Other Lifecycle Pins
-- **Mutation 4:** `_templateUpdateColumnsExist` — added invalid column `notAColumn` to `ClassTemplateOwnUpdateData` -> failed RED naming `'notAColumn'`.
-- **Mutation 5:** `_templateFieldsArePermitted` — added unpermitted column `roomArchived` to `ClassTemplateOwnUpdateData` -> failed RED naming `'roomArchived'`.
-- **Mutation 6:** `_templateAllowlistHasNoStaleFields` — added extra `'staleField'` to `TeacherEditableClassTemplateField` -> failed RED naming `'staleField'`.
-- **Mutation 7:** `_templateAllowlistHasNoForbiddenFields` — added `'roomArchived'` to `TeacherEditableClassTemplateField` -> failed RED naming `'roomArchived'`.
-- **Mutation 8:** `_scheduleRuleUpdateColumnsExist` — added invalid column `notARuleColumn` to `ScheduleRuleUpdateData` -> failed RED naming `'notARuleColumn'`.
-- **Mutation 9:** `_scheduleRuleFieldsArePermitted` — added unpermitted column `isActive` to `ScheduleRuleUpdateData` -> failed RED naming `'isActive'`.
-- **Mutation 10:** `_scheduleRuleAllowlistHasNoStaleFields` — added extra `'staleRuleField'` to `TeacherEditableScheduleRuleField` -> failed RED naming `'staleRuleField'`.
-- **Mutation 11:** `_scheduleRuleListsPartitionTheModel` — deleted `'isActive'` from `PlainUpdateForbiddenScheduleRuleField` -> failed RED naming `'isActive'`.
-- **Mutation 12:** `_scheduleRuleForbiddenColumnsExist` — typo `'isActiv'` in `PlainUpdateForbiddenScheduleRuleField` -> failed RED naming `'isActiv'`.
-- **Mutation 13:** `_scheduleRuleAllowlistHasNoForbiddenFields` — added forbidden `'isActive'` to `TeacherEditableScheduleRuleField` -> failed RED naming `'isActive'`.
-- **Mutation 14:** Call-site parameter guard — removed `& Partial<Record<PlainUpdateForbiddenTemplateField, never>>` from `updateClassTemplate` parameter -> `@ts-expect-error` directives in test for `scheduleRuleId`, `roomArchived`, `ruleLive` went unused (`error TS2578`), failing RED.
+### Implementation Details
+- Uses `prisma.$extends` with a query hook on `$queryRaw`.
+- Intercepts `$queryRaw` when `args.values` contains the target template's `scheduleRuleId`.
+- Captures the bound `Date` object passed for `today` in the pre-lock query (`e.date > ${today}`).
+- Asserts that:
+  1. `capturedToday` is an instance of `Date` (`expect(boundToday).toBeInstanceOf(Date)`).
+  2. The UTC hours, minutes, seconds, and milliseconds of the captured `Date` are `[0, 0, 0, 0]` (`[d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds()].toEqual([0, 0, 0, 0])`).
 
 ---
 
-## Clean State Verification
+## 2. Test Verification Output
 
-- Working tree diff: clean (only the new documentation files `docs/superpowers/plans/2026-09-13-template-partition-pin-mutations.md` and `docs/superpowers/plans/task-2-report.md` are untracked).
-- `pnpm exec tsc --noEmit` exits with code 0.
-- No git commits were made (delegated to parent coordinator).
+Ran vitest targeting the new test:
+```bash
+pnpm exec vitest run --project unit src/services/class-template-lifecycle.test.ts -t "binds the pre-lock to UTC midnight"
+```
+
+Output:
+```
+ RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
+
+[unit-db] unit tests run against ethical_yoga_test
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 66 skipped (67)
+   Start at  12:17:50
+   Duration  1.56s (transform 167ms, setup 0ms, import 376ms, tests 128ms, environment 0ms)
+```
+
+Running both pre-lock tests:
+```bash
+pnpm exec vitest run --project unit src/services/class-template-lifecycle.test.ts -t "pre-lock"
+```
+
+Output:
+```
+ RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
+
+[unit-db] unit tests run against ethical_yoga_test
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 65 skipped (67)
+   Start at  12:18:02
+   Duration  1.64s (transform 174ms, setup 0ms, import 380ms, tests 153ms, environment 0ms)
+```
+
+---
+
+## 3. Mutation Probe
+
+### Applied Mutation
+In [`src/services/rule-lifecycle.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.ts) line 704:
+```diff
+- const today = startOfLocalDay(now, timeZone);
++ const today = now;
+```
+
+### Mutation Probe Execution
+```bash
+pnpm exec vitest run --project unit src/services/class-template-lifecycle.test.ts -t "binds the pre-lock to UTC midnight"
+```
+
+### Mutation Failure Output
+```
+ RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
+
+[unit-db] unit tests run against ethical_yoga_test
+ ❯ |unit| src/services/class-template-lifecycle.test.ts (67 tests | 1 failed | 66 skipped) 127ms
+     × binds the pre-lock to UTC midnight, not the raw instant 41ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/services/class-template-lifecycle.test.ts > archiveOrUnarchiveTemplate (DB) > binds the pre-lock to UTC midnight, not the raw instant
+AssertionError: expected [ 10, 17, 42, 489 ] to deeply equal [ +0, +0, +0, +0 ]
+
+- Expected
++ Received
+
+  [
+-   0,
+-   0,
+-   0,
+-   0,
++   10,
++   17,
++   42,
++   489,
+  ]
+
+ ❯ src/services/class-template-lifecycle.test.ts:2584:8
+    2582|       d.getUTCSeconds(),
+    2583|       d.getUTCMilliseconds(),
+    2584|     ]).toEqual([0, 0, 0, 0]);
+       |        ^
+    2585|   });
+    2586| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 66 skipped (67)
+   Start at  12:17:40
+   Duration  1.59s (transform 168ms, setup 0ms, import 371ms, tests 127ms, environment 0ms)
+```
+
+The mutation probe demonstrated that a non-truncated instant bound fails with non-zero time components, certifying the test assertion.
+
+---
+
+## 4. Restoration & Typecheck Verification
+
+1. `src/services/rule-lifecycle.ts` was restored to `const today = startOfLocalDay(now, timeZone);`.
+2. Verified `git diff src/services/rule-lifecycle.ts` is empty.
+3. Re-ran vitest: test passed (1 passed).
+4. Ran `pnpm run typecheck`:
+```
+$ tsc --noEmit
+Exit code: 0
+```
+5. No commits have been made.
