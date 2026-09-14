@@ -1081,6 +1081,52 @@ describe('generateClassInstances (DB)', () => {
         'already_generated',
       ]);
     });
+
+    it('reports already_this_week over slot_taken when a candidate date is both week-held and slot-taken', async () => {
+      // Preference pin (#288): week-before-slot_taken in entry-generation.ts.
+      // When a template changes weekday (Tuesday -> Thursday), candidate Thursdays
+      // are week-held by the Tuesday classes. If an unrelated manual class ALSO
+      // occupies the exact slot on one of those Thursdays, both reasons apply.
+      // The generator prefers the systematic schedule shift (already_this_week)
+      // over the local slot collision (slot_taken).
+      const takenThursday = new Date('2026-04-09T00:00:00.000Z');
+      await createClassFixture(prisma, {
+        teacherId,
+        teacherRoomId,
+        scheduleRuleId: null,
+        classType: 'Manual',
+        date: takenThursday,
+        startTime: hhmmToTime('09:00'),
+        durationMinutes: 75,
+        roomCost: 40,
+        minRate: 15,
+        targetRate: 30,
+        minStudents: 4,
+        maxStudents: 12,
+        cancelDeadline: 'HOURS_24',
+        autoCancelCheck: 'HOURS_2',
+        status: 'open',
+      });
+
+      await prisma.scheduleRule.update({
+        where: { id: templateScheduleRuleId },
+        data: { dayOfWeek: THURSDAY },
+      });
+
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), from);
+
+      expect(result.created).toBe(0);
+      expect(result.skipped).toHaveLength(4);
+
+      // The date that is BOTH week-held and slot-taken must be reported as
+      // already_this_week, not slot_taken.
+      const takenEntry = result.skipped.find(
+        (s) => s.date.getTime() === takenThursday.getTime(),
+      );
+      expect(takenEntry).toBeDefined();
+      expect(takenEntry?.reason).toBe('already_this_week');
+      expect(result.skipped.every((s) => s.reason === 'already_this_week')).toBe(true);
+    });
   });
 
   /** The template with the `teacher.defaultTimezone` join the generator requires. */
