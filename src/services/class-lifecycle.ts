@@ -24,6 +24,7 @@ import { createBulkNotifications, type CreateNotificationInput } from './notific
 import { closeQueueOnStart } from './waitlist';
 import { classStartInstant, startsInPast, isoOrNull } from '@/lib/timezone';
 import { timeToHHmm } from '@/lib/time-of-day';
+import { formatDayHeader } from '@/lib/format';
 import { log } from '@/lib/log';
 
 export { ECONOMIC_FIELDS, type EconomicField };
@@ -827,7 +828,7 @@ export async function completeClass(
         recipientId: reg.studentId,
         type: 'payment_request' as const,
         title: 'Payment requested',
-        body: `Your price for ${cls.calendarEntry.classType} is €${s.price.toFixed(2)}. Pay your teacher directly.`,
+        body: `Your price for ${cls.calendarEntry.classType} class on ${formatDayHeader(cls.calendarEntry.date)} at ${timeToHHmm(cls.calendarEntry.startTime)} is €${s.price.toFixed(2)}. Pay your teacher directly.`,
         relatedClassId: cls.id,
       };
     });
@@ -836,7 +837,7 @@ export async function completeClass(
       recipientId: cls.calendarEntry.teacherId,
       type: 'payment_request' as const,
       title: 'Class completed',
-      body: `${cls.calendarEntry.classType} completed — €${(pricing.totalCost - Number(cls.roomCost)).toFixed(2)} earnings, ${chargedRegistrations.length} payment ${chargedRegistrations.length === 1 ? 'request' : 'requests'} sent.`,
+      body: `${cls.calendarEntry.classType} class on ${formatDayHeader(cls.calendarEntry.date)} at ${timeToHHmm(cls.calendarEntry.startTime)} completed — €${(pricing.totalCost - Number(cls.roomCost)).toFixed(2)} earnings, ${chargedRegistrations.length} payment ${chargedRegistrations.length === 1 ? 'request' : 'requests'} sent.`,
       relatedClassId: cls.id,
     });
     await createBulkNotifications(tx, notifications);

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, ClassStatus } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
+import { formatDayHeader } from '@/lib/format';
 import {
   VALID_TRANSITIONS,
   TERMINAL_CLASS_STATUSES,
@@ -951,16 +952,25 @@ describe('completeClass (DB)', () => {
       where: { relatedClassId: classId, recipientType: 'student', type: 'payment_request' },
     });
     expect(studentNotes).toHaveLength(4);
+    const entry = cls!.calendarEntry;
     for (const reg of chargedRegs) {
       const note = studentNotes.find((n) => n.recipientId === reg.studentId);
       expect(note).toBeDefined();
       expect(note!.body).toContain(`€${Number(reg.price).toFixed(2)}`);
+      expect(note!.body).toContain(entry.classType);
+      expect(note!.body).toContain(formatDayHeader(entry.date));
+      expect(note!.body).toContain(timeToHHmm(entry.startTime));
+      expect(note!.body).toContain('Pay your teacher directly.');
     }
 
-    const teacherNote = await prisma.notification.findFirst({
+    const teacherNote = await prisma.notification.findFirstOrThrow({
       where: { relatedClassId: classId, recipientType: 'teacher', type: 'payment_request' },
     });
-    expect(teacherNote).not.toBeNull();
+    expect(teacherNote.body).toContain(entry.classType);
+    expect(teacherNote.body).toContain(formatDayHeader(entry.date));
+    expect(teacherNote.body).toContain(timeToHHmm(entry.startTime));
+    expect(teacherNote.body).toContain('completed —');
+    expect(teacherNote.body).toContain('payment requests sent.');
 
     await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
   });
