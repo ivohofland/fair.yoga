@@ -99,9 +99,9 @@ export type StudioTemplateCreateResponse = TemplateCreateResponse;
  *      error) and caught it, logging a warning on the server.
  *
  * For an active template, causes (1) and (3) both result in `null` on the wire:
- * the mutation has already committed, saying nothing beats saying something
- * unfounded, and the UI drops the prediction clause for both while the server
- * log records the failure.
+ * the mutation has already committed, omitting the predicted week avoids
+ * stating an unfounded schedule claim, and server logs record diagnostic
+ * probe failures.
  */
 export interface TemplateEditResponse {
   firstEffective: string | null;

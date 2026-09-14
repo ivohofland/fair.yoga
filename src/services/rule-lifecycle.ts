@@ -1501,13 +1501,15 @@ export type UpdateRuleResult<TChild> =
        *
        * `null` has THREE causes (#287):
        *
-       *   1. No free week inside the probe's horizon (the next 8 occurrences
-       *      are all occupied by this template or blocked by slot conflicts);
+       *   1. No free week inside the probe's horizon (all candidate occurrences
+       *      across the probe horizon are occupied by this template or blocked
+       *      by slot conflicts);
        *   2. The template is not eligible to generate at all (`generationState`
        *      is `'paused'` or `'archived'`), so `probeFirstEffectiveWeek` was
        *      never run;
-       *   3. The probe failed — a database read rejected, the week arithmetic
-       *      threw, or the candidate horizon bounds were empty.
+       *   3. The probe failed — a database read rejected or the week arithmetic
+       *      threw (both caught and logged as warnings by `probeFirstEffectiveWeek`),
+       *      or candidate horizon bounds were empty.
        *
        * `generationState` sits beside this field to separate cause (2) from
        * (1) and (3). Reading `null` alone as "no free week" was what produced
@@ -1518,11 +1520,10 @@ export type UpdateRuleResult<TChild> =
        * Collapsing them is intentional (#287): the edit transaction has
        * already committed by the time the probe runs, and in the copy layer
        * saying nothing about the week beats saying something unfounded. Both
-       * drop the prediction clause and render the confirmed truth ("Template
-       * updated. It takes effect for newly generated classes. Change or
-       * cancel existing classes individually if needed."). The failure in (3)
-       * is observable in server logs via `probeFirstEffectiveWeek`'s structured
-       * warning line, which records the underlying error and template id.
+       * drop the prediction clause and render the confirmed base update
+       * sentence. When the probe catches an error in (3), it records a
+       * structured warning line in server logs with the underlying error
+       * and template id.
        *
        * Named as a week rather than as a date on purpose. `firstFreeWeek`
        * answers with a candidate *occurrence* — a Thursday, say — and the
