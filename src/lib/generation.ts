@@ -52,8 +52,45 @@
  */
 
 /**
- * Why a candidate date produced no row. Six reasons, six distinct origins —
- * they are not interchangeable and the copy layer treats them differently.
+ * Why a candidate date produced no row.
+ *
+ * `SkipReason` is an ordered, first-match classification, not a partition of
+ * disjoint origins. The evaluation predicates overlap across several dimensions:
+ * 1. `already_generated` and `blocked_by_cancelled` are subsets of
+ *    `already_this_week` (an own class on the date implies an own class in the
+ *    week).
+ * 2. `already_this_week` overlaps `slot_taken` (a candidate date can be in a
+ *    week held by this template from a previous schedule, and also collide
+ *    with another class at that slot).
+ * 3. `slot_taken` is a subset of `blocked_by_overlap` (an exact-start collision
+ *    is also a span overlap).
+ * 4. Post-insert probe: `blocked_by_overlap` vs `raced` (transient contention
+ *    versus standing overlap).
+ *
+ * Because these predicates overlap, the order of evaluation in the generator
+ * loop matters. Branch orderings divide into load-bearing requirements and
+ * reporting preferences:
+ *
+ * Load-bearing orderings:
+ * - `own` on date (`already_generated` / `blocked_by_cancelled`) before `week`
+ *   (`already_this_week`): a template's own class on the candidate date itself
+ *   must be classified as idempotency or a cancelled-date block, rather than
+ *   falling through to "already this week on a different date".
+ * - `pre-check` before `post-insert` probe: the pre-check classifies
+ *   `slot_taken` and standing same-day `blocked_by_overlap` before
+ *   `ON CONFLICT DO NOTHING`; only un-pre-checked short dates reach the
+ *   post-insert probe (`probeOverlappingCandidates`), classifying standing
+ *   midnight spills as `blocked_by_overlap` and transient contention as
+ *   `raced`.
+ *
+ * Reporting preferences:
+ * - `already_this_week` before `slot_taken`: when a candidate date is both held
+ *   by this template's previous weekday and occupied at that slot by an
+ *   unrelated class, reporting the systematic schedule shift (`already_this_week`)
+ *   is preferred over the local slot collision (`slot_taken`).
+ * - `slot_taken` before `blocked_by_overlap`: an exact-start same-family
+ *   collision is also an overlap, but `slot_taken` is reported first because
+ *   its diagnostic remedy is internal to this family.
  */
 export type SkipReason =
   /** This template's own non-cancelled instance is already on that date. Correct idempotency; never logged. Includes `completed`/`in_progress` rows, which the classification does not distinguish — only `cancelled` is split out, because only `cancelled` is what the copy needs to explain. */
@@ -202,6 +239,19 @@ export type SkipCounts = {
 };
 
 /**
+ * Total compiler-checked mapping from each `SkipReason` to the `SkipCounts` field
+ * that surfaces it to a teacher/caller, or `null` if the reason is deliberately dropped.
+ */
+export const SKIP_REASON_COUNT_MAP: Record<SkipReason, keyof SkipCounts | null> = {
+  blocked_by_cancelled: 'blockedByCancelled',
+  slot_taken: 'slotTaken',
+  already_this_week: 'alreadyThisWeek',
+  blocked_by_overlap: 'blockedByOverlap',
+  already_generated: null,
+  raced: null,
+};
+
+/**
  * True when any count in the window is a date the teacher should be told about.
  *
  * Exists because the create gates in `template-form.tsx` and
@@ -248,11 +298,9 @@ export function anyBlocked(counts: SkipCounts): boolean {
  * `api/studio-class-templates/route.ts`, `class-template-lifecycle.ts`,
  * `studio-class-template-lifecycle.ts` and `template-sync.ts` — so a fifth
  * `SkipReason` member would have compiled clean and vanished at every one of
- * them. The exhaustive `switch` below is what turns that into a single compile
- * error instead: this project already uses the `const unhandled: never` idiom
- * for exactly this shape (see the API routes' own `never` exhaustiveness
- * checks), and reducing once is what lets one instance of it cover every call
- * site rather than needing one each.
+ * them. The compiler-checked `SKIP_REASON_COUNT_MAP` above is what turns that
+ * into a single compile error instead: reducing once is what lets one mapping
+ * cover every call site rather than needing one each.
  *
  * EVERY NUMBER IN THE PARAGRAPH ABOVE IS THE PRE-#194 STATE, deliberately, and
  * must not be refreshed to today's. It is the roster the measurement was taken
@@ -263,10 +311,11 @@ export function anyBlocked(counts: SkipCounts): boolean {
  * this repo was never in at any point.
  *
  * Today, for the avoidance of exactly that: SIX `SkipReason` members and FOUR
- * `SkipCounts` fields. Both are tethered rather than asserted — the members by
- * the exhaustive `switch` below, the fields by `SkipCounts` itself — so
- * neither can go the way the roster above did. The CALL SITES are not counted
- * here at all, because nothing tethers a count of them; derive them:
+ * `SkipCounts` fields. Both are tethered rather than asserted — the members and
+ * fields by `SKIP_REASON_COUNT_MAP: Record<SkipReason, keyof SkipCounts | null>`
+ * above, and the fields by `SkipCounts` itself — so neither can go the way the
+ * roster above did. The CALL SITES are not counted here at all, because nothing
+ * tethers a count of them; derive them:
  *
  *   grep -rn "import .*countSkipReasons.*'@/lib/generation'" src/ \
  *     --include='*.ts' --include='*.tsx' \
@@ -277,53 +326,37 @@ export function anyBlocked(counts: SkipCounts): boolean {
  * importers of this module: `anyBlocked` and `spansOverlap` are exported from
  * here too, and importing either is not calling this.
  *
- * So the member that would vanish without the `switch` below is now the
+ * So the member that would vanish without `SKIP_REASON_COUNT_MAP` is now the
  * SEVENTH, and `api/class-templates/route.ts` cites this docblock for that
  * number rather than recounting it — the one site that spells the ordinal
  * out.
  *
  * #296 added the sixth member — `blocked_by_overlap`, named
  * `blocked_by_other_family` until #327's rename — and the fourth count, and
- * both halves of this paragraph's warning played out as written. The
- * `switch` below failed the build at its `never` arm — measured by mutation
- * at #296, `Type '"blocked_by_other_family"' is not assignable to type
- * 'never'` — which is the half that works. The COUNT reached the wire, both
- * routes, both forms and the copy layer without a single one of them failing,
- * and that is NOT this guard working: it is #296's task 4a, which had already
- * made every one of those hops carry `SkipCounts` whole rather than its
- * members by name. Before that task the new count would have vanished at all
- * four, exactly as this paragraph predicts.
+ * both halves of this paragraph's warning played out as written.
+ * `SKIP_REASON_COUNT_MAP` enforces completeness at compile time (omitting a
+ * member fails the `Record<SkipReason, ...>` type check) — which is the half
+ * that works. The COUNT reached the wire, both routes, both forms and the copy
+ * layer without a single one of them failing, and that is NOT this guard
+ * working: it is #296's task 4a, which had already made every one of those
+ * hops carry `SkipCounts` whole rather than its members by name. Before that
+ * task the new count would have vanished at all four, exactly as this
+ * paragraph predicts.
  */
 export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
-  let blockedByCancelled = 0;
-  let slotTaken = 0;
-  let alreadyThisWeek = 0;
-  let blockedByOverlap = 0;
+  const counts: SkipCounts = {
+    blockedByCancelled: 0,
+    slotTaken: 0,
+    alreadyThisWeek: 0,
+    blockedByOverlap: 0,
+  };
   for (const { reason } of skipped) {
-    switch (reason) {
-      case 'blocked_by_cancelled':
-        blockedByCancelled += 1;
-        break;
-      case 'slot_taken':
-        slotTaken += 1;
-        break;
-      case 'already_this_week':
-        alreadyThisWeek += 1;
-        break;
-      case 'blocked_by_overlap':
-        blockedByOverlap += 1;
-        break;
-      case 'already_generated':
-      case 'raced':
-        // Deliberately excluded — see `SkipCounts`'s own docblock.
-        break;
-      default: {
-        const unhandled: never = reason;
-        throw new Error(`countSkipReasons: unhandled SkipReason ${String(unhandled)}`);
-      }
+    const field = SKIP_REASON_COUNT_MAP[reason];
+    if (field !== null) {
+      counts[field] += 1;
     }
   }
-  return { blockedByCancelled, slotTaken, alreadyThisWeek, blockedByOverlap };
+  return counts;
 }
 
 /**
