@@ -242,7 +242,7 @@ export type SkipCounts = {
  * Total compiler-checked mapping from each `SkipReason` to the `SkipCounts` field
  * that surfaces it to a teacher/caller, or `null` if the reason is deliberately dropped.
  */
-export const SKIP_REASON_COUNT_MAP: Record<SkipReason, keyof SkipCounts | null> = {
+export const SKIP_REASON_COUNT_MAP: Readonly<Record<SkipReason, keyof SkipCounts | null>> = {
   blocked_by_cancelled: 'blockedByCancelled',
   slot_taken: 'slotTaken',
   already_this_week: 'alreadyThisWeek',
