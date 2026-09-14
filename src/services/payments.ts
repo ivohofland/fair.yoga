@@ -13,6 +13,8 @@ import {
   type TeacherVisibleStudent,
 } from '@/lib/student-visibility';
 import { OUTSTANDING_STATUSES } from '@/lib/payment-status';
+import { formatDayHeader } from '@/lib/format';
+import { timeToHHmm } from '@/lib/time-of-day';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -287,7 +289,12 @@ export async function sendPaymentReminder(
         registration: {
           select: {
             studentId: true,
-            class: { select: { id: true, calendarEntry: { select: { classType: true } } } },
+            class: {
+              select: {
+                id: true,
+                calendarEntry: { select: { classType: true, date: true, startTime: true } },
+              },
+            },
           },
         },
       },
@@ -299,7 +306,7 @@ export async function sendPaymentReminder(
         recipientId: registration.studentId,
         type: 'reminder',
         title: 'Payment outstanding',
-        body: `€${Number(payment.amount).toFixed(2)} for ${registration.class.calendarEntry.classType} is still open. Pay your teacher directly.`,
+        body: `€${Number(payment.amount).toFixed(2)} for ${registration.class.calendarEntry.classType} class on ${formatDayHeader(registration.class.calendarEntry.date)} at ${timeToHHmm(registration.class.calendarEntry.startTime)} is still open. Pay your teacher directly.`,
         relatedClassId: registration.class.id,
       },
     ]);

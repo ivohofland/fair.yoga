@@ -12,6 +12,7 @@ import {
   MANUAL_REMIND_COOLDOWN_MS,
 } from './payments';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { formatDayHeader } from '@/lib/format';
 import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
@@ -274,10 +275,14 @@ describe('Payment Service (DB)', () => {
     if (!result.ok) throw new Error('expected the reminder to send');
     expect(result.payment.reminderSentAt).not.toBeNull();
 
-    const notification = await prisma.notification.findFirst({
+    const notification = await prisma.notification.findFirstOrThrow({
       where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
     });
-    expect(notification).not.toBeNull();
+    expect(notification.body).toContain('Hatha');
+    expect(notification.body).toContain(formatDayHeader(new Date('2026-06-01')));
+    expect(notification.body).toContain('09:00');
+    expect(notification.body).toContain('is still open. Pay your teacher directly.');
+    expect(notification.body).toContain('€24.59');
   });
 
   /**
