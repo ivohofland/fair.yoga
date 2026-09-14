@@ -3,6 +3,7 @@ import {
   anyBlocked,
   countSkipReasons,
   spansOverlap,
+  SKIP_REASON_COUNT_MAP,
   type SkipCounts,
   type SkippedSlot,
 } from './generation';
@@ -100,6 +101,31 @@ describe('countSkipReasons', () => {
       alreadyThisWeek: 0,
       blockedByOverlap: 0,
     });
+  });
+});
+
+describe('SKIP_REASON_COUNT_MAP', () => {
+  it('maps every SkipReason to either a keyof SkipCounts or null', () => {
+    expect(SKIP_REASON_COUNT_MAP).toEqual({
+      blocked_by_cancelled: 'blockedByCancelled',
+      slot_taken: 'slotTaken',
+      already_this_week: 'alreadyThisWeek',
+      blocked_by_overlap: 'blockedByOverlap',
+      already_generated: null,
+      raced: null,
+    });
+  });
+
+  it('deliberately drops already_generated and raced without counting them', () => {
+    expect(SKIP_REASON_COUNT_MAP.already_generated).toBeNull();
+    expect(SKIP_REASON_COUNT_MAP.raced).toBeNull();
+  });
+
+  it('surfaces the other four reasons to their exact SkipCounts keys', () => {
+    expect(SKIP_REASON_COUNT_MAP.blocked_by_cancelled).toBe('blockedByCancelled');
+    expect(SKIP_REASON_COUNT_MAP.slot_taken).toBe('slotTaken');
+    expect(SKIP_REASON_COUNT_MAP.already_this_week).toBe('alreadyThisWeek');
+    expect(SKIP_REASON_COUNT_MAP.blocked_by_overlap).toBe('blockedByOverlap');
   });
 });
 

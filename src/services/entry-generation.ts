@@ -707,12 +707,9 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
     // `active` arm → `resumeMessage`/`resumeStudioMessage`, which renders it
     // as "N dates are still held by classes on your previous day".
     //
-    // Before `slot_taken` below — a REPORTING PREFERENCE, not a guarantee, and
-    // deliberately stated as one: nothing pins it. No fixture makes a single
-    // date both week-held and slot-taken by an unrelated class, so swapping
-    // these two branches fails no test today. The preference is that when a
-    // day edit and an unrelated class both block a date, the systematic cause
-    // is the one worth reporting.
+    // Before `slot_taken` below — a REPORTING PREFERENCE, pinned by
+    // `class-generator.test.ts` (#288): when a day edit and an unrelated class
+    // both block a date, the systematic cause is the one worth reporting.
     //
     // Not free to get wrong, either: the two reasons land in DIFFERENT
     // `SkipCounts` fields and reach a teacher as different clauses of
@@ -721,9 +718,7 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
     // branches `continue` — no class is created either way, the total is
     // unchanged, and `resumeMessage` appends every applicable clause before
     // choosing a head — so a reorder changes WHICH CLAUSE the teacher reads,
-    // never whether the sentence is true. Closing it costs one fixture; until
-    // someone spends it, this comment must not claim an order the suite does
-    // not enforce.
+    // never whether the sentence is true.
     if (isWeekHeld(date, heldWeeks)) {
       skipped.push({ date, reason: 'already_this_week' });
       continue;
@@ -1000,8 +995,8 @@ export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
  * ## Which of the generator's refusals this reproduces, and which it does not
  *
  * The generator declines a candidate date on six named grounds (`SkipReason`,
- * `@/lib/generation`, whose own header says "Six reasons, six distinct
- * origins" — one number, derived from the type, not two conventions counting
+ * `@/lib/generation`, whose own header documents the ordered first-match
+ * classification — one number, derived from the type, not two conventions counting
  * the same union). Stated one at a time rather than as a parity claim, because
  * the parity claim is what this docblock said before `slot_taken` was found
  * missing — and a reader who trusted it had no way to check it. Named rather
