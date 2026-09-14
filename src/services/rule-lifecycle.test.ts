@@ -90,8 +90,10 @@ describe('rule-lifecycle family descriptors', () => {
    * than a silent widening.
    *
    * A claim about what the compiler refuses is worth only the pin that makes
-   * the compiler refuse it, which is the rule `ArchiveRuleResult`'s docblock
-   * states and the non-interchangeability pin below already follows.
+   * the compiler refuse it.
+   *
+   * The 7 `@ts-expect-error` property assignment checks below are verified by
+   * `npm run typecheck` only (`tsc --noEmit`) and are invisible to test runners.
    */
   it('refuses a childTable, logNoun, or editNoun that belongs to the other family', () => {
     // @ts-expect-error `CalendarEntry` is a model, but not a template child
@@ -167,15 +169,12 @@ describe('rule-lifecycle family descriptors', () => {
 });
 
 /**
- * `ArchiveRuleResult`'s and `PauseRuleResult`'s docblocks (`rule-lifecycle.ts`)
- * both claim that being generic in the child leaves the two families' results
- * non-interchangeable, because `template` differs. A claim about what the
- * compiler refuses is worth only the pin that makes the compiler refuse it —
- * the shape `template-action-messages.test.ts` uses for the `templateKind`
- * discriminator this is modelled on ("the two toggle payloads are not
- * interchangeable"). One test per union, because the claim is made twice and
- * either declaration could lose the field that carries the difference without
- * the other noticing.
+ * Non-interchangeability of the two families' lifecycle results is pinned
+ * at compile time via `NoneOf` beside `ArchiveRuleResult`, `PauseRuleResult`,
+ * and `UpdateRuleResult` in `src/services/rule-lifecycle.ts` (#207).
+ *
+ * The tests below retain the positive assertions exercising the type shapes
+ * for each family.
  *
  * `{} as WithSlot<…>` because `template` is the only field carrying the
  * difference and nothing here reads the row; building two real ones would put
@@ -196,11 +195,6 @@ describe("the two families' lifecycle results are not interchangeable", () => {
       action: 'unarchived',
       template: {} as WithSlot<StudioClassTemplate>,
     };
-
-    // @ts-expect-error a class archive result must never satisfy the studio one
-    takesStudio(classResult);
-    // @ts-expect-error a studio archive result must never satisfy the class one
-    takesClass(studioResult);
 
     // Each at its own family, so the two functions above are exercised rather
     // than merely declared.
@@ -226,11 +220,6 @@ describe("the two families' lifecycle results are not interchangeable", () => {
       template: {} as WithSlot<StudioClassTemplate>,
     };
 
-    // @ts-expect-error a class pause result must never satisfy the studio one
-    takesStudio(classResult);
-    // @ts-expect-error a studio pause result must never satisfy the class one
-    takesClass(studioResult);
-
     expect(takesStudio(studioResult)).toBe(true);
     expect(takesClass(classResult)).toBe(true);
   });
@@ -251,11 +240,6 @@ describe("the two families' lifecycle results are not interchangeable", () => {
       firstEffective: null,
       generationState: 'active',
     };
-
-    // @ts-expect-error a class update result must never satisfy the studio one
-    takesStudio(classResult);
-    // @ts-expect-error a studio update result must never satisfy the class one
-    takesClass(studioResult);
 
     expect(takesStudio(studioResult)).toBe(true);
     expect(takesClass(classResult)).toBe(true);

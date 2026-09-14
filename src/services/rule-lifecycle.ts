@@ -6,7 +6,7 @@
  */
 
 import { Prisma } from '@prisma/client';
-import type { PrismaClient, ClassFamily } from '@prisma/client';
+import type { PrismaClient, ClassFamily, ClassTemplate, StudioClassTemplate } from '@prisma/client';
 import type { TransactionClientOnly } from '@/lib/db-locks';
 import { setLockTimeout } from '@/lib/db-locks';
 import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
@@ -16,6 +16,7 @@ import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { isRecordNotFound, isTransientDbError, isRestrictViolationOn } from '@/lib/api-errors';
 import { log } from '@/lib/log';
+import type { NoneOf } from '@/lib/type-pins';
 import {
   type JoinedRule,
   type ChildWithRule,
@@ -319,10 +320,9 @@ export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = Ge
  * non-interchangeable anyway, because `ArchiveRuleResult<ClassTemplate>` and
  * `ArchiveRuleResult<StudioClassTemplate>` differ in `template` — the same job
  * `templateKind` does for the wire types in `template-action-messages.ts`.
- * Held by `@ts-expect-error` call arguments in `rule-lifecycle.test.ts`, the
- * way `template-action-messages.test.ts` holds the discriminator this is
- * modelled on: a claim about what the compiler refuses is worth only the pin
- * that makes the compiler refuse it.
+ * Held by the compile-time `NoneOf` pins declared below (#207): a claim about
+ * what the compiler refuses is worth only the pin that makes the compiler
+ * refuse it.
  */
 export type ArchiveRuleResult<TChild> =
   | { ok: true; action: 'archived'; template: WithSlot<TChild>; deleted: number; remaining: number }
@@ -364,6 +364,22 @@ export type ArchiveRuleResult<TChild> =
    * of them.
    */
   | { ok: false; reason: 'busy' };
+
+// Compile-time pins asserting that class and studio archive results are
+// mutually non-interchangeable via `template: WithSlot<TChild>` (#207).
+const _classArchiveIsNotStudio: NoneOf<
+  ArchiveRuleResult<ClassTemplate> extends ArchiveRuleResult<StudioClassTemplate>
+    ? 'ArchiveRuleResult<ClassTemplate> extends ArchiveRuleResult<StudioClassTemplate>'
+    : never
+> = true;
+void _classArchiveIsNotStudio;
+
+const _studioArchiveIsNotClass: NoneOf<
+  ArchiveRuleResult<StudioClassTemplate> extends ArchiveRuleResult<ClassTemplate>
+    ? 'ArchiveRuleResult<StudioClassTemplate> extends ArchiveRuleResult<ClassTemplate>'
+    : never
+> = true;
+void _studioArchiveIsNotClass;
 
 /**
  * Archive or un-archive one `ScheduleRule` child, for whichever family
@@ -901,8 +917,7 @@ export async function archiveOrUnarchiveRule<TChild>(
  * `ArchiveRuleResult` above sets out: the two families' pause unions were
  * measured arm-for-arm identical, and the two instantiations stay
  * non-interchangeable anyway because they differ in `template`. Held the same
- * way the archive's claim is, by `@ts-expect-error` call arguments in
- * `rule-lifecycle.test.ts`.
+ * way the archive's claim is, by the compile-time `NoneOf` pins declared below (#207).
  */
 export type PauseRuleResult<TChild> =
   | {
@@ -978,6 +993,22 @@ export type PauseRuleResult<TChild> =
    * outlives the lock timeout, instead of reporting it raced".
    */
   | { ok: false; reason: 'busy' };
+
+// Compile-time pins asserting that class and studio pause results are
+// mutually non-interchangeable via `template: WithSlot<TChild>` (#207).
+const _classPauseIsNotStudio: NoneOf<
+  PauseRuleResult<ClassTemplate> extends PauseRuleResult<StudioClassTemplate>
+    ? 'PauseRuleResult<ClassTemplate> extends PauseRuleResult<StudioClassTemplate>'
+    : never
+> = true;
+void _classPauseIsNotStudio;
+
+const _studioPauseIsNotClass: NoneOf<
+  PauseRuleResult<StudioClassTemplate> extends PauseRuleResult<ClassTemplate>
+    ? 'PauseRuleResult<StudioClassTemplate> extends PauseRuleResult<ClassTemplate>'
+    : never
+> = true;
+void _studioPauseIsNotClass;
 
 /**
  * One arm per way `pauseOrResumeRule`'s transaction can resolve, mapped to the
@@ -1576,6 +1607,22 @@ export type UpdateRuleResult<TChild> =
    * was applied and the identical request can win the next attempt.
    */
   | { ok: false; reason: 'busy' };
+
+// Compile-time pins asserting that class and studio update results are
+// mutually non-interchangeable via `template: WithSlot<TChild>` (#207).
+const _classUpdateIsNotStudio: NoneOf<
+  UpdateRuleResult<ClassTemplate> extends UpdateRuleResult<StudioClassTemplate>
+    ? 'UpdateRuleResult<ClassTemplate> extends UpdateRuleResult<StudioClassTemplate>'
+    : never
+> = true;
+void _classUpdateIsNotStudio;
+
+const _studioUpdateIsNotClass: NoneOf<
+  UpdateRuleResult<StudioClassTemplate> extends UpdateRuleResult<ClassTemplate>
+    ? 'UpdateRuleResult<StudioClassTemplate> extends UpdateRuleResult<ClassTemplate>'
+    : never
+> = true;
+void _studioUpdateIsNotClass;
 
 /**
  * Apply a partial update to a template child and its schedule rule.
