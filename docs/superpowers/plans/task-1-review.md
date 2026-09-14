@@ -1,66 +1,59 @@
-# Task 1 Review: Rename Pin, Update Docblocks, and Preserve Class Measurement
+# Task 1 Review: Pre-lock Superset Property Test in Any Session TimeZone (#289)
 
-**Verdict:** APPROVED  
-**Review Date:** 2026-09-13  
-**Implementation Plan:** `docs/superpowers/plans/2026-09-13-template-partition-pin.md`  
-**Task Report:** `docs/superpowers/plans/task-1-report.md`  
-
----
-
-## 1. Spec Compliance & Acceptance Criteria
-
-### A. `src/services/class-template-lifecycle.ts`
-- **Pin Renaming and Construction:**
-  - Renamed `_templateForbiddenListIsComplete` to `_templateListsPartitionTheModel`.
-  - Type implementation correctly partitions against `keyof Prisma.ClassTemplateUncheckedUpdateManyInput`:
-    ```ts
-    const _templateListsPartitionTheModel: NoneOf<
-      Exclude<
-        keyof Prisma.ClassTemplateUncheckedUpdateManyInput,
-        TeacherEditableClassTemplateField | PlainUpdateForbiddenTemplateField
-      >
-    > = true;
-    void _templateListsPartitionTheModel;
-    ```
-- **Docblock Content & Citations:**
-  - Accurately documents that completeness is verified against live Prisma `ClassTemplateUncheckedUpdateManyInput`.
-  - Explains the critical mechanism difference: the old duplicate-union form only caught deletions from the union, whereas the partition form catches newly added columns from migrations that nobody classified.
-  - Correctly cites issue #111 as the motivating incident where `archivedAt` and `withdrawnCount` were added to `ClassTemplate` without the old pin firing.
-
-### B. `src/services/class-template-lifecycle.test.ts`
-- Line 23 comment updated from `_templateForbiddenListIsComplete` to `_templateListsPartitionTheModel` alongside `_templateForbiddenColumnsExist`.
-- Accurately describes what the partition pin and column existence pins prove vs. what the call-site guard in `updateClassTemplate` enforces.
-
-### C. `src/services/class-lifecycle.ts`
-- Docblock above `_classForbiddenListIsComplete` (lines 1065–1075) preserves the census measurement and context from Issue #270:
-  - Explains why the partition pin form (`_templateListsPartitionTheModel`) is unavailable for `Class` without per-column design decisions.
-  - States the measured census: `Class: 10 allowlist + 7 forbidden = 17, plus 7 unclassified = 24 columns`.
-  - Records the verbatim seven unclassified names: `"teacherRoomId" | "templateId" | "cancelDeadline" | "autoCancelCheck" | "createdAt" | "updatedAt" | "spotBroadcastAt"`.
-  - Notes the subsequent #327 split of `Class` and `CalendarEntry` (adding `calendarEntryId`, `kind`, `entryLive`, `roomArchived`), explaining why `Class` remains unpartitioned today.
+**Issue:** #289  
+**Plan:** `docs/superpowers/plans/2026-09-14-pre-lock-superset-timezone.md`  
+**Implementer Report:** `docs/superpowers/plans/task-1-report.md`  
+**Reviewer:** Review Subagent  
+**Date:** 2026-09-14  
 
 ---
 
-## 2. Code and Comment Quality (CLAUDE.md Discipline)
+## Verdict: APPROVED
 
-- **No stale claims:** Historical census numbers and column lists are framed explicitly as measurements made during Issue #270, and subsequent structural changes (#327) are accounted for so no false claim is made about current column structure.
-- **No untethered prose claims:** The partition pin in `class-template-lifecycle.ts` is tethered directly to the live compiler type `keyof Prisma.ClassTemplateUncheckedUpdateManyInput`.
-- **Accurate references:** Issue citations (#111, #270, #327) are exact and match the codebase history and design decisions.
+The implementation of Task 1 meets all requirements defined in the plan, adheres strictly to project guidelines, and provides robust verification of the pre-lock superset property across time zones.
 
 ---
 
-## 3. Verification
+## Review Checklist & Findings
 
-- **Typecheck:**
-  - `pnpm run typecheck` (`tsc --noEmit`) completed with exit code 0 (clean pass).
-- **Lint:**
-  - `pnpm run lint` (`eslint`) completed with exit code 0 (0 errors, 6 pre-existing warnings in component UI code).
-- **Test Suites:**
-  - `pnpm exec vitest run src/services/class-template-lifecycle.test.ts` passed: 1 test file, 65 tests passed.
-  - `pnpm exec vitest run src/services/class-lifecycle.test.ts` passed: 1 test file, 79 tests passed.
-  - Full suite `pnpm test` passed: 71 test files, 927 tests passed.
+### 1. Spec Compliance
+- **Time zones**: Tests all 6 required session time zones: `'UTC'`, `'Europe/Amsterdam'`, `'Asia/Tokyo'`, `'Pacific/Kiritimati'`, `'America/New_York'`, and `'Pacific/Niue'`.
+- **Bound values**: Uses `utcMidnight = '2026-08-15 00:00:00+00'` and `instant = '2026-08-15 22:30:00+00'`.
+- **Query**: Compares `(d > DATE '2026-08-15')` with `(d > TIMESTAMPTZ '${utcMidnight}')` over a 3-day sample set (`2026-08-14`, `2026-08-15`, `2026-08-16`).
+- **Property Assertion**: Enforces the implication `row.reread => row.shipped`, guaranteeing the pre-lock is always a superset (or equal) to the re-read deletion set.
+- **Negative Control**: Explicitly asserts that for east-of-UTC zones (`Asia/Tokyo` and `Pacific/Kiritimati`), `tomorrow.rawInstant` is `false` while `tomorrow.shipped` is `true`. This prevents vacuous passing if Postgres timezone promotion semantics change.
+
+### 2. Isolation & Safety
+- Each timezone probe is isolated within `prisma.$transaction(async (tx) => ...)` executing `SET LOCAL TimeZone = '${timeZone}'`.
+- Because `SET LOCAL` is scoped to the transaction, it does not leak session configuration to connection pool connections or subsequent tests.
+
+### 3. Verification & Test Execution
+- Vitest run for the specific test:
+  ```bash
+  pnpm exec vitest run --project unit src/services/class-template-lifecycle.test.ts -t "the pre-lock bound never selects fewer rows"
+  ```
+  **Result:** Passed (1 passed, 65 skipped, 1.55s).
+- Vitest run for the entire test file:
+  ```bash
+  pnpm exec vitest run --project unit src/services/class-template-lifecycle.test.ts
+  ```
+  **Result:** Passed (66 passed, 3.35s).
+- Typecheck:
+  ```bash
+  pnpm run typecheck
+  ```
+  **Result:** Clean exit (code 0).
+- ESLint:
+  ```bash
+  pnpm run lint
+  ```
+  **Result:** 0 errors (clean pass, only pre-existing client warnings).
+
+### 4. Code Quality & Comments
+- Comments in `src/services/class-template-lifecycle.test.ts` clearly explain the mathematical containment property, why an implication (superset) rather than strict equality is asserted, and the role of the negative control.
+- Types are strictly defined on the `$queryRawUnsafe` call with no `any`.
 
 ---
 
-## 4. Conclusion
-
-Task 1 meets all requirements specified in the implementation plan and issue #270 acceptance criteria. Ready to proceed to Task 2 (Mutation Testing Protocol).
+## Conclusion
+Task 1 is complete and approved. Proceed to Task 2.

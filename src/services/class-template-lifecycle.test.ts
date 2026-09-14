@@ -2503,6 +2503,58 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     }
   });
 
+  it('the pre-lock bound never selects fewer rows than the re-read, in any session TimeZone', async () => {
+    // 22:30 UTC: late enough that a raw-instant bound stops covering
+    // tomorrow once the session TimeZone is far enough east.
+    const instant = '2026-08-15 22:30:00+00';
+    const utcMidnight = '2026-08-15 00:00:00+00';
+
+    for (const timeZone of [
+      'UTC',
+      'Europe/Amsterdam',
+      'Asia/Tokyo',
+      'Pacific/Kiritimati',
+      'America/New_York',
+      'Pacific/Niue',
+    ]) {
+      const rows = await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL TimeZone = '${timeZone}'`);
+        return tx.$queryRawUnsafe<
+          Array<{ day: string; reread: boolean; shipped: boolean; rawInstant: boolean }>
+        >(`
+          SELECT d::text                                        AS day,
+                 (d > DATE '2026-08-15')                        AS reread,
+                 (d > TIMESTAMPTZ '${utcMidnight}')             AS shipped,
+                 (d > TIMESTAMPTZ '${instant}')                 AS "rawInstant"
+          FROM (VALUES (DATE '2026-08-14'), (DATE '2026-08-15'), (DATE '2026-08-16')) AS t(d)
+        `);
+      });
+
+      for (const row of rows) {
+        // The guarantee: superset in every session TimeZone, subset in none.
+        // Stated as an implication rather than equality — west of UTC the
+        // shipped bound legitimately locks today as well, which the re-read
+        // then excludes, and that direction is safe.
+        if (row.reread) {
+          expect(
+            row.shipped,
+            `${timeZone}: ${row.day} is wanted by the re-read but not covered by the pre-lock`,
+          ).toBe(true);
+        }
+      }
+
+      // The negative control, so this test cannot quietly become vacuous:
+      // the bound this replaced DID drop tomorrow east of UTC. If Postgres
+      // ever stopped promoting `date` through the session TimeZone, both
+      // columns would agree everywhere and the assertion above would pass
+      // without meaning anything.
+      const tomorrow = rows.find((r) => r.day === '2026-08-16');
+      if (timeZone === 'Asia/Tokyo' || timeZone === 'Pacific/Kiritimati') {
+        expect(tomorrow?.rawInstant).toBe(false);
+        expect(tomorrow?.shipped).toBe(true);
+      }
+    }
+  });
 });
 
 describe('pauseOrResumeTemplate (DB)', () => {
