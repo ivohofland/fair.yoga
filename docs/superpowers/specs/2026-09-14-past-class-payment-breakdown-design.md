@@ -171,8 +171,9 @@ the student's own payment — never another student's registration.
 
 **Every guard is broken once**, with the failing test and its error text
 recorded: the `completed` gate, the payment-present gate, the `not_charged`
-entry in the status record, each snapshot null check, the subtraction (swapped
-for `effectiveTeacherRate`), and the minus-sign formatting.
+entry in the status record, each snapshot null check, the subtraction (operands
+reversed, and redone as a float subtraction), the page's wiring, and the
+minus-sign formatting.
 
 ## Out of scope
 
