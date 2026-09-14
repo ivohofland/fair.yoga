@@ -183,7 +183,8 @@ describe('studioClassEditability', () => {
    * (unused '@ts-expect-error') pointing here.
    *
    * This `@ts-expect-error` parameter check is verified by `npm run typecheck`
-   * only (`tsc --noEmit`) and is invisible to test runners. The union invariant
+   * only (`tsc --noEmit`) and is invisible to Vitest runtime test execution
+   * (tests do not typecheck or transpile types). The union invariant
    * (`dateEditable ⇒ scheduleEditable`) is pinned separately beside
    * `StudioClassEditVerdict` in `studio-class-editability.ts` via `NoneOf`.
    */

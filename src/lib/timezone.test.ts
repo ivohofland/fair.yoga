@@ -467,6 +467,9 @@ describe('mondayOf', () => {
 
 /**
  * Compile-time assertion that `WeekKey` cannot be assigned from a plain `number` without a cast (#286).
+ *
+ * This check is verified by `npm run typecheck` only (`tsc --noEmit`) and is
+ * invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function _theBrandRejectsPlainNumber(n: number): WeekKey {

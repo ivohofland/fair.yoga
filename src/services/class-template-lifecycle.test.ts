@@ -33,6 +33,9 @@ import { log } from '@/lib/log';
  * the signature fails the build on this line rather than leaving a green
  * suite. Same instrument, same reason, as `_completionTimingIsRequired`
  * (`class-lifecycle.test.ts`).
+ *
+ * This check is verified by `npm run typecheck` only (`tsc --noEmit`) and is
+ * invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
  */
 // VARIABLES, NOT OBJECT LITERALS, and that distinction is the whole test. A
 // literal carrying a forbidden key is rejected by excess-property checking

@@ -172,6 +172,9 @@ describe('ruleSlotHolder', () => {
  *
  * WHERE A CALL SITE SITS is a separate claim, out of this device's reach —
  * `src/lib/probe-placement-census.test.ts` is what holds that one.
+ *
+ * This check is verified by `npm run typecheck` only (`tsc --noEmit`) and is
+ * invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _theProbeRejectsATransactionClient(tx: Prisma.TransactionClient): Promise<void> {

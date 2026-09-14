@@ -705,6 +705,9 @@ writeRegistryLocked(registryPath, (reg) => {
  * Compile-time assertion that allocatePort's rawName and dbSlug parameters
  * cannot be swapped positionally (#528 — three review rounds on #527 had to
  * verify this by hand at every call site).
+ *
+ * This check is verified by `npm run typecheck` only (`tsc --noEmit`) and is
+ * invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function _allocatePortArgsCannotBeSwapped(registry: Registry, rawName: RawName, dbSlug: DbSlug): void {

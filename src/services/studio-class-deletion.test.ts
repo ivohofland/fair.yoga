@@ -160,9 +160,13 @@ describe('studioClassDeletability', () => {
    * Not because of excess-property checking: an OPTIONAL widening
    * (`template?: …`) is legal to supply and legal to omit, so every production
    * call site compiles either way, literal or variable. What catches it is this
-   * directive. Under a widening the line below stops being an error, and an
-   * unused `@ts-expect-error` is itself `TS2578` — so `tsc` fails here, and
-   * measurably nowhere else.
+   * directive. Under a widening the line below stops being an error,
+   * and an unused `@ts-expect-error` is itself `TS2578` — so `tsc` fails here, and measurably
+   * nowhere else.
+   *
+   * This `@ts-expect-error` parameter check is verified by `npm run typecheck`
+   * only (`tsc --noEmit`) and is invisible to Vitest runtime test execution
+   * (tests do not typecheck or transpile types).
    *
    * DO NOT DELETE THIS CASE. It is the entire alarm.
    */

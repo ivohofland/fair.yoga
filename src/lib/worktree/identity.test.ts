@@ -103,6 +103,9 @@ describe('resolveIdentity', () => {
  * Compile-time assertion that `RawName` and `DbSlug` cannot be assigned from
  * a plain string without a cast, and that a `RawName` cannot stand in for a
  * `DbSlug` at `dbNamesForSlug` (#528).
+ *
+ * These checks are verified by `npm run typecheck` only (`tsc --noEmit`) and
+ * are invisible to Vitest runtime test execution (tests do not typecheck or transpile types).
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function _rawNameBrandRejectsPlainString(s: string): RawName {

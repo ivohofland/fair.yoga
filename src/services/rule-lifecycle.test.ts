@@ -93,7 +93,8 @@ describe('rule-lifecycle family descriptors', () => {
    * the compiler refuse it.
    *
    * The 7 `@ts-expect-error` property assignment checks below are verified by
-   * `npm run typecheck` only (`tsc --noEmit`) and are invisible to test runners.
+   * `npm run typecheck` only (`tsc --noEmit`) and are invisible to Vitest runtime test
+   * execution (tests do not typecheck or transpile types).
    */
   it('refuses a childTable, logNoun, or editNoun that belongs to the other family', () => {
     // @ts-expect-error `CalendarEntry` is a model, but not a template child
