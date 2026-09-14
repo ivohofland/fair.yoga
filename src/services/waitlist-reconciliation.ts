@@ -850,9 +850,8 @@ interface SkipCounts {
 
 /**
  * Reduces skip reasons to counts for the log payload, with the exhaustive
- * `switch` + `never` idiom `countSkipReasons` in `lib/generation.ts` uses: a
- * fourth `SkipReason` member becomes a compile error here rather than
- * vanishing silently from the one line an operator reads.
+ * `switch` + `never` idiom: a fourth `SkipReason` member becomes a compile
+ * error here rather than vanishing silently from the one line an operator reads.
  */
 function countSkipReasons(skipped: readonly SkippedClass[]): SkipCounts {
   const counts: SkipCounts = { frozen: 0, full: 0, alreadyBroadcast: 0 };
