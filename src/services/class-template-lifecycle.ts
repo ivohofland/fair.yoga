@@ -691,10 +691,7 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
       // needs, and it holds under every session `TimeZone`, not just this
       // deployment's. Do not restate it as "the same set" and do not use
       // that as licence to narrow either side to match the other: equality
-      // is a UTC-only accident, containment is the guarantee. Pinned by three
-      // tests in `class-template-lifecycle.test.ts` (SQL property across 6
-      // session zones, UTC-midnight parameter binding, and an end-to-end
-      // archive run under a non-UTC session `TimeZone`).
+      // is a UTC-only accident, containment is the guarantee.
       //
       // This deployment runs UTC — the `postgres:16-alpine` default, since
       // neither `docker-compose.yml` nor `docker-compose.prod.yml` sets
