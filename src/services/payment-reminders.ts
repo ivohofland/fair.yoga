@@ -12,6 +12,8 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
+import { formatDayHeader } from '@/lib/format';
+import { timeToHHmm } from '@/lib/time-of-day';
 
 export const OVERDUE_AFTER_DAYS = 7;
 export const REMIND_EVERY_DAYS = 7;
@@ -56,7 +58,12 @@ export async function sendPaymentReminders(
       registration: {
         select: {
           studentId: true,
-          class: { select: { id: true, calendarEntry: { select: { classType: true } } } },
+          class: {
+            select: {
+              id: true,
+              calendarEntry: { select: { classType: true, date: true, startTime: true } },
+            },
+          },
         },
       },
     },
@@ -87,7 +94,7 @@ export async function sendPaymentReminders(
           recipientId: payment.registration.studentId,
           type: 'reminder',
           title: 'Payment outstanding',
-          body: `€${Number(payment.amount).toFixed(2)} for ${payment.registration.class.calendarEntry.classType} is still open. Pay your teacher directly.`,
+          body: `€${Number(payment.amount).toFixed(2)} for ${payment.registration.class.calendarEntry.classType} class on ${formatDayHeader(payment.registration.class.calendarEntry.date)} at ${timeToHHmm(payment.registration.class.calendarEntry.startTime)} is still open. Pay your teacher directly.`,
           relatedClassId: payment.registration.class.id,
         },
       ];

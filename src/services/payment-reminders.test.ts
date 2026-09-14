@@ -7,6 +7,7 @@ import {
   processPaymentReminders,
 } from './payment-reminders';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { formatDayHeader } from '@/lib/format';
 import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
@@ -184,12 +185,15 @@ describe('payment reminders (DB)', () => {
       where: { id: payment.registrationId },
       select: { studentId: true },
     });
-    const note = await prisma.notification.findFirst({
+    const note = await prisma.notification.findFirstOrThrow({
       where: { recipientId: reg.studentId, type: 'reminder', relatedClassId: classId },
     });
-    expect(note).not.toBeNull();
-    expect(note!.body).toContain('€12.50');
-    expect(note!.body).not.toContain('!');
+    expect(note.body).toContain('€12.50');
+    expect(note.body).toContain('PayRem Hatha');
+    expect(note.body).toContain(formatDayHeader(new Date('2026-06-01')));
+    expect(note.body).toContain('09:00');
+    expect(note.body).toContain('is still open. Pay your teacher directly.');
+    expect(note.body).not.toContain('!');
   });
 
   it('processPaymentReminders runs both phases', async () => {
