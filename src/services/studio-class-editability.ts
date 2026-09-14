@@ -1,4 +1,5 @@
 import { startOfLocalDay } from '@/lib/timezone';
+import type { NoneOf } from '@/lib/type-pins';
 
 // Re-exported so SERVER consumers need only this module. Client surfaces must
 // import `@/services/studio-class-edit-refusals` directly — reaching them
@@ -66,6 +67,14 @@ export type StudioClassEditVerdict =
   | { scheduleEditable: false; dateEditable: false }
   /** Not past: the whole schedule may change; `date` only on a manual row. */
   | { scheduleEditable: true; dateEditable: boolean };
+
+// Compile-time pin asserting dateEditable cannot stand without scheduleEditable (#207).
+const _illegalVerdictCannotStand: NoneOf<
+  { scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict
+    ? '{ scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict'
+    : never
+> = true;
+void _illegalVerdictCannotStand;
 
 /**
  * Is this calendar date strictly before the teacher's local today?

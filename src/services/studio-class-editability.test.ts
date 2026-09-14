@@ -181,6 +181,11 @@ describe('studioClassEditability', () => {
    * verdict read cancellation or template state would ship silently. This
    * directive is what fails `tsc` when the signature widens, as TS2578
    * (unused '@ts-expect-error') pointing here.
+   *
+   * This `@ts-expect-error` parameter check is verified by `npm run typecheck`
+   * only (`tsc --noEmit`) and is invisible to test runners. The union invariant
+   * (`dateEditable ⇒ scheduleEditable`) is pinned separately beside
+   * `StudioClassEditVerdict` in `studio-class-editability.ts` via `NoneOf`.
    */
   it('refuses a widened row at the type level', () => {
     studioClassEditability(
@@ -191,13 +196,3 @@ describe('studioClassEditability', () => {
     );
   });
 });
-
-/**
- * The union's own pin. `dateEditable ⇒ scheduleEditable` is held by the TYPE,
- * not merely by the one producer — the matrix sweep above still runs because
- * it also pins zone behaviour, but it is no longer the only thing standing
- * between a second producer and an illegal verdict.
- */
-// @ts-expect-error dateEditable cannot stand without scheduleEditable
-const _illegalVerdict: StudioClassEditVerdict = { scheduleEditable: false, dateEditable: true };
-void _illegalVerdict;
