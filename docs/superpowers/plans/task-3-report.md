@@ -1,141 +1,113 @@
-# Task 3 Report: End-to-end lifecycle test under non-UTC session TimeZone (#289)
+# Task 3 Implementation Report: Migrate Verdict Pin in studio-class-editability.ts & studio-class-editability.test.ts (#207)
 
-**Plan:** [2026-09-14-pre-lock-superset-timezone.md](file:///Users/ivohofland/Projects/fair.yoga/docs/superpowers/plans/2026-09-14-pre-lock-superset-timezone.md)  
-**Date:** 2026-09-14  
-**Status:** Complete ✅
+**Issue:** #207  
+**Plan:** `docs/superpowers/plans/2026-09-14-toggle-payload-type-pins.md`  
+**Status:** Completed  
 
 ---
 
 ## 1. Summary of Changes
 
-In [`src/services/class-template-lifecycle.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/class-template-lifecycle.test.ts), under `describe('archiveOrUnarchiveTemplate (DB)', () => ...)`, added the test:
-`'the pre-lock is a superset of the delete in a non-UTC session TimeZone'`.
+1. **`src/services/studio-class-editability.ts`**:
+   - Imported `type { NoneOf }` from `@/lib/type-pins`.
+   - Added compile-time `NoneOf` pin `_illegalVerdictCannotStand` immediately beside `StudioClassEditVerdict`:
+     ```ts
+     // Compile-time pin asserting dateEditable cannot stand without scheduleEditable (#207).
+     const _illegalVerdictCannotStand: NoneOf<
+       { scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict
+         ? '{ scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict'
+         : never
+     > = true;
+     void _illegalVerdictCannotStand;
+     ```
+   - Invariant violation reports `Type 'true' is not assignable to type '"{ scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict"'`.
 
-### Implementation Details
-- Imported `type Prisma` from `@prisma/client`.
-- Seeded teacher has `defaultTimezone: 'UTC'`.
-- Created classes dated today (`startOfLocalDay(new Date(), teacher.defaultTimezone)`) and tomorrow (`+1 day`).
-- Interposed on `prisma.$extends` to hook `$transaction`, executing `SET LOCAL TimeZone = '${sessionTimeZone}'` before archive statements run.
-- Spied on `dbLocks.lockClassRowsOrdered` via `vi.spyOn(dbLocks, 'lockClassRowsOrdered')` and cleaned up with `onTestFinished(() => spy.mockRestore())`.
-- **West of UTC (`America/New_York`)**:
-  - `lockSets[0]` contains both `classTodayWest.id` and `classTomorrowWest.id` (length 2).
-  - The delete (using Prisma's `date > date`) deletes only `classTomorrowWest` (`count === 0`); `classTodayWest` survives (`count === 1`).
-  - `resultWest.deleted === 1`.
-  - Directly proves: `lock set ⊃ delete set` (today is locked by the pre-lock but spared by the delete).
-- **East of UTC (`Asia/Tokyo`)**:
-  - `lockSets[0]` contains only `classTomorrowEast.id` (length 1).
-  - The delete removes only `classTomorrowEast` (`count === 0`); `classTodayEast` survives (`count === 1`).
-  - `resultEast.deleted === 1`.
-  - Demonstrates: `lock set = delete set` (neither today nor yesterday is matched).
-
----
-
-## 2. Test Verification Output
-
-Ran vitest targeting the new test:
-```bash
-pnpm exec vitest run --project unit src/services/class-template-lifecycle.test.ts -t "the pre-lock is a superset of the delete in a non-UTC session TimeZone"
-```
-
-Output:
-```
- RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
-
-[unit-db] unit tests run against ethical_yoga_test
-
- Test Files  1 passed (1)
-      Tests  1 passed | 67 skipped (68)
-   Start at  12:31:26
-   Duration  1.66s (transform 161ms, setup 0ms, import 360ms, tests 186ms, environment 0ms)
-```
-
-Ran all tests in `src/services/class-template-lifecycle.test.ts`:
-```bash
-pnpm exec vitest run --project unit src/services/class-template-lifecycle.test.ts
-```
-
-Output:
-```
- RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
-
-[unit-db] unit tests run against ethical_yoga_test
-
- Test Files  1 passed (1)
-      Tests  68 passed (68)
-   Start at  12:32:51
-   Duration  3.35s (transform 168ms, setup 0ms, import 369ms, tests 1.91s, environment 0ms)
-```
+2. **`src/services/studio-class-editability.test.ts`**:
+   - Removed trailing `@ts-expect-error _illegalVerdict` declaration and its comment block (lines 195-204).
+   - In `it('refuses a widened row at the type level')`, updated the docblock to explicitly state:
+     - The `@ts-expect-error` parameter check is verified by `npm run typecheck` only (`tsc --noEmit`) and is invisible to test runners.
+     - The union invariant (`dateEditable ⇒ scheduleEditable`) is pinned separately beside `StudioClassEditVerdict` in `studio-class-editability.ts` via `NoneOf`.
 
 ---
 
-## 3. Mutation Probe
+## 2. Git Diff
 
-### Applied Mutation
-In [`src/services/class-template-lifecycle.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/class-template-lifecycle.ts) line 769:
 ```diff
-         where: Prisma.sql`e."scheduleRuleId" = ${scheduleRuleId}
-           AND e."cancelledAt" IS NULL
--          AND e.date > ${today}
-+          AND e.date < ${today}
-           AND c.status IN (${SCHEDULED_STATUSES_SQL})`,
+diff --git a/src/services/studio-class-editability.test.ts b/src/services/studio-class-editability.test.ts
+index 7333aba7..b68e2054 100644
+--- a/src/services/studio-class-editability.test.ts
++++ b/src/services/studio-class-editability.test.ts
+@@ -181,6 +181,11 @@ describe('studioClassEditability', () => {
+    * verdict read cancellation or template state would ship silently. This
+    * directive is what fails `tsc` when the signature widens, as TS2578
+    * (unused '@ts-expect-error') pointing here.
++   *
++   * This `@ts-expect-error` parameter check is verified by `npm run typecheck`
++   * only (`tsc --noEmit`) and is invisible to test runners. The union invariant
++   * (`dateEditable ⇒ scheduleEditable`) is pinned separately beside
++   * `StudioClassEditVerdict` in `studio-class-editability.ts` via `NoneOf`.
+    */
+   it('refuses a widened row at the type level', () => {
+     studioClassEditability(
+@@ -191,13 +196,3 @@ describe('studioClassEditability', () => {
+     );
+   });
+ });
+-
+-/**
+- * The union's own pin. `dateEditable ⇒ scheduleEditable` is held by the TYPE,
+- * not merely by the one producer — the matrix sweep above still runs because
+- * it also pins zone behaviour, but it is no longer the only thing standing
+- * between a second producer and an illegal verdict.
+- */
+-// @ts-expect-error dateEditable cannot stand without scheduleEditable
+-const _illegalVerdict: StudioClassEditVerdict = { scheduleEditable: false, dateEditable: true };
+-void _illegalVerdict;
+diff --git a/src/services/studio-class-editability.ts b/src/services/studio-class-editability.ts
+index 0bc21bb5..8fc3306e 100644
+--- a/src/services/studio-class-editability.ts
++++ b/src/services/studio-class-editability.ts
+@@ -1,4 +1,5 @@
+ import { startOfLocalDay } from '@/lib/timezone';
++import type { NoneOf } from '@/lib/type-pins';
+ 
+ // Re-exported so SERVER consumers need only this module. Client surfaces must
+ // import `@/services/studio-class-edit-refusals` directly — reaching them
+@@ -67,6 +68,14 @@ export type StudioClassEditVerdict =
+   /** Not past: the whole schedule may change; `date` only on a manual row. */
+   | { scheduleEditable: true; dateEditable: boolean };
+ 
++// Compile-time pin asserting dateEditable cannot stand without scheduleEditable (#207).
++const _illegalVerdictCannotStand: NoneOf<
++  { scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict
++    ? '{ scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict'
++    : never
++> = true;
++void _illegalVerdictCannotStand;
++
+ /**
+  * Is this calendar date strictly before the teacher's local today?
+  *
 ```
-
-### Mutation Probe Execution
-```bash
-pnpm exec vitest run --project unit src/services/class-template-lifecycle.test.ts -t "the pre-lock is a superset of the delete in a non-UTC session TimeZone"
-```
-
-### Mutation Failure Output
-```
- RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
-
-[unit-db] unit tests run against ethical_yoga_test
- ❯ |unit| src/services/class-template-lifecycle.test.ts (68 tests | 1 failed | 67 skipped) 151ms
-     × the pre-lock is a superset of the delete in a non-UTC session TimeZone 69ms
-
-⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
-
- FAIL  |unit| src/services/class-template-lifecycle.test.ts > archiveOrUnarchiveTemplate (DB) > the pre-lock is a superset of the delete in a non-UTC session TimeZone
-AssertionError: expected [] to deeply equal ArrayContaining{…}
-
-- Expected
-+ Received
-
-- ArrayContaining [
--   "88415646-daec-4ad3-9fda-4fd2cf0bcd20",
--   "a6024723-a1d4-4dee-8c1e-ceca419f8f62",
-- ]
-+ []
-
- ❯ src/services/class-template-lifecycle.test.ts:2652:25
-    2650|     );
-    2651|
-    2652|     expect(lockSets[0]).toEqual(
-       |                         ^
-    2653|       expect.arrayContaining([classTodayWest.id, classTomorrowWest.id]…
-    2654|     );
-
-⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
-
-
- Test Files  1 failed (1)
-      Tests  1 failed | 67 skipped (68)
-   Start at  12:31:38
-   Duration  1.58s (transform 166ms, setup 0ms, import 369ms, tests 151ms, environment 0ms)
-```
-
-The mutation probe demonstrated that inverting the pre-lock comparison bound causes the pre-lock under `America/New_York` to return an empty array `[]` rather than locking `{today, tomorrow}`, failing the test at line 2652.
 
 ---
 
-## 4. Restoration & Typecheck Verification
+## 3. Verification
 
-1. `src/services/class-template-lifecycle.ts` was restored to `AND e.date > ${today}`.
-2. Verified `git diff src/services/class-template-lifecycle.ts` is empty.
-3. Re-ran vitest: test passed (1 passed).
-4. Ran `pnpm run typecheck`:
-```
-$ tsc --noEmit
-Exit code: 0
-```
-5. No commits have been made to git.
+1. **`pnpm run typecheck`**:
+   - Result: Exit code 0 (`tsc --noEmit` passed cleanly).
+
+2. **`pnpm exec vitest run --project unit src/services/studio-class-editability.test.ts`**:
+   - Result: Exit code 0 (1 test file, 17 passed).
+
+3. **`pnpm exec eslint src/services/studio-class-editability.ts src/services/studio-class-editability.test.ts`**:
+   - Result: Exit code 0 (clean, no errors or warnings).
+
+4. **Mutation Probe (Verification that `_illegalVerdictCannotStand` pin bites)**:
+   - Temporarily widened `StudioClassEditVerdict` to `| { scheduleEditable: boolean; dateEditable: boolean }`.
+   - Ran `pnpm run typecheck`. Compiler failed with error `TS2322`:
+     ```
+     src/services/studio-class-editability.ts(69,7): error TS2322: Type 'true' is not assignable to type '"{ scheduleEditable: false; dateEditable: true } extends StudioClassEditVerdict"'.
+     ```
+   - Confirmed error specifically names the offending invalid state.
+   - Restored `StudioClassEditVerdict` to exact original union and confirmed `pnpm run typecheck` returned to exit 0.

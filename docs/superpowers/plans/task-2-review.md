@@ -1,76 +1,101 @@
-# Task 2 Review: Pin the pre-lock bound parameter to UTC midnight (#289)
+# Task 2 Review: Migrate Lifecycle Result Pins in rule-lifecycle.ts & rule-lifecycle.test.ts (#207)
 
-**Plan:** [2026-09-14-pre-lock-superset-timezone.md](file:///Users/ivohofland/Projects/fair.yoga/docs/superpowers/plans/2026-09-14-pre-lock-superset-timezone.md)  
-**Report:** [task-2-report.md](file:///Users/ivohofland/Projects/fair.yoga/docs/superpowers/plans/task-2-report.md)  
+**Issue:** #207  
+**Plan Reference:** `docs/superpowers/plans/2026-09-14-toggle-payload-type-pins.md` (Task 2 section)  
+**Implementer Report:** `docs/superpowers/plans/task-2-report.md`  
 **Reviewer:** Antigravity Code Reviewer  
-**Status:** **APPROVED** ✅
+**Date:** 2026-09-14  
 
 ---
 
-## 1. Scope & Spec Compliance
+## Verdict: APPROVED
 
-The implementation in [`src/services/class-template-lifecycle.test.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/class-template-lifecycle.test.ts) satisfies all requirements defined in Task 2 of the implementation plan:
-- [x] Adds unit test `'binds the pre-lock to UTC midnight, not the raw instant'` under `describe('archiveOrUnarchiveTemplate (DB)')`.
-- [x] Interposes on Prisma using `prisma.$extends` with a `$queryRaw` query hook.
-- [x] Specifically captures the bound argument for the pre-lock query (`args.values.includes(t.scheduleRuleId)`).
-- [x] Asserts that the captured argument is an instance of `Date` (`expect(boundToday).toBeInstanceOf(Date)`).
-- [x] Asserts that UTC hours, minutes, seconds, and milliseconds are strictly zero (`[0, 0, 0, 0]`).
-- [x] Does not commit to git.
+The Task 2 implementation adheres completely to the plan specification and project rules (`AGENTS.md`, `CLAUDE.md`). All compile-time `NoneOf` pins for `ArchiveRuleResult`, `PauseRuleResult`, and `UpdateRuleResult` are properly instantiated with `const ...: NoneOf<...> = true; void ...`, accurately enforce mutual non-interchangeability between class and studio template families, and provably report the offender name upon type violation. The test file docblocks accurately clarify the `npm run typecheck` only enforcement model, and all tests, typechecks, and linters pass cleanly.
+
+No defects or regressions were identified. The changes are ready to commit.
 
 ---
 
-## 2. Test Execution & Flakiness Verification
+## Detailed Findings
 
-Ran the targeted test and full suite:
-- **Single test run:**
-  ```bash
-  pnpm exec vitest run --project unit src/services/class-template-lifecycle.test.ts -t "binds the pre-lock to UTC midnight"
+### 1. Spec & Plan Compliance: FULLY COMPLIANT
+
+- **`src/services/rule-lifecycle.ts`**:
+  - Imported `type { NoneOf }` from `@/lib/type-pins`.
+  - Imported `ClassTemplate` and `StudioClassTemplate` from `@prisma/client`.
+  - Updated docblock on `ArchiveRuleResult` (lines 320–326): removed reference to `@ts-expect-error` in test files; cited `NoneOf` compile-time pins declared directly below (#207).
+  - Added compile-time pins `_classArchiveIsNotStudio` and `_studioArchiveIsNotClass` immediately below `ArchiveRuleResult`.
+  - Updated docblock on `PauseRuleResult` (lines 916–921): removed reference to `@ts-expect-error` in test files; cited `NoneOf` compile-time pins declared below (#207).
+  - Added compile-time pins `_classPauseIsNotStudio` and `_studioPauseIsNotClass` immediately below `PauseRuleResult`.
+  - Added compile-time pins `_classUpdateIsNotStudio` and `_studioUpdateIsNotClass` immediately below `UpdateRuleResult`.
+
+- **`src/services/rule-lifecycle.test.ts`**:
+  - In `describe('rule-lifecycle family descriptors') -> it('refuses a childTable, logNoun, or editNoun that belongs to the other family')`:
+    - Updated docblock to explicitly state that the 7 `@ts-expect-error` property assignment checks are verified by `npm run typecheck` only (`tsc --noEmit`) and are invisible to test runners.
+  - In `describe("the two families' lifecycle results are not interchangeable")`:
+    - Updated docblock to explain that non-interchangeability is pinned at compile time via `NoneOf` in `src/services/rule-lifecycle.ts` (#207), and tests below retain positive assertions.
+    - Removed the 6 `@ts-expect-error` test calls (`takesStudio(classResult)` / `takesClass(studioResult)` for archive, pause, and update).
+    - Preserved positive assertions:
+      - `expect(takesStudio(studioResult)).toBe(true);`
+      - `expect(takesClass(classResult)).toBe(true);`
+  - Checked all imports in `src/services/rule-lifecycle.test.ts`: all imported symbols (`UpdateRuleResult`, `ArchiveRuleResult`, `PauseRuleResult`, `WithSlot`, etc.) remain actively referenced. No dead imports introduced or retained.
+
+### 2. Quality & Correctness: HIGH
+
+- **Instantiation Pattern**:
+  All 6 pins follow the required canonical instantiation pattern:
+  ```ts
+  const _classArchiveIsNotStudio: NoneOf<
+    ArchiveRuleResult<ClassTemplate> extends ArchiveRuleResult<StudioClassTemplate>
+      ? 'ArchiveRuleResult<ClassTemplate> extends ArchiveRuleResult<StudioClassTemplate>'
+      : never
+  > = true;
+  void _classArchiveIsNotStudio;
   ```
-  Result: **1 passed | 66 skipped** (1.58s).
-- **Flakiness verification (5 consecutive runs):**
-  Executed 5 iterations in succession; all 5 passed consistently and deterministically (~1.7s per run).
-- **Full file test suite:**
-  ```bash
-  pnpm exec vitest run --project unit src/services/class-template-lifecycle.test.ts
-  ```
-  Result: **67 passed (67)** (3.64s).
-- **Static checks:**
-  - `pnpm run typecheck` (`tsc --noEmit`): exit code 0, no errors.
-  - `pnpm exec eslint src/services/class-template-lifecycle.test.ts`: 0 errors, 0 warnings.
+  - Declared using `const ...: NoneOf<...> = true; void ...;` to ensure evaluation by the TypeScript compiler under both server and client conditions, and suppressed from unused variable warnings via `void`.
+  - Resolves to `NoneOf<never>` (`true`) when the types are mutually disjoint.
+
+- **Mutual Non-Interchangeability**:
+  - Covered all 3 lifecycle result types across both directions:
+    - `ArchiveRuleResult<ClassTemplate>` ⇎ `ArchiveRuleResult<StudioClassTemplate>`
+    - `PauseRuleResult<ClassTemplate>` ⇎ `PauseRuleResult<StudioClassTemplate>`
+    - `UpdateRuleResult<ClassTemplate>` ⇎ `UpdateRuleResult<StudioClassTemplate>`
+  - Non-interchangeability holds on `template: WithSlot<TChild>` (the field carrying the child difference between regular and studio families).
+
+- **Offender Naming & Mutation Verification**:
+  - Verified via a live mutation probe in `src/services/rule-lifecycle.ts`:
+    - Mutated `ArchiveRuleResult<TChild>` by replacing `template: WithSlot<TChild>` with `template: { id: string }` (erasing the child type distinction).
+    - Ran `pnpm run typecheck`. The compiler rejected the assignment with error `TS2322`:
+      ```
+      src/services/rule-lifecycle.ts(370,7): error TS2322: Type 'true' is not assignable to type '"ArchiveRuleResult<ClassTemplate> extends ArchiveRuleResult<StudioClassTemplate>"'.
+      src/services/rule-lifecycle.ts(377,7): error TS2322: Type 'true' is not assignable to type '"ArchiveRuleResult<StudioClassTemplate> extends ArchiveRuleResult<ClassTemplate>"'.
+      ```
+    - Both directions named the offending type relation explicitly instead of emitting generic boolean failure messages.
+    - Code was restored and verified clean.
+
+### 3. Comment Discipline: COMPLIANT
+
+- Removed all outdated references to test-level `@ts-expect-error` directives in `ArchiveRuleResult` and `PauseRuleResult` docblocks.
+- Accurately cited `#207` in all pin comments and docblock updates.
+- Added unambiguous clarification in `rule-lifecycle.test.ts` docblock for property assignment guards:
+  > *"The 7 `@ts-expect-error` property assignment checks below are verified by `npm run typecheck` only (`tsc --noEmit`) and are invisible to test runners."*
+
+### 4. Verification: PASSED
+
+- **`git diff`**:
+  - Confirmed changes are strictly limited to `src/services/rule-lifecycle.ts` and `src/services/rule-lifecycle.test.ts`.
+  - No extraneous formatting churn or unintended changes.
+- **`pnpm run typecheck`**: Exit code 0 (`tsc --noEmit` passed with 0 errors).
+- **`pnpm exec vitest run --project unit src/services/rule-lifecycle.test.ts`**: Exit code 0 (1 test file, 13 passed).
+- **`pnpm exec eslint src/services/rule-lifecycle.ts src/services/rule-lifecycle.test.ts`**: Exit code 0 (clean, no errors or warnings).
 
 ---
 
-## 3. Mutation Probe Verification
+## Conclusion & Next Step
 
-Conducted independent mutation probe in [`src/services/rule-lifecycle.ts`](file:///Users/ivohofland/Projects/fair.yoga/src/services/rule-lifecycle.ts#L704):
-- **Mutation:**
-  ```diff
-  - const today = startOfLocalDay(now, timeZone);
-  + const today = now;
-  ```
-- **Observed Result:**
-  Vitest immediately failed with:
-  ```
-  FAIL |unit| src/services/class-template-lifecycle.test.ts > archiveOrUnarchiveTemplate (DB) > binds the pre-lock to UTC midnight, not the raw instant
-  AssertionError: expected [ 10, 19, 56, 160 ] to deeply equal [ +0, +0, +0, +0 ]
-  ```
-- **Restoration:**
-  Restored via `git restore src/services/rule-lifecycle.ts`.
-  Verified `git diff src/services/rule-lifecycle.ts` is completely clean.
-  Re-ran vitest: passed cleanly.
+Task 2 meets all criteria and is approved for commit:
 
-The mutation probe conclusively certifies that the test cannot pass vacuously with an un-truncated instant.
-
----
-
-## 4. Code Quality & Cleanliness
-
-- **Isolation:** Scoped to a dedicated template created via `makeTemplate('Pre-lock UTC midnight bound')`. The `interposing` extended client is passed directly to `archiveOrUnarchiveTemplate` without mutating or polluting the global `prisma` instance.
-- **Vacuous-Pass Prevention:** If `$queryRaw` is never invoked with `t.scheduleRuleId`, `boundToday` remains `undefined` and `expect(boundToday).toBeInstanceOf(Date)` fails the test.
-- **Idiomatic Style:** Follows established conventions in `class-template-lifecycle.test.ts` (matching line 2465's pattern of `prisma.$extends`).
-
----
-
-## 5. Verdict
-
-**APPROVED**. The Task 2 test implementation is clean, robust, verified against mutations, and fully compliant with the plan. Ready to proceed to Task 3.
+```bash
+git add src/services/rule-lifecycle.ts src/services/rule-lifecycle.test.ts
+git commit -m "fix(rule-lifecycle): express result type non-interchangeability with NoneOf pins (#207)"
+```
