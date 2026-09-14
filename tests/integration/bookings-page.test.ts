@@ -794,7 +794,9 @@ describe('GET /bookings (page) — past-class payment breakdown', () => {
         effectiveTeacherRate: 17.35, totalStudents: 6, totalRevenue: 61.25 },
       { amount: 10.2, status: 'not_charged' },
     );
-    // A state `completeClass` cannot produce: completed with no snapshot.
+    // Completed with no snapshot — the defect branch; see
+    // docs/superpowers/specs/2026-09-14-past-class-payment-breakdown-design.md,
+    // "When the disclosure renders".
     await completedClassWithPayment(
       unsnapshottedClass,
       { roomCost: 44.7, minRate: 10, targetRate: 20, minStudents: 3, maxStudents: 10,
