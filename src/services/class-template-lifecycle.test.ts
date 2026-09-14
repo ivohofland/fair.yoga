@@ -2544,7 +2544,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       }
 
       // The negative control, so this test cannot quietly become vacuous:
-      // the bound this replaced DID drop tomorrow east of UTC. If Postgres
+      // a raw-instant bound drops tomorrow east of UTC. If Postgres
       // ever stopped promoting `date` through the session TimeZone, both
       // columns would agree everywhere and the assertion above would pass
       // without meaning anything.
@@ -2587,7 +2587,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   /**
    * The pre-lock superset property in any session TimeZone (#289).
    *
-   * The pre-lock SQL (`class-template-lifecycle.ts:765-772`) compares
+   * The pre-lock SQL in `archiveOrUnarchiveTemplate` compares
    * `e.date > ${today}` where `${today}` is UTC midnight. Because `$queryRaw`
    * binds a JS Date as `timestamptz`, Postgres compares `date > timestamptz`,
    * promoting `e.date` to an instant at midnight IN THE SESSION TimeZone.
