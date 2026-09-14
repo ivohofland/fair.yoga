@@ -24,8 +24,8 @@ export interface ResolvePaymentBreakdownInput {
 
 /**
  * Whether a payment in this status shows the class's breakdown. A waived
- * payment does not — its row shows only the waiver. Exhaustive over the enum,
- * so a new status is a compile error here until it is decided.
+ * payment does not. Exhaustive over the enum, so a new status is a compile
+ * error here until it is decided.
  */
 const SHOWS_BREAKDOWN = {
   pending: true,
@@ -34,7 +34,7 @@ const SHOWS_BREAKDOWN = {
   not_charged: false,
 } as const satisfies Record<PaymentStatus, boolean>;
 
-/** A `Decimal(10,2)` value as whole cents; `mul` keeps it exact. */
+/** A value with at most two decimal places, as whole cents; `mul` keeps it exact. */
 function toCents(value: Prisma.Decimal): number {
   return value.mul(100).toNumber();
 }

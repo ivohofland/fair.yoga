@@ -93,6 +93,9 @@ describe('GET /bookings (page) — payment status gate', () => {
       minStudents: 1,
       maxStudents: 10,
       status: 'completed',
+      effectiveTeacherRate: 10,
+      totalStudents: 1,
+      totalRevenue: 30,
     });
 
     const registration = await prisma.registration.create({
@@ -107,7 +110,7 @@ describe('GET /bookings (page) — payment status gate', () => {
     const payment = await prisma.payment.create({
       data: {
         registrationId: registration.id,
-        amount: 18.5,
+        amount: 30,
         status: 'not_charged',
         notChargedAt: new Date(),
       },
@@ -662,8 +665,9 @@ describe('GET /bookings (page) — waitlist section, viewer has not chosen a tie
  * `/bookings` — the past-class payment breakdown (#576).
  *
  * Each class carries snapshot values no other row on the page renders, so a
- * value's presence or absence is attributable to that class's disclosure. The
- * accessible name carries the class type for the same reason.
+ * value's presence or absence is attributable to that class's disclosure.
+ * The breakdown's accessible name includes the class type too, so the label
+ * assertions are attributable the same way.
  */
 describe('GET /bookings (page) — past-class payment breakdown', () => {
   const suffixB = uniqueSuffix();
@@ -773,21 +777,21 @@ describe('GET /bookings (page) — past-class payment breakdown', () => {
       });
     };
 
-    // 7 students at maxStudents: rate = targetRate 16.25; 41.30 + 16.25 = 57.55.
+    // 41.30 + 16.25 = 57.55.
     await completedClassWithPayment(
       pendingClass,
       { roomCost: 41.3, minRate: 10, targetRate: 16.25, minStudents: 3, maxStudents: 7,
         effectiveTeacherRate: 16.25, totalStudents: 7, totalRevenue: 57.55 },
       { amount: 8.15, status: 'pending' },
     );
-    // 5 students at minStudents: rate = minRate -4.00; 42.60 - 4.00 = 38.60.
+    // 42.60 − 4.00 = 38.60.
     await completedClassWithPayment(
       paidClass,
       { roomCost: 42.6, minRate: -4, targetRate: 20, minStudents: 5, maxStudents: 10,
         effectiveTeacherRate: -4, totalStudents: 5, totalRevenue: 38.6 },
       { amount: 7.7, status: 'paid' },
     );
-    // 6 students at maxStudents: rate = targetRate 17.35; 43.90 + 17.35 = 61.25.
+    // 43.90 + 17.35 = 61.25.
     await completedClassWithPayment(
       waivedClass,
       { roomCost: 43.9, minRate: 10, targetRate: 17.35, minStudents: 3, maxStudents: 6,
@@ -834,6 +838,7 @@ describe('GET /bookings (page) — past-class payment breakdown', () => {
   it('shows a pending payment the room, teacher and class total behind it', async () => {
     const html = await bookingsHtml();
     expect(html).toContain(breakdownLabel(pendingClass));
+    expect(html).toContain(`How to pay — ${pendingClass.classType}, ${formatDayHeader(pendingClass.date)}`);
     expect(html).toContain('€41.30');
     expect(html).toContain('€16.25');
     expect(html).toContain('€57.55');
