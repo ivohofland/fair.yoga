@@ -105,7 +105,9 @@ describe('countSkipReasons', () => {
 
   it('throws an error on unhandled or unknown skip reasons', () => {
     expect(() =>
-      countSkipReasons([at('2026-09-21T00:00:00.000Z', 'unknown_reason' as any)]),
+      countSkipReasons([
+        at('2026-09-21T00:00:00.000Z', 'unknown_reason' as unknown as SkippedSlot['reason']),
+      ]),
     ).toThrow('countSkipReasons: unhandled SkipReason unknown_reason');
   });
 });
