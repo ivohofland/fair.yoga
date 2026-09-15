@@ -1,105 +1,105 @@
-# Task 1 Implementation Report: Upgrade Toggle Payload Pins in api-types.ts & Clean Up template-action-messages.test.ts (#207)
+# Task 1 Implementation Report: Signed Euro Formatter (`formatCents` & `formatEuro`) (#599)
 
-**Issue:** #207  
-**Plan:** `docs/superpowers/plans/2026-09-14-toggle-payload-type-pins.md`  
+**Issue:** #599  
+**Plan:** `docs/superpowers/plans/2026-09-15-signed-euro-formatter.md`  
 **Status:** Completed  
 
 ---
 
 ## 1. Summary of Changes
 
-1. **`src/lib/api-types.ts`**:
-   - Replaced `import type { Assert, Equals } from '@/lib/type-pins'` with `import type { NoneOf } from '@/lib/type-pins'`.
-   - Replaced the `Assert<Equals<..., false>>` type aliases with `NoneOf` compile-time pins (`_classIsNotStudio` and `_studioIsNotClass`).
-   - If an invariant is violated, the pin evaluates to a descriptive string naming the offending direction (`'TemplateToggleResponse extends StudioTemplateToggleResponse'` or `'StudioTemplateToggleResponse extends TemplateToggleResponse'`), causing `Type 'true' is not assignable to type '<OffenderDescription>'`.
+1. **`src/lib/format.ts`**:
+   - Implemented `formatCents(cents: number): string`:
+     - Rounds `cents` with `Math.round`.
+     - Formats positive amounts as `€X.XX`, negative amounts as `−€X.XX` using the unicode minus glyph `−` (U+2212) preceding `€`, and zero as `€0.00`.
+     - Guard `rounded < 0` ensures `-0` and floats rounding to zero never render as `−€0.00` or `€-0.00`.
+   - Implemented `formatEuro(euros: number): string`:
+     - Convenience wrapper around `formatCents(Math.round(euros * 100))`.
 
-2. **`src/components/settings/template-action-messages.test.ts`**:
-   - Removed the `describe('the two toggle payloads are not interchangeable')` block (formerly lines 741–764).
-   - The `@ts-expect-error` directives with dummy `expect(true).toBe(true)` assertions are now redundant because the mutual non-assignability invariant is certified directly beside the type definitions in `src/lib/api-types.ts`.
-
----
-
-## 2. Git Diff
-
-```diff
-diff --git a/src/components/settings/template-action-messages.test.ts b/src/components/settings/template-action-messages.test.ts
-index 28cf91da..1761969f 100644
---- a/src/components/settings/template-action-messages.test.ts
-+++ b/src/components/settings/template-action-messages.test.ts
-@@ -737,28 +737,3 @@ describe('templateUpdatedMessage', () => {
-     );
-   });
- });
--
--describe('the two toggle payloads are not interchangeable', () => {
--  it('rejects a studio payload at the class resolver', () => {
--    const studio: StudioTemplateToggleResponse = {
--      action: 'active',
--      templateKind: 'studio',
--      scheduled: 4,
--      added: 0,
--      counts: { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOverlap: 0 },
--    };
--    // @ts-expect-error studio payloads must never satisfy the class resolver
--    resolveTemplateConfirmation(studio);
--    // and the reverse
--    const cls: TemplateToggleResponse = {
--      action: 'active',
--      templateKind: 'class',
--      scheduled: 4,
--      added: 0,
--      counts: { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOverlap: 0 },
--    };
--    // @ts-expect-error class payloads must never satisfy the studio resolver
--    resolveStudioConfirmation(cls);
--    expect(true).toBe(true);
--  });
--});
-diff --git a/src/lib/api-types.ts b/src/lib/api-types.ts
-index 9694e97f..9e608535 100644
---- a/src/lib/api-types.ts
-+++ b/src/lib/api-types.ts
-@@ -14,7 +14,7 @@
- 
- import type { SkipCounts } from '@/lib/generation';
- import type { TemplateGenerationState } from '@/lib/template-selection';
--import type { Assert, Equals } from '@/lib/type-pins';
-+import type { NoneOf } from '@/lib/type-pins';
- 
- /**
-  * The `data` payload of a successful PATCH on a class template (#206).
-@@ -109,7 +109,18 @@ export interface TemplateEditResponse {
- }
- 
- // Compile-time pins asserting that the class and studio toggle response types
--// remain non-interchangeable via `templateKind` (#93, #119, #206).
--type _classIsNotStudio = Assert<Equals<TemplateToggleResponse extends StudioTemplateToggleResponse ? true : false, false>>;
--type _studioIsNotClass = Assert<Equals<StudioTemplateToggleResponse extends TemplateToggleResponse ? true : false, false>>;
--void 0 as unknown as [_classIsNotStudio, _studioIsNotClass];
-+// remain mutually non-interchangeable via `templateKind` (#93, #119, #206, #207).
-+// Expressed with NoneOf so a broken invariant names the offending direction.
-+const _classIsNotStudio: NoneOf<
-+  TemplateToggleResponse extends StudioTemplateToggleResponse
-+    ? 'TemplateToggleResponse extends StudioTemplateToggleResponse'
-+    : never
-+> = true;
-+void _classIsNotStudio;
-+
-+const _studioIsNotClass: NoneOf<
-+  StudioTemplateToggleResponse extends TemplateToggleResponse
-+    ? 'StudioTemplateToggleResponse extends TemplateToggleResponse'
-+    : never
-+> = true;
-+void _studioIsNotClass;
-```
+2. **`src/lib/format.test.ts`**:
+   - Added unit test suites for `formatCents` and `formatEuro`:
+     - `formatCents`: positive whole cents (`4000` -> `€40.00`), single-digit padding (`5` -> `€0.05`), negative whole cents (`-400` -> `−€4.00` with explicit `charCodeAt(0) === 0x2212` assertion), zero (`0` -> `€0.00`), negative zero (`-0` -> `€0.00`), near-zero float cancellation (`-7.1054e-15` -> `€0.00`), sub-cent rounding (`399.6` -> `€4.00`).
+     - `formatEuro`: positive decimal (`16.25` -> `€16.25`), negative euro (`-4` -> `−€4.00` with `charCodeAt(0) === 0x2212`), zero (`0` -> `€0.00`), negative zero (`-0` -> `€0.00`), float drift cancellation (`(56.30 - 40.10) + (24.00 - 40.20)` -> `€0.00`).
 
 ---
 
-## 3. Verification
+## 2. Test-Driven Development (TDD) Cycle
 
-1. **`pnpm run typecheck`**:
-   - Result: Exit code 0 (`tsc --noEmit`).
-2. **`pnpm exec vitest run --project unit src/components/settings/template-action-messages.test.ts`**:
-   - Result: Exit code 0 (1 test file, 68 passed).
-3. **`pnpm exec eslint src/lib/api-types.ts src/components/settings/template-action-messages.test.ts`**:
-   - Result: Exit code 0 (clean, no warnings or errors).
+### Step 1: RED (Failing Unit Tests)
+- Executed `pnpm exec vitest run --project unit src/lib/format.test.ts`.
+- Tests failed with 12 errors due to missing exports:
+  - `TypeError: formatCents is not a function` (7 tests)
+  - `TypeError: formatEuro is not a function` (5 tests)
+
+### Step 2: GREEN (Implementation)
+- Added implementations in `src/lib/format.ts`.
+- Executed `pnpm exec vitest run --project unit src/lib/format.test.ts`.
+- Result: **50 passed (50 tests total)** in 1.74s.
+
+---
+
+## 3. Mutation Testing (Proving Guards Bite)
+
+### Mutation 1: Minus Glyph Check (`−` U+2212 to `-` ASCII Hyphen)
+- **Mutation:** Changed `rounded < 0 ? '−' : ''` to `rounded < 0 ? '-' : ''` in `src/lib/format.ts`.
+- **Command:** `pnpm exec vitest run --project unit src/lib/format.test.ts`
+- **Result:** FAILED (2 failed, 48 passed).
+- **Exact Failures:**
+  ```
+  FAIL  |unit| src/lib/format.test.ts > formatCents > formats negative whole cents with minus sign (U+2212)
+  AssertionError: expected '-€4.00' to be '−€4.00' // Object.is equality
+  Expected: "−€4.00"
+  Received: "-€4.00"
+
+  FAIL  |unit| src/lib/format.test.ts > formatEuro > formats negative euro amount with minus sign (U+2212)
+  AssertionError: expected '-€4.00' to be '−€4.00' // Object.is equality
+  Expected: "−€4.00"
+  Received: "-€4.00"
+  ```
+- **Restoration:** Restored U+2212. Vitest verified back to GREEN (50 passed).
+
+### Mutation 2: Zero Guard Check (`rounded < 0` to `rounded <= 0`)
+- **Mutation:** Changed `rounded < 0 ? '−' : ''` to `rounded <= 0 ? '−' : ''` in `src/lib/format.ts`.
+- **Command:** `pnpm exec vitest run --project unit src/lib/format.test.ts`
+- **Result:** FAILED (6 failed, 44 passed).
+- **Exact Failures:**
+  ```
+  FAIL  |unit| src/lib/format.test.ts > formatCents > formats zero cents as positive zero
+  AssertionError: expected '−€0.00' to be '€0.00' // Object.is equality
+  Expected: "€0.00"
+  Received: "−€0.00"
+
+  FAIL  |unit| src/lib/format.test.ts > formatCents > formats negative zero cents as positive zero
+  AssertionError: expected '−€0.00' to be '€0.00' // Object.is equality
+  Expected: "€0.00"
+  Received: "−€0.00"
+
+  FAIL  |unit| src/lib/format.test.ts > formatCents > cancels near-zero float drift to zero
+  AssertionError: expected '−€0.00' to be '€0.00' // Object.is equality
+  Expected: "€0.00"
+  Received: "−€0.00"
+
+  FAIL  |unit| src/lib/format.test.ts > formatEuro > formats zero euros as positive zero
+  AssertionError: expected '−€0.00' to be '€0.00' // Object.is equality
+  Expected: "€0.00"
+  Received: "−€0.00"
+
+  FAIL  |unit| src/lib/format.test.ts > formatEuro > formats negative zero euros as positive zero
+  AssertionError: expected '−€0.00' to be '€0.00' // Object.is equality
+  Expected: "€0.00"
+  Received: "−€0.00"
+
+  FAIL  |unit| src/lib/format.test.ts > formatEuro > cancels floating point drift to zero
+  AssertionError: expected '−€0.00' to be '€0.00' // Object.is equality
+  Expected: "€0.00"
+  Received: "−€0.00"
+  ```
+- **Restoration:** Restored `rounded < 0`. Vitest verified back to GREEN (50 passed).
+
+---
+
+## 4. Verification
+
+1. `pnpm exec vitest run --project unit src/lib/format.test.ts`: PASS (50/50 passed).
+2. `pnpm run typecheck`: PASS (`tsc --noEmit` exited 0).
+3. `pnpm run lint`: PASS (0 errors).

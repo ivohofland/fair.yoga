@@ -239,3 +239,27 @@ export function todayLocal(): string {
 export function formatMonthLabel(year: number, monthIndex: number): string {
   return `${FULL_MONTHS[monthIndex] ?? ''} ${year}`;
 }
+
+/**
+ * Euros from whole cents, without float drift.
+ *
+ * Formats positive amounts as `€X.XX`, negative amounts as `−€X.XX` (using U+2212
+ * before the euro sign), and zero as `€0.00` (never `−€0.00` or `€-0.00`).
+ */
+export function formatCents(cents: number): string {
+  const rounded = Math.round(cents);
+  const abs = Math.abs(rounded);
+  const euros = Math.floor(abs / 100);
+  const rest = String(abs % 100).padStart(2, '0');
+  return `${rounded < 0 ? '−' : ''}€${euros}.${rest}`;
+}
+
+/**
+ * Euros from a decimal/float euro amount, rounding to nearest whole cent.
+ *
+ * Convenience helper wrapping `formatCents(Math.round(euros * 100))`.
+ */
+export function formatEuro(euros: number): string {
+  return formatCents(Math.round(euros * 100));
+}
+
