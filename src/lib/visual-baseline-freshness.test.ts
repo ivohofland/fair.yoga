@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ROUTE_BASELINES,
   extractSnapshotStems,
@@ -42,6 +42,7 @@ describe('findCoverageGaps', () => {
     expect(findCoverageGaps(source, routes)).toEqual({
       missingFromMap: [],
       missingFromSpec: [],
+      unparseableCallCount: 0,
     });
   });
 
@@ -54,6 +55,7 @@ describe('findCoverageGaps', () => {
     expect(findCoverageGaps(source, routes)).toEqual({
       missingFromMap: ['new-route'],
       missingFromSpec: [],
+      unparseableCallCount: 0,
     });
   });
 
@@ -62,7 +64,17 @@ describe('findCoverageGaps', () => {
     expect(findCoverageGaps(source, routes)).toEqual({
       missingFromMap: [],
       missingFromSpec: ['settings'],
+      unparseableCallCount: 0,
     });
+  });
+
+  it('counts a toHaveScreenshot() call whose name is not a literal as unparseable', () => {
+    const source = `
+      toHaveScreenshot('login.png', {});
+      toHaveScreenshot(dynamicName, {});
+    `;
+    const gaps = findCoverageGaps(source, routes);
+    expect(gaps.unparseableCallCount).toBe(1);
   });
 
   it('validates the real ROUTE_BASELINES against the real visual.spec.ts', () => {
@@ -70,6 +82,7 @@ describe('findCoverageGaps', () => {
     expect(findCoverageGaps(source, ROUTE_BASELINES)).toEqual({
       missingFromMap: [],
       missingFromSpec: [],
+      unparseableCallCount: 0,
     });
   });
 });
@@ -126,6 +139,41 @@ describe('findStaleRoutes', () => {
         execGit,
       }),
     ).toThrow(/Cannot resolve a base ref/);
+  });
+
+  it('throws on a push event whose GITHUB_BEFORE cannot be resolved', () => {
+    const execGit = () => {
+      throw new Error('unreachable before');
+    };
+    expect(() =>
+      findStaleRoutes(routes, { env: { GITHUB_EVENT_NAME: 'push' }, execGit }),
+    ).toThrow(/Cannot resolve a base ref/);
+  });
+
+  it('warns and continues comparing against HEAD when no base resolves outside CI', () => {
+    const execGit = (cmd: string) => {
+      if (cmd.includes('merge-base')) throw new Error('no merge base');
+      if (cmd.includes('diff --name-only')) return '';
+      throw new Error(`unexpected command: ${cmd}`);
+    };
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = findStaleRoutes(routes, { env: {}, execGit });
+      expect(result).toEqual([]);
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not flag a route when only one of its two baseline files changed', () => {
+    const twoBaselineRoute = {
+      name: 'login',
+      sourceFiles: ['src/login.tsx'],
+      baselineFiles: ['snap/login-chromium-darwin.png', 'snap/login-Mobile-Chrome-darwin.png'],
+    };
+    const execGit = () => 'src/login.tsx\nsnap/login-Mobile-Chrome-darwin.png\n';
+    expect(findStaleRoutes([twoBaselineRoute], { baseRef: 'main', execGit })).toEqual([]);
   });
 
   it('flags a real repo route via a real git diff against the empty tree, proving the real shell-out and path matching work end to end', () => {

@@ -149,6 +149,29 @@ describe('resolveBaseRef', () => {
     expect(ref).toBe('fallback_merge_base');
   });
 
+  it('returns HEAD without falling through to the generic search when both PR candidates fail', () => {
+    // The base branch is deliberately not `main`, so the generic local-dev
+    // search would resolve a ref that has nothing to do with this PR's target.
+    // Falling through therefore produces a silently wrong base rather than the
+    // `HEAD` that callers running under CI fail closed on.
+    const execGit = vi.fn().mockImplementation((cmd: string) => {
+      if (cmd === 'git merge-base origin/release-1.x HEAD') {
+        throw new Error('Not a valid object name origin/release-1.x');
+      }
+      if (cmd === 'git merge-base release-1.x HEAD') {
+        throw new Error('Not a valid object name release-1.x');
+      }
+      if (cmd === 'git merge-base origin/main HEAD') {
+        return 'unrelated_main_merge_base\n';
+      }
+      throw new Error(`Unexpected command: ${cmd}`);
+    });
+
+    const ref = resolveBaseRef({ GITHUB_BASE_REF: 'release-1.x' }, execGit);
+    expect(ref).toBe('HEAD');
+    expect(execGit).not.toHaveBeenCalledWith('git merge-base origin/main HEAD');
+  });
+
   it('resolves GITHUB_BEFORE on push events when it is a valid commit SHA', () => {
     const execGit = vi.fn().mockImplementation((cmd: string) => {
       if (cmd === 'git rev-parse --verify commit_before^{commit}') {

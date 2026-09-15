@@ -103,7 +103,10 @@ function defaultExecGit(cmd: string): string {
  *
  * Precedence:
  * 1. CI Pull Request: merge base of `origin/<GITHUB_BASE_REF>` and HEAD,
- *    falling back to the local `<GITHUB_BASE_REF>` branch.
+ *    falling back to the local `<GITHUB_BASE_REF>` branch. If neither
+ *    resolves, degrades to `HEAD` immediately rather than falling through
+ *    to step 3's generic search, for callers to fail closed on — the same
+ *    reason step 2 refuses to degrade past its own failure.
  * 2. CI Push: `GITHUB_BEFORE` (a valid, non-zero commit SHA). After a push
  *    `origin/main` points at HEAD itself, so a merge-base against it is useless
  *    — if `GITHUB_BEFORE` cannot be resolved or is all-zeros (initial push)
@@ -129,6 +132,12 @@ export function resolveBaseRef(
         // try the next candidate
       }
     }
+    // Both PR-specific candidates failed: refuse to fall through to the
+    // generic local-dev search below, which could silently resolve to an
+    // unrelated branch that has nothing to do with this PR's actual target.
+    // Return 'HEAD' and let callers running under CI fail closed, the same
+    // refusal-to-degrade the push branch below already has.
+    return 'HEAD';
   }
 
   // 2. CI Push event with a previous commit SHA
