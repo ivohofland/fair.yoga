@@ -161,4 +161,14 @@ describe('fetchLatestDigest', () => {
     await expect(promise).rejects.toBeInstanceOf(RegistryUnreachableError);
     await expect(promise).rejects.toThrow('terminated');
   });
+
+  it('preserves the original error as cause when it has no deeper cause of its own (e.g. AbortSignal.timeout firing)', async () => {
+    const timeoutError = new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    stubFetch(() => Promise.reject(timeoutError));
+
+    const promise = fetchLatestDigest('postgres', '16-alpine');
+
+    await expect(promise).rejects.toBeInstanceOf(RegistryUnreachableError);
+    await expect(promise).rejects.toMatchObject({ cause: timeoutError });
+  });
 });
