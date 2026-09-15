@@ -57,9 +57,8 @@ describe('isUpcomingRegistration', () => {
   });
 
   /**
-   * THE BUG (#598). Before this predicate existed, `status === 'open'` alone
-   * put a cancelled class under Upcoming forever, because cancellation never
-   * changes `Class.status` (#327).
+   * A class cancelled while `open` still reports `status === 'open'` (#327) —
+   * this predicate must not trust status alone for a cancelled class.
    */
   it('an open class cancelled in the past is no longer upcoming', () => {
     expect(
