@@ -2,7 +2,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import {
-  checkServiceImageFreshness,
   countImageKeyLines,
   extractImageReferences,
   groupByImageTag,
@@ -10,6 +9,7 @@ import {
   type ImagePin,
 } from '../src/lib/service-image-freshness';
 import { fetchLatestDigest } from '../src/lib/service-image-registry';
+import { checkGroups } from '../src/lib/service-image-check';
 
 const WORKFLOWS_DIR = '.github/workflows';
 
@@ -90,35 +90,7 @@ async function main(): Promise<void> {
 
   const byImageTag = groupByImageTag(pins);
 
-  let anyStale = false;
-  let skippedGroups = 0;
-  for (const [key, group] of byImageTag) {
-    const { image, tag } = group[0]!;
-    let latest: string;
-    try {
-      latest = await fetchLatestDigest(image, tag);
-    } catch (err) {
-      const cause = err instanceof Error && err.cause ? ` — ${String(err.cause)}` : '';
-      skippedGroups++;
-      console.log(
-        `::warning::Could not reach the registry to check ${key}'s latest digest (${err instanceof Error ? err.message : String(err)}${cause}) — skipping.`,
-      );
-      continue;
-    }
-
-    for (const pin of group) {
-      const result = checkServiceImageFreshness(pin.digest, latest);
-      if (result.fresh) {
-        console.log(`✓ ${pin.file}: ${key}@${pin.digest} matches the registry's latest.`);
-      } else {
-        anyStale = true;
-        console.error(
-          `${pin.file}: ${key} is pinned at ${result.pinned}; the registry's latest is ${result.latest}. ` +
-            `Review whether to bump the digest (see docs/supply-chain.md, "The database image").`,
-        );
-      }
-    }
-  }
+  const { anyStale, skippedGroups } = await checkGroups(byImageTag, fetchLatestDigest);
 
   if (skippedGroups === byImageTag.size) {
     console.log(`::warning::All ${skippedGroups} image group(s) were unreachable — this run verified nothing.`);

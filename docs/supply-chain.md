@@ -852,16 +852,6 @@ every image this repo pins this way is the unnamespaced `postgres` image
 from Docker Hub, but worth knowing before pinning a differently-sourced
 image the same way.
 
-The script's two pieces of orchestration logic — the registry auth+manifest
-fetch, and grouping parsed pins by `image:tag` so a repeated reference only
-triggers one fetch — were extracted into `src/lib/service-image-registry.ts`
-and `src/lib/service-image-freshness.ts` respectively (#608), so both are
-unit-tested (`src/lib/service-image-registry.test.ts`,
-`src/lib/service-image-freshness.test.ts`) the same way this repo tests
-every other script's pure/testable logic. The registry fetch is genuine I/O
-and lives in its own file rather than in `service-image-freshness.ts`,
-whose docblock's "no I/O" claim stays true.
-
 All six `postgres:16-alpine` locations are covered now: two by the
 `docker-compose` Dependabot ecosystem, four by this script (2 + 4 = 6).
 
@@ -880,6 +870,21 @@ as a GitHub Actions `::warning::` annotation, so it surfaces on the step
 in the Checks UI even while the exit code stays 0 — and if every image
 group was unreachable in a given run, one further `::warning::` line says
 so explicitly, since that run verified nothing at all.
+
+Three pieces of the script's orchestration logic were extracted into
+`src/lib` for #608: the registry auth+manifest fetch
+(`src/lib/service-image-registry.ts`), grouping parsed pins by `image:tag`
+so a repeated reference only triggers one fetch
+(`src/lib/service-image-freshness.ts`), and the per-group freshness loop
+that wires the two together (`src/lib/service-image-check.ts`) — all three
+are now unit-tested (`src/lib/service-image-registry.test.ts`,
+`src/lib/service-image-freshness.test.ts`,
+`src/lib/service-image-check.test.ts`), the same shape this repo already
+uses for pure/testable script logic, with the registry fetch as the first
+case of that shape covering genuine I/O rather than pure parsing — its
+sibling `check-package-manager-freshness.ts` still has an untested inline
+fetch of its own. The registry fetch lives in its own file rather than in
+`service-image-freshness.ts`, whose docblock's "no I/O" claim stays true.
 
 Non-blocking for the same reason the package manager pin check above is:
 a registry hiccup, or a genuine upstream rebuild of `16-alpine`, is a

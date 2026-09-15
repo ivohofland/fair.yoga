@@ -69,6 +69,10 @@ export function parseImagePin(reference: string): ImagePin | null {
   return { image, tag, digest: `sha256:${digest}` };
 }
 
+// Generic over T so the script's own LocatedPin (image/tag/digest plus a
+// file field this module doesn't need to know about) passes through with
+// that extra field intact — this module stays ignorant of what a caller
+// attaches to an ImagePin.
 export function groupByImageTag<T extends ImagePin>(pins: readonly T[]): Map<string, T[]> {
   const groups = new Map<string, T[]>();
   for (const pin of pins) {
