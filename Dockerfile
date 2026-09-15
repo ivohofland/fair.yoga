@@ -8,8 +8,12 @@
 # Digest-pinned: `node:22-alpine` is a floating tag that can resolve to
 # different content on an unchanged Dockerfile. Dependabot's docker
 # ecosystem (dependabot.yml) keeps this digest current; docs/supply-chain.md
-# has the reasoning and the command that re-derives it.
-FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS deps
+# has the reasoning and the command that re-derives it. One base stage, not
+# one FROM per downstream stage, so there is exactly one line to bump.
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS base
+
+# ---------------------------------------------------------------------------
+FROM base AS deps
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY prisma ./prisma
@@ -46,9 +50,7 @@ COPY prisma ./prisma
 CMD ["pnpm", "exec", "prisma", "migrate", "deploy"]
 
 # ---------------------------------------------------------------------------
-# Same digest as the `deps` stage above — kept in sync by hand or by
-# Dependabot, never left to drift independently between the two stages.
-FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS runner
+FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000

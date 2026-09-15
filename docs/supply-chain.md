@@ -753,18 +753,24 @@ Either is a reason to fix rather than to note.
 ## The base image and the package manager binary
 
 Two artefacts execute in every build and sat outside every control above:
-`node:22-alpine` (both the `Dockerfile`'s `deps`/`build`/`migrate` chain and
-its `runner`) and pnpm itself, bootstrapped via `packageManager`. Neither is
-a lockfile entry, so `--frozen-lockfile`, `minimumReleaseAge`, and
-`pnpm audit` have nothing to say about either. #562.
+`node:22-alpine` (the `Dockerfile`) and pnpm itself, bootstrapped via
+`packageManager`. Neither is a lockfile entry, so `--frozen-lockfile`,
+`minimumReleaseAge`, and `pnpm audit` have nothing to say about either.
+#562. Reviewing #562's own PR turned up a third artefact in the same
+class — `postgres:16-alpine`, floating in six places, only two of which
+are closable the same way — covered separately below under
+*The database image*.
 
 ### The base image
 
-Covered two ways. `.github/dependabot.yml` gained a `docker` ecosystem
-entry, and both `FROM node:22-alpine` lines in the `Dockerfile` are pinned
-to a digest — `sha256:c610fc…a3aa32` (see the `Dockerfile` for the full
-value) — resolved 2026-09-15 straight from the registry rather than from
-whatever happened to be cached locally:
+Covered two ways: one digest, tracked by one Dependabot entry.
+`Dockerfile` has a single `base` stage — `FROM
+node:22-alpine@sha256:c610fc…a3aa32 AS base` (see the `Dockerfile` for the
+full value) — that both `deps` and `runner` build from, so there is exactly
+one line to bump rather than two that could drift apart by hand.
+`.github/dependabot.yml` gained a `docker` ecosystem entry to move it.
+Resolved 2026-09-15 straight from the registry rather than from whatever
+happened to be cached locally:
 
 ```bash
 TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull" \
@@ -778,9 +784,10 @@ That's the **manifest-list** digest — the response's `Content-Type` is
 `application/vnd.oci.image.index.v1+json`, not a single platform's
 `...image.manifest.v1+json` — which is the level that keeps the image
 multi-arch; Docker resolves the right per-platform manifest under it at
-pull time. Confirmed buildable both targets, 2026-09-15: `docker build -t
-fairyoga .` and `docker build --target migrate -t fairyoga-migrate .` both
-exit 0 against the pinned digest.
+pull time. Confirmed buildable both targets, 2026-09-15, including after
+collapsing to the single `base` stage: `docker build -t fairyoga .` and
+`docker build --target migrate -t fairyoga-migrate .` both exit 0 against
+the pinned digest.
 
 Neither half is enough alone. A digest pin with no tracking Dependabot
 entry freezes the wrong content forever; a Dependabot entry with no digest
@@ -798,6 +805,42 @@ bump past Node 25 — outside corepack's supported range, per the
 `Dockerfile`'s own comment on the `deps` stage — therefore arrives as a red
 CI run rather than a surprise on someone's laptop.
 
+### The database image
+
+`postgres:16-alpine` turned out to be floating in **six** places, found
+sweeping the whole repo rather than trusting #562's own two-artefact
+framing:
+
+```bash
+grep -rn 'image:\|^FROM ' Dockerfile docker-compose*.yml .github/workflows/*.yml
+```
+
+`docker-compose.yml:3`, `docker-compose.prod.yml:9` (the **production**
+database), and four GitHub Actions `services:` blocks —
+`.github/workflows/ci.yml:151`, `:234`, `:336`, and
+`.github/workflows/e2e-flake-repro.yml:87`.
+
+**Two of the six are covered, the same way as the base image.**
+`docker-compose.yml` and `docker-compose.prod.yml` are digest-pinned
+(`sha256:cf78e7…fc20685`, resolved 2026-09-15 the same way as `node`'s,
+against `library/postgres`) and tracked by a new `docker-compose`
+Dependabot ecosystem entry — a genuinely **separate** ecosystem from
+`docker`, confirmed against GitHub's ecosystem support table: `docker`
+scans `Dockerfile`s, `docker-compose` scans compose files, and neither
+scans the other's format.
+
+**The remaining four — the CI workflow `services:` blocks — are not
+covered, and can't be yet.** No Dependabot ecosystem scans a GitHub Actions
+`services:`/`container:` image reference at all: `github-actions` scans
+`uses:` action references only. This is an open upstream gap
+([dependabot-core#5819](https://github.com/dependabot/dependabot-core/issues/5819)),
+not a configuration mistake in this repo. Digest-pinning those four lines
+anyway would trade a visibly-floating tag for an invisibly-stale one — a
+pin with no tracking mechanism freezes silently, which is worse, not
+better, and is exactly why this file pairs a digest with a Dependabot
+entry everywhere else rather than shipping either alone. Tracked as #603,
+parented to #562.
+
 ### The package manager binary
 
 Checked, not gated. `scripts/check-package-manager-freshness.ts` (`pnpm run
@@ -806,19 +849,25 @@ check-package-manager-freshness`, wired as a non-blocking step in `checks`
 `registry.npmjs.org/<name>/latest`, and reports whether the pinned version
 matches. It compares by **equality alone, not semver ordering**
 (`src/lib/package-manager-freshness.ts`): the registry's `latest` dist-tag
-never points at an older release than what's already pinned, so there is
-nothing an ordering comparison catches that equality doesn't — reaching for
-a semver library here would be a dependency this supply-chain-hardening
-change has no need to add.
+is a mutable pointer a maintainer can move backward (to walk back a bad
+release), and a repo can also deliberately pin ahead of it — either way,
+any difference from `latest` is worth a look, and equality catches both
+directions where a `pinned < latest` ordering check would only catch one.
+No semver library needed for a check this narrow.
 
 Non-blocking for the same reason the advisory audit above is: a stale pnpm
 pin isn't a reason to stop a PR that didn't touch it. An unreachable
 registry must not read as "stale" either — the script logs and returns
 (exit 0) on a fetch failure, distinctly from the exit 1 it uses only once a
-mismatch is confirmed.
+mismatch is confirmed. A present-but-unparseable pin is a third case,
+distinct from both: it gets the same exit 1 as a confirmed-stale pin
+(loud, since it's a real complaint) rather than the silent "nothing to
+check" an absent field gets — see the mutation list below for why that
+distinction is load-bearing.
 
-Mutation-tested 2026-09-15 against the real `package.json`, each mutation
-restored before the next:
+Mutation-tested against the real `package.json`, each mutation restored
+before the next — 2026-09-15, and again the same day once PR review turned
+up three more paths worth proving:
 
 - Pinning `pnpm@12.4.1+sha512.deadbeef` (the real registry version, a
   fabricated hash) reported fresh and exited 0. Run via `tsx` directly
@@ -830,10 +879,37 @@ restored before the next:
 - Pointing the pin at a nonexistent package name 404s the registry lookup,
   exercising the same "don't report stale" path a genuine outage would:
   the script logged the skip message and exited 0.
-- The real, unmutated pin reported **stale — pinned `12.3.4`, registry
-  latest `12.4.1`** and exited 1: a live positive case, not a constructed
-  one. That gap is real and current as of this measurement; bumping it is
-  out of scope for a coverage issue and is left for a follow-up.
+- Pinning `"pnpm"` (no version) reported the unparseable-pin message and
+  exited 1 — a real complaint, not the silent "nothing to check" a bare
+  absent field gets. Without this, a future corepack field-format change
+  would disable the whole check with zero signal — the same failure mode
+  `checkParserCoverage` (`lockfile-policy.ts`) already guards against for
+  the lockfile parser, applied here.
+- The response-shape guard (`typeof version !== 'string'`) can't be
+  mutation-tested against the live registry — nothing on it serves
+  `/pnpm/latest` without a `version` field on request. Verified instead
+  against five representative malformed shapes (`{}`, `{version: 123}`,
+  `{version: ''}`, `null`, `{notversion: '1.2.3'}`): all five correctly
+  route to the skip path; only a genuine `{version: '<string>'}` passes.
+  Without the guard, any of those shapes would have silently set
+  `latest = undefined` and produced a **false stale finding** — confirmed
+  by tracing `checkPackageManagerFreshness('12.3.4', undefined)` →
+  `{ fresh: false, … }` — the exact failure the "unreachable registry must
+  not read as stale" design promises against.
+- `err.cause`: confirmed Node's `fetch` puts the diagnostic detail there,
+  not in `err.message`, for a real DNS failure
+  (`getaddrinfo ENOTFOUND …` against a nonexistent host) — `err.message`
+  alone is just `"fetch failed"`. The skip message now includes both.
+
+**The pin itself: bumped to `pnpm@12.4.1`** (the version current as of
+this measurement) as part of this same change, with the real
+corepack-verified hash — `corepack use pnpm@12.4.1` computed it, not a
+hand-typed value. `pnpm install --frozen-lockfile` against the existing,
+unchanged `pnpm-lock.yaml` still passes under it, and the whole
+`pnpm run verify` suite still passes. The check reports fresh from the
+moment this change merges rather than shipping red — a non-blocking check
+that starts out permanently red trains reviewers to stop reading it, which
+is the opposite of what a non-blocking check is for.
 
 ## Not yet in place
 
@@ -860,7 +936,10 @@ Still open work — worth a follow-up issue, not a line added on unverified
 faith.
 
 **#562 (the base image and the pnpm binary) is now absorbed** — see
-*The base image and the package manager binary* above.
+*The base image and the package manager binary* above. Reviewing its own
+PR found a third artefact in the same class, `postgres:16-alpine`; four of
+its six locations can't be covered by anything in this repo today — see
+*The database image*, above, and **#603**.
 
 **#535 (commit-pinned GitHub Actions)** is unaffected by this migration and
 stays open. See #531.

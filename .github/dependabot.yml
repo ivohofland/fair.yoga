@@ -1,5 +1,5 @@
-# Keeps the workflow actions and npm dependencies from silently aging.
-# Monthly + grouped: one tidy PR per ecosystem, not a weekly drizzle.
+# Keeps every ecosystem below from silently aging. Monthly; a multi-package
+# ecosystem groups minor/patch into one tidy PR rather than a weekly drizzle.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -33,17 +33,30 @@ updates:
     cooldown:
       default-days: 8
 
-  # Dockerfile is the only place a floating base-image tag lives, and
-  # nothing else in this repo tracks it (#562). Both `FROM node:22-alpine`
-  # lines are digest-pinned; with a digest present, Dependabot proposes tag
-  # and digest together, so this entry is what keeps the pin from going
-  # stale rather than what introduces it.
+  # Tracks the Dockerfile's base-image tag (#562). With a digest present,
+  # Dependabot proposes tag and digest together, so this entry is what keeps
+  # the pin from going stale rather than what introduces it.
+  # docs/supply-chain.md ("The base image and the package manager binary")
+  # has the reasoning, the current state of every floating image tag this
+  # repo has, and which of them this entry does and doesn't reach.
   #
   # `default-days: 8` here isn't tied to a setting the way the npm entry's
   # is to `minimumReleaseAge` — Docker Hub has no equivalent release-age
   # gate this repo enforces — it's the same general
   # let-a-new-artifact-age-briefly posture, applied for consistency.
   - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 8
+
+  # docker-compose is a separate ecosystem from docker above — it does not
+  # scan Dockerfiles, and docker above does not scan compose files. Covers
+  # docker-compose.yml and docker-compose.prod.yml, both of which pin
+  # postgres by digest. docs/supply-chain.md has what this entry does not
+  # reach (the postgres images CI's workflow `services:` blocks pull).
+  - package-ecosystem: docker-compose
     directory: /
     schedule:
       interval: monthly
