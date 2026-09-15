@@ -537,6 +537,11 @@ export function priorDispatchFor(row: {
  * invitation from someone they have never met is not a service message
  * about their own booking, so it does not bypass their opt-out the way a
  * booking confirmation does.
+ *
+ * `priorDispatch` is read by the teacher-account branch alone: a teacher
+ * recipient's fallback email consults no preference, so a resend that
+ * repeated would reach a teacher-only account every time. Students keep their
+ * opt-out and their decline (#172).
  */
 export async function notifyInvitee(
   db: PrismaClient,
