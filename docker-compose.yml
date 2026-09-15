@@ -1,6 +1,9 @@
 services:
   db:
-    image: postgres:16-alpine
+    # Digest-pinned — see docs/supply-chain.md ("The base image and the
+    # package manager binary") for why, and dependabot.yml's docker-compose
+    # entry for what keeps it current.
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     # Come back after a Docker daemon restart or reboot, but respect a
     # deliberate `docker compose stop` — otherwise the dev server's scheduler
     # sweeps fail every minute until someone notices the container is gone.

@@ -96,9 +96,9 @@ jobs:
       # Visible but non-blocking, same shape as the advisory audit above.
       # Corepack verifies packageManager's pinned hash on install, but
       # nothing bumps it — Dependabot's npm ecosystem does not update this
-      # field (dependabot-core#4830 is still open, confirmed 2026-09-15).
-      # #562. docs/supply-chain.md has the reasoning and why an equality
-      # check against the registry's latest is enough here.
+      # field (dependabot-core#4830 was still open as of 2026-09-15). #562.
+      # docs/supply-chain.md has the reasoning and why an equality check
+      # against the registry's latest is enough here.
       - name: Package manager pin freshness
         run: pnpm run check-package-manager-freshness
         continue-on-error: true
@@ -111,10 +111,10 @@ jobs:
       - name: Lockfile supply-chain policy (registry source + integrity)
         run: pnpm run check-lockfile
 
-      # The signature-verification step #534 asked for. Unlike the two steps
-      # above, this checks the packages actually installed against the
-      # registry's own signatures — a property neither the advisory audit
-      # nor the lockfile-shape check covers. It fetches signature data over
+      # The signature-verification step #534 asked for. Unlike the advisory
+      # audit and the lockfile-shape check above, this checks the packages
+      # actually installed against the registry's own signatures — a
+      # property neither of those covers. It fetches signature data over
       # the network, so unlike the lockfile-shape check above it can still
       # redden on an untouched PR if the registry is unreachable or
       # rate-limits the request.

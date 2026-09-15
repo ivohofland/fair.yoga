@@ -9,6 +9,17 @@ async function main(): Promise<void> {
 
   const pin = parsePackageManagerPin(pkg.packageManager);
   if (!pin) {
+    if (pkg.packageManager) {
+      // Present but unparseable is a real complaint, not "nothing to check"
+      // — a future corepack format change must not silently disable this
+      // check. Loud (exitCode 1) even though non-blocking, same as a
+      // confirmed-stale pin.
+      console.error(
+        `Could not parse packageManager pin "${pkg.packageManager}" — expected "<name>@<version>". Review src/lib/package-manager-freshness.ts's PIN_PATTERN against corepack's current field format.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
     console.log('No packageManager pin found in package.json — nothing to check.');
     return;
   }
@@ -19,11 +30,16 @@ async function main(): Promise<void> {
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) throw new Error(`registry responded ${res.status}`);
-    const data: { version: string } = await res.json();
-    latest = data.version;
+    const data: unknown = await res.json();
+    const version = (data as { version?: unknown } | null)?.version;
+    if (typeof version !== 'string' || version === '') {
+      throw new Error(`registry response had no "version" field: ${JSON.stringify(data)}`);
+    }
+    latest = version;
   } catch (err) {
+    const cause = err instanceof Error && err.cause ? ` — ${String(err.cause)}` : '';
     console.log(
-      `Could not reach the registry to check ${pin.name}'s latest version (${err instanceof Error ? err.message : String(err)}) — skipping.`,
+      `Could not reach the registry to check ${pin.name}'s latest version (${err instanceof Error ? err.message : String(err)}${cause}) — skipping.`,
     );
     return;
   }
@@ -35,7 +51,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log(
+  console.error(
     `${pin.name}@${pin.version} is pinned in package.json; the registry's latest is ${latest}. ` +
       `Review whether to bump the packageManager pin (\`corepack use ${pin.name}@${latest}\`). ` +
       'See docs/supply-chain.md for why this check is visible but non-blocking.',
