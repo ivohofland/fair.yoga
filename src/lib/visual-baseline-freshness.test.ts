@@ -5,7 +5,6 @@ import {
   extractSnapshotStems,
   findCoverageGaps,
   findStaleRoutes,
-  lastCommitTime,
 } from './visual-baseline-freshness';
 
 describe('extractSnapshotStems', () => {
@@ -75,84 +74,58 @@ describe('findCoverageGaps', () => {
   });
 });
 
-describe('lastCommitTime', () => {
-  it('returns the timestamp git log reports, trimmed', () => {
-    const execGit = () => '1700000000\n';
-    expect(lastCommitTime('some/file.tsx', execGit)).toBe(1700000000);
-  });
-
-  it('returns null when git log finds no history for the path', () => {
-    const execGit = () => '';
-    expect(lastCommitTime('never/committed.tsx', execGit)).toBeNull();
-  });
-
-  it('returns null when the git command throws', () => {
-    const execGit = () => {
-      throw new Error('not a git repository');
-    };
-    expect(lastCommitTime('some/file.tsx', execGit)).toBeNull();
-  });
-
-  it('double-quotes the path so parentheses in real route-group paths are not shell-interpreted', () => {
-    // Real repo, real default execGit, real file with '(' and ')' in its path.
-    // If lastCommitTime ever stops quoting the path, this either throws
-    // (the shell chokes on the unmatched paren) or silently returns null
-    // (glob expands to nothing) instead of a real, plausible timestamp.
-    const time = lastCommitTime('src/app/(public)/login/page.tsx');
-    expect(time).not.toBeNull();
-    expect(time as number).toBeGreaterThan(1735689600); // 2025-01-01, sanity floor
-  });
-});
-
 describe('findStaleRoutes', () => {
-  it('flags a route whose source changed after its baseline was last updated', () => {
-    const routes = [
-      { name: 'login', sourceFiles: ['src/login.tsx'], baselineFiles: ['snap/login.png'] },
-    ];
-    const times: Record<string, string> = {
-      'src/login.tsx': '2000',
-      'snap/login.png': '1000',
-    };
-    const execGit = (cmd: string) => {
-      const path = /-- "(.+)"/.exec(cmd)?.[1] ?? '';
-      return times[path] ?? '';
-    };
-    const stale = findStaleRoutes(routes, execGit);
-    expect(stale).toHaveLength(1);
-    expect(stale[0]!).toMatchObject({ name: 'login', reason: 'stale' });
+  const routes = [
+    { name: 'login', sourceFiles: ['src/login.tsx'], baselineFiles: ['snap/login.png'] },
+  ];
+
+  it('flags a route whose source changed in the diff without a matching baseline update', () => {
+    const execGit = (cmd: string) => (cmd.includes('diff --name-only') ? 'src/login.tsx\n' : '');
+    const stale = findStaleRoutes(routes, { baseRef: 'main', execGit });
+    expect(stale).toEqual([
+      {
+        name: 'login',
+        detail:
+          'source changed in this diff without a matching baseline update. Regenerate with: pnpm exec playwright test visual --update-snapshots',
+      },
+    ]);
   });
 
-  it('does not flag a route whose baseline is newer than its source', () => {
-    const routes = [
-      { name: 'login', sourceFiles: ['src/login.tsx'], baselineFiles: ['snap/login.png'] },
-    ];
-    const times: Record<string, string> = {
-      'src/login.tsx': '1000',
-      'snap/login.png': '2000',
-    };
-    const execGit = (cmd: string) => {
-      const path = /-- "(.+)"/.exec(cmd)?.[1] ?? '';
-      return times[path] ?? '';
-    };
-    expect(findStaleRoutes(routes, execGit)).toEqual([]);
+  it('does not flag a route whose source and baseline both changed in the diff', () => {
+    const execGit = () => 'src/login.tsx\nsnap/login.png\n';
+    expect(findStaleRoutes(routes, { baseRef: 'main', execGit })).toEqual([]);
   });
 
-  it('flags a route with an untracked path instead of treating it as fresh', () => {
-    const routes = [
-      { name: 'login', sourceFiles: ['src/login.tsx'], baselineFiles: ['snap/login.png'] },
-    ];
-    const execGit = (cmd: string) => (cmd.includes('src/login.tsx') ? '1000' : '');
-    const stale = findStaleRoutes(routes, execGit);
-    expect(stale).toHaveLength(1);
-    expect(stale[0]!.reason).toBe('untracked');
-    expect(stale[0]!.detail).toContain('snap/login.png');
+  it('does not flag a route the diff never touches', () => {
+    const execGit = () => 'some/unrelated/file.ts\n';
+    expect(findStaleRoutes(routes, { baseRef: 'main', execGit })).toEqual([]);
   });
 
-  it('treats equal commit times as fresh, not stale (same-commit edit)', () => {
-    const routes = [
-      { name: 'login', sourceFiles: ['src/login.tsx'], baselineFiles: ['snap/login.png'] },
-    ];
-    const execGit = () => '5000';
-    expect(findStaleRoutes(routes, execGit)).toEqual([]);
+  it('does not flag a route whose baseline changed but source did not (a deliberate baseline refresh)', () => {
+    const execGit = () => 'snap/login.png\n';
+    expect(findStaleRoutes(routes, { baseRef: 'main', execGit })).toEqual([]);
+  });
+
+  it('throws when CI env vars are set but base resolution degrades to HEAD', () => {
+    const execGit = () => {
+      throw new Error('no merge base available');
+    };
+    expect(() =>
+      findStaleRoutes(routes, {
+        env: { GITHUB_BASE_REF: 'main', GITHUB_EVENT_NAME: 'pull_request' },
+        execGit,
+      }),
+    ).toThrow(/Cannot resolve a base ref/);
+  });
+
+  it('validates the real ROUTE_BASELINES + resolveBaseRef wiring against this actual repo', () => {
+    // Real execGit (the default), real `git diff` against the immediately
+    // preceding commit — proves the default wiring actually shells out
+    // correctly end to end, not just the pure comparison logic above. Does
+    // not assert which routes are stale (that depends on what the parent
+    // commit touched, which changes over time) — only that it runs and
+    // returns an array.
+    const result = findStaleRoutes(ROUTE_BASELINES, { baseRef: 'HEAD~1' });
+    expect(Array.isArray(result)).toBe(true);
   });
 });
