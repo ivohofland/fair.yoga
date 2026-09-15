@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { checkGroups } from './service-image-check';
+import { RegistryUnreachableError } from './service-image-registry';
 
 function pin(image: string, tag: string, digest: string, file: string) {
   return { image, tag, digest, file };
@@ -17,10 +18,10 @@ describe('checkGroups', () => {
     expect(fetchDigest).toHaveBeenCalledWith('postgres', '16-alpine');
   });
 
-  it('skips a group whose fetch rejects, without throwing, and counts it as skipped', async () => {
+  it('skips a group whose fetch rejects with a RegistryUnreachableError, without throwing, and counts it as skipped', async () => {
     const group = [pin('postgres', '16-alpine', 'sha256:aaa', 'a.yml')];
     const byImageTag = new Map([['postgres:16-alpine', group]]);
-    const fetchDigest = vi.fn().mockRejectedValue(new Error('registry unreachable'));
+    const fetchDigest = vi.fn().mockRejectedValue(new RegistryUnreachableError('registry unreachable'));
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const result = await checkGroups(byImageTag, fetchDigest);
@@ -29,6 +30,32 @@ describe('checkGroups', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('::warning::'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('registry unreachable'));
     logSpy.mockRestore();
+  });
+
+  it('propagates a rejection that is not a RegistryUnreachableError, rather than treating it as skippable', async () => {
+    const group = [pin('postgres', '16-alpine', 'sha256:aaa', 'a.yml')];
+    const byImageTag = new Map([['postgres:16-alpine', group]]);
+    const unexpected = new SyntaxError('Unexpected token < in JSON at position 0');
+    const fetchDigest = vi.fn().mockRejectedValue(unexpected);
+
+    await expect(checkGroups(byImageTag, fetchDigest)).rejects.toBe(unexpected);
+  });
+
+  it('stops processing further groups once an unexpected error propagates, rather than continuing past it', async () => {
+    const failingGroup = [pin('alpine', 'latest', 'sha256:aaa', 'a.yml')];
+    const neverGroup = [pin('redis', '7', 'sha256:same', 'b.yml')];
+    const byImageTag = new Map([
+      ['alpine:latest', failingGroup],
+      ['redis:7', neverGroup],
+    ]);
+    const unexpected = new SyntaxError('Unexpected token < in JSON at position 0');
+    const fetchDigest = vi.fn((image: string) => {
+      if (image === 'alpine') return Promise.reject(unexpected);
+      return Promise.resolve('sha256:same');
+    });
+
+    await expect(checkGroups(byImageTag, fetchDigest)).rejects.toBe(unexpected);
+    expect(fetchDigest).not.toHaveBeenCalledWith('redis', '7');
   });
 
   it('reports anyStale when a fetched digest differs from a pin, and does not let a skipped group affect a sibling group', async () => {
@@ -40,7 +67,7 @@ describe('checkGroups', () => {
     ]);
     const fetchDigest = vi.fn((image: string) => {
       if (image === 'postgres') return Promise.resolve('sha256:new');
-      return Promise.reject(new Error('unreachable'));
+      return Promise.reject(new RegistryUnreachableError('unreachable'));
     });
 
     const result = await checkGroups(byImageTag, fetchDigest);
@@ -68,7 +95,7 @@ describe('checkGroups', () => {
       ['redis:7', freshGroup],
     ]);
     const fetchDigest = vi.fn((image: string) => {
-      if (image === 'alpine') return Promise.reject(new Error('unreachable'));
+      if (image === 'alpine') return Promise.reject(new RegistryUnreachableError('unreachable'));
       if (image === 'postgres') return Promise.resolve('sha256:new');
       return Promise.resolve('sha256:same');
     });
