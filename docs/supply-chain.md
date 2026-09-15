@@ -844,8 +844,7 @@ files already carry, and `scripts/check-service-image-freshness.ts`
 `ci.yml`) fetches the tag's current digest from the registry and
 reports when it no longer matches the pin — a scripted stand-in for
 the Dependabot PR this ecosystem gap can't produce. The fetch itself
-only resolves against
-Docker Hub (`registry-1.docker.io`): a reference to any other registry —
+only resolves against Docker Hub (`registry-1.docker.io`): a reference to any other registry —
 including one with an explicit host and port — parses fine but its
 freshness check is silently skipped (logged as "could not reach the
 registry", not a crash or a false-stale); not a live concern today, since
@@ -866,7 +865,11 @@ is neither of those: an unreachable registry is not treated as stale —
 the script logs the skip and returns (exit 0) for that image group,
 distinct from the exit 1 used only once a mismatch or an unparseable pin
 is confirmed, the same distinction `check-package-manager-freshness.ts`
-makes for the pnpm pin.
+makes for the pnpm pin. A skip is not silent, though: the script logs it
+as a GitHub Actions `::warning::` annotation, so it surfaces on the step
+in the Checks UI even while the exit code stays 0 — and if every image
+group was unreachable in a given run, one further `::warning::` line says
+so explicitly, since that run verified nothing at all.
 
 Non-blocking for the same reason the package manager pin check above is:
 a registry hiccup, or a genuine upstream rebuild of `16-alpine`, is a
