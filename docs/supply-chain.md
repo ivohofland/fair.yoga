@@ -757,9 +757,9 @@ Two artefacts execute in every build and sat outside every control above:
 `packageManager`. Neither is a lockfile entry, so `--frozen-lockfile`,
 `minimumReleaseAge`, and `pnpm audit` have nothing to say about either.
 #562. Reviewing #562's own PR turned up a third artefact in the same
-class — `postgres:16-alpine`, floating in six places, only two of which
-are closable the same way — covered separately below under
-*The database image*.
+class — `postgres:16-alpine`, then floating in six places, only two of
+which were closable the same way at the time — covered separately below
+under *The database image*.
 
 ### The base image
 
@@ -841,9 +841,10 @@ else in this file: the four lines
 are now digest-pinned to the same `sha256:cf78e7…fc20685` the compose
 files already carry, and `scripts/check-service-image-freshness.ts`
 (`pnpm run check-service-image-freshness`, non-blocking in `checks` —
-`ci.yml`) fetches that digest's tag from the registry and reports when
-the pin no longer matches — a scripted stand-in for the Dependabot PR
-this ecosystem gap can't produce. The fetch itself only resolves against
+`ci.yml`) fetches the tag's current digest from the registry and
+reports when it no longer matches the pin — a scripted stand-in for
+the Dependabot PR this ecosystem gap can't produce. The fetch itself
+only resolves against
 Docker Hub (`registry-1.docker.io`): a reference to any other registry —
 including one with an explicit host and port — parses fine but its
 freshness check is silently skipped (logged as "could not reach the

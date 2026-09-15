@@ -39,6 +39,21 @@ export function extractImageReferences(yamlContent: string): string[] {
     .filter((ref) => ref !== '');
 }
 
+// A loose count of every line whose trimmed key is exactly "image" —
+// regardless of whether a value follows on the same line. Used only to
+// cross-check extractImageReferences: that function requires the value on
+// the same physical line, but YAML also permits an indented continuation
+// line, which extractImageReferences currently cannot see at all. A
+// mismatch between this count and extractImageReferences's result means an
+// image: key produced no entry whatsoever — not merely unparseable, silently
+// invisible — and scripts/check-service-image-freshness.ts treats that as a
+// loud failure rather than letting it vanish.
+const IMAGE_KEY_LINE_PATTERN = /^[ \t]*image:/gm;
+
+export function countImageKeyLines(yamlContent: string): number {
+  return [...yamlContent.matchAll(IMAGE_KEY_LINE_PATTERN)].length;
+}
+
 function stripCommentAndQuotes(raw: string): string {
   const withoutComment = raw.replace(TRAILING_COMMENT_PATTERN, '').trim();
   const quoted = QUOTED_PATTERN.exec(withoutComment);
