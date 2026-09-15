@@ -44,11 +44,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # fetch-depth: 0 is load-bearing for the migration check below: it
-          # needs refs/remotes/origin/main (PRs) and the full history so
-          # GITHUB_BEFORE resolves on pushes. Without it the base cannot be
-          # resolved and the migration check fails the job rather than passing
-          # — it deliberately refuses to compare HEAD to HEAD.
+          # fetch-depth: 0 is load-bearing for two static checks below: the
+          # migration-immutability check needs refs/remotes/origin/main (PRs)
+          # and the full history so GITHUB_BEFORE resolves on pushes; the
+          # visual-baseline-freshness check needs `git log` to see the real
+          # last-modified commit for each route's source and baseline files,
+          # which a shallow clone cannot distinguish from the tip commit
+          # (every job but this one gets GitHub's default depth-1 checkout).
+          # Without full history the migration check fails the job rather
+          # than passing — it deliberately refuses to compare HEAD to HEAD —
+          # and the freshness check would silently pass everything.
           fetch-depth: 0
 
       # Node, the corepack-pinned pnpm, the store cache and the frozen install.
@@ -64,6 +69,9 @@ jobs:
         env:
           GITHUB_BEFORE: ${{ github.event.before }}
         run: pnpm run check-migrations
+
+      - name: Check visual baseline freshness
+        run: pnpm run check-visual-baseline-freshness
 
       - name: Validate Prisma schema
         run: pnpm exec prisma validate

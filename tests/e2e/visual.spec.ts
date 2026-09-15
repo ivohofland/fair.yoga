@@ -18,6 +18,12 @@ import { createClassFixture } from '../class-fixtures';
  * Baselines are platform-suffixed (-darwin/-linux). When a platform has
  * no baselines (currently CI/linux), the suite skips itself rather than
  * failing — regenerate with:  pnpm exec playwright test visual --update-snapshots
+ *
+ * A baseline going stale on macOS (the only platform with baselines, and
+ * this suite's only real coverage) is caught separately by
+ * `pnpm run check-visual-baseline-freshness`, which runs in CI's `checks`
+ * job using git history rather than rendering anything — see
+ * src/lib/visual-baseline-freshness.ts.
  */
 
 const snapshotDir = path.join(__dirname, 'visual.spec.ts-snapshots');
