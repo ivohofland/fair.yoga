@@ -323,8 +323,7 @@ export class AlreadyErasedError extends Error {
  * - `Invitation` rows naming this address anonymized in place, keeping the
  *   teacher's filing state without the identity behind it
  * - `TeacherBlock` rows left standing on purpose — they are what carries the
- *   subject's refusal past that anonymization; the tension is written down at
- *   the site and in `docs/data-model.md`
+ *   subject's refusal past that anonymization (#171, `docs/data-model.md`)
  * - upcoming registrations cancelled (teachers see the spot free up);
  *   charged/past registrations and payments remain, attributed to
  *   "Deleted Student"
@@ -632,23 +631,13 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       data: { lastNotifiedEmail: anonymizedEmail },
     });
 
-    // `TeacherBlock` is DELIBERATELY not touched here, and the omission is
-    // undecided rather than settled — see `docs/data-model.md`
-    // (TeacherBlock), which has the rule these rows follow. They hold the
-    // subject's refusals whichever way they said no, so what to do with them
-    // here is one question rather than one per route. They are also what the scrub above leans on: that write
-    // frees `(teacherId, email)`, and this row is the whole of what still
-    // stands between the subject and mail from a teacher they refused.
-    // Scrubbing the address breaks that, because every
-    // lookup is `teacherId` + exact `email` and the erased person's real
-    // mailbox still exists in the world: the teacher could re-type that
-    // address and the invitation would actually be delivered. Retaining it
-    // keeps a plaintext address for someone who asked to be forgotten, on a
-    // row they can no longer reach to clear (the student profile the unlink
-    // UI hangs off is erased below — not the account, which survives with its
-    // email and sessions intact whenever a live teacher profile still uses
-    // it). `CLAUDE.md` parks GDPR/legal review for proper consultation and
-    // this is exactly that call. Do not resolve it from in here.
+    // `TeacherBlock` is deliberately not touched: each row is the subject's
+    // refusal of one teacher, kept as a suppression entry (#171). The scrub
+    // above frees `(teacherId, email)`, so this row is then all that stands
+    // between the subject's real mailbox and mail from a teacher they refused
+    // — and every lookup is `teacherId` + exact `email`, so scrubbing it
+    // would silently disarm it. Why retention was chosen over scrubbing or
+    // hashing: `docs/data-model.md` (TeacherBlock).
     await tx.notification.deleteMany({ where: { recipientType: 'student', recipientId: studentId } });
     // Sessions and passkeys belong to the account. They die with the
     // erased profile unless a live teacher profile still uses the account.
@@ -1377,9 +1366,8 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // teacher whose blocks are gone has been silently un-refused by every
       // student who refused them, by either route — `docs/data-model.md`
       // (TeacherBlock) has which acts write one. Erring toward the refusal is
-      // the only direction that cannot hurt the person the block protects. The
-      // student-erasure side of the same question is genuinely open — see
-      // `deleteStudentAccount` above.
+      // the only direction that cannot hurt the person the block protects.
+      // Student erasure keeps them too — see `deleteStudentAccount` above.
       await tx.invitation.deleteMany({ where: { teacherId } });
       await tx.notification.deleteMany({ where: { recipientType: 'teacher', recipientId: teacherId } });
       // Sessions and passkeys belong to the account. They die with the
