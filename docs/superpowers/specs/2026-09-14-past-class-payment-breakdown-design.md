@@ -153,6 +153,15 @@ whole-class average, not a per-booking change, and it was judged acceptable on
 #433 and again on #576. The breakdown reads only the class's own snapshot and
 the student's own payment — never another student's registration.
 
+**Two students.** The average reaches further in a class of two: class total,
+own share and own tier give the sum of both tier ratios, so the other
+student's exact tier. Accepted (#576, 2026-09-15), because the breakdown opens
+no new channel: before the class, the price line (#433) prices a booked
+student against the registered tiers, padded with known tier-3 ratios, so the
+same sum is recoverable then. The breakdown adds only the final sum after
+completion, walk-ins included. The two-student case was not measured
+separately; #433's estimator measurement is the evidence.
+
 ## Testing
 
 - **Unit** (`src/lib/payment-breakdown.test.ts`): each gate condition hides on
