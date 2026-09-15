@@ -5,6 +5,7 @@ import {
   checkServiceImageFreshness,
   countImageKeyLines,
   extractImageReferences,
+  groupByImageTag,
   parseImagePin,
   type ImagePin,
 } from '../src/lib/service-image-freshness';
@@ -113,13 +114,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const byImageTag = new Map<string, LocatedPin[]>();
-  for (const pin of pins) {
-    const key = `${pin.image}:${pin.tag}`;
-    const group = byImageTag.get(key) ?? [];
-    group.push(pin);
-    byImageTag.set(key, group);
-  }
+  const byImageTag = groupByImageTag(pins);
 
   let anyStale = false;
   let skippedGroups = 0;

@@ -1,9 +1,10 @@
 /**
  * Pure functions over a Docker image reference — no I/O. Parses the
  * `<image>:<tag>@sha256:<digest>` shape this repo pins service-container
- * images to, and compares a pinned digest against one fetched elsewhere
- * (`scripts/check-service-image-freshness.ts`). Rationale and the measured
- * state: docs/supply-chain.md ("The database image").
+ * images to, groups references by image:tag, and compares a pinned digest
+ * against one fetched elsewhere (`scripts/check-service-image-freshness.ts`).
+ * Rationale and the measured state: docs/supply-chain.md ("The database
+ * image").
  */
 
 export interface ImagePin {
@@ -66,6 +67,17 @@ export function parseImagePin(reference: string): ImagePin | null {
   const [, image, tag, digest] = match;
   if (!image || !tag || !digest) return null;
   return { image, tag, digest: `sha256:${digest}` };
+}
+
+export function groupByImageTag<T extends ImagePin>(pins: readonly T[]): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const pin of pins) {
+    const key = `${pin.image}:${pin.tag}`;
+    const group = groups.get(key) ?? [];
+    group.push(pin);
+    groups.set(key, group);
+  }
+  return groups;
 }
 
 // Equality, not "does the tag still resolve here": a registry digest behind
