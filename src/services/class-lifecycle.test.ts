@@ -981,6 +981,52 @@ describe('completeClass (DB)', () => {
     await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
   });
 
+  it('formats negative teacher earnings with minus sign before euro sign in completion notification', async () => {
+    // Class with roomCost 40, minRate -4, 4 students -> pricing totalCost = 36 -> earnings = -4.00
+    const negClass = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      classType: 'Subsidized Flow',
+      date: new Date('2026-06-02'),
+      startTime: hhmmToTime('10:00'),
+      durationMinutes: 60,
+      roomCost: 40,
+      minRate: -4,
+      targetRate: 20,
+      minStudents: 4,
+      maxStudents: 10,
+      status: 'in_progress',
+      settingsLocked: true,
+    });
+    for (let i = 0; i < 4; i++) {
+      await prisma.registration.create({
+        data: {
+          classId: negClass.id,
+          studentId: studentIds[i]!,
+          status: 'registered',
+          tierAtBooking: i + 1,
+        },
+      });
+    }
+
+    const result = await completeClass(prisma, negClass.id, { finishedEarly: true });
+    expect(result.ok).toBe(true);
+
+    try {
+      const teacherNote = await prisma.notification.findFirstOrThrow({
+        where: { relatedClassId: negClass.id, recipientType: 'teacher', type: 'payment_request' },
+      });
+      expect(teacherNote.body).toContain('completed — −€4.00 earnings, 4 payment requests sent.');
+
+      const studentNote = await prisma.notification.findFirstOrThrow({
+        where: { relatedClassId: negClass.id, recipientType: 'student', type: 'payment_request' },
+      });
+      expect(studentNote.body).toMatch(/Your price for Subsidized Flow class .* is €\d+\.\d{2}\. Pay your teacher directly\./);
+    } finally {
+      await prisma.notification.deleteMany({ where: { relatedClassId: negClass.id } });
+    }
+  });
+
   it('returns error for non-existent class', async () => {
     const result = await completeClass(prisma, 'non-existent-id', { finishedEarly: true });
     expect(result.ok).toBe(false);
