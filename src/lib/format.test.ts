@@ -11,6 +11,8 @@ import {
   formatStudentName,
   timeAgo,
   todayLocal,
+  formatCents,
+  formatEuro,
 } from './format';
 
 /**
@@ -393,5 +395,59 @@ describe('todayLocal', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-03-05T15:00:00.000Z'));
     expect(todayLocal()).toBe('2026-03-05');
+  });
+});
+
+describe('formatCents', () => {
+  it('formats positive whole cents', () => {
+    expect(formatCents(4000)).toBe('€40.00');
+  });
+
+  it('pads single-digit cents with leading zero', () => {
+    expect(formatCents(5)).toBe('€0.05');
+  });
+
+  it('formats negative whole cents with minus sign (U+2212)', () => {
+    expect(formatCents(-400)).toBe('−€4.00');
+    expect(formatCents(-400).charCodeAt(0)).toBe(0x2212);
+  });
+
+  it('formats zero cents as positive zero', () => {
+    expect(formatCents(0)).toBe('€0.00');
+  });
+
+  it('formats negative zero cents as positive zero', () => {
+    expect(formatCents(-0)).toBe('€0.00');
+  });
+
+  it('cancels near-zero float drift to zero', () => {
+    expect(formatCents(-7.1054e-15)).toBe('€0.00');
+  });
+
+  it('rounds sub-cent amounts to nearest whole cent', () => {
+    expect(formatCents(399.6)).toBe('€4.00');
+  });
+});
+
+describe('formatEuro', () => {
+  it('formats positive decimal euro amount', () => {
+    expect(formatEuro(16.25)).toBe('€16.25');
+  });
+
+  it('formats negative euro amount with minus sign (U+2212)', () => {
+    expect(formatEuro(-4)).toBe('−€4.00');
+    expect(formatEuro(-4).charCodeAt(0)).toBe(0x2212);
+  });
+
+  it('formats zero euros as positive zero', () => {
+    expect(formatEuro(0)).toBe('€0.00');
+  });
+
+  it('formats negative zero euros as positive zero', () => {
+    expect(formatEuro(-0)).toBe('€0.00');
+  });
+
+  it('cancels floating point drift to zero', () => {
+    expect(formatEuro((56.30 - 40.10) + (24.00 - 40.20))).toBe('€0.00');
   });
 });
