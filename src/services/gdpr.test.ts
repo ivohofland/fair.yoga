@@ -1025,6 +1025,76 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
   });
 });
 
+describe('exportStudentData filters blocks by profile creation (#171)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-export-block-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const email = `${suffix}@test.local`;
+  let teacherId: string;
+  let teacherAccountId: string;
+  const studentIds: string[] = [];
+  const accountIds: string[] = [];
+
+  afterAll(async () => {
+    await prisma.teacherBlock.deleteMany({ where: { teacherId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    await prisma.account.deleteMany({ where: { id: { in: [teacherAccountId, ...accountIds] } } });
+    await prisma.$disconnect();
+  });
+
+  it('does not list a block an erased profile left behind, on a new profile at the same address', async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Export', lastName: 'Teacher', email: `${suffix}-teacher@test.local`,
+        account: { create: { email: `${suffix}-teacher@test.local` } },
+        bio: '#171 export-filter fixture', pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
+
+    const firstAccount = await prisma.account.create({ data: { email } });
+    const firstStudent = await prisma.student.create({
+      data: {
+        firstName: 'First', lastName: 'Student', email,
+        claimedAt: new Date(), accountId: firstAccount.id,
+      },
+      select: { id: true },
+    });
+    studentIds.push(firstStudent.id);
+    accountIds.push(firstAccount.id);
+
+    await prisma.teacherBlock.create({ data: { teacherId, email } });
+
+    await deleteStudentAccount(prisma, firstStudent.id);
+
+    // The block is what survives the erasure — assert it, or a regression
+    // that deleted the row along with the profile would pass the export
+    // assertion below for the wrong reason.
+    const survived = await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId, email } },
+      select: { id: true },
+    });
+    expect(survived).not.toBeNull();
+
+    // A new profile arrives on the same address — the erasure freed it.
+    const secondAccount = await prisma.account.create({ data: { email } });
+    const secondStudent = await prisma.student.create({
+      data: {
+        firstName: 'Second', lastName: 'Student', email,
+        claimedAt: new Date(), accountId: secondAccount.id,
+      },
+      select: { id: true },
+    });
+    studentIds.push(secondStudent.id);
+    accountIds.push(secondAccount.id);
+
+    const data = await exportStudentData(prisma, secondStudent.id);
+    expect(data.blockedTeachers).toEqual([]);
+  });
+});
+
 // #174. `deleteTeacherAccount` cancels through a compare-and-swap — the
 // `tx.calendarEntry.updateMany` in its loop, guarded by `cancelledAt: null`
 // AND a `status` still in `CANCELLABLE_STATUSES` — and this block pins what

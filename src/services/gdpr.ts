@@ -107,8 +107,11 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
     },
     orderBy: { createdAt: 'asc' },
   });
+  // Only the refusals this profile made. An older block on the same address
+  // belongs to an erased profile, and this export must not narrate it to
+  // whoever holds the address now — `docs/data-model.md` (TeacherBlock).
   const blocks = await db.teacherBlock.findMany({
-    where: { email: subjectEmail },
+    where: { email: subjectEmail, createdAt: { gte: student.createdAt } },
     select: {
       createdAt: true,
       teacher: { select: { firstName: true, lastName: true, pageSlug: true } },
