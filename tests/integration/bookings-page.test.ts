@@ -835,13 +835,17 @@ describe('GET /bookings (page) — past-class payment breakdown', () => {
     return res.text();
   }
 
-  it('shows a pending payment the room, teacher and class total behind it', async () => {
+  it('shows a pending payment the room, teacher, class total, class size and share behind it', async () => {
     const html = await bookingsHtml();
     expect(html).toContain(breakdownLabel(pendingClass));
     expect(html).toContain(`How to pay — ${pendingClass.classType}, ${formatDayHeader(pendingClass.date)}`);
     expect(html).toContain('€41.30');
     expect(html).toContain('€16.25');
     expect(html).toContain('€57.55');
+    // Label and value side by side in the breakdown's description list, so the
+    // count is the snapshot's and the share is the breakdown's, not the row's.
+    expect(html).toMatch(/Students<\/dt><dd[^>]*>7<\/dd>/);
+    expect(html).toMatch(/Your share<\/dt><dd[^>]*>€8\.15<\/dd>/);
   });
 
   it('shows a paid payment its breakdown, with a negative teacher line when the teacher covered part of the room', async () => {
