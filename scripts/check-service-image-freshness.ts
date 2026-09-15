@@ -9,6 +9,7 @@ import {
   parseImagePin,
   type ImagePin,
 } from '../src/lib/service-image-freshness';
+import { fetchLatestDigest } from '../src/lib/service-image-registry';
 
 const WORKFLOWS_DIR = '.github/workflows';
 
@@ -52,33 +53,6 @@ function scanWorkflows(
     }
   }
   return { pins, unparsed, coverageGaps };
-}
-
-async function fetchLatestDigest(image: string, tag: string): Promise<string> {
-  const repository = image.includes('/') ? image : `library/${image}`;
-  const tokenRes = await fetch(
-    `https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repository}:pull`,
-    { signal: AbortSignal.timeout(5000) },
-  );
-  if (!tokenRes.ok) throw new Error(`auth token request responded ${tokenRes.status}`);
-  const tokenData: unknown = await tokenRes.json();
-  const token = (tokenData as { token?: unknown } | null)?.token;
-  if (typeof token !== 'string' || token === '') {
-    throw new Error(`auth response had no "token" field: ${JSON.stringify(tokenData)}`);
-  }
-
-  const manifestRes = await fetch(`https://registry-1.docker.io/v2/${repository}/manifests/${tag}`, {
-    method: 'HEAD',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.index.v1+json',
-    },
-    signal: AbortSignal.timeout(5000),
-  });
-  if (!manifestRes.ok) throw new Error(`manifest request responded ${manifestRes.status}`);
-  const digest = manifestRes.headers.get('docker-content-digest');
-  if (!digest) throw new Error('manifest response had no docker-content-digest header');
-  return digest;
 }
 
 async function main(): Promise<void> {

@@ -1,0 +1,87 @@
+import { describe, expect, it, vi, afterEach } from 'vitest';
+import { fetchLatestDigest } from './service-image-registry';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+function stubFetch(handler: (url: string, init?: RequestInit) => Promise<unknown>) {
+  vi.stubGlobal('fetch', vi.fn(handler));
+}
+
+describe('fetchLatestDigest', () => {
+  it('rejects when the auth token request responds non-OK', async () => {
+    stubFetch((url) => {
+      if (url.includes('auth.docker.io')) {
+        return Promise.resolve({ ok: false, status: 401 });
+      }
+      throw new Error('manifest should not be fetched when the token request fails');
+    });
+    await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toThrow(
+      'auth token request responded 401',
+    );
+  });
+
+  it('rejects when the auth response has no usable "token" field', async () => {
+    stubFetch((url) => {
+      if (url.includes('auth.docker.io')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ nope: 'nope' }) });
+      }
+      throw new Error('manifest should not be fetched when no token is returned');
+    });
+    await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toThrow(
+      'auth response had no "token" field',
+    );
+  });
+
+  it('rejects when the manifest request responds non-OK', async () => {
+    stubFetch((url) => {
+      if (url.includes('auth.docker.io')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ token: 'tok' }) });
+      }
+      return Promise.resolve({ ok: false, status: 404 });
+    });
+    await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toThrow(
+      'manifest request responded 404',
+    );
+  });
+
+  it('rejects when the manifest response has no docker-content-digest header', async () => {
+    stubFetch((url) => {
+      if (url.includes('auth.docker.io')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ token: 'tok' }) });
+      }
+      return Promise.resolve({ ok: true, headers: new Headers() });
+    });
+    await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toThrow(
+      'manifest response had no docker-content-digest header',
+    );
+  });
+
+  it("resolves with the digest, namespacing an unnamespaced image under library/ and sending the token as a bearer header", async () => {
+    stubFetch((url, init) => {
+      if (url.includes('auth.docker.io')) {
+        expect(url).toBe(
+          'https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/postgres:pull',
+        );
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ token: 'tok' }) });
+      }
+      expect(url).toBe('https://registry-1.docker.io/v2/library/postgres/manifests/16-alpine');
+      expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+      return Promise.resolve({ ok: true, headers: new Headers({ 'docker-content-digest': 'sha256:latest' }) });
+    });
+    await expect(fetchLatestDigest('postgres', '16-alpine')).resolves.toBe('sha256:latest');
+  });
+
+  it('uses a namespaced image string verbatim as the repository (no library/ prefix)', async () => {
+    stubFetch((url) => {
+      if (url.includes('auth.docker.io')) {
+        expect(url).toContain('repository:bitnami/postgres:pull');
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ token: 'tok' }) });
+      }
+      expect(url).toBe('https://registry-1.docker.io/v2/bitnami/postgres/manifests/16-alpine');
+      return Promise.resolve({ ok: true, headers: new Headers({ 'docker-content-digest': 'sha256:latest' }) });
+    });
+    await expect(fetchLatestDigest('bitnami/postgres', '16-alpine')).resolves.toBe('sha256:latest');
+  });
+});
