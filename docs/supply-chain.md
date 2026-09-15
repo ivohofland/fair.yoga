@@ -852,6 +852,16 @@ every image this repo pins this way is the unnamespaced `postgres` image
 from Docker Hub, but worth knowing before pinning a differently-sourced
 image the same way.
 
+The script's two pieces of orchestration logic — the registry auth+manifest
+fetch, and grouping parsed pins by `image:tag` so a repeated reference only
+triggers one fetch — were extracted into `src/lib/service-image-registry.ts`
+and `src/lib/service-image-freshness.ts` respectively (#608), so both are
+unit-tested (`src/lib/service-image-registry.test.ts`,
+`src/lib/service-image-freshness.test.ts`) the same way this repo tests
+every other script's pure/testable logic. The registry fetch is genuine I/O
+and lives in its own file rather than in `service-image-freshness.ts`,
+whose docblock's "no I/O" claim stays true.
+
 All six `postgres:16-alpine` locations are covered now: two by the
 `docker-compose` Dependabot ecosystem, four by this script (2 + 4 = 6).
 
