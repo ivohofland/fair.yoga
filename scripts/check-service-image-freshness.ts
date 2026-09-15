@@ -1,59 +1,8 @@
 // scripts/check-service-image-freshness.ts
-import { readFileSync, readdirSync } from 'node:fs';
-import path from 'node:path';
-import {
-  countImageKeyLines,
-  extractImageReferences,
-  groupByImageTag,
-  parseImagePin,
-  type ImagePin,
-} from '../src/lib/service-image-freshness';
+import { groupByImageTag } from '../src/lib/service-image-freshness';
 import { fetchLatestDigest } from '../src/lib/service-image-registry';
 import { checkGroups } from '../src/lib/service-image-check';
-
-const WORKFLOWS_DIR = '.github/workflows';
-
-interface LocatedPin extends ImagePin {
-  readonly file: string;
-}
-
-interface LocatedUnparsed {
-  readonly file: string;
-  readonly reference: string;
-}
-
-interface CoverageGap {
-  readonly file: string;
-  readonly imageKeyLines: number;
-  readonly referencesFound: number;
-}
-
-function scanWorkflows(
-  root: string,
-): { pins: LocatedPin[]; unparsed: LocatedUnparsed[]; coverageGaps: CoverageGap[] } {
-  const dir = path.join(root, WORKFLOWS_DIR);
-  const files = readdirSync(dir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
-  const pins: LocatedPin[] = [];
-  const unparsed: LocatedUnparsed[] = [];
-  const coverageGaps: CoverageGap[] = [];
-  for (const file of files) {
-    const contents = readFileSync(path.join(dir, file), 'utf8');
-    const references = extractImageReferences(contents);
-    const imageKeyLines = countImageKeyLines(contents);
-    if (imageKeyLines !== references.length) {
-      coverageGaps.push({ file, imageKeyLines, referencesFound: references.length });
-    }
-    for (const reference of references) {
-      const pin = parseImagePin(reference);
-      if (pin) {
-        pins.push({ ...pin, file });
-      } else {
-        unparsed.push({ file, reference });
-      }
-    }
-  }
-  return { pins, unparsed, coverageGaps };
-}
+import { WORKFLOWS_DIR, scanWorkflows } from '../src/lib/service-image-scan';
 
 async function main(): Promise<void> {
   const root = process.cwd();
