@@ -103,6 +103,16 @@ jobs:
         run: pnpm run check-package-manager-freshness
         continue-on-error: true
 
+      # Visible but non-blocking, same shape as the package manager pin
+      # freshness check above. No Dependabot ecosystem scans a GitHub
+      # Actions services: image reference (dependabot-core#5819, open as of
+      # 2026-09-15) — this script is the substitute for the Dependabot PR
+      # that ecosystem gap can't produce. #603. docs/supply-chain.md has the
+      # reasoning and the mutation test that proves it catches a stale pin.
+      - name: Service image digest freshness
+        run: pnpm run check-service-image-freshness
+        continue-on-error: true
+
       # Blocking, unlike the advisory audit above: this reports a property of
       # the packages actually locked (registry source + integrity), not the
       # state of an advisory database, so it cannot go red on a PR that
