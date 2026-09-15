@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { formatEuro } from '@/lib/format';
 import { calculateEffectiveTeacherRate } from '@/services/pricing';
 import { INCOME_TIERS, TIER_RATIOS } from '@/lib/tiers';
 
@@ -78,14 +79,6 @@ function calculateTierPrices(
   );
 
   return { prices, weightedSum };
-}
-
-// ---------------------------------------------------------------------------
-// Format helpers
-// ---------------------------------------------------------------------------
-
-function formatEuro(amount: number): string {
-  return `\u20AC${amount.toFixed(2)}`;
 }
 
 const TIER_LABELS = ['Tier 1', 'Tier 2', 'Tier 3', 'Tier 4', 'Tier 5'];
