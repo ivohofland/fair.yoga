@@ -497,6 +497,135 @@ describe('GET /bookings (page) — price line and link gated on bookable state',
 });
 
 /**
+ * `/bookings` — #598: a class cancelled while it was `open` keeps that
+ * status forever (#327), so the ledger split can't use status alone to
+ * decide a cancelled class is Past. This class is dated well before `now`
+ * and must move to Past classes, with a text "Cancelled" marker and no
+ * payment UI — a cancelled class never reaches `completed`, so it never
+ * gets a `Payment` row (`completeClass` is the only creator) and #576's
+ * payment breakdown (gated on `classStatus === 'completed'`,
+ * `src/lib/payment-breakdown.ts`) is unaffected by where it lands.
+ */
+describe('GET /bookings (page) — cancelled class moves to Past', () => {
+  const suffix4 = uniqueSuffix();
+  let teacherId = '';
+  let teacherAccountId = '';
+  let studentId = '';
+  let studentAccountId = '';
+  let studentToken = '';
+  let roomId = '';
+  let cancelledPastClassId = '';
+
+  beforeAll(async () => {
+    await prisma.$connect();
+
+    const teacherEmail = `cancelled-past-teacher-${suffix4}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'CancelledPast', lastName: 'Teacher', email: teacherEmail,
+        bio: 'Cancelled-past fixture teacher',
+        pageSlug: `cancelled-past-teacher-${suffix4}`,
+        account: { create: { email: teacherEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Cancelled Past Studio',
+        address: `${suffix4} Cancelled St`,
+        city: 'Amsterdam',
+        postcode: '1000AA',
+        roomName: 'Hall',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 10, rentalRate: 15 },
+    });
+
+    const studentEmail = `cancelled-past-student-${suffix4}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'CancelledPast', lastName: 'Student', email: studentEmail,
+        claimedAt: new Date(),
+        incomeTier: 3, tierSelectedAt: new Date(),
+        account: { create: { email: studentEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentId = student.id;
+    studentAccountId = student.accountId as string;
+    studentToken = await seedSession(prisma, studentAccountId);
+
+    const cancelledPastClass = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId: teacherRoom.id,
+      classType: 'Cancelled Past Class',
+      date: new Date('2026-01-10'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 10,
+      targetRate: 40,
+      minStudents: 1,
+      maxStudents: 6,
+      status: 'open',
+      cancelledAt: new Date('2026-01-09T00:00:00.000Z'),
+    });
+    cancelledPastClassId = cancelledPastClass.id;
+
+    await prisma.registration.create({
+      data: { classId: cancelledPastClassId, studentId, tierAtBooking: 3, status: 'registered' },
+    });
+
+    // Warm the route before the assertions score anything.
+    await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) }).catch(() => {});
+  }, 20_000);
+
+  afterAll(async () => {
+    await prisma.registration.deleteMany({ where: { studentId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.session.deleteMany({
+      where: { accountId: { in: [teacherAccountId, studentAccountId] } },
+    });
+    await prisma.student.deleteMany({ where: { id: studentId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [teacherAccountId, studentAccountId] } },
+    });
+    await prisma.$disconnect();
+  });
+
+  it('shows a cancelled-in-the-past class under Past classes, marked cancelled, with no payment UI', async () => {
+    const res = await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+
+    // This student has exactly one registration. If it were still bucketed
+    // under Upcoming, the Upcoming section (`{upcoming.length > 0 && (...)}`)
+    // would render and Past classes would not.
+    expect(html).toContain('Past classes');
+    expect(html).not.toContain('Upcoming');
+    expect(html).toContain('Cancelled Past Class');
+
+    // Text marker, no payment amount, no disclosures — #576's breakdown
+    // included, since none of the three renders for a class that never
+    // reached `completed`.
+    expect(html).toContain('Cancelled');
+    expect(html).not.toContain('€');
+    expect(html).not.toContain('How to pay');
+    expect(html).not.toContain('Where your payment goes');
+  });
+});
+
+/**
  * `/bookings` — the Waitlist section's price line for a signed-in student
  * who has not yet chosen an income tier. `resolvePriceLine` returns its
  * anonymous branch whenever `viewer.tierSelectedAt` is null; every other

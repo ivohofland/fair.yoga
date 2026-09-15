@@ -18,6 +18,7 @@ import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { isOutstanding } from '@/lib/payment-status';
 import { resolvePriceLine, type PriceLineViewer } from '@/lib/price-line';
 import { readIncomeTier } from '@/lib/tiers.server';
+import { isUpcomingRegistration } from '@/lib/booking-ledger';
 import { CHARGED_STATUSES } from '@/services/class-lifecycle';
 import { log } from '@/lib/log';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
@@ -47,6 +48,7 @@ export default async function StudentBookingsPage() {
                     pageSlug: true,
                     bankIban: true,
                     bankAccountName: true,
+                    defaultTimezone: true,
                   },
                 },
               },
@@ -178,16 +180,8 @@ export default async function StudentBookingsPage() {
   }));
 
   const now = new Date();
-  // `cancelledAt` is NOT a filter here, deliberately: this splits the ledger
-  // into upcoming and past, and a cancelled class the student is registered
-  // for still belongs in whichever half its date puts it in. The badge below
-  // is what says it is off.
-  const upcoming = registrations.filter(
-    (r) => r.class.status === 'open'
-      || r.class.status === 'in_progress'
-      || new Date(r.class.calendarEntry.date) >= now,
-  );
-  const past = registrations.filter((r) => !upcoming.includes(r));
+  const upcoming = registrations.filter((r) => isUpcomingRegistration(r.class, now));
+  const past = registrations.filter((r) => !isUpcomingRegistration(r.class, now));
 
   return (
     <div>
@@ -354,6 +348,7 @@ export default async function StudentBookingsPage() {
             const cls = reg.class;
             const payment = reg.payment;
             const outstanding = payment ? isOutstanding(payment.status) : false;
+            const cancelled = cls.calendarEntry.cancelledAt !== null;
             const breakdown = resolvePaymentBreakdown({
               classStatus: cls.status,
               roomCost: cls.roomCost,
@@ -376,16 +371,28 @@ export default async function StudentBookingsPage() {
                       {formatDayHeader(cls.calendarEntry.date)} · with {cls.calendarEntry.teacher.firstName} {cls.calendarEntry.teacher.lastName}
                     </p>
                   </div>
-                  {payment && (
+                  {/* A cancelled class never has a payment — `completeClass`
+                      is the only creator of one, and the entry's
+                      terminal-liveness guard keeps `cancelledAt` and
+                      `completed` from ever coexisting (#327) — so this
+                      branches on `cancelled` instead of stacking a second
+                      independent `&&` guard beside `payment`. */}
+                  {cancelled ? (
                     <div className="text-right shrink-0">
-                      <p className={`type-number ${outstanding ? 'text-brown' : ''}`}>
-                        €{Number(payment.amount).toFixed(2)}
-                      </p>
-                      {/* Payment state is text, never a badge */}
-                      <p className={`type-caption ${paymentStateText(payment.status).className}`}>
-                        {paymentStateText(payment.status).label}
-                      </p>
+                      <p className="type-caption text-brown">Cancelled</p>
                     </div>
+                  ) : (
+                    payment && (
+                      <div className="text-right shrink-0">
+                        <p className={`type-number ${outstanding ? 'text-brown' : ''}`}>
+                          €{Number(payment.amount).toFixed(2)}
+                        </p>
+                        {/* Payment state is text, never a badge */}
+                        <p className={`type-caption ${paymentStateText(payment.status).className}`}>
+                          {paymentStateText(payment.status).label}
+                        </p>
+                      </div>
+                    )
                   )}
                 </div>
                 {payment && outstanding && (
