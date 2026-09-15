@@ -6,16 +6,14 @@
  * HEAD on the manifest whose `docker-content-digest` response header is the
  * current digest. Every failure mode recognised as "the registry itself is
  * the problem" — a non-OK response, a missing token or digest, or the
- * `fetch()` call itself rejecting — throws `RegistryUnreachableError`; an
- * unrecognised failure (e.g. `tokenRes.json()` rejecting because the body
- * isn't JSON) propagates as whatever it natively is, so `checkGroups`
- * (`service-image-check.ts`) doesn't fold a checker bug into a "registry
- * unreachable" warning. See docs/supply-chain.md ("The database image")
- * for why this fetch logic lives in its own file, separate from
- * `service-image-freshness.ts`.
+ * `fetch()` call itself rejecting — throws `RegistryUnreachableError`; any
+ * other failure (e.g. `tokenRes.json()` rejecting because the body isn't
+ * JSON) propagates as whatever it natively is. See docs/supply-chain.md
+ * ("The database image") for why this fetch logic lives in its own file,
+ * separate from `service-image-freshness.ts`.
  */
 
-/** A `fetchLatestDigest` failure `checkGroups` treats as "skip this group", not a checker bug. */
+/** Marks a `fetchLatestDigest` failure as "the registry itself is the problem," not an unexpected one. */
 export class RegistryUnreachableError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
