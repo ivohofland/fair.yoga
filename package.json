@@ -11,6 +11,7 @@
     "check-lockfile": "tsx scripts/check-lockfile.ts",
     "check-migrations": "tsx scripts/check-migrations.ts",
     "check-package-manager-freshness": "tsx scripts/check-package-manager-freshness.ts",
+    "check-service-image-freshness": "tsx scripts/check-service-image-freshness.ts",
     "test": "vitest run --project unit --project components && vitest run --project unit-sweeps --project integration",
     "test:watch": "vitest --project unit --project components",
     "test:coverage": "vitest run --coverage --no-file-parallelism",
