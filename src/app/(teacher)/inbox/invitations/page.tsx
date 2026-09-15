@@ -27,7 +27,7 @@ export default async function TeacherInvitationsPage() {
 
   return (
     <div>
-      <PageHeader title="Invitations" backHref="/inbox" />
+      <PageHeader title="Invitations" backHref="/inbox" backLabel="Inbox" />
       {invitations.length === 0 ? (
         <EmptyState
           title="No open invitations"
