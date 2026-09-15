@@ -86,6 +86,8 @@ export const ROUTE_BASELINES: readonly RouteBaseline[] = [
 
 const SNAPSHOT_CALL_PATTERN = /toHaveScreenshot\(\s*['"]([\w-]+)\.png['"]/g;
 
+const SNAPSHOT_CALL_START_PATTERN = /toHaveScreenshot\(/g;
+
 /** Every snapshot stem named in a `toHaveScreenshot('<stem>.png', ...)` call, in order. */
 export function extractSnapshotStems(specSource: string): string[] {
   return [...specSource.matchAll(SNAPSHOT_CALL_PATTERN)].map((m) => m[1] ?? '');
@@ -96,23 +98,38 @@ export interface CoverageGaps {
   readonly missingFromMap: readonly string[];
   /** ROUTE_BASELINES entries with no matching call left in the spec. */
   readonly missingFromSpec: readonly string[];
+  /**
+   * `toHaveScreenshot(` call sites whose name argument isn't a simple
+   * quoted string literal — `extractSnapshotStems` can't see these at all,
+   * so a non-zero count here means coverage can't be verified for at least
+   * one visual test, independent of `missingFromMap`/`missingFromSpec`.
+   */
+  readonly unparseableCallCount: number;
 }
 
 /**
  * Diffs `routes`' names against the `toHaveScreenshot()` calls actually
  * present in `specSource`, in both directions. A non-empty result means
  * the map and the spec have drifted apart.
+ *
+ * Also reconciles the number of calls whose name `extractSnapshotStems`
+ * could read against the number of `toHaveScreenshot(` call sites present,
+ * so a call naming its snapshot with anything but a quoted literal is
+ * reported as `unparseableCallCount` rather than silently dropped.
  */
 export function findCoverageGaps(
   specSource: string,
   routes: readonly RouteBaseline[] = ROUTE_BASELINES,
 ): CoverageGaps {
-  const stemsInSpec = new Set(extractSnapshotStems(specSource));
+  const stems = extractSnapshotStems(specSource);
+  const stemsInSpec = new Set(stems);
   const namesInMap = new Set(routes.map((r) => r.name));
+  const totalCallSites = [...specSource.matchAll(SNAPSHOT_CALL_START_PATTERN)].length;
 
   return {
     missingFromMap: [...stemsInSpec].filter((s) => !namesInMap.has(s)),
     missingFromSpec: [...namesInMap].filter((n) => !stemsInSpec.has(n)),
+    unparseableCallCount: totalCallSites - stems.length,
   };
 }
 

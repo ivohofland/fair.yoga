@@ -29,6 +29,15 @@ try {
     failed = true;
   }
 
+  if (gaps.unparseableCallCount > 0) {
+    console.error(
+      `\n❌ ${VISUAL_SPEC_PATH} has ${gaps.unparseableCallCount} toHaveScreenshot() call(s) whose ` +
+        `name argument isn't a simple quoted string literal — findCoverageGaps cannot verify ` +
+        `these have a matching ROUTE_BASELINES entry. Use a literal '<name>.png' argument.`,
+    );
+    failed = true;
+  }
+
   if (failed) {
     process.exit(1);
   }
