@@ -3,7 +3,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
-import { formatMonthLabel } from '@/lib/format';
+import { formatMonthLabel, formatCents } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,31 +74,33 @@ export default async function ReportingPage() {
     (s) => classStartInstant(s.calendarEntry, session.defaultTimezone) <= now,
   );
 
-  const classEarnings = (c: (typeof completedClasses)[number]) =>
-    Number(c.totalRevenue ?? 0) - Number(c.roomCost);
-  const studioEarnings = (s: (typeof completedStudioClasses)[number]) =>
-    (Number(s.hourlyRate) * s.calendarEntry.durationMinutes) / 60;
+  const toCents = (val: unknown): number => Math.round(Number(val ?? 0) * 100);
 
-  const totalClassEarnings = completedClasses.reduce((sum, c) => sum + classEarnings(c), 0);
-  const totalStudioEarnings = completedStudioClasses.reduce((sum, s) => sum + studioEarnings(s), 0);
-  const totalRoomCosts = completedClasses.reduce((sum, c) => sum + Number(c.roomCost), 0);
+  const classEarningsCents = (c: (typeof completedClasses)[number]) =>
+    toCents(c.totalRevenue) - toCents(c.roomCost);
+  const studioEarningsCents = (s: (typeof completedStudioClasses)[number]) =>
+    Math.round((toCents(s.hourlyRate) * s.calendarEntry.durationMinutes) / 60);
+
+  const totalClassEarningsCents = completedClasses.reduce((sum, c) => sum + classEarningsCents(c), 0);
+  const totalStudioEarningsCents = completedStudioClasses.reduce((sum, s) => sum + studioEarningsCents(s), 0);
+  const totalRoomCostsCents = completedClasses.reduce((sum, c) => sum + toCents(c.roomCost), 0);
 
   // Last six calendar months, newest first
-  const byMonth = new Map<string, { classes: number; students: number; earnings: number }>();
+  const byMonth = new Map<string, { classes: number; students: number; earningsCents: number }>();
   for (const c of completedClasses) {
     const key = monthKey(c.calendarEntry.date);
-    const entry = byMonth.get(key) ?? { classes: 0, students: 0, earnings: 0 };
+    const entry = byMonth.get(key) ?? { classes: 0, students: 0, earningsCents: 0 };
     entry.classes += 1;
     entry.students += c.totalStudents ?? 0;
-    entry.earnings += classEarnings(c);
+    entry.earningsCents += classEarningsCents(c);
     byMonth.set(key, entry);
   }
   for (const s of completedStudioClasses) {
     const key = monthKey(s.calendarEntry.date);
-    const entry = byMonth.get(key) ?? { classes: 0, students: 0, earnings: 0 };
+    const entry = byMonth.get(key) ?? { classes: 0, students: 0, earningsCents: 0 };
     entry.classes += 1;
     entry.students += s.studentCount ?? 0;
-    entry.earnings += studioEarnings(s);
+    entry.earningsCents += studioEarningsCents(s);
     byMonth.set(key, entry);
   }
   const months = [...byMonth.entries()]
@@ -125,7 +127,7 @@ export default async function ReportingPage() {
           <div className="bg-teal-tint rounded-card p-5 text-center">
             <p className="type-label">Total charged for teaching</p>
             <p className="type-number text-[28px] leading-[1.25] mt-1">
-              €{(totalClassEarnings + totalStudioEarnings).toFixed(2)}
+              {formatCents(totalClassEarningsCents + totalStudioEarningsCents)}
             </p>
             <p className="type-caption mt-0.5">
               {completedClasses.length + completedStudioClasses.length} classes · {distinctStudents.length}{' '}
@@ -136,15 +138,15 @@ export default async function ReportingPage() {
           <div className="mt-4">
             <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
               <span className="type-body">Your classes</span>
-              <span className="type-number">€{totalClassEarnings.toFixed(2)}</span>
+              <span className="type-number">{formatCents(totalClassEarningsCents)}</span>
             </div>
             <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
               <span className="type-body">Studio classes</span>
-              <span className="type-number">€{totalStudioEarnings.toFixed(2)}</span>
+              <span className="type-number">{formatCents(totalStudioEarningsCents)}</span>
             </div>
             <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
               <span className="type-body">Room costs paid</span>
-              <span className="tabular-nums text-brown">€{totalRoomCosts.toFixed(2)}</span>
+              <span className="tabular-nums text-brown">{formatCents(totalRoomCostsCents)}</span>
             </div>
           </div>
 
@@ -165,7 +167,7 @@ export default async function ReportingPage() {
                   <span className="flex-1 text-base text-ink">{m.label}</span>
                   <span className="w-20 text-right text-sm text-brown tabular-nums">{m.classes}</span>
                   <span className="w-20 text-right text-sm text-brown tabular-nums">{m.students}</span>
-                  <span className="w-24 text-right type-number text-sm">€{m.earnings.toFixed(2)}</span>
+                  <span className="w-24 text-right type-number text-sm">{formatCents(m.earningsCents)}</span>
                 </div>
               ))}
             </section>

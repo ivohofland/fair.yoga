@@ -44,6 +44,14 @@ describe('GET /settings/reporting (reporting page)', () => {
   let futurePacificTeacherAccountId: string;
   let futurePacificTeacherToken: string;
 
+  let floatTeacherId: string;
+  let floatTeacherAccountId: string;
+  let floatTeacherToken: string;
+
+  let negTeacherId: string;
+  let negTeacherAccountId: string;
+  let negTeacherToken: string;
+
   let roomId: string;
   let reportTeacherRoomId: string;
 
@@ -142,8 +150,22 @@ describe('GET /settings/reporting (reporting page)', () => {
   }, 20_000);
 
   afterAll(async () => {
-    const teacherIds = [emptyTeacherId, reportTeacherId, pacificTeacherId, futurePacificTeacherId].filter(Boolean);
-    const accountIds = [emptyTeacherAccountId, reportTeacherAccountId, pacificTeacherAccountId, futurePacificTeacherAccountId].filter(Boolean);
+    const teacherIds = [
+      emptyTeacherId,
+      reportTeacherId,
+      pacificTeacherId,
+      futurePacificTeacherId,
+      floatTeacherId,
+      negTeacherId,
+    ].filter(Boolean);
+    const accountIds = [
+      emptyTeacherAccountId,
+      reportTeacherAccountId,
+      pacificTeacherAccountId,
+      futurePacificTeacherAccountId,
+      floatTeacherAccountId,
+      negTeacherAccountId,
+    ].filter(Boolean);
 
     await prisma.payment.deleteMany({
       where: { registration: { class: { calendarEntry: { teacherId: { in: teacherIds } } } } },
@@ -320,6 +342,119 @@ describe('GET /settings/reporting (reporting page)', () => {
       expect(html).toContain(julLabel);
       expect(html).toContain('July 2026');
       expect(html).toContain('30.00');
+    });
+
+    it('accumulates in cents and avoids float drift resulting in -0.00', async () => {
+      // Teacher for float drift test (#599)
+      const floatEmail = `report-float-${suffix}@test.local`;
+      const floatTeacher = await prisma.teacher.create({
+        data: {
+          firstName: 'Float',
+          lastName: 'Teacher',
+          email: floatEmail,
+          account: { create: { email: floatEmail } },
+          bio: 'Float test',
+          pageSlug: `report-float-${suffix}`,
+        },
+      });
+      floatTeacherId = floatTeacher.id;
+      floatTeacherAccountId = floatTeacher.accountId;
+      floatTeacherToken = await seedSession(prisma, floatTeacher.accountId);
+      const floatTeacherRoom = await prisma.teacherRoom.create({
+        data: { teacherId: floatTeacher.id, roomId, rentalRate: 40, capacityOverride: 10 },
+      });
+
+      // Class 1: room €40.10, total €56.30 -> +16.20
+      await createClassFixture(prisma, {
+        teacherId: floatTeacher.id,
+        teacherRoomId: floatTeacherRoom.id,
+        classType: 'Float Flow 1',
+        date: new Date('2026-06-10T00:00:00.000Z'),
+        startTime: hhmmToTime('09:00'),
+        durationMinutes: 60,
+        roomCost: new Prisma.Decimal('40.10'),
+        totalRevenue: new Prisma.Decimal('56.30'),
+        totalStudents: 3,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 10,
+        status: 'completed',
+      });
+
+      // Class 2: room €40.20, total €24.00 -> -16.20
+      await createClassFixture(prisma, {
+        teacherId: floatTeacher.id,
+        teacherRoomId: floatTeacherRoom.id,
+        classType: 'Float Flow 2',
+        date: new Date('2026-06-15T00:00:00.000Z'),
+        startTime: hhmmToTime('10:00'),
+        durationMinutes: 60,
+        roomCost: new Prisma.Decimal('40.20'),
+        totalRevenue: new Prisma.Decimal('24.00'),
+        totalStudents: 2,
+        minRate: -20,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 10,
+        status: 'completed',
+      });
+
+      const res = await reportingPage(floatTeacherToken);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+
+      // June 2026 row must render €0.00, never €-0.00 or −€0.00
+      expect(html).toContain('June 2026');
+      expect(html).not.toContain('€-0.00');
+      expect(html).not.toContain('−€0.00');
+      expect(html).toContain('€0.00');
+    });
+
+    it('renders a net-negative earnings month as −€X.XX', async () => {
+      const negEmail = `report-neg-${suffix}@test.local`;
+      const negTeacher = await prisma.teacher.create({
+        data: {
+          firstName: 'Neg',
+          lastName: 'Teacher',
+          email: negEmail,
+          account: { create: { email: negEmail } },
+          bio: 'Negative reporting test',
+          pageSlug: `report-neg-${suffix}`,
+        },
+      });
+      negTeacherId = negTeacher.id;
+      negTeacherAccountId = negTeacher.accountId;
+      negTeacherToken = await seedSession(prisma, negTeacher.accountId);
+      const negTeacherRoom = await prisma.teacherRoom.create({
+        data: { teacherId: negTeacher.id, roomId, rentalRate: 40, capacityOverride: 10 },
+      });
+
+      // Class in May 2026: room €40.00, total revenue €20.00 -> earnings -20.00
+      await createClassFixture(prisma, {
+        teacherId: negTeacher.id,
+        teacherRoomId: negTeacherRoom.id,
+        classType: 'Subsidized Flow',
+        date: new Date('2026-05-10T00:00:00.000Z'),
+        startTime: hhmmToTime('10:00'),
+        durationMinutes: 60,
+        roomCost: new Prisma.Decimal('40.00'),
+        totalRevenue: new Prisma.Decimal('20.00'),
+        totalStudents: 2,
+        minRate: -20,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 10,
+        status: 'completed',
+      });
+
+      const res = await reportingPage(negTeacherToken);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+
+      expect(html).toContain('May 2026');
+      expect(html).toContain('−€20.00');
+      expect(html).not.toContain('€-20.00');
     });
 
     it('handles singular student reach and excludes cancelled registrations from reach count', async () => {
