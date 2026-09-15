@@ -97,7 +97,7 @@ export function DataAndDeletion({ role }: DataAndDeletionProps) {
             <p className="type-body max-w-[420px]">
               This permanently removes your personal data and signs you out.
               {role === 'student'
-                ? ' Past class and payment records stay with your teachers, without your name attached. Upcoming bookings are cancelled.'
+                ? " Past class and payment records stay with your teachers, without your name attached. Upcoming bookings are cancelled. If you've said no to a teacher, we keep your email address only so they can't invite you again."
                 : ' Your upcoming classes are cancelled and registered students notified. Completed classes and payment records stay with your students, without your details attached.'}
             </p>
             <div className="flex gap-3">
