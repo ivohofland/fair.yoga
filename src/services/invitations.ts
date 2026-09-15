@@ -432,8 +432,9 @@ async function revivePendingInvitation(
 
 /**
  * Tell the invitee an invitation exists — layer 1+2 (in-app notification,
- * which the inbox and the email-fallback cron both pick up) for a
- * registered invitee, a plain email for everyone else (#166 task 8).
+ * which the inbox and the email-fallback cron both pick up) for an address
+ * with a `Student` row or a teacher account, a plain email for everyone else
+ * (#166 task 8, #172).
  *
  * The caller MUST only reach this when `InviteResult.delivered` is true.
  * `inviteContact` above creates a real, ordinary-looking `Invitation` row
@@ -552,9 +553,9 @@ export async function notifyInvitee(
   // `rosterLinkState`'s is (`Student_email_lowercase_check` plus the
   // `requireNormalised` above) — but with a worse consequence if that ever
   // stops holding: a miss here does not merely skip the in-app notification,
-  // it falls through to the plain-email branch below — which bypasses
-  // `Student.emailNotifications` entirely and tells an existing account
-  // holder to go and sign up.
+  // it falls through to the branches below — the teacher-inbox one for an
+  // account that also teaches, otherwise the plain email. Either way it
+  // bypasses `Student.emailNotifications`.
   const student = await db.student.findUnique({
     where: { email },
     select: {
@@ -611,8 +612,8 @@ export async function notifyInvitee(
     return;
   }
 
-  // No Student row means no in-app surface exists to notify — a direct
-  // email is the only channel left.
+  // No Student row and no teacher account means no in-app surface exists to
+  // notify — a direct email is the only channel left.
   //
   // `/login`, not the invitation page the registered invitee's own fallback
   // email points at (`renderNotificationEmail`, lib/email-templates.ts): a
@@ -668,12 +669,12 @@ const DELIVERY_FAILURE_MESSAGE = {
  *   dispatch failures suppresses the write. Scoping the write by
  *   `invitationId` alone said nothing about WHICH failures are safe to
  *   surface: only the stranger path (`sendInvitationEmail`, an HTTPS call)
- *   can throw under normal operation — the registered-student path
- *   (`createNotification`, a local insert) essentially never does — and a
- *   Resend outage or a lapsed API key fails every stranger send alike, so an
- *   unguarded write turns this column into a proxy for "does this address
- *   have a fair.yoga account," reopening #166 through a side door. See
- *   `notify-health.ts`'s own docblock.
+ *   can throw under normal operation — the in-app path (`createNotification`,
+ *   a local insert, for a student or a teacher-only account) essentially
+ *   never does — and a Resend outage or a lapsed API key fails every stranger
+ *   send alike, so an unguarded write turns this column into a proxy for
+ *   "does this address have a fair.yoga account," reopening #166 through a
+ *   side door. See `notify-health.ts`'s own docblock.
  * - **`dispatchedAt` CAS** — the write's `where` is scoped to the row still
  *   holding the `lastNotifiedAt` value THIS dispatch wrote synchronously
  *   before calling this function, not `invitationId` alone. Without it, a
