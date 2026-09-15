@@ -152,6 +152,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       invitationId: result.value.id,
       source: 'create',
       dispatchedAt,
+      // A create or a revive is a new invitation to this address.
+      priorDispatch: 'none',
     });
   }
 

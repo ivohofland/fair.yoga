@@ -7,7 +7,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { checkStudentWriteLimit, respondRateLimited } from '@/lib/rate-limit';
-import { deliverInvitation } from '@/services/invitations';
+import { deliverInvitation, priorDispatchFor } from '@/services/invitations';
 import { log } from '@/lib/log';
 import { ownedInvitation, NOT_FOUND, DECLINED, NOT_PENDING } from '../shared';
 
@@ -82,6 +82,8 @@ export const POST = withErrorHandler(async (
   // this route already answers for the same row being gone. A zero-count
   // match means exactly that: the row is gone, and 404 is the honest
   // answer.
+  // Before the marker write below, which overwrites what this reads.
+  const priorDispatch = priorDispatchFor(invitation);
   const dispatchedAt = new Date();
   const updated = await prisma.invitation.updateMany({
     where: { id },
@@ -102,6 +104,7 @@ export const POST = withErrorHandler(async (
     invitationId: id,
     source: 'resend',
     dispatchedAt,
+    priorDispatch,
   });
 
   return respondOk({ id });

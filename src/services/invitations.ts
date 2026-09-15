@@ -431,6 +431,26 @@ async function revivePendingInvitation(
 }
 
 /**
+ * Whether a dispatch has already reached the invitation's current address.
+ * `notifyInvitee`'s teacher-account branch is the only reader (#172).
+ */
+export type PriorDispatch = 'none' | 'same_address';
+
+/**
+ * Read from the row as it stood BEFORE the dispatching route's own
+ * unconditional marker write — read after it, every dispatch is a repeat.
+ */
+export function priorDispatchFor(row: {
+  email: string;
+  lastNotifiedEmail: string | null;
+  lastNotifyFailedAt: Date | null;
+}): PriorDispatch {
+  return row.lastNotifiedEmail === row.email && row.lastNotifyFailedAt === null
+    ? 'same_address'
+    : 'none';
+}
+
+/**
  * Tell the invitee an invitation exists — layer 1+2 (in-app notification,
  * which the inbox and the email-fallback cron both pick up) for an address
  * with a `Student` row or a teacher account, a plain email for everyone else
@@ -520,7 +540,7 @@ async function revivePendingInvitation(
  */
 export async function notifyInvitee(
   db: PrismaClient,
-  input: { teacherId: string; email: string; teacherName: string },
+  input: { teacherId: string; email: string; teacherName: string; priorDispatch: PriorDispatch },
 ): Promise<void> {
   // Load-bearing for both reads below, `TeacherBlock` and `Student` alike:
   // both are plain, case-SENSITIVE `findUnique`s on columns that can only
@@ -602,6 +622,7 @@ export async function notifyInvitee(
     select: { teacher: { select: { id: true } } },
   });
   if (account?.teacher) {
+    if (input.priorDispatch === 'same_address') return;
     await createNotification(db, {
       recipientType: 'teacher',
       recipientId: account.teacher.id,
@@ -699,6 +720,8 @@ export function deliverInvitation(
     source: DeliverySource;
     /** The `Date` this dispatch's own synchronous pre-write set on `lastNotifiedAt`. */
     dispatchedAt: Date;
+    /** `priorDispatchFor` of the row before this dispatch's own marker write. */
+    priorDispatch: PriorDispatch;
   },
 ): FireAndForget {
   void (async () => {
@@ -710,6 +733,7 @@ export function deliverInvitation(
       teacherId: input.teacherId,
       email: input.email,
       teacherName: `${teacher.firstName} ${teacher.lastName}`,
+      priorDispatch: input.priorDispatch,
     });
   })().catch((err: unknown) => {
     log.error(
