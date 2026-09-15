@@ -34,6 +34,18 @@ describe('fetchLatestDigest', () => {
     );
   });
 
+  it('rejects when the auth response has an empty-string "token" field', async () => {
+    stubFetch((url) => {
+      if (url.includes('auth.docker.io')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ token: '' }) });
+      }
+      throw new Error('manifest should not be fetched when the token is empty');
+    });
+    await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toThrow(
+      'auth response had no "token" field',
+    );
+  });
+
   it('rejects when the manifest request responds non-OK', async () => {
     stubFetch((url) => {
       if (url.includes('auth.docker.io')) {
@@ -68,6 +80,10 @@ describe('fetchLatestDigest', () => {
       }
       expect(url).toBe('https://registry-1.docker.io/v2/library/postgres/manifests/16-alpine');
       expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+      expect(init?.method).toBe('HEAD');
+      expect((init?.headers as Record<string, string>).Accept).toContain(
+        'application/vnd.docker.distribution.manifest.list.v2+json',
+      );
       return Promise.resolve({ ok: true, headers: new Headers({ 'docker-content-digest': 'sha256:latest' }) });
     });
     await expect(fetchLatestDigest('postgres', '16-alpine')).resolves.toBe('sha256:latest');

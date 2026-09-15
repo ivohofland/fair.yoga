@@ -5,8 +5,8 @@
  * flow: an anonymous auth token scoped to `repository:<repo>:pull`, then a
  * HEAD on the manifest whose `docker-content-digest` response header is the
  * current digest. See docs/supply-chain.md ("The database image") for why
- * this fetch logic lives in its own file, separate from the pure
- * parsing/comparison functions in `service-image-freshness.ts`.
+ * this fetch logic lives in its own file, separate from
+ * `service-image-freshness.ts`.
  */
 
 export async function fetchLatestDigest(image: string, tag: string): Promise<string> {
