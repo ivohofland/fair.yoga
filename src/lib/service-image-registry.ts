@@ -4,13 +4,12 @@
  * (`scripts/check-service-image-freshness.ts`). Two-step Docker Hub v2
  * flow: an anonymous auth token scoped to `repository:<repo>:pull`, then a
  * HEAD on the manifest whose `docker-content-digest` response header is the
- * current digest. Every failure mode recognised as "the registry itself is
- * the problem" — a non-OK response, a missing token or digest, or the
- * `fetch()` call itself rejecting — throws `RegistryUnreachableError`; any
- * other failure (e.g. `tokenRes.json()` rejecting because the body isn't
- * JSON) propagates as whatever it natively is. See docs/supply-chain.md
- * ("The database image") for why this fetch logic lives in its own file,
- * separate from `service-image-freshness.ts`.
+ * current digest. Every throw in this module is a `RegistryUnreachableError`
+ * — "the registry itself is the problem" — with one exception: a
+ * `SyntaxError` from a response body that isn't valid JSON propagates as
+ * itself, since that's a checker bug, not a registry problem. See
+ * docs/supply-chain.md ("The database image") for why this fetch logic
+ * lives in its own file, separate from `service-image-freshness.ts`.
  */
 
 /** Marks a `fetchLatestDigest` failure as "the registry itself is the problem," not an unexpected one. */
@@ -41,7 +40,13 @@ export async function fetchLatestDigest(image: string, tag: string): Promise<str
     { signal: AbortSignal.timeout(5000) },
   );
   if (!tokenRes.ok) throw new RegistryUnreachableError(`auth token request responded ${tokenRes.status}`);
-  const tokenData: unknown = await tokenRes.json();
+  let tokenData: unknown;
+  try {
+    tokenData = await tokenRes.json();
+  } catch (err) {
+    if (err instanceof SyntaxError) throw err;
+    throw toRegistryUnreachableError(err);
+  }
   const token = (tokenData as { token?: unknown } | null)?.token;
   if (typeof token !== 'string' || token === '') {
     throw new RegistryUnreachableError(`auth response had no "token" field: ${JSON.stringify(tokenData)}`);

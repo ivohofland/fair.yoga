@@ -871,14 +871,20 @@ in the Checks UI even while the exit code stays 0 — and if every image
 group was unreachable in a given run, one further `::warning::` line says
 so explicitly, since that run verified nothing at all.
 
-#611 narrowed that catch further: `fetchLatestDigest` throws `RegistryUnreachableError`
-(`service-image-registry.ts`) for its four documented failure points and for a raw `fetch()`
-rejection (DNS failure, connection refused, the 5s `AbortSignal.timeout` firing), and only that
-type routes to the skip-and-warn path above. Anything else — a `SyntaxError` from an auth response
-body that isn't valid JSON, or any other unrecognised failure shape — propagates out of
-`checkGroups`, out of `main()`, and fails the run loudly at `main().catch`
-(`scripts/check-service-image-freshness.ts`) instead of being folded into the same "registry
-unreachable" warning a genuine outage gets.
+#611 narrowed `checkGroups`'s catch further: `fetchLatestDigest` throws
+`RegistryUnreachableError` (`service-image-registry.ts`) for its four
+documented failure points and for a connection failure at any `fetch()`
+or response-body-read step (DNS failure, connection refused, the 5s
+`AbortSignal.timeout` firing, a reset mid-transfer) — only that type
+routes to the skip-and-warn path above. The one exception is a
+`SyntaxError` from an auth response body that isn't valid JSON, which
+propagates out of `checkGroups`, out of `main()`, to `main().catch`
+(`scripts/check-service-image-freshness.ts`) instead of being folded
+into the same "registry unreachable" warning a genuine outage gets.
+`main().catch` now also emits a `::error::` annotation before exiting
+1, since the CI step itself is `continue-on-error: true` (`ci.yml`) —
+without one, an unexpected failure here would be *less* visible in
+the Checks UI than the skip path's `::warning::`, not more.
 
 Four pieces of the script's orchestration logic were extracted into
 `src/lib` for #608 and #609: the registry auth+manifest fetch
