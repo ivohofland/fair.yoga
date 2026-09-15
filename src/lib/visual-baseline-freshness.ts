@@ -82,7 +82,7 @@ const SNAPSHOT_CALL_PATTERN = /toHaveScreenshot\(\s*['"]([\w-]+)\.png['"]/g;
 
 /** Every snapshot stem named in a `toHaveScreenshot('<stem>.png', ...)` call, in order. */
 export function extractSnapshotStems(specSource: string): string[] {
-  return [...specSource.matchAll(SNAPSHOT_CALL_PATTERN)].map((m) => m[1]);
+  return [...specSource.matchAll(SNAPSHOT_CALL_PATTERN)].map((m) => m[1] ?? '');
 }
 
 export interface CoverageGaps {

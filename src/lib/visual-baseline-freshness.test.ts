@@ -119,7 +119,7 @@ describe('findStaleRoutes', () => {
     };
     const stale = findStaleRoutes(routes, execGit);
     expect(stale).toHaveLength(1);
-    expect(stale[0]).toMatchObject({ name: 'login', reason: 'stale' });
+    expect(stale[0]!).toMatchObject({ name: 'login', reason: 'stale' });
   });
 
   it('does not flag a route whose baseline is newer than its source', () => {
@@ -144,8 +144,8 @@ describe('findStaleRoutes', () => {
     const execGit = (cmd: string) => (cmd.includes('src/login.tsx') ? '1000' : '');
     const stale = findStaleRoutes(routes, execGit);
     expect(stale).toHaveLength(1);
-    expect(stale[0].reason).toBe('untracked');
-    expect(stale[0].detail).toContain('snap/login.png');
+    expect(stale[0]!.reason).toBe('untracked');
+    expect(stale[0]!.detail).toContain('snap/login.png');
   });
 
   it('treats equal commit times as fresh, not stale (same-commit edit)', () => {
