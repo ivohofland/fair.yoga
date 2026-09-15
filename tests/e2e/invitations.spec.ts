@@ -355,3 +355,97 @@ test.describe('Invitation resend (#173)', () => {
     }
   });
 });
+
+test.describe('An invitation to a teacher-only account (#172)', () => {
+  test.describe.configure({ mode: 'serial' });
+
+  const inviterEmail = `e2e-t2t-inviter-${suffix}@test.local`;
+  const inviteeEmail = `e2e-t2t-invitee-${suffix}@test.local`;
+  let inviterId: string;
+  let inviterAccountId: string;
+  let inviterToken: string;
+  let inviteeId: string;
+  let inviteeAccountId: string;
+  let inviteeToken: string;
+
+  test.beforeAll(async () => {
+    await prisma.$connect();
+    const inviter = await prisma.teacher.create({
+      data: {
+        firstName: 'Inviting', lastName: 'Teacher', email: inviterEmail,
+        account: { create: { email: inviterEmail } },
+        bio: '#172 e2e inviter', pageSlug: `e2e-t2t-inviter-${suffix}`,
+      },
+    });
+    inviterId = inviter.id;
+    inviterAccountId = await accountIdOfTeacher(prisma, inviterId);
+    inviterToken = await seedSession(prisma, inviterAccountId);
+
+    const invitee = await prisma.teacher.create({
+      data: {
+        firstName: 'Invited', lastName: 'Teacher', email: inviteeEmail,
+        account: { create: { email: inviteeEmail } },
+        bio: '#172 e2e invitee', pageSlug: `e2e-t2t-invitee-${suffix}`,
+      },
+    });
+    inviteeId = invitee.id;
+    inviteeAccountId = await accountIdOfTeacher(prisma, inviteeId);
+    inviteeToken = await seedSession(prisma, inviteeAccountId);
+  });
+
+  test.afterAll(async () => {
+    const student = await prisma.student.findUnique({ where: { email: inviteeEmail }, select: { id: true } });
+    await prisma.session.deleteMany({ where: { accountId: { in: [inviterAccountId, inviteeAccountId] } } });
+    await prisma.notification.deleteMany({ where: { recipientType: 'teacher', recipientId: inviteeId } });
+    if (student) {
+      await prisma.notification.deleteMany({ where: { recipientType: 'student', recipientId: student.id } });
+    }
+    // Cascades the invitation and the roster link.
+    await prisma.teacher.delete({ where: { id: inviterId } });
+    if (student) await prisma.student.delete({ where: { id: student.id } });
+    await prisma.teacher.delete({ where: { id: inviteeId } });
+    await prisma.account.deleteMany({ where: { id: { in: [inviterAccountId, inviteeAccountId] } } });
+    await prisma.$disconnect();
+  });
+
+  test('the invitee finds it in the Inbox, adds a student side and accepts', async ({ page, context }) => {
+    await signInAs(context, inviterToken);
+    await page.goto('/students');
+    // From inside the page: same origin and the inviter's cookie, as the app's own form sends it.
+    const addStatus = await page.evaluate(async (email) => {
+      const res = await fetch('/api/students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firstName: 'Invited', lastName: 'Teacher', email }),
+      });
+      return res.status;
+    }, inviteeEmail);
+    expect(addStatus).toBe(201);
+    await expect.poll(() => prisma.notification.count({
+      where: { recipientType: 'teacher', recipientId: inviteeId, type: 'teacher_invitation' },
+    })).toBe(1);
+
+    await signInAs(context, inviteeToken);
+    await page.goto('/inbox');
+    await page.getByRole('button', { name: /^A teacher would like to connect/ }).click();
+    await page.waitForURL('**/inbox/invitations');
+    await expect(page.getByText('Inviting Teacher would like to connect with you as a student.')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Set up student side' }).click();
+    await page.waitForURL('**/account/privacy');
+    await expect(page.getByRole('heading', { name: 'Pending invitations' })).toBeVisible();
+    await page.getByRole('button', { name: 'Accept' }).click();
+    await expect(page.getByText('Accepted')).toBeVisible();
+
+    const student = await prisma.student.findUniqueOrThrow({ where: { email: inviteeEmail }, select: { id: true } });
+    await expect.poll(() => prisma.teacherStudent.count({
+      where: { teacherId: inviterId, studentId: student.id },
+    })).toBe(1);
+  });
+
+  test('the invitations page, opened after joining, goes to the student page', async ({ page, context }) => {
+    await signInAs(context, inviteeToken);
+    await page.goto('/inbox/invitations');
+    await page.waitForURL('**/account/privacy');
+  });
+});
