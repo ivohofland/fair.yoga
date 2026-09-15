@@ -7,7 +7,12 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { countImageKeyLines, extractImageReferences, parseImagePin, type ImagePin } from './service-image-freshness';
+import {
+  countImageKeyLines,
+  extractImageReferences,
+  parseImagePin,
+  type ImagePin,
+} from './service-image-freshness';
 
 export const WORKFLOWS_DIR = '.github/workflows';
 
@@ -26,9 +31,11 @@ export interface CoverageGap {
   readonly referencesFound: number;
 }
 
-export function scanWorkflows(
-  root: string,
-): { pins: LocatedPin[]; unparsed: LocatedUnparsed[]; coverageGaps: CoverageGap[] } {
+export function scanWorkflows(root: string): {
+  pins: LocatedPin[];
+  unparsed: LocatedUnparsed[];
+  coverageGaps: CoverageGap[];
+} {
   const dir = path.join(root, WORKFLOWS_DIR);
   const files = readdirSync(dir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
   const pins: LocatedPin[] = [];

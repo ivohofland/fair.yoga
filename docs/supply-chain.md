@@ -871,22 +871,26 @@ in the Checks UI even while the exit code stays 0 — and if every image
 group was unreachable in a given run, one further `::warning::` line says
 so explicitly, since that run verified nothing at all.
 
-Three pieces of the script's orchestration logic were extracted into
-`src/lib` for #608: the registry auth+manifest fetch
+Four pieces of the script's orchestration logic were extracted into
+`src/lib` for #608 and #609: the registry auth+manifest fetch
 (`src/lib/service-image-registry.ts`), grouping parsed pins by `image:tag`
 so a repeated reference only triggers one fetch
-(`src/lib/service-image-freshness.ts`), and the per-group freshness loop,
-with the digest fetch injected as a dependency
-(`src/lib/service-image-check.ts`) — all three
-are now unit-tested (`src/lib/service-image-registry.test.ts`,
+(`src/lib/service-image-freshness.ts`), the per-group freshness loop, with
+the digest fetch injected as a dependency (`src/lib/service-image-check.ts`),
+and scanning `.github/workflows/*.yml` for image references to classify into
+digest-pinned pins, unparseable references, and coverage gaps
+(`src/lib/service-image-scan.ts`) — all four are now unit-tested
+(`src/lib/service-image-registry.test.ts`,
 `src/lib/service-image-freshness.test.ts`,
-`src/lib/service-image-check.test.ts`), the same shape the check-*.ts
+`src/lib/service-image-check.test.ts`,
+`src/lib/service-image-scan.test.ts`), the same shape the check-*.ts
 freshness/policy scripts already use for pure/testable logic — with the
 registry fetch as the first case *within that script family* covering
 genuine I/O rather than pure parsing; its sibling
 `check-package-manager-freshness.ts` still has an untested inline fetch of
-its own. The registry fetch lives in its own file rather than in
-`service-image-freshness.ts`, whose docblock's "no I/O" claim stays true.
+its own. The registry fetch and the workflow scan both live in their own
+files rather than in `service-image-freshness.ts`, whose docblock's "no I/O"
+claim stays true — real file I/O is why each has separate housing.
 
 Non-blocking for the same reason the package manager pin check above is:
 a registry hiccup, or a genuine upstream rebuild of `16-alpine`, is a

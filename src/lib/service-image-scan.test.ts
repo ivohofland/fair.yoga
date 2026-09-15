@@ -7,10 +7,9 @@ import { scanWorkflows } from './service-image-scan';
 
 const root = process.cwd();
 
-// Builds a throwaway `<root>/.github/workflows/` directory so scanWorkflows's
-// three branches (coverageGaps, unparsed, pins) can each be exercised without
-// touching this repo's real workflow files. Callers must rmSync the returned
-// root in a finally block.
+// Builds a throwaway `<root>/.github/workflows/` directory so each branch of
+// `scanWorkflows`'s result can be exercised without touching this repo's real
+// workflow files. Callers must rmSync the returned root in a finally block.
 function makeWorkflowsFixture(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), 'scan-workflows-'));
   const workflowsDir = join(dir, '.github', 'workflows');
@@ -29,7 +28,9 @@ describe('scanWorkflows', () => {
     });
     try {
       const { pins, unparsed, coverageGaps } = scanWorkflows(fixtureRoot);
-      expect(pins).toEqual([{ image: 'postgres', tag: '16-alpine', digest: `sha256:${digest}`, file: 'ci.yml' }]);
+      expect(pins).toEqual([
+        { image: 'postgres', tag: '16-alpine', digest: `sha256:${digest}`, file: 'ci.yml' },
+      ]);
       expect(unparsed).toEqual([]);
       expect(coverageGaps).toEqual([]);
     } finally {
@@ -83,10 +84,10 @@ describe('scanWorkflows', () => {
   // Tethered to the real artifacts, the way parsePackageManagerPin's test
   // reads package.json directly — if #603's digest pins are ever hand-edited
   // back to a floating tag, this fails immediately instead of the check
-  // going quietly inert. Replaces service-image-freshness.test.ts's former
-  // inline re-implementation of this same scan (#609): calls the real
-  // scanWorkflows instead of readdirSync + extractImageReferences +
-  // parseImagePin duplicated in the test.
+  // going quietly inert. Ties the workflow pins to docker-compose.yml's own
+  // pin rather than a hardcoded literal, so a legitimate digest bump moves
+  // both together and docs/supply-chain.md's "same digest the compose files
+  // already carry" claim is something this test actually verifies.
   it("parses every image: reference this repo currently ships under .github/workflows, all matching docker-compose.yml's pinned digest", () => {
     const { pins, unparsed, coverageGaps } = scanWorkflows(root);
     expect(coverageGaps).toEqual([]);
@@ -94,7 +95,9 @@ describe('scanWorkflows', () => {
     expect(pins.length).toBeGreaterThanOrEqual(4);
 
     const composeContent = readFileSync(join(root, 'docker-compose.yml'), 'utf8');
-    const composePin = extractImageReferences(composeContent).map(parseImagePin).find((pin) => pin !== null);
+    const composePin = extractImageReferences(composeContent)
+      .map(parseImagePin)
+      .find((pin) => pin !== null);
     expect(composePin).not.toBeNull();
 
     for (const pin of pins) {
@@ -102,13 +105,12 @@ describe('scanWorkflows', () => {
     }
   });
 
-  it('the fixture helper itself only ever writes files scanWorkflows can see, sanity-checked against a real readdirSync', () => {
-    const fixtureRoot = makeWorkflowsFixture({ 'x.yml': 'image: a:1\n' });
+  it('throws when .github/workflows does not exist, same as the original inline loop', () => {
+    const emptyRoot = mkdtempSync(join(tmpdir(), 'scan-workflows-empty-'));
     try {
-      const workflowsDir = join(fixtureRoot, '.github', 'workflows');
-      expect(readdirSync(workflowsDir)).toEqual(['x.yml']);
+      expect(() => scanWorkflows(emptyRoot)).toThrow();
     } finally {
-      rmSync(fixtureRoot, { recursive: true, force: true });
+      rmSync(emptyRoot, { recursive: true, force: true });
     }
   });
 });
