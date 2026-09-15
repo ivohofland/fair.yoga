@@ -2,7 +2,7 @@
  * Pure functions over a Docker image reference — no I/O. Parses the
  * `<image>:<tag>@sha256:<digest>` shape this repo pins service-container
  * images to, groups references by image:tag, and compares a pinned digest
- * against one fetched elsewhere (`scripts/check-service-image-freshness.ts`).
+ * against one fetched elsewhere (`src/lib/service-image-registry.ts`).
  * Rationale and the measured state: docs/supply-chain.md ("The database
  * image").
  */
@@ -69,10 +69,9 @@ export function parseImagePin(reference: string): ImagePin | null {
   return { image, tag, digest: `sha256:${digest}` };
 }
 
-// Generic over T so the script's own LocatedPin (image/tag/digest plus a
-// file field this module doesn't need to know about) passes through with
-// that extra field intact — this module stays ignorant of what a caller
-// attaches to an ImagePin.
+// Generic over T so a caller's richer pin type — whatever it adds to
+// ImagePin — passes through unchanged; this module stays ignorant of what a
+// caller attaches.
 export function groupByImageTag<T extends ImagePin>(pins: readonly T[]): Map<string, T[]> {
   const groups = new Map<string, T[]>();
   for (const pin of pins) {

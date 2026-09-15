@@ -875,15 +875,17 @@ Three pieces of the script's orchestration logic were extracted into
 `src/lib` for #608: the registry auth+manifest fetch
 (`src/lib/service-image-registry.ts`), grouping parsed pins by `image:tag`
 so a repeated reference only triggers one fetch
-(`src/lib/service-image-freshness.ts`), and the per-group freshness loop
-that wires the two together (`src/lib/service-image-check.ts`) — all three
+(`src/lib/service-image-freshness.ts`), and the per-group freshness loop,
+with the digest fetch injected as a dependency
+(`src/lib/service-image-check.ts`) — all three
 are now unit-tested (`src/lib/service-image-registry.test.ts`,
 `src/lib/service-image-freshness.test.ts`,
-`src/lib/service-image-check.test.ts`), the same shape this repo already
-uses for pure/testable script logic, with the registry fetch as the first
-case of that shape covering genuine I/O rather than pure parsing — its
-sibling `check-package-manager-freshness.ts` still has an untested inline
-fetch of its own. The registry fetch lives in its own file rather than in
+`src/lib/service-image-check.test.ts`), the same shape the check-*.ts
+freshness/policy scripts already use for pure/testable logic — with the
+registry fetch as the first case *within that script family* covering
+genuine I/O rather than pure parsing; its sibling
+`check-package-manager-freshness.ts` still has an untested inline fetch of
+its own. The registry fetch lives in its own file rather than in
 `service-image-freshness.ts`, whose docblock's "no I/O" claim stays true.
 
 Non-blocking for the same reason the package manager pin check above is:
