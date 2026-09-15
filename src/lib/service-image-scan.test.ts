@@ -105,7 +105,29 @@ describe('scanWorkflows', () => {
     }
   });
 
-  it('throws when .github/workflows does not exist, same as the original inline loop', () => {
+  it('accumulates pins, unparsed, and coverage gaps together in a single file', () => {
+    const validDigest = 'a'.repeat(64);
+    const fixtureRoot = makeWorkflowsFixture({
+      'multi.yml': [
+        `image: postgres:16-alpine@sha256:${validDigest}`,
+        'image: redis:7',
+        'image:',
+        '  mysql:8',
+      ].join('\n'),
+    });
+    try {
+      const { pins, unparsed, coverageGaps } = scanWorkflows(fixtureRoot);
+      expect(pins).toEqual([
+        { image: 'postgres', tag: '16-alpine', digest: `sha256:${validDigest}`, file: 'multi.yml' },
+      ]);
+      expect(unparsed).toEqual([{ file: 'multi.yml', reference: 'redis:7' }]);
+      expect(coverageGaps).toEqual([{ file: 'multi.yml', imageKeyLines: 3, referencesFound: 2 }]);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('throws when .github/workflows does not exist (the missing-directory case is not caught or swallowed)', () => {
     const emptyRoot = mkdtempSync(join(tmpdir(), 'scan-workflows-empty-'));
     try {
       expect(() => scanWorkflows(emptyRoot)).toThrow();

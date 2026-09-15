@@ -1,8 +1,10 @@
 /**
- * Scans `.github/workflows/*.yml` for image: references and classifies
- * each into a digest-pinned pin, an unparseable reference, or a coverage
- * gap (an `image:` key line that yielded no reference at all — e.g. an
- * indented continuation line the parser can't see). Does real file I/O.
+ * Scans `.github/workflows/` (`.yml`/`.yaml` files) for image: references and
+ * classifies each into a digest-pinned pin, an unparseable reference, or a
+ * coverage gap (an `image:` key line that yielded no reference at all — e.g.
+ * an indented continuation line the parser can't see). Does real file I/O.
+ * Throws if `<root>/.github/workflows` doesn't exist — callers that want a
+ * softer failure must catch it themselves.
  * See docs/supply-chain.md ("The database image").
  */
 import { readFileSync, readdirSync } from 'node:fs';
