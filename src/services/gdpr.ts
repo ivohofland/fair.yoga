@@ -634,13 +634,10 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       data: { lastNotifiedEmail: anonymizedEmail },
     });
 
-    // `TeacherBlock` is deliberately not touched: each row is the subject's
-    // refusal of one teacher, kept as a suppression entry (#171). The scrub
-    // above frees `(teacherId, email)`, so this row is then all that stands
-    // between the subject's real mailbox and mail from a teacher they refused
-    // — and every lookup is `teacherId` + exact `email`, so scrubbing it
-    // would silently disarm it. Why retention was chosen over scrubbing or
-    // hashing: `docs/data-model.md` (TeacherBlock).
+    // `TeacherBlock` is deliberately not touched (#171): these rows are the
+    // subject's refusals, and the scrub above frees the `Invitation` key a
+    // refusal could otherwise have leaned on. Why they are kept rather than
+    // scrubbed, hashed or expired: `docs/data-model.md` (TeacherBlock).
     await tx.notification.deleteMany({ where: { recipientType: 'student', recipientId: studentId } });
     // Sessions and passkeys belong to the account. They die with the
     // erased profile unless a live teacher profile still uses the account.

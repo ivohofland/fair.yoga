@@ -3,9 +3,8 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { DataAndDeletion } from './data-and-deletion';
 
 /**
- * #171. Erasing a student keeps each refusal they made (`TeacherBlock`) with
- * the address it is matched on, so the student confirmation says so before
- * they commit. Why the row is kept: `docs/data-model.md` (TeacherBlock).
+ * #171: the student delete confirmation discloses that the address behind a
+ * refusal is kept. What is kept and why: `docs/data-model.md` (TeacherBlock).
  */
 describe('DataAndDeletion', () => {
   it('tells a student that the email address behind a refusal is kept', () => {
@@ -17,7 +16,7 @@ describe('DataAndDeletion', () => {
     ).toBeInTheDocument();
   });
 
-  it('does not tell a teacher-only confirmation about refusals', () => {
+  it('keeps the refusal sentence out of the teacher copy', () => {
     render(<DataAndDeletion role="teacher" />);
     fireEvent.click(screen.getByRole('button', { name: 'Delete account' }));
 
