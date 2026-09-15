@@ -501,10 +501,9 @@ describe('GET /bookings (page) — price line and link gated on bookable state',
  * status forever (#327), so the ledger split can't use status alone to
  * decide a cancelled class is Past. This class is dated well before `now`
  * and must move to Past classes, with a text "Cancelled" marker and no
- * payment UI — a cancelled class never reaches `completed`, so it never
- * gets a `Payment` row (`completeClass` is the only creator) and #576's
- * payment breakdown (gated on `classStatus === 'completed'`,
- * `src/lib/payment-breakdown.ts`) is unaffected by where it lands.
+ * payment UI — a cancelled class never has a payment or a breakdown
+ * (docs/lock-order.md; `payment-breakdown.ts`'s own `completed` gate), so
+ * #576 is unaffected by where it lands.
  */
 describe('GET /bookings (page) — cancelled class moves to Past', () => {
   const suffix4 = uniqueSuffix();

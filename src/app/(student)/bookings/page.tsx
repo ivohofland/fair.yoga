@@ -371,13 +371,10 @@ export default async function StudentBookingsPage() {
                       {formatDayHeader(cls.calendarEntry.date)} · with {cls.calendarEntry.teacher.firstName} {cls.calendarEntry.teacher.lastName}
                     </p>
                   </div>
-                  {/* A cancelled class never has a payment — `completeClass`
-                      is the only creator of one, and the
-                      `CalendarEntry_not_cancelled_and_completed` CHECK
-                      constraint keeps `cancelledAt` and `classCompletedAt`
-                      from ever coexisting — so this branches on `cancelled`
-                      instead of stacking a second independent `&&` guard
-                      beside `payment`. */}
+                  {/* A cancelled class never has a payment (docs/lock-order.md —
+                      `CalendarEntry_not_cancelled_and_completed`) — this branches
+                      on `cancelled` instead of stacking a second independent `&&`
+                      guard beside `payment`. */}
                   {cancelled ? (
                     <div className="text-right shrink-0">
                       <p className="type-caption text-brown">Cancelled</p>
