@@ -326,8 +326,10 @@ mock of Resend:
 - **Teacher-only address:** exactly one teacher-recipient `teacher_invitation`
   notification, and no invitation email.
 - **Teacher-only address, repeat dispatch:** nothing.
-- **Teacher-only address after readdressing, and after a recorded failure:**
-  notified.
+- **Readdressing and a recorded failure** are decided before
+  `notifyInvitee` sees the dispatch, so they are pinned where they are
+  decided: `priorDispatchFor`'s own unit test, and a resend route test of
+  what it passes on.
 - **Address with both profiles:** the student notification only, never a
   teacher one.
 - **Student address, repeat dispatch:** still notified. This is the other
@@ -352,9 +354,13 @@ mock of Resend:
 - **`NotificationList`:** a teacher `teacher_invitation` row links to the
   invitations page; a class row still links to its class.
 
-**End-to-end**, in `tests/e2e/invitations.spec.ts`. The page is an async
-server component that reads Prisma, which Vitest cannot render (the same
-constraint `account/privacy/page.tsx` records).
+**Page**, in `src/app/(teacher)/inbox/invitations/page.test.tsx`. The
+session, Prisma and the service are mocked, the way
+`settings/rooms/[id]/page.test.tsx` renders an async server page. It covers
+the redirect, the named teachers with one button, and the empty state.
+
+**End-to-end**, in `tests/e2e/invitations.spec.ts`, runs the page against real
+data.
 - **The whole journey:** a teacher-only invitee sees the Inbox dot, opens the
   row, reaches the page, sets up a student side, lands on `/account/privacy`
   and accepts, and B's CRM shows a student.
@@ -373,8 +379,8 @@ re-verify.
 4. Apply the repeat value in step 3: the student repeat test fails.
 5. Move step 4 above step 3: the both-profiles test fails.
 6. Drop the teacher action link: the email test fails.
-7. Remove the page's `studentId` redirect: the e2e student-profile visit
-   fails.
+7. Remove the page's `studentId` redirect: the page test's student-side case
+   fails, and so does the e2e visit after joining.
 
 ## Docs and comments this change makes false
 
