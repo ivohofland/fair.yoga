@@ -1,11 +1,12 @@
 /**
  * Fetches a Docker Hub image tag's current manifest digest — the networked
- * half of the freshness check whose parsing/comparison half is
- * `service-image-freshness.ts` (kept I/O-free there on purpose). Two-step
- * Docker Hub v2 flow: an anonymous auth token scoped to
- * `repository:<repo>:pull`, then a HEAD on the manifest whose
- * `docker-content-digest` response header is the current digest. Used by
- * `scripts/check-service-image-freshness.ts`.
+ * half of the service-image freshness check
+ * (`scripts/check-service-image-freshness.ts`). Two-step Docker Hub v2
+ * flow: an anonymous auth token scoped to `repository:<repo>:pull`, then a
+ * HEAD on the manifest whose `docker-content-digest` response header is the
+ * current digest. See docs/supply-chain.md ("The database image") for why
+ * this fetch logic lives in its own file, separate from the pure
+ * parsing/comparison functions in `service-image-freshness.ts`.
  */
 
 export async function fetchLatestDigest(image: string, tag: string): Promise<string> {
