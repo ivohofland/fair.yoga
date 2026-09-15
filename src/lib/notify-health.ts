@@ -10,8 +10,9 @@ let recentFailures: number[] = [];
  * SDK/API rejection) is rare and carries no address-class signal on its own.
  * A burst of them in a short window is what a Resend outage or a lapsed API
  * key/sending domain looks like — and that failure mode hits every stranger
- * send alike, never the registered-student path (`createNotification`, a
- * local DB insert that essentially never fails). Left unguarded,
+ * send alike, never the in-app path (`createNotification`, a local DB insert
+ * that essentially never fails, for a student or a teacher-only account).
+ * Left unguarded,
  * `Invitation.lastNotifyFailedAt` would then read "failed" for every
  * unregistered invitee and "sent" for every registered one during the
  * outage — a deterministic partition by account-registration status, the

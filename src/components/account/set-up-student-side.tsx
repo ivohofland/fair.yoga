@@ -17,8 +17,8 @@ export function SetUpStudentSide() {
     setState('working');
     try {
       const res = await fetch('/api/account/student-profile', { method: 'POST' });
-      // 409 ALREADY_STUDENT: another tab or a second tap got there first, and
-      // the student page is where this was going anyway.
+      // 409 ALREADY_STUDENT: this account already holds a student profile
+      // row, and the student page is where this button leads either way.
       if (!res.ok && res.status !== 409) {
         setMessage(await readErrorMessage(res, 'Could not set up your student side. Try again.'));
         setState('error');

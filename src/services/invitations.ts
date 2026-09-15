@@ -431,8 +431,9 @@ async function revivePendingInvitation(
 }
 
 /**
- * Whether a dispatch has already reached the invitation's current address.
- * `notifyInvitee`'s teacher-account branch is the only reader (#172).
+ * Whether a dispatch has already reached the invitation's current address
+ * (#172). Who reads it: `docs/data-model.md` (Invitation, "Who an invitation
+ * reaches").
  */
 export type PriorDispatch = 'none' | 'same_address';
 
@@ -641,7 +642,7 @@ export async function notifyInvitee(
   // No Student row and no teacher account means no in-app surface exists to
   // notify — a direct email is the only channel left.
   //
-  // `/login`, not the invitation page the registered invitee's own fallback
+  // `/login`, not the invitation pages a registered invitee's own fallback
   // email points at (`renderNotificationEmail`, lib/email-templates.ts): a
   // stranger has no account, and the verify flow decides where to land them
   // itself rather than honouring a destination in the link. Not a

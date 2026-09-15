@@ -57,7 +57,8 @@ export async function sendMagicLinkEmail(
 
 /**
  * Sends the invitation email — `notifyInvitee`'s (services/invitations.ts)
- * fallback for an address with no `Student` row to notify instead. Unlike
+ * fallback for an address with neither a `Student` row nor a teacher account
+ * to notify instead. Unlike
  * `sendMagicLinkEmail`, a missing key degrading to dry-run in production is
  * not a login-breaking event here, so this has no equivalent production
  * throw-guard: dry-run just logs, the same as `email-fallback.ts`'s send.
