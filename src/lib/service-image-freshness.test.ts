@@ -5,6 +5,7 @@ import {
   checkServiceImageFreshness,
   countImageKeyLines,
   extractImageReferences,
+  groupByImageTag,
   parseImagePin,
 } from './service-image-freshness';
 
@@ -158,5 +159,40 @@ describe('checkServiceImageFreshness', () => {
       pinned: 'sha256:abc',
       latest: 'sha256:def',
     });
+  });
+});
+
+describe('groupByImageTag', () => {
+  it('groups multiple pins sharing the same image:tag under one key', () => {
+    const pins = [
+      { image: 'postgres', tag: '16-alpine', digest: 'sha256:aaa', file: 'ci.yml' },
+      { image: 'postgres', tag: '16-alpine', digest: 'sha256:bbb', file: 'e2e-flake-repro.yml' },
+    ];
+    const groups = groupByImageTag(pins);
+    expect(groups.size).toBe(1);
+    expect(groups.get('postgres:16-alpine')).toEqual(pins);
+  });
+
+  it('keeps different image:tag pairs in separate groups, in first-seen order', () => {
+    const pins = [
+      { image: 'postgres', tag: '16-alpine', digest: 'sha256:aaa', file: 'ci.yml' },
+      { image: 'redis', tag: '7', digest: 'sha256:bbb', file: 'ci.yml' },
+    ];
+    const groups = groupByImageTag(pins);
+    expect(groups.size).toBe(2);
+    expect([...groups.keys()]).toEqual(['postgres:16-alpine', 'redis:7']);
+  });
+
+  it('returns an empty map for no pins', () => {
+    expect(groupByImageTag([]).size).toBe(0);
+  });
+
+  it("keeps each pin's own digest intact within a shared group, so a stale digest for one occurrence does not affect a sibling's fresh verdict", () => {
+    const stale = { image: 'postgres', tag: '16-alpine', digest: 'sha256:stale', file: 'ci.yml' };
+    const fresh = { image: 'postgres', tag: '16-alpine', digest: 'sha256:fresh', file: 'e2e-flake-repro.yml' };
+    const group = groupByImageTag([stale, fresh]).get('postgres:16-alpine')!;
+    const latest = 'sha256:fresh';
+    expect(checkServiceImageFreshness(group[0]!.digest, latest).fresh).toBe(false);
+    expect(checkServiceImageFreshness(group[1]!.digest, latest).fresh).toBe(true);
   });
 });
