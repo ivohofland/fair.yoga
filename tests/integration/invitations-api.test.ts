@@ -4199,3 +4199,60 @@ describe('GET /api/invitations after the invitee erases (#520)', () => {
     expect(JSON.stringify(json)).not.toContain(erasedEmail);
   });
 });
+
+describe('an invitation to a teacher-only account (#172)', () => {
+  const inviteeEmail = `inv-teacher-invitee-${suffix}@test.local`;
+  let inviteeTeacherId: string;
+  let inviteeAccountId: string;
+
+  beforeAll(async () => {
+    const invitee = await prisma.teacher.create({
+      data: {
+        firstName: 'Invitee', lastName: 'Teacher', email: inviteeEmail,
+        account: { create: { email: inviteeEmail } },
+        bio: '#172 teacher-only invitee',
+        pageSlug: `inv-teacher-invitee-${suffix}`,
+      },
+      select: { id: true, accountId: true },
+    });
+    inviteeTeacherId = invitee.id;
+    inviteeAccountId = invitee.accountId;
+  });
+
+  afterAll(async () => {
+    await prisma.invitation.deleteMany({ where: { teacherId, email: inviteeEmail } });
+    await prisma.notification.deleteMany({
+      where: { recipientType: 'teacher', recipientId: inviteeTeacherId },
+    });
+    const student = await prisma.student.findUnique({
+      where: { email: inviteeEmail },
+      select: { id: true },
+    });
+    if (student) {
+      await prisma.teacherStudent.deleteMany({ where: { studentId: student.id } });
+      await prisma.notification.deleteMany({
+        where: { recipientType: 'student', recipientId: student.id },
+      });
+      await prisma.student.delete({ where: { id: student.id } });
+    }
+    await prisma.session.deleteMany({ where: { accountId: inviteeAccountId } });
+    await prisma.teacher.delete({ where: { id: inviteeTeacherId } });
+    await prisma.account.delete({ where: { id: inviteeAccountId } });
+  });
+
+  it('reaches the invitee in their teacher inbox', async () => {
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'Invitee', lastName: 'Teacher', email: inviteeEmail }),
+    });
+    expect(res.status).toBe(201);
+
+    await waitFor(
+      () => prisma.notification.findFirst({
+        where: { recipientType: 'teacher', recipientId: inviteeTeacherId, type: 'teacher_invitation' },
+      }),
+      { description: 'teacher-inbox teacher_invitation for a teacher-only invitee (#172)' },
+    );
+  });
+});
