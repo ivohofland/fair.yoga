@@ -60,4 +60,20 @@ describe('PricingBreakdown', () => {
     );
     expect(screen.getByText(/−€20\.00\s+–\s+€60\.00/)).toBeInTheDocument();
   });
+
+  it('renders price per tier when tier prices exist', () => {
+    render(
+      <PricingBreakdown
+        cls={makeClass()}
+        tierPrices={[
+          { tier: 1, price: 10.0 },
+          { tier: 2, price: 14.0 },
+        ]}
+      />,
+    );
+    expect(screen.getByText('Tier 1')).toBeInTheDocument();
+    expect(screen.getByText('€10.00')).toBeInTheDocument();
+    expect(screen.getByText('Tier 2')).toBeInTheDocument();
+    expect(screen.getByText('€14.00')).toBeInTheDocument();
+  });
 });

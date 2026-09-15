@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
@@ -74,7 +75,8 @@ export default async function ReportingPage() {
     (s) => classStartInstant(s.calendarEntry, session.defaultTimezone) <= now,
   );
 
-  const toCents = (val: unknown): number => Math.round(Number(val ?? 0) * 100);
+  const toCents = (val: Prisma.Decimal | number | string | null | undefined): number =>
+    Math.round(Number(val ?? 0) * 100);
 
   const classEarningsCents = (c: (typeof completedClasses)[number]) =>
     toCents(c.totalRevenue) - toCents(c.roomCost);
@@ -85,7 +87,7 @@ export default async function ReportingPage() {
   const totalStudioEarningsCents = completedStudioClasses.reduce((sum, s) => sum + studioEarningsCents(s), 0);
   const totalRoomCostsCents = completedClasses.reduce((sum, c) => sum + toCents(c.roomCost), 0);
 
-  // Last six calendar months, newest first
+  // Accumulate classes, students, and earnings in cents by month key (YYYY-MM)
   const byMonth = new Map<string, { classes: number; students: number; earningsCents: number }>();
   for (const c of completedClasses) {
     const key = monthKey(c.calendarEntry.date);
@@ -103,6 +105,7 @@ export default async function ReportingPage() {
     entry.earningsCents += studioEarningsCents(s);
     byMonth.set(key, entry);
   }
+  // Last six calendar months, newest first
   const months = [...byMonth.entries()]
     .sort((a, b) => (a[0] < b[0] ? 1 : -1))
     .slice(0, 6)

@@ -408,7 +408,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       expect(html).toContain('June 2026');
       expect(html).not.toContain('€-0.00');
       expect(html).not.toContain('−€0.00');
-      expect(html).toContain('€0.00');
+      expect(html).toMatch(/June 2026[\s\S]*?<span[^>]*type-number[^>]*>€0\.00<\/span>/);
     });
 
     it('renders a net-negative earnings month as −€X.XX', async () => {
@@ -453,7 +453,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       const html = await res.text();
 
       expect(html).toContain('May 2026');
-      expect(html).toContain('−€20.00');
+      expect(html).toMatch(/May 2026[\s\S]*?<span[^>]*type-number[^>]*>−€20\.00<\/span>/);
       expect(html).not.toContain('€-20.00');
     });
 

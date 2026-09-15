@@ -1009,10 +1009,10 @@ describe('completeClass (DB)', () => {
       });
     }
 
-    const result = await completeClass(prisma, negClass.id, { finishedEarly: true });
-    expect(result.ok).toBe(true);
-
     try {
+      const result = await completeClass(prisma, negClass.id, { finishedEarly: true });
+      expect(result.ok).toBe(true);
+
       const teacherNote = await prisma.notification.findFirstOrThrow({
         where: { relatedClassId: negClass.id, recipientType: 'teacher', type: 'payment_request' },
       });

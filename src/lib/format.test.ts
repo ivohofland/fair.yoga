@@ -424,8 +424,19 @@ describe('formatCents', () => {
     expect(formatCents(-7.1054e-15)).toBe('€0.00');
   });
 
-  it('rounds sub-cent amounts to nearest whole cent', () => {
-    expect(formatCents(399.6)).toBe('€4.00');
+  it('pads negative single-digit cents with leading zero', () => {
+    expect(formatCents(-5)).toBe('−€0.05');
+  });
+
+  it('rounds negative sub-cent drift to positive zero or nearest cent', () => {
+    expect(formatCents(-0.4)).toBe('€0.00');
+    expect(formatCents(-0.6)).toBe('−€0.01');
+  });
+
+  it('throws RangeError for non-finite amounts', () => {
+    expect(() => formatCents(NaN)).toThrow(RangeError);
+    expect(() => formatCents(Infinity)).toThrow(RangeError);
+    expect(() => formatCents(-Infinity)).toThrow(RangeError);
   });
 });
 
@@ -449,5 +460,11 @@ describe('formatEuro', () => {
 
   it('cancels floating point drift to zero', () => {
     expect(formatEuro((56.30 - 40.10) + (24.00 - 40.20))).toBe('€0.00');
+  });
+
+  it('throws RangeError for non-finite amounts', () => {
+    expect(() => formatEuro(NaN)).toThrow(RangeError);
+    expect(() => formatEuro(Infinity)).toThrow(RangeError);
+    expect(() => formatEuro(-Infinity)).toThrow(RangeError);
   });
 });

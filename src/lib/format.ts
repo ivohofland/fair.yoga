@@ -25,11 +25,11 @@ export function timeAgo(date: Date): string {
 
 /**
  * Payment state as text, never a badge: "\u2713 Paid" teal, "\u25cb Unpaid"
- * brown, "! Overdue" danger, "\u2298 Not charged" muted brown. Returns label
- * + the text-color class.
+ * default text, "! Overdue" danger, "\u2298 Not charged" muted brown. Returns
+ * label + the text-color class.
  *
  * Rendered across teacher and student payment surfaces, so the last branch is
- * deliberately quiet at runtime and loud at compile time \u2014 see below.
+ * deliberately quiet at runtime and loud at compile time — see below.
  */
 export function paymentStateText(status: PaymentStatus): { label: string; className: string } {
   if (status === 'paid') return { label: '✓ Paid', className: 'text-teal' };
@@ -48,7 +48,7 @@ export function paymentStateText(status: PaymentStatus): { label: string; classN
   // `global-error.tsx`) logs nothing — so on enum/deploy drift a throw takes
   // down an entire student-facing page on every request, with no diagnostic
   // trail. Log it and mislabel one row instead; '○ Unpaid' is the calmest
-  // of the four states this design system has and never overclaims payment.
+  // of the PaymentStatus states this design system has and never overclaims payment.
   //
   // `console.error`, not `lib/log.ts`: that module is pino and server-only, and
   // this file is imported by `'use client'` components.
@@ -73,10 +73,9 @@ export function paymentStateInlineText(status: PaymentStatus): { label: string; 
 }
 
 /**
- * Shared by the three date formatters below, which want the same abbreviations —
- * `Jun`, not `June` and not a locale's idea of either. Module level rather than
- * a `const` inside each: it was declared twice, twenty lines apart, and rebuilt
- * on every call.
+ * Shared by date formatters below, which want the same abbreviations —
+ * `Jun`, not `June` and not a locale's idea of either. Declared at module level
+ * to avoid allocating on every call.
  *
  * Deliberately not `toLocaleString`: these formatters read their argument with
  * UTC accessors on purpose (see below), and a locale-aware month would have to
@@ -89,10 +88,7 @@ const MONTHS = [
 ];
 
 /**
- * Full month names, for `formatMonthLabel`'s heading-over-a-set-of-months —
- * unlike `MONTHS` above, exported: `class-list.tsx` imports this for its own
- * week-heading label, which is why it stays public while `MONTHS` stays
- * private; nothing outside this file needs the abbreviated form.
+ * Full month names, for `formatMonthLabel` headings and month-level displays.
  */
 export const FULL_MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -102,10 +98,7 @@ export const FULL_MONTHS = [
 /**
  * A class's day, as the schedule and bookings views render it: `Friday, 12 Jun`.
  *
- * Day-first (#96). The app previously rendered this three ways — `Jun 12`,
- * `12 June`, `June 12, 2026` — and a teacher saw two of them one tap apart.
- * Day-first is the international convention, which `CLAUDE.md`'s "international
- * from day one" implies and which will not need undoing when i18n arrives.
+ * Day-first international convention (CLAUDE.md).
  *
  * UTC accessors throughout: `CalendarEntry.date` is a `@db.Date` (midnight
  * UTC) and the time of day lives separately in `startTime`, so reading it in
@@ -219,10 +212,8 @@ export function todayLocal(): string {
 /**
  * A heading over a set of months: `June 2026`.
  *
- * Takes year and zero-indexed month rather than a `Date`, because its only
- * caller has already split them out of a grouping key and has no `Date` to
- * hand. Zero-indexed to match `getUTCMonth`, so a caller that does hold a date
- * can pass its accessors straight through.
+ * Accepts year and zero-indexed month (matching getUTCMonth conventions)
+ * for callers that already hold separated calendar values.
  *
  * The full month name, not the abbreviation the date formatters use: this
  * labels a period rather than a day, and there is no adjacent day number for it
@@ -230,11 +221,7 @@ export function todayLocal(): string {
  *
  * Out of range (`monthIndex` outside 0–11), `FULL_MONTHS[monthIndex]` is
  * `undefined` and the `?? ''` below renders e.g. `" 2026"` — a leading space,
- * no month name. Unreachable from the single caller. Unlike
- * `paymentStateText`'s enum in this same file, `monthIndex` is a plain
- * `number` with no closed set a `never` check could enforce at compile time,
- * and no type assertion is needed to call this out of range — so that
- * behaviour is pinned by a test (`format.test.ts`) rather than guarded here.
+ * no month name. That behaviour is pinned by a test (`format.test.ts`).
  */
 export function formatMonthLabel(year: number, monthIndex: number): string {
   return `${FULL_MONTHS[monthIndex] ?? ''} ${year}`;
@@ -245,8 +232,13 @@ export function formatMonthLabel(year: number, monthIndex: number): string {
  *
  * Formats positive amounts as `€X.XX`, negative amounts as `−€X.XX` (using U+2212
  * before the euro sign), and zero as `€0.00` (never `−€0.00` or `€-0.00`).
+ *
+ * Rejects non-finite numbers (NaN, Infinity) with a RangeError.
  */
 export function formatCents(cents: number): string {
+  if (!Number.isFinite(cents)) {
+    throw new RangeError(`formatCents: expected finite number, received ${cents}`);
+  }
   const rounded = Math.round(cents);
   const abs = Math.abs(rounded);
   const euros = Math.floor(abs / 100);
