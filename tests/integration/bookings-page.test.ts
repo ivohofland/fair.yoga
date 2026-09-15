@@ -514,17 +514,17 @@ describe('GET /bookings (page) — cancelled class moves to Past', () => {
   let studentAccountId = '';
   let studentToken = '';
   let roomId = '';
-  let cancelledPastClassId = '';
+  let lapsedPastClassId = '';
 
   beforeAll(async () => {
     await prisma.$connect();
 
-    const teacherEmail = `cancelled-past-teacher-${suffix4}@test.local`;
+    const teacherEmail = `lapsed-past-teacher-${suffix4}@test.local`;
     const teacher = await prisma.teacher.create({
       data: {
-        firstName: 'CancelledPast', lastName: 'Teacher', email: teacherEmail,
-        bio: 'Cancelled-past fixture teacher',
-        pageSlug: `cancelled-past-teacher-${suffix4}`,
+        firstName: 'LapsedPast', lastName: 'Teacher', email: teacherEmail,
+        bio: 'Lapsed-past fixture teacher',
+        pageSlug: `lapsed-past-teacher-${suffix4}`,
         account: { create: { email: teacherEmail } },
       },
       select: { id: true, accountId: true },
@@ -534,8 +534,8 @@ describe('GET /bookings (page) — cancelled class moves to Past', () => {
 
     const room = await prisma.room.create({
       data: {
-        venueName: 'Cancelled Past Studio',
-        address: `${suffix4} Cancelled St`,
+        venueName: 'Lapsed Past Studio',
+        address: `${suffix4} Lapsed St`,
         city: 'Amsterdam',
         postcode: '1000AA',
         roomName: 'Hall',
@@ -548,10 +548,10 @@ describe('GET /bookings (page) — cancelled class moves to Past', () => {
       data: { teacherId, roomId, capacityOverride: 10, rentalRate: 15 },
     });
 
-    const studentEmail = `cancelled-past-student-${suffix4}@test.local`;
+    const studentEmail = `lapsed-past-student-${suffix4}@test.local`;
     const student = await prisma.student.create({
       data: {
-        firstName: 'CancelledPast', lastName: 'Student', email: studentEmail,
+        firstName: 'LapsedPast', lastName: 'Student', email: studentEmail,
         claimedAt: new Date(),
         incomeTier: 3, tierSelectedAt: new Date(),
         account: { create: { email: studentEmail } },
@@ -562,10 +562,10 @@ describe('GET /bookings (page) — cancelled class moves to Past', () => {
     studentAccountId = student.accountId as string;
     studentToken = await seedSession(prisma, studentAccountId);
 
-    const cancelledPastClass = await createClassFixture(prisma, {
+    const lapsedPastClass = await createClassFixture(prisma, {
       teacherId,
       teacherRoomId: teacherRoom.id,
-      classType: 'Cancelled Past Class',
+      classType: 'Lapsed Past Class',
       date: new Date('2026-01-10'),
       startTime: hhmmToTime('09:00'),
       durationMinutes: 60,
@@ -577,10 +577,10 @@ describe('GET /bookings (page) — cancelled class moves to Past', () => {
       status: 'open',
       cancelledAt: new Date('2026-01-09T00:00:00.000Z'),
     });
-    cancelledPastClassId = cancelledPastClass.id;
+    lapsedPastClassId = lapsedPastClass.id;
 
     await prisma.registration.create({
-      data: { classId: cancelledPastClassId, studentId, tierAtBooking: 3, status: 'registered' },
+      data: { classId: lapsedPastClassId, studentId, tierAtBooking: 3, status: 'registered' },
     });
 
     // Warm the route before the assertions score anything.
@@ -613,7 +613,7 @@ describe('GET /bookings (page) — cancelled class moves to Past', () => {
     // would render and Past classes would not.
     expect(html).toContain('Past classes');
     expect(html).not.toContain('Upcoming');
-    expect(html).toContain('Cancelled Past Class');
+    expect(html).toContain('Lapsed Past Class');
 
     // Text marker, no payment amount, no disclosures — #576's breakdown
     // included, since none of the three renders for a class that never
