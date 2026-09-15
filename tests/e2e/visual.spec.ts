@@ -22,8 +22,9 @@ import { createClassFixture } from '../class-fixtures';
  * A baseline going stale on macOS (the only platform with baselines, and
  * this suite's only real coverage) is caught separately by
  * `pnpm run check-visual-baseline-freshness`, which runs in CI's `checks`
- * job using git history rather than rendering anything — see
- * src/lib/visual-baseline-freshness.ts.
+ * job — it flags a route only when the current PR's own diff touches its
+ * source without touching its baseline, rather than rendering anything or
+ * sweeping all of history. See src/lib/visual-baseline-freshness.ts.
  */
 
 const snapshotDir = path.join(__dirname, 'visual.spec.ts-snapshots');
