@@ -13,7 +13,7 @@ import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
-import { formatRoomLocation, formatDateWithYear } from '@/lib/format';
+import { formatRoomLocation, formatDateWithYear, formatEuro } from '@/lib/format';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { CANCEL_DEADLINE_OPTIONS, AUTO_CANCEL_OPTIONS } from '@/lib/class-options';
 
@@ -640,8 +640,7 @@ export default function CreateClassPage() {
           <div className="py-2 border-b border-border">
             <span className="type-label">Pricing</span>
             <p className="text-base text-ink">
-              Room cost: &euro;{form.roomCost.toFixed(2)} &middot; Rate: &euro;
-              {form.minRate.toFixed(2)} &ndash; &euro;{form.targetRate.toFixed(2)}
+              Room cost: {formatEuro(form.roomCost)} &middot; Rate: {formatEuro(form.minRate)} &ndash; {formatEuro(form.targetRate)}
             </p>
           </div>
 

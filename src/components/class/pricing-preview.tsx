@@ -1,4 +1,5 @@
 import type { Class, Registration } from '@prisma/client';
+import { formatEuro } from '@/lib/format';
 import { calculateClassPricing } from '@/services/pricing';
 import { INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
 import { toIncomeTier } from '@/lib/tiers.server';
@@ -81,14 +82,14 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
       <div className="bg-teal-tint rounded-card p-5 text-center">
         <span className="type-label">Estimated earnings</span>
         <p className="type-number text-[28px] leading-[1.25] mt-1">
-          &euro;{estimatedEarnings.toFixed(2)}
+          {formatEuro(estimatedEarnings)}
         </p>
       </div>
 
       <div className="mt-4">
         <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
           <span className="type-body">Room cost</span>
-          <span className="tabular-nums text-brown">&euro;{Number(cls.roomCost).toFixed(2)}</span>
+          <span className="tabular-nums text-brown">{formatEuro(Number(cls.roomCost))}</span>
         </div>
         <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
           <span className="type-body">Students</span>
@@ -96,7 +97,9 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
         </div>
         <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
           <span className="type-body">Rate</span>
-          <span className="tabular-nums text-ink">&euro;{Number(cls.minRate).toFixed(2)} &ndash; &euro;{Number(cls.targetRate).toFixed(2)}</span>
+          <span className="tabular-nums text-ink">
+            {formatEuro(Number(cls.minRate))} &ndash; {formatEuro(Number(cls.targetRate))}
+          </span>
         </div>
       </div>
 
@@ -109,7 +112,7 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
               Tier {row.tier}
               <span className="type-caption ml-1.5">{row.count} {row.count === 1 ? 'student' : 'students'}</span>
             </span>
-            <span className="type-number">&euro;{row.price.toFixed(2)}</span>
+            <span className="type-number">{formatEuro(row.price)}</span>
           </div>
         ))}
       </div>
