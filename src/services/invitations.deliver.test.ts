@@ -75,6 +75,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
       invitationId: 'inv-391a',
       source: 'create',
       dispatchedAt: new Date(),
+      priorDispatch: 'none',
     });
 
     expect(result).toBeUndefined();
@@ -95,6 +96,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
         invitationId: 'inv-391b',
         source: 'create',
         dispatchedAt: new Date(),
+        priorDispatch: 'none',
       });
 
       await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(1));
@@ -122,6 +124,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
       invitationId: 'inv-391c',
       source: 'resend',
       dispatchedAt: new Date(),
+      priorDispatch: 'none',
     });
 
     await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(1));
@@ -152,6 +155,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
       invitationId,
       source: 'create',
       dispatchedAt,
+      priorDispatch: 'none',
     });
     expect(result).toBeUndefined();
 
@@ -183,6 +187,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
         invitationId,
         source: 'create',
         dispatchedAt: new Date(),
+        priorDispatch: 'none',
       });
 
       await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(2));
@@ -220,6 +225,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
           invitationId: row.id,
           source: 'create',
           dispatchedAt,
+          priorDispatch: 'none',
         });
         // The outer log call and `recordDispatchFailure()` run in the same
         // synchronous tick (see deliverInvitation) — waiting for this
@@ -276,6 +282,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
         invitationId: row.id,
         source: 'create',
         dispatchedAt: staleDispatchedAt,
+        priorDispatch: 'none',
       });
 
       // Wait for the (no-op, CAS-mismatched) write to have actually resolved,

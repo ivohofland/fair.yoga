@@ -19,15 +19,17 @@ import { respondError } from '@/lib/api-utils';
  * in the query itself, which is the shape this project's gate model calls
  * for (#162 was a PUT that skipped exactly this).
  *
- * `email` is selected for the resend route's dispatch, and PUT also reads
- * it now, to compare against the incoming address and decide whether to
- * reset `delivered` (#502 Fix #3). DELETE/PATCH still ignore it, which
- * costs nothing extra to select alongside the other three.
+ * `email` is selected for the resend route's dispatch, and PUT also reads it,
+ * to compare against the incoming address and decide whether to reset
+ * `delivered` (#502 Fix #3). `lastNotifiedEmail` and `lastNotifyFailedAt` are
+ * for the resend route: it derives `priorDispatchFor` from them before its own
+ * marker write overwrites them (#172). A route that ignores a column pays
+ * nothing for selecting it.
  */
 export async function ownedInvitation(teacherId: string, id: string) {
   return prisma.invitation.findFirst({
     where: { id, teacherId },
-    select: { id: true, status: true, isArchived: true, email: true },
+    select: { id: true, status: true, isArchived: true, email: true, lastNotifiedEmail: true, lastNotifyFailedAt: true },
   });
 }
 
