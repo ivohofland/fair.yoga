@@ -890,7 +890,9 @@ genuine I/O rather than pure parsing; its sibling
 `check-package-manager-freshness.ts` still has an untested inline fetch of
 its own. The registry fetch and the workflow scan both live in their own
 files rather than in `service-image-freshness.ts`, whose docblock's "no I/O"
-claim stays true — real file I/O is why each has separate housing.
+claim stays true — network I/O (Docker Hub `fetch` calls) is why the registry
+fetch has separate housing, and file I/O (scanning `.github/workflows/`) is
+why the workflow scan does.
 
 Non-blocking for the same reason the package manager pin check above is:
 a registry hiccup, or a genuine upstream rebuild of `16-alpine`, is a
