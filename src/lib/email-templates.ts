@@ -138,12 +138,13 @@ export function renderMagicLinkEmail(magicLink: string): { subject: string; html
 
 /**
  * The invitation email: sent when a teacher adds someone as a contact and
- * the address has no `Student` row yet (`notifyInvitee`, services/invitations.ts).
+ * the address has neither a `Student` row nor a teacher account
+ * (`notifyInvitee`, services/invitations.ts).
  *
  * Same copy regardless of whether the address is already registered
- * elsewhere on fair.yoga — this function only ever runs for the "no Student
- * row" branch, but the wording itself must not carry a "welcome back" that
- * would leak that distinction if this ever gets reused. `teacherName` is
+ * elsewhere on fair.yoga — this function only ever runs for an address with
+ * no in-app surface, but the wording itself must not carry a "welcome back"
+ * that would leak that distinction if this ever gets reused. `teacherName` is
  * escaped: it is teacher-authored (their own first/last name), not sanitised
  * on write, same reasoning as `renderNotificationEmail` escaping a teacher's
  * announcement body.

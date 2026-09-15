@@ -142,10 +142,11 @@ describe('email templates', () => {
   });
 
   it('invitation email carries no "welcome back" — same copy whether or not the address is already registered', () => {
-    // notifyInvitee (services/invitations.ts) only ever calls this for the
-    // "no Student row" branch, but the copy itself must not assume that —
-    // it is the one artifact of this feature a recipient actually reads,
-    // and it must not leak whether fair.yoga already knew their address.
+    // notifyInvitee (services/invitations.ts) only ever calls this for an
+    // address with neither a `Student` row nor a teacher account, but the
+    // copy itself must not assume that — it is the one artifact of this
+    // feature a recipient actually reads, and it must not leak whether
+    // fair.yoga already knew their address.
     const { html } = renderInvitationEmail('Anna Teacher', 'https://example.test/login');
     expect(html.toLowerCase()).not.toContain('welcome back');
   });
