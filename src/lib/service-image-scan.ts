@@ -2,12 +2,8 @@
  * Scans `.github/workflows/*.yml` for image: references and classifies
  * each into a digest-pinned pin, an unparseable reference, or a coverage
  * gap (an `image:` key line that yielded no reference at all — e.g. an
- * indented continuation line `extractImageReferences` can't see). Does
- * real file I/O, which is why it lives apart from the pure parse/compare
- * functions in `service-image-freshness.ts`. The networked half of this
- * script's orchestration lives in `service-image-registry.ts`; the
- * per-group freshness loop in `service-image-check.ts`. See
- * docs/supply-chain.md ("The database image").
+ * indented continuation line the parser can't see). Does real file I/O.
+ * See docs/supply-chain.md ("The database image").
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
