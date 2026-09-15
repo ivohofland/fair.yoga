@@ -815,9 +815,9 @@ framing:
 grep -rn 'image:\|^FROM ' Dockerfile docker-compose*.yml .github/workflows/*.yml
 ```
 
-`docker-compose.yml:3`, `docker-compose.prod.yml:9` (the **production**
+`docker-compose.yml:6`, `docker-compose.prod.yml:12` (the **production**
 database), and four GitHub Actions `services:` blocks —
-`.github/workflows/ci.yml:151`, `:234`, `:336`, and
+`.github/workflows/ci.yml:161`, `:244`, `:346`, and
 `.github/workflows/e2e-flake-repro.yml:87`.
 
 **Two of the six are covered, the same way as the base image.**
@@ -829,17 +829,36 @@ Dependabot ecosystem entry — a genuinely **separate** ecosystem from
 scans `Dockerfile`s, `docker-compose` scans compose files, and neither
 scans the other's format.
 
-**The remaining four — the CI workflow `services:` blocks — are not
-covered, and can't be yet.** No Dependabot ecosystem scans a GitHub Actions
+**The remaining four — the CI workflow `services:` blocks — are now
+covered a different way.** No Dependabot ecosystem scans a GitHub Actions
 `services:`/`container:` image reference at all: `github-actions` scans
 `uses:` action references only. This is an open upstream gap
-([dependabot-core#5819](https://github.com/dependabot/dependabot-core/issues/5819)),
-not a configuration mistake in this repo. Digest-pinning those four lines
-anyway would trade a visibly-floating tag for an invisibly-stale one — a
-pin with no tracking mechanism freezes silently, which is worse, not
-better, and is exactly why this file pairs a digest with a Dependabot
-entry everywhere else rather than shipping either alone. Tracked as #603,
-parented to #562.
+([dependabot-core#5819](https://github.com/dependabot/dependabot-core/issues/5819),
+still open as of 2026-09-15) — not a configuration mistake in this repo,
+and not one this repo can fix directly. #603 closes it with a script
+instead of a Dependabot entry, the same two-part shape used everywhere
+else in this file: the four lines
+(`.github/workflows/ci.yml:161,244,346`, `.github/workflows/e2e-flake-repro.yml:87`)
+are now digest-pinned to the same `sha256:cf78e7…fc20685` the compose
+files already carry, and `scripts/check-service-image-freshness.ts`
+(`pnpm run check-service-image-freshness`, non-blocking in `checks` —
+`ci.yml`) fetches that digest's tag from the registry and reports when
+the pin no longer matches — a scripted stand-in for the Dependabot PR
+this ecosystem gap can't produce.
+
+All six `postgres:16-alpine` locations are covered now: two by the
+`docker-compose` Dependabot ecosystem, four by this script (2 + 4 = 6).
+
+Mutation-tested 2026-09-15: corrupting one pinned digest's last hex
+character made the script report that one location stale (exit 1) while
+the other three still reported fresh, then restoring it returned all
+four to fresh. A reference reverted to a floating tag (no `@sha256:…`
+suffix) is reported as "not digest-pinned" and also exits 1 — confirmed
+against the real files before this same change pinned them.
+
+Non-blocking for the same reason the package manager pin check above is:
+a registry hiccup, or a genuine upstream rebuild of `16-alpine`, is a
+reason to look, not a reason to stop an unrelated PR.
 
 ### The package manager binary
 
@@ -938,8 +957,13 @@ faith.
 **#562 (the base image and the pnpm binary) is now absorbed** — see
 *The base image and the package manager binary* above. Reviewing its own
 PR found a third artefact in the same class, `postgres:16-alpine`; four of
-its six locations can't be covered by anything in this repo today — see
-*The database image*, above, and **#603**.
+its six locations had no Dependabot ecosystem able to cover them — see
+*The database image*, above.
+
+**#603 (GitHub Actions service-container image tracking) is now
+absorbed** — see *The database image* above. Resolved with a script
+rather than a Dependabot entry, since no Dependabot ecosystem reaches a
+`services:` image reference (dependabot-core#5819, still open).
 
 **#535 (commit-pinned GitHub Actions)** is unaffected by this migration and
 stays open. See #531.
