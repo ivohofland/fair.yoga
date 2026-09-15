@@ -785,7 +785,9 @@ void 0 as unknown as [_deliverInvitationReturnsVoid];
 /**
  * A student's own invitations still awaiting a response — the read
  * `(student)/account/privacy/page.tsx` (#166 task 11) renders above the
- * teacher list.
+ * teacher list. `(teacher)/inbox/invitations/page.tsx` reads it too, for an
+ * account with no student side yet (#172). The address, not a student id, is
+ * what lets it.
  *
  * The block exclusion below is the PRIMARY gate, not defence in depth:
  * `acceptInvitation`'s own `TeacherBlock` re-check exists only because an
