@@ -407,4 +407,106 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       }
     }
   });
+
+  async function createTeacherOnlyInvitee(
+    label: string,
+  ): Promise<{ teacherId: string; accountId: string; email: string }> {
+    const email = `notify-teacher-invitee-${label}-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Invitee', lastName: 'Teacher', email,
+        account: { create: { email } },
+        bio: '#172 teacher-only invitee fixture',
+        pageSlug: `notify-teacher-invitee-${label}-${suffix}`,
+      },
+      select: { id: true, accountId: true },
+    });
+    return { teacherId: teacher.id, accountId: teacher.accountId, email };
+  }
+
+  async function removeTeacherOnlyInvitee(
+    invitee: { teacherId: string; accountId: string },
+  ): Promise<void> {
+    await prisma.notification.deleteMany({
+      where: { recipientType: 'teacher', recipientId: invitee.teacherId },
+    });
+    await prisma.teacher.delete({ where: { id: invitee.teacherId } });
+    await prisma.account.delete({ where: { id: invitee.accountId } });
+  }
+
+  it('tells a teacher-only account in its teacher inbox, and sends no email (#172)', async () => {
+    const invitee = await createTeacherOnlyInvitee('inbox');
+    try {
+      await notifyInvitee(prisma, { teacherId, email: invitee.email, teacherName: 'Some Teacher' });
+
+      const notifications = await prisma.notification.findMany({
+        where: { recipientType: 'teacher', recipientId: invitee.teacherId, type: 'teacher_invitation' },
+        select: { title: true, body: true },
+      });
+      expect(notifications).toEqual([{
+        title: 'A teacher would like to connect',
+        body: 'Some Teacher added you as a contact. Connecting adds a student side to your account, and you choose whether to.',
+      }]);
+      expect(sendMock).not.toHaveBeenCalled();
+    } finally {
+      await removeTeacherOnlyInvitee(invitee);
+    }
+  });
+
+  it('gives an account holding both profiles the student notification only (#172)', async () => {
+    const email = `notify-both-profiles-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Both', lastName: 'Profiles', email,
+        account: { create: { email } },
+        bio: '#172 both-profiles fixture',
+        pageSlug: `notify-both-profiles-${suffix}`,
+      },
+      select: { id: true, accountId: true },
+    });
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Both', lastName: 'Profiles', email,
+        claimedAt: new Date(), accountId: teacher.accountId,
+      },
+      select: { id: true },
+    });
+    try {
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
+
+      expect(await prisma.notification.count({
+        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
+      })).toBe(1);
+      expect(await prisma.notification.count({
+        where: { recipientType: 'teacher', recipientId: teacher.id },
+      })).toBe(0);
+      expect(sendMock).not.toHaveBeenCalled();
+    } finally {
+      await prisma.notification.deleteMany({ where: { recipientId: { in: [student.id, teacher.id] } } });
+      await prisma.student.delete({ where: { id: student.id } });
+      await prisma.teacher.delete({ where: { id: teacher.id } });
+      await prisma.account.delete({ where: { id: teacher.accountId } });
+    }
+  });
+
+  it('sends nothing at all to a blocked teacher-only account (#172)', async () => {
+    // Reachable without this feature writing a block: #171 keeps an erased
+    // student's refusal, and the address can later hold a teacher account.
+    const invitee = await createTeacherOnlyInvitee('blocked');
+    const block = await prisma.teacherBlock.create({
+      data: { teacherId, email: invitee.email },
+      select: { id: true },
+    });
+    try {
+      await notifyInvitee(prisma, { teacherId, email: invitee.email, teacherName: 'Some Teacher' });
+
+      expect(await prisma.notification.count({
+        where: { recipientType: 'teacher', recipientId: invitee.teacherId },
+      })).toBe(0);
+      expect(sendMock).not.toHaveBeenCalled();
+    } finally {
+      await prisma.teacherBlock.delete({ where: { id: block.id } });
+      await removeTeacherOnlyInvitee(invitee);
+    }
+  });
 });

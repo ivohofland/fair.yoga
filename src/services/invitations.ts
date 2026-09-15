@@ -592,6 +592,25 @@ export async function notifyInvitee(
     return;
   }
 
+  // Only an address with no `Student` row gets here, so an account holding
+  // both profiles was answered above. Who each branch reaches, and why this
+  // one needs no teacher liveness filter: `docs/data-model.md` (Invitation,
+  // "Who an invitation reaches").
+  const account = await db.account.findUnique({
+    where: { email },
+    select: { teacher: { select: { id: true } } },
+  });
+  if (account?.teacher) {
+    await createNotification(db, {
+      recipientType: 'teacher',
+      recipientId: account.teacher.id,
+      type: 'teacher_invitation',
+      title: 'A teacher would like to connect',
+      body: `${input.teacherName} added you as a contact. Connecting adds a student side to your account, and you choose whether to.`,
+    });
+    return;
+  }
+
   // No Student row means no in-app surface exists to notify — a direct
   // email is the only channel left.
   //
