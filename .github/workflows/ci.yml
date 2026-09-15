@@ -93,6 +93,16 @@ jobs:
         run: pnpm audit --audit-level=high
         continue-on-error: true
 
+      # Visible but non-blocking, same shape as the advisory audit above.
+      # Corepack verifies packageManager's pinned hash on install, but
+      # nothing bumps it — Dependabot's npm ecosystem does not update this
+      # field (dependabot-core#4830 is still open, confirmed 2026-09-15).
+      # #562. docs/supply-chain.md has the reasoning and why an equality
+      # check against the registry's latest is enough here.
+      - name: Package manager pin freshness
+        run: pnpm run check-package-manager-freshness
+        continue-on-error: true
+
       # Blocking, unlike the advisory audit above: this reports a property of
       # the packages actually locked (registry source + integrity), not the
       # state of an advisory database, so it cannot go red on a PR that

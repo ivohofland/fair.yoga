@@ -750,6 +750,91 @@ request that did not cause them. What would change that: an advisory against
 a package this app's *request path* actually executes, or any critical.
 Either is a reason to fix rather than to note.
 
+## The base image and the package manager binary
+
+Two artefacts execute in every build and sat outside every control above:
+`node:22-alpine` (both the `Dockerfile`'s `deps`/`build`/`migrate` chain and
+its `runner`) and pnpm itself, bootstrapped via `packageManager`. Neither is
+a lockfile entry, so `--frozen-lockfile`, `minimumReleaseAge`, and
+`pnpm audit` have nothing to say about either. #562.
+
+### The base image
+
+Covered two ways. `.github/dependabot.yml` gained a `docker` ecosystem
+entry, and both `FROM node:22-alpine` lines in the `Dockerfile` are pinned
+to a digest — `sha256:c610fc…a3aa32` (see the `Dockerfile` for the full
+value) — resolved 2026-09-15 straight from the registry rather than from
+whatever happened to be cached locally:
+
+```bash
+TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull" \
+  | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).token")
+curl -sI -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.index.v1+json" \
+  https://registry-1.docker.io/v2/library/node/manifests/22-alpine | grep -i docker-content-digest
+```
+
+That's the **manifest-list** digest — the response's `Content-Type` is
+`application/vnd.oci.image.index.v1+json`, not a single platform's
+`...image.manifest.v1+json` — which is the level that keeps the image
+multi-arch; Docker resolves the right per-platform manifest under it at
+pull time. Confirmed buildable both targets, 2026-09-15: `docker build -t
+fairyoga .` and `docker build --target migrate -t fairyoga-migrate .` both
+exit 0 against the pinned digest.
+
+Neither half is enough alone. A digest pin with no tracking Dependabot
+entry freezes the wrong content forever; a Dependabot entry with no digest
+pin still lets the tag drift between its monthly checks — alpine variant
+images get rebuilt for OS-level patches with no Node version change, so
+`node:22-alpine` alone is a moving target even under active Dependabot
+coverage. Together, the tag is pinned between commits and Dependabot is
+what moves the pin — the same shape `--frozen-lockfile` already gives the
+dependency tree.
+
+**Going forward:** with a digest present, Dependabot's docker ecosystem
+proposes the tag and its digest together on each check (confirmed against
+current dependabot-core behaviour, 2026-09-15). A Dependabot PR proposing a
+bump past Node 25 — outside corepack's supported range, per the
+`Dockerfile`'s own comment on the `deps` stage — therefore arrives as a red
+CI run rather than a surprise on someone's laptop.
+
+### The package manager binary
+
+Checked, not gated. `scripts/check-package-manager-freshness.ts` (`pnpm run
+check-package-manager-freshness`, wired as a non-blocking step in `checks`
+— `ci.yml`) reads the `packageManager` field, fetches
+`registry.npmjs.org/<name>/latest`, and reports whether the pinned version
+matches. It compares by **equality alone, not semver ordering**
+(`src/lib/package-manager-freshness.ts`): the registry's `latest` dist-tag
+never points at an older release than what's already pinned, so there is
+nothing an ordering comparison catches that equality doesn't — reaching for
+a semver library here would be a dependency this supply-chain-hardening
+change has no need to add.
+
+Non-blocking for the same reason the advisory audit above is: a stale pnpm
+pin isn't a reason to stop a PR that didn't touch it. An unreachable
+registry must not read as "stale" either — the script logs and returns
+(exit 0) on a fetch failure, distinctly from the exit 1 it uses only once a
+mismatch is confirmed.
+
+Mutation-tested 2026-09-15 against the real `package.json`, each mutation
+restored before the next:
+
+- Pinning `pnpm@12.4.1+sha512.deadbeef` (the real registry version, a
+  fabricated hash) reported fresh and exited 0. Run via `tsx` directly
+  (`./node_modules/.bin/tsx scripts/check-package-manager-freshness.ts`),
+  not `pnpm run` — `pnpm run` itself dispatches through corepack, which
+  verifies `packageManager`'s pinned hash before the script ever starts,
+  so a fabricated hash fails the *bootstrap* rather than exercising the
+  check.
+- Pointing the pin at a nonexistent package name 404s the registry lookup,
+  exercising the same "don't report stale" path a genuine outage would:
+  the script logged the skip message and exited 0.
+- The real, unmutated pin reported **stale — pinned `12.3.4`, registry
+  latest `12.4.1`** and exited 1: a live positive case, not a constructed
+  one. That gap is real and current as of this measurement; bumping it is
+  out of scope for a coverage issue and is left for a follow-up.
+
 ## Not yet in place
 
 The controls that would keep a *compromised* version out, rather than an
@@ -773,6 +858,9 @@ on, confirmed by testing), so it would complement rather than replace
 construct a real transitive-exotic dependency to confirm it fails closed.
 Still open work — worth a follow-up issue, not a line added on unverified
 faith.
+
+**#562 (the base image and the pnpm binary) is now absorbed** — see
+*The base image and the package manager binary* above.
 
 **#535 (commit-pinned GitHub Actions)** is unaffected by this migration and
 stays open. See #531.
