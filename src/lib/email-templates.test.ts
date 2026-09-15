@@ -5,6 +5,7 @@ import {
   renderMagicLinkEmail,
   renderInvitationEmail,
 } from './email-templates';
+import { STUDENT_INVITATION_PATH, TEACHER_INVITATION_PATH } from './notification-links';
 
 describe('email templates', () => {
   it('escapes HTML in notification titles and bodies', () => {
@@ -149,5 +150,32 @@ describe('email templates', () => {
     // fair.yoga already knew their address.
     const { html } = renderInvitationEmail('Anna Teacher', 'https://example.test/login');
     expect(html.toLowerCase()).not.toContain('welcome back');
+  });
+
+  it('links a teacher-inbox invitation to the teacher invitations page (#172)', () => {
+    const { html } = renderNotificationEmail(
+      { type: 'teacher_invitation', title: 'A teacher would like to connect', body: 'Anna added you.', recipientType: 'teacher' },
+      'https://example.test',
+    );
+    expect(html).toContain(`href="https://example.test${TEACHER_INVITATION_PATH}"`);
+    expect(html).not.toContain(STUDENT_INVITATION_PATH);
+  });
+
+  it('still links a student invitation to the student page (#172)', () => {
+    const { html } = renderNotificationEmail(
+      { type: 'teacher_invitation', title: 'A teacher would like to connect', body: 'Anna added you.', recipientType: 'student' },
+      'https://example.test',
+    );
+    expect(html).toContain(`href="https://example.test${STUDENT_INVITATION_PATH}"`);
+    expect(html).not.toContain(TEACHER_INVITATION_PATH);
+  });
+
+  it('gives a teacher notification about a class no invitation link (#172)', () => {
+    const { html } = renderNotificationEmail(
+      { type: 'booking_confirmed', title: 'Anna booked', body: 'Tuesday Vinyasa.', recipientType: 'teacher' },
+      'https://example.test',
+    );
+    expect(html).not.toContain(TEACHER_INVITATION_PATH);
+    expect(html).not.toContain(STUDENT_INVITATION_PATH);
   });
 });

@@ -5,19 +5,13 @@ import { useRouter } from 'next/navigation';
 import type { Notification } from '@prisma/client';
 import { EmptyState } from '@/components/ui/empty-state';
 import { timeAgo } from '@/lib/format';
+import { teacherNotificationHref } from '@/lib/notification-links';
 
 interface NotificationListProps {
   notifications: Notification[];
-  /** Per-row link overrides. Without it, rows link to the teacher class
-   *  detail — student pages must pass their own targets. */
+  /** Per-row link overrides. Without it, rows take the teacher targets
+   * (`teacherNotificationHref`); student pages must pass their own. */
   hrefById?: Record<string, string | null>;
-}
-
-function notificationHref(notification: Notification): string | null {
-  if (notification.relatedClassId) {
-    return `/class/${notification.relatedClassId}`;
-  }
-  return null;
 }
 
 export function NotificationList({ notifications, hrefById }: NotificationListProps) {
@@ -36,7 +30,7 @@ export function NotificationList({ notifications, hrefById }: NotificationListPr
 
   function resolveHref(notification: Notification): string | null {
     if (hrefById) return hrefById[notification.id] ?? null;
-    return notificationHref(notification);
+    return teacherNotificationHref(notification);
   }
 
   function handleNavigate(notification: Notification) {

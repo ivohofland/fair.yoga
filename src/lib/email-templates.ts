@@ -7,7 +7,7 @@
  */
 
 import type { NotificationType } from '@prisma/client';
-import { STUDENT_INVITATION_LABEL, STUDENT_INVITATION_PATH } from './notification-links';
+import { STUDENT_INVITATION_LABEL, STUDENT_INVITATION_PATH, TEACHER_INVITATION_LABEL, TEACHER_INVITATION_PATH } from './notification-links';
 
 export function escapeHtml(text: string): string {
   return text
@@ -84,6 +84,11 @@ const STUDENT_ACTION_LINKS: Partial<Record<NotificationType, { label: string; pa
   teacher_invitation: { label: STUDENT_INVITATION_LABEL, path: STUDENT_INVITATION_PATH },
 };
 
+/** The teacher reader's counterpart to `STUDENT_ACTION_LINKS` (#172). */
+const TEACHER_ACTION_LINKS: Partial<Record<NotificationType, { label: string; path: string }>> = {
+  teacher_invitation: { label: TEACHER_INVITATION_LABEL, path: TEACHER_INVITATION_PATH },
+};
+
 export interface NotificationEmailInput {
   type: NotificationType;
   title: string;
@@ -112,7 +117,7 @@ export function renderNotificationEmail(
       : STUDENT_INTROS[notification.type];
   const action =
     notification.recipientType === 'teacher'
-      ? undefined
+      ? TEACHER_ACTION_LINKS[notification.type]
       : STUDENT_ACTION_LINKS[notification.type];
   const actionHtml = action
     ? `<p style="margin:16px 0 0;"><a href="${baseUrl}${action.path}" style="display:inline-block;background-color:#1A5653;color:#F7F4EF;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:999px;">${escapeHtml(action.label)}</a></p>`
