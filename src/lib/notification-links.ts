@@ -1,5 +1,5 @@
 /**
- * Where a notification points a student.
+ * Where a notification points its reader.
  *
  * The default target for a notification is its related class, and every
  * class route in this app is teacher-only — so the student surfaces have
@@ -7,9 +7,8 @@
  * related class unclickable, which was fine until #166 introduced a
  * notification type whose whole purpose is to send someone somewhere.
  *
- * One module so the two student surfaces (`/updates` and the strip on
- * `/bookings`) and the layer-3 fallback email cannot drift on where an
- * invitation goes.
+ * One module so the inbox surfaces and the layer-3 fallback email cannot
+ * drift on where an invitation goes, for either reader.
  */
 
 import type { ClassStatus, NotificationType } from '@prisma/client';
@@ -28,6 +27,15 @@ export const STUDENT_INVITATION_PATH = '/account/privacy';
  * from one place.
  */
 export const STUDENT_INVITATION_LABEL = 'Review the invitation';
+
+/**
+ * Where a teacher-inbox `teacher_invitation` sends an account with no student
+ * side yet: the page that offers one (#172).
+ */
+export const TEACHER_INVITATION_PATH = '/inbox/invitations';
+
+/** The label for that action, shared by the email's button. */
+export const TEACHER_INVITATION_LABEL = 'Review the invitation';
 
 /** The shape both student surfaces already select. */
 export interface StudentNotificationTarget {
@@ -65,4 +73,17 @@ export function studentNotificationHref(notification: StudentNotificationTarget)
     return `/${cls.calendarEntry.teacher.pageSlug}/book/${cls.id}`;
   }
   return null;
+}
+
+/**
+ * The href for a teacher's inbox row, or null when the row is not
+ * actionable. Type first, related class second, for the same reason
+ * `studentNotificationHref` takes that order.
+ */
+export function teacherNotificationHref(notification: {
+  type: NotificationType;
+  relatedClassId: string | null;
+}): string | null {
+  if (notification.type === 'teacher_invitation') return TEACHER_INVITATION_PATH;
+  return notification.relatedClassId ? `/class/${notification.relatedClassId}` : null;
 }

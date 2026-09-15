@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { STUDENT_INVITATION_PATH, studentNotificationHref } from './notification-links';
+import { STUDENT_INVITATION_PATH, TEACHER_INVITATION_PATH, studentNotificationHref, teacherNotificationHref } from './notification-links';
 
 /**
  * #166 whole-branch review I5. A `teacher_invitation` notification carries no
@@ -57,5 +57,21 @@ describe('studentNotificationHref', () => {
 
   it('yields null for anything else with no related class', () => {
     expect(studentNotificationHref({ type: 'announcement', relatedClass: null })).toBeNull();
+  });
+});
+
+describe('teacherNotificationHref (#172)', () => {
+  it('sends a teacher invitation to the invitations page', () => {
+    expect(teacherNotificationHref({ type: 'teacher_invitation', relatedClassId: null }))
+      .toBe(TEACHER_INVITATION_PATH);
+  });
+
+  it('sends a class notification to its class', () => {
+    expect(teacherNotificationHref({ type: 'booking_confirmed', relatedClassId: 'class-1' }))
+      .toBe('/class/class-1');
+  });
+
+  it('yields null for a notification with neither', () => {
+    expect(teacherNotificationHref({ type: 'announcement', relatedClassId: null })).toBeNull();
   });
 });
