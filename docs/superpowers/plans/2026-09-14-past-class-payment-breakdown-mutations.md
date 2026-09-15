@@ -1,18 +1,20 @@
 # #576 mutation ledger
 
-Nineteen mutations across four groups: the resolver's gate order and cents
+Twenty-one mutations across five groups: the resolver's gate order and cents
 arithmetic (Task 1, `src/lib/payment-breakdown.ts`), the disclosure
 component's cent formatting and accessible name (Task 2,
 `src/components/student/payment-breakdown.tsx`), the `/bookings` page's
 wiring of the breakdown into the response and its integration assertions
-(Task 3), and one further mutation from the whole-branch fix wave (F5,
-confirming the "How to pay" disclosure still renders alongside the new one).
+(Task 3), one mutation from the whole-branch fix wave (F5, confirming the
+"How to pay" disclosure still renders alongside the new one), and two from
+the PR review fix round (P1a, P1b, pinning the Students and Your share lines
+to the snapshot and the breakdown).
 Protocol for every row: with the group's commit already in place, hand-edit
 the mutation, run the named test, record the exact failure text, hand-restore
 the file (never `git checkout`/`git restore`), re-run to green, and confirm
 `git diff --stat` is empty before moving to the next row. Commits: Task 1
-`fbc6f1aa`, Task 2 `b55135c7`, Task 3 `656c51e6`, fix wave `05e36def` (each
-confirmed against its report).
+`fbc6f1aa`, Task 2 `b55135c7`, Task 3 `656c51e6`, fix wave `05e36def`, PR
+review fix round `8b59b88e` (each confirmed against its report).
 
 ## Task 1 — `resolvePaymentBreakdown` (commit `fbc6f1aa`)
 
@@ -71,6 +73,18 @@ confirmed against its report).
   assertion, which pins that both render; neither that assertion nor any
   other in the reports pins which one appears first in the markup.
 
+## PR review fix round (commit `8b59b88e`)
+
+Run after commit `8b59b88e`, which added the `Students` and `Your share`
+assertions and renamed the pending test to `shows a pending payment the room,
+teacher, class total, class size and share behind it`. Rows above name that
+test by the title it had when they ran.
+
+| # | Edit | Test(s) that failed | Exact error text |
+|---|---|---|---|
+| P1a | `src/app/(student)/bookings/page.tsx`, the resolver call: `totalStudents: cls.totalStudents` → `totalStudents: cls.registrations.length` | `GET /bookings (page) — past-class payment breakdown > shows a pending payment the room, teacher, class total, class size and share behind it` (1 failed, 9 passed) | `AssertionError: expected '<!DOCTYPE html><html lang="en" class=…' to match /Students\/dt><dd[^>]*…/dt><dd[^>]*>7<\` — Vitest's truncated header for `/Students<\/dt><dd[^>]*>7<\/dd>/`; the fixture's single registration renders `1` |
+| P1b | `src/components/student/payment-breakdown.tsx`, the `Your share` row: `formatCents(lines.shareCents)` → `formatCents(lines.totalCents)` | same test (1 failed, 9 passed) | `AssertionError: expected '<!DOCTYPE html><html lang="en" class=…' to match /Your share<\/dt><…/dt><dd[^>]*>€8\.15<\` — Vitest's truncated header for `/Your share<\/dt><dd[^>]*>€8\.15<\/dd>/`; the row renders the class total instead |
+
 ## Total
 
-9 (Task 1) + 5 (Task 2) + 4 (Task 3) + 1 (fix wave) = 19 mutations.
+9 (Task 1) + 5 (Task 2) + 4 (Task 3) + 1 (fix wave) + 2 (PR review fix round) = 21 mutations.
