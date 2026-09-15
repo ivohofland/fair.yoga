@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { fetchLatestDigest } from './service-image-registry';
+import { fetchLatestDigest, RegistryUnreachableError } from './service-image-registry';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -99,5 +99,40 @@ describe('fetchLatestDigest', () => {
       return Promise.resolve({ ok: true, headers: new Headers({ 'docker-content-digest': 'sha256:latest' }) });
     });
     await expect(fetchLatestDigest('bitnami/postgres', '16-alpine')).resolves.toBe('sha256:latest');
+  });
+
+  it('rejects with a RegistryUnreachableError when the auth token request responds non-OK', async () => {
+    stubFetch((url) => {
+      if (url.includes('auth.docker.io')) {
+        return Promise.resolve({ ok: false, status: 401 });
+      }
+      throw new Error('manifest should not be fetched when the token request fails');
+    });
+    await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toBeInstanceOf(
+      RegistryUnreachableError,
+    );
+  });
+
+  it('wraps a raw fetch() rejection (e.g. a DNS failure) as a RegistryUnreachableError, preserving message and cause', async () => {
+    const cause = new Error('getaddrinfo ENOTFOUND auth.docker.io');
+    stubFetch(() => Promise.reject(new TypeError('fetch failed', { cause })));
+
+    const promise = fetchLatestDigest('postgres', '16-alpine');
+
+    await expect(promise).rejects.toBeInstanceOf(RegistryUnreachableError);
+    await expect(promise).rejects.toThrow('fetch failed');
+    await expect(promise).rejects.toMatchObject({ cause });
+  });
+
+  it('propagates a SyntaxError from a malformed auth response body unwrapped, not as a RegistryUnreachableError', async () => {
+    const parseError = new SyntaxError('Unexpected token < in JSON at position 0');
+    stubFetch((url) => {
+      if (url.includes('auth.docker.io')) {
+        return Promise.resolve({ ok: true, json: () => Promise.reject(parseError) });
+      }
+      throw new Error('manifest should not be fetched when the auth body fails to parse');
+    });
+
+    await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toBe(parseError);
   });
 });
