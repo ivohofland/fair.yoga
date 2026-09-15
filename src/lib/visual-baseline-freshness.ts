@@ -1,21 +1,25 @@
 /**
- * Detects drift between `tests/e2e/visual.spec.ts`'s committed baseline
- * screenshots and the routes they cover, using git history rather than
- * rendering anything. Two independent checks:
+ * Detects a visual-regression baseline left behind by the diff that
+ * touched its route, using git diffs rather than rendering anything. Two
+ * independent checks:
  *
  * - `findCoverageGaps`: the spec's `toHaveScreenshot('<name>.png', ...)`
  *   calls and this file's `ROUTE_BASELINES` must name the same routes —
  *   a mismatch means a visual test was added, renamed, or removed without
  *   updating the map here.
- * - `findStaleRoutes`: a route's baseline must have a commit at least as
- *   recent as every one of its source files — otherwise the page changed
- *   and nobody regenerated the screenshot.
+ * - `findStaleRoutes`: scoped to the diff between a resolved base ref and
+ *   the working tree, not all of history — a route is flagged only when
+ *   THIS diff touches its source file(s) without touching its baseline
+ *   file(s). Reuses `resolveBaseRef` from `./migration-policy` for the same
+ *   CI/PR/push/local-dev base-ref resolution `check-migrations` already
+ *   solves.
  *
  * `scripts/check-visual-baseline-freshness.ts` is the CLI wrapper that
  * calls both and sets a process exit code; see docs there for why this
  * runs only in the `checks` CI job (fetch-depth: 0) and not others.
  */
 import { execSync } from 'node:child_process';
+import { resolveBaseRef } from './migration-policy';
 
 export interface RouteBaseline {
   readonly name: string;
@@ -114,76 +118,77 @@ function defaultExecGit(cmd: string): string {
   return execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
-/**
- * The unix timestamp (seconds) of the last commit that touched `path`, or
- * `null` when the path has no commit in history (never committed, or a
- * typo'd path). The path is double-quoted in the shell command — several
- * real paths here contain `(` and `[` (route groups, dynamic segments),
- * which an unquoted shell would try to interpret.
- */
-export function lastCommitTime(
-  path: string,
-  execGit: (cmd: string) => string = defaultExecGit,
-): number | null {
-  let output: string;
-  try {
-    output = execGit(`git log -1 --format=%ct -- "${path}"`).trim();
-  } catch {
-    return null;
-  }
-  if (!output) return null;
-  const time = Number(output);
-  return Number.isFinite(time) ? time : null;
-}
-
 export interface StaleRoute {
   readonly name: string;
-  readonly reason: 'stale' | 'untracked';
   readonly detail: string;
 }
 
 const REGENERATE_COMMAND = 'pnpm exec playwright test visual --update-snapshots';
 
 /**
- * Routes whose baseline no longer reflects their source: either a source
- * file's last commit is newer than the route's oldest baseline commit, or
- * one of the route's own paths has no commit in history at all (which the
- * comparison cannot evaluate honestly, so it is reported rather than
- * silently treated as fresh).
+ * Routes whose source file(s) changed in the diff between `base` and the
+ * working tree without a matching change to their baseline file(s) — this
+ * diff touched a route's rendering without updating its screenshot.
+ *
+ * Scoped to the CURRENT diff, not all of history: a route whose baseline
+ * predates an old, already-merged source change is not re-flagged forever
+ * by this — only a source change not yet reflected in THIS diff's baseline
+ * is. This is what lets the check stay a blocking CI gate safely: a route
+ * whose screenshot happens to be byte-identical to its old baseline (a
+ * non-visual source edit) produces no new commit for that baseline file at
+ * all, so a history-wide "is the baseline's commit newer" comparison could
+ * never clear once source and baseline drift apart for unrelated reasons —
+ * this diff-scoped comparison has no such trap, since it only asks about
+ * paths touched in the current diff.
  */
 export function findStaleRoutes(
   routes: readonly RouteBaseline[] = ROUTE_BASELINES,
-  execGit: (cmd: string) => string = defaultExecGit,
+  options: {
+    baseRef?: string;
+    env?: Record<string, string | undefined>;
+    execGit?: (cmd: string) => string;
+  } = {},
 ): StaleRoute[] {
-  const results: StaleRoute[] = [];
+  const env = options.env ?? process.env;
+  const exec = options.execGit ?? defaultExecGit;
+  const base = options.baseRef ?? resolveBaseRef(env, exec);
 
-  for (const route of routes) {
-    const allPaths = [...route.sourceFiles, ...route.baselineFiles];
-    const allTimes = allPaths.map((p) => lastCommitTime(p, execGit));
-    const untracked = allPaths.filter((_, i) => allTimes[i] === null);
-
-    if (untracked.length > 0) {
-      results.push({
-        name: route.name,
-        reason: 'untracked',
-        detail: `no git history found for: ${untracked.join(', ')}`,
-      });
-      continue;
+  if (!options.baseRef && base === 'HEAD') {
+    if (env.GITHUB_BASE_REF || env.GITHUB_EVENT_NAME) {
+      throw new Error(
+        'Cannot resolve a base ref to compare against in CI: the pull request merge base ' +
+          'or the previous commit GITHUB_BEFORE is unavailable. Comparing HEAD to HEAD would ' +
+          'report zero changed routes on any input — refusing to pass. Check that checkout ' +
+          'fetches full history (fetch-depth: 0).',
+      );
     }
+    console.warn(
+      'Warning: no upstream base ref (origin/main, main, origin/master, master) could be ' +
+        'resolved; comparing route files against HEAD. Only uncommitted/staged edits are ' +
+        'covered — a stale local branch may miss committed changes to routes.',
+    );
+  }
 
-    const sourceTimes = route.sourceFiles.map((p) => lastCommitTime(p, execGit) as number);
-    const baselineTimes = route.baselineFiles.map((p) => lastCommitTime(p, execGit) as number);
-    const newestSource = Math.max(...sourceTimes);
-    const oldestBaseline = Math.min(...baselineTimes);
+  const diffOutput = exec(
+    `git diff --name-only ${base} -- src/app tests/e2e/visual.spec.ts-snapshots`,
+  );
+  const changedPaths = new Set(
+    diffOutput
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0),
+  );
 
-    if (oldestBaseline < newestSource) {
+  const results: StaleRoute[] = [];
+  for (const route of routes) {
+    const sourceChanged = route.sourceFiles.some((f) => changedPaths.has(f));
+    const baselineChanged = route.baselineFiles.some((f) => changedPaths.has(f));
+    if (sourceChanged && !baselineChanged) {
       results.push({
         name: route.name,
-        reason: 'stale',
-        detail: `source changed after this route's baseline was last updated. Regenerate with: ${REGENERATE_COMMAND}`,
+        detail: `source changed in this diff without a matching baseline update. Regenerate with: ${REGENERATE_COMMAND}`,
       });
     }
   }
-
   return results;
 }
