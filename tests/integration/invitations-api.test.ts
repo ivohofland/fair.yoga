@@ -4204,6 +4204,7 @@ describe('an invitation to a teacher-only account (#172)', () => {
   const inviteeEmail = `inv-teacher-invitee-${suffix}@test.local`;
   let inviteeTeacherId: string;
   let inviteeAccountId: string;
+  let inviteeToken: string;
 
   beforeAll(async () => {
     const invitee = await prisma.teacher.create({
@@ -4217,6 +4218,7 @@ describe('an invitation to a teacher-only account (#172)', () => {
     });
     inviteeTeacherId = invitee.id;
     inviteeAccountId = invitee.accountId;
+    inviteeToken = await seedSession(prisma, inviteeAccountId);
   });
 
   afterAll(async () => {
@@ -4254,5 +4256,95 @@ describe('an invitation to a teacher-only account (#172)', () => {
       }),
       { description: 'teacher-inbox teacher_invitation for a teacher-only invitee (#172)' },
     );
+  });
+
+  it("lists the invitation on the invitee's invitations page", async () => {
+    const res = await fetch(`${BASE_URL}/inbox/invitations`, { headers: cookie(inviteeToken) });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Invitation Teacher would like to connect with you as a student.');
+  });
+
+  it('does not tell the invitee again when the invitation is resent unchanged', async () => {
+    // Control: a second teacher-only account whose row was readdressed since its
+    // last dispatch, so its resend is a first one. Issued after the repeat, so
+    // once the control's notification lands, the repeat's would have too.
+    const controlEmail = `inv-teacher-invitee-control-${suffix}@test.local`;
+    const control = await prisma.teacher.create({
+      data: {
+        firstName: 'Control', lastName: 'Invitee', email: controlEmail,
+        account: { create: { email: controlEmail } },
+        bio: '#172 resend control', pageSlug: `inv-teacher-invitee-control-${suffix}`,
+      },
+      select: { id: true, accountId: true },
+    });
+    const controlInvitation = await prisma.invitation.create({
+      data: {
+        teacherId, email: controlEmail, firstName: 'Control', lastName: 'Invitee',
+        lastNotifiedAt: new Date(), lastNotifiedEmail: `inv-typo-${suffix}@test.local`,
+      },
+      select: { id: true },
+    });
+    try {
+      const invitation = await prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId, email: inviteeEmail } },
+        select: { id: true },
+      });
+
+      const repeat = await fetch(`${BASE_URL}/api/invitations/${invitation.id}/resend`, {
+        method: 'POST', headers: cookie(teacherToken),
+      });
+      const first = await fetch(`${BASE_URL}/api/invitations/${controlInvitation.id}/resend`, {
+        method: 'POST', headers: cookie(teacherToken),
+      });
+
+      // Neither status nor body tells the teacher which resend reached anyone.
+      expect(repeat.status).toBe(200);
+      expect(first.status).toBe(200);
+      expect(await repeat.json()).toEqual({ data: { id: invitation.id } });
+      expect(await first.json()).toEqual({ data: { id: controlInvitation.id } });
+
+      await waitFor(
+        () => prisma.notification.findFirst({
+          where: { recipientType: 'teacher', recipientId: control.id, type: 'teacher_invitation' },
+        }),
+        { description: 'control: a readdressed resend reaches a teacher-only account (#172)' },
+      );
+      expect(await prisma.notification.count({
+        where: { recipientType: 'teacher', recipientId: inviteeTeacherId, type: 'teacher_invitation' },
+      })).toBe(1);
+    } finally {
+      await prisma.invitation.deleteMany({ where: { id: controlInvitation.id } });
+      await prisma.notification.deleteMany({ where: { recipientType: 'teacher', recipientId: control.id } });
+      await prisma.teacher.delete({ where: { id: control.id } });
+      await prisma.account.delete({ where: { id: control.accountId } });
+    }
+  });
+
+  it('lets the invitee add a student side and accept', async () => {
+    const invitation = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email: inviteeEmail } },
+      select: { id: true },
+    });
+
+    const profile = await fetch(`${BASE_URL}/api/account/student-profile`, {
+      method: 'POST', headers: cookie(inviteeToken),
+    });
+    expect(profile.status).toBe(201);
+
+    const accept = await fetch(`${BASE_URL}/api/invitations/${invitation.id}/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(inviteeToken) },
+      body: JSON.stringify({ response: 'accept' }),
+    });
+    expect(accept.status).toBe(200);
+
+    const student = await prisma.student.findUniqueOrThrow({
+      where: { email: inviteeEmail },
+      select: { id: true },
+    });
+    expect(await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId: student.id } },
+    })).not.toBeNull();
   });
 });
