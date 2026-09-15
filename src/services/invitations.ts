@@ -803,8 +803,8 @@ export async function listPendingInvitations(
  *
  * That choice leaves a gap, and it is accepted rather than overlooked: a
  * student who unlinked a teacher whose invitation row is absent or
- * `delivered: false` sees nothing here, while `inviteContact` above still
- * answers that teacher `DECLINED`. It is the common case, not a corner —
+ * `delivered: false` sees nothing here, while that teacher's re-invite is
+ * created and silently undelivered. It is the common case, not a corner —
  * most links come from bookings and carry no invitation at all. There is no
  * narrative row to read for those, and reading `TeacherBlock` instead is
  * exactly the erased-history disclosure the paragraph above refuses. See

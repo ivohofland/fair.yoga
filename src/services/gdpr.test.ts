@@ -961,10 +961,9 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     expectAnonymizedInvitationValue(staleMarkerRow?.lastNotifiedEmail ?? null, studentId);
     expect(staleMarkerRow?.lastNotifiedEmail).toBe(inviterRow?.email);
 
-    // Deliberately untouched — see the comment at the erasure site and
-    // `docs/data-model.md`. Retention vs. scrubbing is a legal call nobody
-    // on this branch is placed to make, and this asserts the current
-    // behaviour so a change to it is a decision rather than a drift.
+    // Deliberately untouched: #171 decided erasure keeps a student's
+    // refusals, and this pins it — `docs/data-model.md` (TeacherBlock) has
+    // why.
     const block = await prisma.teacherBlock.findFirst({ where: { teacherId: blockerId } });
     expect(block?.email).toBe(email);
   });
