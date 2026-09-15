@@ -17,7 +17,7 @@
     "test:watch": "vitest --project unit --project components",
     "test:coverage": "vitest run --coverage --no-file-parallelism",
     "test:e2e": "playwright test",
-    "verify": "pnpm run typecheck && pnpm run lint && pnpm test && pnpm run check-lockfile && pnpm run check-migrations",
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm test && pnpm run check-lockfile && pnpm run check-migrations && pnpm run check-visual-baseline-freshness",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",

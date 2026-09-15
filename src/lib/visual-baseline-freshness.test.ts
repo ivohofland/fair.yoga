@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   ROUTE_BASELINES,
@@ -74,6 +74,16 @@ describe('findCoverageGaps', () => {
   });
 });
 
+describe('ROUTE_BASELINES', () => {
+  it('every declared source and baseline file exists on disk', () => {
+    for (const route of ROUTE_BASELINES) {
+      for (const file of [...route.sourceFiles, ...route.baselineFiles]) {
+        expect(existsSync(file)).toBe(true);
+      }
+    }
+  });
+});
+
 describe('findStaleRoutes', () => {
   const routes = [
     { name: 'login', sourceFiles: ['src/login.tsx'], baselineFiles: ['snap/login.png'] },
@@ -118,14 +128,20 @@ describe('findStaleRoutes', () => {
     ).toThrow(/Cannot resolve a base ref/);
   });
 
-  it('validates the real ROUTE_BASELINES + resolveBaseRef wiring against this actual repo', () => {
-    // Real execGit (the default), real `git diff` against the immediately
-    // preceding commit — proves the default wiring actually shells out
-    // correctly end to end, not just the pure comparison logic above. Does
-    // not assert which routes are stale (that depends on what the parent
-    // commit touched, which changes over time) — only that it runs and
-    // returns an array.
-    const result = findStaleRoutes(ROUTE_BASELINES, { baseRef: 'HEAD~1' });
-    expect(Array.isArray(result)).toBe(true);
+  it('flags a real repo route via a real git diff against the empty tree, proving the real shell-out and path matching work end to end', () => {
+    // The empty-tree hash is git's well-known constant for "no commit, no
+    // files" — diffing HEAD against it lists every file currently tracked,
+    // so this doesn't depend on any specific commit and won't rot over time.
+    const EMPTY_TREE_HASH = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+    const routes = [
+      {
+        name: 'login',
+        sourceFiles: ['src/app/(public)/login/page.tsx'],
+        baselineFiles: ['tests/e2e/visual.spec.ts-snapshots/this-file-does-not-exist.png'],
+      },
+    ];
+    const stale = findStaleRoutes(routes, { baseRef: EMPTY_TREE_HASH });
+    expect(stale).toHaveLength(1);
+    expect(stale[0]).toMatchObject({ name: 'login' });
   });
 });

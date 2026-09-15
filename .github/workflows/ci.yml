@@ -68,6 +68,9 @@ jobs:
           GITHUB_BEFORE: ${{ github.event.before }}
         run: pnpm run check-migrations
 
+      # Blocking: a route's rendering changed in this diff without its
+      # baseline being updated to match it (#542) — see
+      # src/lib/visual-baseline-freshness.ts for the mechanism.
       - name: Check visual baseline freshness
         env:
           GITHUB_BEFORE: ${{ github.event.before }}

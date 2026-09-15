@@ -40,6 +40,12 @@ try {
     for (const s of stale) {
       console.error(`  [${s.name}] ${s.detail}`);
     }
+    console.error(
+      `\nIf a route's regenerated screenshot comes back byte-identical to its old baseline ` +
+        `(a non-visual source change), there is nothing new for git to commit and this check ` +
+        `cannot clear on its own. Baselines are macOS-only — ask a maintainer with a macOS ` +
+        `checkout to verify and, if needed, regenerate and commit the baseline.`,
+    );
     process.exit(1);
   }
 

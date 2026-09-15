@@ -15,8 +15,10 @@
  *   solves.
  *
  * `scripts/check-visual-baseline-freshness.ts` is the CLI wrapper that
- * calls both and sets a process exit code; see docs there for why this
- * runs only in the `checks` CI job (fetch-depth: 0) and not others.
+ * calls both and sets a process exit code; see the `fetch-depth: 0`
+ * comment on the `checks` job's checkout step in
+ * `.github/workflows/ci.yml` for why this runs only there and not in
+ * every other job.
  */
 import { execSync } from 'node:child_process';
 import { resolveBaseRef } from './migration-policy';
@@ -130,16 +132,13 @@ const REGENERATE_COMMAND = 'pnpm exec playwright test visual --update-snapshots'
  * working tree without a matching change to their baseline file(s) — this
  * diff touched a route's rendering without updating its screenshot.
  *
- * Scoped to the CURRENT diff, not all of history: a route whose baseline
- * predates an old, already-merged source change is not re-flagged forever
- * by this — only a source change not yet reflected in THIS diff's baseline
- * is. This is what lets the check stay a blocking CI gate safely: a route
- * whose screenshot happens to be byte-identical to its old baseline (a
- * non-visual source edit) produces no new commit for that baseline file at
- * all, so a history-wide "is the baseline's commit newer" comparison could
- * never clear once source and baseline drift apart for unrelated reasons —
- * this diff-scoped comparison has no such trap, since it only asks about
- * paths touched in the current diff.
+ * Scoped to the CURRENT diff, not all of history: a route is flagged only
+ * by a source change not yet reflected in THIS diff's baseline, so an old,
+ * already-merged change never re-flags a route forever. A single PR can
+ * still get stuck if its own source edit is genuinely non-visual (the
+ * regenerated screenshot comes back byte-identical, so `--update-snapshots`
+ * produces nothing to commit) — see the CLI wrapper's failure message for
+ * the escape hatch in that case.
  */
 export function findStaleRoutes(
   routes: readonly RouteBaseline[] = ROUTE_BASELINES,
@@ -169,9 +168,7 @@ export function findStaleRoutes(
     );
   }
 
-  const diffOutput = exec(
-    `git diff --name-only ${base} -- src/app tests/e2e/visual.spec.ts-snapshots`,
-  );
+  const diffOutput = exec(`git diff --name-only ${base}`);
   const changedPaths = new Set(
     diffOutput
       .split('\n')
