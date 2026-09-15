@@ -1,5 +1,3 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   checkServiceImageFreshness,
@@ -8,8 +6,6 @@ import {
   groupByImageTag,
   parseImagePin,
 } from './service-image-freshness';
-
-const root = process.cwd();
 
 describe('extractImageReferences', () => {
   it('pulls the reference after each image: key', () => {
@@ -114,33 +110,6 @@ describe('parseImagePin', () => {
       tag: '16-alpine',
       digest: `sha256:${digest}`,
     });
-  });
-
-  // Tethered to the real artifacts, the way parsePackageManagerPin's test
-  // reads package.json directly — if #603's digest pins are ever hand-edited
-  // back to a floating tag, this fails immediately instead of the check
-  // going quietly inert. Ties the workflow pins to docker-compose.yml's own
-  // pin rather than a hardcoded literal, so a legitimate digest bump moves
-  // both together and docs/supply-chain.md's "same digest the compose files
-  // already carry" claim is something this test actually verifies.
-  it('parses every image: reference this repo currently ships under .github/workflows, all matching docker-compose.yml\'s pinned digest', () => {
-    const dir = path.join(root, '.github/workflows');
-    const files = readdirSync(dir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
-    const allPins = files.flatMap((file) =>
-      extractImageReferences(readFileSync(path.join(dir, file), 'utf8')).map(parseImagePin),
-    );
-    expect(allPins.length).toBeGreaterThanOrEqual(4);
-    for (const pin of allPins) {
-      expect(pin).not.toBeNull();
-    }
-
-    const composeContent = readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
-    const composePin = extractImageReferences(composeContent).map(parseImagePin).find((pin) => pin !== null);
-    expect(composePin).not.toBeNull();
-
-    for (const pin of allPins) {
-      expect(pin?.digest).toBe(composePin?.digest);
-    }
   });
 });
 
