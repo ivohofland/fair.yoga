@@ -34,7 +34,7 @@ const SHOWS_BREAKDOWN = {
   not_charged: false,
 } as const satisfies Record<PaymentStatus, boolean>;
 
-/** A value with at most two decimal places, as whole cents; `mul` keeps it exact. */
+/** Converts a value with at most two decimal places to whole cents; `mul` keeps it exact. */
 function toCents(value: Prisma.Decimal): number {
   return value.mul(100).toNumber();
 }
