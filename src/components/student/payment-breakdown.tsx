@@ -1,21 +1,10 @@
-import { formatDayHeader } from '@/lib/format';
+import { formatDayHeader, formatCents } from '@/lib/format';
 import type { PaymentBreakdownLines } from '@/lib/payment-breakdown';
 
 interface PaymentBreakdownProps {
   lines: PaymentBreakdownLines;
   classType: string;
   date: Date;
-}
-
-/**
- * Euros from whole cents, without a float round-trip. A negative amount takes
- * U+2212 before the euro sign.
- */
-function formatCents(cents: number): string {
-  const abs = Math.abs(cents);
-  const euros = Math.floor(abs / 100);
-  const rest = String(abs % 100).padStart(2, '0');
-  return `${cents < 0 ? '−' : ''}€${euros}.${rest}`;
 }
 
 /**
