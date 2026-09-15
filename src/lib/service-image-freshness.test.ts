@@ -1,7 +1,12 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { checkServiceImageFreshness, extractImageReferences, parseImagePin } from './service-image-freshness';
+import {
+  checkServiceImageFreshness,
+  countImageKeyLines,
+  extractImageReferences,
+  parseImagePin,
+} from './service-image-freshness';
 
 const root = process.cwd();
 
@@ -46,6 +51,28 @@ describe('extractImageReferences', () => {
     const yaml = `        image: "postgres:16-alpine@sha256:${digest}"\n`;
     expect(extractImageReferences(yaml)).toEqual([`postgres:16-alpine@sha256:${digest}`]);
   });
+
+  it('strips surrounding single quotes from a quoted reference', () => {
+    const digest = 'a'.repeat(64);
+    const yaml = `        image: 'postgres:16-alpine@sha256:${digest}'\n`;
+    expect(extractImageReferences(yaml)).toEqual([`postgres:16-alpine@sha256:${digest}`]);
+  });
+});
+
+describe('countImageKeyLines', () => {
+  it('counts each image: key line', () => {
+    const yaml = 'image: a:1\nsomething: else\nimage: b:2\n';
+    expect(countImageKeyLines(yaml)).toBe(2);
+  });
+
+  it('ignores a key that merely ends in "image:" (e.g. "base_image:")', () => {
+    expect(countImageKeyLines('base_image: postgres:16-alpine\n')).toBe(0);
+  });
+
+  it('counts an image: key even when its value is on an indented continuation line', () => {
+    const yaml = 'image:\n  postgres:16-alpine@sha256:' + 'a'.repeat(64) + '\n';
+    expect(countImageKeyLines(yaml)).toBe(1);
+  });
 });
 
 describe('parseImagePin', () => {
@@ -77,6 +104,15 @@ describe('parseImagePin', () => {
 
   it('returns null for a reference with no tag', () => {
     expect(parseImagePin(`postgres@sha256:${'a'.repeat(64)}`)).toBeNull();
+  });
+
+  it('parses a namespaced image reference', () => {
+    const digest = 'a'.repeat(64);
+    expect(parseImagePin(`bitnami/postgres:16-alpine@sha256:${digest}`)).toEqual({
+      image: 'bitnami/postgres',
+      tag: '16-alpine',
+      digest: `sha256:${digest}`,
+    });
   });
 
   // Tethered to the real artifacts, the way parsePackageManagerPin's test

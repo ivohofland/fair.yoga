@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import {
   checkServiceImageFreshness,
+  countImageKeyLines,
   extractImageReferences,
   parseImagePin,
   type ImagePin,
@@ -19,14 +20,28 @@ interface LocatedUnparsed {
   readonly reference: string;
 }
 
-function scanWorkflows(root: string): { pins: LocatedPin[]; unparsed: LocatedUnparsed[] } {
+interface CoverageGap {
+  readonly file: string;
+  readonly imageKeyLines: number;
+  readonly referencesFound: number;
+}
+
+function scanWorkflows(
+  root: string,
+): { pins: LocatedPin[]; unparsed: LocatedUnparsed[]; coverageGaps: CoverageGap[] } {
   const dir = path.join(root, WORKFLOWS_DIR);
   const files = readdirSync(dir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
   const pins: LocatedPin[] = [];
   const unparsed: LocatedUnparsed[] = [];
+  const coverageGaps: CoverageGap[] = [];
   for (const file of files) {
     const contents = readFileSync(path.join(dir, file), 'utf8');
-    for (const reference of extractImageReferences(contents)) {
+    const references = extractImageReferences(contents);
+    const imageKeyLines = countImageKeyLines(contents);
+    if (imageKeyLines !== references.length) {
+      coverageGaps.push({ file, imageKeyLines, referencesFound: references.length });
+    }
+    for (const reference of references) {
       const pin = parseImagePin(reference);
       if (pin) {
         pins.push({ ...pin, file });
@@ -35,7 +50,7 @@ function scanWorkflows(root: string): { pins: LocatedPin[]; unparsed: LocatedUnp
       }
     }
   }
-  return { pins, unparsed };
+  return { pins, unparsed, coverageGaps };
 }
 
 async function fetchLatestDigest(image: string, tag: string): Promise<string> {
@@ -67,7 +82,16 @@ async function fetchLatestDigest(image: string, tag: string): Promise<string> {
 
 async function main(): Promise<void> {
   const root = process.cwd();
-  const { pins, unparsed } = scanWorkflows(root);
+  const { pins, unparsed, coverageGaps } = scanWorkflows(root);
+
+  if (coverageGaps.length > 0) {
+    for (const gap of coverageGaps) {
+      console.error(
+        `${gap.file}: found ${gap.imageKeyLines} "image:" key line(s) but extracted only ${gap.referencesFound} reference(s) — a shape extractImageReferences doesn't handle (e.g. an indented continuation line) may have hidden one. See docs/supply-chain.md ("The database image").`,
+      );
+    }
+    process.exitCode = 1;
+  }
 
   if (unparsed.length > 0) {
     // Present but unparseable is a real complaint, not "nothing to check" —
@@ -98,6 +122,7 @@ async function main(): Promise<void> {
   }
 
   let anyStale = false;
+  let skippedGroups = 0;
   for (const [key, group] of byImageTag) {
     const { image, tag } = group[0]!;
     let latest: string;
@@ -105,8 +130,9 @@ async function main(): Promise<void> {
       latest = await fetchLatestDigest(image, tag);
     } catch (err) {
       const cause = err instanceof Error && err.cause ? ` — ${String(err.cause)}` : '';
+      skippedGroups++;
       console.log(
-        `Could not reach the registry to check ${key}'s latest digest (${err instanceof Error ? err.message : String(err)}${cause}) — skipping.`,
+        `::warning::Could not reach the registry to check ${key}'s latest digest (${err instanceof Error ? err.message : String(err)}${cause}) — skipping.`,
       );
       continue;
     }
@@ -123,6 +149,10 @@ async function main(): Promise<void> {
         );
       }
     }
+  }
+
+  if (skippedGroups === byImageTag.size) {
+    console.log(`::warning::All ${skippedGroups} image group(s) were unreachable — this run verified nothing.`);
   }
 
   if (anyStale) process.exitCode = 1;
