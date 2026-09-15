@@ -19,8 +19,14 @@ export interface ServiceImageFreshness {
 }
 
 // Any line whose trimmed key is exactly "image" — not a suffix like
-// "base_image:" — followed by the reference.
-const IMAGE_LINE_PATTERN = /^\s*image:\s*(\S+)\s*$/gm;
+// "base_image:" — followed by the reference, up to end of line. A trailing
+// YAML comment or surrounding quotes are stripped in extractImageReferences.
+const IMAGE_LINE_PATTERN = /^[ \t]*image:[ \t]+(.+?)[ \t]*$/gm;
+
+// YAML comments require preceding whitespace, and an image reference never
+// contains a literal "#", so this split is unambiguous for this file's use.
+const TRAILING_COMMENT_PATTERN = /\s+#.*$/;
+const QUOTED_PATTERN = /^(['"])(.*)\1$/;
 
 // "<image>:<tag>@sha256:<64 hex>" — the shape docker-compose*.yml already
 // pins to, and the shape #603 asks the GitHub Actions services: blocks to
@@ -28,7 +34,15 @@ const IMAGE_LINE_PATTERN = /^\s*image:\s*(\S+)\s*$/gm;
 const IMAGE_PIN_PATTERN = /^([^:@\s]+):([^@\s]+)@sha256:([0-9a-f]{64})$/;
 
 export function extractImageReferences(yamlContent: string): string[] {
-  return [...yamlContent.matchAll(IMAGE_LINE_PATTERN)].map((match) => match[1] ?? '');
+  return [...yamlContent.matchAll(IMAGE_LINE_PATTERN)]
+    .map((match) => stripCommentAndQuotes(match[1] ?? ''))
+    .filter((ref) => ref !== '');
+}
+
+function stripCommentAndQuotes(raw: string): string {
+  const withoutComment = raw.replace(TRAILING_COMMENT_PATTERN, '').trim();
+  const quoted = QUOTED_PATTERN.exec(withoutComment);
+  return quoted ? (quoted[2] ?? '') : withoutComment;
 }
 
 export function parseImagePin(reference: string): ImagePin | null {

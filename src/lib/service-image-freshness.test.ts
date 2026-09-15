@@ -29,6 +29,23 @@ describe('extractImageReferences', () => {
   it('ignores a key that merely ends in "image:" (e.g. "base_image:")', () => {
     expect(extractImageReferences('base_image: postgres:16-alpine\n')).toEqual([]);
   });
+
+  it('strips a trailing YAML comment from the reference', () => {
+    const yaml = '        image: postgres:16-alpine  # TODO pin\n';
+    expect(extractImageReferences(yaml)).toEqual(['postgres:16-alpine']);
+  });
+
+  it('strips a trailing comment from a digest-pinned reference', () => {
+    const digest = 'a'.repeat(64);
+    const yaml = `        image: postgres:16-alpine@sha256:${digest}  # bumped\n`;
+    expect(extractImageReferences(yaml)).toEqual([`postgres:16-alpine@sha256:${digest}`]);
+  });
+
+  it('strips surrounding quotes from a quoted reference', () => {
+    const digest = 'a'.repeat(64);
+    const yaml = `        image: "postgres:16-alpine@sha256:${digest}"\n`;
+    expect(extractImageReferences(yaml)).toEqual([`postgres:16-alpine@sha256:${digest}`]);
+  });
 });
 
 describe('parseImagePin', () => {
@@ -65,8 +82,11 @@ describe('parseImagePin', () => {
   // Tethered to the real artifacts, the way parsePackageManagerPin's test
   // reads package.json directly — if #603's digest pins are ever hand-edited
   // back to a floating tag, this fails immediately instead of the check
-  // going quietly inert.
-  it('parses every image: reference this repo currently ships under .github/workflows', () => {
+  // going quietly inert. Ties the workflow pins to docker-compose.yml's own
+  // pin rather than a hardcoded literal, so a legitimate digest bump moves
+  // both together and docs/supply-chain.md's "same digest the compose files
+  // already carry" claim is something this test actually verifies.
+  it('parses every image: reference this repo currently ships under .github/workflows, all matching docker-compose.yml\'s pinned digest', () => {
     const dir = path.join(root, '.github/workflows');
     const files = readdirSync(dir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
     const allPins = files.flatMap((file) =>
@@ -75,9 +95,14 @@ describe('parseImagePin', () => {
     expect(allPins.length).toBeGreaterThanOrEqual(4);
     for (const pin of allPins) {
       expect(pin).not.toBeNull();
-      expect(pin?.image).toBe('postgres');
-      expect(pin?.tag).toBe('16-alpine');
-      expect(pin?.digest).toBe('sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685');
+    }
+
+    const composeContent = readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
+    const composePin = extractImageReferences(composeContent).map(parseImagePin).find((pin) => pin !== null);
+    expect(composePin).not.toBeNull();
+
+    for (const pin of allPins) {
+      expect(pin?.digest).toBe(composePin?.digest);
     }
   });
 });
