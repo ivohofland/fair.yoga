@@ -47,6 +47,7 @@ describe('the teacher invitations page (#172)', () => {
     expect(screen.getByText('Anna Teacher would like to connect with you as a student.')).toBeInTheDocument();
     expect(screen.getByText('Ben Teacher would like to connect with you as a student.')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'Set up student side' })).toHaveLength(1);
+    expect(screen.getByRole('link', { name: 'Inbox' })).toHaveAttribute('href', '/inbox');
     expect(listPendingInvitations).toHaveBeenCalledWith(expect.anything(), { accountEmail: 'invitee@test.local' });
   });
 
