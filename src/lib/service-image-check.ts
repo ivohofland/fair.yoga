@@ -7,8 +7,8 @@
  * `RegistryUnreachableError`. Any other rejection propagates rather than
  * being folded into that skip path. Extracted so the loop has a home
  * under `src/lib` that vitest's `unit` project collects, letting #608's
- * acceptance criteria (one fetch per group; a rejected fetch skips rather
- * than throws) be asserted directly.
+ * acceptance criteria (one fetch per group; an unreachable registry skips
+ * rather than throws) be asserted directly.
  */
 import { checkServiceImageFreshness, type ImagePin } from './service-image-freshness';
 import { RegistryUnreachableError } from './service-image-registry';

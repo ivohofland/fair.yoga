@@ -49,6 +49,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
+  console.error(`::error::Service image freshness check failed unexpectedly: ${String(err)}`);
   console.error(err);
   process.exit(1);
 });

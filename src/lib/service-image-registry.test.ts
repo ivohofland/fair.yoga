@@ -20,6 +20,9 @@ describe('fetchLatestDigest', () => {
     await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toThrow(
       'auth token request responded 401',
     );
+    await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toBeInstanceOf(
+      RegistryUnreachableError,
+    );
   });
 
   it('rejects when the auth response has no usable "token" field', async () => {
@@ -31,6 +34,9 @@ describe('fetchLatestDigest', () => {
     });
     await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toThrow(
       'auth response had no "token" field',
+    );
+    await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toBeInstanceOf(
+      RegistryUnreachableError,
     );
   });
 
@@ -56,6 +62,9 @@ describe('fetchLatestDigest', () => {
     await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toThrow(
       'manifest request responded 404',
     );
+    await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toBeInstanceOf(
+      RegistryUnreachableError,
+    );
   });
 
   it('rejects when the manifest response has no docker-content-digest header', async () => {
@@ -67,6 +76,9 @@ describe('fetchLatestDigest', () => {
     });
     await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toThrow(
       'manifest response had no docker-content-digest header',
+    );
+    await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toBeInstanceOf(
+      RegistryUnreachableError,
     );
   });
 
@@ -101,18 +113,6 @@ describe('fetchLatestDigest', () => {
     await expect(fetchLatestDigest('bitnami/postgres', '16-alpine')).resolves.toBe('sha256:latest');
   });
 
-  it('rejects with a RegistryUnreachableError when the auth token request responds non-OK', async () => {
-    stubFetch((url) => {
-      if (url.includes('auth.docker.io')) {
-        return Promise.resolve({ ok: false, status: 401 });
-      }
-      throw new Error('manifest should not be fetched when the token request fails');
-    });
-    await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toBeInstanceOf(
-      RegistryUnreachableError,
-    );
-  });
-
   it('wraps a raw fetch() rejection (e.g. a DNS failure) as a RegistryUnreachableError, preserving message and cause', async () => {
     const cause = new Error('getaddrinfo ENOTFOUND auth.docker.io');
     stubFetch(() => Promise.reject(new TypeError('fetch failed', { cause })));
@@ -134,5 +134,31 @@ describe('fetchLatestDigest', () => {
     });
 
     await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toBe(parseError);
+  });
+
+  it('wraps a raw fetch() rejection on the manifest request (not just the token request) as a RegistryUnreachableError', async () => {
+    stubFetch((url) => {
+      if (url.includes('auth.docker.io')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ token: 'tok' }) });
+      }
+      return Promise.reject(new TypeError('fetch failed'));
+    });
+
+    await expect(fetchLatestDigest('postgres', '16-alpine')).rejects.toBeInstanceOf(RegistryUnreachableError);
+  });
+
+  it('wraps a non-SyntaxError rejection from tokenRes.json() (e.g. a socket reset mid-body) as a RegistryUnreachableError', async () => {
+    const cause = new Error('terminated');
+    stubFetch((url) => {
+      if (url.includes('auth.docker.io')) {
+        return Promise.resolve({ ok: true, json: () => Promise.reject(new TypeError('terminated', { cause })) });
+      }
+      throw new Error('manifest should not be fetched when the auth body read fails');
+    });
+
+    const promise = fetchLatestDigest('postgres', '16-alpine');
+
+    await expect(promise).rejects.toBeInstanceOf(RegistryUnreachableError);
+    await expect(promise).rejects.toThrow('terminated');
   });
 });
