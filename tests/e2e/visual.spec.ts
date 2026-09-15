@@ -336,14 +336,16 @@ test.describe('Visual regression', () => {
     if (teacherId) {
       await prisma.calendarEntry.deleteMany({ where: { teacherId } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+      // Room.createdById references Teacher (Room_createdById_fkey), so this
+      // must run before teacher.deleteMany below (issue 617).
+      if (roomId) {
+        await prisma.room.deleteMany({ where: { id: roomId } });
+      }
       const tAcct = await accountIdOfTeacher(prisma, teacherId);
       if (tAcct) {
         await prisma.session.deleteMany({ where: { accountId: tAcct } });
       }
       await prisma.teacher.deleteMany({ where: { id: teacherId } });
-    }
-    if (roomId) {
-      await prisma.room.deleteMany({ where: { id: roomId } });
     }
     // Issue 177: Account must be deleted after Teacher due to FK reference
     await prisma.account.deleteMany({ where: { email: `e2e-visual-${suffix}@test.local` } });
