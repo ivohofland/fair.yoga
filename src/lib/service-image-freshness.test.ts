@@ -1,5 +1,9 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { checkServiceImageFreshness, extractImageReferences, parseImagePin } from './service-image-freshness';
+
+const root = process.cwd();
 
 describe('extractImageReferences', () => {
   it('pulls the reference after each image: key', () => {
@@ -56,6 +60,25 @@ describe('parseImagePin', () => {
 
   it('returns null for a reference with no tag', () => {
     expect(parseImagePin(`postgres@sha256:${'a'.repeat(64)}`)).toBeNull();
+  });
+
+  // Tethered to the real artifacts, the way parsePackageManagerPin's test
+  // reads package.json directly — if #603's digest pins are ever hand-edited
+  // back to a floating tag, this fails immediately instead of the check
+  // going quietly inert.
+  it('parses every image: reference this repo currently ships under .github/workflows', () => {
+    const dir = path.join(root, '.github/workflows');
+    const files = readdirSync(dir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
+    const allPins = files.flatMap((file) =>
+      extractImageReferences(readFileSync(path.join(dir, file), 'utf8')).map(parseImagePin),
+    );
+    expect(allPins.length).toBeGreaterThanOrEqual(4);
+    for (const pin of allPins) {
+      expect(pin).not.toBeNull();
+      expect(pin?.image).toBe('postgres');
+      expect(pin?.tag).toBe('16-alpine');
+      expect(pin?.digest).toBe('sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685');
+    }
   });
 });
 
