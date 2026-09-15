@@ -362,6 +362,8 @@ git commit -m "test(supply-chain): extract and test the registry auth+manifest f
 
 ## Final Verification
 
+**Note (added after a whole-branch review, post-dating the two tasks above):** a third file, `src/lib/service-image-check.ts` (`checkGroups`), was extracted during review to close a gap this plan didn't anticipate — the issue's acceptance criteria (exactly one fetch per group; a rejected fetch routes to skip, not a crash) weren't testable from Tasks 1-2 alone, since nothing exercised the loop that actually wires `groupByImageTag` and `fetchLatestDigest` together. See `src/lib/service-image-check.ts` and `src/lib/service-image-check.test.ts`.
+
 - [ ] Run `pnpm run verify` (typecheck, lint, full test suite — needs the app live per the `verify` skill).
 - [ ] Confirm `scripts/check-service-image-freshness.ts` no longer defines `fetchLatestDigest` or an inline grouping loop — `grep -n "async function fetchLatestDigest\|byImageTag.set" scripts/check-service-image-freshness.ts` should return nothing.
-- [ ] Confirm the two new/modified test files are picked up: `pnpm exec vitest run --project unit src/lib/service-image-freshness.test.ts src/lib/service-image-registry.test.ts` passes.
+- [ ] Confirm all three new/modified test files are picked up: `pnpm exec vitest run --project unit src/lib/service-image-freshness.test.ts src/lib/service-image-registry.test.ts src/lib/service-image-check.test.ts` passes.
