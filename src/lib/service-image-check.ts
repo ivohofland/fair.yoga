@@ -3,12 +3,15 @@
  * `scripts/check-service-image-freshness.ts`'s main loop: fetches each
  * group's latest digest (injected, so tests can substitute a mock without
  * touching the network) and reports every pin's freshness against it,
- * skipping — not crashing — a group whose fetch rejects. Extracted so the
- * loop has a home under `src/lib` that vitest's `unit` project collects,
- * letting #608's acceptance criteria (one fetch per group; a rejected
- * fetch skips rather than throws) be asserted directly.
+ * skipping — not crashing — a group whose fetch rejects with a
+ * `RegistryUnreachableError`. Any other rejection propagates rather than
+ * being folded into that skip path. Extracted so the loop has a home
+ * under `src/lib` that vitest's `unit` project collects, letting #608's
+ * acceptance criteria (one fetch per group; a rejected fetch skips rather
+ * than throws) be asserted directly.
  */
 import { checkServiceImageFreshness, type ImagePin } from './service-image-freshness';
+import { RegistryUnreachableError } from './service-image-registry';
 
 export interface CheckGroupsResult {
   readonly anyStale: boolean;
@@ -27,10 +30,11 @@ export async function checkGroups<T extends ImagePin & { readonly file: string }
     try {
       latest = await fetchDigest(image, tag);
     } catch (err) {
-      const cause = err instanceof Error && err.cause ? ` — ${String(err.cause)}` : '';
+      if (!(err instanceof RegistryUnreachableError)) throw err;
+      const cause = err.cause ? ` — ${String(err.cause)}` : '';
       skippedGroups++;
       console.log(
-        `::warning::Could not reach the registry to check ${key}'s latest digest (${err instanceof Error ? err.message : String(err)}${cause}) — skipping.`,
+        `::warning::Could not reach the registry to check ${key}'s latest digest (${err.message}${cause}) — skipping.`,
       );
       continue;
     }
