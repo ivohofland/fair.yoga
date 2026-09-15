@@ -15,18 +15,15 @@ interface UpcomingLedgerClass {
  * Whether a registration's class belongs under Upcoming, not Past, on
  * `/bookings`.
  *
- * A cancelled class keeps whatever status it was cancelled from (#327) — an
- * `open` or `in_progress` class cancelled by any of the three cancel paths
- * never changes `Class.status` — so status alone can't decide a cancelled
- * class. Its start instant does, via `classStartInstant`, not
- * `calendarEntry.date`: that column is a stored UTC-midnight calendar date
- * and can sit hours away from the teacher's actual wall-clock start in
- * either direction (#101, #278).
+ * A cancelled class keeps whatever status it was cancelled from (#327) — so
+ * status alone can't decide a cancelled class. Its start instant does, via
+ * `classStartInstant`, not `calendarEntry.date`: that column is a stored
+ * UTC-midnight calendar date and can sit hours away from the teacher's
+ * actual wall-clock start in either direction (#101, #278).
  *
- * A live (non-cancelled) class stays decided by status first — `open` and
- * `in_progress` are upcoming regardless of date, matching the lifecycle in
- * CLAUDE.md; only a `draft` or `completed` class falls through to the date
- * check.
+ * A live (non-cancelled) class stays decided by status first — the code
+ * shows which statuses fall through to the date check, matching the
+ * lifecycle in CLAUDE.md.
  */
 export function isUpcomingRegistration(cls: UpcomingLedgerClass, now: Date): boolean {
   const { calendarEntry } = cls;
