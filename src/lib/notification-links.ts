@@ -34,7 +34,7 @@ export const STUDENT_INVITATION_LABEL = 'Review the invitation';
  */
 export const TEACHER_INVITATION_PATH = '/inbox/invitations';
 
-/** The label for that action, shared by the email's button. */
+/** The label for that action on the email's button. */
 export const TEACHER_INVITATION_LABEL = 'Review the invitation';
 
 /** The shape both student surfaces already select. */

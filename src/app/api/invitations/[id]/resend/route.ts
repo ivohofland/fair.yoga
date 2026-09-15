@@ -14,7 +14,10 @@ import { ownedInvitation, NOT_FOUND, DECLINED, NOT_PENDING } from '../shared';
 /**
  * Resend a pending invitation to its current address (#173) — the recovery
  * from a send that never went out, or from a teacher who just corrected a
- * typo and wants the corrected address mailed. `PUT /api/invitations/[id]`
+ * typo and wants the corrected address mailed. The exception is a
+ * teacher-only account this invitation has already reached at this address
+ * with no failure recorded since: `priorDispatchFor` makes that resend
+ * notify nothing (#172). `PUT /api/invitations/[id]`
  * still does not notify (see `notifyInvitee`'s docblock, services/
  * invitations.ts); this route is the actual send.
  *
@@ -71,6 +74,9 @@ export const POST = withErrorHandler(async (
     return NOT_PENDING();
   }
 
+  // Before the marker write below, which overwrites what this reads.
+  const priorDispatch = priorDispatchFor(invitation);
+
   // Unconditional — see this route's own docblock above for why this must
   // never depend on whether `TeacherBlock` withholds the send below.
   //
@@ -82,8 +88,6 @@ export const POST = withErrorHandler(async (
   // this route already answers for the same row being gone. A zero-count
   // match means exactly that: the row is gone, and 404 is the honest
   // answer.
-  // Before the marker write below, which overwrites what this reads.
-  const priorDispatch = priorDispatchFor(invitation);
   const dispatchedAt = new Date();
   const updated = await prisma.invitation.updateMany({
     where: { id },
