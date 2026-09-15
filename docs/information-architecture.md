@@ -182,6 +182,8 @@ Inbox
 
 A simple chronological list. Each notification links to the relevant context (e.g., "Sarah registered for Tuesday Vinyasa" → tapping goes to that class detail). Read/unread states, nothing more.
 
+An invitation from another teacher, sent to an account without a student side, opens `/inbox/invitations`. It names who invited them and offers to add a student side; the invitation itself is then answered on the student's own `/account/privacy` (#172).
+
 The inbox is also where payment confirmations (Level 2) and system announcements live. It's the teacher's activity log.
 
 ---

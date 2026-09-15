@@ -307,7 +307,7 @@ public page at their `pageSlug`. See [Non-Goals](non-goals.md).
 ### 10.1 — Teacher Inbox
 - Chronological list of all system notifications
 - Read/unread states
-- Types: registration alerts, auto-cancel notices, payment received, system announcements
+- Types: registration alerts, auto-cancel notices, payment received, system announcements, invitations from other teachers (tap opens the invitations page, which offers a student side)
 - Tap to expand detail or navigate to relevant screen
 
 ---
