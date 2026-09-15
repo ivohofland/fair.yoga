@@ -14,22 +14,26 @@
 
 /** Marks a `fetchLatestDigest` failure as "the registry itself is the problem," not an unexpected one. */
 export class RegistryUnreachableError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  private constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = 'RegistryUnreachableError';
   }
-}
 
-function toRegistryUnreachableError(err: unknown): RegistryUnreachableError {
-  if (err instanceof Error) return new RegistryUnreachableError(err.message, { cause: err.cause });
-  return new RegistryUnreachableError(String(err));
+  static of(message: string): RegistryUnreachableError {
+    return new RegistryUnreachableError(message);
+  }
+
+  static wrap(err: unknown): RegistryUnreachableError {
+    if (err instanceof Error) return new RegistryUnreachableError(err.message, { cause: err.cause ?? err });
+    return new RegistryUnreachableError(String(err));
+  }
 }
 
 async function fetchOrThrowUnreachable(url: string, init: RequestInit): Promise<Response> {
   try {
     return await fetch(url, init);
   } catch (err) {
-    throw toRegistryUnreachableError(err);
+    throw RegistryUnreachableError.wrap(err);
   }
 }
 
@@ -39,17 +43,17 @@ export async function fetchLatestDigest(image: string, tag: string): Promise<str
     `https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repository}:pull`,
     { signal: AbortSignal.timeout(5000) },
   );
-  if (!tokenRes.ok) throw new RegistryUnreachableError(`auth token request responded ${tokenRes.status}`);
+  if (!tokenRes.ok) throw RegistryUnreachableError.of(`auth token request responded ${tokenRes.status}`);
   let tokenData: unknown;
   try {
     tokenData = await tokenRes.json();
   } catch (err) {
     if (err instanceof SyntaxError) throw err;
-    throw toRegistryUnreachableError(err);
+    throw RegistryUnreachableError.wrap(err);
   }
   const token = (tokenData as { token?: unknown } | null)?.token;
   if (typeof token !== 'string' || token === '') {
-    throw new RegistryUnreachableError(`auth response had no "token" field: ${JSON.stringify(tokenData)}`);
+    throw RegistryUnreachableError.of(`auth response had no "token" field: ${JSON.stringify(tokenData)}`);
   }
 
   const manifestRes = await fetchOrThrowUnreachable(
@@ -63,8 +67,8 @@ export async function fetchLatestDigest(image: string, tag: string): Promise<str
       signal: AbortSignal.timeout(5000),
     },
   );
-  if (!manifestRes.ok) throw new RegistryUnreachableError(`manifest request responded ${manifestRes.status}`);
+  if (!manifestRes.ok) throw RegistryUnreachableError.of(`manifest request responded ${manifestRes.status}`);
   const digest = manifestRes.headers.get('docker-content-digest');
-  if (!digest) throw new RegistryUnreachableError('manifest response had no docker-content-digest header');
+  if (!digest) throw RegistryUnreachableError.of('manifest response had no docker-content-digest header');
   return digest;
 }

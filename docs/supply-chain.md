@@ -886,6 +886,10 @@ into the same "registry unreachable" warning a genuine outage gets.
 without one, an unexpected failure here would be *less* visible in
 the Checks UI than the skip path's `::warning::`, not more.
 
+```bash
+grep -c "RegistryUnreachableError.of(" src/lib/service-image-registry.ts
+```
+
 Four pieces of the script's orchestration logic were extracted into
 `src/lib` for #608 and #609: the registry auth+manifest fetch
 (`src/lib/service-image-registry.ts`), grouping parsed pins by `image:tag`

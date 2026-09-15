@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { checkGroups } from './service-image-check';
-import { RegistryUnreachableError } from './service-image-registry';
+import { fetchLatestDigest, RegistryUnreachableError } from './service-image-registry';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function pin(image: string, tag: string, digest: string, file: string) {
   return { image, tag, digest, file };
@@ -21,7 +25,7 @@ describe('checkGroups', () => {
   it('skips a group whose fetch rejects with a RegistryUnreachableError, without throwing, and counts it as skipped', async () => {
     const group = [pin('postgres', '16-alpine', 'sha256:aaa', 'a.yml')];
     const byImageTag = new Map([['postgres:16-alpine', group]]);
-    const fetchDigest = vi.fn().mockRejectedValue(new RegistryUnreachableError('registry unreachable'));
+    const fetchDigest = vi.fn().mockRejectedValue(RegistryUnreachableError.of('registry unreachable'));
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const result = await checkGroups(byImageTag, fetchDigest);
@@ -67,7 +71,7 @@ describe('checkGroups', () => {
     ]);
     const fetchDigest = vi.fn((image: string) => {
       if (image === 'postgres') return Promise.resolve('sha256:new');
-      return Promise.reject(new RegistryUnreachableError('unreachable'));
+      return Promise.reject(RegistryUnreachableError.of('unreachable'));
     });
 
     const result = await checkGroups(byImageTag, fetchDigest);
@@ -95,7 +99,7 @@ describe('checkGroups', () => {
       ['redis:7', freshGroup],
     ]);
     const fetchDigest = vi.fn((image: string) => {
-      if (image === 'alpine') return Promise.reject(new RegistryUnreachableError('unreachable'));
+      if (image === 'alpine') return Promise.reject(RegistryUnreachableError.of('unreachable'));
       if (image === 'postgres') return Promise.resolve('sha256:new');
       return Promise.resolve('sha256:same');
     });
@@ -134,5 +138,32 @@ describe('checkGroups', () => {
     expect(result).toEqual({ anyStale: true, skippedGroups: 0 });
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('fresh.yml'));
     logSpy.mockRestore();
+  });
+
+  it('includes the cause in the warning log line when the RegistryUnreachableError carries one', async () => {
+    const group = [pin('postgres', '16-alpine', 'sha256:aaa', 'a.yml')];
+    const byImageTag = new Map([['postgres:16-alpine', group]]);
+    const fetchDigest = vi
+      .fn()
+      .mockRejectedValue(RegistryUnreachableError.wrap(new TypeError('fetch failed', { cause: new Error('ECONNRESET') })));
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await checkGroups(byImageTag, fetchDigest);
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('ECONNRESET'));
+    logSpy.mockRestore();
+  });
+
+  it('composes with the real fetchLatestDigest: a stubbed non-OK auth response is skipped, not thrown', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve({ ok: false, status: 401 } as Response)),
+    );
+    const group = [pin('postgres', '16-alpine', 'sha256:aaa', 'a.yml')];
+    const byImageTag = new Map([['postgres:16-alpine', group]]);
+
+    const result = await checkGroups(byImageTag, fetchLatestDigest);
+
+    expect(result).toEqual({ anyStale: false, skippedGroups: 1 });
   });
 });
