@@ -37,8 +37,8 @@ updates:
   # Dependabot proposes tag and digest together, so this entry is what keeps
   # the pin from going stale rather than what introduces it.
   # docs/supply-chain.md ("The base image and the package manager binary")
-  # has the reasoning, the current state of every floating image tag this
-  # repo has, and which of them this entry does and doesn't reach.
+  # has the reasoning, the current state of every image this repo pins,
+  # and which Dependabot entry (or script) tracks each.
   #
   # `default-days: 8` here isn't tied to a setting the way the npm entry's
   # is to `minimumReleaseAge` — Docker Hub has no equivalent release-age
