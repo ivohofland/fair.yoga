@@ -12,7 +12,7 @@
 import crypto from 'crypto';
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
 import { Prisma } from '@prisma/client';
-import type { PrismaClient, ClassStatus } from '@prisma/client';
+import type { PrismaClient, ClassStatus, WaitlistStatus } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
@@ -325,18 +325,32 @@ export class AlreadyErasedError extends Error {
 }
 
 /**
+ * One entry `ErasureLockSetError` found: the columns that say where it was
+ * written and when, which is what identifies the writer that bypassed the
+ * gate. None of them is personal data.
+ */
+export type ErasureLockSetStray = Readonly<{
+  classId: string;
+  status: WaitlistStatus;
+  createdAt: Date;
+}>;
+
+/**
  * Thrown when `deleteStudentAccount` finds a `WaitlistEntry` for its subject in
  * a class its ordered pre-lock did not lock. The transaction aborts whole, so
- * nothing is erased; a retry's pre-lock covers the class that appeared. Why no
+ * nothing is erased; a retry's pre-lock covers the class that appeared, and
+ * its delete removes the entry — so `strays` is the only record of it. Why no
  * writer should be able to cause it: `docs/lock-order.md`, "The `Student` row
  * is the erasure's gate".
  */
 export class ErasureLockSetError extends Error {
   constructor(
     readonly studentId: string,
-    readonly strays: number,
+    readonly strays: readonly ErasureLockSetStray[],
   ) {
-    super(`student ${studentId} holds ${strays} waitlist entries outside the erasure's lock set`);
+    super(
+      `student ${studentId} holds ${strays.length} waitlist entries outside the erasure's lock set, in classes ${strays.map((s) => s.classId).join(', ')}`,
+    );
     this.name = 'ErasureLockSetError';
   }
 }
@@ -401,9 +415,10 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
 
     // EVERY entry, not just the `waiting` ones, because the delete below takes
     // every entry the student holds, of every status — but only in the classes
-    // this statement returns, followed by a count that refuses to commit if any
-    // entry lies outside them. So the lock set has to cover every entry the
-    // student holds, and this statement is what defines the lock set.
+    // this statement returns, and the check after the closing update refuses
+    // to commit if any entry lies outside them. So the lock set has to cover
+    // every entry the student holds, and this statement is what defines the
+    // lock set.
     //
     // A `waiting`-only read would miss entries the delete still takes:
     // `closeQueueOnStart` (#216) flips a never-promoted student's `waiting`
@@ -575,14 +590,10 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // lock. `unlinkTeacher` now takes them in this same order.
     await tx.studentPrivacy.deleteMany({ where: { studentId } });
     await tx.teacherStudent.deleteMany({ where: { studentId } });
+    // Only in the classes the pre-lock holds, so this never waits on an entry
+    // whose class it does not hold. An entry anywhere else fails the check
+    // after the closing update below.
     await tx.waitlistEntry.deleteMany({ where: { studentId, classId: { in: lockedClassIds } } });
-    // Refuses to commit an erasure whose scoped delete above missed one of the
-    // subject's entries: the transaction fails whole with `ErasureLockSetError`
-    // instead of deleting an entry whose class it never held. Why nothing
-    // should reach it: `docs/lock-order.md`, "The `Student` row is the
-    // erasure's gate".
-    const strays = await tx.waitlistEntry.count({ where: { studentId } });
-    if (strays > 0) throw new ErasureLockSetError(studentId, strays);
 
     // Invitations are keyed by address, not by `studentId` — a teacher can
     // hold a CRM contact for someone with no Student row at all — so this
@@ -753,6 +764,24 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       },
     });
     if (erased.count === 0) throw new AlreadyErasedError('student');
+
+    // Refuses to commit an erasure whose scoped `waitlistEntry.deleteMany`
+    // above missed one of the subject's entries: the transaction fails whole
+    // with `ErasureLockSetError` instead of leaving an entry behind for an
+    // erased profile. Why nothing should reach it: `docs/lock-order.md`, "The
+    // `Student` row is the erasure's gate".
+    //
+    // Here, after the closing update, and not beside the delete. That
+    // `UPDATE` changes `email`, a plain unique index, so it takes `FOR UPDATE`
+    // on the student's row, which waits for every in-flight insert of a row
+    // referencing this student (each holds `FOR KEY SHARE` on it). An entry a
+    // writer was still inserting when the delete ran has committed by now,
+    // and this read sees it.
+    const strays = await tx.waitlistEntry.findMany({
+      where: { studentId },
+      select: { classId: true, status: true, createdAt: true },
+    });
+    if (strays.length > 0) throw new ErasureLockSetError(studentId, strays);
 
     return upcoming.filter((r) => r.class.status === 'open').map((r) => r.classId);
   }, {

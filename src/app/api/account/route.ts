@@ -121,10 +121,8 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   // outage and must not page anyone, which is the same reading
   // `classifyApiError`'s transient branch takes. Anything else here is a real
   // defect — an erasure that cannot complete is a legally time-bound
-  // operation failing — and stays at `error`. `ErasureLockSetError` is the
-  // exception: `erasureFailure` answers it as busy, but `level` reads
-  // `isTransientDbError` alone and logs it at `error`, on purpose, because
-  // reaching it means a waiting-list entry was written past the erasure's gate.
+  // operation failing — and stays at `error`. `ErasureLockSetError` has a
+  // branch of its own below.
   if (session.studentId) {
     try {
       await deleteStudentAccount(prisma, session.studentId);
@@ -150,6 +148,16 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
           { err, accountId: session.accountId, half: err.half },
           'account erasure: half already erased',
         );
+      } else if (err instanceof ErasureLockSetError) {
+        // Its own message, so the line can be found without filtering on
+        // `err.type`, and at `error` although `erasureFailure` answers it as
+        // busy: `ErasureLockSetError`'s docblock (`gdpr.ts`) says why nothing
+        // should reach it. `err` carries the entries it found.
+        log.error(
+          { err, accountId: session.accountId },
+          'account erasure: waitlist entry written past the erasure gate',
+        );
+        return erasureFailure(err, { half: 'student', partial: false });
       } else {
         const transient = isTransientDbError(err);
         log[transient ? 'warn' : 'error'](
