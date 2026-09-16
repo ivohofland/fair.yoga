@@ -32,6 +32,11 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
   // (`student.teacherStudents.length > 0`) is scoped to the CALLER's
   // `teacherId`, not "does this student have any teacher at all".
   let otherTeacherId: string;
+  // #623: the account/teacher pair the "notifies the live teacher, not an
+  // erased one on the same account" test below creates, torn down here
+  // alongside this block's own teachers.
+  const liveBesideErasedAccountIds: string[] = [];
+  const liveBesideErasedTeacherIds: string[] = [];
 
   beforeAll(async () => {
     // Force the real-send path: a key is configured and dry-run is off —
@@ -82,6 +87,15 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       }))?.accountId;
       await prisma.teacher.delete({ where: { id: otherTeacherId } });
       if (otherAccountId) await prisma.account.delete({ where: { id: otherAccountId } });
+    }
+    if (liveBesideErasedTeacherIds.length > 0) {
+      await prisma.notification.deleteMany({
+        where: { recipientType: 'teacher', recipientId: { in: liveBesideErasedTeacherIds } },
+      });
+      await prisma.teacher.deleteMany({ where: { id: { in: liveBesideErasedTeacherIds } } });
+    }
+    if (liveBesideErasedAccountIds.length > 0) {
+      await prisma.account.deleteMany({ where: { id: { in: liveBesideErasedAccountIds } } });
     }
 
     if (savedApiKey === undefined) delete process.env.RESEND_API_KEY;
@@ -1038,5 +1052,54 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     } finally {
       await cleanUpInvitee(f);
     }
+  });
+
+  it('notifies the live teacher, not an erased one on the same account (#623)', async () => {
+    const address = `erased-beside-live-${suffix}@test.local`;
+    const account = await prisma.account.create({ data: { email: address } });
+    liveBesideErasedAccountIds.push(account.id);
+    const erased = await prisma.teacher.create({
+      data: {
+        accountId: account.id,
+        firstName: 'Deleted', lastName: 'Teacher',
+        email: `erased-beside-live-${suffix}@deleted.invalid`,
+        bio: '', pageSlug: `erased-beside-live-${suffix}`,
+        deletedAt: new Date(),
+      },
+    });
+    liveBesideErasedTeacherIds.push(erased.id);
+    const live = await prisma.teacher.create({
+      data: {
+        accountId: account.id,
+        firstName: 'Live', lastName: 'Teacher',
+        email: address,
+        bio: '', pageSlug: `live-beside-erased-${suffix}`,
+      },
+    });
+    liveBesideErasedTeacherIds.push(live.id);
+    const invitation = await prisma.invitation.create({
+      data: { teacherId, email: address },
+    });
+
+    await notifyInvitee(prisma, {
+      teacherId,
+      email: address,
+      teacherName: 'Notify Teacher',
+      invitationId: invitation.id,
+      claimedAt: new Date(),
+    });
+
+    // Scoped to these two ids rather than counting every teacher_invitation
+    // in the database: other cases in this file create their own.
+    const notified = await prisma.notification.findMany({
+      where: {
+        recipientType: 'teacher',
+        type: 'teacher_invitation',
+        recipientId: { in: [live.id, erased.id] },
+      },
+      select: { recipientId: true },
+    });
+    expect(notified).toHaveLength(1);
+    expect(notified[0]!.recipientId).toBe(live.id);
   });
 });

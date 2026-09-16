@@ -4,6 +4,7 @@ import type { PrismaClient } from '@prisma/client';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
 import type { SessionUser } from '../types';
+import { liveProfile } from '@/lib/live-profile';
 
 export const SESSION_COOKIE_NAME = 'fair_yoga_session';
 
@@ -69,20 +70,26 @@ export async function validateSession(
   }
 
   // Resolve the account's LIVE profiles. GDPR erasure soft-deletes
-  // (deletedAt) and keeps the link, so liveness must be checked here — an
+  // (deletedAt) and keeps the link, so the selects below filter on it — an
   // erased profile must not resurface through a surviving session. An
   // account with no live profiles left cannot use any surface.
   const account = await db.account.findUnique({
     where: { id: session.accountId },
     select: {
       id: true,
-      teacher: { select: { id: true, deletedAt: true, defaultTimezone: true } },
-      student: { select: { id: true, deletedAt: true } },
+      teachers: {
+        where: { deletedAt: null },
+        select: { id: true, defaultTimezone: true },
+      },
+      students: {
+        where: { deletedAt: null },
+        select: { id: true },
+      },
     },
   });
 
-  const liveTeacher = account?.teacher && !account.teacher.deletedAt ? account.teacher : null;
-  const liveStudent = account?.student && !account.student.deletedAt ? account.student : null;
+  const liveTeacher = account ? liveProfile(account.teachers) : null;
+  const liveStudent = account ? liveProfile(account.students) : null;
   if (!account || (!liveTeacher && !liveStudent)) {
     await db.session.delete({ where: { id: sessionHash } }).catch(() => {});
     return null;

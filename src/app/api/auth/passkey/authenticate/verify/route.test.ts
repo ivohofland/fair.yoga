@@ -76,7 +76,7 @@ afterEach(() => {
 describe('POST /api/auth/passkey/authenticate/verify — teacher-signup destination for an existing account', () => {
   it('sends an account that already teaches to its schedule, not to a page it would be bounced from', async () => {
     primeCredential('acc-teacher');
-    accountFindUnique.mockResolvedValue({ teacher: { deletedAt: null } });
+    accountFindUnique.mockResolvedValue({ teachers: [{ id: 'teacher-1' }] });
     storeChallenge('authentication', 'chal-teacher', 'expected-challenge');
 
     const res = await POST(verify('chal-teacher', '/signup/profile'));
@@ -88,7 +88,7 @@ describe('POST /api/auth/passkey/authenticate/verify — teacher-signup destinat
 
   it('still sends an account with no teacher profile to the profile form', async () => {
     primeCredential('acc-student');
-    accountFindUnique.mockResolvedValue({ teacher: null });
+    accountFindUnique.mockResolvedValue({ teachers: [] });
     storeChallenge('authentication', 'chal-student', 'expected-challenge');
 
     const res = await POST(verify('chal-student', '/signup/profile'));
@@ -103,7 +103,11 @@ describe('POST /api/auth/passkey/authenticate/verify — teacher-signup destinat
 
   it('sends an account whose teacher profile was soft-deleted to the profile form', async () => {
     primeCredential('acc-former-teacher');
-    accountFindUnique.mockResolvedValue({ teacher: { deletedAt: new Date() } });
+    // The route's own `where: { deletedAt: null }` (#623) is what would keep
+    // a soft-deleted teacher out of this array in production; mocked here as
+    // the empty result that filter produces, since this test drives the
+    // handler beneath the query rather than the query itself.
+    accountFindUnique.mockResolvedValue({ teachers: [] });
     storeChallenge('authentication', 'chal-former-teacher', 'expected-challenge');
 
     const res = await POST(verify('chal-former-teacher', '/signup/profile'));

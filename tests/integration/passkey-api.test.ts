@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 
-import { BASE_URL, uniqueSuffix, freshIp } from '../helpers';
+import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession } from '../helpers';
 
 const prisma = new PrismaClient();
 
@@ -133,5 +133,62 @@ describe('POST /api/auth/passkey/authenticate/options', () => {
 
     expect(statuses.slice(0, 100)).toEqual(Array(100).fill(200));
     expect(statuses[100]).toBe(429);
+  });
+});
+
+/**
+ * #623. `account.teacher ?? account.student` filtered neither side for
+ * liveness, so an account whose teacher side was erased named its credential
+ * after the tombstone — and an erasure anonymises that name to "Deleted
+ * Teacher". A passkey's display name lands permanently in the viewer's own
+ * credential manager, so this is not a cosmetic string.
+ */
+describe('POST /api/auth/passkey/register/options', () => {
+  const suffix = uniqueSuffix();
+  const accountIds: string[] = [];
+  let token: string;
+
+  beforeAll(async () => {
+    const account = await prisma.account.create({
+      data: { email: `pk-live-name-${suffix}@test.local` },
+    });
+    accountIds.push(account.id);
+    // The erased teacher is deliberately the `??`'s LEFT operand: an
+    // unfiltered read selects it, which is the regression being pinned.
+    await prisma.teacher.create({
+      data: {
+        accountId: account.id,
+        firstName: 'Deleted', lastName: 'Teacher',
+        email: `pk-erased-teacher-${suffix}@deleted.invalid`,
+        bio: '', pageSlug: `pk-erased-teacher-${suffix}`,
+        deletedAt: new Date(),
+      },
+    });
+    await prisma.student.create({
+      data: {
+        accountId: account.id,
+        firstName: 'Live', lastName: 'Student',
+        email: `pk-live-name-${suffix}@test.local`,
+        claimedAt: new Date(),
+      },
+    });
+    token = await seedSession(prisma, account.id);
+  });
+
+  afterAll(async () => {
+    await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
+    await prisma.student.deleteMany({ where: { accountId: { in: accountIds } } });
+    await prisma.teacher.deleteMany({ where: { accountId: { in: accountIds } } });
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  });
+
+  it('names the credential after the live profile, not an erased one (#623)', async () => {
+    const res = await fetch(`${BASE_URL}/api/auth/passkey/register/options`, {
+      method: 'POST',
+      headers: { ...cookie(token), ...freshIp() },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { user: { displayName: string } } };
+    expect(body.data.user.displayName).toBe('Live Student');
   });
 });
