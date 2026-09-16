@@ -4291,14 +4291,15 @@ describe('an invitation to a teacher-only account (#172)', () => {
     // synchronously, then for the dispatch to have run, and only then count.
     // This IS a fixed sleep standing in for a proof of absence, deliberately:
     // a control dispatch would assume the capped one can't outlive it, which
-    // `src/services/invitations.notify.test.ts:309-325` records as false —
-    // both dispatches are fire-and-forget and compete for one connection
-    // pool with no ordering guarantee. That file's own fix is to spy on the
-    // query and await it directly, which is unavailable here — this tier
-    // drives the app over HTTP, in another process. The cap itself is
-    // proven synchronously and exactly by Task 2's unit tests; this test's
-    // job is only that the route reaches the capped branch and that its
-    // response carries no signal of having done so.
+    // `invitations.notify.test.ts`'s "sets no failure signal when an
+    // already-linked pair is resent via deliverInvitation" records as
+    // false — both dispatches are fire-and-forget and compete for one
+    // connection pool with no ordering guarantee. That test's own fix is to
+    // spy on the query and await it directly, which is unavailable here —
+    // this tier drives the app over HTTP, in another process. The cap
+    // itself is proven synchronously and exactly by Task 2's unit tests;
+    // this test's job is only that the route reaches the capped branch and
+    // that its response carries no signal of having done so.
     await waitFor(
       () => prisma.invitation.findUniqueOrThrow({
         where: { id: invitation.id }, select: { lastNotifiedAt: true },
@@ -4321,25 +4322,31 @@ describe('an invitation to a teacher-only account (#172)', () => {
     expect(row.lastNotifiedEmail).toBe(inviteeEmail);
   });
 
-  // Must run after the capped test above: it depends on the cap already
-  // being claimed there, and it mutates the shared `inviteeEmail` row that
-  // every test in this describe block (including the one below) depends on
-  // — restored in `finally`.
+  // Depends on 'reaches the invitee in their teacher inbox' above: that is
+  // where the cap is first claimed (the capped-resend test right above only
+  // confirms it stays claimed). This test also mutates the shared
+  // `inviteeEmail` row that every test in this describe block — including
+  // the one below — depends on, so it must run after both and restores the
+  // address in `finally`.
   it('tells the readdressed invitee, because PUT clears the cap (#622)', async () => {
     const readdressed = `inv-teacher-readdressed-${suffix}@test.local`;
-    const second = await prisma.teacher.create({
-      data: {
-        firstName: 'Readdressed', lastName: 'Teacher', email: readdressed,
-        account: { create: { email: readdressed } },
-        bio: '#622 readdress', pageSlug: `inv-teacher-readdressed-${suffix}`,
-      },
-      select: { id: true, accountId: true },
-    });
-    const invitation = await prisma.invitation.findUniqueOrThrow({
-      where: { teacherId_email: { teacherId, email: inviteeEmail } },
-      select: { id: true },
-    });
+    // Created and looked up inside the `try` — not before it — so that a
+    // throw from either leaves nothing for `finally` to miss.
+    let second: { id: string; accountId: string } | undefined;
     try {
+      second = await prisma.teacher.create({
+        data: {
+          firstName: 'Readdressed', lastName: 'Teacher', email: readdressed,
+          account: { create: { email: readdressed } },
+          bio: '#622 readdress', pageSlug: `inv-teacher-readdressed-${suffix}`,
+        },
+        select: { id: true, accountId: true },
+      });
+      const invitation = await prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId, email: inviteeEmail } },
+        select: { id: true },
+      });
+
       const put = await fetch(`${BASE_URL}/api/invitations/${invitation.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
@@ -4347,9 +4354,7 @@ describe('an invitation to a teacher-only account (#172)', () => {
       });
       expect(put.status).toBe(200);
 
-      // `PUT /api/invitations/[id]` does NOT dispatch — verified: the route
-      // file contains no `deliverInvitation` call. It only clears the cap.
-      // The resend is what delivers.
+      // Delivery happens on the resend below — the PUT above only readdressed.
       const resend = await fetch(`${BASE_URL}/api/invitations/${invitation.id}/resend`, {
         method: 'POST', headers: cookie(teacherToken),
       });
@@ -4357,19 +4362,27 @@ describe('an invitation to a teacher-only account (#172)', () => {
 
       await waitFor(
         () => prisma.notification.count({
-          where: { recipientType: 'teacher', recipientId: second.id, type: 'teacher_invitation' },
+          where: { recipientType: 'teacher', recipientId: second!.id, type: 'teacher_invitation' },
         }).then((c) => (c > 0 ? c : null)),
         { description: 'a readdressed invitation reaches the new teacher (#622)' },
       );
     } finally {
-      await prisma.notification.deleteMany({
-        where: { recipientType: 'teacher', recipientId: second.id },
-      });
+      // Each step below is reachable regardless of how far the try above
+      // got: `second` is undefined if its own creation threw, and the
+      // email match below is a no-op if the readdress itself never
+      // happened — neither case needs a special branch, just a guard.
+      if (second) {
+        await prisma.notification.deleteMany({
+          where: { recipientType: 'teacher', recipientId: second.id },
+        });
+      }
       await prisma.invitation.updateMany({
-        where: { id: invitation.id }, data: { email: inviteeEmail },
+        where: { teacherId, email: readdressed }, data: { email: inviteeEmail },
       });
-      await prisma.teacher.delete({ where: { id: second.id } });
-      await prisma.account.delete({ where: { id: second.accountId } });
+      if (second) {
+        await prisma.teacher.delete({ where: { id: second.id } });
+        await prisma.account.delete({ where: { id: second.accountId } });
+      }
     }
   });
 
