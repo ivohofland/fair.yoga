@@ -16,15 +16,21 @@
  * Extracted out of `gdpr.test.ts` in two passes rather than moving that file
  * whole — the AB-BA probe below moved first; issue #459
  * (`docs/superpowers/specs/2026-09-05-lock-contention-extraction-design.md`)
- * carried the rest. Its `isClassPreLock`/`awaitHandshake` machinery stays
- * scoped to that one probe — nothing added by #459 uses either.
+ * carried the rest. Its `isClassPreLock` machinery stays scoped to that one
+ * probe — nothing added by #459 uses it or `awaitHandshake`.
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
-import { AlreadyErasedError, deleteStudentAccount, deleteTeacherAccount } from './gdpr';
+import {
+  AlreadyErasedError,
+  deleteStudentAccount,
+  deleteTeacherAccount,
+  ErasureLockSetError,
+} from './gdpr';
 import * as dbLocks from '@/lib/db-locks';
 import { CLASS_TO_ENTRY_JOIN, CLASS_TO_WAITLIST_JOIN, LOCK_TIMEOUT_SQL } from '@/lib/db-locks';
+import { promoteNext } from './waitlist';
 import { claimTemplateForGeneration } from './class-generator';
 import { claimStudioTemplateForGeneration } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -717,11 +723,10 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     const studentRacing = prisma.$extends({
       query: {
         async $queryRaw({ args, query }) {
-          // Same discriminator as the teacher's hook. This side keyed on
-          // `studentId` and fired correctly, but only because
-          // `deleteStudentAccount` happens to have exactly one statement
-          // binding it — a property of today's call graph, not a guarantee,
-          // and one sibling statement away from the teacher side's failure.
+          // Same discriminator as the teacher's hook, for the same reason: a
+          // key on `studentId` would also fire on any other raw statement of
+          // `deleteStudentAccount`'s that binds it, which is the teacher
+          // side's failure on this side.
           if (isClassPreLock(args.sql)) {
             studentPreLockFirings += 1;
             studentPreLockReached();
@@ -757,9 +762,10 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
           // discourage rather than forbid: Postgres still takes those paths
           // where no alternative exists, so the erasure's remaining statements
           // cannot fail on them, only be planned differently.
-          // `deleteStudentAccount` calls `setLockTimeout` twice (once itself,
-          // once inside the helper), so this fires twice; a repeated `SET LOCAL`
-          // overwrites rather than stacks.
+          // `deleteStudentAccount` issues `setLockTimeout` more than once — its
+          // own call, and one inside each `db-locks.ts` lock helper it calls —
+          // so this fires on each; a repeated `SET LOCAL` overwrites rather
+          // than stacks.
           if (args[0] === LOCK_TIMEOUT_SQL) {
             const first = await query(args);
             for (const setting of FORCED_PLAN_SETTINGS) {
@@ -922,11 +928,12 @@ const prisma = new PrismaClient();
  * ordered pre-lock statement runs unconditionally and simply matches zero
  * rows. That pre-lock's OWN `setLockTimeout` call (`lockClassRowsOrdered`,
  * `db-locks.ts`) is unconditional too — before its query runs, not gated on
- * what it matches — so this path is bounded twice over: the hoist above and
- * the pre-lock's own call both fire ahead of the `registration.updateMany`
- * this test contends on. `registered: true` gives that erasure a
- * `Registration` row of its own to contend over, since with no class lock
- * there is otherwise nothing for a counterparty to hold.
+ * what it matches — so this path is bounded more than once: the erasure's
+ * hoist and each lock helper's own call all fire ahead of the
+ * `registration.updateMany` this test contends on. `registered: true` gives
+ * that erasure a `Registration` row of its own to contend over: a plain
+ * write, whose wait is bounded only by a `SET LOCAL` some earlier statement
+ * issued — unlike a row taken through a lock helper, which issues its own.
  */
 async function makeStudentWaitingInClass(
   {
@@ -1187,8 +1194,8 @@ it('waits for a class row another transaction holds before renumbering other stu
  * The same lever as the test above, on a CLOSED entry — and it is the closed
  * case this erasure got wrong.
  *
- * `waitlistEntry.deleteMany({ where: { studentId } })` deletes every entry the
- * student holds, of every status. The `Class` lock set was built from a read
+ * `waitlistEntry.deleteMany({ where: { studentId } })` deleted every entry the
+ * student held, of every status. The `Class` lock set was built from a read
  * scoped to `status: 'waiting'`. Those two sets coincided only by accident:
  * before #216 nothing closed a queue when a class STARTED, so a student who
  * never got in stayed `waiting` for ever and their class stayed in the lock
@@ -1203,17 +1210,19 @@ it('waits for a class row another transaction holds before renumbering other stu
  * `classifyApiError` has no branch for, so a bare 500 with the whole
  * registration rolled back.
  *
- * Run over EVERY status, not just `expired`. The stated invariant is write
- * set equals lock set, and a fixture that only ever produces one status
- * cannot distinguish that from a lock set that merely happens to include it —
- * scoping the pre-lock to `waiting` ∪ `expired` would pass a single-status
- * version of this test while still deleting `promoted`, `claimed` and
- * `removed` rows outside the lock. (`waiting` passes either way and is kept
- * as the control.)
+ * Run over EVERY status, not just `expired`. The stated invariant is a lock
+ * set that covers every entry the student holds, and a fixture that only ever
+ * produces one status cannot distinguish that from a lock set that merely
+ * happens to include it — scoping the pre-lock to `waiting` ∪ `expired` would
+ * pass a single-status version of this test while refusing, with
+ * `ErasureLockSetError`, every erasure of a student who holds a `promoted`,
+ * `claimed` or `removed` entry. (`waiting` passes either way and is kept as
+ * the control.)
  *
- * Without the widened lock set this test does not merely assert something
- * weaker — it goes GREEN by returning immediately, because the erasure never
- * asks for the row the holder is sitting on.
+ * Without the widened lock set this test goes RED, and not on its wait: the
+ * delete is scoped to the classes the pre-lock returned, so the entry whose
+ * class it never locked is left behind, and the erasure throws
+ * `ErasureLockSetError` without waiting for the holder.
  */
 it.each(['waiting', 'promoted', 'claimed', 'expired', 'removed'] as const)(
   'waits for a class row another transaction holds when the erased entry is %s',
@@ -1246,9 +1255,10 @@ it.each(['waiting', 'promoted', 'claimed', 'expired', 'removed'] as const)(
     );
 
     await holder;
-    // False here would mean the erasure sailed past a held row lock, which is
-    // exactly what a lock set scoped to `waiting` does: it never asks for this
-    // class, so it finishes while the holder is still sleeping.
+    // False here would mean the erasure sailed past a held row lock. A lock
+    // set scoped to `waiting` never gets that far on a closed entry: it never
+    // asks for this class, leaves the entry behind, and rejects with
+    // `ErasureLockSetError` (the docblock above).
     expect(await erasedAfterHolder).toBe(true);
 
     // And the entry is still gone afterwards. The widened lock set changes
@@ -1269,11 +1279,13 @@ it.each(['waiting', 'promoted', 'claimed', 'expired', 'removed'] as const)(
  * #174 four-specialist review, Important 5. The 2s bound *arrived* from a
  * `lockClassRow` loop that *ran* once per class the student held an entry
  * in — `waiting`-only in #174, every status by #216/#182 — and today
- * arrives unconditionally from TWO sites: the hoist at the top of the
- * transaction, and `lockClassRowsOrdered`'s own `setLockTimeout`
- * (`db-locks.ts`), which fires before its query runs regardless of what
- * it matches. Either alone bounds this path — measured by removing just
- * the hoist, which leaves the test below passing. Under the old loop, a
+ * arrives unconditionally from the hoist at the top of the transaction,
+ * and again from each `db-locks.ts` lock helper the erasure calls before
+ * the `registration.updateMany` this test contends on, each of which issues
+ * its own `setLockTimeout` before its query runs, regardless of what it
+ * matches.
+ * Any one alone bounds this path — measured by removing just the hoist,
+ * which leaves the test below passing. Under the old loop, a
  * student holding no such entry, the common case, got an unbounded wait
  * on every statement in the erasure transaction. Prisma's own `timeout`
  * cannot rescue that: it refuses to START a statement past the budget, it
@@ -1285,9 +1297,10 @@ it.each(['waiting', 'promoted', 'claimed', 'expired', 'removed'] as const)(
  * erasure depends on the subject being on a waitlist.
  *
  * The contended row is the student's own `Registration`, unrelated to any
- * class lock, because with an empty lock set there is nothing else for a
- * counterparty to hold. Held for 4s, well past the 2s bound, so what this
- * observes is the timeout and not a wait.
+ * class lock: with an empty class lock set, it is a row the erasure writes
+ * without a lock helper in front of it, so its wait is bounded only by a
+ * `SET LOCAL` an earlier statement issued. Held for 4s, well past the 2s
+ * bound, so what this observes is the timeout and not a wait.
  */
 it('bounds its wait even when the student is waiting in no classes at all', async () => {
   const fixture = await makeStudentWaitingInClass({ waiting: false, registered: true });
@@ -1297,15 +1310,15 @@ it('bounds its wait even when the student is waiting in no classes at all', asyn
     // matches zero rows for this student; the statement still runs.
     // MEASURED: this test's outcome does not depend on the
     // top-of-transaction hoist above. Deleting it alone still leaves this
-    // test passing, because `lockClassRowsOrdered`'s own `setLockTimeout`
-    // call is unconditional too — before its query runs, not gated on
-    // what it matches — and it runs ahead of the `registration.updateMany`
+    // test passing, because the lock helpers' own `setLockTimeout` calls
+    // are unconditional too — before their queries run, not gated on what
+    // they match — and they run ahead of the `registration.updateMany`
     // below regardless of row count. What this test actually guards is
     // narrower than the docblock above states: that SOME bound reaches
     // this transaction before that statement, not that the hoist
     // specifically is load-bearing. The hoist's own necessity is
     // currently unverified by any test in this file — a coverage gap, not
-    // a live defect, since a second unconditional call already covers
+    // a live defect, since the helpers' unconditional calls already cover
     // this exact path.
     expect(
       await prisma.waitlistEntry.count({
@@ -1853,19 +1866,25 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
     // erasure can be scheduled inside.
     const holder = new PrismaClient();
     try {
-      // A bare `Promise.allSettled` of the two calls is not a race: they can
-      // serialise, and a serialised second call reads its `upcoming` AFTER the
-      // first cancelled those registrations, so it comes back empty — the
-      // erasure then commits nothing to broadcast about, `handleSpotFreed`
-      // never runs, and the notification assertion below passes EVEN WITH THE
-      // ABORT REMOVED. The whole test would be green against the bug it names.
+      // What each assertion below pins, because it is not the obvious split.
+      // The two erasures serialise at `lockStudentForErasure`, so the loser
+      // reads its `upcoming` only after the winner cancelled those
+      // registrations: it comes back empty, the loser has nothing to
+      // broadcast, and the notification assertion passes EVEN WITH THE ABORT
+      // REMOVED. It passes with the `Student` lock removed too, because the
+      // abort then stops the loser committing. It fails only if both go. The
+      // rejection-count and `AlreadyErasedError` assertions are what pin the
+      // abort.
       //
       // The lever (the pattern in `registrations-api.test.ts`'s cancel race):
       // a third transaction takes the `Student` row `FOR UPDATE` before either
-      // call starts. Both erasures then read the same non-empty `upcoming`
-      // (uncommitted state is invisible under READ COMMITTED) and both park at
-      // a write — one on this lock at the closing CAS, the other behind it on
-      // the shared `Registration` row.
+      // call starts, so both erasures are in flight at once and park at their
+      // `Student` lock — behind this one, then behind each other. With that
+      // lock removed, the same lever is what makes both read the same
+      // non-empty `upcoming` (uncommitted state is invisible under READ
+      // COMMITTED) and park at a write instead — one on this lock at the
+      // closing CAS, the other behind it on the shared `Registration` row —
+      // which is the interleaving the notification assertion exists for.
       let release!: () => void;
       let locked!: () => void;
       const released = new Promise<void>((r) => { release = r; });
@@ -1888,8 +1907,8 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       // 700ms: `deleteStudentAccount` opens with `setLockTimeout`, so a
       // statement parked past 2s is cancelled with `55P03` and the loser
       // rejects with a Postgres error instead of the sentinel. The loser waits
-      // this hold plus the winner's remaining statements, so the margin is
-      // smaller than the 2s suggests.
+      // at its `Student` lock through this hold and then the winner's
+      // transaction, so the margin is smaller than the 2s suggests.
       let settled = false;
       void running.then(() => { settled = true; });
       await new Promise((r) => setTimeout(r, 700));
@@ -1904,9 +1923,10 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
 
       // Asserted before the outcomes, deliberately: the doubled broadcast is
       // the defect — every waiting student told twice about one freed seat —
-      // and this is the assertion whose failure message names it. With the
-      // rejection count first, dropping the abort fails on "expected 1,
-      // received 0", which says nothing about what it cost anyone.
+      // and this is the assertion whose failure message names it when the
+      // `Student` lock and the abort are both gone. With the rejection count
+      // first, that run would fail on "expected 1, received 0", which says
+      // nothing about what it cost anyone.
       const notifications = await prisma.notification.findMany({
         where: {
           relatedClassId: fixture.classId,
@@ -2181,5 +2201,307 @@ describe('deleteTeacherAccount serialises against a studio claim in progress (#3
     });
     expect(rule.isArchived).toBe(true);
     expect(rule.isActive).toBe(false);
+  }, 20_000);
+});
+
+describe('the erasure takes the Student row before any Class row (#183)', () => {
+  const prisma = new PrismaClient();
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  /**
+   * One teacher, two open 2099 classes of one seat each, nobody registered.
+   * `classId`: the subject waits at 1 and a second student at 2.
+   * `otherClassId`: full (a filler holds its seat), the subject holds nothing
+   * in it — the class a late entry can appear in.
+   */
+  async function makeQueue() {
+    const suffix = `gdpr-gate-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Gate',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Student-gate fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Gate Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234GT',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacher.id,
+      },
+      select: { id: true },
+    });
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    const makeClass = async (date: string) =>
+      (
+        await createClassFixture(prisma, {
+          teacherId: teacher.id,
+          teacherRoomId: teacherRoom.id,
+          classType: 'Gate class',
+          date: new Date(date),
+          startTime: hhmmToTime('09:00'),
+          durationMinutes: 60,
+          roomCost: 20,
+          minRate: 15,
+          targetRate: 25,
+          minStudents: 1,
+          maxStudents: 1,
+          status: 'open',
+        })
+      ).id;
+    const classId = await makeClass('2099-06-01');
+    const otherClassId = await makeClass('2099-06-02');
+    const makeStudent = async (label: string) =>
+      (
+        await prisma.student.create({
+          data: { firstName: 'Gate', lastName: label, email: `${suffix}-${label}@test.local`, incomeTier: 2 },
+          select: { id: true },
+        })
+      ).id;
+    const studentId = await makeStudent('subject');
+    const waiterId = await makeStudent('waiter');
+    const fillerId = await makeStudent('filler');
+    await prisma.waitlistEntry.create({ data: { classId, studentId, position: 1, status: 'waiting' } });
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId: waiterId, position: 2, status: 'waiting' },
+    });
+    await prisma.registration.create({
+      data: { classId: otherClassId, studentId: fillerId, status: 'registered', tierAtBooking: 2 },
+    });
+    return {
+      teacherId: teacher.id,
+      accountId: teacher.accountId,
+      roomId: room.id,
+      classId,
+      otherClassId,
+      studentId,
+      waiterId,
+      extraStudentIds: [fillerId],
+    };
+  }
+
+  type Queue = Awaited<ReturnType<typeof makeQueue>>;
+
+  async function cleanupQueue(fx: Queue): Promise<void> {
+    const students = [fx.studentId, fx.waiterId, ...fx.extraStudentIds];
+    await prisma.notification.deleteMany({ where: { recipientId: { in: [...students, fx.teacherId] } } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: fx.teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: fx.teacherId } });
+    await prisma.room.deleteMany({ where: { id: fx.roomId } });
+    await prisma.student.deleteMany({ where: { id: { in: students } } });
+    await prisma.teacher.deleteMany({ where: { id: fx.teacherId } });
+    await prisma.account.deleteMany({ where: { id: fx.accountId } });
+  }
+
+  /**
+   * Resolves once some backend is waiting on a lock `holderPid` holds — the
+   * `template-room-race.test.ts` probe. Bounded well inside the 2s
+   * `lock_timeout` the waiter is running under.
+   */
+  async function waitUntilBlockedBy(holderPid: number): Promise<void> {
+    const deadline = Date.now() + 1_500;
+    while (Date.now() < deadline) {
+      const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+        SELECT count(*)::int AS n FROM pg_stat_activity
+         WHERE wait_event_type = 'Lock'
+           AND ${holderPid} = ANY(pg_blocking_pids(pid))`;
+      if ((row?.n ?? 0) > 0) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`nothing waited behind backend ${holderPid} within 1500ms`);
+  }
+
+  const ownPid = async (tx: Prisma.TransactionClient): Promise<number> => {
+    const [row] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+    return row!.pid;
+  };
+
+  // Shape shared by every staged test below: an OUTER try/finally that always
+  // reaps the fixture, and an INNER finally that releases the stall and joins
+  // every racer (each racer is turned into a value, so the join never throws
+  // on its own and a staging failure still leaves nothing running).
+
+  it('waits for a holder of the student row before it locks any class', async () => {
+    const fx = await makeQueue();
+    try {
+      let holderPid = 0;
+      let parked!: () => void;
+      const isParked = new Promise<void>((r) => { parked = r; });
+      let release!: () => void;
+      const released = new Promise<void>((r) => { release = r; });
+      let holderReleased = false;
+      const holder = prisma.$transaction(
+        async (tx) => {
+          holderPid = await ownPid(tx);
+          await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${fx.studentId} FOR SHARE`;
+          parked();
+          await released;
+          holderReleased = true;
+        },
+        { timeout: 10_000 },
+      );
+
+      let preLockSawRelease: boolean | undefined;
+      const original = dbLocks.lockClassRowsOrdered;
+      const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
+        if (source.join === dbLocks.CLASS_TO_WAITLIST_JOIN && preLockSawRelease === undefined) {
+          preLockSawRelease = holderReleased;
+        }
+        return original(tx, source);
+      });
+      onTestFinished(() => spy.mockRestore());
+
+      let erasing: Promise<'erased' | { error: string }> | undefined;
+      try {
+        await awaitHandshake(isParked, 'Student FOR SHARE holder');
+        erasing = deleteStudentAccount(prisma, fx.studentId).then(
+          () => 'erased' as const,
+          (err: unknown) => ({ error: String(err) }),
+        );
+        await waitUntilBlockedBy(holderPid);
+      } finally {
+        release();
+        await Promise.all([holder, erasing]);
+      }
+
+      expect(await erasing).toBe('erased');
+      // The discriminating half: the pre-lock ran only after the holder
+      // committed, so the erasure waited at its `Student` lock — not merely at
+      // its closing `UPDATE`, which would also conflict with this holder.
+      expect(preLockSawRelease).toBe(true);
+    } finally {
+      await cleanupQueue(fx);
+    }
+  }, 20_000);
+
+  it('refuses to commit when an entry for the student appears outside its lock set', async () => {
+    const fx = await makeQueue();
+    try {
+      let reached!: () => void;
+      const atPreLock = new Promise<void>((r) => { reached = r; });
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      const original = dbLocks.lockClassRowsOrdered;
+      const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
+        const ids = await original(tx, source);
+        if (source.join === dbLocks.CLASS_TO_WAITLIST_JOIN) {
+          reached();
+          await held;
+        }
+        return ids;
+      });
+      onTestFinished(() => spy.mockRestore());
+
+      const erasing = deleteStudentAccount(prisma, fx.studentId).then(
+        () => 'erased' as const,
+        (err: unknown) => err,
+      );
+      try {
+        await awaitHandshake(atPreLock, 'student erasure pre-lock');
+        // Bypasses the join's gate on purpose — this is the writer the count
+        // exists to catch. Its `FOR KEY SHARE` on `Student` passes the
+        // erasure's `FOR NO KEY UPDATE`, and nobody holds `otherClassId`.
+        await prisma.waitlistEntry.create({
+          data: { classId: fx.otherClassId, studentId: fx.studentId, position: 1, status: 'waiting' },
+        });
+      } finally {
+        release();
+        await erasing;
+      }
+
+      expect(await erasing).toBeInstanceOf(ErasureLockSetError);
+      const student = await prisma.student.findUniqueOrThrow({ where: { id: fx.studentId } });
+      expect(student.deletedAt).toBeNull();
+      expect(await prisma.waitlistEntry.count({ where: { studentId: fx.studentId } })).toBe(2);
+    } finally {
+      await cleanupQueue(fx);
+    }
+  }, 20_000);
+
+  it('lets a promotion of the student finish while it waits, then passes the freed seat on', async () => {
+    const fx = await makeQueue();
+    try {
+      let promoterPid = 0;
+      let holding!: () => void;
+      const promoterHolds = new Promise<void>((r) => { holding = r; });
+      let release!: () => void;
+      const released = new Promise<void>((r) => { release = r; });
+      let stalled = false;
+      const original = dbLocks.lockClassRow;
+      const spy = vi.spyOn(dbLocks, 'lockClassRow').mockImplementation(async (tx, classId) => {
+        await original(tx, classId);
+        if (classId === fx.classId && !stalled) {
+          stalled = true;
+          promoterPid = await ownPid(tx);
+          holding();
+          await released;
+        }
+      });
+      onTestFinished(() => spy.mockRestore());
+
+      const promoting = promoteNext(prisma, fx.classId).then(
+        (entry) => ({ promoted: entry?.studentId ?? null }),
+        (err: unknown) => ({ error: String(err) }),
+      );
+      let erasing: Promise<'erased' | { error: string }> | undefined;
+      try {
+        await awaitHandshake(promoterHolds, 'promoteNext class lock');
+        erasing = deleteStudentAccount(prisma, fx.studentId).then(
+          () => 'erased' as const,
+          (err: unknown) => ({ error: String(err) }),
+        );
+        // The erasure holds the subject's row and waits on the class the
+        // promoter holds. Released promptly: the cycle a wrong lock mode
+        // closes is detected at `deadlock_timeout` (1s), which must beat the
+        // 2s `lock_timeout` for the mutation below to read as `40P01`.
+        await waitUntilBlockedBy(promoterPid);
+      } finally {
+        release();
+        await Promise.all([promoting, erasing]);
+      }
+
+      const [promoteOutcome, eraseOutcome] = await Promise.all([promoting, erasing]);
+      for (const [label, outcome] of [
+        ['promoteNext', promoteOutcome],
+        ['erasure', eraseOutcome],
+      ] as const) {
+        if (typeof outcome === 'object' && outcome !== null && 'error' in outcome) {
+          expect(`${label}: ${outcome.error}`).not.toMatch(/40P01|deadlock detected/);
+          expect(`${label}: ${outcome.error}`).not.toMatch(/55P03|lock timeout/);
+          throw new Error(`${label} rejected unexpectedly: ${outcome.error}`);
+        }
+      }
+      expect(promoteOutcome).toEqual({ promoted: fx.studentId });
+      expect(eraseOutcome).toBe('erased');
+
+      // The erasure cancelled the seat the promotion had just given the
+      // subject, and — having read its registrations under the class lock —
+      // handed it to the next in line.
+      const subject = await prisma.registration.findUniqueOrThrow({
+        where: { classId_studentId: { classId: fx.classId, studentId: fx.studentId } },
+      });
+      expect(subject.status).toBe('cancelled');
+      const waiter = await prisma.registration.findUnique({
+        where: { classId_studentId: { classId: fx.classId, studentId: fx.waiterId } },
+      });
+      expect(waiter?.status).toBe('registered');
+    } finally {
+      await cleanupQueue(fx);
+    }
   }, 20_000);
 });
