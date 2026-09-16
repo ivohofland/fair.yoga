@@ -1123,7 +1123,7 @@ itself:
 |---|---|---|---|---|
 | `deleteStudentAccount` (`gdpr.ts`) | `lockStudentForErasure` | first lock of its transaction, right after `setLockTimeout` | `FOR NO KEY UPDATE` | no check at the lock; the closing compare-and-swap answers an erased one with `AlreadyErasedError`, and an absent one fails before the transaction opens, at `findUniqueOrThrow` (`P2025`) |
 | `addToWaitlist` (`waitlist.ts`) | `lockLiveStudent` | first statement of its transaction | `FOR SHARE` | refuses: `StudentErasedError`, surfaced as `WaitlistJoinError` `student_erased` (409 from `POST /api/waitlist`) |
-| `POST /api/registrations` (`src/app/api/registrations/route.ts`) | `lockLiveStudent` | first statement of its transaction, on the student's booking and the teacher's roster add alike | `FOR SHARE` | refuses: 409, `This account has been deleted` to the student, `This student's account no longer exists` to the teacher |
+| `POST /api/registrations` (`src/app/api/registrations/route.ts`) | `lockLiveStudent` | first statement of its transaction, on the student's booking and the teacher's roster add alike | `FOR SHARE` | refuses: 409, `This account has been deleted` to the student, `This student's account no longer exists` to the teacher; an absent one is answered 404 `Student not found` before the transaction opens |
 
 **`Student → Class` at every site.** Each takes the `Student` row before its first
 `Class` row, so the two can meet only at the `Student` row, and what each side
@@ -1139,19 +1139,25 @@ sees after waiting there is decided by who arrived first:
   contains what the writer committed, so a class where the student now holds
   an entry (a join's) is locked, and its entries deleted and renumbered under
   the lock. The erasure's `upcoming` read then sees the booking, so for an
-  open class `handleSpotFreed` runs, even outside the lock set.
+  open class `handleSpotFreed` runs, even outside the lock set. The erasure's
+  wait is bounded by its own 2s `lock_timeout`: a writer that holds the gate
+  longer fails the erasure with `55P03`, which `DELETE /api/account` answers
+  with 503 `ERASURE_BUSY`, saying nothing was changed.
 - **After the erasure committed**, a gated writer's request is refused without
-  waiting. A self-booking never reaches the gate there: the erasure removed
-  its session, so the route answers 401 — unless the account's live teacher
-  profile kept the session (`deleteStudentAccount` deletes it only when none
-  does), in which case the session survives but no longer resolves a student,
-  and the route answers 403 `Student access required`. The gate's sequential
-  refusal is the teacher path's.
+  waiting. A self-booking made after that never reaches the gate: the erasure
+  removed its session, so the route answers 401 — unless the account's live
+  teacher profile kept the session (`deleteStudentAccount` deletes it only
+  when none does), in which case the session survives but no longer resolves
+  a student, and the route answers 403 `Student access required`. A teacher's
+  roster add reaches the gate only through a roster link that outlived the
+  erasure; without one, the route answers 403 `Student is not in your roster`
+  first. The gate's sequential refusal is the teacher path's, through such a
+  link.
 
-The order is observable only on a REJOIN — a join into a class where the
-subject already holds an entry of any status, `waiting` included (a no-op
-rejoin still takes the class lock), so that class is in the erasure's lock
-set. With the join taking the class first, it would hold that class while
+For a join, the order is observable only on a REJOIN — a join into a class
+where the subject already holds an entry of any status, `waiting` included (a
+no-op rejoin still takes the class lock), so that class is in the erasure's
+lock set. With the join taking the class first, it would hold that class while
 waiting on the `Student` row, and the erasure's pre-lock would wait on that
 class: `40P01`. Pinned by `src/services/gdpr-lock-order.test.ts`, describe "the
 erasure takes the Student row before any Class row (#183)" — "refuses a rejoin
@@ -1236,7 +1242,7 @@ while the erasure held `Student` and waited on the `Class` row
 *Correction*), while the booking was ungated. Since #625 the booking is gated,
 so the corollary above is what keeps the write outside. Pinned over HTTP by
 `tests/integration/registrations-api.test.ts` ("a first self-booking does not
-wait on a lock held on its student's row"): the pinning test's holder takes
+wait on a share lock held on its student's row"): the pinning test's holder takes
 `FOR SHARE`, the gate's own mode. The booking's gate shares it, and only an
 update waits on it.
 
@@ -1307,9 +1313,10 @@ written closes a cycle with that closing `UPDATE`:
   #626.
 
 Both are reasoned from the code and neither has been reproduced. Both predate
-the gate. The booking's case is closed by #625, and its cycle was reproduced
-against the ungated route by the test "refuses a booking whose roster link the
-erasure has already deleted", which failed with `40P01` ("deadlock detected").
+the gate. The booking's case is closed by #625. Its cycle was reproduced
+against the ungated route on 2026-09-16, by the test "refuses a booking whose
+roster link the erasure has already deleted": the booking's roster-link insert
+failed with `40P01`, and the route answered 503.
 
 ### Who is not gated yet
 

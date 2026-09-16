@@ -736,7 +736,7 @@ describe('POST /api/registrations', () => {
    * A dedicated student, so no other test has stamped the marker, which is
    * first-choice-only; the `toBeNull` below checks that.
    */
-  it('a first self-booking does not wait on a lock held on its student\'s row', async () => {
+  it('a first self-booking does not wait on a share lock held on its student\'s row', async () => {
     const classId = await makeClass(5);
     const email = `regapi-firstbook-${suffix}@test.local`;
     const student = await prisma.student.create({

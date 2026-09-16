@@ -11,12 +11,14 @@ import { createClassFixture } from '../../../../tests/class-fixtures';
 import { POST } from './route';
 
 /**
- * @serial-tier lock-contention — every test below races this route against a
- * paused `deleteStudentAccount` on real Postgres row locks and asserts on how
- * the race resolves: whether a racer waited, whether the booking got a 409 or
- * a 503 (a `55P03`), and which rows survive. Lock noise from a neighbour in
- * the parallel tier would stretch a staged wait past the 2s `lock_timeout`
- * these outcomes turn on.
+ * @serial-tier lock-contention — the tests below meet this route with the
+ * erasure's `Student` lock on real Postgres row locks: most race it against a
+ * paused `deleteStudentAccount`, and the rest stage a bare holder of that lock
+ * or the erasure's committed result. They assert on how each meeting
+ * resolves: whether a racer waited, whether the booking got a 409 or a 503 (a
+ * `55P03`), and which rows survive. Lock noise from a neighbour in the
+ * parallel tier would stretch a staged wait past the 2s `lock_timeout` these
+ * outcomes turn on.
  *
  * `POST` is invoked directly, as `route.test.ts` does, and the erasure runs in
  * this process too, so a spy can pause either one at an exact statement. What

@@ -541,9 +541,10 @@ access required`.
 
 A booking that takes the row first commits, and the erasure then handles what
 it wrote. If the class is still open, the erasure cancels the registration and
-offers the freed seat to the class's waitlist. It also deletes the roster link
-and any waitlist entry the booking resolved. It does not undo the rest of the
-booking: `resolveInvitationOnLink` may have cleared a `TeacherBlock` and
+hands the freed seat to the waitlist hook, which promotes the next student or
+broadcasts the seat unless the waitlist is frozen. It also deletes the roster
+link and any waitlist entry the booking resolved. It does not undo the rest of
+the booking: `resolveInvitationOnLink` may have cleared a `TeacherBlock` and
 resolved an `Invitation`, and the erasure recreates no block. It anonymises
 that invitation's identity without reverting its status.
 
