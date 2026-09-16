@@ -442,6 +442,58 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
     }
   });
 
+  it('re-opens the cap it claimed even after the row has moved on (#622)', async () => {
+    const f = await teacherOnlyInvitee('fail-moved-on');
+    try {
+      // A resend landing while this dispatch is still failing: its own
+      // synchronous pre-write has already moved `lastNotifiedAt` past the
+      // value this dispatch carries. The marker under the failed
+      // notification is still this dispatch's own, so it must come off
+      // regardless — a clear that consulted `lastNotifiedAt` would refuse
+      // here and leave the invitee capped with nothing ever delivered.
+      const dispatchedAt = new Date(Date.now() - 60_000);
+      await prisma.invitation.update({
+        where: { id: f.invitationId },
+        data: { lastNotifiedAt: new Date(), lastNotifiedEmail: f.email },
+      });
+      const createSpy = vi.spyOn(prisma.notification, 'create')
+        .mockRejectedValueOnce(new Error('insert failed'));
+      const updateManySpy = vi.spyOn(prisma.invitation, 'updateMany');
+
+      deliverInvitation(prisma, {
+        teacherId, email: f.email, invitationId: f.invitationId,
+        source: 'resend', dispatchedAt,
+      });
+
+      // Both of this dispatch's own writes to the column, as in the ordinary
+      // case above: the claim carrying a `Date`, then the clear carrying
+      // `null`, each identified by its own `data` value rather than by
+      // position — so the `null` read below cannot be the untouched fixture.
+      await waitFor(
+        () => Promise.resolve(
+          updateManySpy.mock.calls.some(
+            ([args]) => 'teacherInboxNotifiedAt' in args.data && args.data.teacherInboxNotifiedAt instanceof Date,
+          )
+            && updateManySpy.mock.calls.some(
+              ([args]) => 'teacherInboxNotifiedAt' in args.data && args.data.teacherInboxNotifiedAt === null,
+            )
+            ? true
+            : null,
+        ),
+        { description: 'the superseded dispatch has claimed the cap and then cleared it (#622)' },
+      );
+      await Promise.all(updateManySpy.mock.results.map((r) => r.value));
+
+      const row = await prisma.invitation.findUniqueOrThrow({
+        where: { id: f.invitationId }, select: { teacherInboxNotifiedAt: true },
+      });
+      expect(row.teacherInboxNotifiedAt).toBeNull();
+      createSpy.mockRestore();
+    } finally {
+      await cleanUpInvitee(f);
+    }
+  });
+
   it('leaves a marker it never wrote alone when a non-claiming dispatch fails (#622)', async () => {
     // The clear's CAS has a second job besides always re-opening a cap its
     // own dispatch closed: never clearing one it did not set. Only a
