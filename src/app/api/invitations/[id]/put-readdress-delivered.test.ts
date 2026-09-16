@@ -200,4 +200,60 @@ describe('PUT /api/invitations/[id] resets delivered on every email change (#502
     expect(row.firstName).toBe('Corrected');
     expect(row.delivered).toBe(true);
   });
+
+  // #622, and here for the same reason the tests above are: this route's
+  // `teacherInboxNotifiedAt` reset rides the same `readdressed` branch
+  // `delivered` does, and nothing else pins that it stays there. Moved into
+  // the unconditional `data`, every contact-form Save would lift the
+  // teacher-inbox cap, and Save-then-Resend would nudge a teacher-only
+  // invitee without bound.
+  it('a PUT that does not move the address leaves the teacher-inbox cap marker standing (#622)', async () => {
+    const email = `readdress-cap-${suffix}@test.local`;
+    const invited = await inviteContact(prisma, {
+      teacherId, email, firstName: 'Capped', lastName: 'Contact',
+    });
+    if (!invited.ok) throw new Error(`expected an ordinary delivered invite, got ${invited.reason}`);
+
+    // Hand-set: this test drives the route, and the column's own writer is
+    // `notifyInvitee`'s teacher branch, covered in
+    // `src/services/invitations.notify.test.ts`. An hour-old value, so a
+    // reset to anything this request mints would read as a difference.
+    const marker = new Date(Date.now() - 3_600_000);
+    await prisma.invitation.update({
+      where: { id: invited.value.id },
+      data: { teacherInboxNotifiedAt: marker },
+    });
+
+    // The contact form's own save shape: `email` present and equal to the
+    // stored value, a name changed beside it (`contact-form.tsx` sends all
+    // three fields whether or not they moved).
+    const save = await PUT(
+      put(invited.value.id, { email, firstName: 'Corrected' }, token),
+      { params: Promise.resolve({ id: invited.value.id }) },
+    );
+    expect(save.status).toBe(200);
+
+    const afterSave = await prisma.invitation.findUniqueOrThrow({
+      where: { id: invited.value.id },
+      select: { firstName: true, teacherInboxNotifiedAt: true },
+    });
+    expect(afterSave.firstName).toBe('Corrected');
+    expect(afterSave.teacherInboxNotifiedAt).toEqual(marker);
+
+    // And a body carrying no `email` key at all — `updateInvitationSchema`
+    // (src/lib/schemas.ts) makes every field optional, so this is a shape
+    // the route must answer too, and it takes the same branch.
+    const nameOnly = await PUT(
+      put(invited.value.id, { firstName: 'Corrected again' }, token),
+      { params: Promise.resolve({ id: invited.value.id }) },
+    );
+    expect(nameOnly.status).toBe(200);
+
+    const afterNameOnly = await prisma.invitation.findUniqueOrThrow({
+      where: { id: invited.value.id },
+      select: { firstName: true, teacherInboxNotifiedAt: true },
+    });
+    expect(afterNameOnly.firstName).toBe('Corrected again');
+    expect(afterNameOnly.teacherInboxNotifiedAt).toEqual(marker);
+  });
 });

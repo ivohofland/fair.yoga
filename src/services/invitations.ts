@@ -524,16 +524,27 @@ async function revivePendingInvitation(
  * about their own booking, so it does not bypass their opt-out the way a
  * booking confirmation does.
  *
- * A teacher recipient has no such preference to honour — `processEmailFallback`
- * (services/email-fallback.ts) leaves `emailEnabled` true for the teacher arm,
- * and no teacher-side counterpart to `Student.emailNotifications` exists. The
- * teacher branch below is therefore capped instead: it tells an invitee once
- * per invitation. Which writers set and clear that marker:
- * `docs/data-model.md` (Invitation).
+ * A teacher recipient has no such preference to honour — which columns that
+ * rests on, and the command that re-derives it: `docs/data-model.md`
+ * (Invitation, "Who an invitation reaches"). The teacher branch below is
+ * capped instead: it tells an invitee once per invitation. Which writers set
+ * and clear that marker: the same section.
  */
 export async function notifyInvitee(
   db: PrismaClient,
-  input: { teacherId: string; email: string; teacherName: string; invitationId: string },
+  input: {
+    teacherId: string;
+    email: string;
+    teacherName: string;
+    invitationId: string;
+    /**
+     * The value the teacher branch's claim below writes to
+     * `teacherInboxNotifiedAt`. Supplied by the caller rather than minted
+     * here so that `deliverInvitation`'s `.catch` can scope its clear to
+     * the marker THIS dispatch's own claim wrote.
+     */
+    claimedAt: Date;
+  },
 ): Promise<void> {
   // Load-bearing for both reads below, `TeacherBlock` and `Student` alike:
   // both are plain, case-SENSITIVE `findUnique`s on columns that can only
@@ -624,10 +635,12 @@ export async function notifyInvitee(
     // for a reason involving what the dispatching routes write before this
     // code runs: `docs/data-model.md` (Invitation, "Who an invitation
     // reaches"). A failed dispatch re-opens the cap on the failure path
-    // itself — `deliverInvitation`'s `.catch`, below.
+    // itself — `deliverInvitation`'s `.catch`, below, which scopes that clear
+    // to `input.claimedAt`: the value written here is what tells a later
+    // failure whether the marker it is looking at is its own.
     const claimed = await db.invitation.updateMany({
       where: { id: input.invitationId, teacherInboxNotifiedAt: null },
-      data: { teacherInboxNotifiedAt: new Date() },
+      data: { teacherInboxNotifiedAt: input.claimedAt },
     });
     if (claimed.count === 0) return;
 
@@ -712,21 +725,29 @@ const DELIVERY_FAILURE_MESSAGE = {
  *   went out.
  *
  * `teacherInboxNotifiedAt` (the teacher-branch cap, #622) is cleared on the
- * same `.catch` path, on the same `dispatchedAt` CAS as above — but NOT
- * behind `recordDispatchFailure`'s systemic guard. That guard exists to keep
- * `lastNotifyFailedAt` from proxying "does this address have a fair.yoga
- * account" during a burst; gating this column's clear the same way would buy
- * no privacy and would instead strand every invitee whose notification
- * failed during the outage the guard is suppressing for — see
- * `docs/data-model.md` (Invitation, "Who an invitation reaches") for why.
+ * same `.catch` path, but under neither of those two guards:
+ *
+ * - **Not behind `recordDispatchFailure`'s systemic guard.** That guard
+ *   exists to keep `lastNotifyFailedAt` from proxying "does this address have
+ *   a fair.yoga account" during a burst; gating this column's clear the same
+ *   way would buy no privacy and would instead strand every invitee whose
+ *   notification failed during the outage the guard is suppressing for — see
+ *   `docs/data-model.md` (Invitation, "Who an invitation reaches") for why.
+ * - **Not on the `lastNotifiedAt` CAS.** Its CAS is `claimedAt` — the marker
+ *   value this dispatch's own claim wrote — because the claim, not the
+ *   dispatch, is what this column correlates with. The clear's own comment
+ *   below enumerates the two cases that makes exact.
  *
  * Fire-and-forget is safe here specifically: this is a long-lived Node
  * process on a single VPS, not a serverless function that could be frozen
  * mid-request.
  *
- * Everything this function does must happen inside the
- * `void (async () => { … })()` wrapper below — a statement placed before it
- * would throw synchronously into the caller, bypassing the `.catch` entirely.
+ * No statement before the `void (async () => { … })()` wrapper below may be
+ * able to throw: one that did would throw synchronously into the caller,
+ * bypassing the `.catch` entirely. Exactly one statement sits there — a bare
+ * `new Date()` for `claimedAt`, which cannot throw, and which the wrapper
+ * (it travels into `notifyInvitee`) and the `.catch` (it is the clear's CAS)
+ * must both read as the same value.
  */
 export function deliverInvitation(
   db: PrismaClient,
@@ -739,6 +760,13 @@ export function deliverInvitation(
     dispatchedAt: Date;
   },
 ): FireAndForget {
+  // Minted here, not inside `notifyInvitee`, because the `.catch` below needs
+  // the same value to recognise its own claim — and minted separately from
+  // `input.dispatchedAt` so that what `teacherInboxNotifiedAt` records (when
+  // the teacher branch claimed this row) stays independent of when the
+  // dispatching route pre-wrote `lastNotifiedAt`.
+  const claimedAt = new Date();
+
   void (async () => {
     const teacher = await db.teacher.findUniqueOrThrow({
       where: { id: input.teacherId },
@@ -749,6 +777,7 @@ export function deliverInvitation(
       email: input.email,
       teacherName: `${teacher.firstName} ${teacher.lastName}`,
       invitationId: input.invitationId,
+      claimedAt,
     });
   })().catch((err: unknown) => {
     log.error(
@@ -762,12 +791,31 @@ export function deliverInvitation(
     // gating this write the same way `lastNotifyFailedAt` is gated buys no
     // privacy and would instead strand invitees during an outage.
     //
-    // Same `lastNotifiedAt` CAS as the failure write below, for the same
-    // reason: a superseded attempt's late failure must not re-open a cap a
-    // newer, successful attempt closed.
+    // CAS'd on `claimedAt`, the marker value this dispatch's own claim wrote
+    // (`notifyInvitee`'s teacher branch, above) — NOT on `lastNotifiedAt`
+    // like the failure write below. `lastNotifiedAt` is the right correlate
+    // for `lastNotifyFailedAt`, which describes the attempt; the correlate
+    // for this column is the claim, which is the only thing that ever sets
+    // it. Two cases, and the claim's own value is what separates them:
+    //
+    // - This attempt claimed and then threw. The marker is provably this
+    //   attempt's own, so clearing is always right — and always happens,
+    //   whatever else has moved on the row since. Scoped on `lastNotifiedAt`
+    //   instead, a resend landing during a slow failure would refuse the
+    //   clear and leave the marker standing over a notification that was
+    //   never created: permanent silence, the outcome this cap exists to
+    //   avoid.
+    // - This attempt never claimed — the stranger, student, blocked or
+    //   refused-claim paths — and threw. Any marker on the row belongs to
+    //   some other attempt, and `claimedAt` was written nowhere, so this
+    //   `where` matches nothing and leaves it alone.
+    //
+    // A readdress or a revive nulls the marker; null is already the state
+    // this clear wants, and it matches no `claimedAt`, so neither is
+    // disturbed.
     db.invitation
       .updateMany({
-        where: { id: input.invitationId, lastNotifiedAt: input.dispatchedAt },
+        where: { id: input.invitationId, teacherInboxNotifiedAt: claimedAt },
         data: { teacherInboxNotifiedAt: null },
       })
       .catch((writeErr: unknown) => {
