@@ -42,10 +42,11 @@ function liveTeacher(acct: { id: string; email: string }, slugTag: string) {
 }
 
 /**
- * Exactly what `deleteStudentAccount` (services/gdpr.ts) leaves behind: the
- * name anonymised, the address tombstoned, `deletedAt` set — and `accountId`
- * and `claimedAt` both RETAINED. The retention is the whole point; a fixture
- * that cleared them would not reproduce the state under test.
+ * Reproduces the parts of `deleteStudentAccount`'s (services/gdpr.ts) output
+ * this test depends on — `accountId` and `claimedAt` RETAINED, `deletedAt`
+ * set, address tombstoned — and owns nothing else the real erasure writes.
+ * The retention is the whole point; a fixture that cleared `accountId` or
+ * `claimedAt` would not reproduce the state under test.
  */
 function erasedStudent(accountId: string, tag: string) {
   return prisma.student.create({
@@ -70,8 +71,7 @@ describe('an erased profile no longer bars its account (#623)', () => {
       headers: { ...cookie(token), ...freshIp() },
     });
 
-    // 201, not the 409 ALREADY_STUDENT that `SetUpStudentSide` read as
-    // success before navigating to a page this session could not open.
+    // 201: a live teacher with an erased student side can open a new one.
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.data.studentId).not.toBe(erased.id);
@@ -92,8 +92,8 @@ describe('an erased profile no longer bars its account (#623)', () => {
       headers: { ...cookie(token), ...freshIp() },
     });
 
-    // Acceptance criterion 3. Before this change the `(student)` layout found
-    // no `session.studentId` and redirected to `/schedule` saying nothing.
+    // The `(student)` layout opens for this session rather than redirecting
+    // to `/schedule` for lacking a `session.studentId`.
     expect(page.status).toBe(200);
     expect(new URL(page.url).pathname).toBe('/account/privacy');
   });
@@ -162,8 +162,9 @@ describe('an erased profile no longer bars its account (#623)', () => {
     // in its own right: the pre-check is what keeps `ALREADY_STUDENT` meaning
     // "you already have a live student side" now that an erased one no longer
     // produces that code. The proof that `isUniqueConflictOn(err,
-    // ['accountId'])` still matches over a PARTIAL index is Task 2's
-    // constraint test, which asserts that predicate on a real violation.
+    // ['accountId'])` still matches over a PARTIAL index is in
+    // `tests/integration/live-profile-unique.test.ts`, which asserts that
+    // predicate on a real violation.
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.error.code).toBe('ALREADY_STUDENT');

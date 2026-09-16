@@ -926,8 +926,9 @@ describe('DELETE /api/account', () => {
  * BOTH keys are caught, and this test is what says why. The holder writes the
  * caller's own `accountId` AND the caller's own `email`, so
  * `Student_account_live_unique` and `Student_email_key` both have a pending
- * entry and Postgres reports whichever it reaches first. Which one that is,
- * is recorded in the PR body from an observed run — not assumed here.
+ * entry and Postgres reports whichever it reaches first. Which one that is is
+ * not assumed here — the route's catch recognizes either as the same benign
+ * case, and the assertion below covers whichever one Postgres picks.
  *
  * Not an enumeration oracle: this route is authenticated and writes for the
  * caller's own account, and `Account.email @unique` means no other account

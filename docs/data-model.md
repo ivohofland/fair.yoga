@@ -52,6 +52,8 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 | last_name | string | Required |
 | email | string, unique | Required. Contact email; copies the account email once claimed. Lowercase by `Student_email_lowercase_check` (#170). |
 | income_tier | int (1-5) | Global tier, can change anytime |
+| *account_id* (FK), nullable | → Account | Nullable for rows predating #166; nothing creates a new unclaimed row any more (see Design Notes). Bound to `claimed_at` by `Student_claim_link_check`. |
+| claimed_at | datetime, nullable | Set together with `account_id`, never independently — see `Student_claim_link_check` below. |
 | **Optional fields** | | |
 | phone | string, nullable | |
 | birthday | date, nullable | |
@@ -62,6 +64,12 @@ One Account per human. Teacher and Student are profiles optionally linked to it,
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
+| deleted_at | datetime, nullable | GDPR erasure marker (#623). Set by `deleteStudentAccount`; `account_id` and `claimed_at` are both RETAINED, not cleared. |
+| **Constraints** | | |
+| check | `Student_claim_link_check`: `(claimed_at IS NULL) = (account_id IS NULL)` | |
+| unique (partial) | `Student_account_live_unique` on `(account_id)` `WHERE deleted_at IS NULL` | At most one LIVE student profile per account (#623) |
+
+Nothing in the database requires an erased row to keep its `account_id`. A future erasure that nulled it would, via `Student_claim_link_check`, be forced to null `claimed_at` too — producing a row `resolveOrClaimAccount`'s claim probe (`db.student.findFirst({ where: { email, claimedAt: null } })`) would treat as claimable. Today the tombstoned email is what keeps that unreachable: the erased row's `email` no longer matches the address anyone signs in with.
 
 ### StudentPrivacy (per-teacher privacy layer)
 
@@ -199,7 +207,7 @@ The fact that tells the two apart is read off the roster link's own write, not f
 **Who an invitation reaches (#172).** `notifyInvitee` (`src/services/invitations.ts`) delivers an unblocked invitation through the first of these that holds for its address:
 
 - **A `Student` row** gets a student-inbox `teacher_invitation`, or nothing if that student is already on this teacher's roster.
-- **Otherwise, an `Account` with a teacher profile** gets a teacher-inbox `teacher_invitation`, which opens `/inbox/invitations`. The teacher branch delivers at most once per invitation (#622).
+- **Otherwise, an `Account` with a LIVE teacher profile** gets a teacher-inbox `teacher_invitation`, which opens `/inbox/invitations`. The teacher branch delivers at most once per invitation (#622).
 
   **The claim is the check, and it commits with what it stands for.** The branch does not read the marker and then write it; it issues a conditional `UPDATE` whose `where` requires the marker null — plus the invitation's id, its teacher, and the address this dispatch actually resolved an account for — and treats a matched row as permission to notify. That claim and the `Notification` insert run in one transaction, so the marker cannot be committed over a notification that was never created: a refused insert takes the claim down with it, and a process killed between the two commits neither. The address clause is what keeps a `PUT` readdress landing mid-dispatch from capping the *new* address behind a notification the *old* one received — a state nothing fails on, and so a state nothing would re-open.
 
@@ -212,7 +220,7 @@ The fact that tells the two apart is read off the roster link's own write, not f
   Re-derive the writer set with `grep -rn teacherInboxNotifiedAt --include="*.ts" --include="*.tsx" src/ | grep -v '\.test\.ts'`, and read the hits down rather than counting them — the command matches prose in comments as readily as code. Every hit should be one of: `invitations.ts`'s claim, its `.catch` clear, `revivePendingInvitation`'s reset, the `PUT` route's readdress reset, the miss-path diagnostic `count` inside `notifyInvitee`'s teacher branch (it tells `already-capped` from `no-matching-row` for the log line, and reads no further than that), or the `TeacherFacingInvitationSelect` exclusion in `src/lib/contacts.ts`, which names the column precisely so that no select may. A hit anywhere else — and in particular the column appearing inside a `select` — is what falsifies this.
 - **Otherwise,** the address gets the sign-in email.
 
-An account holding both profiles therefore always takes the student branch.
+An account holding both LIVE profiles therefore always takes the student branch — the `Student` lookup runs first and does not consult the teacher side at all. An account holding a LIVE teacher beside an ERASED student takes the teacher branch instead: erasure tombstones `Student.email` (see `deleteStudentAccount`, `services/gdpr.ts`), so the lookup above misses and falls through.
 
 **The teacher branch consults no email preference, because a teacher recipient has none.** `processEmailFallback` (`src/services/email-fallback.ts`) initialises `emailEnabled = true` and only its student arm reassigns it, through `shouldEmailStudent` (`src/services/notification-policy.ts`). There is no teacher-side counterpart to `Student.emailNotifications` in the schema: `Teacher.defaultReminder` is class-reminder timing and `StudentPrivacy.receiveComms` is student-side per-teacher announcement muting, neither of them an email opt-out for a teacher recipient. Re-derive by reading the models rather than by grepping the name — the claim is that no such preference exists under *any* spelling, and a column added as `emailEnabled` or `receiveEmails` would leave a name-scoped grep's output unchanged while falsifying it:
 
@@ -732,6 +740,8 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
 - **Notification** uses a polymorphic recipient (teacher or student) so both user types share the same inbox infrastructure.
 - **rental_rate** on TeacherRoom is private to each teacher — never exposed to other teachers using the same room.
 - **Authentication** hangs off the Account entity: one Account per human owns the authenticated email, sessions, and passkeys. Teacher and Student are profiles optionally linked to it, each holding at most one LIVE profile per account — enforced by the partial unique indexes `Teacher_account_live_unique` and `Student_account_live_unique` (`ON ("accountId") WHERE "deletedAt" IS NULL`) — a dual-role person (a teacher who attends classes) has one account with both profiles. Student.account_id is nullable, but nothing creates a new unclaimed Student any more (#166): a CRM contact is an Invitation until accepted, and accepting requires an already-signed-in account. The nullable column and the claim-on-first-authenticate path only still serve pre-existing unclaimed rows created before that change. Profile email fields are denormalized copies set at link time.
+- **The `20260916165852_live_profile_unique_per_account` migration's own header cites `20260811202634_teacher_slot_unique_indexes` as its precedent for `prisma migrate diff` not seeing a partial index** — correction recorded here because the migration file is immutable. That precedent no longer holds as stated: `20260811202634` declared six partial indexes, and the four SLOT ones among them are gone — folded into `ScheduleRule_teacher_slot_excl` (#298) and `CalendarEntry_teacher_slot_excl` (#327), see `docs/lock-order.md`. The live precedent is `Room_private_identity_unique` (#196) — one of the two `Room` identity indexes that migration also created, neither of which has since been dropped or folded into anything else.
+- **Both `accountId` columns lost their plain btree index when `Teacher_accountId_key`/`Student_accountId_key` were dropped for the partial indexes above.** `Teacher_account_live_unique`/`Student_account_live_unique` cover only `WHERE "deletedAt" IS NULL`, so a predicate on `accountId` without that clause seq-scans — including Postgres's own referential-integrity check when an `Account` row is hard-deleted. Production never hard-deletes an `Account`, and both `gdpr.ts` liveness reads carry the `deletedAt` filter, so the affected callers today are test teardowns and `prisma/seed.ts`.
 - **Email is lowercase everywhere** (#170). All six email columns — Account,
   Teacher, Student, MagicLinkToken, Invitation, TeacherBlock — carry a
   `CHECK (email = lower(email))` constraint. `emailField` in `src/lib/schemas.ts`
