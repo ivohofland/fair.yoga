@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { respondError } from '@/lib/api-utils';
+import type { TeacherFacingInvitationSelect } from '@/lib/contacts';
 
 /**
  * The ownership preamble shared by PUT/DELETE/PATCH
@@ -22,12 +23,15 @@ import { respondError } from '@/lib/api-utils';
  * `email` is selected for the resend route's dispatch, and PUT also reads it,
  * to compare against the incoming address and decide whether to reset
  * `delivered` (#502 Fix #3). A route that ignores a column pays nothing for
- * selecting it.
+ * selecting it — with one exception, which is what the `satisfies` below
+ * pins: see `TeacherFacingInvitationSelect` (`src/lib/contacts.ts`).
  */
 export async function ownedInvitation(teacherId: string, id: string) {
   return prisma.invitation.findFirst({
     where: { id, teacherId },
-    select: { id: true, status: true, isArchived: true, email: true },
+    select: {
+      id: true, status: true, isArchived: true, email: true,
+    } satisfies TeacherFacingInvitationSelect,
   });
 }
 

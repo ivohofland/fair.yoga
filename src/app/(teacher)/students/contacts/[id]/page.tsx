@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { formatStudentName, timeAgo } from '@/lib/format';
 import { canRemoveContact, invitationDeliveryStatus } from '@/lib/contacts';
+import type { TeacherFacingInvitationSelect } from '@/lib/contacts';
 import { PageHeader } from '@/components/layout/page-header';
 import { ContactForm, ArchiveContactButton, ResendInvitationButton } from '@/components/students/contact-form';
 import { RemoveStudentButton } from '@/components/students/remove-student-button';
@@ -40,13 +41,17 @@ export default async function ContactDetailPage({
   // `findFirst` with `teacherId` in the `where`, matching the ownership
   // preamble in `api/invitations/[id]/route.ts` — the same reasoning applies
   // here: the check belongs in the query, not as a follow-up read.
+  //
+  // `satisfies TeacherFacingInvitationSelect` (`src/lib/contacts.ts`) is not
+  // decoration: this is the select that decides what renders, and that type
+  // makes one column on this row a build failure to name here.
   const invitation = await prisma.invitation.findFirst({
     where: { id, teacherId: session.teacherId },
     select: {
       id: true, firstName: true, lastName: true, email: true,
       status: true, isArchived: true,
       lastNotifiedAt: true, lastNotifiedEmail: true, lastNotifyFailedAt: true,
-    },
+    } satisfies TeacherFacingInvitationSelect,
   });
 
   // 404-shaped, not 403-shaped: same reasoning as the API route this page
