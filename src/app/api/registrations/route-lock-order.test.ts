@@ -17,9 +17,8 @@ import { POST } from './route';
  * `deleteStudentAccount`, or against its `Student` lock, on real Postgres row
  * locks, and assert on how each meeting resolves: whether a racer waited,
  * whether the booking got a 409 or a 503 (a `55P03`), and which rows
- * survive. Lock noise from a neighbour in the
- * parallel tier would stretch a staged wait past the shared `lock_timeout`
- * these outcomes turn on.
+ * survive. Lock noise from a neighbour in the parallel tier would stretch a
+ * staged wait past the shared `lock_timeout` these outcomes turn on.
  *
  * `POST` is invoked directly, as `route.test.ts` does, and the erasure runs in
  * this process too, so a spy can pause either one at an exact statement. What
