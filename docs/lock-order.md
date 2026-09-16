@@ -1255,6 +1255,14 @@ holder. By then the erasure holds every class in its lock set, and a promotion
 or claim needs the student's entry in the class it holds, so no promotion of
 this student is in flight.
 
+That wait is also what the erasure's `ErasureLockSetError` check relies on,
+and why the check runs after this `UPDATE` rather than beside the delete. An
+entry an ungated writer was still inserting when the delete ran is invisible
+to every read before the `UPDATE`; the `UPDATE` waits for that insert's
+transaction to end, so the read after it sees the entry. Pinned by
+`src/services/gdpr-lock-order.test.ts` ("refuses to commit when an entry for
+the student was still being written outside its lock set").
+
 An ungated writer can be. Any ungated writer that inserts a `Student` child
 row, taking `FOR KEY SHARE`, and then waits on a row the erasure has already
 written closes a cycle with that closing `UPDATE`:
@@ -2287,10 +2295,10 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   and `expired` rows exist only on classes that have started and can never
   return to `open`. It could not have been the example.) Write set equals lock
   set is the form that does not rest on any such enumeration staying true.
-  Since #183 the delete is also scoped to the classes the pre-lock returned
-  and followed by a count of the subject's remaining entries, so a lock set
-  that narrowed again would fail the erasure with `ErasureLockSetError`
-  rather than delete outside it.
+  Since #183 the delete is also scoped to the classes the pre-lock returned,
+  and after its closing update the erasure reads the subject's remaining
+  entries, so a lock set that narrowed again would fail the erasure with
+  `ErasureLockSetError` rather than delete outside it.
 
   **One statement, not a loop, and that is a correctness property rather than a
   speed one.** `lockClassRow` is two round trips, so a loop cost 2N of them and
@@ -2345,19 +2353,23 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   `deleteTeacherAccount`'s `studentPrivacy.deleteMany`. Two things close that
   window (#183):
 
-  - **No entry can appear outside the lock set.** This function takes the
-    `Student` row before its pre-lock, and `addToWaitlist` — the one creator
-    of entries — takes the other half of that gate before its own class lock.
-    An entry committed before the erasure's `Student` lock is in the
-    pre-lock's snapshot; a join that arrives after it waits for the erasure
-    to end, and is refused if the erasure committed.
+  - **No join can put an entry outside the lock set.** This function takes
+    the `Student` row before its pre-lock, and `addToWaitlist` — the only
+    production creator of entries (the census under "Who is not gated yet")
+    — takes the other half of that gate before its own class lock. An entry
+    committed before the erasure's `Student` lock is in the pre-lock's
+    snapshot; a join that arrives after it waits for the erasure to end, and
+    is refused if the erasure committed.
   - **The erasure never requests the row lock of an entry whose class it does
     not hold.** Its `waitlistEntry.deleteMany` is scoped to the classes the
-    pre-lock returned, and a count of the subject's remaining entries refuses
-    to commit if any lies outside them (`ErasureLockSetError`). That request —
-    made while holding its own `StudentPrivacy`/`TeacherStudent` row locks —
-    was the wait edge both recorded `40P01` cycles needed (the #183 design
-    spec's reasoning; not re-reproduced).
+    pre-lock returned, and after its closing update a read of the subject's
+    remaining entries refuses to commit if any exists
+    (`ErasureLockSetError`) — which is what an ungated insert would leave.
+    That request — made while holding its own
+    `StudentPrivacy`/`TeacherStudent` row locks — was the wait edge both
+    recorded `40P01` cycles needed
+    (`docs/superpowers/specs/2026-09-16-waitlist-erasure-gate-design.md`;
+    not re-reproduced).
 
   The `Registration` half stays open. Round 1 review of #174 task 7 could not
   construct a live counterparty — the one candidate disagreement,

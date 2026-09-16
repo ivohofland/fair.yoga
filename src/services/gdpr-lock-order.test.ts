@@ -2418,7 +2418,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
       );
       try {
         await awaitHandshake(atPreLock, 'student erasure pre-lock');
-        // Bypasses the join's gate on purpose — this is the writer the count
+        // Bypasses the join's gate on purpose — this is the writer the check
         // exists to catch. Its `FOR KEY SHARE` on `Student` passes the
         // erasure's `FOR NO KEY UPDATE`, and nobody holds `otherClassId`.
         await prisma.waitlistEntry.create({
@@ -2429,7 +2429,93 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
         await erasing;
       }
 
-      expect(await erasing).toBeInstanceOf(ErasureLockSetError);
+      const outcome = await erasing;
+      expect(outcome).toBeInstanceOf(ErasureLockSetError);
+      expect(outcome instanceof ErasureLockSetError ? outcome.strays : outcome).toEqual([
+        { classId: fx.otherClassId, status: 'waiting', createdAt: expect.any(Date) },
+      ]);
+      const student = await prisma.student.findUniqueOrThrow({ where: { id: fx.studentId } });
+      expect(student.deletedAt).toBeNull();
+      expect(await prisma.waitlistEntry.count({ where: { studentId: fx.studentId } })).toBe(2);
+    } finally {
+      await cleanupQueue(fx);
+    }
+  }, 20_000);
+
+  /**
+   * The same bypassing writer, still uncommitted when the erasure's scoped
+   * delete runs, so no read before the erasure's closing update can see its
+   * entry. That update waits for the insert's `FOR KEY SHARE` on the student,
+   * and the insert commits only once the erasure is seen waiting on it: a
+   * check placed before the update misses the entry and the erasure commits
+   * with it standing.
+   */
+  it('refuses to commit when an entry for the student was still being written outside its lock set', async () => {
+    const fx = await makeQueue();
+    try {
+      let reached!: () => void;
+      const atPreLock = new Promise<void>((r) => { reached = r; });
+      let releaseErasure!: () => void;
+      const erasureHeld = new Promise<void>((r) => { releaseErasure = r; });
+      const original = dbLocks.lockClassRowsOrdered;
+      const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
+        const ids = await original(tx, source);
+        if (source.join === dbLocks.CLASS_TO_WAITLIST_JOIN) {
+          reached();
+          await erasureHeld;
+        }
+        return ids;
+      });
+      onTestFinished(() => spy.mockRestore());
+
+      const erasing = deleteStudentAccount(prisma, fx.studentId).then(
+        () => 'erased' as const,
+        (err: unknown) => err,
+      );
+      let writerPid = 0;
+      let inserted!: () => void;
+      const hasInserted = new Promise<void>((r) => { inserted = r; });
+      let releaseWriter!: () => void;
+      const writerHeld = new Promise<void>((r) => { releaseWriter = r; });
+      let writing: Promise<'written' | { error: string }> | undefined;
+      try {
+        await awaitHandshake(atPreLock, 'student erasure pre-lock');
+        writing = prisma
+          .$transaction(
+            async (tx) => {
+              writerPid = await ownPid(tx);
+              await tx.waitlistEntry.create({
+                data: { classId: fx.otherClassId, studentId: fx.studentId, position: 1, status: 'waiting' },
+              });
+              inserted();
+              await writerHeld;
+            },
+            { timeout: 10_000 },
+          )
+          .then(
+            () => 'written' as const,
+            (err: unknown) => ({ error: String(err) }),
+          );
+        await awaitHandshake(hasInserted, 'uncommitted waitlist insert');
+        releaseErasure();
+        // The erasure is now past its delete and parked at its closing
+        // update, behind the uncommitted insert.
+        await waitUntilBlockedBy(writerPid);
+      } finally {
+        releaseErasure();
+        releaseWriter();
+        await Promise.all([erasing, writing]);
+      }
+
+      expect(await writing).toBe('written');
+      const outcome = await erasing;
+      const outcomeText =
+        outcome instanceof ErasureLockSetError
+          ? 'ErasureLockSetError'
+          : outcome instanceof Error
+            ? `erasure: ${String(outcome)}`
+            : `erasure resolved: ${String(outcome)}`;
+      expect(outcomeText).toBe('ErasureLockSetError');
       const student = await prisma.student.findUniqueOrThrow({ where: { id: fx.studentId } });
       expect(student.deletedAt).toBeNull();
       expect(await prisma.waitlistEntry.count({ where: { studentId: fx.studentId } })).toBe(2);
