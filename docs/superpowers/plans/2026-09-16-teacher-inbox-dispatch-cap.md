@@ -1,10 +1,12 @@
 # Teacher-inbox dispatch cap (#622) Implementation Plan
 
+> **This plan has been executed. It is a record of the design as it stood before implementation, not instructions to follow.** The unticked checkboxes below are how it was written, not work outstanding. Several of its code blocks describe shapes the implementation and its PR review then moved away from — the design of record is `docs/superpowers/specs/2026-09-16-teacher-inbox-dispatch-cap-design.md`, and where the two disagree the spec is authoritative and this document is wrong. Blocks that would reintroduce a defect the branch fixed have been corrected in place and marked; the rest is left as history.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A teacher-only invitee is told about an invitation once; further resends of that invitation reach them only if its address changes, it is revived, or the dispatch that told them failed.
 
-**Architecture:** One nullable column on `Invitation`, `teacherInboxNotifiedAt`, written and read by `notifyInvitee`'s teacher branch alone. The read and the write are a single conditional `updateMany` — claiming the row *is* the check, so two concurrent dispatches cannot both notify. A dispatch that fails clears the marker on `deliverInvitation`'s existing `.catch`, so the cap re-opens where the failure is known rather than being inferred later from a marker the routes have already overwritten.
+**Architecture:** One nullable column on `Invitation`, `teacherInboxNotifiedAt`, written and read by `notifyInvitee`'s teacher branch alone. The read and the write are a single conditional `updateMany` — claiming the row *is* the check, so two concurrent dispatches cannot both notify. A dispatch that fails clears the marker on `deliverInvitation`'s existing `.catch`, so the cap re-opens where the failure is known rather than being inferred later from a marker the routes have already overwritten. *(As shipped, the claim and the `Notification` insert commit in one transaction, which is what actually guarantees the marker never outlives the notification; the `.catch` clear is a backstop beneath it. Spec §4.2.)*
 
 **Tech Stack:** Next.js 16 App Router, TypeScript strict, Prisma + PostgreSQL, Vitest (projects: `unit`, `unit-sweeps`, `integration`, `components`), Playwright.
 
@@ -13,10 +15,11 @@
 ## Global Constraints
 
 - Column name is exactly **`teacherInboxNotifiedAt`**, type **`DateTime?`**. Migration name is exactly **`invitation_teacher_inbox_notified_at`**.
-- `notifyInvitee`'s new parameter is **`invitationId: string`, required**. `dispatchedAt` is **not** added to `notifyInvitee` — the claim's own `where` is its compare-and-swap.
-- **`lastNotifyFailedAt` must never appear in the claim's `where`.** Spec §4.2: both dispatching routes clear that column before dispatching, so the clause is inert there and would strand an invitee whose only attempt failed.
-- The `.catch` clear runs **above** `recordDispatchFailure()`'s `looksSystemic` early return, and carries the `lastNotifiedAt: input.dispatchedAt` CAS clause.
-- **`teacherInboxNotifiedAt` must never reach a teacher-facing surface.** Do not add it to `invitationDeliveryStatus`'s parameter type (`src/lib/contacts.ts`), to `ownedInvitation`'s select (`src/app/api/invitations/[id]/shared.ts`), or to `src/app/(teacher)/students/contacts/[id]/page.tsx`. It states which account shape an address holds.
+- `notifyInvitee`'s new parameters are **`invitationId: string` and `claimedAt: Date`, both required** — `claimedAt` is minted once per dispatch by `deliverInvitation`, which needs the same value in its `.catch`. `dispatchedAt` is **not** added to `notifyInvitee` — the claim's own `where` is its compare-and-swap. *(Corrected: as written this constraint named `invitationId` alone.)*
+- **`lastNotifyFailedAt` must never appear in the claim's `where`.** Spec §4.2: every dispatching route clears that column before dispatching, so the clause is inert there and would strand an invitee whose only attempt failed.
+- The `.catch` clear runs **above** `recordDispatchFailure()`'s `looksSystemic` early return, and is CAS'd on **`claimedAt`** — the marker value this dispatch's own claim wrote. *(Corrected: as written this constraint said `lastNotifiedAt: input.dispatchedAt`, which is the bug commit `463693d6` removed. A clear scoped on `lastNotifiedAt` refuses itself whenever a resend has moved that column on, which strands the invitee behind a marker with no notification under it. See spec §4.2.)*
+- **The claim and the `Notification` insert commit in one transaction.** *(Added under the PR #624 review. Separately committable, a claim that survives a failed insert caps the invitee permanently, and the `.catch` clear cannot be relied on to lift it — spec §4.2.)*
+- **`teacherInboxNotifiedAt` must never reach a teacher-facing surface.** Do not add it to `invitationDeliveryStatus`'s parameter type (`src/lib/contacts.ts`), to `ownedInvitation`'s select (`src/app/api/invitations/[id]/shared.ts`), or to `src/app/(teacher)/students/contacts/[id]/page.tsx`. It states which account shape an address holds. *(This is now tethered rather than asked for: `TeacherFacingInvitationSelect`, `src/lib/contacts.ts`, makes naming it in either select a build failure.)*
 - **Comment Discipline (CLAUDE.md):** a comment annotates the code it sits on. Facts about other modules go in `docs/` with a link from the comment. No prose counts or rosters.
 - **Never edit an applied migration**, comment-only edits included.
 - **Never `git add -A` or `git add .`** — stage exact paths. Quote paths containing `(`/`)`.
@@ -49,7 +52,7 @@ Pure plumbing. **No behaviour changes in this task** — the suite must be green
 - Modify: `src/services/invitations.notify.test.ts` (10 call sites)
 
 **Interfaces:**
-- Produces: `notifyInvitee(db: PrismaClient, input: { teacherId: string; email: string; teacherName: string; invitationId: string }): Promise<void>`
+- Produces: `notifyInvitee(db: PrismaClient, input: { teacherId: string; email: string; teacherName: string; invitationId: string; claimedAt: Date }): Promise<void>` *(Corrected: `claimedAt` arrived with Task 3's clear and is absent from this plan as written.)*
 - Produces: `Invitation.teacherInboxNotifiedAt: Date | null`
 
 - [ ] **Step 1: Add the column**
@@ -75,6 +78,8 @@ Expected: a new folder under `prisma/migrations/` whose `migration.sql` is a sin
 ```ts
 export async function notifyInvitee(
   db: PrismaClient,
+  // As shipped this signature also carries `claimedAt: Date` — see the
+  // Global Constraints above.
   input: { teacherId: string; email: string; teacherName: string; invitationId: string },
 ): Promise<void> {
 ```
@@ -399,19 +404,34 @@ Expected: FAIL. The repeat test fails `expected 2 to be 1`; sequence 1 and seque
     // code runs: `docs/data-model.md` (Invitation, "Who an invitation
     // reaches"). A failed dispatch re-opens the cap on the failure path
     // itself — `deliverInvitation`'s `.catch`, below.
-    const claimed = await db.invitation.updateMany({
-      where: { id: input.invitationId, teacherInboxNotifiedAt: null },
-      data: { teacherInboxNotifiedAt: new Date() },
+    //
+    // CORRECTED, not as-written: this block planned a bare `updateMany`
+    // followed by a separate `createNotification`, with the claim's `where`
+    // keyed on `id` alone. Both were wrong and the PR #624 review found them
+    // — the two writes must commit together, and the `where` must name the
+    // address this dispatch resolved an account for. Read spec §4.2, not
+    // this. The shape below is what shipped, abbreviated.
+    const outcome = await db.$transaction(async (tx) => {
+      const claimed = await tx.invitation.updateMany({
+        where: {
+          id: input.invitationId,
+          teacherId: input.teacherId,
+          email,
+          teacherInboxNotifiedAt: null,
+        },
+        data: { teacherInboxNotifiedAt: input.claimedAt },
+      });
+      if (claimed.count === 0) return 'already-capped-or-gone';
+      await createNotification(tx, {
+        recipientType: 'teacher',
+        recipientId: account.teacher.id,
+        type: 'teacher_invitation',
+        title: 'A teacher would like to connect',
+        body: `${input.teacherName} added you as a contact. Connecting adds a student side to your account, and you choose whether to.`,
+      });
+      return 'notified';
     });
-    if (claimed.count === 0) return;
-
-    await createNotification(db, {
-      recipientType: 'teacher',
-      recipientId: account.teacher.id,
-      type: 'teacher_invitation',
-      title: 'A teacher would like to connect',
-      body: `${input.teacherName} added you as a contact. Connecting adds a student side to your account, and you choose whether to.`,
-    });
+    if (outcome !== 'notified') logUndeliveredTeacherInbox(outcome, input);
     return;
   }
 ```
@@ -468,7 +488,7 @@ git commit -m "feat(invitations): cap teacher-inbox dispatches at one per invita
 - Test: `src/services/invitations.deliver.test.ts`
 
 **Interfaces:**
-- Consumes: the claim (Task 2); `deliverInvitation`'s existing `input.invitationId` and `input.dispatchedAt`
+- Consumes: the claim (Task 2); `deliverInvitation`'s existing `input.invitationId`, and the `claimedAt` it mints for this dispatch. *(Corrected: as written this line named `input.dispatchedAt`, which belongs to the `lastNotifyFailedAt` write beside the clear, not to the clear.)*
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -648,21 +668,31 @@ In `deliverInvitation`'s `.catch`, **above** the `recordDispatchFailure()` call:
     // early return below on purpose — `teacherInboxNotifiedAt` reaches no
     // teacher-facing surface, so the burst suppression that protects
     // `lastNotifyFailedAt` from becoming an account-existence proxy buys
-    // nothing here, and gating on it would strand every invitee whose
-    // notification failed during an outage.
+    // nothing here.
     //
-    // Same `lastNotifiedAt` CAS as the failure write below, for the same
-    // reason: a superseded attempt's late failure must not re-open a cap a
-    // newer, successful attempt closed.
+    // CORRECTED, not as-written: this block planned `where: { id,
+    // lastNotifiedAt: input.dispatchedAt }` and justified it as "the same CAS
+    // as the failure write below, for the same reason". That is the
+    // permanent-silence bug commit `463693d6` removed — a resend landing
+    // during a slow failure moves `lastNotifiedAt` on, the clear then refuses
+    // itself, and the marker stands over a notification that was never
+    // created. The CAS is `claimedAt`, the marker value this dispatch's own
+    // claim wrote. Read spec §4.2, not this.
     db.invitation
       .updateMany({
-        where: { id: input.invitationId, lastNotifiedAt: input.dispatchedAt },
+        where: { id: input.invitationId, teacherInboxNotifiedAt: claimedAt },
         data: { teacherInboxNotifiedAt: null },
       })
       .catch((writeErr: unknown) => {
         log.error(
-          { err: writeErr, invitationId: input.invitationId },
-          'failed to re-open teacher inbox dispatch cap',
+          {
+            err: writeErr,
+            teacherId: input.teacherId,
+            invitationId: input.invitationId,
+            source: input.source,
+            claimedAt,
+          },
+          'could not re-open the teacher inbox dispatch cap: …',
         );
       });
 ```
@@ -684,7 +714,7 @@ Expected: all three PASS.
 
 1. Delete the clear entirely → the ordinary case fails.
 2. Move the clear below `if (looksSystemic) return;` → the outage case fails, the ordinary case still passes. If the ordinary case also fails, the two tests are not independent — fix the tests before continuing.
-3. Drop `lastNotifiedAt: input.dispatchedAt` from the clear's `where` → the superseded case fails.
+3. *(Corrected.)* As written, this check told the reader to drop a `lastNotifiedAt: input.dispatchedAt` clause the clear does not carry, against a "superseded case" test that was replaced. The check that matters is: replace the `claimedAt` CAS with a `lastNotifiedAt` one → the *non-claiming* case fails, because a dispatch that never claimed then clears a marker some other attempt set. Spec §7 checks 3-5 are the list of record.
 
 - [ ] **Step 7: Commit**
 
@@ -1017,7 +1047,7 @@ grep -rn "teacherInboxNotifiedAt" src/ docs/ prisma/
 Give every hit a verdict. Then read, in full:
 - `src/app/api/invitations/[id]/resend/route.ts:18-37` — describes what a resend does and does not do.
 - `src/lib/contacts.ts:24-42` — `invitationDeliveryStatus`'s docblock, which defers its writer census to `docs/data-model.md`. Decide whether it now under-describes the row; it probably does not, but the verdict must be recorded rather than assumed.
-- `src/app/api/invitations/[id]/shared.ts` — `ownedInvitation`'s docblock, which explains which columns it selects and why. It must **not** gain the new column.
+- `src/app/api/invitations/[id]/shared.ts` — `ownedInvitation`'s docblock, which explains which columns it selects and why. It must **not** gain the new column. *(Since the PR #624 review, its select `satisfies TeacherFacingInvitationSelect`, so the compiler refuses that rather than the docblock asking.)*
 
 - [ ] **Step 4: Confirm the oracle constraint holds in code**
 
@@ -1025,7 +1055,7 @@ Give every hit a verdict. Then read, in full:
 grep -rn "teacherInboxNotifiedAt" src/app src/lib src/components
 ```
 
-Expected: hits in `src/app/api/invitations/[id]/route.ts` only (the reset). Any hit in `src/lib/contacts.ts`, `src/app/(teacher)/`, or a component is a violation of the Global Constraints.
+Expected as written: hits in `src/app/api/invitations/[id]/route.ts` only (the reset). *(Corrected: since the PR #624 review this also hits `src/lib/contacts.ts`, where `TeacherFacingInvitationSelect` names the column in order to exclude it from a select. That one hit is the tether, not a violation. Read the hits down: the violation is the column appearing inside a `select`, in `src/app/(teacher)/`, or in a component.)*
 
 - [ ] **Step 5: Full verification**
 

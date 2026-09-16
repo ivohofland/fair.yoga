@@ -21,11 +21,13 @@ import { ownedInvitation, NOT_FOUND, DECLINED, NOT_PENDING } from '../shared';
  * recipient, `notifyInvitee`'s teacher branch caps at one notification per
  * invitation. Reaching this route neither lifts that cap nor keeps it
  * closed: the marker write below does not touch it, while a dispatch that
- * then fails re-opens it from `deliverInvitation`'s own failure path. The
- * full census of what sets and clears the marker lives in
- * `docs/data-model.md` (Invitation, "Who an invitation reaches"). A capped
- * resend is a silent no-op past the marker write below, the same shape as
- * the `TeacherBlock` case the next paragraph describes.
+ * then fails leaves it open — the claim that closes the cap commits with the
+ * notification it stands for, so a failure takes it back down. The full
+ * census of what sets and clears the marker, and what the failure path still
+ * covers on top of that, lives in `docs/data-model.md` (Invitation, "Who an
+ * invitation reaches"). A capped resend is a silent no-op past the marker
+ * write below, the same shape as the `TeacherBlock` case the next paragraph
+ * describes.
  *
  * The marker write below (`lastNotifiedAt`/`lastNotifiedEmail`, and since
  * #392 `lastNotifyFailedAt: null`) is unconditional — written before
