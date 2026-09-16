@@ -1,4 +1,26 @@
-import type { InvitationStatus } from '@prisma/client';
+import type { InvitationStatus, Prisma } from '@prisma/client';
+
+/**
+ * The shape an `Invitation` select must have to be allowed to reach a
+ * teacher-facing surface — this file's callers, `ownedInvitation`
+ * (`src/app/api/invitations/[id]/shared.ts`) and the contact detail page.
+ *
+ * `teacherInboxNotifiedAt?: never` is the whole point: intersected with
+ * Prisma's own select, the column's only permitted value becomes `never`, so
+ * naming it in one of those selects is a build failure rather than something a
+ * reviewer has to notice. It is a direct statement of which account shape an
+ * address holds — the fact `notifyInvitee`'s branch routing exists to keep off
+ * every surface (#172, #622) — and it is the one column on this row whose leak
+ * costs a privacy property rather than a duplicate notification. The column's
+ * writers and the reason nothing reads it: `docs/data-model.md` (Invitation,
+ * "Who an invitation reaches").
+ *
+ * The exclusion lives here, named once, so that the selects it guards can
+ * point at it without spelling the column out beside the data they render.
+ */
+export type TeacherFacingInvitationSelect = Prisma.InvitationSelect & {
+  teacherInboxNotifiedAt?: never;
+};
 
 /**
  * Whether a contact's remove affordance should render at all.
