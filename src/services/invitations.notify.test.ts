@@ -165,13 +165,14 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     const email = `Notify-Blocked-${suffix}@Test.Local`;
     let invitationId: string | undefined;
     try {
-      // `Invitation.email` carries its own lowercase CHECK constraint
-      // (`Invitation_email_lowercase_check`), so the row uses the normalised
-      // form — the un-normalised address above is what's passed to
-      // `notifyInvitee`, and `requireNormalised` throws before `invitationId`
-      // is ever read, so which row it names doesn't affect this assertion.
+      // `notifyInvitee` now requires a real `invitationId`, so this test
+      // needs a row too — but the un-normalised address above is what's
+      // under test, not this row's own address, so it gets a distinct
+      // fixture email of its own rather than the normalised form of the one
+      // above (which would collide with the blocked-address test's fixture
+      // on `Invitation`'s `(teacherId, email)` unique key).
       const invitation = await prisma.invitation.create({
-        data: { teacherId, email: email.toLowerCase(), firstName: 'Notify', lastName: 'Blocked' },
+        data: { teacherId, email: `notify-unnormalised-fixture-${suffix}@test.local`, firstName: 'Notify', lastName: 'Blocked' },
         select: { id: true },
       });
       invitationId = invitation.id;
