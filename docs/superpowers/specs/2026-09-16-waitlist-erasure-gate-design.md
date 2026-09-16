@@ -124,10 +124,15 @@ conflict table:
   class, the two would deadlock. `NO KEY UPDATE` lets the insert through.
 - Child inserters that are not gated keep taking only `KEY SHARE`, which conflicts
   with neither gate mode — so gating one site at a time cannot create a new cycle,
-  **provided no transaction that holds a `KEY SHARE` (or a `Class` row) also UPDATES
-  the `Student` row.** An `UPDATE` takes `FOR NO KEY UPDATE`, which the erasure's
-  opening lock blocks. That proviso did not hold when this spec was first written, and
-  the task review of the implementation caught it (see *Correction* below).
+  **provided an `UPDATE` (or delete) of a `Student` row is treated as a lock on the
+  `Student` node.** An `UPDATE` takes `FOR NO KEY UPDATE`, which conflicts with both
+  gate modes. So outside the erasure it must come before any other row lock in its
+  transaction, which in practice means running as a statement of its own. A
+  transaction that takes any row lock the erasure or a gated join later requests (a
+  `Class` row, a `KEY SHARE` on the student, an `Invitation` row, …) and then updates
+  the student closes a cycle. That proviso did not hold when this spec was first
+  written. Task 3's review caught it in its `Class`/`KEY SHARE` form (see *Correction*
+  below), and Task 4's review generalised it.
 - The erasure's closing `UPDATE` still escalates to `FOR UPDATE` (it changes `email`);
   by then it holds every class in its lock set, so no class-locked promotion of this
   student can be in flight. The one cycle that escalation can still close — against an
