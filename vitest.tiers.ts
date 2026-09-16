@@ -133,6 +133,9 @@ export const LOCK_CONTENTION_TESTS = [
   // #183: drops and restores an index inside a transaction — the
   // `class-lifecycle-tier-guard.test.ts` shape; its header carries the reason.
   'src/services/waitlist-position-migration.test.ts',
+  // #625: races the booking route against a paused erasure, the
+  // `gdpr-lock-order.test.ts` shape; its header carries the reason.
+  'src/app/api/registrations/route-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

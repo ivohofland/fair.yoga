@@ -18,7 +18,7 @@ import { classStartInstant } from '@/lib/timezone';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { CLAIMABLE_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { readSeatCount } from '@/services/capacity';
-import { lockClassRow } from '@/lib/db-locks';
+import { lockClassRow, lockLiveStudent, StudentErasedError } from '@/lib/db-locks';
 import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 
@@ -102,6 +102,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   try {
     const registration = await prisma.$transaction(async (tx) => {
+      // The booked student's row first, before the class row, on both paths.
+      // A booking and an erasure of this student serialise here, and a
+      // booking that waited reads the erasure's committed `deletedAt` and
+      // refuses before writing anything. Modes and order: `docs/lock-order.md`,
+      // "The `Student` row is the erasure's gate".
+      await lockLiveStudent(tx, studentId);
+
       // Serialize concurrent registrations for this class: without the row
       // lock, two simultaneous requests both count below max and both insert.
       await lockClassRow(tx, body.classId);
@@ -275,11 +282,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // Roster adds and walk-ins must not consume the income-selection
     // moment. Null-guarded: the marker records the first choice.
     //
-    // Written after the transaction commits, as a statement of its own:
-    // a `Student` update is a lock on the `Student` row, so it must not come
-    // after this transaction's other row locks. Scoped to a live profile
-    // because an erasure can commit while this write waits on the row. Both
-    // rules: `docs/lock-order.md`, "The `Student` row is the erasure's gate".
+    // Written after the transaction commits, as a statement of its own. The
+    // transaction holds this student's row `FOR SHARE` from its first
+    // statement, so an update inside it would upgrade that lock: it would
+    // wait on any other gated writer's share of this student, and two
+    // bookings of one student upgrading at once deadlock. Scoped to a live
+    // profile because an erasure can commit while this write waits on the
+    // row. Both rules: `docs/lock-order.md`, "The `Student` row is the
+    // erasure's gate".
     //
     // A failure is logged and the booking still answered 201, because the
     // booking has committed. What a lost write costs: `tierSelectedAt` stays
@@ -306,6 +316,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   } catch (err) {
     if (err instanceof ClassNotFoundError) {
       return respondError('Class not found', 404);
+    }
+    if (err instanceof StudentErasedError) {
+      return respondError(
+        isTeacher ? "This student's account no longer exists" : 'This account has been deleted',
+        409,
+      );
     }
     if (err instanceof NotYourClassError) {
       return respondError('Not your class', 403);

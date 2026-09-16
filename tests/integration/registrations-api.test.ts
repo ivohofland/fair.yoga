@@ -718,18 +718,20 @@ describe('POST /api/registrations', () => {
   }, 20_000);
 
   /**
-   * #183. A student erasure holds its subject's `Student` row
-   * `FOR NO KEY UPDATE` from its first lock to its commit, and a booking's
-   * transaction holds the class. A `Student` write inside that transaction
-   * waits on the erasure while holding the class — the other half of a cycle
-   * (`docs/lock-order.md`, "The `Student` row is the erasure's gate").
+   * #183, #625. The booking takes its student's row `FOR SHARE` as its first
+   * statement and holds it to commit, so a `Student` write inside its
+   * transaction would upgrade that lock, and two gated writers of one student
+   * upgrading at once deadlock (`docs/lock-order.md`, "The `Student` row is
+   * the erasure's gate").
    *
-   * The holder below takes the erasure's lock mode, not an erasure: what this
-   * pins is that the booking's transaction commits without waiting on it. The
-   * registration row is read on a separate connection, so it appears only
-   * once that transaction has committed — polled while the lock is still
-   * held. The marker write that follows the commit does wait for the release,
-   * and then applies; the last two assertions say so.
+   * The holder below takes `FOR SHARE`, the gate's own mode, standing in for a
+   * second gated writer: the booking's gate shares it, and only an update of
+   * the row waits on it. What this pins is that the booking's transaction
+   * commits without waiting on it. The registration row is read on a separate
+   * connection, so it appears only once that transaction has committed —
+   * polled while the lock is still held. The marker write that follows the
+   * commit does wait for the release, and then applies; the last two
+   * assertions say so.
    *
    * A dedicated student, so no other test has stamped the marker, which is
    * first-choice-only; the `toBeNull` below checks that.
@@ -757,7 +759,7 @@ describe('POST /api/registrations', () => {
     const held = new Promise<void>((r) => { signalHeld = r; });
     const holder = prisma.$transaction(
       async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${student.id} FOR NO KEY UPDATE`;
+        await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${student.id} FOR SHARE`;
         signalHeld();
         await released;
       },
