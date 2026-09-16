@@ -137,11 +137,10 @@ describe('POST /api/auth/passkey/authenticate/options', () => {
 });
 
 /**
- * #623. `account.teacher ?? account.student` filtered neither side for
- * liveness, so an account whose teacher side was erased named its credential
- * after the tombstone — and an erasure anonymises that name to "Deleted
- * Teacher". A passkey's display name lands permanently in the viewer's own
- * credential manager, so this is not a cosmetic string.
+ * The credential is named after the account's LIVE profile, teacher first
+ * (#623) — never an erased one. Erasure anonymises a profile's name to
+ * "Deleted Teacher" or "Deleted Student", and that name lands permanently in
+ * the viewer's own credential manager, so this is not a cosmetic string.
  */
 describe('POST /api/auth/passkey/register/options', () => {
   const suffix = uniqueSuffix();

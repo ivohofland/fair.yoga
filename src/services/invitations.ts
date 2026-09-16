@@ -664,7 +664,9 @@ export async function notifyInvitee(
   }
 
   // Only an address with no `Student` row gets here, so an account holding
-  // both profiles was answered above. Who each branch reaches:
+  // both LIVE profiles was answered above. An account holding a live teacher
+  // beside an erased student reaches here instead: erasure tombstones
+  // `Student.email`, so the lookup above misses it. Who each branch reaches:
   // `docs/data-model.md` (Invitation, "Who an invitation reaches").
   //
   // The `deletedAt` filter is load-bearing. An account may hold erased

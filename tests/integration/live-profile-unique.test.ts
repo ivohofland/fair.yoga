@@ -27,10 +27,11 @@ async function makeAccount(tag: string): Promise<string> {
  * one account — a state these indexes are what makes unreachable, so without
  * them that throw would be the only thing standing between a caller and it.
  *
- * `isUniqueConflictOn` rather than a message match: it is the predicate two
- * production routes use to turn this exact conflict into a coded 409, so
- * asserting it here is what proves those routes still work over a partial
- * index rather than falling through to their unrecognised-P2002 throw.
+ * `isUniqueConflictOn` rather than a message match: it is the predicate
+ * `POST /api/account/teacher-profile` and `POST /api/account/student-profile`
+ * use to turn this exact conflict into a coded 409, so asserting it here is
+ * what proves those routes still work over a partial index rather than
+ * falling through to their unrecognised-P2002 throw.
  */
 describe('one live profile per account (#623)', () => {
   it('accepts a new live Student beside an erased one on the same account', async () => {
