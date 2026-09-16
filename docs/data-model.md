@@ -525,6 +525,28 @@ No pricing engine. No individual registration. No link to Room or Student. No `s
 | cancelled_at | datetime, nullable | |
 | updated_at | datetime | |
 
+**A booking that races its own student's erasure is refused (#625).** The
+erasure wins, as it does for a waitlist join. `POST /api/registrations` and
+`deleteStudentAccount` serialise on the `Student` row, for the student's own
+booking and the teacher's roster add alike.
+
+A booking that finds the profile erased writes nothing and answers 409. A
+teacher sees `This student's account no longer exists`. A student sees
+`This account has been deleted` only when their request raced the erasure. A
+self-booking made after the erasure committed is answered 401 before it gets
+that far, because the erasure removed its session.
+
+A booking that takes the row first commits, and the erasure then handles what
+it wrote. If the class is still open, the erasure cancels the registration and
+offers the freed seat to the class's waitlist. It also deletes the roster link
+and any waitlist entry the booking resolved. It does not undo the rest of the
+booking: `resolveInvitationOnLink` may have cleared a `TeacherBlock` and
+resolved an `Invitation`, and the erasure recreates no block. It anonymises
+that invitation's identity without reverting its status.
+
+The mechanism is `docs/lock-order.md`, "The `Student` row is the erasure's
+gate".
+
 ### WaitlistEntry (overflow)
 
 | Field | Type | Notes |

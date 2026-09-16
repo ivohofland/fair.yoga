@@ -1123,21 +1123,26 @@ itself:
 |---|---|---|---|---|
 | `deleteStudentAccount` (`gdpr.ts`) | `lockStudentForErasure` | first lock of its transaction, right after `setLockTimeout` | `FOR NO KEY UPDATE` | no check at the lock; the closing compare-and-swap answers an erased one with `AlreadyErasedError`, and an absent one fails before the transaction opens, at `findUniqueOrThrow` (`P2025`) |
 | `addToWaitlist` (`waitlist.ts`) | `lockLiveStudent` | first statement of its transaction | `FOR SHARE` | refuses: `StudentErasedError`, surfaced as `WaitlistJoinError` `student_erased` (409 from `POST /api/waitlist`) |
+| `POST /api/registrations` (`src/app/api/registrations/route.ts`) | `lockLiveStudent` | first statement of its transaction, on the student's booking and the teacher's roster add alike | `FOR SHARE` | refuses: 409, `This account has been deleted` to the student, `This student's account no longer exists` to the teacher |
 
-**`Student → Class` at both.** Each takes the `Student` row before its first
+**`Student → Class` at every site.** Each takes the `Student` row before its first
 `Class` row, so the two can meet only at the `Student` row, and what each side
 sees after waiting there is decided by who arrived first:
 
-- **The erasure first.** The join waits at `lockLiveStudent`. Once the erasure
-  commits, the join's read under the lock sees the committed `deletedAt`, and
-  the join refuses before it writes anything — no entry, no roster link. An
-  erasure that outlasts the 2s bound leaves the join with `55P03`, which
-  `classifyApiError` answers as transient.
-- **The join first.** The erasure waits at `lockStudentForErasure` until the
-  join commits. Its class pre-lock runs after that, in a snapshot that contains
-  the new entry, so it locks that class and deletes and renumbers under the
-  lock.
-- **A join after the erasure committed** is refused without waiting.
+- **The erasure first.** The writer waits at `lockLiveStudent`. Once the
+  erasure commits, the writer's read under the lock sees the committed
+  `deletedAt`, and the writer refuses before it writes anything — no entry, no
+  roster link. An erasure that outlasts the 2s bound leaves the writer with
+  `55P03`, which `classifyApiError` answers as transient.
+- **The writer first.** The erasure waits at `lockStudentForErasure` until the
+  writer commits. Its class pre-lock runs after that, in a snapshot that
+  contains the new entry, so it locks that class and deletes and renumbers
+  under the lock. The erasure's `upcoming` read then sees the booking, so for
+  an open class `handleSpotFreed` runs, even outside the lock set.
+- **After the erasure committed**, a gated writer's request is refused without
+  waiting. A self-booking never reaches the gate there. Its session is gone,
+  so the route answers 401. The gate's sequential refusal is the teacher
+  path's.
 
 The order is observable only on a REJOIN — a join into a class where the
 subject already holds an entry of any status, `waiting` included (a no-op
@@ -1149,6 +1154,17 @@ erasure takes the Student row before any Class row (#183)" — "refuses a rejoin
 that waits behind it" for the first case and the order, "waits behind a join
 that holds the gate" for the second — and by `src/services/waitlist.test.ts`
 ("addToWaitlist refuses an erased student (#183)") for the third.
+
+- The booking's order is observable when the booked class is in the erasure's
+  lock set, that is, when the student holds an entry there.
+- That case is pinned by `src/app/api/registrations/route-lock-order.test.ts`,
+  test "refuses a booking that waits behind the erasure, in a class the
+  erasure locks".
+- The reverse race is pinned by "makes an erasure that arrives mid-booking
+  wait, then cancel the booking and pass the seat on".
+- The teacher path is pinned by "refuses a teacher adding an erased student
+  whose roster link survived" and "refuses a teacher adding the student after
+  the erasure cancelled registrations".
 
 ### Why these modes
 
@@ -1186,13 +1202,22 @@ node, and `Student → …` binds it exactly as it binds an explicit lock.** An
 and a `DELETE` takes `FOR UPDATE`; each conflicts with both halves of the gate.
 So outside the erasure, such a statement must come before any other row lock
 in its transaction — in practice it runs as a statement of its own, which is
-what every production `Student` update does today (the census below). A
-transaction that first took ANY row the erasure or a gated join goes on to
+what every production `Student` update does today (the census below).
+
+- A gated writer's own `FOR SHARE` on the row counts as such a lock.
+- An update of the row inside a gated transaction is an upgrade.
+- Two gated writers of one student each hold `FOR SHARE`, because the mode is
+  compatible with itself, and if both upgrade they deadlock.
+- Measured 2026-09-16: two sessions each took `FOR SHARE` on one `Student`
+  row, then each updated it. The first failed with `40P01` "while updating
+  tuple … in relation "Student"".
+
+A transaction that first took ANY row the erasure or a gated writer goes on to
 request, and then wrote the student's row, would wait on the gate while holding
 what the gate's holder is about to wait on. A `Class` row or a `FOR KEY SHARE`
 on the student is the obvious case, not the only one: an `Invitation` row
 carrying the student's address is another, since the erasure anonymises those
-rows (`gdpr.ts`) and a join's `resolveInvitationOnLink` updates them
+rows (`gdpr.ts`) and a gated writer's `resolveInvitationOnLink` updates them
 (`link-consent.ts`), both while holding their half of the gate.
 
 `POST /api/registrations` writes `Student.tierSelectedAt` after its transaction
@@ -1204,8 +1229,12 @@ erasure's closing `UPDATE` waited on that `FOR KEY SHARE`; on a class in the
 erasure's lock set, the booking held the `Class` row and waited on `Student`
 while the erasure held `Student` and waited on the `Class` row
 (`docs/superpowers/specs/2026-09-16-waitlist-erasure-gate-design.md`, §1,
-*Correction*). Pinned over HTTP by `tests/integration/registrations-api.test.ts`
-("a first self-booking does not wait on a lock held on its student's row").
+*Correction*), while the booking was ungated. Since #625 the booking is gated,
+so the corollary above is what keeps the write outside. Pinned over HTTP by
+`tests/integration/registrations-api.test.ts` ("a first self-booking does not
+wait on a lock held on its student's row"): the pinning test's holder takes
+`FOR SHARE`, the gate's own mode. The booking's gate shares it, and only an
+update waits on it.
 
 A `Student` update that waits on the gate is not refused when the erasure
 commits. Under READ COMMITTED it re-checks its `WHERE` against the row version
@@ -1266,8 +1295,6 @@ An ungated writer can be. Any ungated writer that inserts a `Student` child
 row, taking `FOR KEY SHARE`, and then waits on a row the erasure has already
 written closes a cycle with that closing `UPDATE`:
 
-- A booking holds the `FOR KEY SHARE` its `Registration` insert took while
-  its roster-link insert can wait on the erasure. Tracked in #625.
 - `acceptInvitation` (`src/services/invitations.ts`) inserts the roster link
   and then updates an `Invitation` row the erasure anonymises. Tracked in
   #626.
@@ -1275,16 +1302,16 @@ written closes a cycle with that closing `UPDATE`:
   then deletes a `TeacherStudent` row the erasure has deleted. Tracked in
   #626.
 
-The last two are reasoned from the code and have not been reproduced. All
-three predate the gate.
+Both are reasoned from the code and neither has been reproduced. Both predate
+the gate. The booking's case is closed by #625, and its cycle was reproduced
+against the ungated route by the test "refuses a booking whose roster link the
+erasure has already deleted", which failed with `40P01` ("deadlock detected").
 
 ### Who is not gated yet
 
 The inserters into tables with a foreign key to `Student`, other than
-`addToWaitlist`:
+`addToWaitlist` and `POST /api/registrations`:
 
-- `POST /api/registrations`, both the student's own booking and the teacher's
-  roster add — ungated, tracked in #625.
 - `acceptInvitation` and `unlinkTeacher` (`src/services/invitations.ts`), and
   `PUT /api/students/[id]/privacy` — ungated, tracked in #626.
 - `promoteNext` and `claimSpot` (`src/services/waitlist.ts`) — ungated and
@@ -1305,16 +1332,19 @@ and `addToWaitlist`'s own `create` — and the second the two helpers'
 definitions plus their callers: the registrations route, `acceptInvitation`,
 `addToWaitlist`, `promoteNext` and `claimSpot`.
 
-The gate's call sites, filtered to calls and definitions (the last two filters
-drop comment prose and the members of multi-line `import { … }` blocks):
+The gate's call sites, filtered to calls and definitions (the middle two
+filters drop comment prose and the members of multi-line `import { … }`
+blocks, and the last drops a single-line `import` statement):
 
     grep -rn 'lockStudentForErasure\|lockLiveStudent' src/ --include='*.ts' \
       | grep -v '\.test\.ts:' \
       | grep -vE ':[0-9]+: *(\*|//)' \
-      | grep -vE ':[0-9]+: +[A-Za-z]+,$'
+      | grep -vE ':[0-9]+: +[A-Za-z]+,$' \
+      | grep -vE ':[0-9]+:import '
 
-On 2026-09-16 it returned four lines: the two definitions in `db-locks.ts`, and
-one call each in `gdpr.ts` and `waitlist.ts`. A new gated writer is a fifth.
+On 2026-09-16 it returned five lines: the two definitions in `db-locks.ts`, and
+one call each in `gdpr.ts`, `waitlist.ts` and `src/app/api/registrations/route.ts`.
+A new gated writer is a sixth.
 
 ## The advisory lock, which is not a row in the line above (#196, #215)
 
@@ -2378,7 +2408,9 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   waitlist-resolution step actively prevents in the normal booking flow — but
   "no counterparty found" is not the same claim as "safe," and none is made
   here. Its `registration.updateMany` also reaches classes outside the lock
-  set, and a booking racing the erasure is #625.
+  set. A booking cannot race it there, because `POST /api/registrations` takes
+  the other half of the `Student` gate (#625). A booking's registration is
+  therefore either in the erasure's statement snapshots or refused.
 
   Status: the `WaitlistEntry` window is closed (#183); the `Registration` half
   stays open.
@@ -2495,10 +2527,11 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
 - **`removeFromWaitlist`**, **`withdrawWaitingEntriesForTeacher`**
   (`src/services/waitlist.ts`) — `Class` then `WaitlistEntry` only.
 - **`POST /api/registrations`** (`src/app/api/registrations/route.ts`) —
-  `Class`, then `Registration`, `WaitlistEntry`, `TeacherStudent`, then
-  `TeacherBlock`/`Invitation` via `resolveInvitationOnLink` — the same
-  `TeacherBlock`-before-`Invitation` disagreement as `addToWaitlist`, not
-  conformant on that sub-order for the same reason.
+  `Student` (`lockLiveStudent`, #625), then `Class`, then `Registration`,
+  `WaitlistEntry`, `TeacherStudent`, then `TeacherBlock`/`Invitation` via
+  `resolveInvitationOnLink` — the same `TeacherBlock`-before-`Invitation`
+  disagreement as `addToWaitlist`, not conformant on that sub-order for the
+  same reason.
 - **`reapClosedWaitlistEntries`** (`src/services/waitlist-retention.ts`) —
   `Class`, then `WaitlistEntry`, one class per `db.$transaction` via
   `lockClassRow`. **Deliberately a single-row-lock site**, like
