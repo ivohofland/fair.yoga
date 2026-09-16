@@ -153,8 +153,10 @@ describe('POST /api/auth/passkey/register/options', () => {
       data: { email: `pk-live-name-${suffix}@test.local` },
     });
     accountIds.push(account.id);
-    // The erased teacher is deliberately the `??`'s LEFT operand: an
-    // unfiltered read selects it, which is the regression being pinned.
+    // The account holds an erased teacher and both an erased and a live
+    // student, so an unfiltered read on either side would surface a
+    // tombstone instead of the live student — both filters are load-bearing
+    // for the assertion below.
     await prisma.teacher.create({
       data: {
         accountId: account.id,
@@ -162,6 +164,14 @@ describe('POST /api/auth/passkey/register/options', () => {
         email: `pk-erased-teacher-${suffix}@deleted.invalid`,
         bio: '', pageSlug: `pk-erased-teacher-${suffix}`,
         deletedAt: new Date(),
+      },
+    });
+    await prisma.student.create({
+      data: {
+        accountId: account.id,
+        firstName: 'Deleted', lastName: 'Student',
+        email: `pk-erased-student-${suffix}@deleted.invalid`,
+        claimedAt: new Date(), deletedAt: new Date(),
       },
     });
     await prisma.student.create({

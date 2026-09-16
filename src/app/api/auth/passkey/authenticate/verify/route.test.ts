@@ -101,17 +101,26 @@ describe('POST /api/auth/passkey/authenticate/verify — teacher-signup destinat
     expect(body.data.redirectTo).toBe('/signup/profile');
   });
 
-  it('sends an account whose teacher profile was soft-deleted to the profile form', async () => {
+  it('filters the teacher lookup by deletedAt, so a soft-deleted profile does not count as live', async () => {
     primeCredential('acc-former-teacher');
-    // The route's own `where: { deletedAt: null }` (#623) is what would keep
-    // a soft-deleted teacher out of this array in production; mocked here as
-    // the empty result that filter produces, since this test drives the
-    // handler beneath the query rather than the query itself.
+    // This mock cannot reproduce erasure by itself — an unfiltered read and
+    // a filtered one that finds nothing both return `{ teachers: [] }` here,
+    // since neither the mock nor this route talks to a real database. What
+    // distinguishes them is the SELECT the route sends, asserted below; the
+    // filter's actual effect against a soft-deleted row is covered end to
+    // end by `tests/integration/live-profile-unique.test.ts`.
     accountFindUnique.mockResolvedValue({ teachers: [] });
     storeChallenge('authentication', 'chal-former-teacher', 'expected-challenge');
 
     const res = await POST(verify('chal-former-teacher', '/signup/profile'));
 
+    expect(accountFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          teachers: expect.objectContaining({ where: { deletedAt: null } }),
+        }),
+      }),
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { redirectTo: string } };
     // A soft-deleted teacher profile has no live profile to be bounced
