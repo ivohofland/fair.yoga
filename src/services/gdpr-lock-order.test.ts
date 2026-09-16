@@ -2562,8 +2562,15 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
 
       const [eraseOutcome, joinOutcome] = await Promise.all([erasing, joining]);
       expect(eraseOutcome).toBe('erased');
-      expect(joinOutcome).toBeInstanceOf(WaitlistJoinError);
-      expect((joinOutcome as WaitlistJoinError).reason).toBe('student_erased');
+      // Any other rejection is reported by its text, so a `40P01` or `55P03`
+      // on the join's side names itself rather than its error class.
+      const joinResult =
+        joinOutcome instanceof WaitlistJoinError
+          ? joinOutcome.reason
+          : joinOutcome instanceof Error
+            ? `join: ${String(joinOutcome)}`
+            : `join resolved: ${JSON.stringify(joinOutcome)}`;
+      expect(joinResult).toBe('student_erased');
       expect(await prisma.waitlistEntry.count({ where: { studentId: fx.studentId } })).toBe(0);
       expect(await prisma.teacherStudent.count({ where: { studentId: fx.studentId } })).toBe(0);
     } finally {
