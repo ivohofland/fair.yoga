@@ -19,6 +19,7 @@ import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { CLAIMABLE_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { readSeatCount } from '@/services/capacity';
 import { lockClassRow } from '@/lib/db-locks';
+import { log } from '@/lib/log';
 
 /** Thrown inside the registration transaction when the class is at capacity. */
 class ClassFullError extends Error {}
@@ -278,11 +279,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // to a live profile because an erasure can commit while this write waits
     // on the row (`docs/lock-order.md`, "The `Student` row is the erasure's
     // gate").
+    //
+    // A failure is logged and the booking still answered 201: the booking has
+    // committed, and the marker only decides whether the tier prompt shows.
     if (!rosterStudentId) {
-      await prisma.student.updateMany({
-        where: { id: studentId, tierSelectedAt: null, deletedAt: null },
-        data: { tierSelectedAt: new Date() },
-      });
+      try {
+        await prisma.student.updateMany({
+          where: { id: studentId, tierSelectedAt: null, deletedAt: null },
+          data: { tierSelectedAt: new Date() },
+        });
+      } catch (err) {
+        log.warn({ err, studentId }, 'booking committed but its tierSelectedAt write failed');
+      }
     }
 
     return respondOk({ id: registration.id, status: registration.status }, 201);

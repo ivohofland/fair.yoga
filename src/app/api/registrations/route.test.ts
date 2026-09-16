@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'vitest';
 import { NextRequest } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { cookie, seedSession, uniqueSuffix } from '../../../../tests/helpers';
 import { createClassFixture } from '../../../../tests/class-fixtures';
 import { inviteContact } from '@/services/invitations';
+import { prisma as appPrisma } from '@/lib/db';
+import { log } from '@/lib/log';
 import { POST } from './route';
 
 /**
@@ -379,5 +381,125 @@ describe('POST /api/registrations — resolveInvitationOnLink wiring (#418)', ()
         where: { teacherId_email: { teacherId, email: blockedStudentEmail } },
       }),
     ).toBeNull();
+  });
+});
+
+/**
+ * The student's own booking writes `Student.tierSelectedAt` after its
+ * transaction has committed, so by then the booking exists. A failure of that
+ * write is answered as the booking's success, and logged: answering it as an
+ * error would send the student to retry a booking they hold, and the retry
+ * would be refused as already registered.
+ *
+ * The spy is on the `@/lib/db` singleton the handler calls through, so the
+ * failure is forced on the handler's own write; the booking's transaction
+ * runs on its own transaction client and does not meet it.
+ */
+describe('POST /api/registrations — a failed tier-marker write after the booking committed', () => {
+  let teacherId: string;
+  let roomId: string;
+  let classId: string;
+  let studentId: string;
+  let token: string;
+  const accountIds: string[] = [];
+
+  beforeAll(async () => {
+    const teacherEmail = `reg-marker-teacher-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Reg', lastName: 'Marker',
+        email: teacherEmail,
+        account: { create: { email: teacherEmail } },
+        bio: 'registrations-route marker-write fixture teacher',
+        pageSlug: `reg-marker-${suffix}`,
+        defaultTimezone: 'UTC',
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountIds.push(teacher.accountId);
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Reg Marker Studio', address: `${suffix} Marker St`, city: 'Amsterdam',
+        postcode: '1234RM', floor: '1', roomName: 'Main', maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 20, rentalRate: 25 },
+      select: { id: true },
+    });
+
+    const cls = await createClassFixture(prisma, {
+      teacherId, teacherRoomId: teacherRoom.id,
+      classType: 'Reg Marker Vinyasa',
+      date: new Date('2099-08-02'),
+      startTime: new Date('1970-01-01T10:00:00Z'),
+      durationMinutes: 60,
+      roomCost: 25, minRate: 15, targetRate: 25,
+      minStudents: 1, maxStudents: 8,
+      status: 'open',
+    });
+    classId = cls.id;
+
+    const studentEmail = `reg-marker-student-${suffix}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Reg', lastName: 'Marker',
+        email: studentEmail, incomeTier: 3, claimedAt: new Date(),
+        account: { create: { email: studentEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentId = student.id;
+    const studentAccountId = student.accountId;
+    if (!studentAccountId) throw new Error('fixture: the claimed student has no account');
+    accountIds.push(studentAccountId);
+    token = await seedSession(prisma, studentAccountId);
+  });
+
+  afterAll(async () => {
+    await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    await prisma.registration.deleteMany({ where: { classId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.invitation.deleteMany({ where: { teacherId } });
+    await prisma.teacherStudent.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
+    await prisma.student.deleteMany({ where: { id: studentId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  });
+
+  it('answers 201 and logs the failure', async () => {
+    const failure = new Error('forced tier-marker write failure');
+    const markerWrite = vi.spyOn(appPrisma.student, 'updateMany').mockRejectedValueOnce(failure);
+    onTestFinished(() => markerWrite.mockRestore());
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined as unknown as void);
+    onTestFinished(() => warn.mockRestore());
+
+    const res = await POST(new NextRequest('http://localhost:3000/api/registrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(token) },
+      body: JSON.stringify({ classId }),
+    }));
+
+    // The forced failure was met, so the status below is about it.
+    expect(markerWrite).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(201);
+    expect(
+      await prisma.registration.findUnique({
+        where: { classId_studentId: { classId, studentId } },
+        select: { status: true },
+      }),
+    ).toEqual({ status: 'registered' });
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: failure, studentId }),
+      expect.any(String),
+    );
   });
 });
