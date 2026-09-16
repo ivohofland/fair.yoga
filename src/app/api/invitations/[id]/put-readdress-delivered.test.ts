@@ -256,4 +256,42 @@ describe('PUT /api/invitations/[id] resets delivered on every email change (#502
     expect(afterNameOnly.firstName).toBe('Corrected again');
     expect(afterNameOnly.teacherInboxNotifiedAt).toEqual(marker);
   });
+
+  // The other direction of the same branch, here rather than only in
+  // `tests/integration/invitations-api.test.ts` for the reason this whole
+  // file exists: the integration tier cannot run in a worktree with no dev
+  // server, and a reset whose positive case only runs there is a reset that
+  // does not run everywhere. The route's own readdress reset is what keeps a
+  // cap claimed for one person from silencing the next.
+  it('a PUT that moves the address clears the teacher-inbox cap marker (#622)', async () => {
+    const originalEmail = `readdress-cap-src-${suffix}@test.local`;
+    const invited = await inviteContact(prisma, {
+      teacherId, email: originalEmail, firstName: 'Capped', lastName: 'Moved',
+    });
+    if (!invited.ok) throw new Error(`expected an ordinary delivered invite, got ${invited.reason}`);
+
+    // Hand-set for the same reason the negative case above hand-sets it: the
+    // column's own writer is `notifyInvitee`'s teacher branch, which this
+    // test does not drive.
+    const marker = new Date(Date.now() - 3_600_000);
+    await prisma.invitation.update({
+      where: { id: invited.value.id },
+      data: { teacherInboxNotifiedAt: marker },
+    });
+
+    const newEmail = `readdress-cap-dst-${suffix}@test.local`;
+    const res = await PUT(
+      put(invited.value.id, { email: newEmail }, token),
+      { params: Promise.resolve({ id: invited.value.id }) },
+    );
+    expect(res.status).toBe(200);
+
+    const row = await prisma.invitation.findUniqueOrThrow({
+      where: { id: invited.value.id },
+      select: { email: true, delivered: true, teacherInboxNotifiedAt: true },
+    });
+    expect(row.email).toBe(newEmail);
+    expect(row.delivered).toBe(false);
+    expect(row.teacherInboxNotifiedAt).toBeNull();
+  });
 });
