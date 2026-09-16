@@ -435,7 +435,15 @@ test.describe('An invitation to a teacher-only account (#172)', () => {
     await page.waitForURL('**/account/privacy');
     await expect(page.getByRole('heading', { name: 'Pending invitations' })).toBeVisible();
     await page.getByRole('button', { name: 'Accept' }).click();
-    await expect(page.getByText('Accepted')).toBeVisible();
+    // The durable outcome, not the card's "Accepted" notice: that notice is a
+    // `SettledNotice`, which `PendingInvitationCard` renders only for the case
+    // where the `router.refresh()` after a committed accept did NOT repaint
+    // the page. When the refresh does land — as it does on a production build
+    // — the answered invitation leaves "Pending invitations" and the teacher
+    // appears below with its privacy controls, so the notice never renders at
+    // all. Asserting it raced the repaint: green against a dev server, red on
+    // all three CI attempts.
+    await expect(page.getByRole('button', { name: 'Remove this teacher' })).toBeVisible();
 
     const student = await prisma.student.findUniqueOrThrow({ where: { email: inviteeEmail }, select: { id: true } });
     await expect.poll(() => prisma.teacherStudent.count({
