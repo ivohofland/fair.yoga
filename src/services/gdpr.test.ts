@@ -2573,15 +2573,12 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
  * twice concurrently" (#459) and `deleteTeacherAccount`'s identical
  * `AlreadyErasedError` by nothing.
  *
- * Sequential, and that is not a weaker version of that race: the two
- * aborts protect different things. The student one stops a concurrent
- * duplicate committing a redundant second pass; `AlreadyErasedError`'s
- * docblock (`gdpr.ts`) says what it does and does not prevent there. This one
- * guards the write itself — an unscoped `teacher.update` re-runs the whole
- * anonymisation over an already-erased profile and re-stamps `deletedAt`,
- * moving the erasure's own timestamp forward. That is a GDPR record of when
- * the Article 17 request was
- * satisfied, and it does not need a race to be wrong.
+ * Sequential, and that is not a weaker version of that race: what this guard
+ * protects is the write itself, and a second call reaches that write with or
+ * without one. An unscoped `teacher.update` re-runs the whole anonymisation
+ * over an already-erased profile and re-stamps `deletedAt`, moving the
+ * erasure's own timestamp forward. That is a GDPR record of when the Article
+ * 17 request was satisfied, and it does not need a race to be wrong.
  *
  * `DELETE /api/account` cannot reach this sequentially (`validateSession`
  * resolves only live profiles, so a retry arrives with `teacherId` null) —

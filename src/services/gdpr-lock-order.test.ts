@@ -2212,8 +2212,9 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
   });
 
   /**
-   * One teacher, two open 2099 classes of one seat each, nobody registered.
-   * `classId`: the subject waits at 1 and a second student at 2.
+   * One teacher, two open 2099 classes of one seat each.
+   * `classId`: nobody registered; the subject waits at 1 and a second student
+   * at 2.
    * `otherClassId`: full (a filler holds its seat), the subject holds nothing
    * in it — the class a late entry can appear in.
    */
@@ -2345,16 +2346,21 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
       let release!: () => void;
       const released = new Promise<void>((r) => { release = r; });
       let holderReleased = false;
-      const holder = prisma.$transaction(
-        async (tx) => {
-          holderPid = await ownPid(tx);
-          await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${fx.studentId} FOR SHARE`;
-          parked();
-          await released;
-          holderReleased = true;
-        },
-        { timeout: 10_000 },
-      );
+      const holder = prisma
+        .$transaction(
+          async (tx) => {
+            holderPid = await ownPid(tx);
+            await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${fx.studentId} FOR SHARE`;
+            parked();
+            await released;
+            holderReleased = true;
+          },
+          { timeout: 10_000 },
+        )
+        .then(
+          () => 'held' as const,
+          (err: unknown) => ({ error: String(err) }),
+        );
 
       let preLockSawRelease: boolean | undefined;
       const original = dbLocks.lockClassRowsOrdered;
@@ -2379,6 +2385,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
         await Promise.all([holder, erasing]);
       }
 
+      expect(await holder).toBe('held');
       expect(await erasing).toBe('erased');
       // The discriminating half: the pre-lock ran only after the holder
       // committed, so the erasure waited at its `Student` lock — not merely at
@@ -2466,9 +2473,11 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
           (err: unknown) => ({ error: String(err) }),
         );
         // The erasure holds the subject's row and waits on the class the
-        // promoter holds. Released promptly: the cycle a wrong lock mode
-        // closes is detected at `deadlock_timeout` (1s), which must beat the
-        // 2s `lock_timeout` for the mutation below to read as `40P01`.
+        // promoter holds. Released promptly: if the erasure's `Student` lock
+        // conflicted with the promotion's registration insert, the two would
+        // form a cycle, and Postgres detects one at `deadlock_timeout` (1s).
+        // That has to come before the 2s `lock_timeout` for such a cycle to
+        // read as `40P01` rather than `55P03`.
         await waitUntilBlockedBy(promoterPid);
       } finally {
         release();
