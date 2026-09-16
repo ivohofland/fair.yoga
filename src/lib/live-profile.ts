@@ -1,16 +1,11 @@
 /**
  * The one live profile of a kind on an account, or null.
  *
- * `Account.teachers` and `Account.students` are lists because `accountId`'s
- * uniqueness is partial — see each model's own docblock in
- * `prisma/schema.prisma` for the index that enforces it. Prisma cannot
- * express a partial unique key, so it cannot type either relation as
- * at-most-one; callers select with `where: { deletedAt: null }`, which those
- * indexes make single-valued.
- *
- * The throw is what keeps the lost compile-time guarantee loud. Without an
- * index, a caller taking `[0]` picks arbitrarily and silently, and an
- * arbitrary pick can be a soft-deleted row.
+ * Callers pass a list already filtered to the live rows and take back the
+ * single element that filter is expected to leave. The throw is what keeps
+ * "expected" honest: taking `[0]` directly would pick an arbitrary row
+ * silently whenever that expectation broke, and a soft-deleted row is among
+ * what it could pick.
  */
 export function liveProfile<T>(rows: readonly T[]): T | null {
   if (rows.length > 1) {

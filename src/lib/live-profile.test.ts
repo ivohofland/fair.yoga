@@ -10,10 +10,9 @@ describe('liveProfile', () => {
     expect(liveProfile([{ id: 'only' }])).toEqual({ id: 'only' });
   });
 
-  // The partial unique index makes two live rows unreachable. This asserts
-  // what happens if it is ever absent: a loud throw, not an arbitrary pick.
-  // Two of the five call sites can be handed a tombstone by an arbitrary
-  // pick, which is why silence is the wrong default here.
+  // The point of the throw: a caller that took `[0]` would pick one of these
+  // silently. Asserting the message, not just that it threw, keeps this
+  // discriminating if the guard is ever loosened to a warning.
   it('throws rather than choosing between two live profiles', () => {
     expect(() => liveProfile([{ id: 'a' }, { id: 'b' }])).toThrow(
       /account holds 2 live profiles/,
