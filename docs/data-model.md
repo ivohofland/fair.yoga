@@ -544,11 +544,11 @@ it wrote. If the class is still open and not cancelled, the erasure cancels
 the registration and hands the freed seat to the waitlist hook, which promotes
 the next student or broadcasts the seat unless the waitlist is frozen. A
 teacher's walk-in into an `in_progress` class stays `registered`, as the
-erasure keeps every in-progress registration. It also deletes the roster link
-and any waitlist entry the booking resolved. Among what it does not undo: a
-`TeacherBlock` `resolveInvitationOnLink` may have cleared, and an `Invitation`
-it may have resolved — the erasure recreates no block. It anonymises that
-invitation's identity without reverting its status.
+erasure keeps every in-progress registration. The erasure also deletes the
+roster link and any waitlist entry the booking resolved. Among what it does
+not undo is `resolveInvitationOnLink`'s work: a `TeacherBlock` it cleared stays
+cleared, and an `Invitation` it resolved keeps its status, with its identity
+anonymised.
 
 The mechanism is `docs/lock-order.md`, "The `Student` row is the erasure's
 gate".
