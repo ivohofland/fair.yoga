@@ -739,8 +739,8 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
 
     // `deletedAt: null` in the WHERE, and a throw on a count of 0. A second
     // concurrent erasure of this student reaches here too, but it waited at
-    // `lockStudentForErasure` until the first committed, so every read above
-    // ran after the first erasure's writes: its `upcoming` is empty and the
+    // `lockStudentForErasure` until the first committed, so every read in
+    // this transaction ran after that commit: its `upcoming` is empty and the
     // `handleSpotFreed` loop below has nothing to broadcast for it. The
     // `Student` lock, not this throw, is what keeps waiting students from
     // being told twice about one seat. The throw is what stops that redundant
