@@ -23,10 +23,9 @@ async function makeAccount(tag: string): Promise<string> {
 
 /**
  * These assert the DATABASE refuses the write. `liveProfile`
- * (`src/lib/live-profile.ts`) throws on the state these indexes make
- * unreachable, so if they are absent that throw silently becomes the only
- * thing standing — and at two call sites the alternative to throwing is
- * handing out a soft-deleted row.
+ * (`src/lib/live-profile.ts`) throws when a query hands it two LIVE rows for
+ * one account — a state these indexes are what makes unreachable, so without
+ * them that throw would be the only thing standing between a caller and it.
  *
  * `isUniqueConflictOn` rather than a message match: it is the predicate two
  * production routes use to turn this exact conflict into a coded 409, so
