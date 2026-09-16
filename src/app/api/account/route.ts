@@ -14,6 +14,7 @@ import {
   AlreadyErasedError,
   deleteStudentAccount,
   deleteTeacherAccount,
+  ErasureLockSetError,
   type ErasureHalf,
 } from '@/services/gdpr';
 
@@ -21,18 +22,20 @@ import {
  * Turns an erasure failure into the answer that is actually true of it.
  *
  * The retry advice is the whole point, and it has to be conditional.
- * `isTransientDbError` is what separates "safe to retry" from "worth
- * retrying": a lock timeout, a deadlock, an expired transaction budget are
- * all lost races the next attempt can win, and this branch was added for
- * exactly one of them (`P2028` from `deleteStudentAccount`'s flat 20s
- * `timeout`). Everything else that can escape those services will fail the
- * same way forever — `P2025` from the opening `findUniqueOrThrow` if the
- * profile is already gone, `P2003` from a foreign key, a `TypeError` from a
- * bug — and telling that caller to "press Delete again" sends them into a
- * loop that cannot terminate, while making the real failure invisible to
- * them. `P2024` is the sharpest case: it means the connection pool is
- * exhausted, so an immediate retry actively makes the outage worse, which is
- * why the retryable message asks for a moment first.
+ * `transient` below is what separates "safe to retry" from "worth
+ * retrying": a lock timeout, a deadlock, an expired transaction budget
+ * (`isTransientDbError`) are all lost races the next attempt can win, and
+ * this branch was added for exactly one of them (`P2028` from
+ * `deleteStudentAccount`'s flat 20s `timeout`). `ErasureLockSetError` is the
+ * one exception that is not a DB error at all — see the disjunct below for
+ * why it is still retryable. Everything else that can escape those services
+ * will fail the same way forever — `P2025` from the opening
+ * `findUniqueOrThrow` if the profile is already gone, `P2003` from a foreign
+ * key, a `TypeError` from a bug — and telling that caller to "press Delete
+ * again" sends them into a loop that cannot terminate, while making the real
+ * failure invisible to them. `P2024` is the sharpest case: it means the
+ * connection pool is exhausted, so an immediate retry actively makes the
+ * outage worse, which is why the retryable message asks for a moment first.
  *
  * `half` decides what the message may claim about state, and the two halves
  * are NOT symmetric — an earlier version of this docblock said "both erasures
@@ -61,7 +64,9 @@ import {
  * and this split removes; saying nothing was the failure before it.
  */
 function erasureFailure(err: unknown, opts: { half: ErasureHalf; partial: boolean }) {
-  const transient = isTransientDbError(err);
+  // `ErasureLockSetError` is retryable: the retry's pre-lock covers the class
+  // whose entry caused it (see where `gdpr.ts` throws it).
+  const transient = isTransientDbError(err) || err instanceof ErasureLockSetError;
   // The teacher erasure's committed-before-the-transaction exposure. Every
   // failure of that half carries it, `partial` included.
   const billed = 'Any class that was still in progress may already have been closed and billed.';

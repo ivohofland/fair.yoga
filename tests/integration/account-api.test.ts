@@ -642,11 +642,115 @@ describe('DELETE /api/account', () => {
     expect(second.status).toBe(200);
   }, 40_000);
 
+  it('reports ERASURE_BUSY when a waitlist entry appears outside the erasure lock set', async () => {
+    const acc = await seedStudentOnly('lockset');
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Lockset Venue',
+        address: `${suffix} Lockset St`,
+        city: 'Testville',
+        postcode: '1234LS',
+        floor: '1',
+        roomName: 'Hall',
+        maxCapacity: 10,
+        createdById: teacherId,
+      },
+    });
+    seededRoomIds.push(room.id);
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 15 },
+    });
+    seededTeacherRoomIds.push(teacherRoom.id);
+    const makeClass = async (date: string) => {
+      const cls = await createClassFixture(prisma, {
+        teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: 'Lockset Flow',
+        date: new Date(date),
+        startTime: hhmmToTime('09:00'),
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 8,
+        status: 'open',
+      });
+      seededClassIds.push(cls.id);
+      return cls.id;
+    };
+    const bookedClassId = await makeClass('2099-07-01');
+    const lateClassId = await makeClass('2099-07-02');
+    const registration = await prisma.registration.create({
+      data: { classId: bookedClassId, studentId: acc.studentId, status: 'registered', tierAtBooking: 3 },
+    });
+
+    // Hold the subject's registration: the erasure's `registration.updateMany`
+    // parks on it, which is after its pre-lock has chosen its classes.
+    let holderPid = 0;
+    let parked!: () => void;
+    const isParked = new Promise<void>((r) => { parked = r; });
+    let release!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const holding = prisma.$transaction(
+      async (tx) => {
+        const [own] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+        holderPid = own!.pid;
+        await tx.$queryRaw`SELECT id FROM "Registration" WHERE id = ${registration.id} FOR UPDATE`;
+        parked();
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+    await isParked;
+
+    const deleting = fetch(`${BASE_URL}/api/account`, { method: 'DELETE', headers: cookie(acc.token) });
+    try {
+      const deadline = Date.now() + 1_500;
+      for (;;) {
+        const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+          SELECT count(*)::int AS n FROM pg_stat_activity
+           WHERE wait_event_type = 'Lock'
+             AND ${holderPid} = ANY(pg_blocking_pids(pid))`;
+        if ((row?.n ?? 0) > 0) break;
+        if (Date.now() > deadline) throw new Error('the erasure never parked on the held registration');
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      // An entry the erasure's pre-lock never saw: written directly, as a
+      // writer that bypassed the join's gate would.
+      await prisma.waitlistEntry.create({
+        data: { classId: lateClassId, studentId: acc.studentId, position: 1, status: 'waiting' },
+      });
+    } finally {
+      release();
+      await holding;
+    }
+
+    const res = await deleting;
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: { message: string; code?: string } };
+    expect(body.error.code).toBe('ERASURE_BUSY');
+    expect(body.error.message).toMatch(/again/i);
+    const student = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
+    expect(student.deletedAt).toBeNull();
+
+    // The retry the message promises: its pre-lock now covers `lateClassId`.
+    const second = await fetch(`${BASE_URL}/api/account`, { method: 'DELETE', headers: cookie(acc.token) });
+    expect(second.status).toBe(200);
+    expect(await prisma.waitlistEntry.count({ where: { studentId: acc.studentId } })).toBe(0);
+  }, 40_000);
+
   /**
    * #196 branch 2, Task 3, route half. The service now aborts a redundant
-   * erasure with `AlreadyErasedError` so its post-commit `handleSpotFreed`
-   * loop cannot broadcast twice (`gdpr-lock-order.test.ts` owns that
-   * assertion). This pins the other half of that decision: the loser's abort
+   * erasure with `AlreadyErasedError` so a second, redundant transaction
+   * cannot commit at all. That abort is NOT what stops a doubled
+   * `spot_available` broadcast — the loser reads `upcoming` only after the
+   * winner has committed and cancelled those registrations, so it finds none
+   * to hand `handleSpotFreed`; the `Student` lock is what prevents the
+   * doubled broadcast, and the abort is what the route below maps to 200
+   * (`gdpr-lock-order.test.ts` owns the rejection-count assertion that pins
+   * the abort). This pins the other half of that decision: the loser's abort
    * is a SUCCESS, and must not fall into `erasureFailure` — which would
    * answer a 500 and tell a user their account could not be removed, about an
    * account that is gone.
@@ -655,11 +759,13 @@ describe('DELETE /api/account', () => {
    * recorded: two plain fetches serialise, and a serialised second request
    * never reaches the guard at all — `validateSession` resolves only live
    * profiles, so it would 401 before the route ran. The holder takes the
-   * `Student` row that ends the erasure transaction, so both requests
-   * authenticate against a live profile, both run their whole transaction,
-   * and both park at the write — the interleaving `Promise.all` alone cannot
-   * force. Held well inside the erasure's own 2s `lock_timeout`, so what the
-   * loser meets is the CAS and not `55P03`.
+   * `Student` row the erasure now locks at its own second statement
+   * (`lockStudentForErasure`, before its class pre-lock and its reads), so
+   * both requests authenticate against a live profile, both run their whole
+   * transaction, and both park there — the interleaving `Promise.all` alone
+   * cannot force it. Held well inside the erasure's own 2s `lock_timeout`, so
+   * what the loser meets, once the holder releases, is the CAS and not
+   * `55P03`.
    */
   it('answers both halves of a concurrent erasure with success', async () => {
     const acc = await seedStudentOnly('concurrent');
@@ -743,9 +849,12 @@ describe('DELETE /api/account', () => {
    * assertion says so.
    *
    * The session is resolved before the holder commits, so `session.studentId`
-   * is truthy for a profile that is erased by the time the CAS re-evaluates —
-   * which is exactly the state the concurrent case produces, without needing
-   * two racers to land in the right order.
+   * is truthy for a profile the holder erases while this request's own
+   * erasure is parked at its second statement, `lockStudentForErasure` — the
+   * holder's `FOR UPDATE` conflicts with it. Once the holder releases and
+   * commits, this request proceeds and its own closing CAS finds the row
+   * already erased — exactly the state the concurrent case produces, without
+   * needing two racers to land in the right order.
    */
   it('finishes the teacher half when the student half was erased underneath it', async () => {
     const acc = await seedDual('dualrace');
