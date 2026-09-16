@@ -1126,23 +1126,28 @@ itself:
 | `POST /api/registrations` (`src/app/api/registrations/route.ts`) | `lockLiveStudent` | first statement of its transaction, on the student's booking and the teacher's roster add alike | `FOR SHARE` | refuses: 409, `This account has been deleted` to the student, `This student's account no longer exists` to the teacher; an absent one is answered 404 `Student not found` before the transaction opens |
 
 **`Student → Class` at every site.** Each takes the `Student` row before its first
-`Class` row, so the two can meet only at the `Student` row, and what each side
-sees after waiting there is decided by who arrived first:
+`Class` row, so an erasure and a gated writer can meet only at the `Student`
+row, and what each side sees after waiting there is decided by who arrived
+first:
 
 - **The erasure first.** The writer waits at `lockLiveStudent`. Once the
   erasure commits, the writer's read under the lock sees the committed
   `deletedAt`, and the writer refuses before it writes anything — no entry, no
   roster link. An erasure that outlasts the 2s bound leaves the writer with
-  `55P03`, which `classifyApiError` answers as transient.
+  `55P03`, which `classifyApiError` answers as transient (the booking's case:
+  `src/app/api/registrations/route-lock-order.test.ts`, "answers a booking
+  that times out behind an erasure lock as busy, not as deleted").
 - **The writer first.** The erasure waits at `lockStudentForErasure` until the
   writer commits. Its class pre-lock runs after that, in a snapshot that
   contains what the writer committed, so a class where the student now holds
   an entry (a join's) is locked, and its entries deleted and renumbered under
   the lock. The erasure's `upcoming` read then sees the booking, so for an
-  open class `handleSpotFreed` runs, even outside the lock set. The erasure's
-  wait is bounded by its own 2s `lock_timeout`: a writer that holds the gate
-  longer fails the erasure with `55P03`, which `DELETE /api/account` answers
-  with 503 `ERASURE_BUSY`, saying nothing was changed.
+  open, uncancelled class `handleSpotFreed` runs, even outside the lock set. A
+  teacher's walk-in into an `in_progress` class is kept, as the erasure keeps
+  every in-progress registration. The erasure's wait is bounded by its own 2s
+  `lock_timeout`: a writer that holds the gate longer fails the erasure with
+  `55P03`, which `DELETE /api/account` answers with 503 `ERASURE_BUSY`, saying
+  nothing was changed.
 - **After the erasure committed**, a gated writer's request is refused without
   waiting. A self-booking made after that never reaches the gate: the erasure
   removed its session, so the route answers 401 — unless the account's live
@@ -1151,8 +1156,8 @@ sees after waiting there is decided by who arrived first:
   a student, and the route answers 403 `Student access required`. A teacher's
   roster add reaches the gate only through a roster link that outlived the
   erasure; without one, the route answers 403 `Student is not in your roster`
-  first. The gate's sequential refusal is the teacher path's, through such a
-  link.
+  first. In this route, only the teacher path reaches the gate's sequential
+  refusal, through such a link.
 
 For a join, the order is observable only on a REJOIN — a join into a class
 where the subject already holds an entry of any status, `waiting` included (a
@@ -1172,6 +1177,8 @@ that holds the gate" for the second — and by `src/services/waitlist.test.ts`
   erasure locks".
 - The reverse race is pinned by "makes an erasure that arrives mid-booking
   wait, then cancel the booking and pass the seat on".
+- The teacher path's order is pinned by "refuses a teacher adding a student
+  who waits behind the erasure, in a class the erasure locks".
 - The teacher path is pinned by "refuses a teacher adding an erased student
   whose roster link survived" and "refuses a teacher adding the student after
   the erasure cancelled registrations".
@@ -1219,8 +1226,15 @@ what every production `Student` update does today (the census below).
 - Two gated writers of one student each hold `FOR SHARE`, because the mode is
   compatible with itself, and if both upgrade they deadlock.
 - Measured 2026-09-16: two sessions each took `FOR SHARE` on one `Student`
-  row, then each updated it. The first failed with `40P01` "while updating
-  tuple … in relation "Student"".
+  row, then each updated it. One of them failed with `40P01` "while updating
+  tuple … in relation "Student"" — which session Postgres aborts depends on
+  timing:
+
+    -- session A, then session B 0.3s later
+    BEGIN;
+    SELECT id FROM "Student" WHERE id = '<id>' FOR SHARE;
+    -- after both hold it:
+    UPDATE "Student" SET "tierSelectedAt" = "tierSelectedAt" WHERE id = '<id>';
 
 A transaction that first took ANY row the erasure or a gated writer goes on to
 request, and then wrote the student's row, would wait on the gate while holding
@@ -1240,7 +1254,8 @@ erasure's lock set, the booking held the `Class` row and waited on `Student`
 while the erasure held `Student` and waited on the `Class` row
 (`docs/superpowers/specs/2026-09-16-waitlist-erasure-gate-design.md`, §1,
 *Correction*), while the booking was ungated. Since #625 the booking is gated,
-so the corollary above is what keeps the write outside. Pinned over HTTP by
+so what keeps the write outside is the upgrade described above: an update
+inside the transaction would upgrade the gate's `FOR SHARE`. Pinned over HTTP by
 `tests/integration/registrations-api.test.ts` ("a first self-booking does not
 wait on a share lock held on its student's row"): the pinning test's holder takes
 `FOR SHARE`, the gate's own mode. The booking's gate shares it, and only an
@@ -1312,11 +1327,12 @@ written closes a cycle with that closing `UPDATE`:
   then deletes a `TeacherStudent` row the erasure has deleted. Tracked in
   #626.
 
-Both are reasoned from the code and neither has been reproduced. Both predate
-the gate. The booking's case is closed by #625. Its cycle was reproduced
-against the ungated route on 2026-09-16, by the test "refuses a booking whose
-roster link the erasure has already deleted": the booking's roster-link insert
-failed with `40P01`, and the route answered 503.
+Each case above is reasoned from the code, none has been reproduced, and each
+predates the gate. The booking's case is closed by #625. Its cycle was
+reproduced against the ungated route on 2026-09-16, by the test
+`src/app/api/registrations/route-lock-order.test.ts` ("refuses a booking whose
+roster link the erasure has already deleted"): the booking's roster-link
+insert failed with `40P01`, and the route answered 503.
 
 ### Who is not gated yet
 

@@ -525,10 +525,10 @@ No pricing engine. No individual registration. No link to Room or Student. No `s
 | cancelled_at | datetime, nullable | |
 | updated_at | datetime | |
 
-**A booking that races its own student's erasure is refused (#625).** The
-erasure wins, as it does for a waitlist join. `POST /api/registrations` and
-`deleteStudentAccount` serialise on the `Student` row, for the student's own
-booking and the teacher's roster add alike.
+**A booking that meets its student's erasure at the `Student` row is refused
+if the erasure took the row first (#625).** `POST /api/registrations` and
+`deleteStudentAccount` serialise on that row, for the student's own booking
+and the teacher's roster add alike.
 
 A booking that finds the profile erased writes nothing and answers 409. A
 teacher sees `This student's account no longer exists`. A student sees
@@ -540,13 +540,15 @@ but no longer resolves a student, and the request is answered 403 `Student
 access required`.
 
 A booking that takes the row first commits, and the erasure then handles what
-it wrote. If the class is still open, the erasure cancels the registration and
-hands the freed seat to the waitlist hook, which promotes the next student or
-broadcasts the seat unless the waitlist is frozen. It also deletes the roster
-link and any waitlist entry the booking resolved. It does not undo the rest of
-the booking: `resolveInvitationOnLink` may have cleared a `TeacherBlock` and
-resolved an `Invitation`, and the erasure recreates no block. It anonymises
-that invitation's identity without reverting its status.
+it wrote. If the class is still open and not cancelled, the erasure cancels
+the registration and hands the freed seat to the waitlist hook, which promotes
+the next student or broadcasts the seat unless the waitlist is frozen. A
+teacher's walk-in into an `in_progress` class stays `registered`, as the
+erasure keeps every in-progress registration. It also deletes the roster link
+and any waitlist entry the booking resolved. Among what it does not undo: a
+`TeacherBlock` `resolveInvitationOnLink` may have cleared, and an `Invitation`
+it may have resolved — the erasure recreates no block. It anonymises that
+invitation's identity without reverting its status.
 
 The mechanism is `docs/lock-order.md`, "The `Student` row is the erasure's
 gate".
