@@ -519,8 +519,8 @@ export async function autoCancelClasses(
         // `waiting` row committing between the two would be closed without
         // being notified — which is the bug this whole change is about,
         // reintroduced two statements apart. The guard is only a
-        // statement-count saving on the common case of no queue; `gdpr.ts`
-        // issues the same update unguarded.
+        // statement-count saving on the common case of no queue: the update
+        // would be correct without it, matching nothing.
         if (waiting.length > 0) {
           await tx.waitlistEntry.updateMany({
             where: { classId: cls.id, status: 'waiting' },

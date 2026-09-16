@@ -2532,12 +2532,16 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
       const gateHeld = new Promise<void>((r) => { atGate = r; });
       let release!: () => void;
       const held = new Promise<void>((r) => { release = r; });
+      let stalled = false;
       const original = dbLocks.lockStudentForErasure;
       const spy = vi.spyOn(dbLocks, 'lockStudentForErasure').mockImplementation(async (tx, id) => {
         await original(tx, id);
-        erasurePid = await ownPid(tx);
-        atGate();
-        await held;
+        if (id === fx.studentId && !stalled) {
+          stalled = true;
+          erasurePid = await ownPid(tx);
+          atGate();
+          await held;
+        }
       });
       onTestFinished(() => spy.mockRestore());
 
@@ -2661,6 +2665,64 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
         { studentId: firstId, position: 1 },
         { studentId: thirdId, position: 2 },
       ]);
+    } finally {
+      await cleanupQueue(fx);
+    }
+  }, 20_000);
+
+  it('does not tell a join that timed out behind an erasure lock that the account was deleted', async () => {
+    const fx = await makeQueue();
+    try {
+      // The erasure's half of the gate, held past the join's 2s
+      // `lock_timeout`: released only once the join has settled, so the join
+      // cannot get the row and must fail with `55P03` — a busy database, not
+      // an erased account.
+      let holderPid = 0;
+      let parked!: () => void;
+      const isParked = new Promise<void>((r) => { parked = r; });
+      let release!: () => void;
+      const released = new Promise<void>((r) => { release = r; });
+      const holder = prisma
+        .$transaction(
+          async (tx) => {
+            holderPid = await ownPid(tx);
+            await dbLocks.lockStudentForErasure(tx, fx.studentId);
+            parked();
+            await released;
+          },
+          { timeout: 10_000 },
+        )
+        .then(
+          () => 'held' as const,
+          (err: unknown) => ({ error: String(err) }),
+        );
+
+      let joining: Promise<unknown> | undefined;
+      try {
+        await awaitHandshake(isParked, 'Student FOR NO KEY UPDATE holder');
+        joining = addToWaitlist(prisma, fx.otherClassId, fx.studentId).then(
+          (entry) => entry,
+          (err: unknown) => err,
+        );
+        await waitUntilBlockedBy(holderPid);
+      } finally {
+        await joining;
+        release();
+        await holder;
+      }
+
+      const joinOutcome = await joining;
+      const joinText =
+        joinOutcome instanceof Error
+          ? String(joinOutcome)
+          : `join resolved: ${JSON.stringify(joinOutcome)}`;
+      expect(joinText).toMatch(/55P03|lock timeout/);
+      expect(joinOutcome).not.toBeInstanceOf(WaitlistJoinError);
+      expect(await holder).toBe('held');
+      expect(
+        await prisma.waitlistEntry.count({ where: { classId: fx.otherClassId, studentId: fx.studentId } }),
+      ).toBe(0);
+      expect(await prisma.teacherStudent.count({ where: { studentId: fx.studentId } })).toBe(0);
     } finally {
       await cleanupQueue(fx);
     }

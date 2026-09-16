@@ -197,9 +197,9 @@ export function getWaitlistWindow(
  *
  * Guards:
  * - the student must not be erased — read under the `Student` gate
- *   (`lockLiveStudent`, `FOR SHARE`), the transaction's first lock, so a join
- *   serializes with an erasure of the same student (#183) and a refused one
- *   writes nothing
+ *   (`lockLiveStudent`), the transaction's first lock, so a join serializes
+ *   with an erasure of the same student (#183) and a refused one writes
+ *   nothing
  * - then, under the shared FOR UPDATE class lock, so joins serialize with
  *   registrations and promotions:
  *   - the class must be open

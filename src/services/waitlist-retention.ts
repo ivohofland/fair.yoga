@@ -130,9 +130,9 @@
  * entry, and on those the trigger answers whatever the doors do.
  *
  * WHY IT CANNOT DEADLOCK AGAINST THE ERASURE. `deleteStudentAccount` deletes
- * waitlist entries with an UNSCOPED `deleteMany({ where: { studentId } })` —
- * every status, terminal classes included — so its write set and this one
- * overlap, and Postgres picks the victim of any cycle: it can be the erasure,
+ * its subject's waitlist entries with no status scope — terminal classes
+ * included — so its write set and this one overlap, and Postgres picks the
+ * victim of any cycle: it can be the erasure,
  * which means a student's Art. 17 request failing because a background sweep
  * raced it.
  *
@@ -147,8 +147,9 @@
  * argument; it is not, and a future site copying it as one would be misled.
  *
  * WHAT ONE CLASS PER TRANSACTION ACTUALLY BUYS is two smaller things: it keeps
- * `docs/lock-order.md`'s "five sites lock more than one `Class` row" count
- * true, and it bounds how long this sweep holds locks against live traffic.
+ * this sweep off the list of sites that lock more than one `Class` row
+ * (`docs/lock-order.md`, "Ordering WITHIN `Class`", which owns that census),
+ * and it bounds how long this sweep holds locks against live traffic.
  *
  * ARGUED ON THE MECHANISM, NOT ON MULTIPLICITY. `docs/lock-order.md`
  * classifies lock sites by MULTIPLICITY — a transaction holding two `Class` row
