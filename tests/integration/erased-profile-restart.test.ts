@@ -1,5 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { deleteStudentAccount, deleteTeacherAccount } from '@/services/gdpr';
 import { BASE_URL, cookie, freshIp, seedSession, uniqueSuffix } from '../helpers';
 
 const prisma = new PrismaClient();
@@ -107,7 +108,7 @@ describe('an erased profile no longer bars its account (#623)', () => {
         claimedAt: new Date(),
       },
     });
-    await prisma.teacher.create({
+    const erased = await prisma.teacher.create({
       data: {
         accountId: acct.id,
         firstName: 'Deleted', lastName: 'Teacher',
@@ -128,6 +129,14 @@ describe('an erased profile no longer bars its account (#623)', () => {
     });
 
     expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.data.teacherId).not.toBe(erased.id);
+
+    // `fetch` follows redirects, so the pathname is the signal, not the
+    // status — a bounce to `/login` also answers 200.
+    const page = await fetch(`${BASE_URL}/schedule`, { headers: { ...cookie(token), ...freshIp() } });
+    expect(page.status).toBe(200);
+    expect(new URL(page.url).pathname).toBe('/schedule');
   });
 
   it('still answers ALREADY_STUDENT when the student side is genuinely live', async () => {
@@ -158,5 +167,68 @@ describe('an erased profile no longer bars its account (#623)', () => {
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.error.code).toBe('ALREADY_STUDENT');
+  });
+
+  // #623's literal reproduction: every other fixture above hand-builds the
+  // erased row. This one runs the real erasure and then drives the surviving
+  // session through the route, so nothing about the shape of what
+  // `deleteStudentAccount` leaves behind is assumed rather than produced.
+  it('accepts a new student side after a REAL deleteStudentAccount erasure', async () => {
+    const acct = await account('real-erasure-student');
+    await liveTeacher(acct, 'real-erasure-student-teacher');
+    const student = await prisma.student.create({
+      data: {
+        accountId: acct.id,
+        firstName: 'Going', lastName: 'Away',
+        email: acct.email,
+        claimedAt: new Date(),
+      },
+    });
+    const token = await seedSession(prisma, acct.id);
+
+    // The live teacher on this account is what keeps `deleteStudentAccount`
+    // from also clearing the session — see its own `teacherOnAccount` check.
+    await deleteStudentAccount(prisma, student.id);
+
+    const res = await fetch(`${BASE_URL}/api/account/student-profile`, {
+      method: 'POST',
+      headers: { ...cookie(token), ...freshIp() },
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.data.studentId).not.toBe(student.id);
+  });
+
+  // The mirror direction: `deleteTeacherAccount` has the same
+  // `studentOnAccount` check (`services/gdpr.ts`), so a live student side
+  // keeps this session alive too.
+  it('accepts a new teacher side after a REAL deleteTeacherAccount erasure', async () => {
+    const acct = await account('real-erasure-teacher');
+    await prisma.student.create({
+      data: {
+        accountId: acct.id,
+        firstName: 'Live', lastName: 'Student',
+        email: acct.email,
+        claimedAt: new Date(),
+      },
+    });
+    const teacher = await liveTeacher(acct, 'real-erasure-teacher-teacher');
+    const token = await seedSession(prisma, acct.id);
+
+    await deleteTeacherAccount(prisma, teacher.id);
+
+    const res = await fetch(`${BASE_URL}/api/account/teacher-profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(token), ...freshIp() },
+      body: JSON.stringify({
+        firstName: 'Second', lastName: 'Innings', bio: '',
+        pageSlug: `real-erasure-teacher-new-${suffix}`,
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.data.teacherId).not.toBe(teacher.id);
   });
 });
