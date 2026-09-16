@@ -6,6 +6,19 @@ with one keyed on a fact the row actually holds.
 
 Measured against `main` at `e04f0dd1`.
 
+**Every line number in this document was measured at that baseline**, and the
+implementation has moved a good many of them since — including by this
+document's own branch. §4.3 already writes that convention out for its own
+commands; it holds for every citation here. Each one names a symbol or quotes
+a phrase beside the number, so a stale citation is recovered by grepping that
+rather than by trusting the line.
+
+Sections amended after implementation, under the PR #624 review, are marked
+**(amended)** where the shipped design differs from the one first written
+here. Where this spec and the plan
+(`docs/superpowers/plans/2026-09-16-teacher-inbox-dispatch-cap.md`) disagree,
+this document is authoritative.
+
 ## 1. The premise, verified
 
 #622's claims A-E all hold. Three things it states imprecisely, each of which
@@ -134,18 +147,31 @@ Migration: hand-authored is unnecessary (no CHECK constraint), so
 following `20260911101701_invitation_notify_failed_at` as the nearest
 precedent.
 
-### 4.2 The write and the read are one statement
+### 4.2 The write and the read are one statement, and so are the claim and the insert *(amended)*
 
 In `notifyInvitee`'s teacher branch (`src/services/invitations.ts:604`),
 replacing the bare `createNotification` call:
 
 ```ts
-const claimed = await db.invitation.updateMany({
-  where: { id: input.invitationId, teacherInboxNotifiedAt: null },
-  data: { teacherInboxNotifiedAt: new Date() },
+const outcome = await db.$transaction(async (tx): Promise<TeacherInboxDispatch> => {
+  const claimed = await tx.invitation.updateMany({
+    where: {
+      id: input.invitationId,
+      teacherId: input.teacherId,
+      email,
+      teacherInboxNotifiedAt: null,
+    },
+    data: { teacherInboxNotifiedAt: input.claimedAt },
+  });
+  if (claimed.count > 0) {
+    await createNotification(tx, { recipientType: 'teacher', ... });
+    return 'notified';
+  }
+  const capped = await tx.invitation.count({ /* the same where, marker not null */ });
+  return capped > 0 ? 'already-capped' : 'no-matching-row';
 });
-if (claimed.count === 0) return;
-await createNotification(db, { recipientType: 'teacher', ... });
+if (outcome !== 'notified') logUndeliveredTeacherInbox(outcome, input);
+return;
 ```
 
 The `where` is the whole suppression: the claim succeeds exactly once per row,
@@ -153,6 +179,45 @@ and a losing claim returns without notifying. No separate read, so no
 time-of-check window. A row deleted mid-flight — the teacher removed the
 contact while the dispatch was in the air — matches nothing and is likewise
 not notified, which is the behaviour that case wants.
+
+**The claim and the insert commit together.** The version first written here
+made them two separately-committable writes, on the argument that a failed
+insert would be compensated by the clear below. It would not, reliably: the
+clear is issued against the same client microseconds later, so whatever
+refused the insert usually refuses the clear too, and a process killed between
+the two statements — `docker compose up -d --build` on deploy kills in-flight
+fire-and-forget work — reaches the clear never, with no log line anywhere.
+Either way the marker stands over a notification that does not exist, nothing
+else lifts it, and the invitee is silent forever while the teacher is shown
+"Sent". Everything in §2 is built to fail toward notifying; that was the one
+place this design failed the other way. `createNotification` already accepts a
+transaction client (`src/services/notifications.ts`), and its bus emit is
+documented there as harmless for a transaction that later rolls back. Lock
+order: one `Invitation` row plus a `Notification` insert whose only foreign
+key is null here, so this holds a single node of `docs/lock-order.md`'s line.
+
+**`email` and `teacherId` are in the `where` too.** Scoped by id alone, a
+`PUT` readdress committing between a dispatch's start and its claim leaves the
+row pointing at B while A's claim caps it — B is never notified, and because
+the dispatch to A *succeeded* nothing fails and nothing re-opens it. Scoping
+the claim to the address it actually resolved an account for makes both
+interleavings safe: PUT first and the claim matches nothing; claim first and
+the PUT clears it. `teacherId` costs nothing and puts the write's own
+ownership in its `where`, the way every neighbouring `Invitation` write names
+the state it allows.
+
+**A miss is two states, and the log line is what tells them apart.** `if
+(claimed.count === 0) return` conflated the cap holding (ordinary, and the
+whole point) with no row matching at all — deleted mid-flight, readdressed, or
+a caller threading an id it does not own, which is a lost notification with no
+column and no telemetry. The transaction answers a `TeacherInboxDispatch`
+union instead and the branch logs `already-capped` at `info` and
+`no-matching-row` at `warn`. The diagnostic `count` runs only on the miss
+path, inside the same transaction, and carries no `.catch` — a guarded
+statement inside an interactive transaction poisons the rest of it
+(`docs/lock-order.md`). This is the same split, for the same reason, as
+`processEmailFallback`'s `recipient-missing` / `opted-out` pair
+(`src/services/email-fallback.ts`).
 
 **`lastNotifyFailedAt` must not appear in this `where`, and decision 4 is
 implemented on the failure path instead.** The tempting form of decision 4 is
@@ -171,32 +236,43 @@ So **`deliverInvitation`'s `.catch` clears `teacherInboxNotifiedAt`**
 (`src/services/invitations.ts:723-737`), restoring notifiability at the moment
 the failure is known rather than asking a later reader to infer it.
 
-Two properties of that clear, both load-bearing:
+Two properties of that clear, both load-bearing *(amended)*:
 
 - **It is CAS'd on the marker value this dispatch's own claim wrote**
   (`where: { id, teacherInboxNotifiedAt: claimedAt }`) — *not* on
   `lastNotifiedAt`, the way the `lastNotifyFailedAt` write beside it is.
   `lastNotifiedAt` is the right correlate for `lastNotifyFailedAt`: both are
   per-attempt, both written by the dispatching route. The correlate for
-  `teacherInboxNotifiedAt` is **the claim**, which is the only thing that
-  ever sets it. Enumerate when this `.catch` can run with a marker standing:
+  `teacherInboxNotifiedAt` is **the claim**. Clearing is right whenever this
+  `where` matches, and it matches only a marker carrying this dispatch's own
+  `claimedAt`:
 
-  1. *This attempt claimed, then `createNotification` threw.* The marker is
-     provably this attempt's own, so clearing is always correct — and under
-     a `claimedAt` CAS it always happens. Under a `lastNotifiedAt` CAS it
-     would be refused whenever the row's `lastNotifiedAt` had moved on in the
-     meantime (a resend landing during a slow failure), leaving the marker
-     standing over a notification that was never created: permanent silence,
-     the one outcome this feature exists to prevent.
-  2. *This attempt never claimed — the stranger, student, blocked or
-     refused-claim paths — and threw.* Any marker belongs to another attempt
-     and clearing is always wrong. A `lastNotifiedAt` CAS blocks this only
-     when the failing attempt is itself superseded, so it misses the case it
-     was added for: resend #1 claims through the teacher branch, the
+  1. *This attempt claimed and something then threw.* Once the claim commits
+     with its insert, that is a narrow case: the transaction rejecting while
+     Postgres committed it anyway. Clearing then re-opens a cap over a
+     notification that did land, and the next resend notifies twice — the
+     direction this design prefers. Scoping on `lastNotifiedAt` instead would
+     refuse that clear whenever a resend had moved the column on in the
+     meantime, which was the permanent-silence failure this CAS was chosen to
+     avoid when the claim and the insert were separately committable.
+  2. *This attempt never claimed, and threw.* Any exit that precedes the
+     claim — every branch above the teacher one, and every throw before
+     `notifyInvitee` is reached at all, `deliverInvitation`'s own teacher
+     lookup and `requireNormalised` included — wrote `claimedAt` nowhere, so
+     a marker on the row belongs to another attempt and the `where` leaves it
+     alone. Clearing here is always wrong, and a `lastNotifiedAt` CAS blocks
+     it only when the failing attempt is itself superseded, so it misses the
+     case it was added for: resend #1 claims through the teacher branch, the
      invitee's teacher profile is then deleted, resend #2 takes the stranger
      branch and Resend is down — `lastNotifiedAt` matches, and a branch that
-     never claimed clears someone else's marker. Under a `claimedAt` CAS
-     nothing wrote that value, so the `where` matches nothing.
+     never claimed clears someone else's marker.
+
+  One arithmetic exception to "its own": `claimedAt` is `new Date()` at
+  `TIMESTAMP(3)` precision, so two dispatches entering `deliverInvitation` in
+  the same millisecond carry the same value and one of them can lift the
+  other's marker. The cost is one extra notification, which is again the
+  preferred direction, so the code is unchanged and the wording is hedged
+  rather than the invariant asserted.
 
   A readdress or a revive nulls the marker in between: null matches no
   `claimedAt`, and null is already the state this clear wants.
@@ -204,8 +280,10 @@ Two properties of that clear, both load-bearing:
   after. That suppression exists because `lastNotifyFailedAt` is teacher-visible
   and would otherwise proxy for "does this address have an account"
   (`src/lib/notify-health.ts`). `teacherInboxNotifiedAt` is visible to nobody
-  (§5), so gating its clear on the same burst check would buy no privacy and
-  would strand every invitee whose notification failed during an outage.
+  (§5), so gating its clear on the same burst check would buy no privacy — and
+  it would silence the clear precisely when a failure is most likely, since
+  the burst that trips the guard is a count of unrelated dispatches rather
+  than evidence about this one.
 
 ### 4.3 Signature
 
@@ -254,7 +332,7 @@ hit needs reading, not assuming.
 | Site | Change | Why |
 |---|---|---|
 | `src/app/api/invitations/[id]/route.ts:246` | join `delivered` and `lastNotifyFailedAt` in the `readdressed` reset | a readdress points the row at a different person |
-| `revivePendingInvitation` (`src/services/invitations.ts:421`) | clear in the `data` alongside `respondedAt: null` | it reuses the same row (`accepted` → `pending`); a re-invitation after a link ended is a new invitation |
+| `revivePendingInvitation` (`src/services/invitations.ts:421`) | clear in the `data` alongside `respondedAt: null`, **after** the `...fields` spread | it reuses the same row (`accepted` → `pending`); a re-invitation after a link ended is a new invitation. After the spread so that widening `fields` cannot let a caller carry a marker across the revive |
 | `deliverInvitation`'s `.catch` (`src/services/invitations.ts:723-737`) | clear under a `claimedAt` CAS, **above** the `looksSystemic` early return | §4.2 |
 
 Remove-and-re-add needs no reset: `DELETE` then `POST /api/students` creates a
@@ -277,12 +355,23 @@ conventional:
 
 **The column must never reach a teacher-facing serializer.** It is a direct
 statement of which account shape an address holds — a stronger oracle than the
-one `recordDispatchFailure` (`src/lib/notify-health.ts`) exists to bound. Two
-things make that a rule rather than a hope: `invitationDeliveryStatus`
-(`src/lib/contacts.ts:44-51`) declares its own structural input type, so a new
-model column does not flow into it, and
-`src/app/(teacher)/students/contacts/[id]/page.tsx:48` selects columns
-explicitly. Adding it to either is the mistake to guard against in review.
+one `recordDispatchFailure` (`src/lib/notify-health.ts`) exists to bound.
+*(amended)* This was first written as a rule for a reviewer to enforce, resting
+on `invitationDeliveryStatus` (`src/lib/contacts.ts:44-51`) declaring its own
+structural input type and on
+`src/app/(teacher)/students/contacts/[id]/page.tsx:48` selecting columns
+explicitly. It is now tethered instead: `TeacherFacingInvitationSelect`
+(`src/lib/contacts.ts`) intersects `Prisma.InvitationSelect` with
+`teacherInboxNotifiedAt?: never`, and both `ownedInvitation`
+(`src/app/api/invitations/[id]/shared.ts`) and the contact page's select
+`satisfies` it, so naming the column in either is a build failure. The
+exclusion is spelled once, in the type, so the two guarded selects point at it
+rather than repeating the column beside the data they render.
+
+`invitationDeliveryStatus`'s parameter type deliberately gets no tether of its
+own. Excess properties pass through a variable, so its type could never gate
+what flows *in*; and adding the column to it fails at the call site anyway,
+because the page's select can no longer supply it.
 
 ## 6. Tests
 
@@ -300,13 +389,23 @@ Against #622's acceptance criteria:
    them — the existing repeat tests for both stand unmodified.
 5. **No oracle.** Response status and body of a suppressed resend equal those
    of one that notified; the row's `lastNotifiedAt` still advances.
-6. **A failure re-opens the cap** — four cases, because mutation checks 3-5
-   each need one the others do not cover, and check 5 has two directions:
+6. **A failure re-opens the cap** *(amended)* — the cases below, because
+   mutation checks 3-5 each need one the others do not cover. Each of them
+   ends by dispatching again and watching a notification land: the criterion
+   is notifiability, and a column read alone is satisfied just as well by a
+   row nothing ever claimed.
    a. *Ordinary.* A teacher-branch insert that throws leaves the column clear,
       and the next resend notifies.
    b. *Outage.* The same, while `recordDispatchFailure` reports the failure
       burst as systemic — the cap still re-opens even though
       `lastNotifyFailedAt` is suppressed.
+   b-bis. *The clear fails too.* The insert throws and the compensating clear
+      is refused in the same breath — the pair that used to strand an invitee
+      forever. The row still ends clear, because the transaction rolled the
+      claim back rather than the clear lifting it. The refusal has to be
+      selective (the claim is let through, the two best-effort writes are
+      refused), or a plain-client claim would be refused too and the row would
+      read clear for the wrong reason.
    c. *A failure on a branch that never claimed.* A dispatch that took the
       stranger branch and failed there does **not** clear a marker some
       earlier teacher-branch attempt set — with the row's `lastNotifiedAt`
@@ -317,19 +416,24 @@ Against #622's acceptance criteria:
       has moved past does not re-open a cap a newer attempt closed" — is
       unconstructable on the claim path, and asking for it produced a test
       that pinned the §4.2 case-1 stranding as correct. A claiming attempt
-      can only be holding a marker that is its own (the claim's `where`
-      requires null, so a second live claim cannot exist beside it), and an
-      attempt whose claim is refused returns before anything can throw, so
-      it never reaches the `.catch` at all. The only dispatch that can reach
-      the failure path beside another attempt's marker is one that never
-      claimed.
-   d. *Claiming, with the row moved on.* The other direction of the same CAS:
-      a dispatch whose own claim succeeded and whose insert then threw clears
-      its marker even though a later resend has already advanced
-      `lastNotifiedAt` past the value it carries. Without this case, a
-      `lastNotifiedAt` clause re-added *beside* the `claimedAt` one — §4.2
-      case 1, the permanent-silence bug — passes every other test in this
-      list.
+      can only be holding a marker that is its own — the claim's `where`
+      requires the marker null *at claim time*, though a readdress or a
+      revive restores null and a second claim can then stand beside the
+      first's value in time, not on the row — and an attempt whose claim is
+      refused returns before anything can throw, so it never reaches the
+      `.catch` at all. The only dispatch that can reach the failure path
+      beside another attempt's marker is one that never claimed.
+   d. *Claiming, with the row moved on.* *(amended: no longer constructable.)*
+      This case existed to catch a `lastNotifiedAt` clause re-added *beside*
+      the `claimedAt` one, by having a dispatch clear its own marker after a
+      later resend had advanced `lastNotifiedAt` past it. Once the claim
+      commits with its insert (§4.2), a failing teacher-branch dispatch has
+      no committed marker to clear, so no test can distinguish the two CASes
+      on that side — the same fate case (c)'s own predecessor met, and for
+      the same reason. What is kept in its place is a case asserting the
+      outcome rather than the mechanism: a superseded dispatch's failure
+      still leaves the invitation notifiable. §7 check 5 records that its
+      second direction is now unguarded by construction.
 7. **Both resets.** A readdress and a revive each restore notifiability.
 8. **Concurrency.** Two overlapping dispatches for one invitation produce
    exactly one notification.
@@ -338,7 +442,7 @@ Against #622's acceptance criteria:
 order; test 1 currently runs before *lets the invitee add a student side and
 accept*. The plan states whether order is load-bearing for the new cases.
 
-## 7. Mutation checks
+## 7. Mutation checks *(amended)*
 
 Break each, record the exact failure text, restore, re-verify.
 
@@ -349,38 +453,62 @@ Break each, record the exact failure text, restore, re-verify.
 4. Move the `.catch` clear below `recordDispatchFailure`'s `looksSystemic`
    early return: test 6's outage case fails while its ordinary case still
    passes.
-5. Two mutations, one per direction of the clear's CAS. Replace the
-   `claimedAt` CAS with the `lastNotifiedAt` one
+5. Replace the `claimedAt` CAS with the `lastNotifiedAt` one
    (`where: { id, lastNotifiedAt: dispatchedAt }`): test 6's non-claiming case
-   (c) fails. Re-add `lastNotifiedAt: dispatchedAt` *beside* the `claimedAt`
-   clause: test 6's moved-on case (d) fails. Dropping the CAS clause
-   altogether fails (c) too — an unscoped clear wipes a marker this dispatch
-   never wrote — which is why (c) pins the column the CAS is on, not merely
-   that one exists.
+   (c) fails. Dropping the CAS clause altogether fails (c) too — an unscoped
+   clear wipes a marker this dispatch never wrote — which is why (c) pins the
+   column the CAS is on, not merely that one exists. The other direction —
+   re-adding `lastNotifiedAt: dispatchedAt` *beside* the `claimedAt` clause —
+   **is no longer detectable by any test**, and this is where that is
+   recorded rather than left to be discovered. With the claim committing
+   inside the insert's transaction there is no surviving marker for either
+   spelling of the clear to act on, so both spellings behave identically on
+   every constructable path. The clause remains forbidden in prose, alongside
+   check 10 below, for the same reason.
 6. Drop the readdress reset: test 7's readdress case fails.
 7. Drop the revive reset: test 7's revive case fails.
 8. Move the claim after `createNotification`: test 8 fails.
 9. Move the claim into the student branch as well: test 4's student case fails.
    The #172 spec's own check 4 in the same position, and the one that proves
    the cap is scoped to the branch with no opt-out behind it.
+10. *(added)* Drop the `email` clause from the claim's `where`: the
+    readdress-race case fails — a dispatch to the old address caps the row the
+    `PUT` pointed at someone else, and the new address is never notified.
+11. *(added)* Split the claim and the insert back into two statements on `db`:
+    test 6's clear-fails-too case (b-bis) fails with the marker standing. This
+    is the check that pins §4.2's atomicity, and nothing weaker does — every
+    other case in this list passes with the two writes separated.
+12. *(added)* Give the capped return its own early exit and let the notifying
+    path fall through (`if (claimed.count > 0) { await createNotification(…);
+    return; }`): test 1 fails on the email channel. A capped dispatch
+    otherwise reaches `sendInvitationEmail` and mails a teacher-only account
+    the stranger "sign up at `/login`" template — the exact disclosure #172
+    exists to prevent, and the reason test 1 asserts on `sendMock` and not
+    only on the notification count.
 
 Checks 3-5 must each fail for a reason the other two do not, or the two
 narrower ones certify nothing of their own — 3 removes the release valve, 4
 removes it only under a failure burst, 5 mis-aims it — letting a dispatch
-reach across to a marker another attempt set, or refusing one its own attempt
-wrote. Test 6 therefore needs four distinct cases, not one.
+reach across to a marker another attempt set. Test 6 therefore needs several
+distinct cases, not one.
 
-**Add a tenth, adversarial check.** Re-add `lastNotifyFailedAt: null` to the
+**Add an adversarial check.** Re-add `lastNotifyFailedAt: null` to the
 claim's `where` (§4.2's rejected form) and confirm the suite stays green. It
 will: that clause is inert, and nothing in this design can detect it. The check
 exists to record that the clause is untestable — which is why it is forbidden
-in prose rather than guarded by a test.
+in prose rather than guarded by a test. Check 5's second direction is now in
+the same position, and recorded there for the same reason.
 
 ## 8. Docs and comments this makes false
 
 - **`docs/data-model.md`, *Who an invitation reaches* (line 198).** The teacher
-  branch gains a condition. The `Invitation` field table gains the column, and
-  the `last_notify_failed_at` row gains the clear.
+  branch gains a condition. The `Invitation` field table gains the column.
+  *(amended)* The third item here — "the `last_notify_failed_at` row gains the
+  clear" — needed nothing: that row already named `PUT
+  /api/invitations/[id]`'s `readdressed` branch among its writers, written
+  there by #392/#502 before this branch started, and this branch adds no
+  writer of that column. It is left as an unactioned item deliberately rather
+  than silently, so a reader comparing §8 to the diff is not left hunting.
 - **`notifyInvitee`'s docblock** (`src/services/invitations.ts`), whose closing
   paragraph explains why `teacher_invitation` is not essential and what that
   means for a student's opt-out — it now needs the teacher counterpart stated,
