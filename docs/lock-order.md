@@ -6,11 +6,12 @@ order:
 
     Student → Class → WaitlistEntry → Registration → StudentPrivacy → TeacherStudent → Invitation → TeacherBlock
 
-`Student` binds only the sites that lock it explicitly — "The `Student` row is
-the erasure's gate" below names them. A child-row insert's automatic
-`FOR KEY SHARE` on its `Student` parent conflicts with neither gate mode, so it
-creates no ordering obligation against the gate; the erasure's closing
-`UPDATE`, which it does conflict with, is covered in the same section.
+`Student` binds the sites that lock it explicitly and any transaction that
+updates or deletes a `Student` row — "The `Student` row is the erasure's gate"
+below names the former and gives the rule for the latter. A child-row insert's
+automatic `FOR KEY SHARE` on its `Student` parent conflicts with neither gate
+mode, so it creates no ordering obligation; the erasure's closing `UPDATE`,
+which it does conflict with, is covered in the same section.
 
 ## Why it is written down rather than enforced
 
@@ -1140,7 +1141,8 @@ sees after waiting there is decided by who arrived first:
 - **A join after the erasure committed** is refused without waiting.
 
 The order is observable only on a REJOIN — a join into a class where the
-subject already holds a closed entry, so that class is in the erasure's lock
+subject already holds an entry of any status, `waiting` included (a no-op
+rejoin still takes the class lock), so that class is in the erasure's lock
 set. With the join taking the class first, it would hold that class while
 waiting on the `Student` row, and the erasure's pre-lock would wait on that
 class: `40P01`. Pinned by `src/services/gdpr-lock-order.test.ts`, describe "the
@@ -1179,14 +1181,25 @@ child-row insert on the `Student` row, and that conflicts with neither half —
 so leaving a writer ungated adds no wait edge against the gate. That holds
 under one rule:
 
-**No transaction that holds a `Class` row, or a `FOR KEY SHARE` on a student,
-may also `UPDATE` that student's row.** An `UPDATE` takes `FOR NO KEY UPDATE`
-(`FOR UPDATE` if it changes a key column), which the erasure's opening lock
-blocks.
+**An `UPDATE` or `DELETE` of a `Student` row is itself a lock on the `Student`
+node, and `Student → …` binds it exactly as it binds an explicit lock.** An
+`UPDATE` takes `FOR NO KEY UPDATE` (`FOR UPDATE` if it changes a key column)
+and a `DELETE` takes `FOR UPDATE`; each conflicts with both halves of the gate.
+So outside the erasure, such a statement must come before any other row lock
+in its transaction — in practice it runs as a statement of its own, which is
+what every production `Student` update does today (the census below). A
+transaction that first took ANY row the erasure or a gated join goes on to
+request, and then wrote the student's row, would wait on the gate while holding
+what the gate's holder is about to wait on. A `Class` row or a `FOR KEY SHARE`
+on the student is the obvious case, not the only one: an `Invitation` row
+carrying the student's address is another, since the erasure anonymises those
+rows (`gdpr.ts`) and a join's `resolveInvitationOnLink` updates them
+(`link-consent.ts`), both while holding their half of the gate.
 
 `POST /api/registrations` writes `Student.tierSelectedAt` after its transaction
-commits for exactly this reason. It used to write it inside, after inserting
-the `Registration`, and that closed two cycles with the erasure: on any class,
+commits because of this rule — the case that surfaced it. It used to write it
+inside, after inserting the `Registration`, and that closed two cycles with the
+erasure: on any class,
 the booking held `FOR KEY SHARE` and waited for `FOR NO KEY UPDATE` while the
 erasure's closing `UPDATE` waited on that `FOR KEY SHARE`; on a class in the
 erasure's lock set, the booking held the `Class` row and waited on `Student`
@@ -1195,20 +1208,28 @@ while the erasure held `Student` and waited on the `Class` row
 *Correction*). Pinned over HTTP by `tests/integration/registrations-api.test.ts`
 ("a first self-booking does not wait on a lock held on its student's row").
 
-Who updates a `Student` row:
+Who updates or deletes a `Student` row, through any receiver:
 
-    git grep -n -E '(tx|db|prisma)\.student\.(update|updateMany|upsert)' -- src ':!*.test.ts'
+    git grep -n -E 'student[[:space:]]*\.[[:space:]]*(update|updateMany|upsert|delete|deleteMany)\(' -- src ':!*.test.ts'
 
 then read each hit's enclosing transaction. On 2026-09-16 it returned six
-lines. Five run on the bare client, in no transaction at all; the sixth is the
-erasure's own closing `student.updateMany`. The grep sees Prisma calls only. The
-two other ways a statement can update a `Student` row were checked the same
-day and are empty in `src/`: raw SQL (`git grep -n 'UPDATE "Student"' -- src`),
-and a delete of an `Account`, whose foreign key from `Student` is
-`ON DELETE SET NULL`
-(`git grep -n -E '\.account\.(delete|deleteMany)\(' -- src ':!*.test.ts'`). The
-`\(` is deliberate: `git grep -E` does not support `\b` everywhere — on macOS
-a `\b` in its place matches nothing, even with the test files let back in.
+lines. Five run on the bare client, each an autocommit statement in no
+transaction at all; the sixth is the erasure's own closing
+`student.updateMany`. No production code deletes a `Student`. The grep is
+line-based, so a call split between `student` and `.update(` across two lines
+would escape it.
+
+It sees Prisma calls only. The two other ways a statement can update a
+`Student` row were checked the same day and are empty in `src/`: raw SQL
+(`git grep -n 'UPDATE "Student"' -- src`), and a delete of an `Account`,
+whose foreign key from `Student` is `ON DELETE SET NULL`
+(`git grep -n -E '\.account\.(delete|deleteMany)\(' -- src ':!*.test.ts'`).
+
+The spellings are deliberate. `git grep -E` on macOS supports neither `\b`
+nor `\s`: a `\b` matches nothing, even with the test files let back in, and
+`\s` is read as a literal `s`, so `student\s*\.` misses `student .update(` and
+matches `students.update(` instead. `[[:space:]]` and `\(` behave the same in
+`git grep -E` and `grep -E`.
 
 ### What still escalates
 

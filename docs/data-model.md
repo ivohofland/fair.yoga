@@ -567,12 +567,15 @@ wins: `addToWaitlist` and `deleteStudentAccount` serialise on the `Student`
 row, and a join that finds the profile erased — whether it waited for the
 erasure or arrived after it — writes nothing and throws `WaitlistJoinError`
 with reason `student_erased`, which `POST /api/waitlist` answers with 409. A
-join that takes the row first commits, and the erasure then removes what it
-wrote along with the rest. Refusal was chosen over the two alternatives.
-Deleting and re-scanning at the end of the erasure would take class locks
-after the erasure's own writes, inverting the `Class`-first order
-`docs/lock-order.md` sets, and still could not see a join that had not
-committed yet.
+join that takes the row first commits, and the erasure then deletes the entry
+and the roster link it wrote. It does not undo the rest of the join:
+`resolveInvitationOnLink` may have cleared a `TeacherBlock` and resolved an
+`Invitation`, and the erasure recreates no block and anonymises that
+invitation's identity without reverting its status.
+Refusal was chosen over the two alternatives. Deleting and re-scanning at the
+end of the erasure would take class locks after the erasure's own writes —
+`Class` after the rows below it in `docs/lock-order.md`'s order — and still
+could not see a join that had not committed yet.
 Accepting the join would leave an entry and a roster link for an erased
 profile, and `promoteNext` could later turn that entry into a registration.
 The mechanism — lock modes, order, and which writers are not gated yet — is
