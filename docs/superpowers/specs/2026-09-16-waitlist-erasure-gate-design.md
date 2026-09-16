@@ -158,12 +158,19 @@ not hold, which removes the wait edge both reproduced `40P01` cycles needed.
 
 `DELETE /api/account`'s `erasureFailure` answers `ErasureLockSetError` with the
 **busy** message (503, `ERASURE_BUSY`): a retry's pre-lock covers the class that
-appeared, so "press Delete again" is true and "will not fix it" would not be. It is
-logged at `error`, not `warn` — reaching it means an ungated creator exists.
+appeared, so "press Delete again" is true and "will not fix it" would not be. The
+change is one disjunct in `erasureFailure`'s own `transient`. The handler's log line
+computes its level from `isTransientDbError` alone, which is false for this error, so
+it is logged at `error`, not `warn` — reaching it means an ungated creator exists.
 
-`AlreadyErasedError` and the closing CAS are unchanged. A second concurrent erasure
-now waits at step 2 instead of at the closing `UPDATE`, then reaches the CAS and throws
-as before.
+`AlreadyErasedError` and the closing CAS are unchanged in code. A second concurrent
+erasure now waits at step 2 instead of at the closing `UPDATE`, reads `upcoming` only
+after the first has committed — so it finds nothing to free — then reaches the CAS
+and throws as before. That changes what the throw is FOR: the `Student` lock, not the
+abort, is now what prevents a doubled `spot_available` broadcast, and the abort is
+what keeps a redundant second pass from committing (and what the route maps to 200).
+`AlreadyErasedError`'s docblock says the abort prevents the doubled broadcast and
+cites a test for it; both are rewritten to the new division of labour.
 
 ### 3. `addToWaitlist` — the gate
 
@@ -189,15 +196,22 @@ W1, W1′, W2 and W3 are all closed by this, for the one creator of entries.
 
 Hand-authored, two statements:
 
-1. Renumber each class's `waiting` rows to `1..n`, ordered by
-   `(position, "createdAt", id)`, updating only rows whose position changes. A no-op on
-   clean data; repairs a duplicate or gap so step 2 cannot fail on deploy. The index
-   does not exist yet, so the single statement cannot trip it.
+1. A `DO $$` block that renumbers each class's `waiting` rows to `1..n`, ordered by
+   `(position, "createdAt", id)`, updating only rows whose position changes, and
+   `RAISE NOTICE`s the affected count when it is non-zero. A no-op on clean data;
+   repairs a duplicate or gap so step 2 cannot fail on deploy. The index does not
+   exist yet, so the single `UPDATE` cannot trip it. The notice is not optional:
+   `src/lib/migration-remediation-trace.test.ts` refuses a post-cutoff migration
+   whose `UPDATE "…"` carries neither a live `RAISE NOTICE` nor a
+   `-- DML WITHOUT NOTICE:` line, and a remediation that may touch production rows is
+   exactly what should announce itself (the `20260905120000_class_room_archive_invariant`
+   precedent).
 2. `CREATE UNIQUE INDEX "WaitlistEntry_waiting_position_key" ON "WaitlistEntry"
    ("classId", "position") WHERE status = 'waiting';`
 
-No SQL comments beyond a one-line pointer to `docs/data-model.md` — prose about a
-migration goes in `docs/` (CLAUDE.md, *Comment Discipline*).
+The only `--` lines are a short header pointing at `docs/data-model.md`, each on its
+own line (the same test refuses a trailing `--`). Prose about a migration goes in
+`docs/` (CLAUDE.md, *Comment Discipline*).
 
 `prisma/schema.prisma` gets a `///` docblock on `WaitlistEntry` naming the index, in
 the `Room` precedent's shape (`schema.prisma:291`). CI's drift check (`ci.yml`,
@@ -262,15 +276,19 @@ mutation is applied, its exact failure text recorded, then restored and re-verif
 
 | # | Scenario | Asserts | Mutation that must turn it red |
 |---|---|---|---|
-| R1 | erasure holds the `Student` lock; join for a class the student never touched | join blocked while held; then `WaitlistJoinError('student_erased')`; no entry, no `TeacherStudent` | drop the join's gate; weaken it to `FOR KEY SHARE` |
+| R1 | erasure holds the `Student` lock; a **rejoin** (the student holds a closed entry in that class, so it is in the erasure's lock set) | join blocked while held; then `WaitlistJoinError('student_erased')`; no entry, no `TeacherStudent` | drop the join's gate; weaken it to `FOR KEY SHARE`; move it below `lockClassRow` (`40P01` — the rejoin is what makes the gate-before-class order observable) |
 | R2 | join holds its `Student` lock; erasure starts | erasure blocked while held; then the new entry is gone and the class's remaining `waiting` positions are `1..n` | drop the erasure's `Student` lock (the erasure is no longer blocked while held; it runs its pre-lock before the entry exists, then waits at its closing `UPDATE` instead, and the entry survives) |
-| R3 | `promoteNext` holds the class, promoting the student, while the erasure takes its `Student` lock and waits on that class | both complete, no `40P01` | erasure takes `FOR UPDATE` instead of `FOR NO KEY UPDATE` |
-| R4 | an entry inserted directly (bypassing the gate) after the pre-lock | erasure throws `ErasureLockSetError`; student not erased, entry intact | remove the count check |
-| R5 | `addToWaitlist` after the erasure committed | `WaitlistJoinError('student_erased')` (unit, `waitlist.test.ts`) | drop the join's gate |
-| R6 | a promotion of the student commits while the erasure waits on that class | `handleSpotFreed` runs for that class after the erasure | move the `upcoming` read back above the pre-lock |
-| C1 | two `waiting` rows, one class, one position | `P2002` | drop the index |
+| R3 + R6 | one staging: `promoteNext` holds the class, promoting the student, while the erasure takes its `Student` lock and waits on that class; a second waiter queues behind the student | both complete with no `40P01` (R3); after the erasure, the second waiter holds a `registered` row — `handleSpotFreed` ran for the class (R6) | erasure takes `FOR UPDATE` → `40P01`; `upcoming` read moved back above the pre-lock → second waiter not promoted |
+| R4 | an entry inserted directly (bypassing the gate) after the pre-lock | erasure throws `ErasureLockSetError`; student not erased, entry intact | remove the count check; revert to the unscoped `deleteMany` |
+| R5 | `addToWaitlist` for an erased student | `WaitlistJoinError('student_erased')`, no entry (unit, `waitlist.test.ts`) | drop the join's gate |
+| L1–L3 | the helpers' modes, in `db-locks-lock-order.test.ts`: `lockLiveStudent` waits behind `lockStudentForErasure` (L1); a real child insert (`TeacherStudent`) does NOT wait behind it (L2); `lockStudentForErasure` waits behind `lockLiveStudent` (L3) | causal release flags | `lockLiveStudent` → `FOR KEY SHARE` (L1 red); `lockStudentForErasure` → `FOR UPDATE` (L2 red) |
+| C1 | two `waiting` rows, one class, one position | `P2002` on `['classId','position']` | drop the index |
 | C2 | `waiting` + `removed` at one position; two closed rows at one position; one position in two classes | all accepted | make the index non-partial (C2 must fail) |
-| M1 | the migration's renumber | a class seeded with a duplicate and a gap ends `1..n` in `(position, createdAt, id)` order | — (run the statement against a seeded fixture) |
+| M1 | the migration file itself: inside one transaction, drop the index, seed a class with a duplicate and a gap, execute the migration's two statements as written, assert `1..n` in `(position, createdAt, id)` order and that the index exists again, then roll back | as stated | break the renumber's ordering (M1 red); remove the renumber (the `CREATE UNIQUE INDEX` fails on the seeded duplicate) |
+
+M1 takes `ACCESS EXCLUSIVE` on `WaitlistEntry` for its transaction, so it lives in its
+own `@serial-tier lock-contention` file, the `class-lifecycle-tier-guard.test.ts`
+precedent; C1/C2 stay in the parallel tier.
 
 Also over HTTP, in `tests/integration/account-api.test.ts` beside its existing
 `ERASURE_BUSY` / `ERASURE_FAILED` cases: `DELETE /api/account` answers
@@ -280,10 +298,21 @@ row the erasure writes after its pre-lock (for instance one of the student's
 directly while the erasure waits, release. Mutation: drop the route's
 `ErasureLockSetError` branch (the response becomes 500 `ERASURE_FAILED`).
 
-Existing tests to re-read for what they now prove, because the erasure blocks at its
-first statement instead of its last: `gdpr-lock-order.test.ts` around `:1877` (a
-`Student … FOR UPDATE` holder in the duplicate-erasure test) and
-`tests/integration/account-api.test.ts` around `:676` and `:759`.
+Existing tests whose comments go stale because the erasure now blocks at its second
+statement instead of its last (assertions still hold, by reasoning; confirmed by the
+run):
+
+- `gdpr-lock-order.test.ts`, "erases once when the same student erasure runs twice
+  concurrently" (`:1877` holder): its lever paragraph says both erasures read the
+  same non-empty `upcoming` and park at the closing CAS. Both now park at
+  `lockStudentForErasure`, and the loser reads an empty `upcoming`. Its notification
+  assertion now stays green if EITHER the abort or the `Student` lock is removed
+  alone; the rejection-count assertion is what pins the abort. The comment is
+  rewritten to say so, and both single mutations are recorded.
+- `gdpr-lock-order.test.ts:760-762`: "`setLockTimeout` twice … fires twice" is now
+  three times.
+- `tests/integration/account-api.test.ts:654-662` and the `:759` test's comments:
+  "park at the write" is now "park at the erasure's `Student` lock".
 
 ## Follow-ups (to be filed with this PR's number)
 
