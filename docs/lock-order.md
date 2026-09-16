@@ -1136,13 +1136,17 @@ sees after waiting there is decided by who arrived first:
   `55P03`, which `classifyApiError` answers as transient.
 - **The writer first.** The erasure waits at `lockStudentForErasure` until the
   writer commits. Its class pre-lock runs after that, in a snapshot that
-  contains the new entry, so it locks that class and deletes and renumbers
-  under the lock. The erasure's `upcoming` read then sees the booking, so for
-  an open class `handleSpotFreed` runs, even outside the lock set.
+  contains what the writer committed, so a class where the student now holds
+  an entry (a join's) is locked, and its entries deleted and renumbered under
+  the lock. The erasure's `upcoming` read then sees the booking, so for an
+  open class `handleSpotFreed` runs, even outside the lock set.
 - **After the erasure committed**, a gated writer's request is refused without
-  waiting. A self-booking never reaches the gate there. Its session is gone,
-  so the route answers 401. The gate's sequential refusal is the teacher
-  path's.
+  waiting. A self-booking never reaches the gate there: the erasure removed
+  its session, so the route answers 401 — unless the account's live teacher
+  profile kept the session (`deleteStudentAccount` deletes it only when none
+  does), in which case the session survives but no longer resolves a student,
+  and the route answers 403 `Student access required`. The gate's sequential
+  refusal is the teacher path's.
 
 The order is observable only on a REJOIN — a join into a class where the
 subject already holds an entry of any status, `waiting` included (a no-op

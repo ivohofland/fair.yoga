@@ -533,8 +533,11 @@ booking and the teacher's roster add alike.
 A booking that finds the profile erased writes nothing and answers 409. A
 teacher sees `This student's account no longer exists`. A student sees
 `This account has been deleted` only when their request raced the erasure. A
-self-booking made after the erasure committed is answered 401 before it gets
-that far, because the erasure removed its session.
+self-booking made after the erasure committed never gets that far: the
+erasure removed its session, so the request is answered 401 — unless the
+account's live teacher profile kept the session, in which case it survives
+but no longer resolves a student, and the request is answered 403 `Student
+access required`.
 
 A booking that takes the row first commits, and the erasure then handles what
 it wrote. If the class is still open, the erasure cancels the registration and
