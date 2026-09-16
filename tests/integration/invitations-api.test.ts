@@ -4279,6 +4279,14 @@ describe('an invitation to a teacher-only account (#172)', () => {
     const before = await prisma.notification.count({
       where: { recipientType: 'teacher', recipientId: inviteeTeacherId, type: 'teacher_invitation' },
     });
+    // The dispatch that first notified this invitee ('reaches the invitee in
+    // their teacher inbox', above) already wrote this column, so the wait
+    // below has to be for a strictly newer value: waiting for merely
+    // non-null would resolve on its first poll against this one.
+    const { lastNotifiedAt: notifiedBefore } = await prisma.invitation.findUniqueOrThrow({
+      where: { id: invitation.id }, select: { lastNotifiedAt: true },
+    });
+    expect(notifiedBefore).not.toBeNull();
 
     const resend = await fetch(`${BASE_URL}/api/invitations/${invitation.id}/resend`, {
       method: 'POST', headers: cookie(teacherToken),
@@ -4287,8 +4295,10 @@ describe('an invitation to a teacher-only account (#172)', () => {
     expect(await resend.json()).toEqual({ data: { id: invitation.id } });
 
     // The dispatch is fire-and-forget, so "no notification" cannot be proven
-    // by reading immediately. Wait for the marker the route writes
-    // synchronously, then for the dispatch to have run, and only then count.
+    // by reading immediately. Wait for this resend's own marker write —
+    // criterion 5's other half, since a capped resend must advance
+    // `lastNotifiedAt` exactly as a notifying one does — then for the
+    // dispatch to have run, and only then count.
     // This IS a fixed sleep standing in for a proof of absence, deliberately:
     // a control dispatch would assume the capped one can't outlive it, which
     // `invitations.notify.test.ts`'s "sets no failure signal when an
@@ -4303,8 +4313,12 @@ describe('an invitation to a teacher-only account (#172)', () => {
     await waitFor(
       () => prisma.invitation.findUniqueOrThrow({
         where: { id: invitation.id }, select: { lastNotifiedAt: true },
-      }).then((r) => r.lastNotifiedAt),
-      { description: 'the resend wrote its dispatch marker (#622)' },
+      }).then((r) => (
+        r.lastNotifiedAt !== null && notifiedBefore !== null && r.lastNotifiedAt > notifiedBefore
+          ? r.lastNotifiedAt
+          : null
+      )),
+      { description: 'the resend advanced the dispatch marker past the first one (#622)' },
     );
     await new Promise((r) => setTimeout(r, 1_000));
 

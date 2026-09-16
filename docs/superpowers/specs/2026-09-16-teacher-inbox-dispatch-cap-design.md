@@ -173,10 +173,33 @@ the failure is known rather than asking a later reader to infer it.
 
 Two properties of that clear, both load-bearing:
 
-- **It carries the same `dispatchedAt` CAS** as the `lastNotifyFailedAt` write
-  (`where: { id, lastNotifiedAt: dispatchedAt }`), for the same reason: a
-  superseded attempt's late failure must not re-open a cap that a newer,
-  successful attempt closed.
+- **It is CAS'd on the marker value this dispatch's own claim wrote**
+  (`where: { id, teacherInboxNotifiedAt: claimedAt }`) — *not* on
+  `lastNotifiedAt`, the way the `lastNotifyFailedAt` write beside it is.
+  `lastNotifiedAt` is the right correlate for `lastNotifyFailedAt`: both are
+  per-attempt, both written by the dispatching route. The correlate for
+  `teacherInboxNotifiedAt` is **the claim**, which is the only thing that
+  ever sets it. Enumerate when this `.catch` can run with a marker standing:
+
+  1. *This attempt claimed, then `createNotification` threw.* The marker is
+     provably this attempt's own, so clearing is always correct — and under
+     a `claimedAt` CAS it always happens. Under a `lastNotifiedAt` CAS it
+     would be refused whenever the row's `lastNotifiedAt` had moved on in the
+     meantime (a resend landing during a slow failure), leaving the marker
+     standing over a notification that was never created: permanent silence,
+     the one outcome this feature exists to prevent.
+  2. *This attempt never claimed — the stranger, student, blocked or
+     refused-claim paths — and threw.* Any marker belongs to another attempt
+     and clearing is always wrong. A `lastNotifiedAt` CAS blocks this only
+     when the failing attempt is itself superseded, so it misses the case it
+     was added for: resend #1 claims through the teacher branch, the
+     invitee's teacher profile is then deleted, resend #2 takes the stranger
+     branch and Resend is down — `lastNotifiedAt` matches, and a branch that
+     never claimed clears someone else's marker. Under a `claimedAt` CAS
+     nothing wrote that value, so the `where` matches nothing.
+
+  A readdress or a revive nulls the marker in between: null matches no
+  `claimedAt`, and null is already the state this clear wants.
 - **It runs before `recordDispatchFailure`'s `looksSystemic` early return**, not
   after. That suppression exists because `lastNotifyFailedAt` is teacher-visible
   and would otherwise proxy for "does this address have an account"
@@ -186,14 +209,24 @@ Two properties of that clear, both load-bearing:
 
 ### 4.3 Signature
 
-`notifyInvitee` gains `invitationId: string`, required.
-`deliverInvitation` already holds it (`src/services/invitations.ts:693-702`)
-and forwards `teacherId`/`email`/`teacherName` only
-(`src/services/invitations.ts:709-713`); it forwards the id too.
+`notifyInvitee` gains `invitationId: string` and `claimedAt: Date`, both
+required. `deliverInvitation` already holds the id
+(`src/services/invitations.ts:693-702`) and forwards
+`teacherId`/`email`/`teacherName` only (`src/services/invitations.ts:709-713`);
+it forwards the id too, and mints `claimedAt` itself — one `new Date()` per
+dispatch, read by the wrapper (it travels into `notifyInvitee`, whose claim
+writes it) and by the `.catch` (where it is the clear's CAS). It is the lone
+statement outside `deliverInvitation`'s `void (async () => …)()` wrapper,
+which is safe only because it cannot throw.
 
-`dispatchedAt` is **not** added to `notifyInvitee` — the claim's own `where` is
-its compare-and-swap. The `.catch` clear in §4.2 happens in
-`deliverInvitation`, which already has `dispatchedAt`.
+`dispatchedAt` is **not** added to `notifyInvitee`, and the reason is about
+the **claim's** CAS, not the clear's: the claim's own `where`
+(`teacherInboxNotifiedAt: null`) is its compare-and-swap, so it needs nothing
+from the dispatching route. The clear in §4.2 is a separate question, and its
+CAS is `claimedAt` — minted for that purpose rather than borrowed from
+`dispatchedAt`, so that what the column records (when the teacher branch
+claimed the row) stays independent of when the route pre-wrote
+`lastNotifiedAt`.
 
 Required rather than optional: an optional id would let a caller silently opt
 out of the cap. The cost is real and belongs in the plan — the ten
@@ -222,7 +255,7 @@ hit needs reading, not assuming.
 |---|---|---|
 | `src/app/api/invitations/[id]/route.ts:246` | join `delivered` and `lastNotifyFailedAt` in the `readdressed` reset | a readdress points the row at a different person |
 | `revivePendingInvitation` (`src/services/invitations.ts:421`) | clear in the `data` alongside `respondedAt: null` | it reuses the same row (`accepted` → `pending`); a re-invitation after a link ended is a new invitation |
-| `deliverInvitation`'s `.catch` (`src/services/invitations.ts:723-737`) | clear under the same `dispatchedAt` CAS, **above** the `looksSystemic` early return | §4.2 |
+| `deliverInvitation`'s `.catch` (`src/services/invitations.ts:723-737`) | clear under a `claimedAt` CAS, **above** the `looksSystemic` early return | §4.2 |
 
 Remove-and-re-add needs no reset: `DELETE` then `POST /api/students` creates a
 fresh row whose column is null by default.
@@ -274,9 +307,22 @@ Against #622's acceptance criteria:
    b. *Outage.* The same, while `recordDispatchFailure` reports the failure
       burst as systemic — the cap still re-opens even though
       `lastNotifyFailedAt` is suppressed.
-   c. *Superseded.* A late failure from an attempt the row has moved past
-      (`lastNotifiedAt` no longer matches its `dispatchedAt`) does **not**
-      re-open a cap a newer, successful attempt closed.
+   c. *A failure on a branch that never claimed.* A dispatch that took the
+      stranger branch and failed there does **not** clear a marker some
+      earlier teacher-branch attempt set — with the row's `lastNotifiedAt`
+      equal to the failing dispatch's own `dispatchedAt`, which is the state
+      in which a CAS on the wrong column would match and wrongly clear.
+
+      The property this replaces — "a late failure from an attempt the row
+      has moved past does not re-open a cap a newer attempt closed" — is
+      unconstructable on the claim path, and asking for it produced a test
+      that pinned the §4.2 case-1 stranding as correct. A claiming attempt
+      can only be holding a marker that is its own (the claim's `where`
+      requires null, so a second live claim cannot exist beside it), and an
+      attempt whose claim is refused returns before anything can throw, so
+      it never reaches the `.catch` at all. The only dispatch that can reach
+      the failure path beside another attempt's marker is one that never
+      claimed.
 7. **Both resets.** A readdress and a revive each restore notifiability.
 8. **Concurrency.** Two overlapping dispatches for one invitation produce
    exactly one notification.
@@ -296,8 +342,11 @@ Break each, record the exact failure text, restore, re-verify.
 4. Move the `.catch` clear below `recordDispatchFailure`'s `looksSystemic`
    early return: test 6's outage case fails while its ordinary case still
    passes.
-5. Drop the `dispatchedAt` CAS from the `.catch` clear: test 6's superseded
-   case fails.
+5. Replace the `.catch` clear's `claimedAt` CAS with the `lastNotifiedAt` one
+   (`where: { id, lastNotifiedAt: dispatchedAt }`): test 6's non-claiming case
+   fails. Dropping the CAS clause altogether fails it too — an unscoped clear
+   wipes a marker this dispatch never wrote — which is why that case pins the
+   column the CAS is on, not merely that one exists.
 6. Drop the readdress reset: test 7's readdress case fails.
 7. Drop the revive reset: test 7's revive case fails.
 8. Move the claim after `createNotification`: test 8 fails.
@@ -307,8 +356,9 @@ Break each, record the exact failure text, restore, re-verify.
 
 Checks 3-5 must each fail for a reason the other two do not, or the two
 narrower ones certify nothing of their own — 3 removes the release valve, 4
-removes it only under a failure burst, 5 removes only its protection against a
-late loser. Test 6 therefore needs three distinct cases, not one.
+removes it only under a failure burst, 5 leaves it working for the dispatch
+that claimed and lets it reach across to a marker another attempt set. Test 6
+therefore needs three distinct cases, not one.
 
 **Add a tenth, adversarial check.** Re-add `lastNotifyFailedAt: null` to the
 claim's `where` (§4.2's rejected form) and confirm the suite stays green. It

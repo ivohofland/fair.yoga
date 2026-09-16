@@ -111,7 +111,10 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
+      await notifyInvitee(prisma, {
+        teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+        claimedAt: new Date(),
+      });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -144,7 +147,10 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
+      await notifyInvitee(prisma, {
+        teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+        claimedAt: new Date(),
+      });
 
       expect(sendMock).toHaveBeenCalledTimes(1);
       const [args] = sendMock.mock.calls[0] as [{ to: string }];
@@ -179,7 +185,10 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       invitationId = invitation.id;
 
       await expect(
-        notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id }),
+        notifyInvitee(prisma, {
+          teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+          claimedAt: new Date(),
+        }),
       ).rejects.toThrow(/un-normalised/);
       expect(sendMock).not.toHaveBeenCalled();
     } finally {
@@ -216,7 +225,10 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
+      await notifyInvitee(prisma, {
+        teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+        claimedAt: new Date(),
+      });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -258,7 +270,10 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
+      await notifyInvitee(prisma, {
+        teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+        claimedAt: new Date(),
+      });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -408,7 +423,10 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
+      await notifyInvitee(prisma, {
+        teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+        claimedAt: new Date(),
+      });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -452,7 +470,10 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
+      await notifyInvitee(prisma, {
+        teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+        claimedAt: new Date(),
+      });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -508,7 +529,10 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email: invitee.email, teacherName: 'Some Teacher', invitationId: invitation.id });
+      await notifyInvitee(prisma, {
+        teacherId, email: invitee.email, teacherName: 'Some Teacher', invitationId: invitation.id,
+        claimedAt: new Date(),
+      });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'teacher', recipientId: invitee.teacherId, type: 'teacher_invitation' },
@@ -551,7 +575,10 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
+      await notifyInvitee(prisma, {
+        teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+        claimedAt: new Date(),
+      });
 
       expect(await prisma.notification.count({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -585,7 +612,10 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email: invitee.email, teacherName: 'Some Teacher', invitationId: invitation.id });
+      await notifyInvitee(prisma, {
+        teacherId, email: invitee.email, teacherName: 'Some Teacher', invitationId: invitation.id,
+        claimedAt: new Date(),
+      });
 
       expect(await prisma.notification.count({
         where: { recipientType: 'teacher', recipientId: invitee.teacherId },
@@ -635,6 +665,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     try {
       const dispatch = () => notifyInvitee(prisma, {
         teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+        claimedAt: new Date(),
       });
       await dispatch();
       expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
@@ -660,6 +691,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       // No account yet: the stranger branch runs.
       await notifyInvitee(prisma, {
         teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+        claimedAt: new Date(),
       });
       expect(sendMock).toHaveBeenCalledTimes(1);
 
@@ -676,6 +708,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
 
       await notifyInvitee(prisma, {
         teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+        claimedAt: new Date(),
       });
       expect(await countTeacherNotifications(invitee.id)).toBe(1);
     } finally {
@@ -693,6 +726,14 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
   it('tells a previously-linked invitee once the student side is gone (#622, sequence 2)', async () => {
     // The dispatch made while the pair was linked returned at the roster-link
     // check without notifying anyone. It must not count as having told them.
+    //
+    // The erased state below is constructed by hand rather than produced by
+    // an erasure: a real one also anonymises `Invitation.email`
+    // (`docs/data-model.md`, the Invitation-erasure paragraphs), and a row
+    // holding the anonymised address reaches the stranger branch below, not
+    // the teacher branch this test is about. So what this pins is the branch
+    // behaviour for the state written here — a dispatch that notified nobody
+    // does not count as having told them — however a row came to hold it.
     const f = await teacherOnlyInvitee('seq2');
     let studentId: string | undefined;
     try {
@@ -708,6 +749,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       // Linked: this dispatch notifies nobody.
       await notifyInvitee(prisma, {
         teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+        claimedAt: new Date(),
       });
       expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(0);
 
@@ -721,6 +763,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
 
       await notifyInvitee(prisma, {
         teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+        claimedAt: new Date(),
       });
       expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
     } finally {
@@ -748,6 +791,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
 
       const dispatch = () => notifyInvitee(prisma, {
         teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+        claimedAt: new Date(),
       });
       await dispatch();
       await dispatch();
@@ -773,6 +817,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     try {
       const dispatch = () => notifyInvitee(prisma, {
         teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+        claimedAt: new Date(),
       });
       await dispatch();
       await dispatch();
@@ -789,8 +834,14 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     const f = await teacherOnlyInvitee('race');
     try {
       await Promise.all([
-        notifyInvitee(prisma, { teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId }),
-        notifyInvitee(prisma, { teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId }),
+        notifyInvitee(prisma, {
+          teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+          claimedAt: new Date(),
+        }),
+        notifyInvitee(prisma, {
+          teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+          claimedAt: new Date(),
+        }),
       ]);
       expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
     } finally {
@@ -806,6 +857,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     try {
       await notifyInvitee(prisma, {
         teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+        claimedAt: new Date(),
       });
       expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
 
@@ -820,7 +872,14 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       secondTeacherId = second.id;
       secondAccountId = second.accountId;
 
-      // What `PUT /api/invitations/[id]` does on a genuine address change.
+      // A hand-built stand-in for the reset `PUT /api/invitations/[id]`
+      // writes on a genuine address change, not evidence that the route
+      // writes it: this test drives `notifyInvitee` directly and never
+      // reaches the route at all. The route's own reset is driven over HTTP
+      // by `tests/integration/invitations-api.test.ts` ('tells the
+      // readdressed invitee, because PUT clears the cap (#622)'), and the
+      // gate that keeps it off a name-only save by
+      // `put-readdress-delivered.test.ts`.
       await prisma.invitation.update({
         where: { id: f.invitationId },
         data: { email: newEmail, delivered: false, lastNotifyFailedAt: null, teacherInboxNotifiedAt: null },
@@ -828,6 +887,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
 
       await notifyInvitee(prisma, {
         teacherId, email: newEmail, teacherName: 'Some Teacher', invitationId: f.invitationId,
+        claimedAt: new Date(),
       });
       expect(await countTeacherNotifications(second.id)).toBe(1);
     } finally {
@@ -847,6 +907,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     try {
       await notifyInvitee(prisma, {
         teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+        claimedAt: new Date(),
       });
       expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
 
@@ -868,6 +929,16 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       expect(row.status).toBe('pending');
       expect(row.teacherInboxNotifiedAt).toBeNull();
+
+      // The criterion is notifiability, not column state — a cleared marker
+      // over which the next dispatch still delivers nothing would satisfy
+      // the assertion above and fail the promise it stands for. So dispatch
+      // again and count, the way the readdress test above does.
+      await notifyInvitee(prisma, {
+        teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+        claimedAt: new Date(),
+      });
+      expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(2);
     } finally {
       await cleanUpInvitee(f);
     }

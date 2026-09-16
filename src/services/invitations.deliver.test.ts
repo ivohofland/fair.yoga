@@ -6,6 +6,18 @@ import { __resetDispatchFailureTrackingForTests, recordDispatchFailure } from '@
 import { log } from '@/lib/log';
 import { teardownTeacher, waitFor } from '../../tests/helpers';
 
+// One test below needs a stranger-branch dispatch to actually fail, which
+// means reaching the real send rather than the dry-run branch that logs and
+// returns (src/lib/email.ts) — same technique `invitations.notify.test.ts`
+// uses: mock the Resend SDK itself. Every other test in this file fails
+// before any send is attempted, so this mock is inert for them.
+const sendMock = vi.hoisted(() => vi.fn());
+vi.mock('resend', () => ({
+  Resend: class {
+    emails = { send: sendMock };
+  },
+}));
+
 const prisma = new PrismaClient();
 const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
@@ -343,22 +355,26 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
       });
 
       // The row's `teacherInboxNotifiedAt` starts null (the fixture never
-      // sets it), so polling for that value directly is trivially satisfied
-      // by its untouched initial state, before the claim has even run —
-      // proving nothing about whether a claim was made and then cleared.
-      // `lastNotifyFailedAt` is the last write this path issues here (this
-      // test's lone failure never looks systemic), so waiting for its own
-      // call to appear — by its distinct `data` shape, not by position —
-      // means the claim and the clear under test have both already been
-      // issued too; awaiting every captured call's own settled result is
-      // what proves they have actually finished, not merely started.
+      // sets it), so the `null` read below is ambiguous on its own: a
+      // dispatch that never claimed leaves exactly the value one that
+      // claimed and then cleared does. So wait for both of this dispatch's
+      // own writes to that column to appear — the claim, carrying a `Date`,
+      // and the clear, carrying `null` — each identified by its own `data`
+      // value rather than by position, and then await every captured call's
+      // settled result, which is what proves they finished rather than
+      // merely started.
       await waitFor(
         () => Promise.resolve(
-          updateManySpy.mock.calls.some(([args]) => 'lastNotifyFailedAt' in args.data)
+          updateManySpy.mock.calls.some(
+            ([args]) => 'teacherInboxNotifiedAt' in args.data && args.data.teacherInboxNotifiedAt instanceof Date,
+          )
+            && updateManySpy.mock.calls.some(
+              ([args]) => 'teacherInboxNotifiedAt' in args.data && args.data.teacherInboxNotifiedAt === null,
+            )
             ? true
             : null,
         ),
-        { description: 'the failing dispatch has recorded its failure (#622)' },
+        { description: 'the failing dispatch has claimed the cap and then cleared it (#622)' },
       );
       await Promise.all(updateManySpy.mock.results.map((r) => r.value));
 
@@ -395,11 +411,11 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
         source: 'resend', dispatchedAt,
       });
 
-      // The systemic verdict suppresses the `lastNotifyFailedAt` write below
-      // (#392), so — unlike the ordinary case above — that call never
-      // appears here. The clear itself is the last write this path issues
-      // in this scenario, so its own call, identified by its `data` value
-      // rather than by position, is the settling signal instead.
+      // This test synchronises on the clear's own call — identified by its
+      // `data` value, not by position — and then on every captured call's
+      // settled result. The `lastNotifyFailedAt` assertion below is about
+      // the state this scenario leaves behind, not about any write this
+      // wait is holding for.
       await waitFor(
         () => Promise.resolve(
           updateManySpy.mock.calls.some(
@@ -426,62 +442,78 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
     }
   });
 
-  it('does not re-open a cap a newer dispatch closed (#622)', async () => {
-    const f = await teacherOnlyInvitee('fail-superseded');
+  it('leaves a marker it never wrote alone when a non-claiming dispatch fails (#622)', async () => {
+    // The clear's CAS has a second job besides always re-opening a cap its
+    // own dispatch closed: never clearing one it did not set. Only a
+    // dispatch that took some other branch can reach the failure path while
+    // another attempt's marker stands — a dispatch whose own claim is
+    // REFUSED returns before anything can throw, so it never gets there at
+    // all. Here that other branch is the stranger one: the address held a
+    // teacher profile when the marker was set and holds none now, so the
+    // same row that was capped through the teacher inbox now dispatches by
+    // email — and Resend is down.
+    const email = `deliver-cap-noclaim-${suffix}@test.local`;
+    const dispatchedAt = new Date();
+    // A round millisecond value, and an hour old, so the assertion below
+    // cannot pass by accidentally matching anything this dispatch mints.
+    const markerFromAnotherAttempt = new Date(Date.now() - 3_600_000);
+    const row = await prisma.invitation.create({
+      data: {
+        teacherId, email, firstName: 'Cap', lastName: 'NoClaim',
+        // Set by hand: the address deliberately has no teacher profile left,
+        // so the branch that writes this column cannot be reached to write
+        // it here. `lastNotifiedAt` equals this dispatch's own
+        // `dispatchedAt` because that is the state in which a CAS on the
+        // wrong column would match and wrongly clear.
+        lastNotifiedAt: dispatchedAt, lastNotifiedEmail: email,
+        teacherInboxNotifiedAt: markerFromAnotherAttempt,
+      },
+      select: { id: true },
+    });
+    const savedApiKey = process.env.RESEND_API_KEY;
+    const savedDryRun = process.env.EMAIL_DRY_RUN;
+
     try {
-      const staleDispatchedAt = new Date(Date.now() - 60_000);
-      const currentDispatchedAt = new Date();
-      // A later resend's own synchronous pre-write has already moved
-      // `lastNotifiedAt` on by the time this stale attempt's own insert
-      // fails — the row no longer holds the value this dispatch remembers.
-      // `teacherInboxNotifiedAt` is left null here: the claim below must
-      // itself succeed for `createNotification` — and therefore the mocked
-      // rejection — to be reached at all; a claim starting from an
-      // already-non-null marker returns before ever calling it, which would
-      // make this test pass independently of anything the CAS clause does.
-      await prisma.invitation.update({
-        where: { id: f.invitationId },
-        data: { lastNotifiedAt: currentDispatchedAt, lastNotifiedEmail: f.email },
-      });
-      const createSpy = vi.spyOn(prisma.notification, 'create')
-        .mockRejectedValueOnce(new Error('insert failed'));
+      vi.spyOn(log, 'error').mockImplementation(() => undefined);
+      // Force the real-send path; dry-run logs and returns, and would never
+      // reach the failure this test is about.
+      process.env.RESEND_API_KEY = 're_test_dummy';
+      delete process.env.EMAIL_DRY_RUN;
+      sendMock.mockResolvedValueOnce({ error: { message: 'resend is down' } });
       const updateManySpy = vi.spyOn(prisma.invitation, 'updateMany');
 
-      // A stale attempt: its own claim still succeeds (the cap was open when
-      // it ran), but its insert then fails.
       deliverInvitation(prisma, {
-        teacherId, email: f.email, invitationId: f.invitationId,
-        source: 'create', dispatchedAt: staleDispatchedAt,
+        teacherId, email, invitationId: row.id,
+        source: 'resend', dispatchedAt,
       });
 
-      // The `lastNotifyFailedAt` write is unconditional here (this test's
-      // lone failure never looks systemic) and is issued after every other
-      // write this path can make from the same `.catch` tick — including
-      // the claim above and the CAS-guarded clear under test — so its own
-      // call appearing is a structural signal, not a count, that the whole
-      // chain has been issued. `in` picks it out by its own `data` shape
-      // rather than by position, so this holds whether or not the clear
-      // above still runs, still comes first, or still carries its own CAS
-      // clause. Awaiting every call's own settled result — not just its
-      // appearance — is what proves each write actually finished before the
-      // row is read below.
+      // Synchronises on this dispatch's own cap-clear call — identified by
+      // its `data` value, not by position — and then on every captured
+      // call's settled result, so the row below is read after the clear has
+      // finished rather than while it is still in flight.
       await waitFor(
         () => Promise.resolve(
-          updateManySpy.mock.calls.some(([args]) => 'lastNotifyFailedAt' in args.data)
+          updateManySpy.mock.calls.some(
+            ([args]) => 'teacherInboxNotifiedAt' in args.data && args.data.teacherInboxNotifiedAt === null,
+          )
             ? true
             : null,
         ),
-        { description: 'the stale dispatch has recorded its failure (#622)' },
+        { description: 'the non-claiming dispatch has issued its cap clear (#622)' },
       );
       await Promise.all(updateManySpy.mock.results.map((r) => r.value));
 
-      const row = await prisma.invitation.findUniqueOrThrow({
-        where: { id: f.invitationId }, select: { teacherInboxNotifiedAt: true },
+      const after = await prisma.invitation.findUniqueOrThrow({
+        where: { id: row.id }, select: { teacherInboxNotifiedAt: true },
       });
-      expect(row.teacherInboxNotifiedAt).not.toBeNull();
-      createSpy.mockRestore();
+      expect(after.teacherInboxNotifiedAt).toEqual(markerFromAnotherAttempt);
     } finally {
-      await cleanUpInvitee(f);
+      if (savedApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = savedApiKey;
+      if (savedDryRun === undefined) delete process.env.EMAIL_DRY_RUN;
+      else process.env.EMAIL_DRY_RUN = savedDryRun;
+      sendMock.mockReset();
+      await prisma.invitation.deleteMany({ where: { id: row.id } });
     }
   });
 });

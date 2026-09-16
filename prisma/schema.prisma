@@ -256,11 +256,11 @@ model Invitation {
   isArchived  Boolean          @default(false)
   createdAt   DateTime         @default(now())
   respondedAt DateTime?
-  lastNotifiedAt      DateTime?
-  lastNotifiedEmail   String?
-  lastNotifyFailedAt  DateTime?
+  lastNotifiedAt         DateTime?
+  lastNotifiedEmail      String?
+  lastNotifyFailedAt     DateTime?
   teacherInboxNotifiedAt DateTime?
-  delivered           Boolean          @default(true)
+  delivered              Boolean          @default(true)
 
   teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
 
