@@ -18,6 +18,8 @@ import {
   CLASS_TO_WAITLIST_JOIN,
   lockClassRow,
   lockClassRowsOrdered,
+  lockLiveStudent,
+  StudentErasedError,
   type TransactionClientOnly,
 } from '@/lib/db-locks';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
@@ -56,7 +58,11 @@ export class WaitlistPromotionError extends Error {
 export class WaitlistJoinError extends Error {
   constructor(
     message: string,
-    public readonly reason: 'class_not_open' | 'class_not_full' | 'already_registered',
+    public readonly reason:
+      | 'class_not_open'
+      | 'class_not_full'
+      | 'already_registered'
+      | 'student_erased',
   ) {
     super(message);
     this.name = 'WaitlistJoinError';
@@ -189,11 +195,16 @@ export function getWaitlistWindow(
 /**
  * Adds a student to the waitlist at the next available position.
  *
- * Guards (under the shared FOR UPDATE class lock, so joins serialize with
- * registrations and promotions):
- * - the class must be open
- * - the class must actually be full — otherwise the student should book
- * - the student must not hold an active registration
+ * Guards:
+ * - the student must not be erased — read under the `Student` gate
+ *   (`lockLiveStudent`, `FOR SHARE`), the transaction's first lock, so a join
+ *   serializes with an erasure of the same student (#183) and a refused one
+ *   writes nothing
+ * - then, under the shared FOR UPDATE class lock, so joins serialize with
+ *   registrations and promotions:
+ *   - the class must be open
+ *   - the class must actually be full — otherwise the student should book
+ *   - the student must not hold an active registration
  *
  * A student who left (or was promoted and then cancelled) has their old
  * entry reactivated at the back of the queue — the unique
@@ -210,6 +221,19 @@ export async function addToWaitlist(
   studentId: string,
 ): Promise<WaitlistEntry> {
   return db.$transaction(async (tx) => {
+    // The `Student` gate, before the class lock (#183): an erasure of this
+    // student holds the other half, so a join that waited here reads its
+    // committed `deletedAt` and writes nothing. Mode and order:
+    // `docs/lock-order.md`, "The `Student` row is the erasure's gate".
+    try {
+      await lockLiveStudent(tx, studentId);
+    } catch (err) {
+      if (err instanceof StudentErasedError) {
+        throw new WaitlistJoinError('This account has been deleted', 'student_erased');
+      }
+      throw err;
+    }
+
     await lockClassRow(tx, classId);
 
     const cls = await tx.class.findUniqueOrThrow({
@@ -271,11 +295,12 @@ export async function addToWaitlist(
     // no-op rejoin, and it buys all three exits agreeing about whether a link
     // exists.
     //
-    // Order matters and is not a preference: the class lock is already held
-    // (top of this transaction) and the `TeacherStudent` row is taken after
-    // it, which is the same order `promoteNext`, `claimSpot` and
-    // `unlinkTeacher` take them in. Reversing it here would deadlock against
-    // any of the three.
+    // Order matters and is not a preference: `Student`, then `Class`, then
+    // `TeacherStudent`. The first two are already held (top of this
+    // transaction) and the `TeacherStudent` row is taken after both. `Class`
+    // before `TeacherStudent` is the same order `promoteNext`, `claimSpot` and
+    // `unlinkTeacher` take them in; reversing it here would deadlock against
+    // any of the three. The full order is `docs/lock-order.md`'s.
     const student = await tx.student.findUniqueOrThrow({
       where: { id: studentId },
       select: { email: true },
@@ -389,9 +414,10 @@ export async function removeFromWaitlist(
     // (or `lockClassRowsOrdered`) now, bounded to 2s by its `SET LOCAL
     // lock_timeout`. Without the lock at all, two renumberings of one
     // queue interleave, each having read a snapshot the other invalidated,
-    // and nothing errors: there is no unique on `(classId, position)`, only
-    // a plain index. `promoteNext` then picks its head by lowest position
-    // and promotes the wrong student.
+    // and the partial unique index on waiting positions
+    // (`WaitlistEntry_waiting_position_key`) refuses only a result that
+    // duplicates a position. `promoteNext` picks its head by lowest position,
+    // so a misnumbered queue it lets through promotes the wrong student.
     //
     // `SET LOCAL` bounds every statement left in this transaction, not just
     // the `FOR UPDATE` above it — including the reorder loop's own
@@ -1004,21 +1030,25 @@ async function hasActiveRegistration(
  *
  * The convention now covers every renumbering writer *in this module*:
  * `addToWaitlist`, `promoteNext`, `claimSpot` and `removeFromWaitlist` each
- * open with the lock, and this function takes it too — for an additional
- * reason on top of the link race above, not the same one: two renumberings
- * of one queue interleaving with no unique on `(classId, position)` to catch
- * it. (`removeFromWaitlist` picked it up in #174, having gone without it for
- * a while — it can only move an entry OUT of `waiting`, never into it, so
- * nothing it raced could have manufactured the standing request this
- * withdraws; the gap was skew in the position numbering, not a wrong
- * promotion.) `POST /api/registrations` locks and renumbers the same way,
+ * take the lock before they read the queue (`addToWaitlist` as its second
+ * lock, after its `Student` gate), and this function takes it too — for an
+ * additional reason on top of the link race above, not the same one: two
+ * renumberings of one queue interleaving, which the partial unique index on
+ * waiting positions (`WaitlistEntry_waiting_position_key`) refuses only when
+ * the interleaving ends in a duplicate. (`removeFromWaitlist` picked it up in
+ * #174, having gone without it for a while — it can only move an entry OUT of
+ * `waiting`, never into it, so nothing it raced could have manufactured the
+ * standing request this withdraws; the gap was skew in the position
+ * numbering, not a wrong promotion.) `POST /api/registrations` locks and
+ * renumbers the same way,
  * outside this module (`src/app/api/registrations/route.ts` — `lockClassRow`,
  * the same helper this module's functions call, and the
  * `reorderWaitingEntries` call in its waitlist-resolution step).
  * This paragraph claims nothing about renumbering writers beyond the ones
  * named here. `deleteStudentAccount` (`gdpr.ts`) was the last renumbering
- * writer that ran fully unlocked — closed in #174 Task 5 — so as of that
- * task nothing renumbers this queue unlocked any more; every one of them now
+ * writer that could run unlocked — closed in #174 Task 5 for the classes its
+ * pre-lock read, and in #183 for an entry committed after that read — so
+ * nothing renumbers this queue unlocked any more; every one of them now
  * takes the same bounded 2s wait, through `lockClassRow` or
  * `lockClassRowsOrdered` (`src/lib/db-locks.ts`).
  *

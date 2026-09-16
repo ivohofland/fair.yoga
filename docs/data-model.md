@@ -562,6 +562,22 @@ integration tests (2806 database-backed tests total) passed with zero
 violations, and a mutation forcing `addToWaitlist`'s `nextPosition` to always
 be `1` failed 5 tests with `P2002` on `['classId', 'position']`.
 
+**A join that races its own student's erasure is refused (#183).** The erasure
+wins: `addToWaitlist` and `deleteStudentAccount` serialise on the `Student`
+row, and a join that finds the profile erased — whether it waited for the
+erasure or arrived after it — writes nothing and throws `WaitlistJoinError`
+with reason `student_erased`, which `POST /api/waitlist` answers with 409. A
+join that takes the row first commits, and the erasure then removes what it
+wrote along with the rest. Refusal was chosen over the two alternatives.
+Deleting and re-scanning at the end of the erasure would take class locks
+after the erasure's own writes, inverting the `Class`-first order
+`docs/lock-order.md` sets, and still could not see a join that had not
+committed yet.
+Accepting the join would leave an entry and a roster link for an erased
+profile, and `promoteNext` could later turn that entry into a registration.
+The mechanism — lock modes, order, and which writers are not gated yet — is
+`docs/lock-order.md`, "The `Student` row is the erasure's gate".
+
 ---
 
 ## Payments

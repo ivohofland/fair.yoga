@@ -4,7 +4,13 @@ Nothing enforces this. It is a convention, and the only defence against a
 deadlock is that every transaction taking two of these rows takes them in this
 order:
 
-    Class → WaitlistEntry → Registration → StudentPrivacy → TeacherStudent → Invitation → TeacherBlock
+    Student → Class → WaitlistEntry → Registration → StudentPrivacy → TeacherStudent → Invitation → TeacherBlock
+
+`Student` binds only the sites that lock it explicitly — "The `Student` row is
+the erasure's gate" below names them. A child-row insert's automatic
+`FOR KEY SHARE` on its `Student` parent conflicts with neither gate mode, so it
+creates no ordering obligation against the gate; the erasure's closing
+`UPDATE`, which it does conflict with, is covered in the same section.
 
 ## Why it is written down rather than enforced
 
@@ -14,10 +20,10 @@ type can prevent the cycle forming — only the order can.
 
 ## `Class` is the real gate; the rest is not
 
-`Class` is not merely first in the list — every site below that touches more
+`Class` is not merely early in the list — every site below that touches more
 than one of these tables also holds `Class`'s row lock before touching any of
-the others, *when it touches `Class` at all*. Two different statements take
-that lock and both count: `lockClassRow` (or `lockClassRowsOrdered`), and a
+the tables after it, *when it touches `Class` at all*. Two different
+statements take that lock and both count: `lockClassRow` (or `lockClassRowsOrdered`), and a
 compare-and-swap `class.updateMany` (an `UPDATE` locks the rows it matches).
 No site in `src/` relies on the second alone any more — `transitionClass`
 (`class-lifecycle.ts`) was the last, until #327 gave its CAS a second table and
@@ -52,10 +58,12 @@ cannot hold conflicting `WaitlistEntry`/`Registration` locks concurrently
 regardless of which table each reaches for second, or whether it reaches for
 it at all. That protection is real but conditional twice over — on the `Class`
 lock actually being taken, and on it covering the rows the transaction goes on
-to write. `deleteStudentAccount` under "Known conformance" is a case where the
-second condition fails (its `Class` lock set is strictly smaller than its
-`WaitlistEntry` write set) and the cycle outside that set was reproduced, so do
-not read this section as a blanket escape. The first condition is why the
+to write. `deleteStudentAccount` under "Known conformance" is where the second
+condition used to fail for `WaitlistEntry` — its `Class` lock set smaller than
+its `WaitlistEntry` write set, with the cycle outside that set reproduced — and
+that entry records what closed it (#183). Its `Registration` writes still reach
+classes it never locked, so do not read this section as a blanket escape. The
+first condition is why the
 entries further down this list matter: several
 sites reach `StudentPrivacy`, `TeacherStudent`, `Invitation` or `TeacherBlock`
 for a (teacher, student) or (teacher, email) pair with **no** `Class` row in
@@ -1099,6 +1107,158 @@ under any ordering discipline this document could add. The branch above
 answers "what does the client see", not "does this still happen" — it still
 does, at the rates measured above (32/100, 1/120).
 
+## The `Student` row is the erasure's gate (#183)
+
+`deleteStudentAccount` (`src/services/gdpr.ts`) chooses its `Class` lock set
+with one statement and deletes its subject's `WaitlistEntry` rows with a later
+one, and under READ COMMITTED each statement reads its own snapshot. Before
+this gate, an entry a waitlist join committed between the two was deleted
+outside the lock set (its class renumbered unlocked too), and one still
+uncommitted when the delete ran survived the erasure, roster link included.
+
+Two halves, both in `src/lib/db-locks.ts`, each arming the shared 2s bound
+itself:
+
+| Site | Helper | Where | Mode | On an erased or absent profile |
+|---|---|---|---|---|
+| `deleteStudentAccount` (`gdpr.ts`) | `lockStudentForErasure` | second statement of its transaction, after `setLockTimeout` | `FOR NO KEY UPDATE` | no check at the lock; the closing compare-and-swap answers an erased one with `AlreadyErasedError` |
+| `addToWaitlist` (`waitlist.ts`) | `lockLiveStudent` | first statement of its transaction | `FOR SHARE` | refuses: `StudentErasedError`, surfaced as `WaitlistJoinError` `student_erased` (409 from `POST /api/waitlist`) |
+
+**`Student → Class` at both.** Each takes the `Student` row before its first
+`Class` row, so the two can meet only at the `Student` row, and what each side
+sees after waiting there is decided by who arrived first:
+
+- **The erasure first.** The join waits at `lockLiveStudent`. Once the erasure
+  commits, the join's read under the lock sees the committed `deletedAt`, and
+  the join refuses before it writes anything — no entry, no roster link. An
+  erasure that outlasts the 2s bound leaves the join with `55P03`, which
+  `classifyApiError` answers as transient.
+- **The join first.** The erasure waits at `lockStudentForErasure` until the
+  join commits. Its class pre-lock runs after that, in a snapshot that contains
+  the new entry, so it locks that class and deletes and renumbers under the
+  lock.
+- **A join after the erasure committed** is refused without waiting.
+
+The order is observable only on a REJOIN — a join into a class where the
+subject already holds a closed entry, so that class is in the erasure's lock
+set. With the join taking the class first, it would hold that class while
+waiting on the `Student` row, and the erasure's pre-lock would wait on that
+class: `40P01`. Pinned by `src/services/gdpr-lock-order.test.ts`, describe "the
+erasure takes the Student row before any Class row (#183)" — "refuses a rejoin
+that waits behind it" for the first case and the order, "waits behind a join
+that holds the gate" for the second — and by `src/services/waitlist.test.ts`
+("addToWaitlist refuses an erased student (#183)") for the third.
+
+### Why these modes
+
+| held ↓ / requested → | `KEY SHARE` | `SHARE` | `NO KEY UPDATE` | `UPDATE` |
+|---|---|---|---|---|
+| `KEY SHARE` (a child-row insert's FK check) | – | – | – | conflict |
+| `SHARE` (`lockLiveStudent`) | – | – | conflict | conflict |
+| `NO KEY UPDATE` (`lockStudentForErasure`) | – | conflict | conflict | conflict |
+
+Two requirements choose the pair:
+
+- **The two halves must conflict with each other.** `SHARE` against
+  `NO KEY UPDATE` does.
+- **The erasure's half must not conflict with `FOR KEY SHARE`.** `promoteNext`
+  holds a class and then inserts the promoted student's `Registration`, which
+  takes `FOR KEY SHARE` on that student's row. An erasure holding `FOR UPDATE`
+  on the student while waiting on that class would close a cycle;
+  `FOR NO KEY UPDATE` lets the insert through.
+
+Pinned by `src/lib/db-locks-lock-order.test.ts` ("the Student gate: lock
+modes"), and end to end by `src/services/gdpr-lock-order.test.ts` ("lets a
+promotion of the student finish while it waits, then passes the freed seat
+on"), which fails with `40P01` when `lockStudentForErasure` takes `FOR UPDATE`.
+
+### Why gating one writer at a time is safe
+
+A writer that is not gated takes only the automatic `FOR KEY SHARE` of a
+child-row insert on the `Student` row, and that conflicts with neither half —
+so leaving a writer ungated adds no wait edge against the gate. That holds
+under one rule:
+
+**No transaction that holds a `Class` row, or a `FOR KEY SHARE` on a student,
+may also `UPDATE` that student's row.** An `UPDATE` takes `FOR NO KEY UPDATE`
+(`FOR UPDATE` if it changes a key column), which the erasure's opening lock
+blocks.
+
+`POST /api/registrations` writes `Student.tierSelectedAt` after its transaction
+commits for exactly this reason. It used to write it inside, after inserting
+the `Registration`, and that closed two cycles with the erasure: on any class,
+the booking held `FOR KEY SHARE` and waited for `FOR NO KEY UPDATE` while the
+erasure's closing `UPDATE` waited on that `FOR KEY SHARE`; on a class in the
+erasure's lock set, the booking held the `Class` row and waited on `Student`
+while the erasure held `Student` and waited on the `Class` row
+(`docs/superpowers/specs/2026-09-16-waitlist-erasure-gate-design.md`, §1,
+*Correction*). Pinned over HTTP by `tests/integration/registrations-api.test.ts`
+("a first self-booking does not wait on a lock held on its student's row").
+
+Who updates a `Student` row:
+
+    git grep -n -E '(tx|db|prisma)\.student\.(update|updateMany|upsert)' -- src ':!*.test.ts'
+
+then read each hit's enclosing transaction. On 2026-09-16 it returned six
+lines. Five run on the bare client, in no transaction at all; the sixth is the
+erasure's own closing `student.updateMany`. The grep sees Prisma calls only. The
+two other ways a statement can update a `Student` row were checked the same
+day and are empty in `src/`: raw SQL (`git grep -n 'UPDATE "Student"' -- src`),
+and a delete of an `Account`, whose foreign key from `Student` is
+`ON DELETE SET NULL`
+(`git grep -n -E '\.account\.(delete|deleteMany)\(' -- src ':!*.test.ts'`). The
+`\(` is deliberate: `git grep -E` does not support `\b` everywhere — on macOS
+a `\b` in its place matches nothing, even with the test files let back in.
+
+### What still escalates
+
+The erasure's closing `student.updateMany` changes `email`, and
+`Student_email_key` is a plain unique index, so that `UPDATE` takes
+`FOR UPDATE` — which does conflict with `FOR KEY SHARE`, and waits for every
+holder. By then the erasure holds every class in its lock set, and a promotion
+or claim needs the student's entry in the class it holds, so no promotion of
+this student is in flight. An ungated booking can be: it holds the
+`FOR KEY SHARE` its `Registration` insert took while its roster-link insert
+can wait on the erasure. That cycle predates the gate and is tracked in #625.
+
+### Who is not gated yet
+
+The inserters into tables with a foreign key to `Student`, other than
+`addToWaitlist`:
+
+- `POST /api/registrations`, both the student's own booking and the teacher's
+  roster add — ungated, tracked in #625.
+- `acceptInvitation` and `unlinkTeacher` (`src/services/invitations.ts`), and
+  `PUT /api/students/[id]/privacy` — ungated, tracked in #626.
+- `promoteNext` and `claimSpot` (`src/services/waitlist.ts`) — ungated and
+  not tracked, because they need no gate: each inserts only for a student
+  holding a `waiting` entry in the class it has locked, which puts that class
+  in the erasure's lock set, so the `Class` row already serialises the two.
+
+Re-derived from the insert statements and the two shared helpers that issue
+most of them (`linkTeacherStudent`, `activateRegistration`):
+
+    git grep -n -E '\.(studentPrivacy|teacherStudent|registration|waitlistEntry)\.(create|createMany|createManyAndReturn|upsert)\(' -- src ':!*.test.ts'
+    git grep -n -E '(linkTeacherStudent|activateRegistration)\(' -- src ':!*.test.ts' \
+      | grep -vE ':[0-9]+: *(\*|//)'
+
+On 2026-09-16 the first returned five statement sites — the privacy route,
+`unlinkTeacher`'s privacy upsert, `linkTeacherStudent`, `activateRegistration`
+and `addToWaitlist`'s own `create` — and the second the two helpers'
+definitions plus their callers: the registrations route, `acceptInvitation`,
+`addToWaitlist`, `promoteNext` and `claimSpot`.
+
+The gate's call sites, filtered to calls and definitions (the last two filters
+drop comment prose and the members of multi-line `import { … }` blocks):
+
+    grep -rn 'lockStudentForErasure\|lockLiveStudent' src/ --include='*.ts' \
+      | grep -v '\.test\.ts:' \
+      | grep -vE ':[0-9]+: *(\*|//)' \
+      | grep -vE ':[0-9]+: +[A-Za-z]+,$'
+
+On 2026-09-16 it returned four lines: the two definitions in `db-locks.ts`, and
+one call each in `gdpr.ts` and `waitlist.ts`. A new gated writer is a fifth.
+
 ## The advisory lock, which is not a row in the line above (#196, #215)
 
 `lockAnnouncementSlot` (`src/services/announcements.ts`) is the first and so far only
@@ -2045,19 +2205,20 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   entry claimed no reproduction was possible at all; that was wrong, and
   wrong because it generalised from a counterparty whose roster-link write
   came first — which is not where the registration route puts it.
-- **`deleteStudentAccount`** (`src/services/gdpr.ts`) — `Class`, via a single
-  ordered `SELECT … FOR UPDATE OF c` joined through `WaitlistEntry`, covering
-  every class the student holds an entry in of **any** status, ahead of every
-  row write (#174 task 5 hoisted it; #216/#182's review made it one statement).
-  Then `Registration`,
+- **`deleteStudentAccount`** (`src/services/gdpr.ts`) — `Student`, via
+  `lockStudentForErasure` (#183; "The `Student` row is the erasure's gate"
+  above), then `Class`, via a single ordered `SELECT … FOR UPDATE OF c` joined
+  through `WaitlistEntry`, covering every class the student holds an entry in
+  of **any** status, ahead of every row write (#174 task 5 hoisted it;
+  #216/#182's review made it one statement). Then `Registration`,
   `StudentPrivacy`, `TeacherStudent`, `WaitlistEntry`, `Invitation`
   (anonymized in place, not deleted). Was already `StudentPrivacy` before
   `TeacherStudent`; not the outlier on that pair.
 
   **Any status, not `waiting` only, and that is a fix rather than caution**
-  (#216/#182 whole-branch review). The `deleteMany` below is keyed on
-  `studentId` with no status scope, so a lock set scoped to `waiting` is
-  strictly smaller than the write set it is meant to gate. The two used to
+  (#216/#182 whole-branch review). The `deleteMany` below has no status
+  scope, so a lock set scoped to `waiting` is strictly smaller than the write
+  set it is meant to gate. The two used to
   coincide by accident: before #216 nothing closed a queue when a class
   *started*, so a student who never got in stayed `waiting` for ever.
   `closeQueueOnStart` flips exactly those rows to `expired`, which dropped
@@ -2076,6 +2237,10 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   and `expired` rows exist only on classes that have started and can never
   return to `open`. It could not have been the example.) Write set equals lock
   set is the form that does not rest on any such enumeration staying true.
+  Since #183 the delete is also scoped to the classes the pre-lock returned
+  and followed by a count of the subject's remaining entries, so a lock set
+  that narrowed again would fail the erasure with `ErasureLockSetError`
+  rather than delete outside it.
 
   **One statement, not a loop, and that is a correctness property rather than a
   speed one.** `lockClassRow` is two round trips, so a loop cost 2N of them and
@@ -2101,7 +2266,8 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   Pinned by "waits for a class row another transaction holds when the erased
   entry is %s" (`gdpr-lock-order.test.ts`), which resolves the erasure to the
   holder's own release flag — a causal assertion rather than a wall-clock
-  threshold — and reads `false` if the lock set narrows again.
+  threshold — and fails if the lock set narrows again: the narrowed erasure
+  never asks for the held class, and rejects with `ErasureLockSetError`.
 
   It is the outlier on `WaitlistEntry`, though, and in **three** ways, not the
   one this entry used to name: it writes `Registration`, `StudentPrivacy` AND
@@ -2109,14 +2275,11 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   `WaitlistEntry` before all three. The whole-branch review of #174 added the
   two that were missing here.
 
-  What protects all three is the same thing, and it is partial — though
-  narrower now than it was. "`Class` is the real gate" above applies, but only
-  to the classes this function actually locked: the ones the student held an
-  entry in **as of its own read of that set**. Its `waitlistEntry.deleteMany`
-  is keyed on `studentId` alone, so the gap is now purely a TIME one — an entry
-  created after that read is written but was never gated. It used to be a
-  status one as well, which was the larger hole and is closed above. Both halves were reproduced directly against the real
-  functions (#174 whole-branch review):
+  What protects all three is "`Class` is the real gate" above, over the
+  classes this function locked — and since #183 those are all the classes its
+  `WaitlistEntry` writes can reach. The #174 whole-branch review reproduced the
+  disagreement directly against the real functions, first with the entry
+  inside the lock set:
 
   - **Inside the gate — no cycle.** Student already `waiting` in the class:
     a real `unlinkTeacher` racing this erasure did not deadlock (it failed
@@ -2125,24 +2288,39 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
     those counterparties take the canonical direction (`WaitlistEntry` before
     `StudentPrivacy`/`TeacherStudent`), so they are the disagreement, and the
     shared `Class` lock is what makes it harmless.
-  - **Outside the gate — a live cycle.** With the `waiting` entry appearing
-    only after this function read its waiting set, the same two counterparties
-    both deadlocked: `40P01 deadlock detected`, raised at `unlinkTeacher`'s
-    `studentPrivacy.upsert` and at `deleteTeacherAccount`'s
-    `studentPrivacy.deleteMany` respectively.
 
-  That residual window is the unscoped `waitlistEntry.deleteMany` already
-  filed as a separate concern, not a new one, and nothing here changes it —
-  recorded so the next reader does not re-derive "the `Class` gate covers it"
-  and stop one step early, which is what the entry above used to invite. The
-  `Registration` half stays as it was: round 1 review of #174 task 7 could not
+  With the `waiting` entry appearing only after this function had read its
+  set, the same two counterparties both deadlocked — `40P01 deadlock
+  detected`, raised at `unlinkTeacher`'s `studentPrivacy.upsert` and at
+  `deleteTeacherAccount`'s `studentPrivacy.deleteMany`. Two things close that
+  window (#183):
+
+  - **No entry can appear outside the lock set.** This function takes the
+    `Student` row before its pre-lock, and `addToWaitlist` — the one creator
+    of entries — takes the other half of that gate before its own class lock.
+    An entry committed before the erasure's `Student` lock is in the
+    pre-lock's snapshot; a join that arrives after it waits for the erasure
+    to end, and is refused if the erasure committed.
+  - **The erasure never requests the row lock of an entry whose class it does
+    not hold.** Its `waitlistEntry.deleteMany` is scoped to the classes the
+    pre-lock returned, and a count of the subject's remaining entries refuses
+    to commit if any lies outside them (`ErasureLockSetError`). That request —
+    made while holding its own `StudentPrivacy`/`TeacherStudent` row locks —
+    was the wait edge both recorded `40P01` cycles needed (the #183 design
+    spec's reasoning; not re-reproduced).
+
+  The `Registration` half stays open. Round 1 review of #174 task 7 could not
   construct a live counterparty — the one candidate disagreement,
   `promoteNext`'s conditional stale-head drop above, needs the erased student
   to hold both an active `Registration` and a `waiting` `WaitlistEntry` for
   the same class at once, a state `POST /api/registrations`'s own
   waitlist-resolution step actively prevents in the normal booking flow — but
   "no counterparty found" is not the same claim as "safe," and none is made
-  here. All three left open, not resolved: no code changed for any of them.
+  here. Its `registration.updateMany` also reaches classes outside the lock
+  set, and a booking racing the erasure is #625.
+
+  Status: the `WaitlistEntry` window is closed (#183); the `Registration` half
+  stays open.
 - **`deleteTeacherAccount`** (`src/services/gdpr.ts`) — `Class`, via an
   ordered `lockClassRowsOrdered` pre-lock over every class in
   `CANCELLABLE_STATUSES`. Not first in the transaction — the two template
@@ -2229,8 +2407,9 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   `class.updateMany`, then `closeQueueOnStart` (`waitlist.ts`) — atomic with
   the CAS, inside the same lock. Same shape as `autoCancelClasses` immediately
   above: one row lock at a time, one transaction per class.
-- **`addToWaitlist`** (`src/services/waitlist.ts`) — `Class`, then
-  `TeacherStudent` (`linkTeacherStudent`), then `TeacherBlock`/`Invitation` via
+- **`addToWaitlist`** (`src/services/waitlist.ts`) — `Student`
+  (`lockLiveStudent`, #183), then `Class`, then `TeacherStudent`
+  (`linkTeacherStudent`), then `TeacherBlock`/`Invitation` via
   `resolveInvitationOnLink`, then `WaitlistEntry`. That call takes
   `TeacherBlock` BEFORE `Invitation` — the opposite of this document's
   canonical line, and of `unlinkTeacher`'s own order. Not conformant on that
@@ -2280,8 +2459,9 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
 
   **Against `deleteStudentAccount` specifically, the `Class` row lock is what
   removes the cycle — not the batch size.** The write sets do overlap: that
-  function's `waitlistEntry.deleteMany` is keyed on `studentId` with no
-  class-status scope, so it deletes entries on terminal classes too, which is
+  function's `waitlistEntry.deleteMany` is keyed on `studentId` and the
+  classes its pre-lock returned, with no class-status scope, so it deletes
+  entries on terminal classes too, which is
   exactly what this sweep deletes. But `deleteStudentAccount` PRE-LOCKS every
   `Class` it will delete entries from, before its first write, joined on
   `w."studentId"` with no status predicate; and this sweep takes
