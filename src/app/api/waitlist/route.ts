@@ -10,6 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { addToWaitlist, WaitlistJoinError } from '@/services/waitlist';
 import { createWaitlistSchema } from '@/lib/schemas';
+import { log } from '@/lib/log';
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireStudent(request);
@@ -32,10 +33,20 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // a live profile because an erasure can commit while this write waits on
     // the row (`docs/lock-order.md`, "The `Student` row is the erasure's
     // gate").
-    await prisma.student.updateMany({
-      where: { id: session.studentId, tierSelectedAt: null, deletedAt: null },
-      data: { tierSelectedAt: new Date() },
-    });
+    //
+    // A failure is logged and the join still answered 201: the join has
+    // committed, and the marker only decides whether the tier prompt shows.
+    try {
+      await prisma.student.updateMany({
+        where: { id: session.studentId, tierSelectedAt: null, deletedAt: null },
+        data: { tierSelectedAt: new Date() },
+      });
+    } catch (err) {
+      log.warn(
+        { err, studentId: session.studentId },
+        'waitlist join committed but its tierSelectedAt write failed',
+      );
+    }
     return respondOk(entry, 201);
   } catch (err) {
     if (err instanceof WaitlistJoinError) {
