@@ -1045,12 +1045,10 @@ async function hasActiveRegistration(
  * the same helper this module's functions call, and the
  * `reorderWaitingEntries` call in its waitlist-resolution step).
  * This paragraph claims nothing about renumbering writers beyond the ones
- * named here. `deleteStudentAccount` (`gdpr.ts`) was the last renumbering
- * writer that could run unlocked — closed in #174 Task 5 for the classes its
- * pre-lock read, and in #183 for an entry committed after that read — so
- * nothing renumbers this queue unlocked any more; every one of them now
- * takes the same bounded 2s wait, through `lockClassRow` or
- * `lockClassRowsOrdered` (`src/lib/db-locks.ts`).
+ * named here. `deleteStudentAccount` (`gdpr.ts`) renumbers this queue too;
+ * which classes it holds while it does, and why none of its entries can sit
+ * outside them, is `docs/lock-order.md`'s to say ("Known conformance", and
+ * "The `Student` row is the erasure's gate").
  *
  * A narrower gap: some writers flip `WaitlistEntry.status` out of `waiting`
  * — never touching `position`, so "renumbering writer" above does not cover

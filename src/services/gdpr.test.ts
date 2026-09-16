@@ -2211,20 +2211,18 @@ describe('deleteTeacherAccount cancels an in_progress class on the CAS loop, not
 });
 
 /**
- * #196 branch 2, Task 3. `deleteStudentAccount` ended its transaction with an
- * unscoped `student.update`, so two concurrent erasures of one student both
- * committed — and each then ran its own post-commit `handleSpotFreed` loop,
- * broadcasting a second `spot_available` set to every student waiting on
- * every class the erasure freed a seat in.
+ * A student erasure's post-commit `handleSpotFreed` loop, and what it logs
+ * when the hook fails after the erasure committed. The concurrent duplicate
+ * itself is raced in `gdpr-lock-order.test.ts`, under this describe's name:
+ * the `Student` lock makes the duplicate read its `upcoming` only after the
+ * first erasure committed, so it has no seat to broadcast, and its
+ * `AlreadyErasedError` abort keeps it from committing a redundant second pass.
  *
  * The class sits in the final-hour `first_come_first_claimed` window on
  * purpose: that is the only window where `handleSpotFreed` broadcasts rather
- * than auto-promoting, and a doubled auto-promotion is invisible (the second
- * call finds the head already `promoted` and returns `none`). The tests
- * below that fail past window resolution — inside the broadcast write, or
- * in the diagnostic read that follows it — depend on landing in this
- * branch, even though the doubled-broadcast guard that first justified the
- * window now lives in `gdpr-lock-order.test.ts` (#459).
+ * than auto-promoting. The tests below that fail past window resolution —
+ * inside the broadcast write, or in the diagnostic read that follows it —
+ * depend on landing in this branch.
  */
 describe('student erasure is retry-safe against a concurrent duplicate (#196)', () => {
   const prisma = new PrismaClient();

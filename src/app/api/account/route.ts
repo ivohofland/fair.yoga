@@ -121,19 +121,21 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   // outage and must not page anyone, which is the same reading
   // `classifyApiError`'s transient branch takes. Anything else here is a real
   // defect — an erasure that cannot complete is a legally time-bound
-  // operation failing — and stays at `error`.
+  // operation failing — and stays at `error`. `ErasureLockSetError` is the
+  // exception: `erasureFailure` answers it as busy, but `level` reads
+  // `isTransientDbError` alone and logs it at `error`, on purpose, because
+  // reaching it means a waiting-list entry was written past the erasure's gate.
   if (session.studentId) {
     try {
       await deleteStudentAccount(prisma, session.studentId);
     } catch (err) {
       // The erasure this request wanted has already happened — a concurrent
-      // duplicate, whose transaction aborted whole rather than committing a
-      // second time and re-running its post-commit `handleSpotFreed` loop.
-      // The caller's question is "is this account gone?" and the honest
-      // answer is yes, so this must NOT reach `erasureFailure`, which would
-      // report a 500 for an outcome that succeeded. Caught per half so a
-      // dual-role account whose student half is already erased still goes on
-      // to erase its teacher half below.
+      // duplicate, whose transaction aborted whole rather than commit a
+      // redundant second pass. The caller's question is "is this account
+      // gone?" and the honest answer is yes, so this must NOT reach
+      // `erasureFailure`, which would report a 500 for an outcome that
+      // succeeded. Caught per half so a dual-role account whose student half
+      // is already erased still goes on to erase its teacher half below.
       //
       // Only reachable concurrently: a sequential retry never gets here,
       // because `validateSession` (`lib/auth/session.ts`) resolves only LIVE

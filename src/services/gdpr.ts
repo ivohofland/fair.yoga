@@ -452,14 +452,10 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // walk-in resolver in `POST /api/registrations` writes `expired` entries
     // under this same class row lock, so the gap was live.
     //
-    // VERDICT (#327): no `entries: true`. This transaction reads and writes
-    // `WaitlistEntry`, `Registration`, `StudentPrivacy`, `TeacherStudent`,
-    // `Invitation`, `Notification`, `Session` and `Account` — it touches no
-    // `CalendarEntry` column. Its registration-cancel filter reads
-    // `calendarEntry: { cancelledAt: null }` further down, which is a
-    // predicate on a relation, not a decision this lock has to serialise —
-    // the same shape `status: { in: ['draft', 'open'] }` had, unlocked,
-    // before #327.
+    // VERDICT (#327): no `entries: true`. This transaction writes no
+    // `CalendarEntry` column. Its `upcoming` read and its registration cancel
+    // both filter on `calendarEntry: { cancelledAt: null }`, which is a
+    // predicate on a relation, not a decision this lock has to serialise.
     const lockedClassIds = await lockClassRowsOrdered(tx, {
       join: CLASS_TO_WAITLIST_JOIN,
       where: Prisma.sql`w."studentId" = ${studentId}`,
@@ -586,10 +582,11 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     await tx.studentPrivacy.deleteMany({ where: { studentId } });
     await tx.teacherStudent.deleteMany({ where: { studentId } });
     await tx.waitlistEntry.deleteMany({ where: { studentId, classId: { in: lockedClassIds } } });
-    // Refuses to commit rather than write outside the lock set. Unreachable
-    // while every creator of entries takes `lockLiveStudent`; if one stops, the
-    // erasure fails whole instead of deleting an entry whose class it never
-    // held (`ErasureLockSetError`).
+    // Refuses to commit an erasure whose scoped delete above missed one of the
+    // subject's entries: the transaction fails whole with `ErasureLockSetError`
+    // instead of deleting an entry whose class it never held. Why nothing
+    // should reach it: `docs/lock-order.md`, "The `Student` row is the
+    // erasure's gate".
     const strays = await tx.waitlistEntry.count({ where: { studentId } });
     if (strays > 0) throw new ErasureLockSetError(studentId, strays);
 
@@ -845,21 +842,8 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // Which is why the number below is a ceiling on damage rather than a
     // forecast of need.
     //
-    // NOT sized from statement cost, and the measurement is what says so. Not
-    // all of this transaction's work is indexed on the column it filters by,
-    // and an older version of this comment claimed otherwise: the
-    // `waitlistEntry.count` that checks for strays and
-    // `teacherStudent.deleteMany` key on `studentId` alone, and no
-    // `WaitlistEntry` or `TeacherStudent` index leads with it;
-    // `magicLinkToken.deleteMany` keys on `email`, which no `MagicLinkToken`
-    // index leads with; and the teacher-notification `updateMany` filters on
-    // `body: { startsWith }`. Those are checked against
-    // `prisma/migrations/*/migration.sql` rather than assumed. The
-    // `waitlistEntry.findMany`/`deleteMany` filter on `classId IN (…)` as well
-    // as `studentId`; which plan they get has not been measured. That
-    // inventory is recorded to correct the "it is all indexed" claim, NOT as a
-    // reason more budget was needed — the measured fact points the other way:
-    // this whole statement set, its sequential scans included, already ran
+    // NOT sized from statement cost, and the measurement is what says so:
+    // this whole statement set, whatever plans its statements get, already ran
     // inside 5_000ms, which is Prisma's default transaction timeout and the
     // only budget this function had before #174 gave it an explicit one. So
     // the 20s buys nothing for statement time.
