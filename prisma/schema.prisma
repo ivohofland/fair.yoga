@@ -989,6 +989,10 @@ model Registration {
   @@index([studentId, status])
 }
 
+/// Carries a partial unique index Prisma cannot express and therefore cannot
+/// show: `WaitlistEntry_waiting_position_key` on (classId, position) WHERE
+/// status = 'waiting' (#183). Invisible to `migrate diff`, so it never appears
+/// as drift. Why it is partial and immediate: docs/data-model.md (WaitlistEntry).
 model WaitlistEntry {
   id             String         @id @default(uuid())
   classId        String

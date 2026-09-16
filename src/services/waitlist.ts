@@ -1163,9 +1163,10 @@ export async function reorderWaitingEntries(
  * different and equally wrong story from the one the data supports.
  *
  * No reorder. `reorderWaitingEntries` renumbers only `waiting` rows, so closed
- * rows keep stale positions by design (#183); closing an entire queue at once
- * leaves nothing to renumber, which is why the three cancel paths issue their
- * `updateMany` without one either.
+ * rows keep stale positions by design — `WaitlistEntry_waiting_position_key` is
+ * partial on `status = 'waiting'` for the same reason; closing an entire queue
+ * at once leaves nothing to renumber, which is why the three cancel paths issue
+ * their `updateMany` without one either.
  *
  * No notification. #112's promise was about a class ceasing to be OFFERED. A
  * class that ran is not that, and "it happened without you" is noise to

@@ -449,8 +449,9 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // Read AFTER the lock rather than before it — under the rows this
     // transaction now holds, so it cannot see a queue another writer is
     // mid-change. The reorder stays `waiting`-only: closed rows keep stale
-    // positions by design (#183), so a class where this student held only a
-    // closed entry must still be LOCKED but has nothing to renumber.
+    // positions by design (`WaitlistEntry_waiting_position_key` is partial on
+    // `status = 'waiting'`), so a class where this student held only a closed
+    // entry must still be LOCKED but has nothing to renumber.
     const waitingClassIds = (
       await tx.waitlistEntry.findMany({
         where: { studentId, status: 'waiting' },
