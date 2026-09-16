@@ -517,6 +517,13 @@ async function revivePendingInvitation(
  * invitation from someone they have never met is not a service message
  * about their own booking, so it does not bypass their opt-out the way a
  * booking confirmation does.
+ *
+ * A teacher recipient has no such preference to honour — `processEmailFallback`
+ * (services/email-fallback.ts) leaves `emailEnabled` true for the teacher arm,
+ * and no teacher-side counterpart to `Student.emailNotifications` exists. The
+ * teacher branch below is therefore capped instead: it tells an invitee once
+ * per invitation. Which writers set and clear that marker:
+ * `docs/data-model.md` (Invitation).
  */
 export async function notifyInvitee(
   db: PrismaClient,
@@ -602,6 +609,22 @@ export async function notifyInvitee(
     select: { teacher: { select: { id: true } } },
   });
   if (account?.teacher) {
+    // The cap (#622). A conditional UPDATE rather than a read and then a
+    // write: two concurrent dispatches would both observe a null marker and
+    // both notify, so claiming the row IS the check. A row deleted mid-flight
+    // matches nothing and is likewise not notified.
+    //
+    // Do not add `lastNotifyFailedAt: null` to this `where`. It is inert here,
+    // for a reason involving what the dispatching routes write before this
+    // code runs: `docs/data-model.md` (Invitation, "Who an invitation
+    // reaches"). A failed dispatch re-opens the cap on the failure path
+    // itself — `deliverInvitation`'s `.catch`, below.
+    const claimed = await db.invitation.updateMany({
+      where: { id: input.invitationId, teacherInboxNotifiedAt: null },
+      data: { teacherInboxNotifiedAt: new Date() },
+    });
+    if (claimed.count === 0) return;
+
     await createNotification(db, {
       recipientType: 'teacher',
       recipientId: account.teacher.id,

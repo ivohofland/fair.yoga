@@ -198,7 +198,7 @@ The fact that tells the two apart is read off the roster link's own write, not f
 **Who an invitation reaches (#172).** `notifyInvitee` (`src/services/invitations.ts`) delivers an unblocked invitation through the first of these that holds for its address:
 
 - **A `Student` row** gets a student-inbox `teacher_invitation`, or nothing if that student is already on this teacher's roster.
-- **Otherwise, an `Account` with a teacher profile** gets a teacher-inbox `teacher_invitation`, which opens `/inbox/invitations`.
+- **Otherwise, an `Account` with a teacher profile** gets a teacher-inbox `teacher_invitation`, which opens `/inbox/invitations`. The teacher branch delivers at most once per invitation (#622). `lastNotifyFailedAt` cannot serve as the release valve for that cap — both dispatching routes clear it before dispatching, so a reader in `notifyInvitee` always sees null — so a failed dispatch re-opens the cap on the failure path itself, in `deliverInvitation`'s `.catch`. Set by the teacher branch on delivery; cleared by that `.catch`, by a genuine readdress in `PUT /api/invitations/[id]`, and by `revivePendingInvitation`.
 - **Otherwise,** the address gets the sign-in email.
 
 An account holding both profiles therefore always takes the student branch.
