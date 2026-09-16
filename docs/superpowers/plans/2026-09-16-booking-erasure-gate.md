@@ -73,12 +73,14 @@ import { createClassFixture } from '../../../../tests/class-fixtures';
 import { POST } from './route';
 
 /**
- * @serial-tier lock-contention — every test below races this route against a
- * paused `deleteStudentAccount` on real Postgres row locks and asserts on how
- * the race resolves: whether a racer waited, whether the booking got a 409 or
- * a 503 (a `55P03`), and which rows survive. Lock noise from a neighbour in
- * the parallel tier would stretch a staged wait past the 2s `lock_timeout`
- * these outcomes turn on.
+ * @serial-tier lock-contention — the tests below meet this route with the
+ * erasure's `Student` lock on real Postgres row locks: most race it against a
+ * paused `deleteStudentAccount`, and the rest stage a bare holder of that lock
+ * or the erasure's committed result. They assert on how each meeting
+ * resolves: whether a racer waited, whether the booking got a 409 or a 503 (a
+ * `55P03`), and which rows survive. Lock noise from a neighbour in the
+ * parallel tier would stretch a staged wait past the 2s `lock_timeout` these
+ * outcomes turn on.
  *
  * `POST` is invoked directly, as `route.test.ts` does, and the erasure runs in
  * this process too, so a spy can pause either one at an exact statement. What
@@ -646,7 +648,7 @@ Check one mechanism when the file first runs. If it fails, report it to the cont
 In `vitest.tiers.ts`, append to `LOCK_CONTENTION_TESTS`, after the `#183` entry:
 
 ```ts
-  // #625: races the booking route against a paused erasure, the
+  // #625: stages the booking route against the erasure's `Student` lock, the
   // `gdpr-lock-order.test.ts` shape; its header carries the reason.
   'src/app/api/registrations/route-lock-order.test.ts',
 ```
@@ -974,7 +976,8 @@ profile keeps the session but it no longer resolves a student.
 
 A booking that takes the row first commits, and the erasure then handles what
 it wrote. If the class is still open, the erasure cancels the registration and
-offers the freed seat to the class's waitlist. It also deletes the roster link
+hands the freed seat to the waitlist hook, which promotes the next student or
+broadcasts the seat unless the waitlist is frozen. It also deletes the roster link
 and any waitlist entry the booking resolved. It does not undo the rest of the
 booking: `resolveInvitationOnLink` may have cleared a `TeacherBlock` and
 resolved an `Invitation`, and the erasure recreates no block. It anonymises
