@@ -1,8 +1,6 @@
 /**
  * Pins the delete order `TeacherRoom -> Room -> Teacher` against
- * `Room_createdById_fkey` (`ON DELETE RESTRICT`, non-cascading). Lives in
- * the `integration` tier because that is where CI runs it unconditionally
- * (#619).
+ * `Room_createdById_fkey` (`ON DELETE RESTRICT`, non-cascading) (#619).
  *
  * `TeacherRoom -> Teacher` is `ON DELETE CASCADE` (`prisma/schema.prisma`),
  * so only `Room.createdById -> Teacher` can refuse a delete here — which is
@@ -29,6 +27,11 @@ interface Fixture {
   teacherRoomId: string;
 }
 
+// Each id is pushed onto its cleanup array immediately after its own
+// `create` resolves — not batched at the end — so a fixture that fails
+// partway through (e.g. `teacherRoom.create` throws after `teacher` and
+// `room` already committed) still leaves `afterAll` tracking every row that
+// actually landed in the database, rather than orphaning it untracked.
 async function makeFixture(): Promise<Fixture> {
   const tag = `roomorder-${suffix}-${seq++}`;
   const email = `${tag}@test.local`;
@@ -42,6 +45,8 @@ async function makeFixture(): Promise<Fixture> {
       pageSlug: tag,
     },
   });
+  teacherIds.push(teacher.id);
+  accountEmails.push(email);
   const room = await prisma.room.create({
     data: {
       venueName: `Venue ${tag}`,
@@ -52,6 +57,7 @@ async function makeFixture(): Promise<Fixture> {
       createdById: teacher.id,
     },
   });
+  roomIds.push(room.id);
   const teacherRoom = await prisma.teacherRoom.create({
     data: {
       teacherId: teacher.id,
@@ -60,17 +66,14 @@ async function makeFixture(): Promise<Fixture> {
       rentalRate: new Prisma.Decimal(20),
     },
   });
-  teacherIds.push(teacher.id);
-  roomIds.push(room.id);
   teacherRoomIds.push(teacherRoom.id);
-  accountEmails.push(email);
   return { teacherId: teacher.id, roomId: room.id, teacherRoomId: teacherRoom.id };
 }
 
 afterAll(async () => {
-  // Room.createdById -> Teacher and Teacher.accountId -> Account are both
-  // ON DELETE RESTRICT, so Room must go before Teacher, and Teacher before
-  // Account. deleteMany is a no-op on whatever a test already deleted inline.
+  // Room.createdById -> Teacher is ON DELETE RESTRICT (pinned by the test
+  // below), so Room must go before Teacher. deleteMany is a no-op on
+  // whatever a test already deleted inline.
   try {
     await prisma.teacherRoom.deleteMany({ where: { id: { in: teacherRoomIds } } });
     await prisma.room.deleteMany({ where: { id: { in: roomIds } } });
