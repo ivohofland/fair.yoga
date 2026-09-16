@@ -19,6 +19,7 @@ import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { CLAIMABLE_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { readSeatCount } from '@/services/capacity';
 import { lockClassRow } from '@/lib/db-locks';
+import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 
 /** Thrown inside the registration transaction when the class is at capacity. */
@@ -274,14 +275,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // Roster adds and walk-ins must not consume the income-selection
     // moment. Null-guarded: the marker records the first choice.
     //
-    // Written after the transaction commits because a `Student` write under
-    // the class lock would cycle with an erasure's `Student` lock, and scoped
-    // to a live profile because an erasure can commit while this write waits
-    // on the row (`docs/lock-order.md`, "The `Student` row is the erasure's
-    // gate").
+    // Written after the transaction commits, as a statement of its own:
+    // a `Student` update is a lock on the `Student` row, so it must not come
+    // after this transaction's other row locks. Scoped to a live profile
+    // because an erasure can commit while this write waits on the row. Both
+    // rules: `docs/lock-order.md`, "The `Student` row is the erasure's gate".
     //
-    // A failure is logged and the booking still answered 201: the booking has
-    // committed, and the marker only decides whether the tier prompt shows.
+    // A failure is logged and the booking still answered 201, because the
+    // booking has committed. What a lost write costs: `tierSelectedAt` stays
+    // null, so the student keeps the first-booking tier prompt and the
+    // anonymous price line until a later write sets it — their next
+    // self-booking or join, or a tier change. `error` unless the failure is
+    // a lost race.
     if (!rosterStudentId) {
       try {
         await prisma.student.updateMany({
@@ -289,7 +294,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           data: { tierSelectedAt: new Date() },
         });
       } catch (err) {
-        log.warn({ err, studentId }, 'booking committed but its tierSelectedAt write failed');
+        const transient = isTransientDbError(err);
+        log[transient ? 'warn' : 'error'](
+          { err, studentId, classId: body.classId, registrationId: registration.id, transient },
+          'booking committed but its tierSelectedAt write failed',
+        );
       }
     }
 

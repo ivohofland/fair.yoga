@@ -475,12 +475,16 @@ describe('POST /api/registrations — a failed tier-marker write after the booki
     await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
   });
 
-  it('answers 201 and logs the failure', async () => {
+  // A plain `Error` is not a lost race, so the failure is logged at `error`,
+  // with what identifies the booking it followed.
+  it('answers 201 and logs the failure at error', async () => {
     const failure = new Error('forced tier-marker write failure');
     const markerWrite = vi.spyOn(appPrisma.student, 'updateMany').mockRejectedValueOnce(failure);
     onTestFinished(() => markerWrite.mockRestore());
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined as unknown as void);
     onTestFinished(() => warn.mockRestore());
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined as unknown as void);
+    onTestFinished(() => error.mockRestore());
 
     const res = await POST(new NextRequest('http://localhost:3000/api/registrations', {
       method: 'POST',
@@ -491,15 +495,22 @@ describe('POST /api/registrations — a failed tier-marker write after the booki
     // The forced failure was met, so the status below is about it.
     expect(markerWrite).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(201);
-    expect(
-      await prisma.registration.findUnique({
-        where: { classId_studentId: { classId, studentId } },
-        select: { status: true },
-      }),
-    ).toEqual({ status: 'registered' });
-    expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ err: failure, studentId }),
-      expect.any(String),
+    const registration = await prisma.registration.findUnique({
+      where: { classId_studentId: { classId, studentId } },
+      select: { id: true, status: true },
+    });
+    expect(registration?.status).toBe('registered');
+    const message = 'booking committed but its tierSelectedAt write failed';
+    expect(error).toHaveBeenCalledWith(
+      {
+        err: failure,
+        studentId,
+        classId,
+        registrationId: registration?.id,
+        transient: false,
+      },
+      message,
     );
+    expect(warn).not.toHaveBeenCalledWith(expect.anything(), message);
   });
 });
