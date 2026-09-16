@@ -223,11 +223,9 @@ grep -n "model Account" -A 25 prisma/schema.prisma
 
 Read both whole. Any boolean preference column on `Teacher` or `Account` governing whether that person is emailed is what falsifies this. So keeping `teacher_invitation` out of `ESSENTIAL_NOTIFICATION_TYPES` (`src/services/notification-policy.ts`), which is what honours a *student* invitee's opt-out, buys a teacher invitee nothing, and the one-notification cap above is what bounds the teacher branch instead. Building the missing preference is filed out of scope in `docs/superpowers/specs/2026-09-16-teacher-inbox-dispatch-cap-design.md` (§10).
 
-The teacher branch filters on no teacher liveness, because no erased teacher can reach it:
-- erasing an account's last live profile rewrites `Account.email`;
-- erasing only the teacher leaves a live `Student` row on the account, whose address is the account's own (`updateStudentSchema` has no `email` field), so the first branch answers it.
+The teacher branch filters on teacher liveness: `notifyInvitee` selects `account.teachers` with `where: { deletedAt: null }` and takes the result through `liveProfile` (`src/lib/live-profile.ts`), so a row's existence in `account.teachers` never stands in for a live teacher. This is load-bearing since #623: an account can hold erased `Teacher` rows beside a live one, so nothing about a row's mere presence tells the branch whether there is a teacher there to read the notification — the filter is what keeps it from addressing a notification to a tombstone.
 
-Re-derive the rewrites with `grep -n "tx.account.update" -B 5 -A 3 src/services/gdpr.ts`.
+Re-derive the filter with `grep -n "teachers: { where: { deletedAt: null }" src/services/invitations.ts`.
 
 A teacher-only account is offered no decline: leaving the invitation unanswered is its answer. So no `TeacherBlock` is written from one, and the student export's boundary in the TeacherBlock section below stays true.
 

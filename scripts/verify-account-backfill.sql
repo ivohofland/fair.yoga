@@ -1,6 +1,8 @@
 -- Run against a production snapshot BEFORE deploying the account_hybrid
 -- migration (to see what the backfill will do), and against production
--- AFTER, to verify the invariants. All counts must be zero.
+-- AFTER, to verify the invariants below. Run the last two checks again
+-- after the live_profile_unique_per_account migration (#623) to confirm
+-- its two partial unique indexes are in place. All counts must be zero.
 SELECT 'teachers without account' AS invariant, count(*) FROM "Teacher" WHERE "accountId" IS NULL;
 SELECT 'claimed students without account', count(*) FROM "Student" WHERE "claimedAt" IS NOT NULL AND "accountId" IS NULL;
 SELECT 'sessions without account', count(*) FROM "Session" s
@@ -10,11 +12,11 @@ SELECT 'passkeys without account', count(*) FROM "PasskeyCredential" pc
 SELECT 'duplicate emails across accounts', count(*) FROM (
   SELECT email FROM "Account" GROUP BY email HAVING count(*) > 1
 ) d;
-SELECT 'accounts with two live students' AS invariant, count(*) FROM (
-  SELECT "accountId" FROM "Student"
-   WHERE "accountId" IS NOT NULL AND "deletedAt" IS NULL
-   GROUP BY "accountId" HAVING count(*) > 1) t;
-SELECT 'accounts with two live teachers' AS invariant, count(*) FROM (
-  SELECT "accountId" FROM "Teacher"
-   WHERE "deletedAt" IS NULL
-   GROUP BY "accountId" HAVING count(*) > 1) t;
+SELECT 'Teacher_account_live_unique missing or non-partial' AS invariant,
+  1 - count(*) FROM pg_indexes
+  WHERE indexname = 'Teacher_account_live_unique'
+    AND indexdef LIKE '%WHERE ("deletedAt" IS NULL)%';
+SELECT 'Student_account_live_unique missing or non-partial' AS invariant,
+  1 - count(*) FROM pg_indexes
+  WHERE indexname = 'Student_account_live_unique'
+    AND indexdef LIKE '%WHERE ("deletedAt" IS NULL)%';

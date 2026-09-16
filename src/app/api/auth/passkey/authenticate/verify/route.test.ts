@@ -106,9 +106,9 @@ describe('POST /api/auth/passkey/authenticate/verify — teacher-signup destinat
     // This mock cannot reproduce erasure by itself — an unfiltered read and
     // a filtered one that finds nothing both return `{ teachers: [] }` here,
     // since neither the mock nor this route talks to a real database. What
-    // distinguishes them is the SELECT the route sends, asserted below; the
-    // filter's actual effect against a soft-deleted row is covered end to
-    // end by `tests/integration/live-profile-unique.test.ts`.
+    // distinguishes them is the SELECT the route sends — the
+    // `toHaveBeenCalledWith` assertion below is the tether that keeps this
+    // test failing if that filter is ever removed.
     accountFindUnique.mockResolvedValue({ teachers: [] });
     storeChallenge('authentication', 'chal-former-teacher', 'expected-challenge');
 
