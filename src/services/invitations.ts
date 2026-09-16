@@ -636,8 +636,8 @@ export async function notifyInvitee(
     // code runs: `docs/data-model.md` (Invitation, "Who an invitation
     // reaches"). A failed dispatch re-opens the cap on the failure path
     // itself — `deliverInvitation`'s `.catch`, below, which scopes that clear
-    // to `input.claimedAt`: the value written here is what tells a later
-    // failure whether the marker it is looking at is its own.
+    // to this same value: what is written here is what tells a failing
+    // dispatch whether the marker it is looking at is its own.
     const claimed = await db.invitation.updateMany({
       where: { id: input.invitationId, teacherInboxNotifiedAt: null },
       data: { teacherInboxNotifiedAt: input.claimedAt },
@@ -803,8 +803,8 @@ export function deliverInvitation(
     //   whatever else has moved on the row since. Scoped on `lastNotifiedAt`
     //   instead, a resend landing during a slow failure would refuse the
     //   clear and leave the marker standing over a notification that was
-    //   never created: permanent silence, the outcome this cap exists to
-    //   avoid.
+    //   never created: permanent silence, which is the state this clear
+    //   exists to prevent.
     // - This attempt never claimed — the stranger, student, blocked or
     //   refused-claim paths — and threw. Any marker on the row belongs to
     //   some other attempt, and `claimedAt` was written nowhere, so this
