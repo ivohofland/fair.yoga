@@ -171,7 +171,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // ordinary lost race.
       log.error(
         { err, rawTarget: err.meta?.target },
-        'student profile create hit a unique constraint that is neither the account nor the email key',
+        'student profile create hit a unique constraint that is neither the accountId column nor the email key',
       );
       throw new Error('student profile create: unrecognised unique constraint');
     }
