@@ -11,6 +11,7 @@ import { deleteStudentAccount } from '@/services/gdpr';
 import { promoteNext } from '@/services/waitlist';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { TEACHER_INVITATION_PATH } from '@/lib/notification-links';
 import { createClassFixture } from '../class-fixtures';
 
 const prisma = new PrismaClient();
@@ -4259,66 +4260,49 @@ describe('an invitation to a teacher-only account (#172)', () => {
   });
 
   it("lists the invitation on the invitee's invitations page", async () => {
-    const res = await fetch(`${BASE_URL}/inbox/invitations`, { headers: cookie(inviteeToken) });
+    // Through the constant, not the literal: every unit and component test
+    // imports `TEACHER_INVITATION_PATH` and compares it against itself, so
+    // none of them can fail when its value stops matching the route folder.
+    // Before this, the only thing tying the two together was the e2e spec —
+    // which `pnpm run verify` does not run.
+    const res = await fetch(`${BASE_URL}${TEACHER_INVITATION_PATH}`, { headers: cookie(inviteeToken) });
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('Invitation Teacher would like to connect with you as a student.');
   });
 
-  it('does not tell the invitee again when the invitation is resent unchanged', async () => {
-    // Control: a second teacher-only account whose row was readdressed since its
-    // last dispatch, so its resend is a first one. Issued after the repeat, so
-    // once the control's notification lands, the repeat's would have too.
-    const controlEmail = `inv-teacher-invitee-control-${suffix}@test.local`;
-    const control = await prisma.teacher.create({
-      data: {
-        firstName: 'Control', lastName: 'Invitee', email: controlEmail,
-        account: { create: { email: controlEmail } },
-        bio: '#172 resend control', pageSlug: `inv-teacher-invitee-control-${suffix}`,
-      },
-      select: { id: true, accountId: true },
-    });
-    const controlInvitation = await prisma.invitation.create({
-      data: {
-        teacherId, email: controlEmail, firstName: 'Control', lastName: 'Invitee',
-        lastNotifiedAt: new Date(), lastNotifiedEmail: `inv-typo-${suffix}@test.local`,
-      },
+  // A resend reaches the invitee every time, like every other recipient.
+  //
+  // #172 first shipped a once-per-address suppression here, and it was removed
+  // before merge: it keyed on `lastNotifiedEmail`/`lastNotifyFailedAt`, which
+  // record that a dispatch was ATTEMPTED at an address and never which branch
+  // took it. An address invited while it had no account keeps those markers,
+  // so once that person signed up as a teacher the next resend was suppressed
+  // and they were never told at all — this issue's own dead end, on the one
+  // request that exists to recover a send that did not land. Capping the
+  // repeats is worth doing, and needs a column recording the channel; it is
+  // filed separately rather than approximated from these two.
+  it('tells the invitee again when the invitation is resent', async () => {
+    const invitation = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email: inviteeEmail } },
       select: { id: true },
     });
-    try {
-      const invitation = await prisma.invitation.findUniqueOrThrow({
-        where: { teacherId_email: { teacherId, email: inviteeEmail } },
-        select: { id: true },
-      });
+    const before = await prisma.notification.count({
+      where: { recipientType: 'teacher', recipientId: inviteeTeacherId, type: 'teacher_invitation' },
+    });
 
-      const repeat = await fetch(`${BASE_URL}/api/invitations/${invitation.id}/resend`, {
-        method: 'POST', headers: cookie(teacherToken),
-      });
-      const first = await fetch(`${BASE_URL}/api/invitations/${controlInvitation.id}/resend`, {
-        method: 'POST', headers: cookie(teacherToken),
-      });
+    const resend = await fetch(`${BASE_URL}/api/invitations/${invitation.id}/resend`, {
+      method: 'POST', headers: cookie(teacherToken),
+    });
+    expect(resend.status).toBe(200);
+    expect(await resend.json()).toEqual({ data: { id: invitation.id } });
 
-      // Neither status nor body tells the teacher which resend reached anyone.
-      expect(repeat.status).toBe(200);
-      expect(first.status).toBe(200);
-      expect(await repeat.json()).toEqual({ data: { id: invitation.id } });
-      expect(await first.json()).toEqual({ data: { id: controlInvitation.id } });
-
-      await waitFor(
-        () => prisma.notification.findFirst({
-          where: { recipientType: 'teacher', recipientId: control.id, type: 'teacher_invitation' },
-        }),
-        { description: 'control: a readdressed resend reaches a teacher-only account (#172)' },
-      );
-      expect(await prisma.notification.count({
+    await waitFor(
+      () => prisma.notification.count({
         where: { recipientType: 'teacher', recipientId: inviteeTeacherId, type: 'teacher_invitation' },
-      })).toBe(1);
-    } finally {
-      await prisma.invitation.deleteMany({ where: { id: controlInvitation.id } });
-      await prisma.notification.deleteMany({ where: { recipientType: 'teacher', recipientId: control.id } });
-      await prisma.teacher.delete({ where: { id: control.id } });
-      await prisma.account.delete({ where: { id: control.accountId } });
-    }
+      }).then((count) => (count > before ? count : null)),
+      { description: 'a resend reaches a teacher-only account again (#172)' },
+    );
   });
 
   it('lets the invitee add a student side and accept', async () => {

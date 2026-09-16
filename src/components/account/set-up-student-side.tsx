@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { readError } from '@/lib/client-errors';
 import { STUDENT_INVITATION_PATH } from '@/lib/notification-links';
 
 // Adding the student side is the account holder's own act; the invitation is
@@ -17,12 +17,24 @@ export function SetUpStudentSide() {
     setState('working');
     try {
       const res = await fetch('/api/account/student-profile', { method: 'POST' });
-      // 409 ALREADY_STUDENT: this account already holds a student profile
-      // row, and the student page is where this button leads either way.
-      if (!res.ok && res.status !== 409) {
-        setMessage(await readErrorMessage(res, 'Could not set up your student side. Try again.'));
-        setState('error');
-        return;
+      if (!res.ok) {
+        // Only `ALREADY_STUDENT` means the student side is already there, and
+        // so only that 409 is success — the student page is where this button
+        // leads either way. Keyed on the code rather than the status because
+        // this route answers 409 for other reasons too, and `classifyApiError`
+        // turns a unique-constraint violation that escapes the route's own
+        // catch into a code-less one. Treating those as success navigated to a
+        // page this account cannot open, which bounces it to the schedule
+        // saying nothing at all.
+        const { code, message } = await readError(
+          res,
+          'Could not set up your student side. Try again.',
+        );
+        if (!(res.status === 409 && code === 'ALREADY_STUDENT')) {
+          setMessage(message);
+          setState('error');
+          return;
+        }
       }
       router.push(STUDENT_INVITATION_PATH);
       // If the navigation never commits, don't leave a dead button behind.

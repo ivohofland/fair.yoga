@@ -431,27 +431,6 @@ async function revivePendingInvitation(
 }
 
 /**
- * Whether a dispatch has already reached the invitation's current address
- * (#172). Who reads it: `docs/data-model.md` (Invitation, "Who an invitation
- * reaches").
- */
-export type PriorDispatch = 'none' | 'same_address';
-
-/**
- * Read from the row as it stood BEFORE the dispatching route's own
- * unconditional marker write — read after it, every dispatch is a repeat.
- */
-export function priorDispatchFor(row: {
-  email: string;
-  lastNotifiedEmail: string | null;
-  lastNotifyFailedAt: Date | null;
-}): PriorDispatch {
-  return row.lastNotifiedEmail === row.email && row.lastNotifyFailedAt === null
-    ? 'same_address'
-    : 'none';
-}
-
-/**
  * Tell the invitee an invitation exists — layer 1+2 (in-app notification,
  * which the inbox and the email-fallback cron both pick up) for an address
  * with a `Student` row or a teacher account, a plain email for everyone else
@@ -538,15 +517,10 @@ export function priorDispatchFor(row: {
  * invitation from someone they have never met is not a service message
  * about their own booking, so it does not bypass their opt-out the way a
  * booking confirmation does.
- *
- * `priorDispatch` is read by the teacher-account branch alone: a teacher
- * recipient's fallback email consults no preference, so a resend that
- * repeated would reach a teacher-only account every time. Students keep their
- * opt-out and their decline (#172).
  */
 export async function notifyInvitee(
   db: PrismaClient,
-  input: { teacherId: string; email: string; teacherName: string; priorDispatch: PriorDispatch },
+  input: { teacherId: string; email: string; teacherName: string },
 ): Promise<void> {
   // Load-bearing for both reads below, `TeacherBlock` and `Student` alike:
   // both are plain, case-SENSITIVE `findUnique`s on columns that can only
@@ -628,7 +602,6 @@ export async function notifyInvitee(
     select: { teacher: { select: { id: true } } },
   });
   if (account?.teacher) {
-    if (input.priorDispatch === 'same_address') return;
     await createNotification(db, {
       recipientType: 'teacher',
       recipientId: account.teacher.id,
@@ -697,9 +670,9 @@ const DELIVERY_FAILURE_MESSAGE = {
  *   `invitationId` alone said nothing about WHICH failures are safe to
  *   surface: only the stranger path (`sendInvitationEmail`, an HTTPS call)
  *   can throw under normal operation — the in-app path (`createNotification`,
- *   a local insert, for a student or a teacher-only account) essentially
- *   never does — and a Resend outage or a lapsed API key fails every stranger
- *   send alike, so an unguarded write turns this column into a proxy for
+ *   a local insert) essentially never does — and a Resend outage or a lapsed
+ *   API key fails every stranger send alike, so an unguarded write turns this
+ *   column into a proxy for
  *   "does this address have a fair.yoga account," reopening #166 through a
  *   side door. See `notify-health.ts`'s own docblock.
  * - **`dispatchedAt` CAS** — the write's `where` is scoped to the row still
@@ -726,8 +699,6 @@ export function deliverInvitation(
     source: DeliverySource;
     /** The `Date` this dispatch's own synchronous pre-write set on `lastNotifiedAt`. */
     dispatchedAt: Date;
-    /** `priorDispatchFor` of the row before this dispatch's own marker write. */
-    priorDispatch: PriorDispatch;
   },
 ): FireAndForget {
   void (async () => {
@@ -739,7 +710,6 @@ export function deliverInvitation(
       teacherId: input.teacherId,
       email: input.email,
       teacherName: `${teacher.firstName} ${teacher.lastName}`,
-      priorDispatch: input.priorDispatch,
     });
   })().catch((err: unknown) => {
     log.error(

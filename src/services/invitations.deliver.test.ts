@@ -74,9 +74,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
       email: 'nobody-391a@test.local',
       invitationId: 'inv-391a',
       source: 'create',
-      dispatchedAt: new Date(),
-      priorDispatch: 'none',
-    });
+      dispatchedAt: new Date(),    });
 
     expect(result).toBeUndefined();
 
@@ -95,9 +93,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
         email: 'nobody-391b@test.local',
         invitationId: 'inv-391b',
         source: 'create',
-        dispatchedAt: new Date(),
-        priorDispatch: 'none',
-      });
+        dispatchedAt: new Date(),      });
 
       await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(1));
 
@@ -123,9 +119,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
       email: 'nobody-391c@test.local',
       invitationId: 'inv-391c',
       source: 'resend',
-      dispatchedAt: new Date(),
-      priorDispatch: 'none',
-    });
+      dispatchedAt: new Date(),    });
 
     await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(1));
     expect(error.mock.calls[0]?.[1]).toBe('failed to resend invitation');
@@ -154,9 +148,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
       email: 'nobody-392d@test.local',
       invitationId,
       source: 'create',
-      dispatchedAt,
-      priorDispatch: 'none',
-    });
+      dispatchedAt,    });
     expect(result).toBeUndefined();
 
     // Poll the row itself rather than trusting `log.error` as a proxy for
@@ -186,9 +178,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
         email: 'nobody-392e@test.local',
         invitationId,
         source: 'create',
-        dispatchedAt: new Date(),
-        priorDispatch: 'none',
-      });
+        dispatchedAt: new Date(),      });
 
       await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(2));
       expect(error.mock.calls[1]?.[1]).toBe('failed to record notify failure');
@@ -224,9 +214,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
           email: 'nobody-392-suppress@test.local',
           invitationId: row.id,
           source: 'create',
-          dispatchedAt,
-          priorDispatch: 'none',
-        });
+          dispatchedAt,        });
         // The outer log call and `recordDispatchFailure()` run in the same
         // synchronous tick (see deliverInvitation) — waiting for this
         // confirms this invocation's place in the failure count is settled
@@ -281,9 +269,7 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
         email: 'nobody-392-stale@test.local',
         invitationId: row.id,
         source: 'create',
-        dispatchedAt: staleDispatchedAt,
-        priorDispatch: 'none',
-      });
+        dispatchedAt: staleDispatchedAt,      });
 
       // Wait for the (no-op, CAS-mismatched) write to have actually resolved,
       // not just started, before reading the row.

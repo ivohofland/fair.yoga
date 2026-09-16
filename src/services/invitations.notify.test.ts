@@ -104,7 +104,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       studentId = student.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', priorDispatch: 'none' });
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -129,7 +129,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     // this file's mock were simply never reached at all.
     const email = `notify-stranger-${suffix}@test.local`;
 
-    await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', priorDispatch: 'none' });
+    await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
 
     expect(sendMock).toHaveBeenCalledTimes(1);
     const [args] = sendMock.mock.calls[0] as [{ to: string }];
@@ -148,7 +148,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     const email = `Notify-Blocked-${suffix}@Test.Local`;
 
     await expect(
-      notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', priorDispatch: 'none' }),
+      notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' }),
     ).rejects.toThrow(/un-normalised/);
     expect(sendMock).not.toHaveBeenCalled();
   });
@@ -176,7 +176,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       blockId = block.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', priorDispatch: 'none' });
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -211,7 +211,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       studentId = student.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', priorDispatch: 'none' });
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -278,9 +278,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       const studentFindSpy = vi.spyOn(prisma.student, 'findUnique');
 
       deliverInvitation(prisma, {
-        teacherId, email, invitationId: invitation.id, source: 'resend', dispatchedAt: new Date(),
-        priorDispatch: 'none',
-      });
+        teacherId, email, invitationId: invitation.id, source: 'resend', dispatchedAt: new Date(),      });
 
       const controlStudent = await prisma.student.create({
         data: { firstName: 'Notify', lastName: 'LinkedDeliverControl', email: controlEmail },
@@ -294,7 +292,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       controlInvitationId = controlInvitation.id;
       deliverInvitation(prisma, {
         teacherId, email: controlEmail, invitationId: controlInvitation.id,
-        source: 'resend', dispatchedAt: new Date(), priorDispatch: 'none',
+        source: 'resend', dispatchedAt: new Date(),
       });
 
       await vi.waitFor(() => expect(studentFindSpy.mock.calls.length).toBeGreaterThanOrEqual(2));
@@ -356,7 +354,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       studentId = student.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', priorDispatch: 'none' });
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -393,7 +391,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       });
       studentId = student.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', priorDispatch: 'none' });
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -438,7 +436,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
   it('tells a teacher-only account in its teacher inbox, and sends no email (#172)', async () => {
     const invitee = await createTeacherOnlyInvitee('inbox');
     try {
-      await notifyInvitee(prisma, { teacherId, email: invitee.email, teacherName: 'Some Teacher', priorDispatch: 'none' });
+      await notifyInvitee(prisma, { teacherId, email: invitee.email, teacherName: 'Some Teacher' });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'teacher', recipientId: invitee.teacherId, type: 'teacher_invitation' },
@@ -473,7 +471,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       select: { id: true },
     });
     try {
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', priorDispatch: 'none' });
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
 
       expect(await prisma.notification.count({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -499,7 +497,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       select: { id: true },
     });
     try {
-      await notifyInvitee(prisma, { teacherId, email: invitee.email, teacherName: 'Some Teacher', priorDispatch: 'none' });
+      await notifyInvitee(prisma, { teacherId, email: invitee.email, teacherName: 'Some Teacher' });
 
       expect(await prisma.notification.count({
         where: { recipientType: 'teacher', recipientId: invitee.teacherId },
@@ -509,51 +507,5 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       await prisma.teacherBlock.delete({ where: { id: block.id } });
       await removeTeacherOnlyInvitee(invitee);
     }
-  });
-
-  it('does not tell a teacher-only account again on a repeat dispatch (#172)', async () => {
-    const invitee = await createTeacherOnlyInvitee('repeat');
-    try {
-      await notifyInvitee(prisma, {
-        teacherId, email: invitee.email, teacherName: 'Some Teacher', priorDispatch: 'same_address',
-      });
-
-      expect(await prisma.notification.count({
-        where: { recipientType: 'teacher', recipientId: invitee.teacherId },
-      })).toBe(0);
-      expect(sendMock).not.toHaveBeenCalled();
-    } finally {
-      await removeTeacherOnlyInvitee(invitee);
-    }
-  });
-
-  it('still notifies a student on a repeat dispatch — the rule is the teacher branch alone (#172)', async () => {
-    const email = `notify-student-repeat-${suffix}@test.local`;
-    const student = await prisma.student.create({
-      data: { firstName: 'Notify', lastName: 'StudentRepeat', email },
-      select: { id: true },
-    });
-    try {
-      await notifyInvitee(prisma, {
-        teacherId, email, teacherName: 'Some Teacher', priorDispatch: 'same_address',
-      });
-
-      expect(await prisma.notification.count({
-        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
-      })).toBe(1);
-    } finally {
-      await prisma.notification.deleteMany({ where: { recipientId: student.id } });
-      await prisma.student.delete({ where: { id: student.id } });
-    }
-  });
-
-  it('still emails an address with no account on a repeat dispatch (#172)', async () => {
-    const email = `notify-stranger-repeat-${suffix}@test.local`;
-
-    await notifyInvitee(prisma, {
-      teacherId, email, teacherName: 'Some Teacher', priorDispatch: 'same_address',
-    });
-
-    expect(sendMock).toHaveBeenCalledTimes(1);
   });
 });
