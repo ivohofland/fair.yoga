@@ -827,12 +827,12 @@ const DELIVERY_FAILURE_MESSAGE = {
  *
  * - **Not behind `recordDispatchFailure`'s systemic guard.** That guard
  *   exists to keep `lastNotifyFailedAt` from proxying "does this address have
- *   a fair.yoga account" during a burst. Nothing reads this column, so gating
- *   its clear the same way would buy no privacy — and it would silence the
- *   clear precisely when a failure is most likely, since the burst that trips
- *   the guard is a count of unrelated dispatches rather than evidence about
- *   this one. See `docs/data-model.md` (Invitation, "Who an invitation
- *   reaches").
+ *   a fair.yoga account" during a burst. No teacher- or student-facing
+ *   surface reads this column, so gating its clear the same way would buy no
+ *   privacy — and it would silence the clear precisely when a failure is
+ *   most likely, since the burst that trips the guard is a count of
+ *   unrelated dispatches rather than evidence about this one. See
+ *   `docs/data-model.md` (Invitation, "Who an invitation reaches").
  * - **Not on the `lastNotifiedAt` CAS.** Its CAS is `claimedAt` — the marker
  *   value this dispatch's own claim wrote — because the claim, not the
  *   dispatch, is what this column correlates with. What that buys, and the
