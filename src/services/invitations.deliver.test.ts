@@ -500,23 +500,23 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
     // dispatch that took some other branch can reach the failure path while
     // another attempt's marker stands — a dispatch whose own claim is
     // REFUSED returns before anything can throw, so it never gets there at
-    // all. Here that other branch is the stranger one: the address held a
-    // teacher profile when the marker was set and holds none now, so the
-    // same row that was capped through the teacher inbox now dispatches by
+    // all. The scenario modelled here is the stranger branch: the address
+    // held a teacher profile when an earlier dispatch capped this row and
+    // holds none by the time of this one, which therefore dispatches by
     // email — and Resend is down.
     const email = `deliver-cap-noclaim-${suffix}@test.local`;
     const dispatchedAt = new Date();
-    // A round millisecond value, and an hour old, so the assertion below
-    // cannot pass by accidentally matching anything this dispatch mints.
+    // An hour old, so the assertion below cannot pass by coincidentally
+    // matching a value this dispatch mints for itself.
     const markerFromAnotherAttempt = new Date(Date.now() - 3_600_000);
     const row = await prisma.invitation.create({
       data: {
         teacherId, email, firstName: 'Cap', lastName: 'NoClaim',
-        // Set by hand: the address deliberately has no teacher profile left,
-        // so the branch that writes this column cannot be reached to write
-        // it here. `lastNotifiedAt` equals this dispatch's own
-        // `dispatchedAt` because that is the state in which a CAS on the
-        // wrong column would match and wrongly clear.
+        // Set by hand: this address has no teacher profile, so the branch
+        // that writes this column cannot be reached to write it here.
+        // `lastNotifiedAt` equals this dispatch's own `dispatchedAt` because
+        // that is the state in which a CAS on the wrong column would match
+        // and wrongly clear.
         lastNotifiedAt: dispatchedAt, lastNotifiedEmail: email,
         teacherInboxNotifiedAt: markerFromAnotherAttempt,
       },

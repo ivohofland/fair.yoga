@@ -4279,10 +4279,10 @@ describe('an invitation to a teacher-only account (#172)', () => {
     const before = await prisma.notification.count({
       where: { recipientType: 'teacher', recipientId: inviteeTeacherId, type: 'teacher_invitation' },
     });
-    // The dispatch that first notified this invitee ('reaches the invitee in
-    // their teacher inbox', above) already wrote this column, so the wait
-    // below has to be for a strictly newer value: waiting for merely
-    // non-null would resolve on its first poll against this one.
+    // The `POST /api/students` in 'reaches the invitee in their teacher
+    // inbox' (above) already wrote this column, so the wait below has to be
+    // for a strictly newer value: waiting for merely non-null would resolve
+    // on its first poll against this one.
     const { lastNotifiedAt: notifiedBefore } = await prisma.invitation.findUniqueOrThrow({
       where: { id: invitation.id }, select: { lastNotifiedAt: true },
     });
