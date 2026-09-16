@@ -73,12 +73,11 @@ import { createClassFixture } from '../../../../tests/class-fixtures';
 import { POST } from './route';
 
 /**
- * @serial-tier lock-contention — the tests below meet this route with the
- * erasure's `Student` lock on real Postgres row locks: most race it against a
- * paused `deleteStudentAccount`, and the rest stage a bare holder of that lock
- * or the erasure's committed result. They assert on how each meeting
- * resolves: whether a racer waited, whether the booking got a 409 or a 503 (a
- * `55P03`), and which rows survive. Lock noise from a neighbour in the
+ * @serial-tier lock-contention — the tests below stage this route against
+ * `deleteStudentAccount`, or against its `Student` lock, on real Postgres row
+ * locks, and assert on how each meeting resolves: whether a racer waited,
+ * whether the booking got a 409 or a 503 (a `55P03`), and which rows
+ * survive. Lock noise from a neighbour in the
  * parallel tier would stretch a staged wait past the 2s `lock_timeout` these
  * outcomes turn on.
  *
@@ -648,7 +647,7 @@ Check one mechanism when the file first runs. If it fails, report it to the cont
 In `vitest.tiers.ts`, append to `LOCK_CONTENTION_TESTS`, after the `#183` entry:
 
 ```ts
-  // #625: stages the booking route against the erasure's `Student` lock, the
+  // #625: stages the booking route against the student erasure, the
   // `gdpr-lock-order.test.ts` shape; its header carries the reason.
   'src/app/api/registrations/route-lock-order.test.ts',
 ```
@@ -878,7 +877,7 @@ Add a row after `addToWaitlist`'s:
 
 The three bullets below it ("The erasure first.", "The join first.", "A join after the erasure committed") are written about "the join". Restate them for "a gated writer" and keep each bullet's content where it holds for every gated writer. The join-first bullet's "locks that class" holds only where the writer created an entry, which a booking does not. Add one clause for the booking to each of two bullets:
 - **"The writer first":** the erasure's `upcoming` read then sees the booking, so for an open class `handleSpotFreed` runs, even outside the lock set.
-- **"After the erasure committed":** a self-booking never reaches the gate there. The route answers 401 where the erasure removed the session, or 403 where a live teacher profile keeps the session but it no longer resolves a student. The gate's sequential refusal is the teacher path's.
+- **"After the erasure committed":** a self-booking made after that never reaches the gate. The route answers 401 where the erasure removed the session, or 403 where a live teacher profile keeps the session but it no longer resolves a student. The gate's sequential refusal is the teacher path's, and only through a roster link that outlived the erasure (otherwise the route answers 403 `Student is not in your roster` first).
 
 The paragraph "The order is observable only on a REJOIN…" stays about the join. After it, add a paragraph for the booking:
 
