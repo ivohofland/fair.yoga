@@ -302,9 +302,8 @@ the **claim's** CAS, not the clear's: the claim's own `where`
 (`teacherInboxNotifiedAt: null`) is its compare-and-swap, so it needs nothing
 from the dispatching route. The clear in §4.2 is a separate question, and its
 CAS is `claimedAt` — minted for that purpose rather than borrowed from
-`dispatchedAt`, so that what the column records (when the teacher branch
-claimed the row) stays independent of when the route pre-wrote
-`lastNotifiedAt`.
+`dispatchedAt`, so that what the column records (when this dispatch began)
+stays independent of when the route pre-wrote `lastNotifiedAt`.
 
 Required rather than optional: an optional id would let a caller silently opt
 out of the cap. The cost is real and belongs in the plan — the ten
@@ -362,11 +361,14 @@ structural input type and on
 `src/app/(teacher)/students/contacts/[id]/page.tsx:48` selecting columns
 explicitly. It is now tethered instead: `TeacherFacingInvitationSelect`
 (`src/lib/contacts.ts`) intersects `Prisma.InvitationSelect` with
-`teacherInboxNotifiedAt?: never`, and both `ownedInvitation`
-(`src/app/api/invitations/[id]/shared.ts`) and the contact page's select
-`satisfies` it, so naming the column in either is a build failure. The
-exclusion is spelled once, in the type, so the two guarded selects point at it
-rather than repeating the column beside the data they render.
+`teacherInboxNotifiedAt?: never`, and every teacher-facing `Invitation`
+select — `ownedInvitation` (`src/app/api/invitations/[id]/shared.ts`), the
+contact page's select, and `GET /api/invitations`'s — `satisfies` it, so
+naming the column in any of them is a build failure. The exclusion is
+spelled once, in the type, so the guarded selects point at it rather than
+repeating the column beside the data they render; re-derive the current set
+with `grep -rn 'satisfies TeacherFacingInvitationSelect' --include="*.ts"
+--include="*.tsx" src/`.
 
 `invitationDeliveryStatus`'s parameter type deliberately gets no tether of its
 own. Excess properties pass through a variable, so its type could never gate
@@ -423,17 +425,24 @@ Against #622's acceptance criteria:
       refused returns before anything can throw, so it never reaches the
       `.catch` at all. The only dispatch that can reach the failure path
       beside another attempt's marker is one that never claimed.
-   d. *Claiming, with the row moved on.* *(amended: no longer constructable.)*
+   d. *Claiming, with the row moved on.* *(amended: not a guard test.)*
       This case existed to catch a `lastNotifiedAt` clause re-added *beside*
       the `claimedAt` one, by having a dispatch clear its own marker after a
-      later resend had advanced `lastNotifiedAt` past it. Once the claim
-      commits with its insert (§4.2), a failing teacher-branch dispatch has
-      no committed marker to clear, so no test can distinguish the two CASes
-      on that side — the same fate case (c)'s own predecessor met, and for
-      the same reason. What is kept in its place is a case asserting the
-      outcome rather than the mechanism: a superseded dispatch's failure
-      still leaves the invitation notifiable. §7 check 5 records that its
-      second direction is now unguarded by construction.
+      later resend had advanced `lastNotifiedAt` past it. That scenario is
+      constructable once the claim commits with its insert: spy on
+      `prisma.$transaction` so it runs the real transaction — the claim and
+      the notification insert both land — and then throws, staging §4.2 case
+      1, the commit this process never heard the answer to. With
+      `lastNotifiedAt` since moved on and the forbidden clause added to the
+      clear's `where`, the clause no longer matches and the marker is left
+      standing where the shipped clear would null it — a real `expected
+      <Date> to be null` failure. No test pins that difference because it is
+      not one worth pinning: §4.2 case 1 already names it as the direction
+      this design prefers, one extra notification on the next resend rather
+      than none, never silence. What is kept in its place is a case
+      asserting the outcome rather than the mechanism: a superseded
+      dispatch's failure still leaves the invitation notifiable. §7 check 5
+      records the same reasoning for the clause itself.
 7. **Both resets.** A readdress and a revive each restore notifiability.
 8. **Concurrency.** Two overlapping dispatches for one invitation produce
    exactly one notification.
@@ -449,7 +458,31 @@ Break each, record the exact failure text, restore, re-verify.
 1. Drop the `teacherInboxNotifiedAt: null` clause from the claim's `where`:
    test 1 fails.
 2. Invert `claimed.count === 0` to `!== 0`: test 2 fails.
-3. Drop the `.catch` clear entirely: test 6 fails.
+3. Drop the `.catch` clear entirely: test 6 fails, but weakly *(amended)*.
+   All five of its cases wait for evidence that the clear's write was
+   *attempted*, not for a row state only the clear produces: four (a, b, c,
+   and d's replacement) via `settleCapClear`'s wait for
+   `prisma.invitation.updateMany` to have been called with
+   `teacherInboxNotifiedAt: null` in its `data`, and b-bis via a count of
+   `log.error` calls that includes the clear's own refusal. In every case but
+   (c), `createNotification`'s insert and the claim run inside the same
+   `db.$transaction` (§4.2), so a rejected insert rolls the claim back
+   whether or not the `.catch` clear runs afterward — the marker is already
+   null before the clear is reached. Case (c) runs no transaction at all
+   (its failure is the stranger branch's plain email send) and its final
+   assertion — the marker, set directly in the test's fixture, is left
+   unchanged — holds identically whether the clear is present and
+   non-matching or absent altogether. Dropping the clear therefore fails all
+   five by timing out a wait on a call that no longer happens, not because
+   any row ends up in a state the clear alone produced. The clear's one case
+   with such a state is the unacknowledged-commit one (§4.2 case 1,
+   constructed via the `prisma.$transaction` spy in check 5 below); none of
+   the five shipped tests reaches it, and none is added to reach it — doing
+   so would give every one of the five the spy check 5 uses, slower and more
+   delicate machinery than what they were built to establish: acceptance
+   criterion 6's own point (§6, check 6's preamble), that a follow-up
+   dispatch after each failure still notifies. This gap does not touch that
+   point.
 4. Move the `.catch` clear below `recordDispatchFailure`'s `looksSystemic`
    early return: test 6's outage case fails while its ordinary case still
    passes.
@@ -459,12 +492,19 @@ Break each, record the exact failure text, restore, re-verify.
    clear wipes a marker this dispatch never wrote — which is why (c) pins the
    column the CAS is on, not merely that one exists. The other direction —
    re-adding `lastNotifiedAt: dispatchedAt` *beside* the `claimedAt` clause —
-   **is no longer detectable by any test**, and this is where that is
-   recorded rather than left to be discovered. With the claim committing
-   inside the insert's transaction there is no surviving marker for either
-   spelling of the clear to act on, so both spellings behave identically on
-   every constructable path. The clause remains forbidden in prose, alongside
-   check 10 below, for the same reason.
+   **is detectable, but by construction rather than by any shipped test.**
+   Spying on `prisma.$transaction` to run the real transaction and then
+   throw stages §4.2 case 1 — the commit this process never heard the
+   answer to — with `lastNotifiedAt` since moved on; the forbidden clause
+   then leaves the marker standing where the shipped clear would null it, a
+   real `expected <Date> to be null` failure (§6d). No shipped test pins
+   that difference because §4.2 case 1 already names it as the direction
+   this design prefers: with or without the clause, every constructable path
+   still notifies the invitee at least once, and what the clause changes is
+   one extra notification on a lost-acknowledgment resend versus none — a
+   preference between two safe outcomes, never the silence this design must
+   avoid. The clause remains forbidden in prose, alongside the adversarial
+   check below, for that reason rather than for undetectability.
 6. Drop the readdress reset: test 7's readdress case fails.
 7. Drop the revive reset: test 7's revive case fails.
 8. Move the claim after `createNotification`: test 8 fails.
@@ -496,8 +536,10 @@ distinct cases, not one.
 claim's `where` (§4.2's rejected form) and confirm the suite stays green. It
 will: that clause is inert, and nothing in this design can detect it. The check
 exists to record that the clause is untestable — which is why it is forbidden
-in prose rather than guarded by a test. Check 5's second direction is now in
-the same position, and recorded there for the same reason.
+in prose rather than guarded by a test. Check 5's second direction is a
+different case — detectable by construction, not untestable (see its note
+above) — but forbidden in prose for the same reason no test guards it here:
+neither difference is an invariant worth pinning.
 
 ## 8. Docs and comments this makes false
 
