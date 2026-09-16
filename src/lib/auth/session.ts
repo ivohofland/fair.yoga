@@ -79,11 +79,11 @@ export async function validateSession(
       id: true,
       teachers: {
         where: { deletedAt: null },
-        select: { id: true, defaultTimezone: true },
+        select: { id: true, defaultTimezone: true, deletedAt: true },
       },
       students: {
         where: { deletedAt: null },
-        select: { id: true },
+        select: { id: true, deletedAt: true },
       },
     },
   });

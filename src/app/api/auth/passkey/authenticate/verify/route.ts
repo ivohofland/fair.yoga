@@ -50,7 +50,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const sessionToken = await createSession(prisma, credential.accountId);
   const account = await prisma.account.findUnique({
     where: { id: credential.accountId },
-    select: { teachers: { where: { deletedAt: null }, select: { id: true } } },
+    select: { teachers: { where: { deletedAt: null }, select: { id: true, deletedAt: true } } },
   });
   const hasTeacherProfile = account !== null && liveProfile(account.teachers) !== null;
   const fallback = hasTeacherProfile ? '/schedule' : '/bookings';
