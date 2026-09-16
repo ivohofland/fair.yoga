@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll, onTestFinished, vi } from 'vitest';
+import { describe, it, expect, afterAll, beforeAll, onTestFinished, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
@@ -6,6 +6,8 @@ import * as dbLocks from '@/lib/db-locks';
 import * as waitlist from '@/services/waitlist';
 import { deleteStudentAccount } from '@/services/gdpr';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { log } from '@/lib/log';
+import { prisma as appPrisma } from '@/lib/db';
 import { cookie, seedSession } from '../../../../tests/helpers';
 import { createClassFixture } from '../../../../tests/class-fixtures';
 import { POST } from './route';
@@ -16,21 +18,20 @@ import { POST } from './route';
  * locks, and assert on how each meeting resolves: whether a racer waited,
  * whether the booking got a 409 or a 503 (a `55P03`), and which rows
  * survive. Lock noise from a neighbour in the
- * parallel tier would stretch a staged wait past the 2s `lock_timeout` these
- * outcomes turn on.
+ * parallel tier would stretch a staged wait past the shared `lock_timeout`
+ * these outcomes turn on.
  *
  * `POST` is invoked directly, as `route.test.ts` does, and the erasure runs in
  * this process too, so a spy can pause either one at an exact statement. What
- * each test stages, and what it expects with and without the gate, is tabled
- * in `docs/superpowers/specs/2026-09-16-booking-erasure-gate-design.md`
- * (Tests).
+ * each ordering means, and which of these tests pins it: `docs/lock-order.md`,
+ * "The `Student` row is the erasure's gate".
  */
 const prisma = new PrismaClient();
 
 /**
- * How long a racer may take to start waiting on a lock. Well inside the 2s
- * `lock_timeout` the waiter runs under, and inside the Prisma budget of the
- * paused transaction it waits on.
+ * How long a racer may take to start waiting on a lock. Well inside the
+ * shared `lock_timeout` the waiter runs under, and inside the Prisma budget
+ * of the paused transaction it waits on.
  */
 const WAIT_MS = 1_500;
 
@@ -38,10 +39,12 @@ const WAIT_MS = 1_500;
 const HANDSHAKE_MS = 2_000;
 
 /**
- * How long the busy-database test holds the student's row: well past the
- * booking's 2s `lock_timeout`, so a gated booking times out first.
+ * How long the busy-database test holds the student's row: longer than the
+ * shared `lock_timeout` and shorter than the route's default Prisma
+ * transaction budget, so only the gate's own bound can settle the booking
+ * within the hold.
  */
-const BUSY_HOLD_MS = 6_000;
+const BUSY_HOLD_MS = 4_000;
 
 const DELETED_MESSAGE = 'This account has been deleted';
 const GONE_MESSAGE = "This student's account no longer exists";
@@ -117,7 +120,7 @@ async function waiterOf(holderPid: number, stop: () => boolean): Promise<number 
   return null;
 }
 
-async function handshake(signal: Promise<void>, label: string): Promise<void> {
+async function handshake(signal: Promise<void>, label: string, racer: Promise<unknown>): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
@@ -127,6 +130,9 @@ async function handshake(signal: Promise<void>, label: string): Promise<void> {
           () => reject(new Error(`${label} never happened within ${HANDSHAKE_MS}ms`)),
           HANDSHAKE_MS,
         );
+      }),
+      racer.then((outcome) => {
+        throw new Error(`${label} never happened: the racer settled first with ${JSON.stringify(outcome)}`);
       }),
     ]);
   } finally {
@@ -280,9 +286,9 @@ function pauseErasureAtGate(studentId: string): Pause {
 }
 
 /**
- * Pauses the erasure after its registration cancel and its privacy, roster
- * and waitlist deletes, before its closing `Student` update: at the renumber
- * of `classId`, a class the subject waits in.
+ * Pauses the erasure at its renumber of `classId`, a class the subject waits
+ * in: by then its registration cancel and roster-link delete have run, and
+ * its closing `Student` update has not.
  */
 function pauseErasureAfterWrites(classId: string): Pause {
   const reached = latch();
@@ -331,6 +337,12 @@ async function registeredCount(studentId: string): Promise<number> {
 }
 
 describe('POST /api/registrations takes the Student gate (#625)', () => {
+  // Opens the route's own Prisma client before the first staged wait, so
+  // connection set-up is not spent inside one.
+  beforeAll(async () => {
+    await appPrisma.$queryRaw`SELECT 1`;
+  });
+
   afterAll(async () => {
     await prisma.$disconnect();
   });
@@ -349,7 +361,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       let booking: Tracked<Settled> | undefined;
       let bookingWaited = false;
       try {
-        await handshake(erasure.reached, 'erasure Student lock');
+        await handshake(erasure.reached, 'erasure Student lock', erasing);
         // The subject waits in this class, so the erasure's pre-lock will
         // request it. A booking that took the class before the student would
         // hold it while waiting on the erasure: `40P01`.
@@ -370,6 +382,39 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
     }
   }, 30_000);
 
+  it('refuses a teacher adding a student who waits behind the erasure, in a class the erasure locks', async () => {
+    const fx = await makeFixture();
+    try {
+      // The roster check reads it outside the transaction, before the
+      // erasure deletes it.
+      await prisma.teacherStudent.create({ data: { teacherId: fx.teacherId, studentId: fx.studentId } });
+      const erasure = pauseErasureAtGate(fx.studentId);
+      const erasing = settleErasure(deleteStudentAccount(prisma, fx.studentId));
+      let booking: Tracked<Settled> | undefined;
+      let bookingWaited = false;
+      try {
+        await handshake(erasure.reached, 'erasure Student lock', erasing);
+        // The subject waits in this class, so the erasure's pre-lock will
+        // request it. A booking that took the class before the student would
+        // hold it while waiting on the erasure: `40P01`.
+        booking = track(
+          settle(book(fx.teacherToken, { classId: fx.lockSetClassId, studentId: fx.studentId })),
+        );
+        bookingWaited = (await waiterOf(erasure.pid(), booking.settled)) !== null;
+      } finally {
+        erasure.release();
+        await Promise.all([erasing, booking?.racer]);
+      }
+
+      expect(await erasing).toBe('erased');
+      expect(await booking?.racer).toEqual({ status: 409, message: GONE_MESSAGE });
+      expect(await registeredCount(fx.studentId)).toBe(0);
+      expect(bookingWaited).toBe(true);
+    } finally {
+      await cleanup(fx);
+    }
+  }, 30_000);
+
   it('refuses a booking that arrives after the erasure cancelled registrations', async () => {
     const fx = await makeFixture();
     try {
@@ -378,7 +423,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       let booking: Tracked<Settled> | undefined;
       let bookingWaited = false;
       try {
-        await handshake(erasure.reached, 'erasure renumber');
+        await handshake(erasure.reached, 'erasure renumber', erasing);
         booking = track(settle(book(fx.studentToken, { classId: fx.outsideClassId })));
         bookingWaited = (await waiterOf(erasure.pid(), booking.settled)) !== null;
       } finally {
@@ -408,7 +453,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       let booking: Tracked<Settled> | undefined;
       let bookingWaited = false;
       try {
-        await handshake(erasure.reached, 'erasure renumber');
+        await handshake(erasure.reached, 'erasure renumber', erasing);
         booking = track(settle(book(fx.studentToken, { classId: fx.outsideClassId })));
         bookingWaited = (await waiterOf(erasure.pid(), booking.settled)) !== null;
       } finally {
@@ -437,7 +482,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       let booking: Tracked<Settled> | undefined;
       let bookingWaited = false;
       try {
-        await handshake(erasure.reached, 'erasure renumber');
+        await handshake(erasure.reached, 'erasure renumber', erasing);
         booking = track(
           settle(book(fx.teacherToken, { classId: fx.outsideClassId, studentId: fx.studentId })),
         );
@@ -462,7 +507,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       const bookingPause = pauseBookingBeforeClassLock(fx.outsideClassId);
 
       // Read on another connection when the erasure's pre-lock starts: the
-      // `upcoming` read after it sees the booking only if this does.
+      // `upcoming` read after it sees the booking if this does.
       let bookedBeforePreLock: boolean | undefined;
       const originalPreLock = dbLocks.lockClassRowsOrdered;
       const preLockSpy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
@@ -481,7 +526,7 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       let erasing: Tracked<ErasureOutcome> | undefined;
       let erasureWaited = false;
       try {
-        await handshake(bookingPause.reached, 'booking class lock');
+        await handshake(bookingPause.reached, 'booking class lock', booking.racer);
         erasing = track(settleErasure(deleteStudentAccount(prisma, fx.studentId)));
         erasureWaited = (await waiterOf(bookingPause.pid(), erasing.settled)) !== null;
       } finally {
@@ -513,8 +558,8 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
     const fx = await makeFixture();
     try {
       await deleteStudentAccount(prisma, fx.studentId);
-      // A link that outlived the erasure: what an ungated link writer, or a
-      // booking that survived an erasure, leaves behind.
+      // A link that outlived the erasure, as an ungated link writer can leave
+      // (`docs/lock-order.md`, "Who is not gated yet").
       await prisma.teacherStudent.create({ data: { teacherId: fx.teacherId, studentId: fx.studentId } });
 
       const res = await settle(
@@ -531,6 +576,8 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
   it('answers a booking that times out behind an erasure lock as busy, not as deleted', async () => {
     const fx = await makeFixture();
     try {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined as unknown as void);
+      onTestFinished(() => warn.mockRestore());
       const parked = latch();
       const held = latch();
       let holderPid = 0;
@@ -551,12 +598,15 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
 
       let booking: Tracked<Settled> | undefined;
       let bookingWaited = false;
+      let settledWithinHold = false;
       try {
-        await handshake(parked.promise, 'Student FOR NO KEY UPDATE holder');
+        await handshake(parked.promise, 'Student FOR NO KEY UPDATE holder', holder);
         booking = track(settle(book(fx.studentToken, { classId: fx.outsideClassId })));
         bookingWaited = (await waiterOf(holderPid, booking.settled)) !== null;
-        // Held until the booking settles, or well past its 2s wait at the latest.
+        // Held until the booking settles, or well past its shared
+        // `lock_timeout` wait at the latest.
         await Promise.race([booking.racer, new Promise((r) => setTimeout(r, BUSY_HOLD_MS))]);
+        settledWithinHold = booking.settled();
       } finally {
         held.open();
         await Promise.all([holder, booking?.racer]);
@@ -568,6 +618,14 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       expect(await holder).toBe('held');
       expect(await prisma.registration.count({ where: { studentId: fx.studentId } })).toBe(0);
       expect(bookingWaited).toBe(true);
+      // The 503 came from the gate's own bounded wait (`55P03`), inside the
+      // hold, not from the route's transaction budget expiring behind an
+      // unbounded one.
+      expect(settledWithinHold).toBe(true);
+      const logged = warn.mock.calls
+        .map(([payload]) => String((payload as { err?: unknown }).err))
+        .join('\n');
+      expect(logged).toMatch(/55P03/);
     } finally {
       await cleanup(fx);
     }

@@ -74,19 +74,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
   const isTeacher = actingTeacherId !== null;
 
-  // The student and the roster link concern the student, not the class, so
-  // they stay outside the transaction — holding the class lock across them
-  // would widen it for nothing. One consequence, accepted: a request with a
-  // student-side problem — an unknown student, or, the case this suite
-  // actually exercises, a roster link the acting teacher doesn't hold — and
-  // an unusable class now answers about the student first, where it used to
-  // answer about the class. This changed what one existing test proved: a
-  // cross-teacher request used to reach the ownership check — which now
-  // lives inside the transaction, but sat at the top of the handler before
-  // this fix — and now dies at the roster-link check instead, so that
-  // test's meaning shifted and it was supplemented with one that reaches the
-  // ownership check directly (a teacher's own roster student, posted into
-  // another teacher's class).
+  // The student read and the roster-link read concern the student, not the
+  // class, so they stay outside the transaction — holding the class lock across
+  // them would widen it for nothing. One consequence, accepted: a request with
+  // a student-side problem — an unknown student, or, the case this suite
+  // actually exercises, a roster link the acting teacher doesn't hold — and an
+  // unusable class now answers about the student first, where it used to answer
+  // about the class. This changed what one existing test proved: a cross-
+  // teacher request used to reach the ownership check — which now lives inside
+  // the transaction, but sat at the top of the handler before this fix — and
+  // now dies at the roster-link check instead, so that test's meaning shifted
+  // and it was supplemented with one that reaches the ownership check directly
+  // (a teacher's own roster student, posted into another teacher's class).
   //
   // Look up the student to get incomeTier
   const student = await prisma.student.findUnique({ where: { id: studentId } });
@@ -284,7 +283,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     //
     // Written after the transaction commits, as a statement of its own. The
     // transaction holds this student's row `FOR SHARE` from its first
-    // statement, so an update inside it would upgrade that lock: it would
+    // lock, so an update inside it would upgrade that lock: it would
     // wait on any other gated writer's share of this student, and two
     // bookings of one student upgrading at once deadlock. Scoped to a live
     // profile because an erasure can commit while this write waits on the
