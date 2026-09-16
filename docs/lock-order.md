@@ -881,7 +881,7 @@ use that the convention is not worth checking.
 figure, 14 from the 2026-08-29 derivation, was itself stale by two lines that
 multi-line `import { … }` reformatting had already added by the time this
 task started). Three of the 18 are the bound itself and the helper that
-issues it, both in `db-locks.ts`; two are members of multi-line
+issues it, all three in `db-locks.ts`; two are members of multi-line
 `import { … }` blocks that name `setLockTimeout` without issuing it —
 `gdpr.ts`'s and `class-template-lifecycle.ts`'s own `  setLockTimeout,`
 lines — which the `import ` filter cannot drop, since it matches only a line
@@ -1253,9 +1253,23 @@ The erasure's closing `student.updateMany` changes `email`, and
 `FOR UPDATE` — which does conflict with `FOR KEY SHARE`, and waits for every
 holder. By then the erasure holds every class in its lock set, and a promotion
 or claim needs the student's entry in the class it holds, so no promotion of
-this student is in flight. An ungated booking can be: it holds the
-`FOR KEY SHARE` its `Registration` insert took while its roster-link insert
-can wait on the erasure. That cycle predates the gate and is tracked in #625.
+this student is in flight.
+
+An ungated writer can be. Any ungated writer that inserts a `Student` child
+row, taking `FOR KEY SHARE`, and then waits on a row the erasure has already
+written closes a cycle with that closing `UPDATE`:
+
+- A booking holds the `FOR KEY SHARE` its `Registration` insert took while
+  its roster-link insert can wait on the erasure. Tracked in #625.
+- `acceptInvitation` (`src/services/invitations.ts`) inserts the roster link
+  and then updates an `Invitation` row the erasure anonymises. Tracked in
+  #626.
+- `unlinkTeacher` (same file), when its `StudentPrivacy` upsert inserts,
+  then deletes a `TeacherStudent` row the erasure has deleted. Tracked in
+  #626.
+
+The last two are reasoned from the code and have not been reproduced. All
+three predate the gate.
 
 ### Who is not gated yet
 
@@ -2048,7 +2062,7 @@ release the child row before archiving the teacher templates"
 (#315)`), mutation-proven the same way
 as the other nine sites.
 
-Not a new node on the canonical `Class → WaitlistEntry → …` ordering above.
+Not a new node on the canonical `Student → Class → WaitlistEntry → …` ordering above.
 Since #229 `deleteTeacherAccount` takes `ClassTemplate` before `Class` —
 consistent with every other site — so these child locks are the transaction's
 first lock acquisition, ahead of `lockClassRowsOrdered`.
