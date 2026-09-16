@@ -25,7 +25,7 @@ const prisma = new PrismaClient();
  * the next insert takes it — measured 2026-08-28, and the mechanism behind the
  * CI failure in `db-locks.test.ts`'s own lock-order case on 2026-08-27. Under
  * these settings the join side is ordered by a btree leading with `classId` —
- * both of `WaitlistEntry`'s composite indexes do — and the scan side by
+ * every composite index on `WaitlistEntry` does — and the scan side by
  * whichever btree its plan is driven from; this file's fixture ASSIGNS every
  * key those plans can order by, so no index has to be named as the one. Btree
  * specifically; see INDEX ORDER STILL MEANS BTREE below.
@@ -44,8 +44,8 @@ const prisma = new PrismaClient();
  *
  * Which side wins is a cost knife-edge on the selectivity estimate for
  * `w."studentId"`, and `WaitlistEntry` has no index leading with that column
- * (`@@unique([classId, studentId])` and `@@index([classId, position])` both
- * lead with `classId`), so there is no plan the planner naturally prefers.
+ * (every composite index on it leads with `classId`), so there is no plan the
+ * planner naturally prefers.
  * Measured across background-row counts on 2026-08-16 it is NON-MONOTONIC —
  * 0 rows and 2 rows and 50 rows pick `Class`-outer, 10 rows picks
  * `WaitlistEntry`-outer — so no amount of seeding makes a cost-chosen plan
@@ -577,15 +577,18 @@ describe('the Student gate: lock modes (#183)', () => {
    * Opens a transaction that takes `lock`, then holds it until `release` is
    * called. `done` flips just before the holder's COMMIT, so a waiter that
    * reads it after its own wait ended sees `true` only if it really waited.
+   * `state.pid` is the holder's backend, for `waitUntilBlockedBy`.
    */
   function hold(lock: (tx: Prisma.TransactionClient) => Promise<void>) {
     let release!: () => void;
     let held!: () => void;
     const released = new Promise<void>((r) => { release = r; });
     const isHeld = new Promise<void>((r) => { held = r; });
-    const state = { done: false };
+    const state = { done: false, pid: 0 };
     const finished = prisma.$transaction(
       async (tx) => {
+        const [own] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+        state.pid = own!.pid;
         await lock(tx);
         held();
         await released;
@@ -596,6 +599,25 @@ describe('the Student gate: lock modes (#183)', () => {
     return { release, isHeld, state, finished };
   }
 
+  /**
+   * Resolves once some backend is waiting on a lock `holderPid` holds, and
+   * throws if none does within 1.5s — inside the 2s `lock_timeout` the waiter
+   * runs under. The release waits on this, so a test cannot pass by the
+   * waiter arriving after the holder let go.
+   */
+  async function waitUntilBlockedBy(holderPid: number): Promise<void> {
+    const deadline = Date.now() + 1_500;
+    while (Date.now() < deadline) {
+      const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+        SELECT count(*)::int AS n FROM pg_stat_activity
+         WHERE wait_event_type = 'Lock'
+           AND ${holderPid} = ANY(pg_blocking_pids(pid))`;
+      if ((row?.n ?? 0) > 0) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`nothing waited behind backend ${holderPid} within 1500ms`);
+  }
+
   it('makes lockLiveStudent wait for lockStudentForErasure (L1)', async () => {
     const h = hold((tx) => lockStudentForErasure(tx, studentId));
     await h.isHeld;
@@ -604,9 +626,10 @@ describe('the Student gate: lock modes (#183)', () => {
       return h.state.done;
     });
     try {
-      await new Promise((r) => setTimeout(r, 400));
+      await waitUntilBlockedBy(h.state.pid);
     } finally {
       h.release();
+      await Promise.allSettled([h.finished, waited]);
     }
     const [, sawCommit] = await Promise.all([h.finished, waited]);
     expect(sawCommit).toBe(true);
@@ -639,9 +662,10 @@ describe('the Student gate: lock modes (#183)', () => {
       return h.state.done;
     });
     try {
-      await new Promise((r) => setTimeout(r, 400));
+      await waitUntilBlockedBy(h.state.pid);
     } finally {
       h.release();
+      await Promise.allSettled([h.finished, waited]);
     }
     const [, sawCommit] = await Promise.all([h.finished, waited]);
     expect(sawCommit).toBe(true);
