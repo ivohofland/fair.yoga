@@ -185,10 +185,17 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
         dispatchedAt: new Date(),      });
 
       await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(3));
-      expect(error.mock.calls[1]?.[1]).toBe('failed to re-open teacher inbox dispatch cap');
-      expect(error.mock.calls[2]?.[1]).toBe('failed to record notify failure');
-      const context = error.mock.calls[2]?.[0] as Record<string, unknown>;
-      expect(context.invitationId).toBe(invitationId);
+      // The two best-effort writes below are order-independent by
+      // construction (disjoint columns, independent promises, neither
+      // touches `lastNotifiedAt`), so their own failure logs are asserted
+      // as a set rather than by call index.
+      const followUpCalls = error.mock.calls.slice(1);
+      expect(followUpCalls.map(([, message]) => message).sort()).toEqual(
+        ['failed to re-open teacher inbox dispatch cap', 'failed to record notify failure'].sort(),
+      );
+      for (const [context] of followUpCalls) {
+        expect((context as Record<string, unknown>).invitationId).toBe(invitationId);
+      }
       expect(unhandled).not.toHaveBeenCalled();
     } finally {
       process.off('unhandledRejection', unhandled);
@@ -427,12 +434,11 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
       // A later resend's own synchronous pre-write has already moved
       // `lastNotifiedAt` on by the time this stale attempt's own insert
       // fails — the row no longer holds the value this dispatch remembers.
-      // `teacherInboxNotifiedAt` is left null here (unlike the fixture two
-      // tests above pre-set it to): the claim below must itself succeed for
-      // `createNotification` — and therefore the mocked rejection — to be
-      // reached at all; a claim starting from an already-non-null marker
-      // returns before ever calling it, which would make this test pass
-      // independently of anything the CAS clause does.
+      // `teacherInboxNotifiedAt` is left null here: the claim below must
+      // itself succeed for `createNotification` — and therefore the mocked
+      // rejection — to be reached at all; a claim starting from an
+      // already-non-null marker returns before ever calling it, which would
+      // make this test pass independently of anything the CAS clause does.
       await prisma.invitation.update({
         where: { id: f.invitationId },
         data: { lastNotifiedAt: currentDispatchedAt, lastNotifiedEmail: f.email },

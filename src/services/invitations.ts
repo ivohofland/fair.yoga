@@ -709,10 +709,10 @@ const DELIVERY_FAILURE_MESSAGE = {
  * same `.catch` path, on the same `dispatchedAt` CAS as above — but NOT
  * behind `recordDispatchFailure`'s systemic guard. That guard exists to keep
  * `lastNotifyFailedAt` from proxying "does this address have a fair.yoga
- * account" during a burst; `teacherInboxNotifiedAt` reaches no teacher- or
- * student-facing surface, so gating its clear the same way buys no privacy
- * and would instead strand every invitee whose notification failed during
- * the outage the guard is suppressing for.
+ * account" during a burst; gating this column's clear the same way would buy
+ * no privacy and would instead strand every invitee whose notification
+ * failed during the outage the guard is suppressing for — see
+ * `docs/data-model.md` (Invitation, "Who an invitation reaches") for why.
  *
  * Fire-and-forget is safe here specifically: this is a long-lived Node
  * process on a single VPS, not a serverless function that could be frozen
@@ -751,11 +751,10 @@ export function deliverInvitation(
     );
 
     // #622: re-open the cap wherever a dispatch failed. Above the systemic
-    // early return below on purpose — `teacherInboxNotifiedAt` reaches no
-    // teacher-facing surface, so the burst suppression that protects
-    // `lastNotifyFailedAt` from becoming an account-existence proxy buys
-    // nothing here, and gating on it would strand every invitee whose
-    // notification failed during an outage.
+    // early return below on purpose — see this function's own docblock and
+    // `docs/data-model.md` (Invitation, "Who an invitation reaches") for why
+    // gating this write the same way `lastNotifyFailedAt` is gated buys no
+    // privacy and would instead strand invitees during an outage.
     //
     // Same `lastNotifiedAt` CAS as the failure write below, for the same
     // reason: a superseded attempt's late failure must not re-open a cap a
