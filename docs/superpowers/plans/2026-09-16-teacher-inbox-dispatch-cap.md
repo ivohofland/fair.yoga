@@ -126,7 +126,9 @@ with `let invitationId: string | undefined;` declared beside the test's other id
 
 Then pass it: `await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });`
 
-Two sites need care. The already-linked test at `:255` **already** creates an invitation — reuse that row, do not create a second. The blocked-address test creates a `TeacherBlock`; its invitation row must be created before the block so the `(teacherId, email)` unique key is free.
+One site needs care: the already-linked test at `:255` **already** creates an invitation — reuse that row, do not create a second.
+
+(The blocked-address test also creates a `TeacherBlock`, but that table has its own `@@unique([teacherId, email])` independent of `Invitation`'s, so the two never collide and ordering between them does not matter.)
 
 - [ ] **Step 7: Run the tests to verify they pass unchanged**
 
@@ -371,7 +373,7 @@ Then the tests:
   });
 ```
 
-`sendMock` is cleared per test by the file's existing `beforeEach`; confirm that is so before relying on the two `toHaveBeenCalledTimes` assertions, and add `sendMock.mockClear()` to those tests if it is not.
+Verified: the file's existing `beforeEach` (`src/services/invitations.notify.test.ts:92-94`) calls `sendMock.mockReset()` and re-arms the resolved value, so the two `toHaveBeenCalledTimes` assertions are per-test safe with no extra clearing. Both new tests must sit inside that same `describe` for it to apply.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -427,7 +429,11 @@ Its closing paragraph explains that `teacher_invitation` is not in `ESSENTIAL_NO
  * `docs/data-model.md` (Invitation).
 ```
 
-Per Comment Discipline, the census of writers stays in `docs/data-model.md` (Task 6) and this links to it rather than restating it.
+Per Comment Discipline, the census of writers stays in `docs/data-model.md` and this links to it rather than restating it — and **this task writes that paragraph too, in the same commit**. A comment shipped pointing at a doc section that does not yet say it is a pointer to nothing for three tasks, and a reviewer reading it has no way to tell a deliberate stage from a mistake. Add to `docs/data-model.md`'s *Who an invitation reaches* (~`:198-212`), under the teacher-branch bullet:
+
+> The teacher branch delivers at most once per invitation (#622). `lastNotifyFailedAt` cannot serve as the release valve for that cap — both dispatching routes clear it before dispatching, so a reader in `notifyInvitee` always sees null — so a failed dispatch re-opens the cap on the failure path itself, in `deliverInvitation`'s `.catch`. Set by the teacher branch on delivery; cleared by that `.catch`, by a genuine readdress in `PUT /api/invitations/[id]`, and by `revivePendingInvitation`.
+
+Task 6 extends this section and sweeps the rest; it does not create it.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -996,9 +1002,9 @@ git commit -m "test(invitations): the dispatch cap over HTTP, and the readdress 
 
 A row for `teacher_inbox_notified_at`, `datetime?`, whose note states: set by `notifyInvitee`'s teacher branch when it delivers a notification, cleared by `deliverInvitation`'s failure path, by a genuine readdress in `PUT /api/invitations/[id]`, and by `revivePendingInvitation`. Note that it is never read by any teacher-facing surface, and why that matters — it states which account shape an address holds.
 
-- [ ] **Step 2: Extend *Who an invitation reaches* with the cap**
+- [ ] **Step 2: Re-read *Who an invitation reaches*, which Task 2 already amended**
 
-Under the existing teacher-branch bullet, state that the branch delivers at most once per invitation, and **own the fact the comment in `invitations.ts` links to**: that `lastNotifyFailedAt` cannot serve as the release valve because both dispatching routes clear it before dispatching, so the release lives on the failure path. This paragraph is what makes the code comment legal under Comment Discipline — without it the comment points at nothing.
+Task 2 wrote the paragraph its own comment points at. Re-read it against the code as it now stands after Tasks 3-5 — the failure-path clear, both resets — and correct anything those tasks made imprecise. Do not duplicate it.
 
 - [ ] **Step 3: Sweep for what this branch invalidated**
 
