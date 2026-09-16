@@ -1,8 +1,11 @@
 /**
  * `WaitlistEntry_waiting_position_key`: a partial unique index on
  * `(classId, position) WHERE status = 'waiting'`. Hand-authored — Prisma cannot
- * express the predicate — so these tests are the only thing that notices it
- * missing. Why it is partial and immediate: `docs/data-model.md` (WaitlistEntry).
+ * express the predicate — so `schema.prisma` cannot notice it missing or
+ * changed. These tests pin its behaviour on the migrated database: what it
+ * refuses (a second `waiting` row at a held position) and what its predicate
+ * and key let through (closed rows, other classes). Why it is partial and
+ * immediate: `docs/data-model.md` (WaitlistEntry).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, type WaitlistStatus } from '@prisma/client';

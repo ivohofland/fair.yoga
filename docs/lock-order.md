@@ -870,19 +870,18 @@ grep -rn 'setLockTimeout\|LOCK_TIMEOUT_SQL' src/ --include='*.ts' \
   | grep -vE ":[0-9]+:import "
 ```
 
-The filters are not cosmetic. Unfiltered the same needle returns 88 lines
-across 27 files: 41 of them in `.test.ts` files, 27 more comment prose outside
-the tests — five of those in `db-locks.ts` itself, quoting the needle back at
-its own reader. That is the failure the `FOR UPDATE` census one section up
-already records: a reader who runs the unfiltered version concludes on first
-use that the convention is not worth checking.
+The filters are not cosmetic. On 2026-09-16 (issue 183) the unfiltered needle
+returned 100 lines across 26 files: 52 of them in `.test.ts` files, 26 more
+comment prose outside the tests — five of those in `db-locks.ts` itself,
+quoting the needle back at its own reader. That is the failure the
+`FOR UPDATE` census one section up already records: a reader who runs the
+unfiltered version concludes on first use that the convention is not worth
+checking.
 
-**It returns 18** (re-derived 2026-09-16 for issue 183; this section's last
-figure, 14 from the 2026-08-29 derivation, was itself stale by two lines that
-multi-line `import { … }` reformatting had already added by the time this
-task started). Three of the 18 are the bound itself and the helper that
-issues it, all three in `db-locks.ts`; two are members of multi-line
-`import { … }` blocks that name `setLockTimeout` without issuing it —
+**On 2026-09-16 (issue 183) it returned 18.** Three of the 18 are the bound
+itself and the helper that issues it, all three in `db-locks.ts`; two are
+members of multi-line `import { … }` blocks that name `setLockTimeout`
+without issuing it —
 `gdpr.ts`'s and `class-template-lifecycle.ts`'s own `  setLockTimeout,`
 lines — which the `import ` filter cannot drop, since it matches only a line
 that itself starts with `import `; the remaining thirteen are transactions
