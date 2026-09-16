@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { notifyInvitee, deliverInvitation } from './invitations';
+import { teardownTeacher } from '../../tests/helpers';
 
 // `notifyInvitee`'s dry-run branch (src/lib/email.ts) can't tell "sent" from
 // "not reached" — a dry run just logs either way. Proving the registered
@@ -591,6 +592,206 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       await prisma.teacherBlock.delete({ where: { id: block.id } });
       await removeTeacherOnlyInvitee(invitee);
+    }
+  });
+
+  /** A teacher-only account plus a pending invitation to it from `teacherId`. */
+  async function teacherOnlyInvitee(slug: string) {
+    const email = `notify-cap-${slug}-${suffix}@test.local`;
+    const invitee = await prisma.teacher.create({
+      data: {
+        firstName: 'Cap', lastName: 'Invitee', email,
+        account: { create: { email } },
+        bio: '#622 teacher-inbox dispatch cap',
+        pageSlug: `notify-cap-${slug}-${suffix}`,
+      },
+      select: { id: true, accountId: true },
+    });
+    const invitation = await prisma.invitation.create({
+      data: { teacherId, email, firstName: 'Cap', lastName: 'Invitee' },
+      select: { id: true },
+    });
+    return { email, inviteeTeacherId: invitee.id, accountId: invitee.accountId, invitationId: invitation.id };
+  }
+
+  async function cleanUpInvitee(f: { inviteeTeacherId: string; accountId: string; invitationId: string }) {
+    await prisma.notification.deleteMany({
+      where: { recipientType: 'teacher', recipientId: f.inviteeTeacherId },
+    });
+    await prisma.invitation.deleteMany({ where: { id: f.invitationId } });
+    await teardownTeacher(prisma, f.inviteeTeacherId, f.accountId);
+  }
+
+  const countTeacherNotifications = (recipientId: string) =>
+    prisma.notification.count({
+      where: { recipientType: 'teacher', recipientId, type: 'teacher_invitation' },
+    });
+
+  it('tells a teacher-only invitee once, and a repeat dispatch not at all (#622)', async () => {
+    const f = await teacherOnlyInvitee('repeat');
+    try {
+      const dispatch = () => notifyInvitee(prisma, {
+        teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+      });
+      await dispatch();
+      expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
+      await dispatch();
+      expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
+    } finally {
+      await cleanUpInvitee(f);
+    }
+  });
+
+  it('tells an address that gained a teacher profile after an earlier dispatch (#622, sequence 1)', async () => {
+    // The dead end this replaces: the first dispatch took the stranger-email
+    // branch and the routes wrote their markers anyway, so a suppression
+    // reading those markers never told this person at all.
+    const email = `notify-cap-seq1-${suffix}@test.local`;
+    const invitation = await prisma.invitation.create({
+      data: { teacherId, email, firstName: 'Cap', lastName: 'Seq1' },
+      select: { id: true },
+    });
+    let inviteeTeacherId: string | undefined;
+    let accountId: string | undefined;
+    try {
+      // No account yet: the stranger branch runs.
+      await notifyInvitee(prisma, {
+        teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+      });
+      expect(sendMock).toHaveBeenCalledTimes(1);
+
+      const invitee = await prisma.teacher.create({
+        data: {
+          firstName: 'Cap', lastName: 'Seq1', email,
+          account: { create: { email } },
+          bio: '#622 sequence 1', pageSlug: `notify-cap-seq1-${suffix}`,
+        },
+        select: { id: true, accountId: true },
+      });
+      inviteeTeacherId = invitee.id;
+      accountId = invitee.accountId;
+
+      await notifyInvitee(prisma, {
+        teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+      });
+      expect(await countTeacherNotifications(invitee.id)).toBe(1);
+    } finally {
+      if (inviteeTeacherId) {
+        await prisma.notification.deleteMany({
+          where: { recipientType: 'teacher', recipientId: inviteeTeacherId },
+        });
+        await prisma.teacher.delete({ where: { id: inviteeTeacherId } });
+      }
+      if (accountId) await prisma.account.delete({ where: { id: accountId } });
+      await prisma.invitation.deleteMany({ where: { id: invitation.id } });
+    }
+  });
+
+  it('tells a previously-linked invitee once the student side is gone (#622, sequence 2)', async () => {
+    // The dispatch made while the pair was linked returned at the roster-link
+    // check without notifying anyone. It must not count as having told them.
+    const f = await teacherOnlyInvitee('seq2');
+    let studentId: string | undefined;
+    try {
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Cap', lastName: 'Seq2', email: f.email,
+          teacherStudents: { create: { teacherId } },
+        },
+        select: { id: true },
+      });
+      studentId = student.id;
+
+      // Linked: this dispatch notifies nobody.
+      await notifyInvitee(prisma, {
+        teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+      });
+      expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(0);
+
+      // The student side is erased: address tombstoned, link removed. The
+      // account keeps its address because a live teacher remains.
+      await prisma.teacherStudent.deleteMany({ where: { studentId: student.id } });
+      await prisma.student.update({
+        where: { id: student.id },
+        data: { email: `deleted-${student.id}@deleted.invalid`, deletedAt: new Date() },
+      });
+
+      await notifyInvitee(prisma, {
+        teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+      });
+      expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
+    } finally {
+      if (studentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId } });
+        await prisma.student.delete({ where: { id: studentId } });
+      }
+      await cleanUpInvitee(f);
+    }
+  });
+
+  it('caps nothing for a student invitee — every dispatch still notifies (#622)', async () => {
+    const email = `notify-cap-student-${suffix}@test.local`;
+    const invitation = await prisma.invitation.create({
+      data: { teacherId, email, firstName: 'Cap', lastName: 'Student' },
+      select: { id: true },
+    });
+    let studentId: string | undefined;
+    try {
+      const student = await prisma.student.create({
+        data: { firstName: 'Cap', lastName: 'Student', email },
+        select: { id: true },
+      });
+      studentId = student.id;
+
+      const dispatch = () => notifyInvitee(prisma, {
+        teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+      });
+      await dispatch();
+      await dispatch();
+
+      expect(await prisma.notification.count({
+        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
+      })).toBe(2);
+    } finally {
+      if (studentId) {
+        await prisma.notification.deleteMany({ where: { recipientId: studentId } });
+        await prisma.student.delete({ where: { id: studentId } });
+      }
+      await prisma.invitation.deleteMany({ where: { id: invitation.id } });
+    }
+  });
+
+  it('caps nothing for an address with no account — every dispatch still emails (#622)', async () => {
+    const email = `notify-cap-stranger-${suffix}@test.local`;
+    const invitation = await prisma.invitation.create({
+      data: { teacherId, email, firstName: 'Cap', lastName: 'Stranger' },
+      select: { id: true },
+    });
+    try {
+      const dispatch = () => notifyInvitee(prisma, {
+        teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id,
+      });
+      await dispatch();
+      await dispatch();
+      expect(sendMock).toHaveBeenCalledTimes(2);
+    } finally {
+      await prisma.invitation.deleteMany({ where: { id: invitation.id } });
+    }
+  });
+
+  it('creates exactly one notification when two dispatches race (#622)', async () => {
+    // The reason the claim is a conditional UPDATE and not a read followed by
+    // a write: both of these would observe a null marker under a read-first
+    // implementation, and both would notify.
+    const f = await teacherOnlyInvitee('race');
+    try {
+      await Promise.all([
+        notifyInvitee(prisma, { teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId }),
+        notifyInvitee(prisma, { teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId }),
+      ]);
+      expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
+    } finally {
+      await cleanUpInvitee(f);
     }
   });
 });
