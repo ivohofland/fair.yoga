@@ -852,9 +852,13 @@ describe('an erased profile no longer bars its account (#623)', () => {
       headers: { ...cookie(token), ...freshIp() },
     });
 
-    // The empirical proof that `isUniqueConflictOn(err, ['accountId'])` still
-    // matches over a PARTIAL index. If it stopped matching, this branch would
-    // fall through to the route's unrecognised-P2002 throw and answer 500.
+    // This exercises the route's PRE-CHECK (`if (session.studentId)`), which
+    // returns before the create is attempted — not the catch. Worth pinning
+    // in its own right: the pre-check is what keeps `ALREADY_STUDENT` meaning
+    // "you already have a live student side" now that an erased one no longer
+    // produces that code. The proof that `isUniqueConflictOn(err,
+    // ['accountId'])` still matches over a PARTIAL index is Task 2's
+    // constraint test, which asserts that predicate on a real violation.
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.error.code).toBe('ALREADY_STUDENT');
