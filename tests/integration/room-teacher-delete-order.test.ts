@@ -70,8 +70,7 @@ async function makeFixture(): Promise<Fixture> {
 afterAll(async () => {
   // Room.createdById -> Teacher and Teacher.accountId -> Account are both
   // ON DELETE RESTRICT, so Room must go before Teacher, and Teacher before
-  // Account. TeacherRoom's own FKs are CASCADE either way; deleteMany here
-  // is a no-op on whatever a test already deleted inline.
+  // Account. deleteMany is a no-op on whatever a test already deleted inline.
   try {
     await prisma.teacherRoom.deleteMany({ where: { id: { in: teacherRoomIds } } });
     await prisma.room.deleteMany({ where: { id: { in: roomIds } } });
