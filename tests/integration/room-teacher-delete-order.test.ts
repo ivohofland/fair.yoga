@@ -1,11 +1,13 @@
 /**
  * Pins the delete order `TeacherRoom -> Room -> Teacher` against
- * `Room_createdById_fkey` (`ON DELETE RESTRICT`, non-cascading).
+ * `Room_createdById_fkey` (`ON DELETE RESTRICT`, non-cascading). Lives in
+ * the `integration` tier because that is where CI runs it unconditionally
+ * (#619).
  *
- * `TeacherRoom -> Teacher` and `TeacherRoom -> Room` are both `ON DELETE
- * CASCADE` (`prisma/schema.prisma`), so only `Room.createdById -> Teacher`
- * can refuse a delete here — which is why the wrong-order case below
- * deletes `teacher` directly rather than needing a separate cascade case.
+ * `TeacherRoom -> Teacher` is `ON DELETE CASCADE` (`prisma/schema.prisma`),
+ * so only `Room.createdById -> Teacher` can refuse a delete here — which is
+ * why the wrong-order case below deletes `teacher` directly rather than
+ * needing a separate cascade case.
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
@@ -25,7 +27,6 @@ interface Fixture {
   teacherId: string;
   roomId: string;
   teacherRoomId: string;
-  accountEmail: string;
 }
 
 async function makeFixture(): Promise<Fixture> {
@@ -63,19 +64,22 @@ async function makeFixture(): Promise<Fixture> {
   roomIds.push(room.id);
   teacherRoomIds.push(teacherRoom.id);
   accountEmails.push(email);
-  return { teacherId: teacher.id, roomId: room.id, teacherRoomId: teacherRoom.id, accountEmail: email };
+  return { teacherId: teacher.id, roomId: room.id, teacherRoomId: teacherRoom.id };
 }
 
 afterAll(async () => {
-  // Delete in correct order to respect foreign key constraints:
-  // TeacherRoom has CASCADE to both Teacher and Room, so delete it first.
-  // Room.createdById has RESTRICT, so delete Room before Teacher.
-  // Then delete Account.
-  await prisma.teacherRoom.deleteMany({ where: { id: { in: teacherRoomIds } } });
-  await prisma.room.deleteMany({ where: { id: { in: roomIds } } });
-  await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
-  await prisma.account.deleteMany({ where: { email: { in: accountEmails } } });
-  await prisma.$disconnect();
+  // Room.createdById -> Teacher and Teacher.accountId -> Account are both
+  // ON DELETE RESTRICT, so Room must go before Teacher, and Teacher before
+  // Account. TeacherRoom's own FKs are CASCADE either way; deleteMany here
+  // is a no-op on whatever a test already deleted inline.
+  try {
+    await prisma.teacherRoom.deleteMany({ where: { id: { in: teacherRoomIds } } });
+    await prisma.room.deleteMany({ where: { id: { in: roomIds } } });
+    await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+    await prisma.account.deleteMany({ where: { email: { in: accountEmails } } });
+  } finally {
+    await prisma.$disconnect();
+  }
 });
 
 describe('Room/TeacherRoom/Teacher delete order (Room_createdById_fkey)', () => {
