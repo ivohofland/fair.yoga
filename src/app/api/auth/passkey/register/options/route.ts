@@ -25,18 +25,23 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       email: true,
       teachers: {
         where: { deletedAt: null },
-        select: { firstName: true, lastName: true },
+        select: { id: true, deletedAt: true, firstName: true, lastName: true },
       },
       students: {
         where: { deletedAt: null },
-        select: { firstName: true, lastName: true },
+        select: { id: true, deletedAt: true, firstName: true, lastName: true },
       },
     },
   });
   if (!account) {
     return respondError('Account not found', 404);
   }
-  const profile = liveProfile(account.teachers) ?? liveProfile(account.students);
+  // Both calls run unconditionally: `liveProfile` throws on two live rows of
+  // one kind, and `??`'s short-circuit would skip the student-side call (and
+  // its assertion) whenever a live teacher exists.
+  const liveTeacher = liveProfile(account.teachers);
+  const liveStudent = liveProfile(account.students);
+  const profile = liveTeacher ?? liveStudent;
   if (!profile) {
     return respondError('Account has no profile', 404);
   }

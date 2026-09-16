@@ -673,7 +673,7 @@ export async function notifyInvitee(
   // address this dispatch to a tombstone.
   const account = await db.account.findUnique({
     where: { email },
-    select: { teachers: { where: { deletedAt: null }, select: { id: true } } },
+    select: { teachers: { where: { deletedAt: null }, select: { id: true, deletedAt: true } } },
   });
   const inviteeTeacher = account ? liveProfile(account.teachers) : null;
   if (inviteeTeacher) {

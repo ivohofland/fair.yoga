@@ -76,7 +76,7 @@ afterEach(() => {
 describe('POST /api/auth/passkey/authenticate/verify — teacher-signup destination for an existing account', () => {
   it('sends an account that already teaches to its schedule, not to a page it would be bounced from', async () => {
     primeCredential('acc-teacher');
-    accountFindUnique.mockResolvedValue({ teachers: [{ id: 'teacher-1' }] });
+    accountFindUnique.mockResolvedValue({ teachers: [{ id: 'teacher-1', deletedAt: null }] });
     storeChallenge('authentication', 'chal-teacher', 'expected-challenge');
 
     const res = await POST(verify('chal-teacher', '/signup/profile'));

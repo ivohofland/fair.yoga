@@ -34,8 +34,8 @@ export async function resolveOrClaimAccount(
     where: { email },
     select: {
       id: true,
-      teachers: { where: { deletedAt: null }, select: { id: true } },
-      students: { where: { deletedAt: null }, select: { id: true } },
+      teachers: { where: { deletedAt: null }, select: { id: true, deletedAt: true } },
+      students: { where: { deletedAt: null }, select: { id: true, deletedAt: true } },
     },
   });
   if (account) {
