@@ -1208,6 +1208,21 @@ while the erasure held `Student` and waited on the `Class` row
 *Correction*). Pinned over HTTP by `tests/integration/registrations-api.test.ts`
 ("a first self-booking does not wait on a lock held on its student's row").
 
+A `Student` update that waits on the gate is not refused when the erasure
+commits. Under READ COMMITTED it re-checks its `WHERE` against the row version
+the erasure committed, and applies there unless that `WHERE` requires
+`deletedAt: null`. The erasure holds the row from its second statement to its
+commit, so the window is the whole erasure. `PUT /api/students/[id]`, the
+student's self-edit, writes names and contact details, so its `update` is
+scoped to `deletedAt: null` and answers 404 when the scope misses. Pinned by
+`tests/integration/students-api.test.ts` ("does not write onto a profile
+erased while the edit waited on it (#183)"), which sees the edit's name on the
+erased row and a 200 when the scope is removed. The `tierSelectedAt` marker
+writes that `POST /api/registrations` and `POST /api/waitlist` make after
+their transactions commit are scoped the same way. That marker carries no
+personal data, so their scope is consistency rather than protection, and no
+test pins it.
+
 Who updates or deletes a `Student` row, through any receiver:
 
     git grep -n -E 'student[[:space:]]*\.[[:space:]]*(update|updateMany|upsert|delete|deleteMany)\(' -- src ':!*.test.ts'
