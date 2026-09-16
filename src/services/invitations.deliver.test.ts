@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterEach, beforeEach, beforeAll, afterAll } 
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { deliverInvitation } from './invitations';
-import { __resetDispatchFailureTrackingForTests } from '@/lib/notify-health';
+import { __resetDispatchFailureTrackingForTests, recordDispatchFailure } from '@/lib/notify-health';
 import { log } from '@/lib/log';
-import { teardownTeacher } from '../../tests/helpers';
+import { teardownTeacher, waitFor } from '../../tests/helpers';
 
 const prisma = new PrismaClient();
 const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -168,9 +168,13 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     const unhandled = vi.fn();
     process.on('unhandledRejection', unhandled);
+    // Persistent, not `Once`: this path now issues two best-effort writes
+    // (the #622 cap-clear, then `lastNotifyFailedAt`) — failing only the
+    // first would exercise just the new one and leave the pre-existing one
+    // untested here.
     const writeSpy = vi
       .spyOn(prisma.invitation, 'updateMany')
-      .mockRejectedValueOnce(new Error('db down'));
+      .mockRejectedValue(new Error('db down'));
 
     try {
       deliverInvitation(prisma, {
@@ -180,9 +184,10 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
         source: 'create',
         dispatchedAt: new Date(),      });
 
-      await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(2));
-      expect(error.mock.calls[1]?.[1]).toBe('failed to record notify failure');
-      const context = error.mock.calls[1]?.[0] as Record<string, unknown>;
+      await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(3));
+      expect(error.mock.calls[1]?.[1]).toBe('failed to re-open teacher inbox dispatch cap');
+      expect(error.mock.calls[2]?.[1]).toBe('failed to record notify failure');
+      const context = error.mock.calls[2]?.[0] as Record<string, unknown>;
       expect(context.invitationId).toBe(invitationId);
       expect(unhandled).not.toHaveBeenCalled();
     } finally {
@@ -283,6 +288,194 @@ describe('deliverInvitation — fire-and-forget by construction (#391)', () => {
       expect(after.lastNotifyFailedAt).toBeNull();
     } finally {
       await prisma.invitation.deleteMany({ where: { id: row.id } });
+    }
+  });
+
+  /** A teacher-only account plus a pending invitation to it from `teacherId`. */
+  async function teacherOnlyInvitee(slug: string) {
+    const email = `deliver-cap-${slug}-${suffix}@test.local`;
+    const invitee = await prisma.teacher.create({
+      data: {
+        firstName: 'Cap', lastName: 'Invitee', email,
+        account: { create: { email } },
+        bio: '#622 teacher-inbox dispatch cap',
+        pageSlug: `deliver-cap-${slug}-${suffix}`,
+      },
+      select: { id: true, accountId: true },
+    });
+    const invitation = await prisma.invitation.create({
+      data: { teacherId, email, firstName: 'Cap', lastName: 'Invitee' },
+      select: { id: true },
+    });
+    return { email, inviteeTeacherId: invitee.id, accountId: invitee.accountId, invitationId: invitation.id };
+  }
+
+  async function cleanUpInvitee(f: { inviteeTeacherId: string; accountId: string; invitationId: string }) {
+    await prisma.notification.deleteMany({
+      where: { recipientType: 'teacher', recipientId: f.inviteeTeacherId },
+    });
+    await prisma.invitation.deleteMany({ where: { id: f.invitationId } });
+    await teardownTeacher(prisma, f.inviteeTeacherId, f.accountId);
+  }
+
+  it('re-opens the cap when the teacher-branch insert fails (#622)', async () => {
+    const f = await teacherOnlyInvitee('fail-ordinary');
+    try {
+      const dispatchedAt = new Date();
+      await prisma.invitation.update({
+        where: { id: f.invitationId },
+        data: { lastNotifiedAt: dispatchedAt, lastNotifiedEmail: f.email },
+      });
+      const createSpy = vi.spyOn(prisma.notification, 'create')
+        .mockRejectedValueOnce(new Error('insert failed'));
+      const updateManySpy = vi.spyOn(prisma.invitation, 'updateMany');
+
+      deliverInvitation(prisma, {
+        teacherId, email: f.email, invitationId: f.invitationId,
+        source: 'resend', dispatchedAt,
+      });
+
+      // The row's `teacherInboxNotifiedAt` starts null (the fixture never
+      // sets it), so polling for that value directly is trivially satisfied
+      // by its untouched initial state, before the claim has even run —
+      // proving nothing about whether a claim was made and then cleared.
+      // `lastNotifyFailedAt` is the last write this path issues here (this
+      // test's lone failure never looks systemic), so waiting for its own
+      // call to appear — by its distinct `data` shape, not by position —
+      // means the claim and the clear under test have both already been
+      // issued too; awaiting every captured call's own settled result is
+      // what proves they have actually finished, not merely started.
+      await waitFor(
+        () => Promise.resolve(
+          updateManySpy.mock.calls.some(([args]) => 'lastNotifyFailedAt' in args.data)
+            ? true
+            : null,
+        ),
+        { description: 'the failing dispatch has recorded its failure (#622)' },
+      );
+      await Promise.all(updateManySpy.mock.results.map((r) => r.value));
+
+      const row = await prisma.invitation.findUniqueOrThrow({
+        where: { id: f.invitationId }, select: { teacherInboxNotifiedAt: true },
+      });
+      expect(row.teacherInboxNotifiedAt).toBeNull();
+      createSpy.mockRestore();
+    } finally {
+      await cleanUpInvitee(f);
+    }
+  });
+
+  it('re-opens the cap even when the failure looks systemic (#622)', async () => {
+    const f = await teacherOnlyInvitee('fail-outage');
+    try {
+      const dispatchedAt = new Date();
+      await prisma.invitation.update({
+        where: { id: f.invitationId },
+        data: { lastNotifiedAt: dispatchedAt, lastNotifiedEmail: f.email },
+      });
+      // Drive the health window past its threshold, so `looksSystemic` is
+      // true by the time this dispatch's own failure is handled.
+      recordDispatchFailure();
+      recordDispatchFailure();
+      recordDispatchFailure();
+
+      const createSpy = vi.spyOn(prisma.notification, 'create')
+        .mockRejectedValueOnce(new Error('insert failed'));
+      const updateManySpy = vi.spyOn(prisma.invitation, 'updateMany');
+
+      deliverInvitation(prisma, {
+        teacherId, email: f.email, invitationId: f.invitationId,
+        source: 'resend', dispatchedAt,
+      });
+
+      // The systemic verdict suppresses the `lastNotifyFailedAt` write below
+      // (#392), so — unlike the ordinary case above — that call never
+      // appears here. The clear itself is the last write this path issues
+      // in this scenario, so its own call, identified by its `data` value
+      // rather than by position, is the settling signal instead.
+      await waitFor(
+        () => Promise.resolve(
+          updateManySpy.mock.calls.some(
+            ([args]) => 'teacherInboxNotifiedAt' in args.data && args.data.teacherInboxNotifiedAt === null,
+          )
+            ? true
+            : null,
+        ),
+        { description: 'the failing dispatch has cleared the cap under a burst (#622)' },
+      );
+      await Promise.all(updateManySpy.mock.results.map((r) => r.value));
+
+      const row = await prisma.invitation.findUniqueOrThrow({
+        where: { id: f.invitationId },
+        select: { teacherInboxNotifiedAt: true, lastNotifyFailedAt: true },
+      });
+      expect(row.teacherInboxNotifiedAt).toBeNull();
+      // The teacher-visible half stays suppressed — that is #392's rule and
+      // this change does not touch it.
+      expect(row.lastNotifyFailedAt).toBeNull();
+      createSpy.mockRestore();
+    } finally {
+      await cleanUpInvitee(f);
+    }
+  });
+
+  it('does not re-open a cap a newer dispatch closed (#622)', async () => {
+    const f = await teacherOnlyInvitee('fail-superseded');
+    try {
+      const staleDispatchedAt = new Date(Date.now() - 60_000);
+      const currentDispatchedAt = new Date();
+      // A later resend's own synchronous pre-write has already moved
+      // `lastNotifiedAt` on by the time this stale attempt's own insert
+      // fails — the row no longer holds the value this dispatch remembers.
+      // `teacherInboxNotifiedAt` is left null here (unlike the fixture two
+      // tests above pre-set it to): the claim below must itself succeed for
+      // `createNotification` — and therefore the mocked rejection — to be
+      // reached at all; a claim starting from an already-non-null marker
+      // returns before ever calling it, which would make this test pass
+      // independently of anything the CAS clause does.
+      await prisma.invitation.update({
+        where: { id: f.invitationId },
+        data: { lastNotifiedAt: currentDispatchedAt, lastNotifiedEmail: f.email },
+      });
+      const createSpy = vi.spyOn(prisma.notification, 'create')
+        .mockRejectedValueOnce(new Error('insert failed'));
+      const updateManySpy = vi.spyOn(prisma.invitation, 'updateMany');
+
+      // A stale attempt: its own claim still succeeds (the cap was open when
+      // it ran), but its insert then fails.
+      deliverInvitation(prisma, {
+        teacherId, email: f.email, invitationId: f.invitationId,
+        source: 'create', dispatchedAt: staleDispatchedAt,
+      });
+
+      // The `lastNotifyFailedAt` write is unconditional here (this test's
+      // lone failure never looks systemic) and is issued after every other
+      // write this path can make from the same `.catch` tick — including
+      // the claim above and the CAS-guarded clear under test — so its own
+      // call appearing is a structural signal, not a count, that the whole
+      // chain has been issued. `in` picks it out by its own `data` shape
+      // rather than by position, so this holds whether or not the clear
+      // above still runs, still comes first, or still carries its own CAS
+      // clause. Awaiting every call's own settled result — not just its
+      // appearance — is what proves each write actually finished before the
+      // row is read below.
+      await waitFor(
+        () => Promise.resolve(
+          updateManySpy.mock.calls.some(([args]) => 'lastNotifyFailedAt' in args.data)
+            ? true
+            : null,
+        ),
+        { description: 'the stale dispatch has recorded its failure (#622)' },
+      );
+      await Promise.all(updateManySpy.mock.results.map((r) => r.value));
+
+      const row = await prisma.invitation.findUniqueOrThrow({
+        where: { id: f.invitationId }, select: { teacherInboxNotifiedAt: true },
+      });
+      expect(row.teacherInboxNotifiedAt).not.toBeNull();
+      createSpy.mockRestore();
+    } finally {
+      await cleanUpInvitee(f);
     }
   });
 });

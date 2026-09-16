@@ -705,6 +705,15 @@ const DELIVERY_FAILURE_MESSAGE = {
  *   attempt's row state — the teacher told "failed" about an invitation that
  *   went out.
  *
+ * `teacherInboxNotifiedAt` (the teacher-branch cap, #622) is cleared on the
+ * same `.catch` path, on the same `dispatchedAt` CAS as above — but NOT
+ * behind `recordDispatchFailure`'s systemic guard. That guard exists to keep
+ * `lastNotifyFailedAt` from proxying "does this address have a fair.yoga
+ * account" during a burst; `teacherInboxNotifiedAt` reaches no teacher- or
+ * student-facing surface, so gating its clear the same way buys no privacy
+ * and would instead strand every invitee whose notification failed during
+ * the outage the guard is suppressing for.
+ *
  * Fire-and-forget is safe here specifically: this is a long-lived Node
  * process on a single VPS, not a serverless function that could be frozen
  * mid-request.
@@ -740,6 +749,28 @@ export function deliverInvitation(
       { err, teacherId: input.teacherId, invitationId: input.invitationId },
       DELIVERY_FAILURE_MESSAGE[input.source],
     );
+
+    // #622: re-open the cap wherever a dispatch failed. Above the systemic
+    // early return below on purpose — `teacherInboxNotifiedAt` reaches no
+    // teacher-facing surface, so the burst suppression that protects
+    // `lastNotifyFailedAt` from becoming an account-existence proxy buys
+    // nothing here, and gating on it would strand every invitee whose
+    // notification failed during an outage.
+    //
+    // Same `lastNotifiedAt` CAS as the failure write below, for the same
+    // reason: a superseded attempt's late failure must not re-open a cap a
+    // newer, successful attempt closed.
+    db.invitation
+      .updateMany({
+        where: { id: input.invitationId, lastNotifiedAt: input.dispatchedAt },
+        data: { teacherInboxNotifiedAt: null },
+      })
+      .catch((writeErr: unknown) => {
+        log.error(
+          { err: writeErr, invitationId: input.invitationId },
+          'failed to re-open teacher inbox dispatch cap',
+        );
+      });
 
     // #392 review, Critical #1: a burst of failures looks systemic, and a
     // systemic failure hits every stranger send alike — see this function's
