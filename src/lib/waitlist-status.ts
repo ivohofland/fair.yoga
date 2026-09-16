@@ -38,7 +38,8 @@ import type { WaitlistStatus } from '@prisma/client';
  * split:
  *
  * - `live` — still contending for a seat. The only role `reorderWaitingEntries`
- *   renumbers; closed rows keep stale positions by design (#183).
+ *   renumbers; closed rows keep stale positions by design, which is what makes
+ *   `WaitlistEntry_waiting_position_key` partial on `status = 'waiting'`.
  * - `fulfilled` — the student got a seat. Self-limiting and not a queue closure.
  * - `lapsed` — the queue closed under them and they never got in. No decision was
  *   ever made ABOUT them, which is why a walk-in can still make them `claimed`.

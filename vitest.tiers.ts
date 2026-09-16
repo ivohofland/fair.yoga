@@ -130,6 +130,9 @@ export const LOCK_CONTENTION_TESTS = [
   // staged race.
   'src/services/update-class-lock-order.test.ts',
   'src/services/template-room-race.test.ts',
+  // #183: drops and restores an index inside a transaction — the
+  // `class-lifecycle-tier-guard.test.ts` shape; its header carries the reason.
+  'src/services/waitlist-position-migration.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

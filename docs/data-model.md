@@ -536,6 +536,32 @@ An entry that did become a registration is kept because the FK to
 **cancelled** class has a `Registration` and no `Payment`.
 Swept daily by `reapClosedWaitlistEntries` (`services/waitlist-retention.ts`).
 
+**`WaitlistEntry_waiting_position_key` (#183):** a hand-authored partial unique
+index on `(classId, position) WHERE status = 'waiting'` — Prisma cannot express
+the predicate, so the migration is raw SQL and the model carries a `///`
+docblock naming it instead of a schema attribute. Immediate, not deferred:
+every writer that touches a class's waiting positions does so under that
+class's row lock, and each either renumbers downward (`reorderWaitingEntries`,
+ascending by current position — read as `1..n`, the i-th of the class's
+distinct positive positions is already ≥ i, so overwriting it with `i` in
+ascending order never collides with a row the loop has not reached yet) or
+appends at `max(position) + 1` (`addToWaitlist`). No writer ever produces a
+transient duplicate, so nothing needs deferring to end-of-transaction. A
+deferrable alternative exists — Postgres 16 accepts a partial `EXCLUDE USING
+btree (...) WHERE (...) DEFERRABLE` — but a partial *unique index* cannot be
+promoted to a constraint and so can never be made deferrable; that `EXCLUDE`
+form would have been the only way to defer, and the immediate case above is
+why reaching for it was unnecessary. Gaps are legal: a gap in the waiting
+sequence still preserves promotion order, and gap-freedom is a cross-row
+property no single-row constraint can express. The migration renumbers
+existing `waiting` rows to `1..n` per class, ordered by `(position, createdAt,
+id)`, before creating the index, and announces the affected count via `RAISE
+NOTICE` so a repair on production data does not pass silently. Spiked before
+being written: with an equivalent index applied by hand, 2095 unit and 711
+integration tests (2806 database-backed tests total) passed with zero
+violations, and a mutation forcing `addToWaitlist`'s `nextPosition` to always
+be `1` failed 5 tests with `P2002` on `['classId', 'position']`.
+
 ---
 
 ## Payments
