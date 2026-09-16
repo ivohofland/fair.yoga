@@ -1,6 +1,9 @@
 -- Hand-authored: Prisma cannot express a partial unique index.
 -- Why partial, why immediate, and why gaps stay legal: docs/data-model.md (WaitlistEntry).
 
+-- First, so no other writer runs between the renumber and the index build.
+LOCK TABLE "WaitlistEntry" IN SHARE ROW EXCLUSIVE MODE;
+
 DO $$
 DECLARE
   affected INT;
