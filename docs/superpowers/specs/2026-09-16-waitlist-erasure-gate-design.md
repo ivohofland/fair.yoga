@@ -184,13 +184,21 @@ Statement order inside the transaction becomes:
 5. `waitingClassIds` read — as today, and additionally restricted to
    `lockedClassIds`.
 6. Writes as today, except `waitlistEntry.deleteMany` becomes
-   `{ studentId, classId: { in: lockedClassIds } }`, followed by
-   `waitlistEntry.count({ where: { studentId } })`. A non-zero count throws
-   `ErasureLockSetError` and the transaction rolls back.
+   `{ studentId, classId: { in: lockedClassIds } }`.
+7. After the closing `student.updateMany` CAS (and its `AlreadyErasedError`
+   throw), read the student's remaining `WaitlistEntry` rows. Any row found throws
+   `ErasureLockSetError`, which carries the rows, and the transaction rolls back.
+   *PR review amendment:* this check first sat directly after the delete. There, an
+   ungated insert still uncommitted at that moment escaped it. After the closing
+   `UPDATE`, which takes `FOR UPDATE` on the student's row and so waits for every
+   in-flight child insert's `FOR KEY SHARE`, such an entry is committed and
+   visible.
 
-With the gate, no entry can exist outside `lockedClassIds`, so the count is always
-zero. The check exists so that a future writer that creates entries without the gate
-fails loudly and safely, instead of being deleted outside the lock set. The scoped
+With the gate, no entry can exist outside `lockedClassIds`, so the check always
+finds nothing. It exists so that a future writer that creates entries without the
+gate fails loudly and safely, instead of being deleted outside the lock set. A writer
+that inserts after the erasure has committed is beyond any check inside the erasure;
+only the gate covers it. The scoped
 delete also means the erasure never takes a row lock on an entry whose class it does
 not hold, which removes the wait edge both reproduced `40P01` cycles needed.
 
@@ -241,8 +249,11 @@ marker's semantics.
 
 ### 4. The constraint — migration `…_waitlist_waiting_position_unique`
 
-Hand-authored, two statements:
+Hand-authored, three statements. *PR review amendment:* the first was added so
+that neither the renumber nor the index build can interleave with a still-running
+old app's writes during deploy.
 
+0. `LOCK TABLE "WaitlistEntry" IN SHARE ROW EXCLUSIVE MODE;`
 1. A `DO $$` block that renumbers each class's `waiting` rows to `1..n`, ordered by
    `(position, "createdAt", id)`, updating only rows whose position changes, and
    `RAISE NOTICE`s the affected count when it is non-zero. A no-op on clean data;
@@ -326,7 +337,7 @@ mutation is applied, its exact failure text recorded, then restored and re-verif
 | R1 | erasure holds the `Student` lock; a **rejoin** (the student holds a closed entry in that class, so it is in the erasure's lock set) | join blocked while held; then `WaitlistJoinError('student_erased')`; no entry, no `TeacherStudent` | drop the join's gate; weaken it to `FOR KEY SHARE`; move it below `lockClassRow` (`40P01` — the rejoin is what makes the gate-before-class order observable) |
 | R2 | join holds its `Student` lock; erasure starts | erasure blocked while held; then the new entry is gone and the class's remaining `waiting` positions are `1..n` | drop the erasure's `Student` lock (the erasure is no longer blocked while held; it runs its pre-lock before the entry exists, then waits at its closing `UPDATE` instead, and the entry survives) |
 | R3 + R6 | one staging: `promoteNext` holds the class, promoting the student, while the erasure takes its `Student` lock and waits on that class; a second waiter queues behind the student | both complete with no `40P01` (R3); after the erasure, the second waiter holds a `registered` row — `handleSpotFreed` ran for the class (R6) | erasure takes `FOR UPDATE` → `40P01`; `upcoming` read moved back above the pre-lock → second waiter not promoted |
-| R4 | an entry inserted directly (bypassing the gate) after the pre-lock | erasure throws `ErasureLockSetError`; student not erased, entry intact | remove the count check; revert to the unscoped `deleteMany` |
+| R4 | an entry inserted directly (bypassing the gate) after the pre-lock | erasure throws `ErasureLockSetError`; student not erased, entry intact | remove the stray check; revert to the unscoped `deleteMany` |
 | R5 | `addToWaitlist` for an erased student | `WaitlistJoinError('student_erased')`, no entry (unit, `waitlist.test.ts`) | drop the join's gate |
 | L1–L3 | the helpers' modes, in `db-locks-lock-order.test.ts`: `lockLiveStudent` waits behind `lockStudentForErasure` (L1); a real child insert (`TeacherStudent`) does NOT wait behind it (L2); `lockStudentForErasure` waits behind `lockLiveStudent` (L3) | causal release flags | `lockLiveStudent` → `FOR KEY SHARE` (L1 red); `lockStudentForErasure` → `FOR UPDATE` (L2 red) |
 | C1 | two `waiting` rows, one class, one position | `P2002` on `['classId','position']` | drop the index |
