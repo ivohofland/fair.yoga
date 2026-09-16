@@ -4344,6 +4344,18 @@ describe('an invitation to a teacher-only account (#172)', () => {
   // address in `finally`.
   it('tells the readdressed invitee, because PUT clears the cap (#622)', async () => {
     const readdressed = `inv-teacher-readdressed-${suffix}@test.local`;
+    // The whole state the PUT below moves, captured before it moves any of
+    // it. Restoring only `email` would hand the rest of this describe block a
+    // row carrying `delivered: false`, a stale `lastNotifiedEmail` and the
+    // readdressed teacher's cap marker — which makes this test's stated
+    // ordering dependency (above) a documentary claim rather than an
+    // enforceable one.
+    const before = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email: inviteeEmail } },
+      select: {
+        id: true, delivered: true, lastNotifiedEmail: true, teacherInboxNotifiedAt: true,
+      },
+    });
     // Created and looked up inside the `try` — not before it — so that a
     // throw from either leaves nothing for `finally` to miss.
     let second: { id: string; accountId: string } | undefined;
@@ -4383,15 +4395,23 @@ describe('an invitation to a teacher-only account (#172)', () => {
     } finally {
       // Each step below is reachable regardless of how far the try above
       // got: `second` is undefined if its own creation threw, and the
-      // email match below is a no-op if the readdress itself never
-      // happened — neither case needs a special branch, just a guard.
+      // restore below writes the values it read before the PUT — a no-op if
+      // the PUT never landed, and matched by `id` through `updateMany` so a
+      // vanished row costs nothing rather than throwing out of `finally`
+      // over whatever brought us here.
       if (second) {
         await prisma.notification.deleteMany({
           where: { recipientType: 'teacher', recipientId: second.id },
         });
       }
       await prisma.invitation.updateMany({
-        where: { teacherId, email: readdressed }, data: { email: inviteeEmail },
+        where: { id: before.id },
+        data: {
+          email: inviteeEmail,
+          delivered: before.delivered,
+          lastNotifiedEmail: before.lastNotifiedEmail,
+          teacherInboxNotifiedAt: before.teacherInboxNotifiedAt,
+        },
       });
       if (second) {
         await prisma.teacher.delete({ where: { id: second.id } });
