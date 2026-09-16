@@ -380,7 +380,7 @@ export async function autoCancelClasses(
         // claimed that EVERY writer of `WaitlistEntry` is serialized behind a
         // conflicting `Class` row lock, "either by calling `lockClassRow` or by
         // writing through a CAS `UPDATE` that already took one". Both halves
-        // were wrong. The mechanism list omitted the most common one — an
+        // were mistakes. The mechanism list omitted the most common one — an
         // inline `SELECT ... FOR UPDATE` on the class row, which is what
         // `addToWaitlist`, `promoteNext`, `claimSpot`,
         // `withdrawWaitingEntriesForTeacher` and `POST /api/registrations` all
@@ -389,12 +389,13 @@ export async function autoCancelClasses(
         // `lockClassRow`; `withdrawWaitingEntriesForTeacher` had already
         // moved to `lockClassRowsOrdered` under #237 — so this mechanism is
         // gone from today's roster, not from the checklist below) — and the
-        // universal claim is false regardless: issue #183 is open
-        // precisely because `deleteStudentAccount`'s write set can exceed its
-        // lock set. It replaced a correct hand-written roster with a general
-        // rule, on the reasoning that rosters go stale. They do; a false
-        // invariant is worse, because the next person adding a writer checks it
-        // and concludes they are safe.
+        // universal half is a claim about other modules that this comment
+        // cannot keep true: which writers take which lock is
+        // `docs/lock-order.md`'s to say. That version replaced a correct
+        // hand-written roster with a general rule, on the reasoning that
+        // rosters go stale. They do; an invariant nobody here can keep true is
+        // worse, because the next person adding a writer checks it and
+        // concludes they are safe.
         //
         // To re-derive the real roster:
         // `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`,
@@ -511,13 +512,15 @@ export async function autoCancelClasses(
           where: { classId: cls.id, status: 'waiting' },
           select: { studentId: true },
         });
-        // The read and the update are two statements but cannot interleave:
-        // every writer of `WaitlistEntry` takes this class's row lock first,
-        // and `lockClassRow` above is holding it. Without that, a `waiting`
-        // row committing between them would be closed without being notified —
-        // which is the bug this whole change is about, reintroduced two
-        // statements apart. The guard is only a statement-count saving on the
-        // common case of no queue; `gdpr.ts` issues the same update unguarded.
+        // The read and the update are two statements, and `lockClassRow` above
+        // holds this class's row across both, so a `WaitlistEntry` writer that
+        // takes this class's lock cannot interleave with them. Which writers
+        // do is `docs/lock-order.md`'s to say ("Known conformance"). A
+        // `waiting` row committing between the two would be closed without
+        // being notified — which is the bug this whole change is about,
+        // reintroduced two statements apart. The guard is only a
+        // statement-count saving on the common case of no queue; `gdpr.ts`
+        // issues the same update unguarded.
         if (waiting.length > 0) {
           await tx.waitlistEntry.updateMany({
             where: { classId: cls.id, status: 'waiting' },

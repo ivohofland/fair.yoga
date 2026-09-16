@@ -2061,3 +2061,95 @@ describe('withdrawWaitingEntriesForTeacher locks only the pair it was given (#45
     expect(otherStudentsRequest.status).toBe('waiting');
   });
 });
+
+describe('addToWaitlist refuses an erased student (#183)', () => {
+  const suffix = `waitlist-erased-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let classId: string;
+  const studentIds: string[] = [];
+  let erasedId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Erased',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Erased-join fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Erased Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234ER',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    classId = (
+      await createClassFixture(prisma, {
+        teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: 'Hatha',
+        date: new Date('2099-06-01'),
+        startTime: hhmmToTime('09:00'),
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents: 1,
+        status: 'open',
+      })
+    ).id;
+    const filler = await prisma.student.create({
+      data: { firstName: 'Filler', lastName: 'Test', email: `${suffix}-filler@test.local`, incomeTier: 3 },
+      select: { id: true },
+    });
+    studentIds.push(filler.id);
+    await prisma.registration.create({
+      data: { classId, studentId: filler.id, status: 'registered', tierAtBooking: 3 },
+    });
+    const erased = await prisma.student.create({
+      data: { firstName: 'Erased', lastName: 'Test', email: `${suffix}-erased@test.local`, incomeTier: 3 },
+      select: { id: true },
+    });
+    erasedId = erased.id;
+    studentIds.push(erasedId);
+    await prisma.student.update({ where: { id: erasedId }, data: { deletedAt: new Date() } });
+  });
+
+  afterAll(async () => {
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+  });
+
+  it('refuses the join and writes neither an entry nor a roster link', async () => {
+    await expect(addToWaitlist(prisma, classId, erasedId)).rejects.toMatchObject({
+      reason: 'student_erased',
+    });
+    expect(await prisma.waitlistEntry.count({ where: { studentId: erasedId } })).toBe(0);
+    expect(await prisma.teacherStudent.count({ where: { studentId: erasedId } })).toBe(0);
+  });
+});

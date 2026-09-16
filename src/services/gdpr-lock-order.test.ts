@@ -30,7 +30,7 @@ import {
 } from './gdpr';
 import * as dbLocks from '@/lib/db-locks';
 import { CLASS_TO_ENTRY_JOIN, CLASS_TO_WAITLIST_JOIN, LOCK_TIMEOUT_SQL } from '@/lib/db-locks';
-import { promoteNext } from './waitlist';
+import { addToWaitlist, promoteNext, WaitlistJoinError } from './waitlist';
 import { claimTemplateForGeneration } from './class-generator';
 import { claimStudioTemplateForGeneration } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -2509,6 +2509,151 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
         where: { classId_studentId: { classId: fx.classId, studentId: fx.waiterId } },
       });
       expect(waiter?.status).toBe('registered');
+    } finally {
+      await cleanupQueue(fx);
+    }
+  }, 20_000);
+
+  it('refuses a rejoin that waits behind it, and leaves nothing of the join behind', async () => {
+    const fx = await makeQueue();
+    try {
+      // A REJOIN: the subject already holds a closed entry in `otherClassId`,
+      // so that class is in the erasure's lock set. That is what makes the
+      // join's gate-before-class order observable — with the class taken
+      // first, the join would hold `otherClassId` while waiting on the
+      // `Student` row the erasure holds, and the erasure's pre-lock would then
+      // wait on `otherClassId`: `40P01`.
+      await prisma.waitlistEntry.create({
+        data: { classId: fx.otherClassId, studentId: fx.studentId, position: 1, status: 'removed' },
+      });
+
+      let erasurePid = 0;
+      let atGate!: () => void;
+      const gateHeld = new Promise<void>((r) => { atGate = r; });
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      const original = dbLocks.lockStudentForErasure;
+      const spy = vi.spyOn(dbLocks, 'lockStudentForErasure').mockImplementation(async (tx, id) => {
+        await original(tx, id);
+        erasurePid = await ownPid(tx);
+        atGate();
+        await held;
+      });
+      onTestFinished(() => spy.mockRestore());
+
+      const erasing = deleteStudentAccount(prisma, fx.studentId).then(
+        () => 'erased' as const,
+        (err: unknown) => ({ error: String(err) }),
+      );
+      let joining: Promise<unknown> | undefined;
+      try {
+        await awaitHandshake(gateHeld, 'erasure Student lock');
+        // `otherClassId` is full and the subject holds no active registration
+        // in it, so the join is valid on every other count.
+        joining = addToWaitlist(prisma, fx.otherClassId, fx.studentId).then(
+          (entry) => entry,
+          (err: unknown) => err,
+        );
+        await waitUntilBlockedBy(erasurePid);
+      } finally {
+        release();
+        await Promise.all([erasing, joining]);
+      }
+
+      const [eraseOutcome, joinOutcome] = await Promise.all([erasing, joining]);
+      expect(eraseOutcome).toBe('erased');
+      expect(joinOutcome).toBeInstanceOf(WaitlistJoinError);
+      expect((joinOutcome as WaitlistJoinError).reason).toBe('student_erased');
+      expect(await prisma.waitlistEntry.count({ where: { studentId: fx.studentId } })).toBe(0);
+      expect(await prisma.teacherStudent.count({ where: { studentId: fx.studentId } })).toBe(0);
+    } finally {
+      await cleanupQueue(fx);
+    }
+  }, 20_000);
+
+  it('waits behind a join that holds the gate, then erases and renumbers what the join wrote', async () => {
+    const fx = await makeQueue();
+    try {
+      // A gap in `otherClassId`'s queue ahead of where the join will append
+      // (4): the renumber closes it only if the erasure renumbers that class,
+      // which it does only if that class is in its lock set.
+      const suffix = crypto.randomBytes(3).toString('hex');
+      const makeWaiter = async (label: string, position: number) => {
+        const s = await prisma.student.create({
+          data: { firstName: 'Gate', lastName: label, email: `gate-${label}-${suffix}@test.local`, incomeTier: 2 },
+          select: { id: true },
+        });
+        fx.extraStudentIds.push(s.id);
+        await prisma.waitlistEntry.create({
+          data: { classId: fx.otherClassId, studentId: s.id, position, status: 'waiting' },
+        });
+        return s.id;
+      };
+      const firstId = await makeWaiter('first', 1);
+      const thirdId = await makeWaiter('third', 3);
+
+      let joinPid = 0;
+      let atGate!: () => void;
+      const gateHeld = new Promise<void>((r) => { atGate = r; });
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      let joinReleased = false;
+      let stalled = false;
+      const originalGate = dbLocks.lockLiveStudent;
+      const gateSpy = vi.spyOn(dbLocks, 'lockLiveStudent').mockImplementation(async (tx, id) => {
+        await originalGate(tx, id);
+        if (id === fx.studentId && !stalled) {
+          stalled = true;
+          joinPid = await ownPid(tx);
+          atGate();
+          await held;
+        }
+      });
+      onTestFinished(() => gateSpy.mockRestore());
+      let preLockSawRelease: boolean | undefined;
+      const originalPreLock = dbLocks.lockClassRowsOrdered;
+      const preLockSpy = vi
+        .spyOn(dbLocks, 'lockClassRowsOrdered')
+        .mockImplementation(async (tx, source) => {
+          if (source.join === dbLocks.CLASS_TO_WAITLIST_JOIN && preLockSawRelease === undefined) {
+            preLockSawRelease = joinReleased;
+          }
+          return originalPreLock(tx, source);
+        });
+      onTestFinished(() => preLockSpy.mockRestore());
+
+      const joining = addToWaitlist(prisma, fx.otherClassId, fx.studentId).then(
+        (entry) => ({ position: entry.position }),
+        (err: unknown) => ({ error: String(err) }),
+      );
+      let erasing: Promise<'erased' | { error: string }> | undefined;
+      try {
+        await awaitHandshake(gateHeld, 'join Student lock');
+        erasing = deleteStudentAccount(prisma, fx.studentId).then(
+          () => 'erased' as const,
+          (err: unknown) => ({ error: String(err) }),
+        );
+        await waitUntilBlockedBy(joinPid);
+      } finally {
+        joinReleased = true;
+        release();
+        await Promise.all([joining, erasing]);
+      }
+
+      const [joinOutcome, eraseOutcome] = await Promise.all([joining, erasing]);
+      expect(joinOutcome).toEqual({ position: 4 });
+      expect(eraseOutcome).toBe('erased');
+      expect(preLockSawRelease).toBe(true);
+      expect(await prisma.waitlistEntry.count({ where: { studentId: fx.studentId } })).toBe(0);
+      const queue = await prisma.waitlistEntry.findMany({
+        where: { classId: fx.otherClassId, status: 'waiting' },
+        select: { studentId: true, position: true },
+        orderBy: { position: 'asc' },
+      });
+      expect(queue).toEqual([
+        { studentId: firstId, position: 1 },
+        { studentId: thirdId, position: 2 },
+      ]);
     } finally {
       await cleanupQueue(fx);
     }
