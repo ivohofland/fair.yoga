@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { lockClassRowsOrdered } from './db-locks';
+import { lockClassRowsOrdered, lockLiveStudent, lockStudentForErasure } from './db-locks';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { FORCED_PLAN_SETTINGS } from '../../tests/forced-plan-settings';
 
@@ -529,5 +529,121 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     // above perfectly.
     expect(aSettled.status === 'fulfilled' && aSettled.value).toEqual([lowClassId, highClassId]);
     expect(bSettled.status === 'fulfilled' && bSettled.value).toEqual([lowClassId, highClassId]);
+  });
+});
+
+/**
+ * The two halves of the `Student` gate (#183) must conflict with each other,
+ * and the erasure's half must NOT conflict with the `FOR KEY SHARE` a child-row
+ * insert takes on its `Student` parent. Why each mode: `docs/lock-order.md`
+ * ("The `Student` row is the erasure's gate").
+ */
+describe('the Student gate: lock modes (#183)', () => {
+  const suffix = `student-gate-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let studentId: string;
+  let teacherId: string;
+  let accountId: string;
+
+  beforeAll(async () => {
+    studentId = (
+      await prisma.student.create({
+        data: { firstName: 'Gate', lastName: 'Student', email: `${suffix}-student@test.local`, incomeTier: 3 },
+        select: { id: true },
+      })
+    ).id;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Gate',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Student-gate mode fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+  });
+
+  afterAll(async () => {
+    await prisma.teacherStudent.deleteMany({ where: { studentId } });
+    await prisma.student.deleteMany({ where: { id: studentId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+  });
+
+  /**
+   * Opens a transaction that takes `lock`, then holds it until `release` is
+   * called. `done` flips just before the holder's COMMIT, so a waiter that
+   * reads it after its own wait ended sees `true` only if it really waited.
+   */
+  function hold(lock: (tx: Prisma.TransactionClient) => Promise<void>) {
+    let release!: () => void;
+    let held!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const isHeld = new Promise<void>((r) => { held = r; });
+    const state = { done: false };
+    const finished = prisma.$transaction(
+      async (tx) => {
+        await lock(tx);
+        held();
+        await released;
+        state.done = true;
+      },
+      { timeout: 10_000 },
+    );
+    return { release, isHeld, state, finished };
+  }
+
+  it('makes lockLiveStudent wait for lockStudentForErasure (L1)', async () => {
+    const h = hold((tx) => lockStudentForErasure(tx, studentId));
+    await h.isHeld;
+    const waited = prisma.$transaction(async (tx) => {
+      await lockLiveStudent(tx, studentId);
+      return h.state.done;
+    });
+    try {
+      await new Promise((r) => setTimeout(r, 400));
+    } finally {
+      h.release();
+    }
+    const [, sawCommit] = await Promise.all([h.finished, waited]);
+    expect(sawCommit).toBe(true);
+  });
+
+  it('lets a child-row insert through while lockStudentForErasure is held (L2)', async () => {
+    const h = hold((tx) => lockStudentForErasure(tx, studentId));
+    await h.isHeld;
+    // A safety release, so a blocked insert (the defect) cannot hang the test:
+    // it then lands after the holder commits and reports `false` below.
+    const safety = setTimeout(h.release, 1_000);
+    let insertedWhileHeld = false;
+    try {
+      insertedWhileHeld = await prisma.teacherStudent
+        .create({ data: { teacherId, studentId } })
+        .then(() => !h.state.done);
+    } finally {
+      clearTimeout(safety);
+      h.release();
+      await h.finished;
+    }
+    expect(insertedWhileHeld).toBe(true);
+  });
+
+  it('makes lockStudentForErasure wait for lockLiveStudent (L3)', async () => {
+    const h = hold((tx) => lockLiveStudent(tx, studentId));
+    await h.isHeld;
+    const waited = prisma.$transaction(async (tx) => {
+      await lockStudentForErasure(tx, studentId);
+      return h.state.done;
+    });
+    try {
+      await new Promise((r) => setTimeout(r, 400));
+    } finally {
+      h.release();
+    }
+    const [, sawCommit] = await Promise.all([h.finished, waited]);
+    expect(sawCommit).toBe(true);
   });
 });

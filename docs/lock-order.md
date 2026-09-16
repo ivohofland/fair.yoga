@@ -868,16 +868,23 @@ its own reader. That is the failure the `FOR UPDATE` census one section up
 already records: a reader who runs the unfiltered version concludes on first
 use that the convention is not worth checking.
 
-**It returned 14 when this section was written** (re-derived 2026-08-29 for
-issue 284). Three of those are the bound itself and the helper that issues it,
-all in `db-locks.ts`; the other eleven are transactions arming it, spread over
-`db-locks.ts` (its own two helpers), `rule-lifecycle.ts`,
-`studio-class-template-lifecycle.ts`, `class-template-lifecycle.ts`,
-`entry-generation.ts`, `gdpr.ts` and `room-archive.ts`. What the number is for
-is noticing a MOVE — a new transaction that takes a contended row lock without
-arming the bound does not appear here at all, so a count that has not moved is
-not on its own evidence that nothing was missed. Re-derive the list, not the
-total.
+**It returns 18** (re-derived 2026-09-16 for issue 183; this section's last
+figure, 14 from the 2026-08-29 derivation, was itself stale by two lines that
+multi-line `import { … }` reformatting had already added by the time this
+task started). Three of the 18 are the bound itself and the helper that
+issues it, both in `db-locks.ts`; two are members of multi-line
+`import { … }` blocks that name `setLockTimeout` without issuing it —
+`gdpr.ts`'s and `class-template-lifecycle.ts`'s own `  setLockTimeout,`
+lines — which the `import ` filter cannot drop, since it matches only a line
+that itself starts with `import `; the remaining thirteen are transactions
+arming it, spread over `db-locks.ts` (four helpers now: `lockClassRow`,
+`lockClassRowsOrdered`, and #183's `lockStudentForErasure` and
+`lockLiveStudent`), `rule-lifecycle.ts`, `studio-class-template-lifecycle.ts`,
+`class-template-lifecycle.ts`, `entry-generation.ts`, `gdpr.ts` and
+`room-archive.ts`. What the number is for is noticing a MOVE — a new
+transaction that takes a contended row lock without arming the bound does not
+appear here at all, so a count that has not moved is not on its own evidence
+that nothing was missed. Re-derive the list, not the total.
 
 ### The slot key is a wait edge, and the ascending-by-`id` rule cannot see it (#196)
 
