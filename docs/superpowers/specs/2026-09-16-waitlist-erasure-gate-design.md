@@ -135,8 +135,18 @@ conflict table:
   below), and Task 4's review generalised it.
 - The erasure's closing `UPDATE` still escalates to `FOR UPDATE` (it changes `email`);
   by then it holds every class in its lock set, so no class-locked promotion of this
-  student can be in flight. The one cycle that escalation can still close — against an
-  ungated booking's roster-link insert — exists today and belongs to follow-up 1.
+  student can be in flight. The cycles that escalation can still close exist today:
+  any ungated writer that inserts a `Student` child row (taking `FOR KEY SHARE`) and
+  then waits on a row the erasure has already written. Examples are a booking's
+  roster-link insert (follow-up 1), and `acceptInvitation`'s invitation update and
+  `unlinkTeacher`'s link delete (follow-up 2; the whole-branch review found them by
+  reasoning).
+- A `Student` update that waits on the gate applies to the erased row version once
+  the erasure commits, unless its `WHERE` requires `deletedAt: null`. The whole-branch
+  review measured this. The student's self-edit `PUT /api/students/[id]` carries
+  personal data, so it is scoped that way in this PR. Before this branch the exposure
+  was only the gap between the erasure's closing `UPDATE` and its commit; the opening
+  lock widens it to the whole erasure.
 
 **Correction (found in Task 3's review, reproduced on a scratch schema).**
 `POST /api/registrations` wrote `Student.tierSelectedAt` inside its class-locked
