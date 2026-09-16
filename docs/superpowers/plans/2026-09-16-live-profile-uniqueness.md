@@ -366,7 +366,14 @@ that belongs in the PR body.
 
 - [ ] **Step 4: Generate the migration, then hand-author the partial indexes**
 
-Run: `pnpm exec prisma migrate dev --name live_profile_unique_per_account`
+Run: `pnpm exec prisma migrate dev --create-only --name live_profile_unique_per_account`
+
+**`--create-only` is load-bearing, not a convenience.** Without it Prisma
+generates AND APPLIES in one step, and the edit below would then be amending
+an *applied* migration — which `pnpm run check-migrations` fails by design
+(applied migrations are checksummed and immutable) and which leaves any
+database that already ran it needing a destructive reset. Generate, edit,
+then apply.
 
 Prisma generates a migration containing only the two `DROP INDEX` statements. Open the generated `migration.sql` and replace its contents with the following, keeping the generated drops:
 
@@ -399,6 +406,10 @@ CREATE UNIQUE INDEX "Student_account_live_unique"
 ```
 
 Then apply it: `pnpm exec prisma migrate dev`
+
+Confirm the edit was legal: `pnpm run check-migrations` must print
+`✓ No applied migrations amended`. If it reports a violation, the migration
+was applied before it was edited — the `--create-only` step was missed.
 
 - [ ] **Step 5: Translate `src/lib/auth/session.ts`**
 
