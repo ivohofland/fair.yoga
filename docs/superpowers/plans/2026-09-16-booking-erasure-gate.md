@@ -740,18 +740,19 @@ with:
 ```ts
     // Written after the transaction commits, as a statement of its own. The
     // transaction holds this student's row `FOR SHARE` from its first
-    // statement, and an update inside it would upgrade that lock, which
-    // deadlocks against another gated writer holding the same share on the
-    // same student. Scoped to a live profile because an erasure can commit
-    // while this write waits on the row. Both rules: `docs/lock-order.md`,
-    // "The `Student` row is the erasure's gate".
+    // statement, so an update inside it would upgrade that lock: it would
+    // wait on any other gated writer's share of this student, and two
+    // bookings of one student upgrading at once deadlock. Scoped to a live
+    // profile because an erasure can commit while this write waits on the
+    // row. Both rules: `docs/lock-order.md`, "The `Student` row is the
+    // erasure's gate".
 ```
 
 Leave the rest of that comment ("A failure is logged…") unchanged.
 
 - [ ] **Step 6: Move the marker test's holder to the gate's mode**
 
-In `tests/integration/registrations-api.test.ts`, find the test "a first self-booking does not wait on a lock held on its student's row".
+In `tests/integration/registrations-api.test.ts`, find the test "a first self-booking does not wait on a lock held on its student's row". In the source its name has an escaped apostrophe, so search for `does not wait on a lock held`. Its docblock is at lines 720-736 and its holder at line 760.
 
 In its holder, replace:
 
@@ -826,7 +827,7 @@ For each mutation:
 
 1. Apply it.
 2. Run the named tests. Use `--project unit-sweeps` for the new file, and `--project integration` for M5. Before M5's run, warm the route: `curl -s -o /dev/null -X POST <INTEGRATION_BASE_URL from .env>/api/registrations`.
-3. Record the exact first failing assertion for each named test. For M3, also record the SQLSTATE from the error the route logs (`transient database contention surfaced to a client`).
+3. Record the exact first failing assertion for each named test. For M3, also record the SQLSTATE from the error the route logs (`transient database contention surfaced to a client`). Run that test on its own (`-t "in a class the erasure locks"`), because a full-file run under M3 also logs the busy test's expected `55P03`.
 4. Restore the file with `git checkout -- <file>`, and confirm `git diff` is empty.
 
 After the last restore, run the new file once more and confirm it is green.
@@ -873,7 +874,9 @@ Add a row after `addToWaitlist`'s:
 
 "**`Student → Class` at both.**" becomes "**`Student → Class` at every site.**"
 
-The three bullets below it ("The erasure first.", "The join first.", "A join after the erasure committed") are written about "the join". Restate them for "a gated writer" and keep each bullet's content. In "the writer first", add one clause for the booking: the erasure's `upcoming` read then sees the booking, so for an open class `handleSpotFreed` runs, even outside the lock set.
+The three bullets below it ("The erasure first.", "The join first.", "A join after the erasure committed") are written about "the join". Restate them for "a gated writer" and keep each bullet's content. Add one clause for the booking to each of two bullets:
+- **"The writer first":** the erasure's `upcoming` read then sees the booking, so for an open class `handleSpotFreed` runs, even outside the lock set.
+- **"After the erasure committed":** a self-booking never reaches the gate there. Its session is gone, so the route answers 401. The gate's sequential refusal is the teacher path's.
 
 The paragraph "The order is observable only on a REJOIN…" stays about the join. After it, add a paragraph for the booking:
 
@@ -894,7 +897,13 @@ The paragraph "The order is observable only on a REJOIN…" stays about the join
 **The marker paragraph.** The paragraph beginning "`POST /api/registrations` writes `Student.tierSelectedAt` after its transaction commits because of this rule" keeps its history: the two cycles the in-transaction write closed while the booking was ungated.
 
 - After that history, add: since #625 the booking is gated, so the corollary above is what keeps the write outside.
-- Correct the pin sentence: the pinning test's holder now takes `FOR SHARE`, the gate's own mode. The booking's gate shares it, and only an update waits on it.
+- Extend the pin sentence: the pinning test's holder takes `FOR SHARE`, the gate's own mode. The booking's gate shares it, and only an update waits on it.
+
+**Passages the booking now falls under.** Two sentences in the rule's own paragraph (about lines 1190-1196) name only the join as a gated writer:
+- "A transaction that first took ANY row the erasure or a gated join goes on to request…"
+- "…a join's `resolveInvitationOnLink` updates them (`link-consent.ts`), both while holding their half of the gate."
+
+The booking's `resolveInvitationOnLink` now also runs while the booking holds the gate. Widen both sentences to cover gated writers, the booking included.
 
 - [ ] **Step 4: "What still escalates" and "Who is not gated yet"**
 
@@ -924,6 +933,8 @@ Expected: six lines. The extra one is the route's single-line import, which the 
       | grep -vE ':[0-9]+:import '
 ```
 
+The documented command is a multi-line block joined with ` \`, so the line that is currently last (`| grep -vE ':[0-9]+: +[A-Za-z]+,$'`) needs a trailing ` \` too. Without it the block splits into two commands.
+
 Run the extended command. Confirm it returns five lines: the two definitions in `db-locks.ts`, and one call each in `gdpr.ts`, `waitlist.ts` and `route.ts`.
 
 **Show that the new filter drops only imports.** The six-line output above differs from the five-line one only by the route's import. Also confirm that none of the five lines starts with `import`.
@@ -950,17 +961,26 @@ After the `Registration` table, add:
 
 ```markdown
 **A booking that races its own student's erasure is refused (#625).** The
-erasure wins, as it does for a waitlist join: `POST /api/registrations` and
-`deleteStudentAccount` serialise on the `Student` row, on the student's own
-booking and on the teacher's roster add alike. A booking that finds the profile
-erased writes nothing and answers 409 — `This account has been deleted` to the
-student, `This student's account no longer exists` to the teacher. A booking
-that takes the row first commits, and the erasure then cancels the
-registration if its class is still open, and passes the freed seat on. It does
-not undo the rest of the booking: `resolveInvitationOnLink` may have cleared a
-`TeacherBlock` and resolved an `Invitation`, and the erasure recreates no block
-and anonymises that invitation's identity without reverting its status. The
-mechanism is `docs/lock-order.md`, "The `Student` row is the erasure's gate".
+erasure wins, as it does for a waitlist join. `POST /api/registrations` and
+`deleteStudentAccount` serialise on the `Student` row, for the student's own
+booking and the teacher's roster add alike.
+
+A booking that finds the profile erased writes nothing and answers 409. A
+teacher sees `This student's account no longer exists`. A student sees
+`This account has been deleted` only when their request raced the erasure. A
+self-booking made after the erasure committed is answered 401 before it gets
+that far, because the erasure removed its session.
+
+A booking that takes the row first commits, and the erasure then handles what
+it wrote. If the class is still open, the erasure cancels the registration and
+offers the freed seat to the class's waitlist. It also deletes the roster link
+and any waitlist entry the booking resolved. It does not undo the rest of the
+booking: `resolveInvitationOnLink` may have cleared a `TeacherBlock` and
+resolved an `Invitation`, and the erasure recreates no block. It anonymises
+that invitation's identity without reverting its status.
+
+The mechanism is `docs/lock-order.md`, "The `Student` row is the erasure's
+gate".
 ```
 
 - [ ] **Step 8: Sweep for what this invalidated**
@@ -968,6 +988,8 @@ mechanism is `docs/lock-order.md`, "The `Student` row is the erasure's gate".
 1. Run `git grep -n "#625" -- docs src tests vitest.tiers.ts`. Every hit must either describe the booking as gated, or belong to this branch's spec, plan or tests.
 2. Run `git grep -n -i "ungated\|not gated" -- docs/lock-order.md docs/data-model.md src`, and read every hit that mentions bookings or `POST /api/registrations`.
 3. Run `git grep -n "Class\`, then \`Registration" -- docs`, and confirm no other description of the route's lock order starts at `Class`.
+4. Run `git grep -n "gated join\|a join's" -- docs/lock-order.md`, and confirm every hit now covers the booking where it applies.
+5. Re-run the "Who updates or deletes a `Student` row" census and its two companion checks (raw `UPDATE "Student"`, and `.account.delete`), exactly as that subsection gives them. Correct its result paragraph only if the output differs. It returned six lines before this branch.
 
 Report every hit, each with a verdict.
 
@@ -979,3 +1001,13 @@ git commit -m "docs(lock-order): the booking route takes the Student gate (#625)
 ```
 
 End the message with the Co-Authored-By line.
+
+- [ ] **Step 10: Run the whole local gate**
+
+Run: `pnpm run verify`
+
+Expected: green. This covers typecheck, lint, every vitest project (the integration tier against this worktree's app), the lockfile check, the migration check and the visual-baseline freshness check.
+
+Record the per-project counts from the two vitest invocations. If anything earlier in the chain fails, the integration tier reports nothing, so run `pnpm exec vitest run --project integration` directly and record that result separately.
+
+CI is checked at the PR stage.
