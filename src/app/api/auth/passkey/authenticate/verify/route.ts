@@ -10,6 +10,7 @@ import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-
 import { prisma } from '@/lib/db';
 import type { AuthenticationResponseJSON } from '@simplewebauthn/types';
 import { passkeyAuthVerifySchema, TEACHER_PROFILE_PATH } from '@/lib/schemas';
+import { liveProfile } from '@/lib/live-profile';
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, passkeyAuthVerifySchema);
@@ -49,9 +50,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const sessionToken = await createSession(prisma, credential.accountId);
   const account = await prisma.account.findUnique({
     where: { id: credential.accountId },
-    select: { teacher: { select: { deletedAt: true } } },
+    select: { teachers: { where: { deletedAt: null }, select: { id: true } } },
   });
-  const hasTeacherProfile = account?.teacher != null && !account.teacher.deletedAt;
+  const hasTeacherProfile = account !== null && liveProfile(account.teachers) !== null;
   const fallback = hasTeacherProfile ? '/schedule' : '/bookings';
   // Prefer the caller's destination (booking flow) — schema-validated to a
   // relative path — over the role default; dual-role accounts default to

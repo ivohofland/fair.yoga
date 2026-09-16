@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { requireNormalised } from '@/lib/schemas';
+import { liveProfile } from '@/lib/live-profile';
 
 export interface ResolvedAccount {
   accountId: string;
@@ -33,16 +34,17 @@ export async function resolveOrClaimAccount(
     where: { email },
     select: {
       id: true,
-      teacher: { select: { id: true, deletedAt: true } },
-      student: { select: { id: true, deletedAt: true } },
+      teachers: { where: { deletedAt: null }, select: { id: true } },
+      students: { where: { deletedAt: null }, select: { id: true } },
     },
   });
   if (account) {
-    // Erased (soft-deleted) profiles never resurface through sign-in.
+    // Erased (soft-deleted) profiles never resurface through sign-in — the
+    // selects above are where that is enforced.
     return {
       accountId: account.id,
-      teacherId: account.teacher && !account.teacher.deletedAt ? account.teacher.id : null,
-      studentId: account.student && !account.student.deletedAt ? account.student.id : null,
+      teacherId: liveProfile(account.teachers)?.id ?? null,
+      studentId: liveProfile(account.students)?.id ?? null,
     };
   }
 

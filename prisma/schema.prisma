@@ -131,23 +131,36 @@ enum MagicLinkPurpose {
 // One account per human: owns the authenticated email identity, sessions,
 // and passkeys. Teacher/Student are profiles optionally hanging off it —
 // only the two profile-link columns reference Account; everything else in
-// the domain keys on teacherId/studentId (auth unifies, domain doesn't).
-// Profile email columns are denormalized copies set at link time; live
-// linked profiles match the account's email by construction, and there is
+// the domain keys on teacherId/studentId (auth unifies, domain doesn't). An
+// account holds at most one LIVE teacher and one LIVE student profile, plus
+// any number of erased ones (#623) — GDPR erasure soft-deletes a profile and
+// keeps its accountId, so a hard unique would bar the account from ever
+// holding that kind of profile again.
+// Profile email columns are denormalized copies set at link time; a LIVE
+// linked profile matches the account's email by construction, and there is
 // deliberately no email-change flow — adding one must update the account
-// and its live linked profiles together, through a single choke point.
+// and its live linked profiles together, through a single choke point. An
+// erased profile on the same account holds a tombstoned address that
+// matches nothing.
 model Account {
   id        String   @id @default(uuid())
   email     String   @unique
   createdAt DateTime @default(now())
 
-  teacher Teacher?
-  student Student?
+  teachers Teacher[]
+  students Student[]
 }
 
+/// Carries a partial unique index Prisma cannot express and therefore cannot
+/// show: `Teacher_account_live_unique` on (accountId) WHERE "deletedAt" IS
+/// NULL (#623). One account holds at most one LIVE teacher profile and any
+/// number of erased ones, so an erasure does not bar the account from ever
+/// holding another. Invisible to `migrate diff`, so it will not appear as
+/// drift and will not be dropped — and equally will not appear in this file
+/// unless someone keeps this comment true.
 model Teacher {
   id                 String           @id @default(uuid())
-  accountId          String           @unique
+  accountId          String
   firstName          String
   lastName           String
   email              String           @unique
@@ -180,6 +193,12 @@ model Teacher {
   scheduleRules   ScheduleRule[]
 }
 
+/// Carries a partial unique index Prisma cannot express and therefore cannot
+/// show: `Student_account_live_unique` on (accountId) WHERE "deletedAt" IS
+/// NULL (#623). One account holds at most one LIVE student profile and any
+/// number of erased ones. `accountId` is nullable and Postgres treats NULLs
+/// as distinct in a unique index, so rows with no account continue to
+/// coexist freely. Same visibility caveat as `Teacher`'s.
 model Student {
   id                 String              @id @default(uuid())
   // Nullable for rows predating #166, which stopped the CRM creating a
@@ -187,7 +206,7 @@ model Student {
   // The sole remaining create site sets this and `claimedAt` in one statement,
   // so nothing produces an unclaimed row any more. What still READS for one,
   // and why, is `docs/data-model.md` (StudentPrivacy).
-  accountId          String?             @unique
+  accountId          String?
   firstName          String
   lastName           String
   email              String              @unique

@@ -19,6 +19,7 @@ import { isRecordNotFound } from '@/lib/api-errors';
 import { privacyIsBypassed } from '@/lib/student-visibility';
 import { requireNormalised } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { liveProfile } from '@/lib/live-profile';
 import { log } from '@/lib/log';
 import type { FireAndForget } from '@/lib/fire-and-forget';
 import type { Assert, Equals } from '@/lib/type-pins';
@@ -663,15 +664,20 @@ export async function notifyInvitee(
   }
 
   // Only an address with no `Student` row gets here, so an account holding
-  // both profiles was answered above. Who each branch reaches, and why this
-  // one needs no teacher liveness filter: `docs/data-model.md` (Invitation,
-  // "Who an invitation reaches").
+  // both profiles was answered above. Who each branch reaches:
+  // `docs/data-model.md` (Invitation, "Who an invitation reaches").
+  //
+  // The `deletedAt` filter is load-bearing. An account may hold erased
+  // teacher rows beside a live one, so a row's existence no longer means a
+  // teacher is there to read a notification — and an unfiltered read could
+  // address this dispatch to a tombstone.
   const account = await db.account.findUnique({
     where: { email },
-    select: { teacher: { select: { id: true } } },
+    select: { teachers: { where: { deletedAt: null }, select: { id: true } } },
   });
-  if (account?.teacher) {
-    const inviteeTeacherId = account.teacher.id;
+  const inviteeTeacher = account ? liveProfile(account.teachers) : null;
+  if (inviteeTeacher) {
+    const inviteeTeacherId = inviteeTeacher.id;
 
     // The cap (#622). A conditional UPDATE rather than a read and then a
     // write: two concurrent dispatches would both observe a null marker and

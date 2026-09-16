@@ -8,25 +8,35 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
+import { liveProfile } from '@/lib/live-profile';
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
-  // The passkey belongs to the account; name it after whichever profile
-  // exists (teacher first — the account email is the same either way).
+  // The passkey belongs to the account; name it after whichever LIVE profile
+  // exists (teacher first — the account email is the same either way). The
+  // `deletedAt` filters are not decoration: an erased profile's name is
+  // anonymised, and this display name lands permanently in the viewer's own
+  // credential manager.
   const account = await prisma.account.findUnique({
     where: { id: session.accountId },
     select: {
       email: true,
-      teacher: { select: { firstName: true, lastName: true } },
-      student: { select: { firstName: true, lastName: true } },
+      teachers: {
+        where: { deletedAt: null },
+        select: { firstName: true, lastName: true },
+      },
+      students: {
+        where: { deletedAt: null },
+        select: { firstName: true, lastName: true },
+      },
     },
   });
   if (!account) {
     return respondError('Account not found', 404);
   }
-  const profile = account.teacher ?? account.student;
+  const profile = liveProfile(account.teachers) ?? liveProfile(account.students);
   if (!profile) {
     return respondError('Account has no profile', 404);
   }
