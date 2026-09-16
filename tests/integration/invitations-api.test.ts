@@ -4271,18 +4271,7 @@ describe('an invitation to a teacher-only account (#172)', () => {
     expect(html).toContain('Invitation Teacher would like to connect with you as a student.');
   });
 
-  // A resend reaches the invitee every time, like every other recipient.
-  //
-  // #172 first shipped a once-per-address suppression here, and it was removed
-  // before merge: it keyed on `lastNotifiedEmail`/`lastNotifyFailedAt`, which
-  // record that a dispatch was ATTEMPTED at an address and never which branch
-  // took it. An address invited while it had no account keeps those markers,
-  // so once that person signed up as a teacher the next resend was suppressed
-  // and they were never told at all — this issue's own dead end, on the one
-  // request that exists to recover a send that did not land. Capping the
-  // repeats is worth doing, and needs a column recording the channel; it is
-  // filed separately rather than approximated from these two.
-  it('tells the invitee again when the invitation is resent', async () => {
+  it('tells the invitee once, and a resend not again (#622)', async () => {
     const invitation = await prisma.invitation.findUniqueOrThrow({
       where: { teacherId_email: { teacherId, email: inviteeEmail } },
       select: { id: true },
@@ -4297,12 +4286,91 @@ describe('an invitation to a teacher-only account (#172)', () => {
     expect(resend.status).toBe(200);
     expect(await resend.json()).toEqual({ data: { id: invitation.id } });
 
+    // The dispatch is fire-and-forget, so "no notification" cannot be proven
+    // by reading immediately. Wait for the marker the route writes
+    // synchronously, then for the dispatch to have run, and only then count.
+    // This IS a fixed sleep standing in for a proof of absence, deliberately:
+    // a control dispatch would assume the capped one can't outlive it, which
+    // `src/services/invitations.notify.test.ts:309-325` records as false —
+    // both dispatches are fire-and-forget and compete for one connection
+    // pool with no ordering guarantee. That file's own fix is to spy on the
+    // query and await it directly, which is unavailable here — this tier
+    // drives the app over HTTP, in another process. The cap itself is
+    // proven synchronously and exactly by Task 2's unit tests; this test's
+    // job is only that the route reaches the capped branch and that its
+    // response carries no signal of having done so.
     await waitFor(
-      () => prisma.notification.count({
-        where: { recipientType: 'teacher', recipientId: inviteeTeacherId, type: 'teacher_invitation' },
-      }).then((count) => (count > before ? count : null)),
-      { description: 'a resend reaches a teacher-only account again (#172)' },
+      () => prisma.invitation.findUniqueOrThrow({
+        where: { id: invitation.id }, select: { lastNotifiedAt: true },
+      }).then((r) => r.lastNotifiedAt),
+      { description: 'the resend wrote its dispatch marker (#622)' },
     );
+    await new Promise((r) => setTimeout(r, 1_000));
+
+    expect(await prisma.notification.count({
+      where: { recipientType: 'teacher', recipientId: inviteeTeacherId, type: 'teacher_invitation' },
+    })).toBe(before);
+
+    // The suppressed resend above must be indistinguishable from a
+    // notifying one: same 200, same body, and no failure recorded.
+    const row = await prisma.invitation.findUniqueOrThrow({
+      where: { id: invitation.id },
+      select: { lastNotifyFailedAt: true, lastNotifiedEmail: true },
+    });
+    expect(row.lastNotifyFailedAt).toBeNull();
+    expect(row.lastNotifiedEmail).toBe(inviteeEmail);
+  });
+
+  // Must run after the capped test above: it depends on the cap already
+  // being claimed there, and it mutates the shared `inviteeEmail` row that
+  // every test in this describe block (including the one below) depends on
+  // — restored in `finally`.
+  it('tells the readdressed invitee, because PUT clears the cap (#622)', async () => {
+    const readdressed = `inv-teacher-readdressed-${suffix}@test.local`;
+    const second = await prisma.teacher.create({
+      data: {
+        firstName: 'Readdressed', lastName: 'Teacher', email: readdressed,
+        account: { create: { email: readdressed } },
+        bio: '#622 readdress', pageSlug: `inv-teacher-readdressed-${suffix}`,
+      },
+      select: { id: true, accountId: true },
+    });
+    const invitation = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email: inviteeEmail } },
+      select: { id: true },
+    });
+    try {
+      const put = await fetch(`${BASE_URL}/api/invitations/${invitation.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ email: readdressed, firstName: 'Readdressed', lastName: 'Teacher' }),
+      });
+      expect(put.status).toBe(200);
+
+      // `PUT /api/invitations/[id]` does NOT dispatch — verified: the route
+      // file contains no `deliverInvitation` call. It only clears the cap.
+      // The resend is what delivers.
+      const resend = await fetch(`${BASE_URL}/api/invitations/${invitation.id}/resend`, {
+        method: 'POST', headers: cookie(teacherToken),
+      });
+      expect(resend.status).toBe(200);
+
+      await waitFor(
+        () => prisma.notification.count({
+          where: { recipientType: 'teacher', recipientId: second.id, type: 'teacher_invitation' },
+        }).then((c) => (c > 0 ? c : null)),
+        { description: 'a readdressed invitation reaches the new teacher (#622)' },
+      );
+    } finally {
+      await prisma.notification.deleteMany({
+        where: { recipientType: 'teacher', recipientId: second.id },
+      });
+      await prisma.invitation.updateMany({
+        where: { id: invitation.id }, data: { email: inviteeEmail },
+      });
+      await prisma.teacher.delete({ where: { id: second.id } });
+      await prisma.account.delete({ where: { id: second.accountId } });
+    }
   });
 
   it('lets the invitee add a student side and accept', async () => {
