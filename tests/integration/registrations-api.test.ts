@@ -731,8 +731,8 @@ describe('POST /api/registrations', () => {
    * held. The marker write that follows the commit does wait for the release,
    * and then applies; the last two assertions say so.
    *
-   * A dedicated student, because the marker is first-choice-only and every
-   * shared fixture student has booked by the time this runs.
+   * A dedicated student, so no other test has stamped the marker, which is
+   * first-choice-only; the `toBeNull` below checks that.
    */
   it('a first self-booking does not wait on a lock held on its student\'s row', async () => {
     const classId = await makeClass(5);

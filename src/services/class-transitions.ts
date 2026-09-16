@@ -376,31 +376,18 @@ export async function autoCancelClasses(
         // it did before #112. That is the whole argument, and it depends only
         // on this function's own lock, not on a property of every other writer.
         //
-        // Stated that narrowly on purpose. An earlier version of this comment
-        // claimed that EVERY writer of `WaitlistEntry` is serialized behind a
-        // conflicting `Class` row lock, "either by calling `lockClassRow` or by
-        // writing through a CAS `UPDATE` that already took one". Both halves
-        // were mistakes. The mechanism list omitted the most common one — an
-        // inline `SELECT ... FOR UPDATE` on the class row, which is what
-        // `addToWaitlist`, `promoteNext`, `claimSpot`,
-        // `withdrawWaitingEntriesForTeacher` and `POST /api/registrations` all
-        // did AT THE TIME (issue #104 later converted `addToWaitlist`,
-        // `promoteNext`, `claimSpot` and `POST /api/registrations` onto
-        // `lockClassRow`; `withdrawWaitingEntriesForTeacher` had already
-        // moved to `lockClassRowsOrdered` under #237 — so this mechanism is
-        // gone from today's roster, not from the checklist below) — and the
-        // universal half is a claim about other modules that this comment
-        // cannot keep true: which writers take which lock is
-        // `docs/lock-order.md`'s to say. That version replaced a correct
-        // hand-written roster with a general rule, on the reasoning that
-        // rosters go stale. They do; an invariant nobody here can keep true is
-        // worse, because the next person adding a writer checks it and
-        // concludes they are safe.
+        // Stated that narrowly on purpose: which writers of `WaitlistEntry`
+        // take which lock is `docs/lock-order.md`'s to say. A rule about every
+        // writer, written here, is one this comment cannot keep true, and the
+        // next person adding a writer would check it and conclude they are
+        // safe.
         //
         // To re-derive the real roster:
         // `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`,
-        // excluding tests, then read each hit's enclosing transaction for which
-        // of the three mechanisms it uses, if any.
+        // excluding tests, then read each hit's enclosing transaction for how
+        // it takes the class row lock, if it does: `lockClassRow` or
+        // `lockClassRowsOrdered`, an inline `SELECT ... FOR UPDATE`, or a CAS
+        // `UPDATE` on the class row.
         //
         // If one did time out, the per-class `catch` at the bottom of this
         // loop logs it and the sweep moves to the next class — no partial
