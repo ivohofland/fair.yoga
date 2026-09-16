@@ -874,9 +874,9 @@ Add a row after `addToWaitlist`'s:
 
 "**`Student → Class` at both.**" becomes "**`Student → Class` at every site.**"
 
-The three bullets below it ("The erasure first.", "The join first.", "A join after the erasure committed") are written about "the join". Restate them for "a gated writer" and keep each bullet's content. Add one clause for the booking to each of two bullets:
+The three bullets below it ("The erasure first.", "The join first.", "A join after the erasure committed") are written about "the join". Restate them for "a gated writer" and keep each bullet's content where it holds for every gated writer. The join-first bullet's "locks that class" holds only where the writer created an entry, which a booking does not. Add one clause for the booking to each of two bullets:
 - **"The writer first":** the erasure's `upcoming` read then sees the booking, so for an open class `handleSpotFreed` runs, even outside the lock set.
-- **"After the erasure committed":** a self-booking never reaches the gate there. Its session is gone, so the route answers 401. The gate's sequential refusal is the teacher path's.
+- **"After the erasure committed":** a self-booking never reaches the gate there. The route answers 401 where the erasure removed the session, or 403 where a live teacher profile keeps the session but it no longer resolves a student. The gate's sequential refusal is the teacher path's.
 
 The paragraph "The order is observable only on a REJOIN…" stays about the join. After it, add a paragraph for the booking:
 
@@ -968,8 +968,9 @@ booking and the teacher's roster add alike.
 A booking that finds the profile erased writes nothing and answers 409. A
 teacher sees `This student's account no longer exists`. A student sees
 `This account has been deleted` only when their request raced the erasure. A
-self-booking made after the erasure committed is answered 401 before it gets
-that far, because the erasure removed its session.
+self-booking made after the erasure committed never gets that far. It is
+answered 401 where the erasure removed its session, or 403 where a live teacher
+profile keeps the session but it no longer resolves a student.
 
 A booking that takes the row first commits, and the erasure then handles what
 it wrote. If the class is still open, the erasure cancels the registration and
