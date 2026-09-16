@@ -716,6 +716,88 @@ describe('POST /api/registrations', () => {
     expect(res.status).toBe(503);
     expect(waited).toBeGreaterThan(1_000);
   }, 20_000);
+
+  /**
+   * #183. A student erasure holds its subject's `Student` row
+   * `FOR NO KEY UPDATE` from its first lock to its commit, and a booking's
+   * transaction holds the class. A `Student` write inside that transaction
+   * waits on the erasure while holding the class — the other half of a cycle
+   * (`docs/lock-order.md`, "The `Student` row is the erasure's gate").
+   *
+   * The holder below takes the erasure's lock mode, not an erasure: what this
+   * pins is that the booking's transaction commits without waiting on it. The
+   * registration row is read on a separate connection, so it appears only
+   * once that transaction has committed — polled while the lock is still
+   * held. The marker write that follows the commit does wait for the release,
+   * and then applies; the last two assertions say so.
+   *
+   * A dedicated student, because the marker is first-choice-only and every
+   * shared fixture student has booked by the time this runs.
+   */
+  it('a first self-booking does not wait on a lock held on its student\'s row', async () => {
+    const classId = await makeClass(5);
+    const email = `regapi-firstbook-${suffix}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'FirstBook',
+        lastName: 'Test',
+        email,
+        claimedAt: new Date(),
+        account: { create: { email } },
+        incomeTier: 3,
+      },
+    });
+    studentIds.push(student.id);
+    const token = await seedSession(prisma, student.accountId!);
+    expect(student.tierSelectedAt).toBeNull();
+
+    let release!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    let signalHeld!: () => void;
+    const held = new Promise<void>((r) => { signalHeld = r; });
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${student.id} FOR NO KEY UPDATE`;
+        signalHeld();
+        await released;
+      },
+      { timeout: 15_000 },
+    );
+
+    let booking: Promise<Response> | undefined;
+    let registeredWhileHeld = false;
+    try {
+      await held;
+      booking = post(token, { classId });
+      const deadline = Date.now() + 1_500;
+      while (Date.now() < deadline) {
+        const reg = await prisma.registration.findUnique({
+          where: { classId_studentId: { classId, studentId: student.id } },
+          select: { status: true },
+        });
+        if (reg?.status === 'registered') {
+          registeredWhileHeld = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    } finally {
+      release();
+      await holder;
+    }
+    const res = await booking;
+
+    // First, because it is the discriminator: with the marker written inside
+    // the transaction, the booking waits on the holder before it commits and
+    // nothing is visible while the lock is held.
+    expect(registeredWhileHeld).toBe(true);
+    expect(res?.status).toBe(201);
+    const stamped = await prisma.student.findUniqueOrThrow({
+      where: { id: student.id },
+      select: { tierSelectedAt: true },
+    });
+    expect(stamped.tierSelectedAt).not.toBeNull();
+  }, 20_000);
 });
 
 describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
