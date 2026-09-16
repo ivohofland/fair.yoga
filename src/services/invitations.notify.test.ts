@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { notifyInvitee, deliverInvitation, inviteContact } from './invitations';
+import { log } from '@/lib/log';
 import { teardownTeacher } from '../../tests/helpers';
 
 // `notifyInvitee`'s dry-run branch (src/lib/email.ts) can't tell "sent" from
@@ -662,6 +663,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
 
   it('tells a teacher-only invitee once, and a repeat dispatch not at all (#622)', async () => {
     const f = await teacherOnlyInvitee('repeat');
+    const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
     try {
       const dispatch = () => notifyInvitee(prisma, {
         teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
@@ -671,15 +673,32 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
       await dispatch();
       expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
+
+      // The capped dispatch must be silent on the email channel too, not
+      // merely on the notification one. The teacher branch's `return` is what
+      // keeps it from falling through to `sendInvitationEmail` below it, and
+      // that email tells its recipient to sign up at `/login` — the #172
+      // stranger template, addressed to someone who already has an account.
+      expect(sendMock).not.toHaveBeenCalled();
+
+      // A capped dispatch is the feature working, and a dispatch that matched
+      // no row is a notification nobody got; only this line tells them apart
+      // (`TeacherInboxDispatch`, services/invitations.ts).
+      expect(info.mock.calls.some(
+        ([context]) => (context as Record<string, unknown>).outcome === 'already-capped',
+      )).toBe(true);
     } finally {
+      info.mockRestore();
       await cleanUpInvitee(f);
     }
   });
 
   it('tells an address that gained a teacher profile after an earlier dispatch (#622, sequence 1)', async () => {
-    // The dead end this replaces: the first dispatch took the stranger-email
-    // branch and the routes wrote their markers anyway, so a suppression
-    // reading those markers never told this person at all.
+    // The dead end this replaces (the withdrawn PR #620 cap, spec §2 of
+    // `docs/superpowers/specs/2026-09-16-teacher-inbox-dispatch-cap-design.md`):
+    // the first dispatch took the stranger-email branch and the routes wrote
+    // their markers anyway, so a suppression reading those markers never told
+    // this person at all.
     const email = `notify-cap-seq1-${suffix}@test.local`;
     const invitation = await prisma.invitation.create({
       data: { teacherId, email, firstName: 'Cap', lastName: 'Seq1' },
@@ -832,6 +851,9 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     // a write: both of these would observe a null marker under a read-first
     // implementation, and both would notify.
     const f = await teacherOnlyInvitee('race');
+    // Spied only to keep the loser's expected `already-capped` line out of
+    // the run's output; this test asserts on the notification count.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => undefined);
     try {
       await Promise.all([
         notifyInvitee(prisma, {
@@ -845,6 +867,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       ]);
       expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
     } finally {
+      info.mockRestore();
       await cleanUpInvitee(f);
     }
   });
@@ -902,6 +925,70 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     }
   });
 
+  it('does not let a dispatch to the old address cap a readdressed invitation (#622)', async () => {
+    // The race the claim's `email` clause closes. A dispatch resolves an
+    // account for address A; a `PUT` readdresses the row to B and nulls the
+    // marker; only then does A's claim run. Scoped by id alone that claim
+    // lands on the B row, capping B behind a notification A received — and
+    // nothing failed, so nothing re-opens it and B is never told at all.
+    //
+    // Staged in that order rather than raced, so the interleaving is the
+    // test's rather than the scheduler's.
+    const f = await teacherOnlyInvitee('readdress-race');
+    const newEmail = `notify-cap-readdress-race-new-${suffix}@test.local`;
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    let secondTeacherId: string | undefined;
+    let secondAccountId: string | undefined;
+    try {
+      const second = await prisma.teacher.create({
+        data: {
+          firstName: 'Cap', lastName: 'RaceTarget', email: newEmail,
+          account: { create: { email: newEmail } },
+          bio: '#622 readdress race', pageSlug: `notify-cap-readdress-race-new-${suffix}`,
+        },
+        select: { id: true, accountId: true },
+      });
+      secondTeacherId = second.id;
+      secondAccountId = second.accountId;
+
+      // The PUT, landing first — the same reset `PUT /api/invitations/[id]`
+      // writes on a genuine address change, driven over HTTP by
+      // `tests/integration/invitations-api.test.ts`.
+      await prisma.invitation.update({
+        where: { id: f.invitationId },
+        data: { email: newEmail, delivered: false, lastNotifyFailedAt: null, teacherInboxNotifiedAt: null },
+      });
+
+      // The dispatch that was already in flight, still carrying the address
+      // it resolved an account for.
+      await notifyInvitee(prisma, {
+        teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+        claimedAt: new Date(),
+      });
+      expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(0);
+      expect(warn.mock.calls.some(
+        ([context]) => (context as Record<string, unknown>).outcome === 'no-matching-row',
+      )).toBe(true);
+
+      // And B is still owed theirs.
+      await notifyInvitee(prisma, {
+        teacherId, email: newEmail, teacherName: 'Some Teacher', invitationId: f.invitationId,
+        claimedAt: new Date(),
+      });
+      expect(await countTeacherNotifications(second.id)).toBe(1);
+    } finally {
+      warn.mockRestore();
+      if (secondTeacherId) {
+        await prisma.notification.deleteMany({
+          where: { recipientType: 'teacher', recipientId: secondTeacherId },
+        });
+        await prisma.teacher.delete({ where: { id: secondTeacherId } });
+      }
+      if (secondAccountId) await prisma.account.delete({ where: { id: secondAccountId } });
+      await cleanUpInvitee(f);
+    }
+  });
+
   it('tells the invitee again after a revived invitation (#622)', async () => {
     const f = await teacherOnlyInvitee('revive');
     try {
@@ -910,6 +997,15 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
         claimedAt: new Date(),
       });
       expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
+
+      // Establishes what the revive below has to undo. Without this, the
+      // `toBeNull()` after the revive is satisfied by a marker that was never
+      // set — and this is the only place on this branch asserting that a
+      // delivering dispatch leaves one standing at all.
+      const claimed = await prisma.invitation.findUniqueOrThrow({
+        where: { id: f.invitationId }, select: { teacherInboxNotifiedAt: true },
+      });
+      expect(claimed.teacherInboxNotifiedAt).not.toBeNull();
 
       await prisma.invitation.update({
         where: { id: f.invitationId },

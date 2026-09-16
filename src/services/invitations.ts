@@ -427,13 +427,56 @@ async function revivePendingInvitation(
     where: { id, status: 'accepted' },
     data: {
       status: 'pending', respondedAt: null, isArchived: false,
-      // #622: a revive reuses this row, so the cap would otherwise travel
-      // across a link that ended. A re-invitation is a new invitation.
-      teacherInboxNotifiedAt: null,
       ...fields,
+      // #622: a revive reuses this row, so the cap would otherwise travel
+      // across a link that ended. A re-invitation is a new invitation. After
+      // the spread, not before it: `fields` is what a caller supplies, and a
+      // caller must not be able to carry a marker across the revive by
+      // widening that type.
+      teacherInboxNotifiedAt: null,
     },
   });
   return revived.count === 0 ? null : id;
+}
+
+/**
+ * What `notifyInvitee`'s teacher-branch claim-and-notify transaction did
+ * (#622).
+ *
+ * The two non-delivering members are the reason this is a union rather than a
+ * boolean: `already-capped` is the feature working, and `no-matching-row` is a
+ * notification nobody received — the row was removed or readdressed under a
+ * dispatch already in flight, or a caller threaded an id that is not this
+ * teacher's. Only a log line tells them apart, which is the same split, for
+ * the same reason, as `processEmailFallback`'s `recipient-missing` /
+ * `opted-out` pair (`services/email-fallback.ts`).
+ */
+type TeacherInboxDispatch = 'notified' | 'already-capped' | 'no-matching-row';
+
+/**
+ * The log line a teacher-branch dispatch that created no notification leaves
+ * behind.
+ *
+ * `info` for the cap and `warn` for the miss, because they differ in whether
+ * anything is wrong; a member added to `TeacherInboxDispatch` falls to `warn`,
+ * which is the direction that gets noticed. The invitee's address is
+ * deliberately absent, the same omission `deliverInvitation`'s own failure log
+ * makes (#166 review, F4) — the id pair is what finds the row.
+ */
+function logUndeliveredTeacherInbox(
+  outcome: Exclude<TeacherInboxDispatch, 'notified'>,
+  input: { teacherId: string; invitationId: string },
+): void {
+  const context = {
+    teacherId: input.teacherId,
+    invitationId: input.invitationId,
+    outcome,
+  };
+  if (outcome === 'already-capped') {
+    log.info(context, 'teacher inbox invitation already delivered; not notifying again');
+    return;
+  }
+  log.warn(context, 'teacher inbox invitation notified nobody: no invitation row matched this dispatch');
 }
 
 /**
@@ -527,8 +570,10 @@ async function revivePendingInvitation(
  * A teacher recipient has no such preference to honour — which columns that
  * rests on, and the command that re-derives it: `docs/data-model.md`
  * (Invitation, "Who an invitation reaches"). The teacher branch below is
- * capped instead: it tells an invitee once per invitation. Which writers set
- * and clear that marker: the same section.
+ * capped instead: it tells an invitee once per invitation. The claim that
+ * closes that cap and the notification it stands for commit together or not
+ * at all, so the column can never read "told" over a notification that does
+ * not exist. Which writers set and clear the marker: the same section.
  */
 export async function notifyInvitee(
   db: PrismaClient,
@@ -626,31 +671,84 @@ export async function notifyInvitee(
     select: { teacher: { select: { id: true } } },
   });
   if (account?.teacher) {
+    const inviteeTeacherId = account.teacher.id;
+
     // The cap (#622). A conditional UPDATE rather than a read and then a
     // write: two concurrent dispatches would both observe a null marker and
-    // both notify, so claiming the row IS the check. A row deleted mid-flight
-    // matches nothing and is likewise not notified.
+    // both notify, so claiming the row IS the check.
+    //
+    // Claim and insert in ONE transaction, so a marker can never stand over a
+    // notification that was not created. Committed separately they can, and
+    // the failure-path clear in `deliverInvitation`'s `.catch` cannot cover
+    // that: it runs against the same client microseconds later, so whatever
+    // refused the insert usually refuses the clear too, and a process killed
+    // between the two statements never reaches the clear at all — a marker
+    // left standing with no log line anywhere. `createNotification` accepts a
+    // transaction client for exactly this (`services/notifications.ts`), and
+    // its bus emit is documented there as harmless for a transaction that
+    // later rolls back.
+    //
+    // Lock order: one `Invitation` row, plus an insert into `Notification`
+    // whose only foreign key (`relatedClassId`) is null here, so this holds a
+    // single node of `docs/lock-order.md`'s line and can take no second row
+    // lock.
+    //
+    // The `where` names every fact this dispatch is acting on, so any of them
+    // moving under it is a miss rather than a wrong notification.
+    // `teacherInboxNotifiedAt: null` is the cap itself. `email` is the
+    // address this dispatch resolved an account for: without it, a `PUT`
+    // readdress committing in between would leave the NEW address capped by a
+    // notification the OLD one received, with nothing failing anywhere and so
+    // nothing to re-open it. `teacherId` scopes the write to the inviter this
+    // dispatch was called for.
     //
     // Do not add `lastNotifyFailedAt: null` to this `where`. It is inert here,
     // for a reason involving what the dispatching routes write before this
     // code runs: `docs/data-model.md` (Invitation, "Who an invitation
-    // reaches"). A failed dispatch re-opens the cap on the failure path
-    // itself — `deliverInvitation`'s `.catch`, below, which scopes that clear
-    // to this same value: what is written here is what tells a failing
-    // dispatch whether the marker it is looking at is its own.
-    const claimed = await db.invitation.updateMany({
-      where: { id: input.invitationId, teacherInboxNotifiedAt: null },
-      data: { teacherInboxNotifiedAt: input.claimedAt },
+    // reaches").
+    const outcome = await db.$transaction(async (tx): Promise<TeacherInboxDispatch> => {
+      const claimed = await tx.invitation.updateMany({
+        where: {
+          id: input.invitationId,
+          teacherId: input.teacherId,
+          email,
+          teacherInboxNotifiedAt: null,
+        },
+        data: { teacherInboxNotifiedAt: input.claimedAt },
+      });
+      if (claimed.count > 0) {
+        await createNotification(tx, {
+          recipientType: 'teacher',
+          recipientId: inviteeTeacherId,
+          type: 'teacher_invitation',
+          title: 'A teacher would like to connect',
+          body: `${input.teacherName} added you as a contact. Connecting adds a student side to your account, and you choose whether to.`,
+        });
+        return 'notified';
+      }
+      // Only on the miss path, so the ordinary dispatch pays nothing for it.
+      // No `.catch` on this statement: a guarded statement inside an
+      // interactive transaction poisons the rest of it rather than protecting
+      // it (`docs/lock-order.md`, "A diagnostic read inside an interactive
+      // transaction cannot be guarded").
+      const capped = await tx.invitation.count({
+        where: {
+          id: input.invitationId,
+          teacherId: input.teacherId,
+          email,
+          teacherInboxNotifiedAt: { not: null },
+        },
+      });
+      return capped > 0 ? 'already-capped' : 'no-matching-row';
     });
-    if (claimed.count === 0) return;
+    if (outcome !== 'notified') logUndeliveredTeacherInbox(outcome, input);
 
-    await createNotification(db, {
-      recipientType: 'teacher',
-      recipientId: account.teacher.id,
-      type: 'teacher_invitation',
-      title: 'A teacher would like to connect',
-      body: `${input.teacherName} added you as a contact. Connecting adds a student side to your account, and you choose whether to.`,
-    });
+    // Unconditional, and load-bearing: neither a capped dispatch nor a
+    // delivered one may fall through to the stranger email below. That
+    // template tells its recipient to sign up at `/login`, which is the one
+    // thing #172 exists to keep away from an address that already holds an
+    // account. `invitations.notify.test.ts` asserts that silence for the
+    // capped dispatch as well as the delivered one.
     return;
   }
 
@@ -729,14 +827,17 @@ const DELIVERY_FAILURE_MESSAGE = {
  *
  * - **Not behind `recordDispatchFailure`'s systemic guard.** That guard
  *   exists to keep `lastNotifyFailedAt` from proxying "does this address have
- *   a fair.yoga account" during a burst; gating this column's clear the same
- *   way would buy no privacy and would instead strand every invitee whose
- *   notification failed during the outage the guard is suppressing for — see
- *   `docs/data-model.md` (Invitation, "Who an invitation reaches") for why.
+ *   a fair.yoga account" during a burst. Nothing reads this column, so gating
+ *   its clear the same way would buy no privacy — and it would silence the
+ *   clear precisely when a failure is most likely, since the burst that trips
+ *   the guard is a count of unrelated dispatches rather than evidence about
+ *   this one. See `docs/data-model.md` (Invitation, "Who an invitation
+ *   reaches").
  * - **Not on the `lastNotifiedAt` CAS.** Its CAS is `claimedAt` — the marker
  *   value this dispatch's own claim wrote — because the claim, not the
- *   dispatch, is what this column correlates with. The clear's own comment
- *   below enumerates the two cases that makes exact.
+ *   dispatch, is what this column correlates with. What that buys, and the
+ *   narrow case in which this clear still has work to do now that the claim
+ *   commits with its notification, is on the clear itself below.
  *
  * Fire-and-forget is safe here specifically: this is a long-lived Node
  * process on a single VPS, not a serverless function that could be frozen
@@ -763,8 +864,8 @@ export function deliverInvitation(
   // Minted here, not inside `notifyInvitee`, because the `.catch` below needs
   // the same value to recognise its own claim — and minted separately from
   // `input.dispatchedAt` so that what `teacherInboxNotifiedAt` records (when
-  // the teacher branch claimed this row) stays independent of when the
-  // dispatching route pre-wrote `lastNotifiedAt`.
+  // this dispatch began) stays independent of when the dispatching route
+  // pre-wrote `lastNotifiedAt`.
   const claimedAt = new Date();
 
   void (async () => {
@@ -785,30 +886,42 @@ export function deliverInvitation(
       DELIVERY_FAILURE_MESSAGE[input.source],
     );
 
-    // #622: re-open the cap wherever a dispatch failed. Above the systemic
-    // early return below on purpose — see this function's own docblock and
-    // `docs/data-model.md` (Invitation, "Who an invitation reaches") for why
-    // gating this write the same way `lastNotifyFailedAt` is gated buys no
-    // privacy and would instead strand invitees during an outage.
+    // #622: the backstop beneath the claim's own transaction.
+    // `notifyInvitee`'s teacher branch claims and inserts as one unit, so a
+    // rejected insert takes the marker down with it and there is usually
+    // nothing here to lift. What is left is the commit this process never
+    // heard the answer to — Postgres committed both rows and the client saw
+    // an error anyway — where this clear re-opens a cap over a notification
+    // that did land. That costs one extra notification on the next resend,
+    // which is the direction this design fails in deliberately; permanent
+    // silence is the one it must not.
+    //
+    // Above the systemic early return below on purpose — see this function's
+    // own docblock and `docs/data-model.md` (Invitation, "Who an invitation
+    // reaches") for why gating this write the same way `lastNotifyFailedAt`
+    // is gated buys no privacy.
     //
     // CAS'd on `claimedAt`, the marker value this dispatch's own claim wrote
     // (`notifyInvitee`'s teacher branch, above) — NOT on `lastNotifiedAt`
     // like the failure write below. `lastNotifiedAt` is the right correlate
     // for `lastNotifyFailedAt`, which describes the attempt; the correlate
-    // for this column is the claim, which is the only thing that ever sets
-    // it. Two cases, and the claim's own value is what separates them:
+    // for this column is the claim (the writer census behind that is
+    // `docs/data-model.md`, Invitation, "Who an invitation reaches"). So
+    // clearing is right whenever this `where` matches, and it matches only a
+    // marker carrying this dispatch's own `claimedAt`:
     //
-    // - This attempt claimed and then threw. The marker is provably this
-    //   attempt's own, so clearing is always right — and always happens,
-    //   whatever else has moved on the row since. Scoped on `lastNotifiedAt`
-    //   instead, a resend landing during a slow failure would refuse the
-    //   clear and leave the marker standing over a notification that was
-    //   never created: permanent silence, which is the state this clear
-    //   exists to prevent.
-    // - This attempt never claimed — the stranger, student, blocked or
-    //   refused-claim paths — and threw. Any marker on the row belongs to
-    //   some other attempt, and `claimedAt` was written nowhere, so this
-    //   `where` matches nothing and leaves it alone.
+    // - Any exit that precedes the claim — every branch above the teacher one,
+    //   and every throw before `notifyInvitee` is reached at all — wrote that
+    //   value nowhere, so a marker on the row belongs to another attempt and
+    //   this `where` leaves it alone.
+    // - A dispatch that did claim clears its own marker whatever else has
+    //   moved on the row meanwhile, because `lastNotifiedAt` is not consulted:
+    //   a resend landing during a slow failure cannot refuse the clear.
+    //
+    // `claimedAt` is `new Date()` at `TIMESTAMP(3)` precision, so two
+    // dispatches entering this function in the same millisecond carry the same
+    // value and one of them can clear the other's marker. That costs one extra
+    // notification, the direction above.
     //
     // A readdress or a revive nulls the marker; null is already the state
     // this clear wants, and it matches no `claimedAt`, so neither is
@@ -820,8 +933,14 @@ export function deliverInvitation(
       })
       .catch((writeErr: unknown) => {
         log.error(
-          { err: writeErr, invitationId: input.invitationId },
-          'failed to re-open teacher inbox dispatch cap',
+          {
+            err: writeErr,
+            teacherId: input.teacherId,
+            invitationId: input.invitationId,
+            source: input.source,
+            claimedAt,
+          },
+          'could not re-open the teacher inbox dispatch cap: if this dispatch did claim it, only a readdress or a revive will lift the marker now',
         );
       });
 
