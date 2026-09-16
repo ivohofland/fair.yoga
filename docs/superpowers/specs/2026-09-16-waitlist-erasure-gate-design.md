@@ -123,11 +123,34 @@ conflict table:
   `KEY SHARE`). If the erasure held `FOR UPDATE` on that student and waited on that
   class, the two would deadlock. `NO KEY UPDATE` lets the insert through.
 - Child inserters that are not gated keep taking only `KEY SHARE`, which conflicts
-  with neither gate mode — so gating one site at a time cannot create a new cycle.
-  The erasure's closing `UPDATE` still escalates to `FOR UPDATE` (it changes `email`);
+  with neither gate mode — so gating one site at a time cannot create a new cycle,
+  **provided no transaction that holds a `KEY SHARE` (or a `Class` row) also UPDATES
+  the `Student` row.** An `UPDATE` takes `FOR NO KEY UPDATE`, which the erasure's
+  opening lock blocks. That proviso did not hold when this spec was first written, and
+  the task review of the implementation caught it (see *Correction* below).
+- The erasure's closing `UPDATE` still escalates to `FOR UPDATE` (it changes `email`);
   by then it holds every class in its lock set, so no class-locked promotion of this
   student can be in flight. The one cycle that escalation can still close — against an
   ungated booking's roster-link insert — exists today and belongs to follow-up 1.
+
+**Correction (found in Task 3's review, reproduced on a scratch schema).**
+`POST /api/registrations` wrote `Student.tierSelectedAt` inside its class-locked
+transaction, after inserting the `Registration`. With the erasure holding
+`FOR NO KEY UPDATE` from its second statement, that closes two new cycles:
+- **A, any class.** The booking holds `KEY SHARE` and waits for `NO KEY UPDATE`, while
+  the erasure's closing `FOR UPDATE` waits on that `KEY SHARE`.
+- **B, a class in the erasure's lock set.** The booking holds the `Class` row and
+  waits on `Student`, while the erasure holds `Student` and waits on the `Class` row.
+
+A grep of production `student.update*` calls found that write to be the only `Student`
+update made inside a class-locked transaction. The others (`api/account/student-profile`,
+`api/students/[id]`, `api/waitlist`, the sign-in claim) hold no class lock. **Fix,
+in this PR:** the booking's `tierSelectedAt` write moves to after its transaction
+commits, as `POST /api/waitlist` already does. The route change is outside the "gate
+only the join" scope, and deliberately so: the cycle is this PR's own, and the change
+gates nothing. It also removes the `SHARE → NO KEY UPDATE` upgrade deadlock that
+follow-up 1's gate would otherwise create between two concurrent first bookings by the
+same student.
 
 ### 2. `deleteStudentAccount` — new opening, scoped delete
 
@@ -191,6 +214,15 @@ Resulting behaviour:
 - **Join after the erasure committed:** refused.
 
 W1, W1′, W2 and W3 are all closed by this, for the one creator of entries.
+
+### 3b. `POST /api/registrations` — the marker write leaves the transaction
+
+The student's own booking sets `Student.tierSelectedAt` (null-guarded) after its
+transaction commits instead of inside it. This is the correction under §1, and it
+follows `POST /api/waitlist`'s shape. Pinned by a new integration test: a holder takes
+`Student FOR NO KEY UPDATE`, and a first self-booking's `Registration` must commit
+while it is held. `tests/integration/tier-selected-at.test.ts` keeps pinning the
+marker's semantics.
 
 ### 4. The constraint — migration `…_waitlist_waiting_position_unique`
 
