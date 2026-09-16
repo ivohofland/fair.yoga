@@ -1867,12 +1867,9 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
     const holder = new PrismaClient();
     try {
       // What each assertion below pins, because it is not the obvious split.
-      // The two erasures serialise at `lockStudentForErasure`, so the loser
-      // reads its `upcoming` only after the winner cancelled those
-      // registrations: it comes back empty, the loser has nothing to
-      // broadcast, and the notification assertion passes EVEN WITH THE ABORT
-      // REMOVED. It passes with the `Student` lock removed too, because the
-      // abort then stops the loser committing. It fails only if both go. The
+      // The notification assertion passes EVEN WITH THE ABORT REMOVED, and
+      // passes with the `Student` lock removed too; it fails only if both go
+      // (why: `AlreadyErasedError`'s docblock, `gdpr.ts`). The
       // rejection-count and `AlreadyErasedError` assertions are what pin the
       // abort.
       //
@@ -1905,10 +1902,11 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       ]);
 
       // 700ms: `deleteStudentAccount` opens with `setLockTimeout`, so a
-      // statement parked past 2s is cancelled with `55P03` and the loser
-      // rejects with a Postgres error instead of the sentinel. The loser waits
-      // at its `Student` lock through this hold and then the winner's
-      // transaction, so the margin is smaller than the 2s suggests.
+      // statement parked past 2s on one lock is cancelled with `55P03` and the
+      // loser rejects with a Postgres error instead of the sentinel. The loser
+      // waits at its `Student` lock twice — behind this hold, then behind the
+      // winner's transaction — and `lock_timeout` bounds each of those
+      // acquisitions separately, so each wait has to end inside 2s.
       let settled = false;
       void running.then(() => { settled = true; });
       await new Promise((r) => setTimeout(r, 700));

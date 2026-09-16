@@ -391,11 +391,12 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // `db-locks.test.ts` checks it).
     await setLockTimeout(tx);
 
-    // The `Student` row first, before any `Class` row (#183). A waitlist join
-    // takes the other half of this gate before its own class lock, so from
-    // here on no entry for this student can be created that the pre-lock
-    // below does not see. Mode and order: `docs/lock-order.md`, "The `Student`
-    // row is the erasure's gate".
+    // The `Student` row, right after `setLockTimeout` and before any other
+    // lock — any `Class` row included (#183). The pre-lock below starts after
+    // this lock is granted, so its snapshot holds every entry committed before
+    // then. Which writers take the other half of this gate, and so cannot add
+    // an entry after it, and why this mode: `docs/lock-order.md`, "The
+    // `Student` row is the erasure's gate".
     await lockStudentForErasure(tx, studentId);
 
     // EVERY entry, not just the `waiting` ones, because the delete below takes
@@ -404,24 +405,22 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // entry lies outside them. So the lock set has to cover every entry the
     // student holds, and this statement is what defines the lock set.
     //
-    // Those two sets used to coincide by accident. Before #216 nothing closed a
-    // queue when a class STARTED, so a student who never got in stayed `waiting`
-    // for ever and their class stayed in this read. `closeQueueOnStart` flips
-    // those rows to `expired`, which is the fix — and it silently dropped their
-    // classes out of the lock set while the delete kept deleting them.
+    // A `waiting`-only read would miss entries the delete still takes:
+    // `closeQueueOnStart` (#216) flips a never-promoted student's `waiting`
+    // row to `expired` when the class starts, and that class must stay in the
+    // lock set.
     //
-    // Not narrowed to "statuses another writer can still touch", which was the
-    // first version of this fix and was wrong: `addToWaitlist` revives an
-    // existing entry of ANY status on a rejoin (`waitlist.ts`, the
-    // `existingEntry` branch — it updates back to `waiting` rather than
-    // creating), so there is no terminal status here whose row is provably
-    // nobody else's to write. A lock set that covers every entry, whatever its
-    // status, is the only version of this that does not depend on such a claim
+    // Not narrowed to "statuses another writer can still touch" either:
+    // `addToWaitlist` revives an existing entry of ANY status on a rejoin
+    // (`waitlist.ts`, the `existingEntry` branch — it updates back to
+    // `waiting` rather than creating), so there is no terminal status here
+    // whose row is provably nobody else's to write. A lock set that covers
+    // every entry, whatever its status, does not depend on such a claim
     // staying true.
     //
-    // Taken before this transaction's first write, not beside the reorder
-    // loop. The comment above that first write, further down, says why the
-    // order matters and not just the fact of locking.
+    // Taken before this transaction's first write. The comment above that
+    // first write, further down, says why the order matters and not just the
+    // fact of locking.
     //
     // ONE statement, not a `lockClassRow` loop, and the difference is not
     // stylistic. `lockClassRow` is two round trips (`setLockTimeout`, then the
@@ -445,12 +444,10 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // so this join could not duplicate a class anyway; the helper's dedupe is
     // for its other callers.
     //
-    // EVERY status, matching the delete below, which is unscoped by status.
-    // The lock set has to cover every entry: before #216 a student who never
-    // got in stayed `waiting` for ever, so a `waiting`-scoped lock happened to
-    // cover it; `closeQueueOnStart` flips those rows to `expired`, and the
-    // walk-in resolver in `POST /api/registrations` writes `expired` entries
-    // under this same class row lock, so the gap was live.
+    // EVERY status, matching the delete below, which is unscoped by status. A
+    // closed entry's class is contended too: the walk-in resolver in
+    // `POST /api/registrations` writes `expired` entries under this same class
+    // row lock.
     //
     // VERDICT (#327): no `entries: true`. This transaction writes no
     // `CalendarEntry` column. Its `upcoming` read and its registration cancel
@@ -496,33 +493,30 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     ).map((w) => w.classId);
 
     // The classes are locked above, before this transaction's first write
-    // below — not merely before the reorder loop the lock used to sit beside.
-    // Round 1 review reproduced why placement matters: `promoteNext` drops a
-    // stale head and `withdrawWaitingEntriesForTeacher` clears every entry,
-    // and both take the Class row's lock BEFORE writing `WaitlistEntry`.
-    // Locking after this transaction's own writes (the previous version of
-    // this fix) let this transaction hold a `WaitlistEntry` row lock — from,
-    // e.g., the `waitlistEntry.deleteMany` below — while *requesting* the
-    // Class lock, at the same moment one of those functions held the Class
-    // lock while *requesting* that same `WaitlistEntry` row: transaction A
-    // holds row lock 1 and waits on lock 2; transaction B holds lock 2 and
-    // waits on lock 1. Postgres detects that cycle and kills one side with
-    // error `40P01 deadlock detected` — reproduced against the previous
-    // version of this fix, and the victim can be this erasure or a student's
-    // booking, Postgres's choice, not this code's. Locking every affected
-    // class above, before any write, makes this transaction's acquisition
-    // order match theirs (Class row, then its children) — the same convention
-    // `withdrawWaitingEntriesForTeacher`'s docblock (`waitlist.ts`)
-    // documents as "a correctness requirement rather than a style note,"
-    // now for the same reason there as here.
+    // below, and the placement matters, not just the fact of locking:
+    // `promoteNext` drops a stale head and `withdrawWaitingEntriesForTeacher`
+    // clears every entry, and both take the Class row's lock BEFORE writing
+    // `WaitlistEntry`. Locking after this transaction's own writes would let
+    // it hold a `WaitlistEntry` row lock — from, e.g., the
+    // `waitlistEntry.deleteMany` below — while *requesting* the Class lock, at
+    // the same moment one of those functions held the Class lock while
+    // *requesting* that same `WaitlistEntry` row: transaction A holds row
+    // lock 1 and waits on lock 2; transaction B holds lock 2 and waits on
+    // lock 1. Postgres detects that cycle and kills one side with error
+    // `40P01 deadlock detected` — reproduced in #174's review, and the victim
+    // can be this erasure or a student's booking, Postgres's choice, not this
+    // code's. Locking every affected class above, before any write, makes
+    // this transaction's acquisition order match theirs (Class row, then its
+    // children) — the same convention `withdrawWaitingEntriesForTeacher`'s
+    // docblock (`waitlist.ts`) documents as "a correctness requirement rather
+    // than a style note," now for the same reason there as here.
     //
     // Not covered by the escape argument in `waitlist.ts`'s
     // `withdrawWaitingEntriesForTeacher` docblock: that argument turns on
     // only ever moving an entry OUT of `waiting`, and this renumbers rows
-    // belonging to OTHER students, racing the six other writers of
-    // `WaitlistEntry.position` on the same class, all of which also lock it
-    // (`addToWaitlist`, `removeFromWaitlist`, `promoteNext`, `claimSpot`,
-    // `withdrawWaitingEntriesForTeacher`, `POST /api/registrations`).
+    // belonging to OTHER students, racing every other writer of
+    // `WaitlistEntry.position` on the same class. Each of those takes that
+    // class's row lock first — `docs/lock-order.md`, "Known conformance".
     //
     // Ascending by id is this project's intended order for taking more than
     // one `Class` row, and every site that does goes through the shared
@@ -727,22 +721,16 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // Every class here is held: `waitingClassIds` is read only over
     // `lockedClassIds`, which the ordered pre-lock above took before this
     // transaction's first write — see the comment above that write for why
-    // placement, not just the fact of locking, matters here. Renumbering here
-    // rather than there only changes when the write happens; the lock has
+    // placement, not just the fact of locking, matters here. The lock has
     // been held since before this transaction wrote anything at all.
     for (const classId of waitingClassIds) {
       await reorderWaitingEntries(tx, classId);
     }
 
-    // `deletedAt: null` in the WHERE, and a throw on a count of 0. A second
-    // concurrent erasure of this student reaches here too, but it waited at
-    // `lockStudentForErasure` until the first committed, so every read in
-    // this transaction ran after that commit: its `upcoming` is empty and the
-    // `handleSpotFreed` loop below has nothing to broadcast for it. The
-    // `Student` lock, not this throw, is what keeps waiting students from
-    // being told twice about one seat. The throw is what stops that redundant
-    // second transaction committing at all — the scope alone would let it
-    // commit a redundant second pass.
+    // `deletedAt: null` in the WHERE, and a throw on a count of 0: the scope
+    // alone would let a second concurrent erasure of this student commit a
+    // redundant second pass. What the throw does and does not prevent:
+    // `AlreadyErasedError`'s docblock.
     //
     // Not an error condition, which is why the sentinel is typed rather than
     // generic: the caller wanted this profile erased and it is,
