@@ -1084,11 +1084,11 @@ export type PauseRuleOutcome<TChild> =
  * claim's `SET LOCAL lock_timeout` governs every statement left in this
  * transaction, not just its own `SELECT … FOR UPDATE`, so the same 2s also
  * bounds each generated row's own `FOR KEY SHARE` on the `Teacher` row for its
- * FK. `Teacher.email`, `pageSlug` and `accountId` are all `@unique`, so an
- * update touching any of them — a teacher changing their page slug in another
- * tab, say — takes `FOR UPDATE` there instead of `FOR NO KEY UPDATE`, which
- * conflicts; negligible odds, but this paragraph exists to enumerate exactly
- * this class of thing.
+ * FK. `Teacher.email` and `pageSlug` are both `@unique`, so an update touching
+ * either of them — a teacher changing their page slug in another tab, say —
+ * takes `FOR UPDATE` there instead of `FOR NO KEY UPDATE`, which conflicts;
+ * negligible odds, but this paragraph exists to enumerate exactly this class
+ * of thing.
  */
 export async function pauseOrResumeRule<TChild>(
   db: PrismaClient,

@@ -12,6 +12,9 @@ import { Prisma } from '@prisma/client';
  * AND indexdef ILIKE '%UNIQUE%' AND indexdef ILIKE '%WHERE%'` lists every
  * partial unique index live today, rather than trusting a number here:
  * `{"modelName":"Room","target":["createdById","address","floor","roomName"]}`.
+ * Measured the same way on `Teacher_account_live_unique` and
+ * `Student_account_live_unique` (#623), both reaching this matcher as
+ * `isUniqueConflictOn(err, ['accountId'])`.
  *
  * Compared as a set. Two unique keys over the same columns in a different
  * order cannot meaningfully coexist, and an order-sensitive check would turn a
