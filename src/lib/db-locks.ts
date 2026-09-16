@@ -14,6 +14,8 @@ import { ClassStatus, Prisma } from '@prisma/client';
  * uncommitted writes. Decided per site, not uniformly:
  *
  *   adopt  `lockClassRow`, `lockClassRowsOrdered` and `setLockTimeout` below.
+ *   adopt  `lockStudentForErasure` and `lockLiveStudent` below — each issues
+ *          `SET LOCAL` and then a row lock on `Student` (#183).
  *   adopt  `claimRuleForGeneration` (`entry-generation.ts`) — issues
  *          `LOCK_TIMEOUT_SQL` and then a `FOR UPDATE`, for either template
  *          family from the one statement.
@@ -282,6 +284,55 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
     JOIN "Class" c ON c."calendarEntryId" = e.id
     WHERE c.id = ${classId}
     FOR UPDATE OF e`;
+}
+
+/**
+ * Thrown by `lockLiveStudent` when the student it was asked to lock is not
+ * live: the row is erased (`deletedAt` set) or absent.
+ */
+export class StudentErasedError extends Error {
+  constructor(readonly studentId: string) {
+    super(`student ${studentId} is erased`);
+    this.name = 'StudentErasedError';
+  }
+}
+
+/**
+ * The erasure's half of the `Student` gate (#183): the student's row
+ * `FOR NO KEY UPDATE`, with the shared bounded wait.
+ *
+ * Conflicts with `lockLiveStudent`'s `FOR SHARE` below, which is the gate. Does
+ * not conflict with the `FOR KEY SHARE` a child-row insert takes on its parent —
+ * the reason the mode is this one and not `FOR UPDATE` is
+ * `docs/lock-order.md`, "The `Student` row is the erasure's gate".
+ */
+export async function lockStudentForErasure(
+  tx: TransactionClientOnly,
+  studentId: string,
+): Promise<void> {
+  await setLockTimeout(tx);
+  await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${studentId} FOR NO KEY UPDATE`;
+}
+
+/**
+ * The writer's half of the `Student` gate (#183): the student's row
+ * `FOR SHARE`, with the shared bounded wait, and a `StudentErasedError` unless
+ * the row exists and is not erased.
+ *
+ * The read happens under the lock, so a caller that waited behind
+ * `lockStudentForErasure` sees that erasure's committed `deletedAt`. Take it
+ * before the transaction's first `Class` lock — the order is
+ * `docs/lock-order.md`'s.
+ */
+export async function lockLiveStudent(
+  tx: TransactionClientOnly,
+  studentId: string,
+): Promise<void> {
+  await setLockTimeout(tx);
+  const rows = await tx.$queryRaw<Array<{ deletedAt: Date | null }>>`
+    SELECT "deletedAt" FROM "Student" WHERE id = ${studentId} FOR SHARE`;
+  const row = rows[0];
+  if (row === undefined || row.deletedAt !== null) throw new StudentErasedError(studentId);
 }
 
 /**

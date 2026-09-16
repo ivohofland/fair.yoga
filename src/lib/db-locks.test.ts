@@ -8,9 +8,12 @@ import {
   LOCK_TIMEOUT_SQL,
   lockClassRow,
   lockClassRowsOrdered,
+  lockLiveStudent,
+  lockStudentForErasure,
   setLockTimeout,
   statusesWhere,
   statusInList,
+  StudentErasedError,
   type TransactionClientOnly,
 } from './db-locks';
 import { claimTemplateForGeneration } from '@/services/class-generator';
@@ -80,6 +83,10 @@ async function _theBrandRejectsABareClient(client: PrismaClient): Promise<void> 
   // other `WaitlistEntry` writer and un-rolled-back if the status flip it is
   // supposed to be atomic with then fails.
   await closeQueueOnStart(client, 'never-called');
+  // @ts-expect-error `SET LOCAL` then `FOR NO KEY UPDATE` on `Student` (#183).
+  await lockStudentForErasure(client, 'never-called');
+  // @ts-expect-error `SET LOCAL` then `FOR SHARE` on `Student` (#183).
+  await lockLiveStudent(client, 'never-called');
 }
 
 describe('the shared lock timeout', () => {
@@ -144,6 +151,28 @@ describe('the shared lock timeout', () => {
 
   it('is the literal both template-claim sites share', () => {
     expect(LOCK_TIMEOUT_SQL).toBe("SET LOCAL lock_timeout = '2s'");
+  });
+
+  it('is in force after lockStudentForErasure, which sets it itself', async () => {
+    const observed = await prisma.$transaction(async (tx) => {
+      await lockStudentForErasure(tx, '00000000-0000-4000-8000-000000000000');
+      const rows = await tx.$queryRaw<Array<{ lock_timeout: string }>>`SHOW lock_timeout`;
+      return rows[0]?.lock_timeout;
+    });
+
+    expect(observed).toBe('2s');
+  });
+
+  it('is in force after lockLiveStudent, which sets it itself', async () => {
+    const observed = await prisma.$transaction(async (tx) => {
+      await lockLiveStudent(tx, '00000000-0000-4000-8000-000000000000').catch((err: unknown) => {
+        if (!(err instanceof StudentErasedError)) throw err;
+      });
+      const rows = await tx.$queryRaw<Array<{ lock_timeout: string }>>`SHOW lock_timeout`;
+      return rows[0]?.lock_timeout;
+    });
+
+    expect(observed).toBe('2s');
   });
 });
 
@@ -666,5 +695,48 @@ describe('lockClassRowsOrdered', () => {
 
     expect(await modeOf(Prisma.sql`FOR UPDATE`)).toContain('RowShareLock');
     expect(await modeOf(Prisma.empty)).toEqual(['AccessShareLock']);
+  });
+});
+
+describe('lockLiveStudent', () => {
+  const suffix = `live-student-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let liveId: string;
+  let erasedId: string;
+
+  beforeAll(async () => {
+    liveId = (
+      await prisma.student.create({
+        data: { firstName: 'Live', lastName: 'Student', email: `${suffix}-live@test.local`, incomeTier: 3 },
+        select: { id: true },
+      })
+    ).id;
+    erasedId = (
+      await prisma.student.create({
+        data: { firstName: 'Erased', lastName: 'Student', email: `${suffix}-erased@test.local`, incomeTier: 3 },
+        select: { id: true },
+      })
+    ).id;
+    await prisma.student.update({ where: { id: erasedId }, data: { deletedAt: new Date() } });
+  });
+
+  afterAll(async () => {
+    await prisma.student.deleteMany({ where: { id: { in: [liveId, erasedId] } } });
+  });
+
+  it('returns for a live student', async () => {
+    await expect(prisma.$transaction((tx) => lockLiveStudent(tx, liveId))).resolves.toBeUndefined();
+  });
+
+  it('throws StudentErasedError for an erased student', async () => {
+    const err = await prisma.$transaction((tx) => lockLiveStudent(tx, erasedId)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StudentErasedError);
+    expect((err as StudentErasedError).studentId).toBe(erasedId);
+  });
+
+  it('throws StudentErasedError for an id with no row', async () => {
+    const missing = '00000000-0000-4000-8000-000000000000';
+    await expect(prisma.$transaction((tx) => lockLiveStudent(tx, missing))).rejects.toBeInstanceOf(
+      StudentErasedError,
+    );
   });
 });
