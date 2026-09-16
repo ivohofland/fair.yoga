@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { notifyInvitee, deliverInvitation } from './invitations';
+import { notifyInvitee, deliverInvitation, inviteContact } from './invitations';
 import { teardownTeacher } from '../../tests/helpers';
 
 // `notifyInvitee`'s dry-run branch (src/lib/email.ts) can't tell "sent" from
@@ -469,7 +469,10 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     }
   });
 
-  async function createTeacherOnlyInvitee(
+  // Creates the teacher-only account only — no `Invitation` row. Do not
+  // confuse with `teacherOnlyInvitee` below, which creates both; a test that
+  // reaches for this one expecting an invitation to already exist gets none.
+  async function createTeacherOnlyAccount(
     label: string,
   ): Promise<{ teacherId: string; accountId: string; email: string }> {
     const email = `notify-teacher-invitee-${label}-${suffix}@test.local`;
@@ -485,7 +488,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     return { teacherId: teacher.id, accountId: teacher.accountId, email };
   }
 
-  async function removeTeacherOnlyInvitee(
+  async function removeTeacherOnlyAccount(
     invitee: { teacherId: string; accountId: string },
   ): Promise<void> {
     await prisma.notification.deleteMany({
@@ -496,7 +499,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
   }
 
   it('tells a teacher-only account in its teacher inbox, and sends no email (#172)', async () => {
-    const invitee = await createTeacherOnlyInvitee('inbox');
+    const invitee = await createTeacherOnlyAccount('inbox');
     let invitationId: string | undefined;
     try {
       const invitation = await prisma.invitation.create({
@@ -518,7 +521,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       expect(sendMock).not.toHaveBeenCalled();
     } finally {
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
-      await removeTeacherOnlyInvitee(invitee);
+      await removeTeacherOnlyAccount(invitee);
     }
   });
 
@@ -569,7 +572,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
   it('sends nothing at all to a blocked teacher-only account (#172)', async () => {
     // Reachable without this feature writing a block: #171 keeps an erased
     // student's refusal, and the address can later hold a teacher account.
-    const invitee = await createTeacherOnlyInvitee('blocked');
+    const invitee = await createTeacherOnlyAccount('blocked');
     const block = await prisma.teacherBlock.create({
       data: { teacherId, email: invitee.email },
       select: { id: true },
@@ -591,7 +594,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     } finally {
       if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       await prisma.teacherBlock.delete({ where: { id: block.id } });
-      await removeTeacherOnlyInvitee(invitee);
+      await removeTeacherOnlyAccount(invitee);
     }
   });
 
@@ -790,6 +793,81 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
         notifyInvitee(prisma, { teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId }),
       ]);
       expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
+    } finally {
+      await cleanUpInvitee(f);
+    }
+  });
+
+  it('tells the invitee again after the invitation is readdressed (#622)', async () => {
+    const f = await teacherOnlyInvitee('readdress');
+    const newEmail = `notify-cap-readdress-new-${suffix}@test.local`;
+    let secondTeacherId: string | undefined;
+    let secondAccountId: string | undefined;
+    try {
+      await notifyInvitee(prisma, {
+        teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+      });
+      expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
+
+      const second = await prisma.teacher.create({
+        data: {
+          firstName: 'Cap', lastName: 'Readdressed', email: newEmail,
+          account: { create: { email: newEmail } },
+          bio: '#622 readdress', pageSlug: `notify-cap-readdress-new-${suffix}`,
+        },
+        select: { id: true, accountId: true },
+      });
+      secondTeacherId = second.id;
+      secondAccountId = second.accountId;
+
+      // What `PUT /api/invitations/[id]` does on a genuine address change.
+      await prisma.invitation.update({
+        where: { id: f.invitationId },
+        data: { email: newEmail, delivered: false, lastNotifyFailedAt: null, teacherInboxNotifiedAt: null },
+      });
+
+      await notifyInvitee(prisma, {
+        teacherId, email: newEmail, teacherName: 'Some Teacher', invitationId: f.invitationId,
+      });
+      expect(await countTeacherNotifications(second.id)).toBe(1);
+    } finally {
+      if (secondTeacherId) {
+        await prisma.notification.deleteMany({
+          where: { recipientType: 'teacher', recipientId: secondTeacherId },
+        });
+        await prisma.teacher.delete({ where: { id: secondTeacherId } });
+      }
+      if (secondAccountId) await prisma.account.delete({ where: { id: secondAccountId } });
+      await cleanUpInvitee(f);
+    }
+  });
+
+  it('tells the invitee again after a revived invitation (#622)', async () => {
+    const f = await teacherOnlyInvitee('revive');
+    try {
+      await notifyInvitee(prisma, {
+        teacherId, email: f.email, teacherName: 'Some Teacher', invitationId: f.invitationId,
+      });
+      expect(await countTeacherNotifications(f.inviteeTeacherId)).toBe(1);
+
+      await prisma.invitation.update({
+        where: { id: f.invitationId },
+        data: { status: 'accepted', respondedAt: new Date() },
+      });
+
+      // `inviteContact` revives the accepted row rather than creating a new
+      // one, so the marker travels with it unless the revive clears it.
+      const revived = await inviteContact(prisma, {
+        teacherId, email: f.email, firstName: 'Cap', lastName: 'Invitee',
+      });
+      expect(revived.ok).toBe(true);
+
+      const row = await prisma.invitation.findUniqueOrThrow({
+        where: { id: f.invitationId },
+        select: { status: true, teacherInboxNotifiedAt: true },
+      });
+      expect(row.status).toBe('pending');
+      expect(row.teacherInboxNotifiedAt).toBeNull();
     } finally {
       await cleanUpInvitee(f);
     }

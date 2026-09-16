@@ -425,7 +425,13 @@ async function revivePendingInvitation(
 ): Promise<string | null> {
   const revived = await db.invitation.updateMany({
     where: { id, status: 'accepted' },
-    data: { status: 'pending', respondedAt: null, isArchived: false, ...fields },
+    data: {
+      status: 'pending', respondedAt: null, isArchived: false,
+      // #622: a revive reuses this row, so the cap would otherwise travel
+      // across a link that ended. A re-invitation is a new invitation.
+      teacherInboxNotifiedAt: null,
+      ...fields,
+    },
   });
   return revived.count === 0 ? null : id;
 }
