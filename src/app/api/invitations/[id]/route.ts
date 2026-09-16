@@ -240,10 +240,14 @@ export const PUT = withErrorHandler(async (
       // `lastNotifyFailedAt: null` rides along for the same reason: whatever
       // this row's failure state was, it described the OLD address, and no
       // attempt has been made against the new one either (#392).
+      // `teacherInboxNotifiedAt: null` rides along too: the new address is a
+      // different person, who has been told nothing (#622).
       data: {
         ...rest,
         ...(email !== undefined ? { email } : {}),
-        ...(readdressed ? { delivered: false, lastNotifyFailedAt: null } : {}),
+        ...(readdressed
+          ? { delivered: false, lastNotifyFailedAt: null, teacherInboxNotifiedAt: null }
+          : {}),
       },
     });
   } catch (err) {
