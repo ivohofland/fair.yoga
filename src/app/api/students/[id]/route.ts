@@ -8,6 +8,7 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
+import { isRecordNotFound } from '@/lib/api-errors';
 import { updateStudentSchema, archiveStateQuerySchema } from '@/lib/schemas';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 
@@ -78,8 +79,11 @@ export const PUT = withErrorHandler(async (
       return respondError('No valid fields to update', 400);
     }
 
+    // Scoped to a live profile because an erasure can commit while this write
+    // waits on the row, and an unscoped `WHERE` would then apply to the erased
+    // version (`docs/lock-order.md`, "The `Student` row is the erasure's gate").
     const student = await prisma.student.update({
-      where: { id },
+      where: { id, deletedAt: null },
       data: {
         ...updateData,
         // A tier set by the student themself is a choice — the marker the
@@ -87,7 +91,11 @@ export const PUT = withErrorHandler(async (
         // never reach this branch.
         ...(updateData.incomeTier !== undefined ? { tierSelectedAt: new Date() } : {}),
       },
+    }).catch((err: unknown) => {
+      if (isRecordNotFound(err)) return null;
+      throw err;
     });
+    if (!student) return respondError('Student not found', 404);
 
     return respondOk(student);
   }

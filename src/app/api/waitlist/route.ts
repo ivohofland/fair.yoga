@@ -28,9 +28,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     const entry = await addToWaitlist(prisma, parsed.data.classId, session.studentId);
     // Joining a waitlist implies tier choice (the route is self-only);
     // promotions and claims are covered transitively — nobody reaches
-    // them without joining first. Null-guarded: first choice only.
+    // them without joining first. Null-guarded: first choice only. Scoped to
+    // a live profile because an erasure can commit while this write waits on
+    // the row (`docs/lock-order.md`, "The `Student` row is the erasure's
+    // gate").
     await prisma.student.updateMany({
-      where: { id: session.studentId, tierSelectedAt: null },
+      where: { id: session.studentId, tierSelectedAt: null, deletedAt: null },
       data: { tierSelectedAt: new Date() },
     });
     return respondOk(entry, 201);

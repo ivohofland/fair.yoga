@@ -273,13 +273,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // Roster adds and walk-ins must not consume the income-selection
     // moment. Null-guarded: the marker records the first choice.
     //
-    // Written after the transaction commits, which is also what keeps a
-    // refused booking from setting it: a `Student` write under the class lock
-    // would cycle with an erasure's `Student` lock (`docs/lock-order.md`,
-    // "The `Student` row is the erasure's gate").
+    // Written after the transaction commits because a `Student` write under
+    // the class lock would cycle with an erasure's `Student` lock, and scoped
+    // to a live profile because an erasure can commit while this write waits
+    // on the row (`docs/lock-order.md`, "The `Student` row is the erasure's
+    // gate").
     if (!rosterStudentId) {
       await prisma.student.updateMany({
-        where: { id: studentId, tierSelectedAt: null },
+        where: { id: studentId, tierSelectedAt: null, deletedAt: null },
         data: { tierSelectedAt: new Date() },
       });
     }

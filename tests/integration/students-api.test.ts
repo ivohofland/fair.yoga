@@ -1707,6 +1707,7 @@ describe('PUT /api/students/[id]', () => {
   type Owner = { id: string; token: string; accountId: string };
   let alice: Owner;
   let bob: Owner;
+  let erased: Owner | undefined;
 
   async function mkClaimedStudent(name: string): Promise<Owner> {
     const email = `putown-${name}-${suffix}@test.local`;
@@ -1749,6 +1750,7 @@ describe('PUT /api/students/[id]', () => {
     await prisma.teacherStudent.deleteMany({ where: { teacherId, studentId: alice?.id } });
     await teardownStudent(prisma, alice?.id, alice?.accountId);
     await teardownStudent(prisma, bob?.id, bob?.accountId);
+    await teardownStudent(prisma, erased?.id, erased?.accountId);
   });
 
   it('refuses a teacher session even when the teacher is linked to the student', async () => {
@@ -1780,4 +1782,72 @@ describe('PUT /api/students/[id]', () => {
     expect(message).toMatch(/firstName/i);
     expect(await firstNameOf(alice.id)).toBe(before);
   });
+
+  /**
+   * An erasure holds the `Student` row from its second statement to its
+   * commit, so a self-edit sent meanwhile authenticates against a live
+   * profile and then waits on the row. Under READ COMMITTED the waiting
+   * `UPDATE` re-checks its `WHERE` against the version the erasure committed,
+   * and applies there unless that `WHERE` requires a live profile.
+   *
+   * The holder stands in for the erasure: it takes the row, then writes what
+   * the erasure's closing update writes, and commits. Its release waits until
+   * the request is parked on the holder's backend, so the edit is known to
+   * have reached the row before the erased version exists.
+   */
+  it('does not write onto a profile erased while the edit waited on it (#183)', async () => {
+    const subject = await mkClaimedStudent('erased');
+    erased = subject;
+
+    let holderPid = 0;
+    let parked!: () => void;
+    const isParked = new Promise<void>((r) => { parked = r; });
+    let release!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const holding = prisma.$transaction(
+      async (tx) => {
+        const [own] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+        holderPid = own!.pid;
+        await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${subject.id} FOR UPDATE`;
+        parked();
+        await released;
+        await tx.student.update({
+          where: { id: subject.id },
+          data: {
+            deletedAt: new Date(),
+            firstName: 'Deleted',
+            lastName: 'Student',
+            email: `deleted-${subject.id}@deleted.invalid`,
+          },
+        });
+      },
+      { timeout: 20_000 },
+    );
+    await isParked;
+
+    const editing = put(subject.id, { firstName: 'RealAgain' }, subject.token);
+    try {
+      const deadline = Date.now() + 1_500;
+      for (;;) {
+        const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+          SELECT count(*)::int AS n FROM pg_stat_activity
+           WHERE wait_event_type = 'Lock'
+             AND ${holderPid} = ANY(pg_blocking_pids(pid))`;
+        if ((row?.n ?? 0) > 0) break;
+        if (Date.now() > deadline) throw new Error('the edit never parked on the held Student row');
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    } finally {
+      release();
+      await holding;
+    }
+
+    const res = await editing;
+    // One assertion over both, so a failure shows where the name went and
+    // what the caller was told in the same diff.
+    expect({ firstName: await firstNameOf(subject.id), status: res.status }).toEqual({
+      firstName: 'Deleted',
+      status: 404,
+    });
+  }, 40_000);
 });
