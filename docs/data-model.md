@@ -556,11 +556,15 @@ sequence still preserves promotion order, and gap-freedom is a cross-row
 property no single-row constraint can express. The migration renumbers
 existing `waiting` rows to `1..n` per class, ordered by `(position, createdAt,
 id)`, before creating the index, and announces the affected count via `RAISE
-NOTICE` so a repair on production data does not pass silently. Spiked before
-being written: with an equivalent index applied by hand, 2095 unit and 711
-integration tests (2806 database-backed tests total) passed with zero
-violations, and a mutation forcing `addToWaitlist`'s `nextPosition` to always
-be `1` failed 5 tests with `P2002` on `['classId', 'position']`.
+NOTICE` so a repair on production data does not pass silently. It first takes
+`SHARE ROW EXCLUSIVE` on the table, because the deploy keeps the old app
+running while `migrate` runs, and an old-app queue write landing between the
+renumber and the index build could fail the index with `23505` or deadlock
+against the renumber — a failed deploy either way. Spiked before being
+written (measured 2026-09-16 for #183): with an equivalent index applied by
+hand, the unit tier (2095 tests) and the integration tier (711) passed with
+zero violations, and a mutation forcing `addToWaitlist`'s `nextPosition` to
+always be `1` failed 5 tests with `P2002` on `['classId', 'position']`.
 
 **A join that races its own student's erasure is refused (#183).** The erasure
 wins: `addToWaitlist` and `deleteStudentAccount` serialise on the `Student`
