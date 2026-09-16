@@ -1,12 +1,6 @@
 /**
  * Pins the delete order `TeacherRoom -> Room -> Teacher` against
- * `Room_createdById_fkey` (`ON DELETE RESTRICT`, non-cascading). #617:
- * `tests/e2e/visual.spec.ts`'s `afterAll` deleted `Teacher` before `Room`
- * and tripped this constraint, but its only regression coverage lives
- * inside a Playwright `describe` that self-skips on Linux CI (no
- * `-linux` baselines, #542's `hasBaselines` check) — so nothing in CI
- * caught it, and nothing catches its reintroduction. This file does,
- * unconditionally, in the `test-integration` job.
+ * `Room_createdById_fkey` (`ON DELETE RESTRICT`, non-cascading).
  *
  * `TeacherRoom -> Teacher` and `TeacherRoom -> Room` are both `ON DELETE
  * CASCADE` (`prisma/schema.prisma`), so only `Room.createdById -> Teacher`
@@ -21,6 +15,11 @@ import { isRestrictViolationOn } from '@/lib/api-errors';
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
 let seq = 0;
+
+const teacherIds: string[] = [];
+const roomIds: string[] = [];
+const teacherRoomIds: string[] = [];
+const accountEmails: string[] = [];
 
 interface Fixture {
   teacherId: string;
@@ -60,10 +59,22 @@ async function makeFixture(): Promise<Fixture> {
       rentalRate: new Prisma.Decimal(20),
     },
   });
+  teacherIds.push(teacher.id);
+  roomIds.push(room.id);
+  teacherRoomIds.push(teacherRoom.id);
+  accountEmails.push(email);
   return { teacherId: teacher.id, roomId: room.id, teacherRoomId: teacherRoom.id, accountEmail: email };
 }
 
 afterAll(async () => {
+  // Delete in correct order to respect foreign key constraints:
+  // TeacherRoom has CASCADE to both Teacher and Room, so delete it first.
+  // Room.createdById has RESTRICT, so delete Room before Teacher.
+  // Then delete Account.
+  await prisma.teacherRoom.deleteMany({ where: { id: { in: teacherRoomIds } } });
+  await prisma.room.deleteMany({ where: { id: { in: roomIds } } });
+  await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+  await prisma.account.deleteMany({ where: { email: { in: accountEmails } } });
   await prisma.$disconnect();
 });
 
@@ -73,7 +84,6 @@ describe('Room/TeacherRoom/Teacher delete order (Room_createdById_fkey)', () => 
     await expect(prisma.teacherRoom.delete({ where: { id: f.teacherRoomId } })).resolves.toBeDefined();
     await expect(prisma.room.delete({ where: { id: f.roomId } })).resolves.toBeDefined();
     await expect(prisma.teacher.delete({ where: { id: f.teacherId } })).resolves.toBeDefined();
-    await prisma.account.deleteMany({ where: { email: f.accountEmail } });
   });
 
   it('rejects on Room_createdById_fkey when teacher is deleted before room', async () => {
@@ -81,12 +91,7 @@ describe('Room/TeacherRoom/Teacher delete order (Room_createdById_fkey)', () => 
     await expect(prisma.teacher.delete({ where: { id: f.teacherId } })).rejects.toSatisfy((e: unknown) =>
       isRestrictViolationOn(e, ['Room_createdById_fkey']),
     );
-
-    // The failed delete rolled back, so teacher/room/teacherRoom all still
-    // exist — clean up in the order the test above just proved works.
-    await prisma.teacherRoom.delete({ where: { id: f.teacherRoomId } });
-    await prisma.room.delete({ where: { id: f.roomId } });
-    await prisma.teacher.delete({ where: { id: f.teacherId } });
-    await prisma.account.deleteMany({ where: { email: f.accountEmail } });
+    // The failed delete rolled back, so teacher/room/teacherRoom all still exist.
+    // afterAll will clean them up in the correct order.
   });
 });
