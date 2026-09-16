@@ -1784,8 +1784,8 @@ describe('PUT /api/students/[id]', () => {
   });
 
   /**
-   * An erasure holds the `Student` row from its second statement to its
-   * commit, so a self-edit sent meanwhile authenticates against a live
+   * An erasure holds the `Student` row from right after its `setLockTimeout`
+   * to its commit, so a self-edit sent meanwhile authenticates against a live
    * profile and then waits on the row. Under READ COMMITTED the waiting
    * `UPDATE` re-checks its `WHERE` against the version the erasure committed,
    * and applies there unless that `WHERE` requires a live profile.

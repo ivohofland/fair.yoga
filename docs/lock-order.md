@@ -1122,7 +1122,7 @@ itself:
 
 | Site | Helper | Where | Mode | On an erased or absent profile |
 |---|---|---|---|---|
-| `deleteStudentAccount` (`gdpr.ts`) | `lockStudentForErasure` | second statement of its transaction, after `setLockTimeout` | `FOR NO KEY UPDATE` | no check at the lock; the closing compare-and-swap answers an erased one with `AlreadyErasedError` |
+| `deleteStudentAccount` (`gdpr.ts`) | `lockStudentForErasure` | first lock of its transaction, right after `setLockTimeout` | `FOR NO KEY UPDATE` | no check at the lock; the closing compare-and-swap answers an erased one with `AlreadyErasedError`, and an absent one fails before the transaction opens, at `findUniqueOrThrow` (`P2025`) |
 | `addToWaitlist` (`waitlist.ts`) | `lockLiveStudent` | first statement of its transaction | `FOR SHARE` | refuses: `StudentErasedError`, surfaced as `WaitlistJoinError` `student_erased` (409 from `POST /api/waitlist`) |
 
 **`Student → Class` at both.** Each takes the `Student` row before its first
@@ -1211,8 +1211,8 @@ while the erasure held `Student` and waited on the `Class` row
 A `Student` update that waits on the gate is not refused when the erasure
 commits. Under READ COMMITTED it re-checks its `WHERE` against the row version
 the erasure committed, and applies there unless that `WHERE` requires
-`deletedAt: null`. The erasure holds the row from its second statement to its
-commit, so the window is the whole erasure. `PUT /api/students/[id]`, the
+`deletedAt: null`. The erasure holds the row from its first lock, right after
+its `setLockTimeout`, to its commit, so the window is the whole erasure. `PUT /api/students/[id]`, the
 student's self-edit, writes names and contact details, so its `update` is
 scoped to `deletedAt: null` and answers 404 when the scope misses. Pinned by
 `tests/integration/students-api.test.ts` ("does not write onto a profile
@@ -1243,7 +1243,7 @@ whose foreign key from `Student` is `ON DELETE SET NULL`
 The spellings are deliberate. `git grep -E` on macOS supports neither `\b`
 nor `\s`: a `\b` matches nothing, even with the test files let back in, and
 `\s` is read as a literal `s`, so `student\s*\.` misses `student .update(` and
-matches `students.update(` instead. `[[:space:]]` and `\(` behave the same in
+matches `students.update(` as well as `student.update(`. `[[:space:]]` and `\(` behave the same in
 `git grep -E` and `grep -E`.
 
 ### What still escalates

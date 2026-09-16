@@ -221,9 +221,9 @@ export async function addToWaitlist(
   studentId: string,
 ): Promise<WaitlistEntry> {
   return db.$transaction(async (tx) => {
-    // The `Student` gate, before the class lock (#183): an erasure of this
-    // student holds the other half, so a join that waited here reads its
-    // committed `deletedAt` and writes nothing. Mode and order:
+    // The `Student` gate: this transaction's first lock, before the class
+    // lock (#183). A refusal here comes before any write, so a refused join
+    // writes nothing. Who holds the other half, and why this mode and order:
     // `docs/lock-order.md`, "The `Student` row is the erasure's gate".
     try {
       await lockLiveStudent(tx, studentId);
@@ -297,10 +297,10 @@ export async function addToWaitlist(
     //
     // Order matters and is not a preference: `Student`, then `Class`, then
     // `TeacherStudent`. The first two are already held (top of this
-    // transaction) and the `TeacherStudent` row is taken after both. `Class`
-    // before `TeacherStudent` is the same order `promoteNext`, `claimSpot` and
-    // `unlinkTeacher` take them in; reversing it here would deadlock against
-    // any of the three. The full order is `docs/lock-order.md`'s.
+    // transaction) and the `TeacherStudent` row is taken after both.
+    // Reversing `Class` and `TeacherStudent` here would deadlock against the
+    // sites that take them in this order — `docs/lock-order.md`, "Known
+    // conformance", which also holds the full order.
     const student = await tx.student.findUniqueOrThrow({
       where: { id: studentId },
       select: { email: true },

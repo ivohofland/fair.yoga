@@ -2213,10 +2213,9 @@ describe('deleteTeacherAccount cancels an in_progress class on the CAS loop, not
 /**
  * A student erasure's post-commit `handleSpotFreed` loop, and what it logs
  * when the hook fails after the erasure committed. The concurrent duplicate
- * itself is raced in `gdpr-lock-order.test.ts`, under this describe's name:
- * the `Student` lock makes the duplicate read its `upcoming` only after the
- * first erasure committed, so it has no seat to broadcast, and its
- * `AlreadyErasedError` abort keeps it from committing a redundant second pass.
+ * itself is raced in `gdpr-lock-order.test.ts`, under this describe's name;
+ * what keeps that duplicate from broadcasting a second time is
+ * `AlreadyErasedError`'s docblock (`gdpr.ts`).
  *
  * The class sits in the final-hour `first_come_first_claimed` window on
  * purpose: that is the only window where `handleSpotFreed` broadcasts rather

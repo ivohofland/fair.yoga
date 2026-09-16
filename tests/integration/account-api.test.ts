@@ -742,30 +742,27 @@ describe('DELETE /api/account', () => {
   }, 40_000);
 
   /**
-   * #196 branch 2, Task 3, route half. The service now aborts a redundant
+   * #196 branch 2, Task 3, route half. The service aborts a redundant
    * erasure with `AlreadyErasedError` so a second, redundant transaction
-   * cannot commit at all. That abort is NOT what stops a doubled
-   * `spot_available` broadcast — the loser reads `upcoming` only after the
-   * winner has committed and cancelled those registrations, so it finds none
-   * to hand `handleSpotFreed`; the `Student` lock is what prevents the
-   * doubled broadcast, and the abort is what the route below maps to 200
-   * (`gdpr-lock-order.test.ts` owns the rejection-count assertion that pins
-   * the abort). This pins the other half of that decision: the loser's abort
-   * is a SUCCESS, and must not fall into `erasureFailure` — which would
-   * answer a 500 and tell a user their account could not be removed, about an
-   * account that is gone.
+   * cannot commit at all (what that abort does and does not prevent:
+   * `AlreadyErasedError`'s docblock, `gdpr.ts`), and `DELETE /api/account`
+   * maps the abort to 200 (`gdpr-lock-order.test.ts` owns the
+   * rejection-count assertion that pins the abort). This pins the route's
+   * half: the loser's abort is a SUCCESS, and must not fall into
+   * `erasureFailure` — which would answer a 500 and tell a user their account
+   * could not be removed, about an account that is gone.
    *
    * The lever is the one Tasks 1 and 2 established, for the reason they
    * recorded: two plain fetches serialise, and a serialised second request
    * never reaches the guard at all — `validateSession` resolves only live
    * profiles, so it would 401 before the route ran. The holder takes the
-   * `Student` row the erasure now locks at its own second statement
-   * (`lockStudentForErasure`, before its class pre-lock and its reads), so
-   * both requests authenticate against a live profile, both run their whole
-   * transaction, and both park there — the interleaving `Promise.all` alone
-   * cannot force it. Held well inside the erasure's own 2s `lock_timeout`, so
-   * what the loser meets, once the holder releases, is the CAS and not
-   * `55P03`.
+   * `Student` row the erasure locks right after its `setLockTimeout`, before
+   * any other lock (`lockStudentForErasure`), so both requests authenticate
+   * against a live profile and both park at that lock before their
+   * transactions read or write anything — the interleaving `Promise.all`
+   * alone cannot force. Held well inside the erasure's own 2s
+   * `lock_timeout`: once the holder releases, one request erases, and the
+   * other, reading after that commit, meets the CAS and not `55P03`.
    */
   it('answers both halves of a concurrent erasure with success', async () => {
     const acc = await seedStudentOnly('concurrent');
@@ -792,10 +789,11 @@ describe('DELETE /api/account', () => {
     const both = Promise.all([del(), del()]);
 
     // 700ms, not the second the other race tests hold: `deleteStudentAccount`
-    // opens with `setLockTimeout`, so a request parked longer than 2s is
-    // cancelled with `55P03` and takes the 503 ERASURE_BUSY path instead of
-    // the CAS. The loser waits this hold PLUS the winner's remaining
-    // statements, so the margin is smaller than it looks.
+    // opens with `setLockTimeout`, so a request parked longer than 2s on one
+    // lock is cancelled with `55P03` and takes the 503 ERASURE_BUSY path
+    // instead of the CAS. The loser waits twice — behind this hold, then
+    // behind the winner's transaction — and `lock_timeout` bounds each of
+    // those acquisitions separately, so each wait has to end inside 2s.
     let settled = false;
     void both.then(() => { settled = true; });
     await new Promise((r) => setTimeout(r, 700));
@@ -850,8 +848,8 @@ describe('DELETE /api/account', () => {
    *
    * The session is resolved before the holder commits, so `session.studentId`
    * is truthy for a profile the holder erases while this request's own
-   * erasure is parked at its second statement, `lockStudentForErasure` — the
-   * holder's `FOR UPDATE` conflicts with it. Once the holder releases and
+   * erasure is parked at `lockStudentForErasure`, the lock it takes right
+   * after its `setLockTimeout` — the holder's `FOR UPDATE` conflicts with it. Once the holder releases and
    * commits, this request proceeds and its own closing CAS finds the row
    * already erased — exactly the state the concurrent case produces, without
    * needing two racers to land in the right order.
