@@ -10,3 +10,11 @@ SELECT 'passkeys without account', count(*) FROM "PasskeyCredential" pc
 SELECT 'duplicate emails across accounts', count(*) FROM (
   SELECT email FROM "Account" GROUP BY email HAVING count(*) > 1
 ) d;
+SELECT 'accounts with two live students' AS invariant, count(*) FROM (
+  SELECT "accountId" FROM "Student"
+   WHERE "accountId" IS NOT NULL AND "deletedAt" IS NULL
+   GROUP BY "accountId" HAVING count(*) > 1) t;
+SELECT 'accounts with two live teachers' AS invariant, count(*) FROM (
+  SELECT "accountId" FROM "Teacher"
+   WHERE "deletedAt" IS NULL
+   GROUP BY "accountId" HAVING count(*) > 1) t;

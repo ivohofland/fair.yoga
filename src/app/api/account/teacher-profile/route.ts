@@ -42,8 +42,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   // Only the `create` is inside: every branch of the catch below names a
-  // unique constraint on the teacher row, so a failure from the session mint
-  // that followed would be reported as a collision that never happened.
+  // unique constraint or partial unique index on the teacher row, so a
+  // failure from the session mint that followed would be reported as a
+  // collision that never happened.
   let teacher;
   try {
     teacher = await prisma.teacher.create({
@@ -89,7 +90,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       log.error(
         { err, rawTarget: err.meta?.target },
-        'teacher profile create hit a unique constraint that is neither the slug, the email nor the account key',
+        'teacher profile create hit a unique constraint that is neither the slug, the email nor the accountId column',
       );
       throw new Error('teacher profile create: unrecognised unique constraint');
     }

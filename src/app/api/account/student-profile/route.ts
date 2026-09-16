@@ -118,8 +118,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // double-tap), so the catch below answers it separately, with its own
   // message and a log line.
   // Only the `create` is inside: every branch of the catch below names a
-  // unique constraint on the student row, so a failure from the session mint
-  // that followed would be reported as a collision that never happened.
+  // unique constraint or partial unique index on the student row, so a
+  // failure from the session mint that followed would be reported as a
+  // collision that never happened.
   let student;
   try {
     student = await prisma.student.create({
