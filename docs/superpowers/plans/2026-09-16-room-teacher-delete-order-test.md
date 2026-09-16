@@ -129,6 +129,8 @@ describe('Room/TeacherRoom/Teacher delete order (Room_createdById_fkey)', () => 
 });
 ```
 
+> Superseded during review — see `tests/integration/room-teacher-delete-order.test.ts` for the shipped version (exception-safe `afterAll` cleanup, trimmed docblock).
+
 - [ ] **Step 2: Run the file once as written to confirm both cases pass**
 
 Run: `pnpm exec vitest run --project integration tests/integration/room-teacher-delete-order.test.ts`
