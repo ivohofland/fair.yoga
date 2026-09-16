@@ -520,7 +520,7 @@ async function revivePendingInvitation(
  */
 export async function notifyInvitee(
   db: PrismaClient,
-  input: { teacherId: string; email: string; teacherName: string },
+  input: { teacherId: string; email: string; teacherName: string; invitationId: string },
 ): Promise<void> {
   // Load-bearing for both reads below, `TeacherBlock` and `Student` alike:
   // both are plain, case-SENSITIVE `findUnique`s on columns that can only
@@ -710,6 +710,7 @@ export function deliverInvitation(
       teacherId: input.teacherId,
       email: input.email,
       teacherName: `${teacher.firstName} ${teacher.lastName}`,
+      invitationId: input.invitationId,
     });
   })().catch((err: unknown) => {
     log.error(

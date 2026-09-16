@@ -97,14 +97,20 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
   it('sends only the in-app notification for a registered invitee, never also the direct email', async () => {
     const email = `notify-double-send-${suffix}@test.local`;
     let studentId: string | undefined;
+    let invitationId: string | undefined;
     try {
       const student = await prisma.student.create({
         data: { firstName: 'Notify', lastName: 'DoubleSend', email },
         select: { id: true },
       });
       studentId = student.id;
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email, firstName: 'Notify', lastName: 'DoubleSend' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -116,6 +122,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       // `shouldEmailStudent` and their own `emailNotifications` preference.
       expect(sendMock).not.toHaveBeenCalled();
     } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       if (studentId) {
         await prisma.notification.deleteMany({ where: { recipientId: studentId } });
         await prisma.student.delete({ where: { id: studentId } });
@@ -128,12 +135,22 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     // double-send test's `not.toHaveBeenCalled()` would trivially pass if
     // this file's mock were simply never reached at all.
     const email = `notify-stranger-${suffix}@test.local`;
+    let invitationId: string | undefined;
+    try {
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email, firstName: 'Notify', lastName: 'Stranger' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
 
-    await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
-    const [args] = sendMock.mock.calls[0] as [{ to: string }];
-    expect(args.to).toBe(email);
+      expect(sendMock).toHaveBeenCalledTimes(1);
+      const [args] = sendMock.mock.calls[0] as [{ to: string }];
+      expect(args.to).toBe(email);
+    } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
+    }
   });
 
   it('rejects an un-normalised address rather than silently missing the block (#170)', async () => {
@@ -146,11 +163,26 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     // rejected loudly (`requireNormalised`, src/lib/schemas.ts) instead of
     // silently missing the block and mailing the exact person who set it.
     const email = `Notify-Blocked-${suffix}@Test.Local`;
+    let invitationId: string | undefined;
+    try {
+      // `Invitation.email` carries its own lowercase CHECK constraint
+      // (`Invitation_email_lowercase_check`), so the row uses the normalised
+      // form — the un-normalised address above is what's passed to
+      // `notifyInvitee`, and `requireNormalised` throws before `invitationId`
+      // is ever read, so which row it names doesn't affect this assertion.
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email: email.toLowerCase(), firstName: 'Notify', lastName: 'Blocked' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
 
-    await expect(
-      notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' }),
-    ).rejects.toThrow(/un-normalised/);
-    expect(sendMock).not.toHaveBeenCalled();
+      await expect(
+        notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id }),
+      ).rejects.toThrow(/un-normalised/);
+      expect(sendMock).not.toHaveBeenCalled();
+    } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
+    }
   });
 
   it('sends nothing at all for a blocked address', async () => {
@@ -164,6 +196,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     const email = `notify-blocked-${suffix}@test.local`;
     let studentId: string | undefined;
     let blockId: string | undefined;
+    let invitationId: string | undefined;
     try {
       const student = await prisma.student.create({
         data: { firstName: 'Notify', lastName: 'Blocked', email },
@@ -175,8 +208,13 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
         select: { id: true },
       });
       blockId = block.id;
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email, firstName: 'Notify', lastName: 'Blocked' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -184,6 +222,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       expect(notifications).toHaveLength(0);
       expect(sendMock).not.toHaveBeenCalled();
     } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       if (blockId) await prisma.teacherBlock.deleteMany({ where: { id: blockId } });
       if (studentId) {
         await prisma.notification.deleteMany({ where: { recipientId: studentId } });
@@ -201,6 +240,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     // sent to someone already connected.
     const email = `notify-linked-${suffix}@test.local`;
     let studentId: string | undefined;
+    let invitationId: string | undefined;
     try {
       const student = await prisma.student.create({
         data: {
@@ -210,8 +250,13 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
         select: { id: true },
       });
       studentId = student.id;
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email, firstName: 'Notify', lastName: 'Linked' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -222,6 +267,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       // a teacher they already have.
       expect(sendMock).not.toHaveBeenCalled();
     } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       if (studentId) {
         await prisma.teacherStudent.deleteMany({ where: { studentId } });
         await prisma.notification.deleteMany({ where: { recipientId: studentId } });
@@ -344,6 +390,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     // fallback below it.
     const email = `notify-archived-${suffix}@test.local`;
     let studentId: string | undefined;
+    let invitationId: string | undefined;
     try {
       const student = await prisma.student.create({
         data: {
@@ -353,8 +400,13 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
         select: { id: true },
       });
       studentId = student.id;
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email, firstName: 'Notify', lastName: 'Archived' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -362,6 +414,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       expect(notifications).toHaveLength(0);
       expect(sendMock).not.toHaveBeenCalled();
     } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       if (studentId) {
         await prisma.teacherStudent.deleteMany({ where: { studentId } });
         await prisma.notification.deleteMany({ where: { recipientId: studentId } });
@@ -381,6 +434,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     // error, no log.
     const email = `notify-other-teacher-linked-${suffix}@test.local`;
     let studentId: string | undefined;
+    let invitationId: string | undefined;
     try {
       const student = await prisma.student.create({
         data: {
@@ -390,8 +444,13 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
         select: { id: true },
       });
       studentId = student.id;
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email, firstName: 'Notify', lastName: 'OtherTeacherLinked' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
 
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -399,6 +458,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       expect(notifications).toHaveLength(1);
       expect(sendMock).not.toHaveBeenCalled();
     } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       if (studentId) {
         await prisma.teacherStudent.deleteMany({ where: { studentId } });
         await prisma.notification.deleteMany({ where: { recipientId: studentId } });
@@ -435,8 +495,15 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
 
   it('tells a teacher-only account in its teacher inbox, and sends no email (#172)', async () => {
     const invitee = await createTeacherOnlyInvitee('inbox');
+    let invitationId: string | undefined;
     try {
-      await notifyInvitee(prisma, { teacherId, email: invitee.email, teacherName: 'Some Teacher' });
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email: invitee.email, firstName: 'Notify', lastName: 'Inbox' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
+
+      await notifyInvitee(prisma, { teacherId, email: invitee.email, teacherName: 'Some Teacher', invitationId: invitation.id });
 
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'teacher', recipientId: invitee.teacherId, type: 'teacher_invitation' },
@@ -448,6 +515,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       }]);
       expect(sendMock).not.toHaveBeenCalled();
     } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       await removeTeacherOnlyInvitee(invitee);
     }
   });
@@ -470,8 +538,15 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       },
       select: { id: true },
     });
+    let invitationId: string | undefined;
     try {
-      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher' });
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email, firstName: 'Notify', lastName: 'BothProfiles' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
+
+      await notifyInvitee(prisma, { teacherId, email, teacherName: 'Some Teacher', invitationId: invitation.id });
 
       expect(await prisma.notification.count({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -481,6 +556,7 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       })).toBe(0);
       expect(sendMock).not.toHaveBeenCalled();
     } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       await prisma.notification.deleteMany({ where: { recipientId: { in: [student.id, teacher.id] } } });
       await prisma.student.delete({ where: { id: student.id } });
       await prisma.teacher.delete({ where: { id: teacher.id } });
@@ -496,14 +572,22 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
       data: { teacherId, email: invitee.email },
       select: { id: true },
     });
+    let invitationId: string | undefined;
     try {
-      await notifyInvitee(prisma, { teacherId, email: invitee.email, teacherName: 'Some Teacher' });
+      const invitation = await prisma.invitation.create({
+        data: { teacherId, email: invitee.email, firstName: 'Notify', lastName: 'Blocked' },
+        select: { id: true },
+      });
+      invitationId = invitation.id;
+
+      await notifyInvitee(prisma, { teacherId, email: invitee.email, teacherName: 'Some Teacher', invitationId: invitation.id });
 
       expect(await prisma.notification.count({
         where: { recipientType: 'teacher', recipientId: invitee.teacherId },
       })).toBe(0);
       expect(sendMock).not.toHaveBeenCalled();
     } finally {
+      if (invitationId) await prisma.invitation.deleteMany({ where: { id: invitationId } });
       await prisma.teacherBlock.delete({ where: { id: block.id } });
       await removeTeacherOnlyInvitee(invitee);
     }
