@@ -80,10 +80,9 @@ describe('liveProfile', () => {
     expect(liveProfile([{ id: 'only' }])).toEqual({ id: 'only' });
   });
 
-  // The partial unique index makes two live rows unreachable. This asserts
-  // what happens if it is ever absent: a loud throw, not an arbitrary pick.
-  // Two of the five call sites can be handed a tombstone by an arbitrary
-  // pick, which is why silence is the wrong default here.
+  // The point of the throw: a caller that took `[0]` would pick one of these
+  // silently. Asserting the message, not just that it threw, keeps this
+  // discriminating if the guard is ever loosened to a warning.
   it('throws rather than choosing between two live profiles', () => {
     expect(() => liveProfile([{ id: 'a' }, { id: 'b' }])).toThrow(
       /account holds 2 live profiles/,
@@ -106,16 +105,11 @@ Create `src/lib/live-profile.ts`:
 /**
  * The one live profile of a kind on an account, or null.
  *
- * `Account.teachers` and `Account.students` are lists because `accountId`'s
- * uniqueness is partial — see each model's own docblock in
- * `prisma/schema.prisma` for the index that enforces it. Prisma cannot
- * express a partial unique key, so it cannot type either relation as
- * at-most-one; callers select with `where: { deletedAt: null }`, which those
- * indexes make single-valued.
- *
- * The throw is what keeps the lost compile-time guarantee loud. Without an
- * index, a caller taking `[0]` picks arbitrarily and silently, and an
- * arbitrary pick can be a soft-deleted row.
+ * Callers pass a list already filtered to the live rows and take back the
+ * single element that filter is expected to leave. The throw is what keeps
+ * "expected" honest: taking `[0]` directly would pick an arbitrary row
+ * silently whenever that expectation broke, and a soft-deleted row is among
+ * what it could pick.
  */
 export function liveProfile<T>(rows: readonly T[]): T | null {
   if (rows.length > 1) {
@@ -479,9 +473,9 @@ Add `import { liveProfile } from '@/lib/live-profile';`. Replace lines 16-31 wit
 ```ts
   // The passkey belongs to the account; name it after whichever LIVE profile
   // exists (teacher first — the account email is the same either way). The
-  // `deletedAt` filters are not decoration: an erasure anonymises the row's
-  // name to "Deleted Teacher"/"Deleted Student", and this display name lands
-  // permanently in the viewer's own credential manager (#623).
+  // `deletedAt` filters are not decoration: an erased profile's name is
+  // anonymised, and this display name lands permanently in the viewer's own
+  // credential manager.
   const account = await prisma.account.findUnique({
     where: { id: session.accountId },
     select: {
