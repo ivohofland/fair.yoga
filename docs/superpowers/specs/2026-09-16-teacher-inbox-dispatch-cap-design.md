@@ -300,8 +300,8 @@ Against #622's acceptance criteria:
    them — the existing repeat tests for both stand unmodified.
 5. **No oracle.** Response status and body of a suppressed resend equal those
    of one that notified; the row's `lastNotifiedAt` still advances.
-6. **A failure re-opens the cap** — three cases, because mutation checks 3-5
-   each need one that the others do not cover:
+6. **A failure re-opens the cap** — four cases, because mutation checks 3-5
+   each need one the others do not cover, and check 5 has two directions:
    a. *Ordinary.* A teacher-branch insert that throws leaves the column clear,
       and the next resend notifies.
    b. *Outage.* The same, while `recordDispatchFailure` reports the failure
@@ -323,6 +323,13 @@ Against #622's acceptance criteria:
       it never reaches the `.catch` at all. The only dispatch that can reach
       the failure path beside another attempt's marker is one that never
       claimed.
+   d. *Claiming, with the row moved on.* The other direction of the same CAS:
+      a dispatch whose own claim succeeded and whose insert then threw clears
+      its marker even though a later resend has already advanced
+      `lastNotifiedAt` past the value it carries. Without this case, a
+      `lastNotifiedAt` clause re-added *beside* the `claimedAt` one — §4.2
+      case 1, the permanent-silence bug — passes every other test in this
+      list.
 7. **Both resets.** A readdress and a revive each restore notifiability.
 8. **Concurrency.** Two overlapping dispatches for one invitation produce
    exactly one notification.
@@ -342,11 +349,14 @@ Break each, record the exact failure text, restore, re-verify.
 4. Move the `.catch` clear below `recordDispatchFailure`'s `looksSystemic`
    early return: test 6's outage case fails while its ordinary case still
    passes.
-5. Replace the `.catch` clear's `claimedAt` CAS with the `lastNotifiedAt` one
+5. Two mutations, one per direction of the clear's CAS. Replace the
+   `claimedAt` CAS with the `lastNotifiedAt` one
    (`where: { id, lastNotifiedAt: dispatchedAt }`): test 6's non-claiming case
-   fails. Dropping the CAS clause altogether fails it too — an unscoped clear
-   wipes a marker this dispatch never wrote — which is why that case pins the
-   column the CAS is on, not merely that one exists.
+   (c) fails. Re-add `lastNotifiedAt: dispatchedAt` *beside* the `claimedAt`
+   clause: test 6's moved-on case (d) fails. Dropping the CAS clause
+   altogether fails (c) too — an unscoped clear wipes a marker this dispatch
+   never wrote — which is why (c) pins the column the CAS is on, not merely
+   that one exists.
 6. Drop the readdress reset: test 7's readdress case fails.
 7. Drop the revive reset: test 7's revive case fails.
 8. Move the claim after `createNotification`: test 8 fails.
@@ -356,9 +366,9 @@ Break each, record the exact failure text, restore, re-verify.
 
 Checks 3-5 must each fail for a reason the other two do not, or the two
 narrower ones certify nothing of their own — 3 removes the release valve, 4
-removes it only under a failure burst, 5 leaves it working for the dispatch
-that claimed and lets it reach across to a marker another attempt set. Test 6
-therefore needs three distinct cases, not one.
+removes it only under a failure burst, 5 mis-aims it — letting a dispatch
+reach across to a marker another attempt set, or refusing one its own attempt
+wrote. Test 6 therefore needs four distinct cases, not one.
 
 **Add a tenth, adversarial check.** Re-add `lastNotifyFailedAt: null` to the
 claim's `where` (§4.2's rejected form) and confirm the suite stays green. It
