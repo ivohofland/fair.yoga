@@ -112,6 +112,20 @@ describe('resolveOrClaimAccount', () => {
     await db.student.update({ where: { id: claimedStudentId }, data: { deletedAt: null } });
   });
 
+  it('does not resolve a soft-deleted teacher profile', async () => {
+    await db.teacher.update({
+      where: { id: teacherId },
+      data: { deletedAt: new Date() },
+    });
+
+    const resolved = await resolveOrClaimAccount(db, teacherEmail);
+
+    // The account resolves, but the erased profile does not come back.
+    expect(resolved).not.toBeNull();
+    expect(resolved!.teacherId).toBeNull();
+    await db.teacher.update({ where: { id: teacherId }, data: { deletedAt: null } });
+  });
+
   it('returns null for an unknown email', async () => {
     expect(await resolveOrClaimAccount(db, `nobody-${uniqueSuffix}@test.local`)).toBeNull();
   });
