@@ -13,6 +13,7 @@ import {
   writeRegistryLocked,
   writeRegistryLockedOrExplain,
   acquireLock,
+  ACQUIRE_LOCK_MAX_UNKNOWN_PASSES,
   releaseLock,
   isLockStale,
   isPidAlive,
@@ -484,11 +485,14 @@ describe('acquireLock / releaseLock staleness recovery', () => {
 
     // The first read genuinely observes the token-less lock. The very next
     // read of owner.json — whichever of acquireLock's internal checks makes
-    // it, since nothing here depends on that — lands as the real holder
-    // releases: it fails, and the directory is gone by the time anything
-    // reads again. That reproduces the #631 race (a sibling's mkdirSync
-    // landing before its owner.json write) without pinning which numbered
-    // call belongs to which internal check.
+    // it, since nothing here depends on that — fails for a reason unrelated
+    // to the holder actually changing: here, the whole directory disappears
+    // out from under the read (a release), so the read gets ENOENT. #631's
+    // real trigger was a sibling's mkdirSync landing before its own
+    // owner.json write — a different way to fail the same read (owner.json
+    // missing while the directory exists) — but both collide the same way:
+    // an unrelated read failure coerces to the same `null` as the original
+    // observation's genuine, token-less parse.
     const realReadFileSync = fs.readFileSync;
     let calls = 0;
     const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
@@ -509,8 +513,89 @@ describe('acquireLock / releaseLock staleness recovery', () => {
       const handle = acquireLock(lockDir, { retries: 1, delayMs: 1 });
       // The unreadable observation actually happened, and what came back is
       // a lock this call itself created — not one left over by a path that
-      // skipped consulting the previous holder entirely.
-      expect(calls).toBeGreaterThanOrEqual(2);
+      // skipped consulting the previous holder entirely. 3, not 2: the
+      // directory is gone by call 2, so call 3 (whichever check makes it)
+      // also fails, naturally rather than by the mock.
+      expect(calls).toBe(3);
+      expect(handle.pid).toBe(process.pid);
+      expect(readLockInfo(lockDir).info?.token).toBe(handle.token);
+      releaseLock(lockDir, handle.token);
+    } finally {
+      readSpy.mockRestore();
+    }
+  });
+
+  it('does not spuriously time out when the FIRST observation is unreadable rather than a later one (#631)', () => {
+    // Mirror of the test above: there, the LATER read fails against a
+    // genuinely-known first observation, pinning currentTokenKnown. Here,
+    // the FIRST read fails and a later one succeeds against the same
+    // legacy content — pinning observedTokenKnown instead. Without this
+    // test, forcing observedTokenKnown to `true` unconditionally (ignoring
+    // whether the first read actually succeeded) leaves the whole suite
+    // green: both known `null` tokens compare equal, so the "did the
+    // holder change" check reads "unchanged" and throws — #631 again, from
+    // the other side of the comparison.
+    fs.mkdirSync(lockDir);
+    const ownerPath = path.join(lockDir, 'owner.json');
+    fs.writeFileSync(ownerPath, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+
+    const realReadFileSync = fs.readFileSync;
+    let calls = 0;
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+      if (args[0] !== ownerPath) {
+        return realReadFileSync(...args);
+      }
+      calls++;
+      if (calls === 1) {
+        const err = new Error('ENOENT') as NodeJS.ErrnoException;
+        err.code = 'ENOENT';
+        throw err;
+      }
+      const result = realReadFileSync(...args);
+      if (calls === 3) {
+        fs.rmSync(lockDir, { recursive: true, force: true });
+      }
+      return result;
+    }) as typeof fs.readFileSync);
+
+    try {
+      const handle = acquireLock(lockDir, { retries: 1, delayMs: 1 });
+      expect(calls).toBe(3);
+      expect(handle.pid).toBe(process.pid);
+      expect(readLockInfo(lockDir).info?.token).toBe(handle.token);
+      releaseLock(lockDir, handle.token);
+    } finally {
+      readSpy.mockRestore();
+    }
+  });
+
+  it('does not spuriously time out when owner.json is corrupted rather than genuinely unchanged (#631)', () => {
+    // Same collision as the test above, but readLockInfo's `info: null`
+    // comes from parseLockInfo rejecting unparseable content (no fs error
+    // at all) rather than a failed read — the fix must not care which.
+    fs.mkdirSync(lockDir);
+    const ownerPath = path.join(lockDir, 'owner.json');
+    fs.writeFileSync(ownerPath, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+
+    const realReadFileSync = fs.readFileSync;
+    let calls = 0;
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+      if (args[0] !== ownerPath) {
+        return realReadFileSync(...args);
+      }
+      calls++;
+      if (calls === 2) {
+        fs.rmSync(lockDir, { recursive: true, force: true });
+        return 'not valid json{{{';
+      }
+      return realReadFileSync(...args);
+    }) as typeof fs.readFileSync);
+
+    try {
+      const handle = acquireLock(lockDir, { retries: 1, delayMs: 1 });
+      // 3, not 2: the directory is gone by call 2, so call 3 (whichever
+      // check makes it) also fails, naturally rather than by the mock.
+      expect(calls).toBe(3);
       expect(handle.pid).toBe(process.pid);
       expect(readLockInfo(lockDir).info?.token).toBe(handle.token);
       releaseLock(lockDir, handle.token);
@@ -523,17 +608,28 @@ describe('acquireLock / releaseLock staleness recovery', () => {
     // A live, non-stale holder whose owner.json permission-denies every
     // read: isLockStale's own age fallback never fires (the directory stays
     // fresh), so the only thing that can end the wait is the unknown-read
-    // bound — proves tolerating a transient unreadable read (previous test)
-    // does not turn into waiting on a permanently unreadable one forever.
+    // bound — proves tolerating a transient unreadable read (the "does not
+    // spuriously time out" tests above) does not turn into waiting on a
+    // permanently unreadable one forever. Also pins the bound at exactly
+    // ACQUIRE_LOCK_MAX_UNKNOWN_PASSES: every pass makes two owner.json reads
+    // (isLockStale's own, then the holder-changed check's), plus one more
+    // for the initial observation, so throwing at N passes costs exactly
+    // 1 + 2*N reads — an off-by-one in the bound changes that count.
+    //
+    // acquireLock's own wait is a synchronous Atomics.wait spin, which
+    // vitest's testTimeout cannot interrupt — if the bound itself regresses
+    // to unbounded, this test doesn't fail, it hangs the whole run.
     fs.mkdirSync(lockDir);
     const ownerPath = path.join(lockDir, 'owner.json');
     fs.writeFileSync(ownerPath, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
 
     const realReadFileSync = fs.readFileSync;
+    let calls = 0;
     const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
       if (args[0] !== ownerPath) {
         return realReadFileSync(...args);
       }
+      calls++;
       const err = new Error('EACCES') as NodeJS.ErrnoException;
       err.code = 'EACCES';
       throw err;
@@ -543,8 +639,113 @@ describe('acquireLock / releaseLock staleness recovery', () => {
       expect(() => acquireLock(lockDir, { retries: 1, delayMs: 1, staleMs: 60_000 })).toThrow(
         /lock info stayed unreadable/,
       );
+      expect(calls).toBe(1 + 2 * ACQUIRE_LOCK_MAX_UNKNOWN_PASSES);
     } finally {
       readSpy.mockRestore();
+    }
+  });
+
+  it('resets the unreadable-pass budget on any successful read, not just a reclaim', () => {
+    // A live, non-stale, never-reclaimable holder (so the only reset path
+    // available is the ordinary "a known read clears the count" one the
+    // reclaim-path test above deliberately avoids). Two holder-changed
+    // reads fail, building the count to 2 — one short of the bound — then
+    // a read succeeds while the *original* observation is still unknown
+    // (never having succeeded itself), so the comparison still takes the
+    // "unknown" branch and consults the count: a carried-over 2+1 hits the
+    // bound right there; a correctly-reset 0 does not.
+    fs.mkdirSync(lockDir);
+    const ownerPath = path.join(lockDir, 'owner.json');
+    fs.writeFileSync(ownerPath, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+
+    const realReadFileSync = fs.readFileSync;
+    let calls = 0;
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+      if (args[0] !== ownerPath) {
+        return realReadFileSync(...args);
+      }
+      calls++;
+      if (calls <= 6) {
+        const err = new Error('EACCES') as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }
+      const result = realReadFileSync(...args);
+      if (calls === 7) {
+        fs.rmSync(lockDir, { recursive: true, force: true });
+      }
+      return result;
+    }) as typeof fs.readFileSync);
+
+    try {
+      const handle = acquireLock(lockDir, { retries: 1, delayMs: 1, staleMs: 60_000 });
+      expect(calls).toBe(7);
+      expect(handle.pid).toBe(process.pid);
+      expect(readLockInfo(lockDir).info?.token).toBe(handle.token);
+      releaseLock(lockDir, handle.token);
+    } finally {
+      readSpy.mockRestore();
+    }
+  });
+
+  it('resets the unreadable-pass budget when a stale lock is reclaimed', () => {
+    // Three unreadable reads accumulate against a fresh, non-stale dead-pid
+    // lock (its own age fallback holds off staleness while unreadable, the
+    // same as the test above). The fourth read finally succeeds and reveals
+    // the dead pid — which makes isLockStale's own read (always the first
+    // of a pass) trigger an immediate reclaim, before the holder-changed
+    // check ever runs that same pass. So only the reclaim branch's own
+    // reset — not the ordinary "a known read clears the count" case the
+    // tests above exercise — can be what clears the 3 already accumulated.
+    // A sibling wins the race to recreate the slot right after the reclaim
+    // (never itself becoming readable, so nothing here depends on which
+    // internal check does the reading) and stays unreadable forever after
+    // — reaching the bound against it costs a full fresh budget only if
+    // the reset actually happened.
+    fs.mkdirSync(lockDir);
+    const ownerPath = path.join(lockDir, 'owner.json');
+    fs.writeFileSync(ownerPath, JSON.stringify({ pid: 2147483647, createdAt: Date.now() }));
+
+    const realReadFileSync = fs.readFileSync;
+    let calls = 0;
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+      if (args[0] !== ownerPath) {
+        return realReadFileSync(...args);
+      }
+      calls++;
+      if (calls <= 3) {
+        const err = new Error('EACCES') as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }
+      return realReadFileSync(...args);
+    }) as typeof fs.readFileSync);
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const realRenameSync = fs.renameSync;
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementationOnce((...args) => {
+      realRenameSync(...(args as Parameters<typeof fs.renameSync>));
+      fs.mkdirSync(lockDir);
+    });
+
+    try {
+      expect(() => acquireLock(lockDir, { retries: 1, delayMs: 1, staleMs: 60_000 })).toThrow(
+        /lock info stayed unreadable/,
+      );
+      // 3 forced-unreadable reads, then the revealing read that triggers
+      // the reclaim (4 total) — the reclaim also resets observedToken to
+      // undefined, so the very next pass re-observes from scratch and costs
+      // 3 reads (mirroring the first pass, before this one), and every pass
+      // after that costs 2 — until ACQUIRE_LOCK_MAX_UNKNOWN_PASSES of them
+      // have run. A carried-over count would reach the bound sooner than
+      // this — verified by mutation: deleting the reclaim branch's own
+      // `unknownPasses = 0` drops this count, without failing any other
+      // test in this file.
+      expect(calls).toBe(4 + 3 + 2 * (ACQUIRE_LOCK_MAX_UNKNOWN_PASSES - 1));
+    } finally {
+      readSpy.mockRestore();
+      renameSpy.mockRestore();
+      warnSpy.mockRestore();
     }
   });
 
