@@ -26,10 +26,14 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    '/schedule/:path*',
+    '/studio-class/:path*',
     '/students/:path*',
     '/inbox/:path*',
     '/settings/:path*',
     '/class/:path*',
     '/bookings/:path*',
+    '/account/:path*',
+    '/updates/:path*',
   ],
 };

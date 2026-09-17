@@ -33,6 +33,45 @@ describe('proxy', () => {
       const location = response.headers.get('location');
       expect(location).toBe('http://localhost:3000/login?redirect=%2Fstudents%2Fstu-1%3Ftab%3Dnotes%26filter%3Dactive');
     });
+    it('redirects unauthenticated request on /schedule to login with redirect param', () => {
+      const request = makeRequest('/schedule');
+      const response = proxy(request);
+
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toBe('http://localhost:3000/login?redirect=%2Fschedule');
+    });
+
+    it('redirects unauthenticated request on /studio-class/sc-1 to login with redirect param', () => {
+      const request = makeRequest('/studio-class/sc-1');
+      const response = proxy(request);
+
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toBe('http://localhost:3000/login?redirect=%2Fstudio-class%2Fsc-1');
+    });
+
+    it('redirects unauthenticated request on /account/privacy to login with redirect param', () => {
+      const request = makeRequest('/account/privacy');
+      const response = proxy(request);
+
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toBe('http://localhost:3000/login?redirect=%2Faccount%2Fprivacy');
+    });
+
+    it('redirects unauthenticated request on /updates to login with redirect param', () => {
+      const request = makeRequest('/updates');
+      const response = proxy(request);
+
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toBe('http://localhost:3000/login?redirect=%2Fupdates');
+    });
+
+    it('preserves query parameters on newly protected routes', () => {
+      const request = makeRequest('/account/privacy?tab=invitations');
+      const response = proxy(request);
+
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toBe('http://localhost:3000/login?redirect=%2Faccount%2Fprivacy%3Ftab%3Dinvitations');
+    });
   });
 
   describe('authenticated requests', () => {
@@ -62,13 +101,17 @@ describe('proxy', () => {
   });
 
   describe('config matcher', () => {
-    it('matches the 5 protected route prefixes', () => {
+    it('matches the 9 protected route prefixes', () => {
       expect(config.matcher).toEqual([
+        '/schedule/:path*',
+        '/studio-class/:path*',
         '/students/:path*',
         '/inbox/:path*',
         '/settings/:path*',
         '/class/:path*',
         '/bookings/:path*',
+        '/account/:path*',
+        '/updates/:path*',
       ]);
     });
   });
