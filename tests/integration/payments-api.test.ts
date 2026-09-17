@@ -688,8 +688,8 @@ describe('POST /api/payments/[id]/not-charged', () => {
     const res = await notCharged(teacherToken, paymentId);
     const data = (await expectApplied(res)) as Record<string, unknown>;
     expect(data.status).toBe('not_charged');
-    // The key-allowlist assertion: it denies every key not on
-    // `PAYMENT_ROW_KEYS`, which is how this repo catches a widened `select`.
+    // Denies every key not on `PAYMENT_ROW_KEYS`, so a widened `select` here
+    // fails this assertion.
     expect(Object.keys(data).sort()).toEqual(PAYMENT_ROW_KEYS);
 
     const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
