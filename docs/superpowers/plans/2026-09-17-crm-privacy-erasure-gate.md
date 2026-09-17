@@ -80,8 +80,10 @@ Then append this whole block at the end of the file (after the final `});` on th
 /**
  * How long a paused racer may take to report it is in place, before a test
  * fails naming the statement that never arrived — the bare `await` this
- * replaces could hang until vitest's own 30s test timeout instead, which
- * names the `it`, not the missing handshake.
+ * replaces could hang until the test's own timeout instead (vitest's
+ * default is 5000ms, per `tests/integration/teacher-rooms-api.test.ts` and
+ * this project's other timeout comments), which names the `it`, not the
+ * missing handshake.
  */
 const HANDSHAKE_TIMEOUT_MS = 2_000;
 
