@@ -1037,6 +1037,68 @@ describe('acquireLock / releaseLock staleness recovery', () => {
     }
   });
 
+  it('a benign race interleaved with genuine failures does not reset the count — only skips it (#638)', () => {
+    // Same fixture as the previous test: unreadable owner.json (EACCES) +
+    // backdated mtime so isLockStale's age fallback reports stale on every
+    // pass. This time, fs.renameSync throws an *interleaved* sequence:
+    // EPERM(1), EPERM(2), ENOENT, EPERM(3) — 4 calls total. If the benign
+    // branch *reset* the counter instead of just skipping the increment, the
+    // ENOENT would reset failedReclaimAttempts to 0, requiring 3 more EPERM
+    // calls (6 total) to trip the bound. But if it only skips (doesn't
+    // increment), the ENOENT call leaves failedReclaimAttempts at 2, so the
+    // next EPERM increments it to 3 and trips the bound on call 4.
+    fs.mkdirSync(lockDir);
+    const ownerPath = path.join(lockDir, 'owner.json');
+    fs.writeFileSync(ownerPath, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+    const oldTime = new Date(Date.now() - 100_000);
+    fs.utimesSync(lockDir, oldTime, oldTime);
+
+    const realReadFileSync = fs.readFileSync;
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+      if (args[0] !== ownerPath) {
+        return realReadFileSync(...args);
+      }
+      const err = new Error('EACCES') as NodeJS.ErrnoException;
+      err.code = 'EACCES';
+      throw err;
+    }) as typeof fs.readFileSync);
+
+    let renameCalls = 0;
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      renameCalls += 1;
+      let code: string;
+      // Interleaved: EPERM(1), EPERM(2), ENOENT, EPERM(3)
+      if (renameCalls === 1 || renameCalls === 2 || renameCalls === 4) {
+        code = 'EPERM';
+      } else if (renameCalls === 3) {
+        code = 'ENOENT';
+      } else {
+        code = 'EPERM';
+      }
+      const err = new Error(code) as NodeJS.ErrnoException;
+      err.code = code;
+      throw err;
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      expect(() => acquireLock(lockDir, { retries: 1, delayMs: 1, staleMs: 60_000 })).toThrow(
+        /the rename kept failing.*EPERM/,
+      );
+      // 4 total calls: EPERM(1) EPERM(2) ENOENT(uncounted, still 2) EPERM(3) →
+      // trips at 4. If the benign call reset the counter, we'd need 6 calls
+      // total (2 + reset-to-0 + 3 more). A bound mutation to `failedReclaimAttempts = 0`
+      // in the benign branch would fail this assertion by allowing 6+ calls.
+      expect(renameSpy).toHaveBeenCalledTimes(4);
+      expect(fs.existsSync(lockDir)).toBe(true);
+    } finally {
+      readSpy.mockRestore();
+      renameSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
   it('releaseLock does not delete lock directory if token or pid does not match', () => {
     fs.mkdirSync(lockDir);
     fs.writeFileSync(
