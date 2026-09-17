@@ -232,8 +232,9 @@ describe('POST /api/classes/[id]/complete against a transaction holding the clas
 
   /**
    * A template archive hard-deletes future live classes, so a class can vanish
-   * between the route's read and the service's locked one. That used to be a
-   * 409 carrying "Class not found".
+   * between the route's read and the service's locked one. The answer is
+   * `NOT_FOUND` at 404, decided from the locked read: the route's own read
+   * found the class, and only the service can see that it since went.
    */
   it('answers NOT_FOUND when the class is deleted while the completion waits on it', async () => {
     const cls = await makeClass();

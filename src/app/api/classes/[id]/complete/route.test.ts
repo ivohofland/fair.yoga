@@ -72,7 +72,8 @@ describe('POST /api/classes/[id]/complete — each service result', () => {
     await expectRefusal(res, 'ILLEGAL_TRANSITION');
   });
 
-  // NOT_FOUND was a 409 before: the route sent every refusal at one status.
+  // Each at the status its own code is registered at, which `expectRefusal`
+  // reads from the registry: `NOT_FOUND` is the 404 among them.
   it.each([
     ['NOT_FOUND', 'NOT_FOUND'],
     ['CANCELLED', 'CLASS_CANCELLED'],
