@@ -8,6 +8,7 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
+import type { ApiErrorCode } from '@/lib/api-error-codes';
 import { transitionClass, type TransitionFailureReason } from '@/services/class-lifecycle';
 import { transitionClassSchema } from '@/lib/schemas';
 
@@ -47,7 +48,7 @@ import { transitionClassSchema } from '@/lib/schemas';
  */
 const TRANSITION_FAILURE_RESPONSE: Record<
   TransitionFailureReason,
-  { httpStatus: number; code: string }
+  { httpStatus: 404 | 409; code: ApiErrorCode }
 > = {
   NOT_FOUND: { httpStatus: 404, code: 'NOT_FOUND' },
   ILLEGAL_TRANSITION: { httpStatus: 409, code: 'ILLEGAL_TRANSITION' },

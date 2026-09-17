@@ -1,41 +1,47 @@
-/**
- * Extracts the server's error message from a failed API response.
- * API errors arrive as `{ error: string }` or `{ error: { message } }`;
- * anything unparseable falls back to the caller's generic copy — the
- * user should see *why* it failed whenever the server said so.
- */
-export async function readErrorMessage(res: Response, fallback: string): Promise<string> {
-  try {
-    const json = (await res.json()) as { error?: { message?: string } | string };
-    const message = typeof json.error === 'string' ? json.error : json.error?.message;
-    return message ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
+import { isApiErrorCode, type ApiErrorCode } from './api-error-codes';
 
 /**
- * Both halves of a failed response in one read: the server's `code`
- * discriminator and the message to show. A body can be read only once, so a
- * caller that must branch on the code AND display the message gets them
- * together rather than calling two helpers.
+ * Both halves of a failed response in one read: the server's `code` and the
+ * message to show. A body can be read only once, so a caller that must branch
+ * on the code AND display the message gets them together.
  *
- * `code` is `undefined` when the server did not name the case —
- * `classifyApiError` omits it for anything it did not classify deliberately,
- * including a unique-constraint violation that escaped a route's own catch.
- * A caller treating one outcome as success must therefore compare against the
- * code, never the status: two responses can share a status and mean opposite
- * things.
+ * `code` is `undefined` when the server named no case or named one the
+ * registry does not know — a caller treating one outcome as success compares
+ * against the code, never the status, because two responses can share a
+ * status and mean opposite things.
+ *
+ * A body that is not JSON — a proxy's HTML error page, a truncated response —
+ * answers the caller's fallback, and is logged with its status and URL first:
+ * otherwise nothing, client or server, records which failure the user saw.
  */
 export async function readError(
   res: Response,
   fallback: string,
-): Promise<{ code?: string; message: string }> {
+): Promise<{ code?: ApiErrorCode; message: string }> {
+  let json: unknown;
   try {
-    const json = (await res.json()) as { error?: { code?: string; message?: string } | string };
-    if (typeof json.error === 'string') return { message: json.error || fallback };
-    return { code: json.error?.code, message: json.error?.message ?? fallback };
-  } catch {
+    json = await res.json();
+  } catch (err) {
+    console.error('API error response body could not be read', {
+      status: res.status,
+      url: res.url,
+      err,
+    });
     return { message: fallback };
   }
+
+  const error = typeof json === 'object' && json !== null ? (json as { error?: unknown }).error : undefined;
+  if (typeof error === 'string') return { message: error || fallback };
+  if (typeof error !== 'object' || error === null) return { message: fallback };
+
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  return {
+    code: isApiErrorCode(code) ? code : undefined,
+    message: typeof message === 'string' && message !== '' ? message : fallback,
+  };
+}
+
+/** The message half of `readError`, for a caller that branches on nothing. */
+export async function readErrorMessage(res: Response, fallback: string): Promise<string> {
+  return (await readError(res, fallback)).message;
 }
