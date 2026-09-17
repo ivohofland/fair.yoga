@@ -1946,4 +1946,59 @@ describe('acceptInvitation and unlinkTeacher take the Student gate (#626)', () =
       await cleanupGateFixture(fx);
     }
   }, 20_000);
+
+  it('refuses unlinkTeacher for an erased student even when a stray TeacherStudent link survives', async () => {
+    const fx = await makeGateFixture();
+    try {
+      await deleteStudentAccount(prisma, fx.studentId);
+      // A link that outlived the erasure, as an ungated writer or a
+      // pre-existing row could leave (`docs/lock-order.md`, "Who is not
+      // gated yet").
+      await prisma.teacherStudent.create({ data: { teacherId: fx.teacherId, studentId: fx.studentId } });
+
+      const result = await unlinkTeacher(prisma, {
+        teacherId: fx.teacherId, studentId: fx.studentId, accountEmail: fx.email,
+      });
+
+      expect(result).toEqual({ ok: false, reason: 'STUDENT_ERASED' });
+      expect(
+        await prisma.teacherStudent.count({ where: { teacherId: fx.teacherId, studentId: fx.studentId } }),
+      ).toBe(1);
+      expect(await prisma.teacherBlock.count({ where: { teacherId: fx.teacherId } })).toBe(0);
+    } finally {
+      await cleanupGateFixture(fx);
+    }
+  }, 15_000);
+
+  it('refuses unlinkTeacher for a student erased mid-transaction, and leaves the link untouched', async () => {
+    const fx = await makeGateFixture();
+    try {
+      await prisma.teacherStudent.create({ data: { teacherId: fx.teacherId, studentId: fx.studentId } });
+      await prisma.studentPrivacy.create({
+        data: { studentId: fx.studentId, teacherId: fx.teacherId, shareFullName: true },
+      });
+
+      const erasure = pauseErasureAtGate(fx.studentId);
+      const erasing = deleteStudentAccount(prisma, fx.studentId).then(
+        () => 'erased' as const,
+        (err: unknown) => ({ error: String(err) }),
+      );
+      let unlinking: Promise<unknown> | undefined;
+      try {
+        await awaitHandshake(erasure.reached, 'erasure Student lock');
+        unlinking = unlinkTeacher(prisma, {
+          teacherId: fx.teacherId, studentId: fx.studentId, accountEmail: fx.email,
+        });
+        await waitUntilBlockedBy(erasure.pid());
+      } finally {
+        erasure.release();
+        await Promise.all([erasing, unlinking]);
+      }
+
+      expect(await erasing).toBe('erased');
+      expect(await unlinking).toEqual({ ok: false, reason: 'STUDENT_ERASED' });
+    } finally {
+      await cleanupGateFixture(fx);
+    }
+  }, 20_000);
 });

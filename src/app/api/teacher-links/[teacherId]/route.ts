@@ -42,7 +42,12 @@ export const DELETE = withErrorHandler(async (
   const result = await unlinkTeacher(prisma, {
     teacherId, studentId: session.studentId, accountEmail: account.email,
   });
-  if (!result.ok) return respondError('Teacher link not found', 404);
+  if (!result.ok) {
+    if (result.reason === 'STUDENT_ERASED') {
+      return respondError('This account has been deleted', 409);
+    }
+    return respondError('Teacher link not found', 404);
+  }
 
   return respondOk({ teacherId });
 });

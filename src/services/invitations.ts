@@ -1464,7 +1464,7 @@ const SILENCED_PRIVACY = {
 export async function unlinkTeacher(
   db: PrismaClient,
   input: { teacherId: string; studentId: string; accountEmail: string },
-): Promise<{ ok: true } | { ok: false; reason: 'NOT_LINKED' }> {
+): Promise<{ ok: true } | { ok: false; reason: 'NOT_LINKED' | 'STUDENT_ERASED' }> {
   const link = await db.teacherStudent.findUnique({
     where: {
       teacherId_studentId: { teacherId: input.teacherId, studentId: input.studentId },
@@ -1490,6 +1490,15 @@ export async function unlinkTeacher(
   const email = requireNormalised(input.accountEmail);
 
   const unlinked = await db.$transaction(async (tx) => {
+    // The Student gate (#183, #626): this transaction's first lock, before
+    // `withdrawWaitingEntriesForTeacher`'s `Class` locks below and before the
+    // `StudentPrivacy` upsert further down — a child-row insert that takes
+    // `FOR KEY SHARE` on the student and would otherwise wait on a
+    // `Student` row the erasure has already committed past. Who holds the
+    // other half, and why this mode and order: `docs/lock-order.md`, "The
+    // `Student` row is the erasure's gate".
+    await lockLiveStudent(tx, input.studentId);
+
     // FIRST, before any write below. A `waiting` entry for one of this
     // teacher's classes is a standing request the student is walking away
     // from along with the link — left in place, it hands the teacher a lever
@@ -1599,8 +1608,15 @@ export async function unlinkTeacher(
       update: {},
       create: { teacherId: input.teacherId, email },
     });
-    return true;
+    return true as const;
   }).catch((err: unknown) => {
+    // The Student gate refusing (#626): a `TeacherStudent` row can survive
+    // an erasure that missed it — an ungated writer, or a row created before
+    // this gate existed — and this refuses writing onto it rather than
+    // silencing shares nobody can read and blocking an address whose
+    // `Student` row is gone.
+    if (err instanceof StudentErasedError) return 'STUDENT_ERASED' as const;
+
     // A concurrent erasure deleted the link out from under this transaction.
     // `NOT_LINKED` is what `DELETE /api/teacher-links/[teacherId]` turns into
     // a 404, which is the same answer the caller would have got a moment
@@ -1614,9 +1630,9 @@ export async function unlinkTeacher(
     // transaction and rolls back the withdrawal and the privacy write with
     // it — this catch is outside `$transaction`, so all it does is translate
     // an outcome that has already happened.
-    if (isRecordNotFound(err)) return false;
+    if (isRecordNotFound(err)) return 'NOT_LINKED' as const;
     throw err;
   });
-  if (!unlinked) return { ok: false, reason: 'NOT_LINKED' };
+  if (unlinked !== true) return { ok: false, reason: unlinked };
   return { ok: true };
 }
