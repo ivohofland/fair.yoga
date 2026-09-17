@@ -170,8 +170,9 @@ export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
 /**
  * Why a transition was refused, as a value rather than as prose.
  *
- * `error` alongside it stays free text for humans — a 409 body, a log line. The
- * split matters: those two have opposite change pressures. User-facing copy
+ * `error` alongside it stays free text for a log line; a caller words its own
+ * answer from `reason`. The split matters: the two have opposite change
+ * pressures. User-facing copy
  * wants to be rewritten (and, per CLAUDE.md's "international from day one",
  * eventually translated); something another module branches on must never
  * change silently. Before this existed, `autoCompleteClasses` told the
@@ -185,10 +186,8 @@ export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
  * Both `transitionClass` and `completeClass` declare `TransitionDbResult`, so
  * each sees a type wider than its own range. Enumerated in full, because an
  * earlier revision named only `NOT_ENDED_YET` and `STARTS_IN_PAST` and called
- * them "the mirror" — a tidy symmetry that miscounts. The split is 2 shared /
- * 3 `transitionClass`-only / 1 `completeClass`-only, not 1/1 — named by axis
- * because the bullets below do not run in that order, and "2/3/1" over them
- * reads as a mismatch:
+ * them "the mirror" — a tidy symmetry that does not hold. Named by axis
+ * instead:
  *
  * - SHARED: `NOT_FOUND`, `ILLEGAL_TRANSITION` — both functions call
  *   `validateTransition`, `transitionClass` in the diagnostic read after a
@@ -201,10 +200,9 @@ export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
  *   for a `draft -> open` publish), and `ROOM_ARCHIVED` (issue 76, also only
  *   for a `draft -> open` publish).
  *
- * The looseness predates #249 and no member added since introduces it.
- * `POST /api/classes/[id]/transition` handles the full union anyway via an
- * exhaustive `Record`, so the widening costs a table row rather than a wrong
- * answer.
+ * The looseness predates #249 and no member added since introduces it. A
+ * caller that handles the full union pays a table row for the widening, not a
+ * wrong answer.
  */
 export type TransitionFailureReason =
   | 'NOT_FOUND'
@@ -215,9 +213,21 @@ export type TransitionFailureReason =
   | 'ROOM_ARCHIVED'
   | 'CANCELLED';
 
-export type TransitionResult =
-  | { ok: true }
-  | { ok: false; reason: 'ILLEGAL_TRANSITION'; error: string };
+/**
+ * `validateTransition`'s refusal. `from` is the status the decision was made
+ * from and `to` the one asked for, so a caller can word the refusal per pair
+ * and can tell a request for the status a class already holds from a move the
+ * state machine forbids.
+ */
+export type IllegalTransition = {
+  ok: false;
+  reason: 'ILLEGAL_TRANSITION';
+  error: string;
+  from: ClassStatus;
+  to: ClassStatus;
+};
+
+export type TransitionResult = { ok: true } | IllegalTransition;
 
 // ---------------------------------------------------------------------------
 // Functions
@@ -232,8 +242,8 @@ export function canTransition(from: ClassStatus, to: ClassStatus): boolean {
 }
 
 /**
- * Validate a state transition, returning a typed result.
- * On failure, the error message describes the invalid transition.
+ * Validate a state transition, returning a typed result. A refusal carries the
+ * pair it refused; `error` describes it for a log line.
  */
 export function validateTransition(
   from: ClassStatus,
@@ -246,6 +256,8 @@ export function validateTransition(
     ok: false,
     reason: 'ILLEGAL_TRANSITION',
     error: `Invalid transition: cannot move from "${from}" to "${to}". Valid transitions from "${from}": [${VALID_TRANSITIONS[from].join(', ')}]`,
+    from,
+    to,
   };
 }
 
@@ -291,16 +303,16 @@ export function isEconomicFieldLocked(settingsLocked: boolean): boolean {
  *
  * A caller that switches on `reason` now gets the narrow union, so a branch for
  * a reason its callee never returns is a compile error rather than dead code.
- * `POST /api/classes/[id]/transition` deliberately keeps handling the full
- * union in one exhaustive `Record`: a route table that narrowed with its callee
- * would need editing every time a service's range changed, which is churn for
- * no safety.
+ *
+ * `ILLEGAL_TRANSITION` is its own arm, `IllegalTransition`, because it alone
+ * carries the pair it refused. It exists only where `R` names it.
  */
 export type TransitionDbResult<
   R extends TransitionFailureReason = TransitionFailureReason,
 > =
   | { ok: true; newStatus: ClassStatus }
-  | { ok: false; reason: R; error: string };
+  | { ok: false; reason: Exclude<R, 'ILLEGAL_TRANSITION'>; error: string }
+  | ('ILLEGAL_TRANSITION' extends R ? IllegalTransition : never);
 
 /**
  * The one sentence a teacher reads for `ROOM_ARCHIVED`, whichever of
@@ -309,9 +321,13 @@ export type TransitionDbResult<
  * the CAS below when `Class_live_needs_open_room` closes the window between
  * that read and the write (#339). A teacher who lost that race and a teacher
  * who never had it need the same thing done, so both sites share this
- * constant rather than each spelling the string out.
+ * constant. Exported so the route answering the refusal sends this text
+ * rather than a copy of it.
  */
-const ROOM_ARCHIVED_MESSAGE = 'This room is archived. Unarchive it to publish classes here.';
+export const ROOM_ARCHIVED_MESSAGE = 'This room is archived. Unarchive it to publish classes here.';
+
+/** The sentence a teacher reads for `STARTS_IN_PAST`, exported for the same reason. */
+export const STARTS_IN_PAST_MESSAGE = "This class's start time has already passed, so it can't be published.";
 
 /**
  * Transition a class to a new status in the database.
@@ -493,13 +509,7 @@ export async function transitionClass(
       return {
         ok: false,
         reason: 'STARTS_IN_PAST',
-        // Prose, because this string is the whole of what the teacher sees:
-        // `transition/route.ts` returns it as the 409 body and `PublishClassButton`
-        // renders it, and this route logs nothing, so there is no diagnostic use
-        // to preserve. The instant it used to carry was rendered in UTC — a time
-        // the teacher never sees anywhere else in the app, from a guard whose
-        // entire point is reading the start in `Teacher.defaultTimezone`.
-        error: 'Cannot publish a class whose start time has already passed.',
+        error: STARTS_IN_PAST_MESSAGE,
       };
     }
   }

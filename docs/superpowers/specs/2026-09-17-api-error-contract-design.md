@@ -401,6 +401,8 @@ a refusal (§5.2).
 | complete | `Class not found: ${classId}` (sent as **409**) | This class no longer exists. | **404** · `NOT_FOUND` |
 | cancel | `This class is already cancelled.` | → unchanged | — |
 | cancel | `Cannot cancel a class with status "${status}"` | `in_progress`: This class has already started, so it can't be cancelled. · `completed`: This class has already finished, so it can't be cancelled. | 409 · `CLASS_NOT_CANCELLABLE` |
+| cancel | the same template, `draft` / `open` — the CAS missed for neither of the reasons above, so the re-read contradicts itself | This class can't be cancelled right now. Refresh and try again. | 409 · `CLASS_NOT_CANCELLABLE` |
+| transition, complete | `Class ${classId} has not ended yet` | This class hasn't finished yet. | 409 · `CLASS_NOT_ENDED_YET` |
 | cancel | `Class not found` (404, service re-read) | This class no longer exists. | 404 · `NOT_FOUND` |
 | `PUT /api/classes/[id]` | `Cannot update economic fields when settings are locked: ${fields}` | Prices and capacity are locked once the first student books. | 409 · `SETTINGS_LOCKED` |
 | `PUT /api/classes/[id]` | `Cannot edit a class that is ${state}` | `completed`: This class has finished and can no longer be changed. · cancelled: This class has been cancelled and can no longer be changed. | 409 · `CLASS_TERMINAL` |
