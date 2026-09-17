@@ -12,7 +12,7 @@ import {
   studentVisibilitySelect,
   type TeacherVisibleStudent,
 } from '@/lib/student-visibility';
-import { OUTSTANDING_STATUSES } from '@/lib/payment-status';
+import { OUTSTANDING_STATUSES, isOutstanding } from '@/lib/payment-status';
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 
@@ -21,6 +21,48 @@ import { timeToHHmm } from '@/lib/time-of-day';
 // ---------------------------------------------------------------------------
 
 export type PaymentResult = { ok: true; payment: Payment } | { ok: false; error: string };
+
+/**
+ * A refusal from one of the teacher's payment actions below. `code` is a
+ * registered code (`src/lib/api-error-codes.ts`), which fixes the HTTP status;
+ * `message` is what the teacher reads.
+ */
+export type PaymentRefusal = {
+  readonly code:
+    | 'CONCURRENT_MODIFICATION'
+    | 'NOT_FOUND'
+    | 'PAYMENT_ALREADY_PAID'
+    | 'PAYMENT_SETTLED'
+    | 'PAYMENT_WAIVED';
+  readonly message: string;
+};
+
+/**
+ * What a teacher's payment action did. `applied`: this call wrote the row.
+ * `unchanged`: the row already held what the action asks for, and nothing was
+ * written or sent. Either way `payment` is the row as stored. An `unchanged`
+ * answer describes the row, so a caller checks ownership before calling.
+ */
+export type PaymentOutcome =
+  | { readonly kind: 'applied'; readonly payment: Payment }
+  | { readonly kind: 'unchanged'; readonly payment: Payment }
+  | { readonly kind: 'refused'; readonly refusal: PaymentRefusal };
+
+/** The answer when the payment row does not exist. */
+export const PAYMENT_GONE: PaymentRefusal = {
+  code: 'NOT_FOUND',
+  message: 'This payment no longer exists.',
+};
+
+/**
+ * The answer when a compare-and-swap missed but the re-read finds a state the
+ * swap would have accepted: another action changed the row between the two
+ * statements, so neither "already done" nor a status refusal is true.
+ */
+const PAYMENT_CHANGED: PaymentRefusal = {
+  code: 'CONCURRENT_MODIFICATION',
+  message: 'This payment was just changed elsewhere. Refresh and try again.',
+};
 
 /**
  * What a teacher-facing payment read returns.
@@ -76,13 +118,15 @@ export type TeacherPaymentRow = Payment & {
  * Mark a payment as paid with the given method (e.g. 'bank_transfer', 'cash').
  * Sets status to 'paid', records the method, and timestamps paidAt.
  *
- * Only valid from 'pending' or 'overdue' status.
+ * Applies from 'pending' or 'overdue'. A payment already paid with the same
+ * method is `unchanged`; with another method it is refused, because answering
+ * "done" would discard the method this call carries.
  */
 export async function markPaymentPaid(
   db: PrismaClient,
   paymentId: string,
   method: string,
-): Promise<PaymentResult> {
+): Promise<PaymentOutcome> {
   // Conditional update: the status guard lives in the WHERE clause so a
   // double submission cannot both pass a pre-check and clobber method/paidAt.
   const result = await db.payment.updateMany({
@@ -96,15 +140,34 @@ export async function markPaymentPaid(
 
   if (result.count === 0) {
     const payment = await db.payment.findUnique({ where: { id: paymentId } });
-    if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
-    return {
-      ok: false,
-      error: `Cannot mark payment as paid: current status is "${payment.status}". Must be "pending" or "overdue".`,
-    };
+    if (!payment) return { kind: 'refused', refusal: PAYMENT_GONE };
+    switch (payment.status) {
+      case 'paid':
+        if (payment.method === method) return { kind: 'unchanged', payment };
+        return {
+          kind: 'refused',
+          refusal: { code: 'PAYMENT_ALREADY_PAID', message: 'This payment is already marked paid.' },
+        };
+      case 'not_charged':
+        return {
+          kind: 'refused',
+          refusal: {
+            code: 'PAYMENT_WAIVED',
+            message: 'This payment was marked not charged. Mark it unpaid first.',
+          },
+        };
+      case 'pending':
+      case 'overdue':
+        return { kind: 'refused', refusal: PAYMENT_CHANGED };
+      default: {
+        const unhandled: never = payment.status;
+        throw new Error(`Unhandled payment status: ${String(unhandled)}`);
+      }
+    }
   }
 
   const updated = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
-  return { ok: true, payment: updated };
+  return { kind: 'applied', payment: updated };
 }
 
 /**
@@ -138,7 +201,8 @@ export async function markPaymentOverdue(
 
 /**
  * Return a settled payment to outstanding: paid or not_charged → pending,
- * clearing whichever settlement fields were set.
+ * clearing whichever settlement fields were set. A payment already
+ * outstanding — pending or overdue — is `unchanged`.
  *
  * Returns to 'pending' (not 'overdue') deliberately — the dunning sweep
  * (`markOverduePayments`) re-derives overdue from the payment's age, so an old
@@ -151,7 +215,7 @@ export async function markPaymentOverdue(
 export async function reopenPayment(
   db: PrismaClient,
   paymentId: string,
-): Promise<PaymentResult> {
+): Promise<PaymentOutcome> {
   const result = await db.payment.updateMany({
     where: { id: paymentId, status: { in: ['paid', 'not_charged'] } },
     data: { status: 'pending', method: null, paidAt: null, notChargedAt: null },
@@ -159,22 +223,25 @@ export async function reopenPayment(
 
   if (result.count === 0) {
     const payment = await db.payment.findUnique({ where: { id: paymentId } });
-    if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
-    return {
-      ok: false,
-      error: `Cannot undo: current status is "${payment.status}". Must be "paid" or "not charged".`,
-    };
+    if (!payment) return { kind: 'refused', refusal: PAYMENT_GONE };
+    // Both outstanding statuses are "unpaid" to the teacher, and
+    // `markOverduePayments` may have turned a reopened 'pending' into
+    // 'overdue' before this call arrived.
+    if (isOutstanding(payment.status)) return { kind: 'unchanged', payment };
+    return { kind: 'refused', refusal: PAYMENT_CHANGED };
   }
 
   const updated = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
-  return { ok: true, payment: updated };
+  return { kind: 'applied', payment: updated };
 }
 
 /**
- * The grace policy of `docs/product-concept.md:142`: the teacher chooses not to
- * collect. A settled state like `paid` — no longer outstanding, never dunned —
- * that differs from it in the one respect that matters to the money: nothing
- * arrived. `reopenPayment` is the reversal.
+ * The grace policy of `docs/product-concept.md` (section: Cancellation Policy
+ * & No-Shows — Grace policies): the teacher chooses not to collect. A settled
+ * state like `paid` — no longer outstanding, never dunned — that differs from
+ * it in the one respect that matters to the money: nothing arrived.
+ * `reopenPayment` is the reversal. A payment already not charged is
+ * `unchanged`; a paid one is refused, because waiving it would be a refund.
  *
  * `reminderSentAt` is deliberately left alone. A reminder that was sent was
  * sent, and the row's history stays true.
@@ -186,7 +253,7 @@ export async function reopenPayment(
 export async function markPaymentNotCharged(
   db: PrismaClient,
   paymentId: string,
-): Promise<PaymentResult> {
+): Promise<PaymentOutcome> {
   const result = await db.payment.updateMany({
     where: { id: paymentId, status: { in: ['pending', 'overdue'] } },
     data: { status: 'not_charged', notChargedAt: new Date() },
@@ -194,15 +261,30 @@ export async function markPaymentNotCharged(
 
   if (result.count === 0) {
     const payment = await db.payment.findUnique({ where: { id: paymentId } });
-    if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
-    return {
-      ok: false,
-      error: `Cannot mark as not charged: current status is "${payment.status}". Must be "pending" or "overdue".`,
-    };
+    if (!payment) return { kind: 'refused', refusal: PAYMENT_GONE };
+    switch (payment.status) {
+      case 'not_charged':
+        return { kind: 'unchanged', payment };
+      case 'paid':
+        return {
+          kind: 'refused',
+          refusal: {
+            code: 'PAYMENT_ALREADY_PAID',
+            message: "This payment is already paid, so it can't be marked not charged.",
+          },
+        };
+      case 'pending':
+      case 'overdue':
+        return { kind: 'refused', refusal: PAYMENT_CHANGED };
+      default: {
+        const unhandled: never = payment.status;
+        throw new Error(`Unhandled payment status: ${String(unhandled)}`);
+      }
+    }
   }
 
   const updated = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
-  return { ok: true, payment: updated };
+  return { kind: 'applied', payment: updated };
 }
 
 // ---------------------------------------------------------------------------
@@ -243,13 +325,14 @@ export const MANUAL_REMIND_COOLDOWN_MS = 2 * 60 * 1000;
  * both read 'pending', both passed, both stamped and both dunned the student.
  * `reminderSentAt` is the value that actually moves, so it is in the WHERE too
  * — bounded by MANUAL_REMIND_COOLDOWN_MS, which is a retry guard and not a
- * nagging policy (#196).
+ * nagging policy (#196). A call inside that window is `unchanged`: the
+ * reminder it asks for went out moments ago.
  */
 export async function sendPaymentReminder(
   db: PrismaClient,
   paymentId: string,
-): Promise<PaymentResult> {
-  return db.$transaction(async (tx): Promise<PaymentResult> => {
+): Promise<PaymentOutcome> {
+  return db.$transaction(async (tx): Promise<PaymentOutcome> => {
     // Compare-and-swap on both things a reminder depends on: the payment is
     // still outstanding, and it was not just reminded. A count of 0 means one
     // of those two stopped holding and nothing is sent.
@@ -264,23 +347,26 @@ export async function sendPaymentReminder(
     });
     if (stamped.count === 0) {
       const payment = await tx.payment.findUnique({ where: { id: paymentId } });
-      if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
-      // Status before cooldown, and not the other way round: a settled payment
-      // is settled whether or not it was reminded a minute ago, and telling
-      // that teacher to try again shortly would promise a retry the status
-      // guard refuses forever. Once the payment IS outstanding, the cooldown is
-      // the only remaining term in the WHERE, so it is the only explanation
-      // left.
-      if (payment.status !== 'pending' && payment.status !== 'overdue') {
+      if (!payment) return { kind: 'refused', refusal: PAYMENT_GONE };
+      // Settled before cooldown: a settled payment needs no reminder, so
+      // reporting that one already went out would answer a question that no
+      // longer matters.
+      if (!isOutstanding(payment.status)) {
         return {
-          ok: false,
-          error: `Cannot send a reminder: current status is "${payment.status}". Must be "pending" or "overdue".`,
+          kind: 'refused',
+          refusal: {
+            code: 'PAYMENT_SETTLED',
+            message: 'This payment is already settled, so no reminder is needed.',
+          },
         };
       }
-      return {
-        ok: false,
-        error: 'A reminder for this payment was just sent. Try again in a couple of minutes.',
-      };
+      // Outstanding, so the cooldown term is the one that missed — provided
+      // this read still finds a stamp inside the window. `unchanged` returns
+      // the row carrying that stamp.
+      if (payment.reminderSentAt !== null && payment.reminderSentAt >= cooldownStart) {
+        return { kind: 'unchanged', payment };
+      }
+      return { kind: 'refused', refusal: PAYMENT_CHANGED };
     }
 
     const { registration, ...payment } = await tx.payment.findUniqueOrThrow({
@@ -311,7 +397,7 @@ export async function sendPaymentReminder(
       },
     ]);
 
-    return { ok: true, payment };
+    return { kind: 'applied', payment };
   });
 }
 

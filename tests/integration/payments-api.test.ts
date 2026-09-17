@@ -3,6 +3,8 @@ import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
+import { MANUAL_REMIND_COOLDOWN_MS } from '@/services/payments';
+import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -123,6 +125,16 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+/**
+ * An ownership refusal, with no `unchanged` answer ahead of it. Each door runs
+ * this in a state where the unchanged condition holds, which is the only way a
+ * check placed above the ownership gate becomes visible.
+ */
+async function expectForbidden(res: Response): Promise<void> {
+  const body = (await res.json()) as { outcome?: unknown };
+  expect({ status: res.status, outcome: body.outcome }).toEqual({ status: 403, outcome: undefined });
+}
+
 describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', () => {
   it('GET /api/payments withholds the email and surname of a student who shared neither', async () => {
     const res = await fetch(`${BASE_URL}/api/payments`, { headers: cookie(teacherToken) });
@@ -184,6 +196,13 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
     expect(res.status).toBe(403);
   });
 
+  it('GET /api/payments/[id] 404s an unknown payment with NOT_FOUND', async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/00000000-0000-4000-8000-000000000000`, {
+      headers: cookie(teacherToken),
+    });
+    await expectRefusal(res, 'NOT_FOUND');
+  });
+
   it('GET /api/classes/[id]/payments withholds the surname too', async () => {
     const res = await fetch(`${BASE_URL}/api/classes/${classId}/payments`, {
       headers: cookie(teacherToken),
@@ -242,7 +261,7 @@ describe('POST /api/payments/[id]/remind', () => {
       `${BASE_URL}/api/payments/00000000-0000-4000-8000-000000000000/remind`,
       { method: 'POST', headers: cookie(teacherToken) },
     );
-    expect(res.status).toBe(404);
+    await expectRefusal(res, 'NOT_FOUND');
   });
 
   it("403s another teacher's payment", async () => {
@@ -263,8 +282,7 @@ describe('POST /api/payments/[id]/remind', () => {
       method: 'POST',
       headers: cookie(teacherToken),
     });
-    expect(res.status).toBe(200);
-    const { data } = (await res.json()) as { data: { reminderSentAt: string | null } };
+    const data = (await expectApplied(res)) as { reminderSentAt: string | null };
     expect(data.reminderSentAt).not.toBeNull();
 
     const notification = await prisma.notification.findFirst({
@@ -277,8 +295,8 @@ describe('POST /api/payments/[id]/remind', () => {
     expect(stamped.reminderSentAt).not.toBeNull();
   });
 
-  it('409s a payment that is already paid, sending nothing', async () => {
-    await prisma.payment.update({ where: { id: paymentId }, data: { status: 'paid' } });
+  it('answers a retry inside the cooldown unchanged, with the stamp, sending nothing', async () => {
+    const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     const before = await prisma.notification.count({
       where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
     });
@@ -287,7 +305,43 @@ describe('POST /api/payments/[id]/remind', () => {
       method: 'POST',
       headers: cookie(teacherToken),
     });
-    expect(res.status).toBe(409);
+    const data = (await expectUnchanged(res)) as { reminderSentAt: string | null };
+    expect(data.reminderSentAt).toBe(stamped.reminderSentAt!.toISOString());
+
+    expect(
+      await prisma.notification.count({
+        where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
+      }),
+    ).toBe(before);
+    const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(after.reminderSentAt).toEqual(stamped.reminderSentAt);
+    expect(after.updatedAt).toEqual(stamped.updatedAt);
+  });
+
+  it("403s another teacher's reminder inside the cooldown rather than answering unchanged", async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/remind`, {
+      method: 'POST',
+      headers: cookie(otherTeacherToken),
+    });
+    await expectForbidden(res);
+  });
+
+  it('refuses a settled payment inside the cooldown with PAYMENT_SETTLED, sending nothing', async () => {
+    await prisma.payment.update({ where: { id: paymentId }, data: { status: 'paid' } });
+    const settled = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    // Both the settled refusal and the unchanged answer fit this row, which
+    // the reminder above stamped moments ago. Settled makes the reminder moot,
+    // so it answers.
+    expect(Date.now() - settled.reminderSentAt!.getTime()).toBeLessThan(MANUAL_REMIND_COOLDOWN_MS);
+    const before = await prisma.notification.count({
+      where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
+    });
+
+    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/remind`, {
+      method: 'POST',
+      headers: cookie(teacherToken),
+    });
+    await expectRefusal(res, 'PAYMENT_SETTLED');
 
     const after = await prisma.notification.count({
       where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
@@ -352,7 +406,8 @@ describe('POST /api/payments/[id]/remind', () => {
       // returns before its callback has run, and a fresh `PrismaClient` has
       // to connect and start its engine first (50-200ms, measured), so both
       // requests could finish before the row was ever locked — and the second
-      // would then 409 off its own pre-check rather than off the CAS.
+      // would then find the first's stamp already committed, never meeting it
+      // inside the CAS.
       const parked = new Promise<void>((r) => {
         locked = r;
       });
@@ -390,18 +445,28 @@ describe('POST /api/payments/[id]/remind', () => {
       const [a, b] = await both;
       await holder.$disconnect();
 
-      // Asserted before the status pair, deliberately: the defect is a student
+      // Asserted before the outcomes, deliberately: the defect is a student
       // dunned twice for one debt, and this is the assertion whose failure
-      // message names it. With the statuses first, removing the guard fails on
-      // `[200, 200]`, which reports two successful requests without saying
-      // what that cost anyone.
+      // message names it. With the outcomes first, removing the guard fails on
+      // a missing `unchanged`, which says nothing about what that cost anyone.
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: raceStudentId, type: 'reminder' },
       });
       expect(notifications).toHaveLength(1);
 
-      // Either request can win, so the loser is identified rather than assumed.
-      expect([a.status, b.status].sort()).toEqual([200, 409]);
+      // Either request can win, so the loser is identified rather than assumed:
+      // both answer 200, and exactly one says it changed nothing.
+      expect([a.status, b.status]).toEqual([200, 200]);
+      const bodies = (await Promise.all([a.json(), b.json()])) as {
+        data: { reminderSentAt: string };
+        outcome?: string;
+      }[];
+      expect(bodies.map((body) => body.outcome ?? 'applied').sort()).toEqual([
+        'applied',
+        'unchanged',
+      ]);
+      // The loser carries the winner's stamp, not one of its own.
+      expect(bodies[0]!.data.reminderSentAt).toBe(bodies[1]!.data.reminderSentAt);
     });
   });
 });
@@ -424,6 +489,21 @@ const notCharged = (token: string | null, id: string) =>
     headers: { ...(token ? cookie(token) : {}) },
   });
 
+/** The keys of a payment row on the wire — the applied and unchanged answers carry the same ones. */
+const PAYMENT_ROW_KEYS = [
+  'amount',
+  'createdAt',
+  'id',
+  'method',
+  'notChargedAt',
+  'paidAt',
+  'processorRef',
+  'registrationId',
+  'reminderSentAt',
+  'status',
+  'updatedAt',
+];
+
 describe('POST /api/payments/[id]/paid', () => {
   it('rejects a signed-out caller', async () => {
     const res = await paid(null, paymentId);
@@ -432,7 +512,7 @@ describe('POST /api/payments/[id]/paid', () => {
 
   it('404s an unknown payment', async () => {
     const res = await paid(teacherToken, UNKNOWN_PAYMENT_ID);
-    expect(res.status).toBe(404);
+    await expectRefusal(res, 'NOT_FOUND');
   });
 
   it("403s another teacher's payment (paid)", async () => {
@@ -450,8 +530,7 @@ describe('POST /api/payments/[id]/paid', () => {
 
   it('marks the pending payment paid', async () => {
     const res = await paid(teacherToken, paymentId);
-    expect(res.status).toBe(200);
-    const { data } = (await res.json()) as { data: { status: string } };
+    const data = (await expectApplied(res)) as { status: string };
     expect(data.status).toBe('paid');
 
     const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
@@ -460,12 +539,49 @@ describe('POST /api/payments/[id]/paid', () => {
     expect(stamped.paidAt).not.toBeNull();
   });
 
-  it('409s re-marking a payment that is already paid', async () => {
-    const res = await paid(teacherToken, paymentId);
-    expect(res.status).toBe(409);
+  it('answers the same mark unchanged, writing nothing', async () => {
+    const before = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
 
-    const unchanged = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
-    expect(unchanged.status).toBe('paid');
+    const res = await paid(teacherToken, paymentId);
+    const data = (await expectUnchanged(res)) as { status: string; method: string | null };
+    expect(data).toMatchObject({ status: 'paid', method: 'cash' });
+
+    const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(after.status).toBe('paid');
+    expect(after.method).toBe('cash');
+    expect(after.paidAt).toEqual(before.paidAt);
+    expect(after.updatedAt).toEqual(before.updatedAt);
+  });
+
+  it("403s another teacher's identical mark rather than answering unchanged", async () => {
+    const res = await paid(otherTeacherToken, paymentId);
+    await expectForbidden(res);
+  });
+
+  it('refuses a mark with another method: PAYMENT_ALREADY_PAID', async () => {
+    const before = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+
+    const res = await paid(teacherToken, paymentId, { method: 'bank_transfer' });
+    await expectRefusal(res, 'PAYMENT_ALREADY_PAID');
+
+    const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(after.method).toBe('cash');
+    expect(after.updatedAt).toEqual(before.updatedAt);
+  });
+
+  it('refuses a not-charged payment: PAYMENT_WAIVED', async () => {
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { status: 'not_charged', method: null, paidAt: null, notChargedAt: new Date() },
+    });
+    const before = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+
+    const res = await paid(teacherToken, paymentId);
+    await expectRefusal(res, 'PAYMENT_WAIVED');
+
+    const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(after.status).toBe('not_charged');
+    expect(after.updatedAt).toEqual(before.updatedAt);
   });
 });
 
@@ -475,7 +591,7 @@ describe('POST /api/payments/[id]/unpaid', () => {
   beforeAll(async () => {
     await prisma.payment.update({
       where: { id: paymentId },
-      data: { status: 'paid', method: 'cash', paidAt: new Date() },
+      data: { status: 'paid', method: 'cash', paidAt: new Date(), notChargedAt: null },
     });
   });
 
@@ -486,7 +602,7 @@ describe('POST /api/payments/[id]/unpaid', () => {
 
   it('404s an unknown payment', async () => {
     const res = await unpaid(teacherToken, UNKNOWN_PAYMENT_ID);
-    expect(res.status).toBe(404);
+    await expectRefusal(res, 'NOT_FOUND');
   });
 
   it("403s another teacher's payment (unpaid)", async () => {
@@ -499,23 +615,44 @@ describe('POST /api/payments/[id]/unpaid', () => {
 
   it('undoes the paid payment back to pending', async () => {
     const res = await unpaid(teacherToken, paymentId);
-    expect(res.status).toBe(200);
-    const { data } = (await res.json()) as { data: { status: string } };
+    const data = (await expectApplied(res)) as { status: string };
     expect(data.status).toBe('pending');
 
     const reverted = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(reverted.status).toBe('pending');
   });
 
-  it('409s a payment that is already pending', async () => {
-    const res = await unpaid(teacherToken, paymentId);
-    expect(res.status).toBe(409);
+  it('answers an undo of a pending payment unchanged, writing nothing', async () => {
+    const before = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
 
-    // Read BEFORE any restore: a 409 must have changed nothing.
-    const unchanged = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
-    expect(unchanged.status).toBe('pending');
-    expect(unchanged.method).toBeNull();
-    expect(unchanged.paidAt).toBeNull();
+    const res = await unpaid(teacherToken, paymentId);
+    const data = (await expectUnchanged(res)) as { status: string };
+    expect(data.status).toBe('pending');
+
+    // Read BEFORE any restore: an unchanged answer must have written nothing.
+    const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(after.status).toBe('pending');
+    expect(after.method).toBeNull();
+    expect(after.paidAt).toBeNull();
+    expect(after.updatedAt).toEqual(before.updatedAt);
+  });
+
+  it('answers an undo of an overdue payment unchanged, carrying its status', async () => {
+    await prisma.payment.update({ where: { id: paymentId }, data: { status: 'overdue' } });
+    const before = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+
+    const res = await unpaid(teacherToken, paymentId);
+    const data = (await expectUnchanged(res)) as { status: string };
+    expect(data.status).toBe('overdue');
+
+    const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(after.status).toBe('overdue');
+    expect(after.updatedAt).toEqual(before.updatedAt);
+  });
+
+  it("403s another teacher's undo of an unpaid payment rather than answering unchanged", async () => {
+    const res = await unpaid(otherTeacherToken, paymentId);
+    await expectForbidden(res);
   });
 });
 
@@ -536,7 +673,7 @@ describe('POST /api/payments/[id]/not-charged', () => {
 
   it('404s an unknown payment', async () => {
     const res = await notCharged(teacherToken, UNKNOWN_PAYMENT_ID);
-    expect(res.status).toBe(404);
+    await expectRefusal(res, 'NOT_FOUND');
   });
 
   it("403s another teacher's payment", async () => {
@@ -549,38 +686,34 @@ describe('POST /api/payments/[id]/not-charged', () => {
 
   it('marks a payment not charged', async () => {
     const res = await notCharged(teacherToken, paymentId);
-    expect(res.status).toBe(200);
-    const { data } = (await res.json()) as {
-      data: { status: string; notChargedAt: string | null };
-    };
+    const data = (await expectApplied(res)) as Record<string, unknown>;
     expect(data.status).toBe('not_charged');
-    // The key-allowlist assertion mirrors the existing key-allowlist
-    // assertions elsewhere in this file — it is how this repo catches a
-    // widened `select`, and
-    // `notChargedAt` joining the row is exactly the kind of change it exists
-    // to notice.
-    expect(Object.keys(data).sort()).toEqual([
-      'amount',
-      'createdAt',
-      'id',
-      'method',
-      'notChargedAt',
-      'paidAt',
-      'processorRef',
-      'registrationId',
-      'reminderSentAt',
-      'status',
-      'updatedAt',
-    ]);
+    // The key-allowlist assertion: it denies every key not on
+    // `PAYMENT_ROW_KEYS`, which is how this repo catches a widened `select`.
+    expect(Object.keys(data).sort()).toEqual(PAYMENT_ROW_KEYS);
 
     const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(stamped.status).toBe('not_charged');
     expect(stamped.notChargedAt).not.toBeNull();
   });
 
-  it('409s a payment that is already not charged', async () => {
+  it('answers a payment already not charged unchanged, writing nothing', async () => {
+    const before = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+
     const res = await notCharged(teacherToken, paymentId);
-    expect(res.status).toBe(409);
+    const data = (await expectUnchanged(res)) as Record<string, unknown>;
+    expect(Object.keys(data).sort()).toEqual(PAYMENT_ROW_KEYS);
+    expect(data.status).toBe('not_charged');
+
+    const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(after.status).toBe('not_charged');
+    expect(after.notChargedAt).toEqual(before.notChargedAt);
+    expect(after.updatedAt).toEqual(before.updatedAt);
+  });
+
+  it("403s another teacher's mark on a payment already not charged rather than answering unchanged", async () => {
+    const res = await notCharged(otherTeacherToken, paymentId);
+    await expectForbidden(res);
 
     const unchanged = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(unchanged.status).toBe('not_charged');
@@ -588,12 +721,27 @@ describe('POST /api/payments/[id]/not-charged', () => {
 
   it('reverses a not-charged payment through /unpaid', async () => {
     const res = await unpaid(teacherToken, paymentId);
-    expect(res.status).toBe(200);
-    const { data } = (await res.json()) as { data: { status: string } };
+    const data = (await expectApplied(res)) as { status: string };
     expect(data.status).toBe('pending');
 
     const reverted = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(reverted.status).toBe('pending');
     expect(reverted.notChargedAt).toBeNull();
+  });
+
+  it('refuses a paid payment: PAYMENT_ALREADY_PAID', async () => {
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { status: 'paid', method: 'cash', paidAt: new Date() },
+    });
+    const before = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+
+    const res = await notCharged(teacherToken, paymentId);
+    await expectRefusal(res, 'PAYMENT_ALREADY_PAID');
+
+    const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(after.status).toBe('paid');
+    expect(after.notChargedAt).toBeNull();
+    expect(after.updatedAt).toEqual(before.updatedAt);
   });
 });
