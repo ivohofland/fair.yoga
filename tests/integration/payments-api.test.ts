@@ -328,28 +328,33 @@ describe('POST /api/payments/[id]/remind', () => {
 
   it('refuses a settled payment inside the cooldown with PAYMENT_SETTLED, sending nothing', async () => {
     await prisma.payment.update({ where: { id: paymentId }, data: { status: 'paid' } });
-    const settled = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
-    // Both the settled refusal and the unchanged answer fit this row, which
-    // the reminder above stamped moments ago. Settled makes the reminder moot,
-    // so it answers.
-    expect(Date.now() - settled.reminderSentAt!.getTime()).toBeLessThan(MANUAL_REMIND_COOLDOWN_MS);
-    const before = await prisma.notification.count({
-      where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
-    });
+    try {
+      const settled = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+      // Both the settled refusal and the unchanged answer fit this row, which
+      // the reminder above stamped moments ago. Settled makes the reminder moot,
+      // so it answers.
+      expect(Date.now() - settled.reminderSentAt!.getTime()).toBeLessThan(MANUAL_REMIND_COOLDOWN_MS);
+      const before = await prisma.notification.count({
+        where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
+      });
 
-    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/remind`, {
-      method: 'POST',
-      headers: cookie(teacherToken),
-    });
-    await expectRefusal(res, 'PAYMENT_SETTLED');
+      const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/remind`, {
+        method: 'POST',
+        headers: cookie(teacherToken),
+      });
+      await expectRefusal(res, 'PAYMENT_SETTLED');
 
-    const after = await prisma.notification.count({
-      where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
-    });
-    expect(after).toBe(before);
-
-    // Leave the fixture pending for cleanup symmetry.
-    await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending' } });
+      const after = await prisma.notification.count({
+        where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
+      });
+      expect(after).toBe(before);
+    } finally {
+      // Leave the fixture pending for cleanup symmetry — in a `finally` so an
+      // assertion failure above (a broken guard) can't leave every describe
+      // after this one reading a 'paid' row instead of the 'pending' one they
+      // assume.
+      await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending' } });
+    }
   });
 
   describe('is retry-safe against a concurrent duplicate (#196)', () => {
