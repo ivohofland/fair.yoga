@@ -839,9 +839,10 @@ describe('acquireLock / releaseLock staleness recovery', () => {
     let phase: 'stale1' | 'live' | 'stale2' = 'stale1';
     let liveReadCount = 0;
 
+    const realReadFileSync = fs.readFileSync;
     const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
       if (args[0] !== ownerPath) {
-        return fs.readFileSync(...(args as Parameters<typeof fs.readFileSync>));
+        return realReadFileSync(...args);
       }
       if (phase === 'live') {
         liveReadCount += 1;
