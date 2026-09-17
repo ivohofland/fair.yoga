@@ -1966,9 +1966,9 @@ describe('updateClass — the count === 0 branches', () => {
   });
 
   it('reports not_found when no economic field was sent — the row was deleted (#72)', async () => {
-    // The originally-filed bug. Before the fix this returned the `locked`
-    // reason with an empty field list, rendered as
-    // "Cannot update economic fields when settings are locked: " with a 409.
+    // The originally-filed bug (#72): a row that vanished mid-request must
+    // answer `not_found`, not `locked` with an empty field list naming no
+    // field the caller could act on.
     const stub = stubDb({ settingsLocked: false, rowSurvives: false });
     const { db, updateManyCalls } = stub;
 

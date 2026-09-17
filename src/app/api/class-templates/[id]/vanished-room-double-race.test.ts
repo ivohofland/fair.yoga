@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { log } from '@/lib/log';
+import { expectRefusal } from '../../../../../tests/api-assertions';
 
 /**
  * Tests for PUT /api/class-templates/[id]'s room constraint error handling.
@@ -10,7 +11,7 @@ import { log } from '@/lib/log';
  *
  * 1. Double-race room deletion: when a room vanishes after updateRule's
  *    internal re-read, the route re-reads, finds null, logs warn, and returns
- *    400 ('Invalid teacher room') rather than 409 (#231).
+ *    400 ROOM_NOT_ON_LIST rather than 409 (#231).
  * 2. Diagnostic probe safety: if the re-read itself fails (DB drop, pool
  *    exhaustion), the route rethrows the original error rather than masking it.
  *    The rethrow is pinned by identity (`.toBe`), not a structural assertion.
@@ -72,7 +73,7 @@ describe('PUT /api/class-templates/[id] — room deletion double-race & probe gu
     vi.clearAllMocks();
   });
 
-  it('maps double-race room deletion to 400 with invalid room message and logs warn', async () => {
+  it('maps double-race room deletion to 400 ROOM_NOT_ON_LIST and logs warn', async () => {
     findUniqueClassTemplate.mockResolvedValue({
       ruleLive: true,
       teacherRoomId: 'old-room',
@@ -93,9 +94,7 @@ describe('PUT /api/class-templates/[id] — room deletion double-race & probe gu
     try {
       const res = await PUT(putWithRoom(VALID_ROOM_ID), { params: Promise.resolve({ id: TEMPLATE_ID }) });
 
-      expect(res.status).toBe(400);
-      const payload = (await res.json()) as { error: { message: string } };
-      expect(payload.error.message).toBe('Invalid teacher room');
+      await expectRefusal(res, 'ROOM_NOT_ON_LIST');
       expect(warn).toHaveBeenCalledWith(
         expect.objectContaining({
           templateId: TEMPLATE_ID,
@@ -165,7 +164,7 @@ describe('PUT /api/class-templates/[id] — room deletion double-race & probe gu
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
     try {
       const res = await PUT(putWithRoom(VALID_ROOM_ID), { params: Promise.resolve({ id: TEMPLATE_ID }) });
-      expect(res.status).toBe(400);
+      await expectRefusal(res, 'ROOM_NOT_ON_LIST');
       expect(warn).toHaveBeenCalledWith(
         expect.objectContaining({ templateId: TEMPLATE_ID, teacherRoomId: VALID_ROOM_ID }),
         'template move target room not found',
@@ -238,5 +237,15 @@ describe('PUT /api/class-templates/[id] — room deletion double-race & probe gu
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it("answers the service's invalid_room with ROOM_NOT_ON_LIST", async () => {
+    // No pre-check: the probe finds no template, so the service decides.
+    findUniqueClassTemplate.mockResolvedValue(null);
+    updateClassTemplate.mockResolvedValue({ ok: false, reason: 'invalid_room' });
+
+    const res = await PUT(putWithRoom(VALID_ROOM_ID), { params: Promise.resolve({ id: TEMPLATE_ID }) });
+
+    await expectRefusal(res, 'ROOM_NOT_ON_LIST');
   });
 });

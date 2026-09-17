@@ -11,6 +11,7 @@ import {
 } from '@/lib/api-utils';
 import { isRestrictViolationOn } from '@/lib/api-errors';
 import { isCheckViolationOn } from '@/lib/check-violation';
+import { roomNotOnListResponse } from '@/lib/room-refusal';
 import { log } from '@/lib/log';
 import { updateClassTemplateSchema, templateStateQuerySchema } from '@/lib/schemas';
 import {
@@ -190,7 +191,7 @@ export const PUT = withErrorHandler(async (
             'template move target room not found',
           );
         }
-        return respondError('Invalid teacher room', 400);
+        return roomNotOnListResponse();
       }
       if (targetRoom.isArchived && moving.ruleLive) {
         return roomArchivedResponse('move');
@@ -259,7 +260,7 @@ export const PUT = withErrorHandler(async (
           },
           'template move target room vanished',
         );
-        return respondError('Invalid teacher room', 400);
+        return roomNotOnListResponse();
       }
       if (room === null || room.isArchived) {
         log.warn(
@@ -314,7 +315,7 @@ export const PUT = withErrorHandler(async (
   if (result.reason === 'not_found') return respondError('Class template not found', 404);
   if (result.reason === 'forbidden') return respondError('Access denied', 403);
   if (result.reason === 'no_fields') return respondError('No valid fields to update', 400);
-  if (result.reason === 'invalid_room') return respondError('Invalid teacher room', 400);
+  if (result.reason === 'invalid_room') return roomNotOnListResponse();
   // The template's own dayOfWeek/startTime moved into a slot another of this
   // teacher's live rules already holds — same family or the other (#196/#296).
   if (result.reason === 'slot_conflict') {
@@ -333,7 +334,7 @@ export const PUT = withErrorHandler(async (
   }
 
   // Exhaustiveness: a new UpdateClassTemplateResult variant becomes a compile
-  // error here rather than being silently answered as "Invalid teacher room".
+  // error here rather than being silently answered as ROOM_NOT_ON_LIST.
   const unhandled: never = result;
   return unhandled;
 });
@@ -431,9 +432,9 @@ export const PATCH = withErrorHandler(async (
     //     checks ownership before it reaches door 3; hoisting the door up here
     //     without the check left the ordering behind.
     //   - `isArchived` — an ARCHIVED template on an archived room is refused
-    //     by `archiveOrUnarchiveRule`'s own `archived` branch, whose message
-    //     ("Unarchive the template before activating it") is the one the
-    //     teacher can act on. Un-archiving the room accomplishes nothing for
+    //     as archived before this handler answers anything, and the
+    //     `TEMPLATE_ARCHIVED` branch further down is the sentence the teacher
+    //     can act on. Un-archiving the room accomplishes nothing for
     //     it. The constraint cannot fire on that path either: the rule archive
     //     forces `isActive: false` in both directions, so `live` stays false.
     //
@@ -518,7 +519,7 @@ export const PATCH = withErrorHandler(async (
   // would instantly materialize bookable classes for something the teacher
   // shelved.
   if (result.reason === 'archived') {
-    return respondError('Unarchive the template before activating it', 409);
+    return respondError('Unarchive this recurring class before resuming it.', 409, 'TEMPLATE_ARCHIVED');
   }
   if (result.reason === 'busy') {
     return respondError(

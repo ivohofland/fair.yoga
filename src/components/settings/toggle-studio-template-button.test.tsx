@@ -142,6 +142,28 @@ describe('ToggleStudioTemplateButton', () => {
     expect(routerRefresh).not.toHaveBeenCalled();
   });
 
+  // Only a stale page can offer Resume on an archived template. The refusal
+  // re-reads the page, so the controls it shows next match the template.
+  it('refreshes the page on TEMPLATE_ARCHIVED, and still shows why', async () => {
+    stubFetch({
+      ok: false,
+      json: async () => ({
+        error: {
+          code: 'TEMPLATE_ARCHIVED',
+          message: 'Unarchive this studio class before resuming it.',
+        },
+      }),
+    });
+    render(<ToggleStudioTemplateButton templateId="tpl-1" isActive={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Unarchive this studio class before resuming it.',
+    );
+    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+  });
+
   it('disables the button while the request is in flight', async () => {
     let release!: (value: { ok: boolean; json: () => Promise<unknown> }) => void;
     fetchMock.mockReturnValue(

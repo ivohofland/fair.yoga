@@ -24,6 +24,7 @@ import { startOfLocalDay, mondayOf } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, createStudioClassFixture } from '../class-fixtures';
+import { expectRefusal } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -940,7 +941,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     ).id;
 
     const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=active`);
-    expect(res.status).toBe(409);
+    await expectRefusal(res, 'TEMPLATE_ARCHIVED');
 
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id }, include: { scheduleRule: true } });
     expect(after.scheduleRule.isActive).toBe(false);
@@ -1394,6 +1395,24 @@ describe('/api/studio-classes', () => {
 
     const { data } = (await res.json()) as { data: { teacherId: string } };
     expect(data.teacherId).toBe(ownerId);
+  });
+
+  it('GET answers an unknown studio class with NOT_FOUND', async () => {
+    await expectRefusal(
+      await send('GET', ownerToken, '/api/studio-classes/00000000-0000-4000-8000-000000000000'),
+      'NOT_FOUND',
+    );
+  });
+
+  // The ownership read comes before the body is parsed, so a valid body is
+  // not what makes this a 404.
+  it('PUT answers an unknown studio class with NOT_FOUND', async () => {
+    await expectRefusal(
+      await send('PUT', ownerToken, '/api/studio-classes/00000000-0000-4000-8000-000000000000', {
+        studentCount: 3,
+      }),
+      'NOT_FOUND',
+    );
   });
 
   // #327 stage B, Task 1: `startTime` becomes a `@db.Time` column. The wire
@@ -2125,13 +2144,13 @@ describe('DELETE /api/studio-classes/[id]', () => {
     expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true } })).not.toBeNull();
   });
 
-  it('answers 404 for an id that is not there', async () => {
+  it('answers NOT_FOUND for an id that is not there', async () => {
     const res = await send(
       'DELETE',
       ownerToken,
       '/api/studio-classes/00000000-0000-4000-8000-000000000000',
     );
-    expect(res.status).toBe(404);
+    await expectRefusal(res, 'NOT_FOUND');
   });
 
   it('refuses a future generated class, naming cancel and the code', async () => {
@@ -2203,7 +2222,6 @@ describe('DELETE /api/studio-classes/[id]', () => {
     expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true } })).toBeNull();
   });
 
-  /** The double-click. P2025 must read as 404, not as a 500. */
   /**
    * THE OTHER DIRECTION, and the one that was missing: cancellation must not
    * ENABLE a removal either. Add `if (cancelledAt !== null) return deletable`
@@ -2275,10 +2293,12 @@ describe('DELETE /api/studio-classes/[id]', () => {
     expect(await prisma.studioClass.findUnique({ where: { id: sc.id }, include: { calendarEntry: true } })).toBeNull();
   });
 
-  it('answers the second removal with 404 rather than a 500', async () => {
+  // The concurrent twin — both removals past the read before either commits —
+  // is `src/app/api/studio-classes/[id]/route-lock-order.test.ts`.
+  it('answers the second removal with NOT_FOUND, which the removing button reads as done', async () => {
     const sc = await makeClass({ date: PAST, startTime: '06:45' });
     expect((await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`)).status).toBe(200);
-    expect((await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`)).status).toBe(404);
+    await expectRefusal(await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`), 'NOT_FOUND');
   });
 
   describe('whitespace trimming and validation on studio endpoints (#311)', () => {

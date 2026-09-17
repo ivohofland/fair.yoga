@@ -42,7 +42,7 @@ export const GET = withErrorHandler(async (
       },
     },
   });
-  if (!studioClass) return respondError('Studio class not found', 404);
+  if (!studioClass) return respondError('Studio class not found', 404, 'NOT_FOUND');
   if (studioClass.calendarEntry.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
@@ -77,7 +77,7 @@ export const PUT = withErrorHandler(async (
     where: { id },
     include: { calendarEntry: true },
   });
-  if (!studioClass) return respondError('Studio class not found', 404);
+  if (!studioClass) return respondError('Studio class not found', 404, 'NOT_FOUND');
   if (studioClass.calendarEntry.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
@@ -351,7 +351,7 @@ export const DELETE = withErrorHandler(async (
       calendarEntry: { select: { teacherId: true, ...STUDIO_CLASS_REMOVAL_FACTS_SELECT } },
     },
   });
-  if (!studioClass) return respondError('Studio class not found', 404);
+  if (!studioClass) return respondError('Studio class not found', 404, 'NOT_FOUND');
   if (studioClass.calendarEntry.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
@@ -400,11 +400,9 @@ export const DELETE = withErrorHandler(async (
         { err, studioClassId: id, teacherId: session.teacherId },
         'studio class vanished between the ownership read and the delete',
       );
-      // Not "not found": the teacher answered "yes, remove it" and the row is
-      // gone, which is the end state they asked for. A red "Studio class not
-      // found" under a successful removal reads as failure — the second half of
-      // the confirm-then-silence family the button's docblock names.
-      return respondError('That class is already gone.', 404);
+      // Gone, which is the end state the teacher asked for: the same code as
+      // the read above, worded for someone who just confirmed the removal.
+      return respondError('That class is already gone.', 404, 'NOT_FOUND');
     }
     throw err;
   }

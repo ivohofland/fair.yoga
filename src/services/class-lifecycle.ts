@@ -1201,27 +1201,21 @@ class UpdateClassRefusal extends Error {
 }
 
 /**
- * Why an update did or did not happen.
+ * Why an update did or did not happen. Callers own the user-facing wording;
+ * this type owns the distinction.
  *
- * `locked` carries a NON-EMPTY tuple of offending fields deliberately. The bug
- * this type replaced (#72) returned a "locked" response naming no fields at
- * all, for a request that touched none — the compiler now refuses to construct
- * that. Callers own the user-facing wording; this type owns the distinction.
+ * `locked` carries a NON-EMPTY tuple of the economic fields the request sent.
+ * The bug this type replaced (#72) reported "locked" for a request that sent
+ * none — the compiler now refuses to construct that.
  *
- * `terminal` carries the state for the same reason `locked` carries fields:
- * the caller owns the wording and needs to name what happened. It is
- * `TerminalClassState` rather than `ClassStatus` because since #327 one of the
- * two things it can name is not a status at all — a cancelled class keeps
+ * `terminal` carries the state, which is what tells a completed class from a
+ * cancelled one. It is `TerminalClassState` rather than `ClassStatus` because
+ * since #327 one of the two is not a status at all — a cancelled class keeps
  * whatever live status it had, and its cancellation is a column on the entry.
- * The 409's sentence still has to say "cancelled", so the value has to.
  *
- * `past_start` carries NOTHING, and the asymmetry with its two neighbours is
- * deliberate. `locked` and `terminal` carry data because their callers' MESSAGE
- * VARIES with it — `terminal`'s 409 renders "completed" or "cancelled" from one
- * branch, and an integration test exists to pin that variance. This refusal has
- * one sentence for every past start, whether the offending value arrived as
- * `date`, as `startTime`, or as both. A carried instant would be a payload
- * nothing reads.
+ * `past_start` carries NOTHING: a past start is one refusal whether the
+ * offending value arrived as `date`, as `startTime`, or as both, and a carried
+ * instant would be a payload nothing reads.
  *
  * Every *business* outcome of an update is a variant here. The one non-outcome
  * — an invariant violation, where the function's own reasoning about its
@@ -1420,9 +1414,8 @@ export async function updateClass(
   // theoretical. `ClassEditForm` PUTs the whole form on every save, so `date`
   // and `startTime` are present in every request this route ever receives —
   // the field gate alone never narrows anything in production, and a teacher
-  // editing only the description of a past-dated draft was refused with
-  // "Cannot move a class to a date and time that has already passed" having
-  // moved nothing. The rule is that a write may not NEWLY PLACE the start in
+  // editing only the description of a past-dated draft was refused as a past
+  // start having moved nothing. The rule is that a write may not NEWLY PLACE the start in
   // the past; leaving it where it already was is not that.
   //
   // NOT COVERED BY `lockClassRow`, and that is not the same thing as safe.

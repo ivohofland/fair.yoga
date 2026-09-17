@@ -52,3 +52,25 @@ export function notCancellableMessage(status: ClassStatus): string {
     }
   }
 }
+
+/**
+ * Why a frozen class refuses an edit. `state` is a status or `'cancelled'`,
+ * the domain a freeze is reported in. A live status is never reported as
+ * frozen, so its sentence names no state.
+ */
+export function frozenClassMessage(state: ClassStatus | 'cancelled'): string {
+  switch (state) {
+    case 'completed':
+      return 'This class has finished and can no longer be changed.';
+    case 'cancelled':
+      return 'This class has been cancelled and can no longer be changed.';
+    case 'draft':
+    case 'open':
+    case 'in_progress':
+      return 'This class can no longer be changed.';
+    default: {
+      const unhandled: never = state;
+      return unhandled;
+    }
+  }
+}

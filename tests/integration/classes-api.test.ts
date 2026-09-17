@@ -198,14 +198,10 @@ beforeAll(async () => {
   const completedCls = await makeClass('Classes API Terminal (#247)', 'completed', '10:15');
   completedClassId = completedCls.id;
 
-  // The cancelled side of the freeze. `updateClass` answers `reason:
-  // 'terminal'` carrying a `TerminalClassState` (`class-lifecycle.ts`) —
-  // `ClassStatus | 'cancelled'` rather than a `ClassStatus` since #327,
-  // because a cancelled class keeps whatever live status it had and carries
-  // `cancelledAt` on its entry — and the route interpolates that value
-  // straight into the 409. `frozenStateOf` picks between a
-  // `TERMINAL_CLASS_STATUSES` member and `'cancelled'`; one fixture per side
-  // of that choice, so neither half of the rendered message goes unasserted.
+  // The cancelled side of the freeze. A cancelled class keeps whatever live
+  // status it had and carries `cancelledAt` on its entry, so `updateClass`
+  // finds this freeze on a different row than the completed fixture's; one
+  // fixture per side.
   const cancelledCls = await makeClass('Classes API Terminal cancelled (#247)', 'cancelled', '10:30');
   cancelledTerminalClassId = cancelledCls.id;
 
@@ -1027,28 +1023,15 @@ describe('PUT /api/classes/[id]', () => {
     expect(updated.minStudents).toBe(2);
   });
 
-  it('locked class: economic edit is rejected with 409 naming the fields sent', async () => {
+  // The fields the request sent are in the server's log, not in the sentence.
+  // What the route does with that tuple is pinned over a spy in
+  // `src/app/api/classes/[id]/route.test.ts`; what the service puts in it, in
+  // `src/services/class-lifecycle.test.ts`.
+  it('locked class: an economic edit is refused with SETTINGS_LOCKED and writes nothing', async () => {
     const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
     expect(before.settingsLocked).toBe(true); // sanity: the beforeAll fixture registration locked it
 
-    // Body order deliberately reversed from the `ECONOMIC_FIELDS` constant's
-    // own declaration order (src/services/class-lifecycle.ts — roomCost
-    // before minRate), so the "regardless of the order given in the request
-    // body" claim below is actually exercised rather than accidentally true
-    // because the two orders match.
-    const res = await put(ownerToken, lockedClassId, { minRate: 1, roomCost: 999 });
-    expect(res.status).toBe(409);
-
-    // The `locked` branch's 409 message in the route's `PUT` names every sent
-    // field, in ECONOMIC_FIELDS order regardless of request-body order. Two
-    // separate toContain checks rather than one 'roomCost, minRate' string, so
-    // this doesn't depend on ECONOMIC_FIELDS' own declaration order —
-    // alphabetizing that array is cosmetic and shouldn't fail this test. Each
-    // check still distinguishes this 409 from withErrorHandler's unrelated
-    // 'Resource already exists' 409 (src/lib/api-utils.ts) just as well.
-    const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('roomCost');
-    expect(json.error.message).toContain('minRate');
+    await expectRefusal(await put(ownerToken, lockedClassId, { minRate: 1, roomCost: 999 }), 'SETTINGS_LOCKED');
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
@@ -1063,8 +1046,10 @@ describe('PUT /api/classes/[id]', () => {
     // future "strip the locked fields and apply the rest" refactor could pass
     // every other case here while quietly changing the contract from atomic
     // rejection to partial apply.
-    const res = await put(ownerToken, lockedClassId, { description: 'x', roomCost: 999 });
-    expect(res.status).toBe(409);
+    await expectRefusal(
+      await put(ownerToken, lockedClassId, { description: 'x', roomCost: 999 }),
+      'SETTINGS_LOCKED',
+    );
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
@@ -1094,7 +1079,7 @@ describe('PUT /api/classes/[id]', () => {
     // be empty either way and the `ECONOMIC_FIELDS` lock in `updateClass`
     // would be unreachable regardless of guard order. roomCost makes the two
     // orderings diverge: ownership-first -> 403 "Not your class"; lock-first
-    // -> 409 "Cannot update economic fields...".
+    // -> 409 SETTINGS_LOCKED.
     const res = await put(otherTeacherToken, lockedClassId, { roomCost: 999 });
     expect(res.status).toBe(403);
 
@@ -1105,6 +1090,16 @@ describe('PUT /api/classes/[id]', () => {
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId }, include: { calendarEntry: true } });
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
+  });
+
+  it('answers an unknown class with NOT_FOUND', async () => {
+    await expectRefusal(await put(ownerToken, UNKNOWN_CLASS_ID, { description: 'x' }), 'NOT_FOUND');
+  });
+
+  // The read half of the same route file, which answers a missing class the same way.
+  it('GET answers an unknown class with NOT_FOUND', async () => {
+    const res = await fetch(`${BASE_URL}/api/classes/${UNKNOWN_CLASS_ID}`, { headers: cookie(ownerToken) });
+    await expectRefusal(res, 'NOT_FOUND');
   });
 
   it('open class: a date edit into the past is refused with 409, not 500 (#249)', async () => {
@@ -1272,19 +1267,14 @@ describe('PUT /api/classes/[id]', () => {
     });
   });
 
-  it('completed class: the edit is refused with 409 and the stored date does not move (#247)', async () => {
+  it('completed class: the edit is refused with CLASS_TERMINAL and the stored date does not move (#247)', async () => {
     const before = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId }, include: { calendarEntry: true } });
     expect(before.status).toBe('completed'); // sanity: the fixture is the state under test
 
     // The exact payload from the issue. `isoDate` has no range bound, so this
     // passes schema validation and reaches the service — the refusal has to
     // come from the guard, not from parsing.
-    const res = await put(ownerToken, completedClassId, { date: '2020-01-01' });
-    expect(res.status).toBe(409);
-
-    const json = (await res.json()) as { error: { code: string; message: string } };
-    expect(json.error.message).toContain('completed');
-    expect(json.error.code).toBe('CLASS_TERMINAL');
+    await expectRefusal(await put(ownerToken, completedClassId, { date: '2020-01-01' }), 'CLASS_TERMINAL');
 
     // The whole point: a refusal that still wrote the column would leave
     // waitlist-retention's sweep with a class dated 2020 to reap.
@@ -1292,31 +1282,19 @@ describe('PUT /api/classes/[id]', () => {
     expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-06-01');
   });
 
-  it('cancelled class: the edit is refused with 409 naming cancelled, not completed (#247)', async () => {
+  // Each freeze's own sentence is pinned in `src/app/api/classes/[id]/route.test.ts`,
+  // against the function the route words it with.
+  it('cancelled class: the edit is refused with CLASS_TERMINAL and the stored date does not move (#247)', async () => {
     const before = await prisma.class.findUniqueOrThrow({
       where: { id: cancelledTerminalClassId }, include: { calendarEntry: true } });
     // The premise, on the row that carries it since #327: the class keeps a
     // live status and the ENTRY holds the cancellation.
     expect(before.calendarEntry.cancelledAt).not.toBeNull();
 
-    // Not a duplicate of the `completed` case above. The route builds its
-    // message by interpolating `result.state`, and the two states render two
-    // different sentences from one branch — of which only one was pinned. That
-    // `state` is `ClassStatus | 'cancelled'` rather than `ClassStatus` is
-    // exactly because this sentence still has to say "cancelled".
-    // A regression that hard-coded "completed" into that string — the obvious
-    // way to write it if only the completed fixture exists — would have passed
-    // the whole suite while telling half of the affected teachers their class
-    // is in a state it is not.
-    const res = await put(ownerToken, cancelledTerminalClassId, { date: '2020-01-01' });
-    expect(res.status).toBe(409);
-
-    const json = (await res.json()) as { error: { code: string; message: string } };
-    expect(json.error.message).toContain('cancelled');
-    expect(json.error.message).not.toContain('completed');
-    // Coded, like the two conflict 409s in the same handler, so a client can
-    // distinguish "frozen" from "slot taken" without matching on English.
-    expect(json.error.code).toBe('CLASS_TERMINAL');
+    await expectRefusal(
+      await put(ownerToken, cancelledTerminalClassId, { date: '2020-01-01' }),
+      'CLASS_TERMINAL',
+    );
 
     const after = await prisma.class.findUniqueOrThrow({
       where: { id: cancelledTerminalClassId }, include: { calendarEntry: true } });
@@ -1545,8 +1523,10 @@ describe('POST /api/classes', () => {
   // `rentalRate` is never shared between teachers and which
   // `class/[id]/page.tsx` renders via `teacherRoom → room`.
   it("refuses another teacher's teacherRoomId", async () => {
-    const res = await post(ownerToken, { ...baseBody(), teacherRoomId: victimRoomId });
-    expect(res.status).toBe(400);
+    await expectRefusal(
+      await post(ownerToken, { ...baseBody(), teacherRoomId: victimRoomId }),
+      'ROOM_NOT_ON_LIST',
+    );
     expect(await prisma.class.count({ where: { teacherRoomId: victimRoomId } })).toBe(0);
   });
 
@@ -1555,8 +1535,10 @@ describe('POST /api/classes', () => {
   // known id owned by someone else fail on different halves of the same
   // condition.
   it('refuses an unknown teacherRoomId', async () => {
-    const res = await post(ownerToken, { ...baseBody(), teacherRoomId: UNKNOWN_CLASS_ID });
-    expect(res.status).toBe(400);
+    await expectRefusal(
+      await post(ownerToken, { ...baseBody(), teacherRoomId: UNKNOWN_CLASS_ID }),
+      'ROOM_NOT_ON_LIST',
+    );
   });
 
   /**
@@ -1629,11 +1611,8 @@ describe('POST /api/classes', () => {
       await holding;
       const res = await pending;
 
-      expect(res.status).toBe(400);
-      const json = (await res.json()) as { error: { message: string } };
-      expect(json.error.message).toBe('Invalid teacher room');
-      // Discriminated from a genuine slot conflict, whose message would be misleading here.
-      expect(json.error.message).not.toContain('overlaps that time');
+      // A 400 with this code, and so not the slot conflict's 409.
+      await expectRefusal(res, 'ROOM_NOT_ON_LIST');
     } finally {
       release();
       await holding.catch(() => {});

@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { ClassStatus } from '@prisma/client';
 import { canTransition } from '@/services/class-lifecycle';
-import { notCancellableMessage, transitionRefusalMessage } from './transition-refusal';
+import {
+  frozenClassMessage,
+  notCancellableMessage,
+  transitionRefusalMessage,
+} from './transition-refusal';
 
 const STATUSES = Object.values(ClassStatus);
 const QUOTED_STATUS = new RegExp(`["'\`](${STATUSES.join('|')})["'\`]`);
@@ -64,5 +68,24 @@ describe('notCancellableMessage', () => {
 
   it('answers every status with a sentence that names no status literal', () => {
     for (const status of STATUSES) expectUserSentence(notCancellableMessage(status));
+  });
+});
+
+describe('frozenClassMessage', () => {
+  it.each([
+    ['completed', 'This class has finished and can no longer be changed.'],
+    ['cancelled', 'This class has been cancelled and can no longer be changed.'],
+  ] as const)('%s: %s', (state, message) => {
+    expect(frozenClassMessage(state)).toBe(message);
+  });
+
+  it('answers a live status, which is never frozen, with a sentence that names no state', () => {
+    for (const status of ['draft', 'open', 'in_progress'] as const) {
+      expect(frozenClassMessage(status)).toBe('This class can no longer be changed.');
+    }
+  });
+
+  it('answers every state with a sentence that names no status literal', () => {
+    for (const state of [...STATUSES, 'cancelled' as const]) expectUserSentence(frozenClassMessage(state));
   });
 });

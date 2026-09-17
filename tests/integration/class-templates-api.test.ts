@@ -10,6 +10,7 @@ import { mondayOf } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
+import { expectRefusal } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -476,6 +477,41 @@ describe('POST /api/class-templates', () => {
     }
   });
 
+  // Refused before any write, so neither case holds a slot.
+  it("refuses another teacher's room with ROOM_NOT_ON_LIST, and creates nothing", async () => {
+    const res = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({
+        ...templateBody('Foreign Room Template', '20:00', ALT_DAY_2),
+        teacherRoomId: otherTeacherRoomId,
+      }),
+    });
+
+    await expectRefusal(res, 'ROOM_NOT_ON_LIST');
+    expect(
+      await prisma.scheduleRule.count({
+        where: { teacherId: { in: [teacherId, otherTeacherId] }, classType: 'Foreign Room Template' },
+      }),
+    ).toBe(0);
+  });
+
+  it('refuses an unknown room with ROOM_NOT_ON_LIST, and creates nothing', async () => {
+    const res = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({
+        ...templateBody('Unknown Room Template', '21:30', ALT_DAY_2),
+        teacherRoomId: '00000000-0000-4000-8000-000000000000',
+      }),
+    });
+
+    await expectRefusal(res, 'ROOM_NOT_ON_LIST');
+    expect(
+      await prisma.scheduleRule.count({ where: { teacherId, classType: 'Unknown Room Template' } }),
+    ).toBe(0);
+  });
+
   // The behaviour change this branch exists to prove: `19:00 +90` against
   // `19:30 +60` is legal today (only an EXACT-start match was refused before
   // issue 298) and refused after. A dedicated `seedTeacher` fixture, like the
@@ -664,7 +700,7 @@ describe('PATCH /api/class-templates/[id]', () => {
       method: 'PATCH',
       headers: cookie(sessionToken),
     });
-    expect(toggle.status).toBe(409);
+    await expectRefusal(toggle, 'TEMPLATE_ARCHIVED');
 
     const after = await prisma.classTemplate.findUniqueOrThrow({
       where: { id: template.id },
@@ -1449,7 +1485,7 @@ describe('PUT /api/class-templates/[id]', () => {
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
       body: JSON.stringify({ teacherRoomId: otherTeacherRoomId }),
     });
-    expect(res.status).toBe(400);
+    await expectRefusal(res, 'ROOM_NOT_ON_LIST');
 
     const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id }, include: { scheduleRule: true } });
     expect(after.teacherRoomId).toBe(teacherRoomId);
@@ -2546,10 +2582,8 @@ describe('PUT /api/class-templates/[id]', () => {
       const res = await fetch(`${BASE_URL}/api/class-templates/${template.id}?state=active`, {
         method: 'PATCH', headers: cookie(owner.sessionToken),
       });
-      expect(res.status).toBe(409);
-      const body = (await res.json()) as { error: { code?: string; message: string } };
-      expect(body.error.message).toBe('Unarchive the template before activating it');
-      expect(body.error.code).not.toBe('ROOM_ARCHIVED');
+      // TEMPLATE_ARCHIVED, and so not ROOM_ARCHIVED.
+      await expectRefusal(res, 'TEMPLATE_ARCHIVED');
     } finally {
       await prisma.calendarEntry.deleteMany({ where: { teacherId: owner.teacherId } });
       await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });

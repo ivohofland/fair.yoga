@@ -92,7 +92,11 @@ describe('DeleteStudioClassButton', () => {
       ok: false,
       status: 409,
       json: async () => ({
-        error: { message: 'This class has not started yet and comes from a recurring template, so removing it would only create it again. Cancel it instead.' },
+        error: {
+          code: 'STUDIO_CLASS_REGENERATES',
+          message:
+            'This class comes from a recurring template and is not yet past, so removing it would only create it again. Cancel it instead.',
+        },
       }),
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -102,6 +106,42 @@ describe('DeleteStudioClassButton', () => {
     confirmRemove();
 
     expect(await screen.findByText(/Cancel it instead\./)).toBeInTheDocument();
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  // Spec §5.3: this button asked for the row to be gone, so its own NOT_FOUND
+  // is the end state the teacher confirmed.
+  it('treats NOT_FOUND as done: the class is already gone', async () => {
+    const assign = stubLocation();
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: { code: 'NOT_FOUND', message: 'That class is already gone.' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<DeleteStudioClassButton studioClassId="sc-1" earningsAtRisk={null} />);
+
+    openConfirm();
+    confirmRemove();
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/schedule'));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('shows a 403 as an error, and stays put', async () => {
+    const assign = stubLocation();
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: { message: 'Access denied' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<DeleteStudioClassButton studioClassId="sc-1" earningsAtRisk={null} />);
+
+    openConfirm();
+    confirmRemove();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Access denied');
     expect(assign).not.toHaveBeenCalled();
   });
 
