@@ -17,7 +17,7 @@ import {
 const db = new PrismaClient();
 const uniqueSuffix = Date.now();
 
-// Three account shapes: teacher-only, student-only, dual (both profiles).
+// Account fixtures covering teacher-only, student-only, and dual profile accounts.
 let teacherAccountId: string;
 let studentAccountId: string;
 let dualAccountId: string;
@@ -358,6 +358,28 @@ describe('validateSession', () => {
       const result = await validateSession(db, token);
       expect(result).toBeNull();
       expect(updateSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      updateSpy.mockRestore();
+    }
+  });
+
+  it('re-throws non-P2025 database errors during extension update', async () => {
+    const token = await createSession(db, teacherAccountId);
+    const sessionHash = hashToken(token);
+
+    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
+    const originalExpiry = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+    await db.session.update({
+      where: { id: sessionHash },
+      data: { createdAt: sixteenDaysAgo, expiresAt: originalExpiry },
+    });
+
+    const updateSpy = vi
+      .spyOn(db.session, 'update')
+      .mockRejectedValueOnce(new Error('connection timeout'));
+
+    try {
+      await expect(validateSession(db, token)).rejects.toThrow('connection timeout');
     } finally {
       updateSpy.mockRestore();
     }

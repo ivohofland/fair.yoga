@@ -105,6 +105,7 @@ export async function validateSession(
         data: { expiresAt: new Date(Date.now() + THIRTY_DAYS_MS) },
       });
     } catch (err) {
+      // Concurrently deleted between read and update (e.g. logout or GDPR erasure)
       if (isRecordNotFound(err)) {
         return null;
       }
