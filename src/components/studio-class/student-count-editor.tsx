@@ -63,7 +63,7 @@ export function StudentCountEditor({ studioClassId, initialCount }: StudentCount
       </Button>
       {/* One slot, never both: "Saved" and a failure describe the same click. */}
       {error
-        ? <span className="type-caption text-danger mb-3.5">{error}</span>
+        ? <span role="alert" className="type-caption text-danger mb-3.5">{error}</span>
         : success && <span className="type-caption text-teal mb-3.5">{success}</span>}
     </div>
   );

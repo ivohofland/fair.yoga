@@ -11,6 +11,7 @@ import {
 } from '@/lib/api-utils';
 import { isRestrictViolationOn } from '@/lib/api-errors';
 import { isCheckViolationOn } from '@/lib/check-violation';
+import { roomNotOnListResponse } from '@/lib/room-refusal';
 import { createClassTemplateSchema } from '@/lib/schemas';
 import {
   withSlot,
@@ -46,6 +47,24 @@ const SLOT_TAKEN = {
   ],
 } as const satisfies Record<RuleSlotHolder, readonly [string, string]>;
 
+/** The 409 both room-archive checks in this file answer with. */
+function roomArchivedResponse() {
+  return respondError(
+    'This room is archived. Unarchive it to add a recurring class here.',
+    409,
+    'ROOM_ARCHIVED',
+  );
+}
+
+/** The 503 for a create that lost a race and wrote nothing. */
+function templateCreateBusyResponse() {
+  return respondError(
+    'The system was busy and could not create this recurring class. Nothing was created. Wait a moment, then try again.',
+    503,
+    'TEMPLATE_BUSY',
+  );
+}
+
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
@@ -72,7 +91,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // Verify teacherRoomId belongs to this teacher
   const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: body.teacherRoomId } });
   if (!teacherRoom || teacherRoom.teacherId !== session.teacherId) {
-    return respondError('Invalid teacher room', 400);
+    return roomNotOnListResponse();
   }
 
   // Door 4 of the room archive lifecycle (issue 76). Unlike a class — always
@@ -85,11 +104,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       { teacherRoomId: body.teacherRoomId, teacherId: session.teacherId },
       'template create refused: the room is archived',
     );
-    return respondError(
-      'This room is archived. Unarchive it to add a recurring class here.',
-      409,
-      'ROOM_ARCHIVED',
-    );
+    return roomArchivedResponse();
   }
 
   // The lock behavior for this create — what `setLockTimeout(tx)` bounds,
@@ -101,23 +116,49 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   try {
     result = await createClassTemplate(prisma, session.teacherId, body);
   } catch (e) {
-    // The room archived between the pre-check above and the insert: the
-    // service ASSERTS `roomArchived: false`, so the room mirror's foreign key
-    // refuses the row (23503) without a re-read to race. Same 409 as the
-    // pre-check — the probe is for the sentence, the constraint does the work.
     if (
       isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room') ||
       isRestrictViolationOn(e, [CLASS_TEMPLATE_ROOM_FK])
     ) {
+      // WHICH WAY THE ROOM MOVED, because the constraint name does not say.
+      // The service ASSERTS `roomArchived: false`, so the room mirror's
+      // foreign key refuses the row when the room changed after the
+      // pre-check above: archived since, deleted since (#231), or archived at
+      // the insert and open again by now, where a retry simply works. The
+      // re-read tells those apart; a failure of the re-read itself rethrows
+      // the constraint error rather than replacing it.
+      let room: { isArchived: boolean } | null;
+      try {
+        room = await prisma.teacherRoom.findUnique({
+          where: { id: body.teacherRoomId },
+          select: { isArchived: true },
+        });
+      } catch (probeErr) {
+        log.warn(
+          { err: e, probeErr, teacherId: session.teacherId, teacherRoomId: body.teacherRoomId },
+          'template create hit the room constraint, but the diagnostic re-read failed',
+        );
+        throw e;
+      }
+      if (room === null) {
+        log.warn(
+          { err: e, teacherId: session.teacherId, teacherRoomId: body.teacherRoomId },
+          'template create target room vanished',
+        );
+        return roomNotOnListResponse();
+      }
+      if (room.isArchived) {
+        log.warn(
+          { err: e, teacherId: session.teacherId, teacherRoomId: body.teacherRoomId },
+          'template create lost the room-archive race',
+        );
+        return roomArchivedResponse();
+      }
       log.warn(
-        { err: e, teacherRoomId: body.teacherRoomId, teacherId: session.teacherId },
-        'template create lost the room-archive race',
+        { err: e, teacherId: session.teacherId, teacherRoomId: body.teacherRoomId },
+        'template create lost a room-state race the other way; the room is open again',
       );
-      return respondError(
-        'This room is archived. Unarchive it to add a recurring class here.',
-        409,
-        'ROOM_ARCHIVED',
-      );
+      return templateCreateBusyResponse();
     }
     throw e;
   }
@@ -131,11 +172,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError(message, 409, code);
   }
   if (!result.ok && result.reason === 'busy') {
-    return respondError(
-      'The system was busy and could not create this recurring class. Nothing was created. Wait a moment, then try again.',
-      503,
-      'TEMPLATE_BUSY',
-    );
+    return templateCreateBusyResponse();
   }
   if (!result.ok) {
     // Exhaustiveness: a new CreateTemplateResult arm becomes a compile error

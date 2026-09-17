@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { cookie, seedSession, uniqueSuffix } from '../../../../tests/helpers';
+import { expectRefusal } from '../../../../tests/api-assertions';
 import { POST } from './route';
 
 /**
@@ -61,7 +62,7 @@ describe('POST /api/classes — room deleted between the ownership check and the
    * the room and passes, then the handler's transaction parks on its own
    * `FOR KEY SHARE` re-read until the delete commits and the row is gone —
    * discovering `{ ok: false, reason: 'room_not_found' }`, which must answer
-   * 400 "Invalid teacher room", not the slot-conflict 409.
+   * 400 ROOM_NOT_ON_LIST, not the slot-conflict 409.
    */
   it('answers 400, not a false slot conflict, when the room is deleted while parked on it', async () => {
     const room = await prisma.room.create({
@@ -123,11 +124,8 @@ describe('POST /api/classes — room deleted between the ownership check and the
       await holding;
       const res = await pending;
 
-      expect(res.status).toBe(400);
-      const json = (await res.json()) as { error: { message: string } };
-      expect(json.error.message).toBe('Invalid teacher room');
-      // Discriminated from a genuine slot conflict, whose message would be misleading here.
-      expect(json.error.message).not.toContain('overlaps that time');
+      // A 400 with this code, and so not the slot conflict's 409.
+      await expectRefusal(res, 'ROOM_NOT_ON_LIST');
     } finally {
       release();
       await holding.catch(() => {});

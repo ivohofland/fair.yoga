@@ -297,7 +297,7 @@ export const PATCH = withErrorHandler(async (
   // reason is ever produced — pinned by
   // `studio-class-template-lifecycle.test.ts`.
   if (result.reason === 'archived') {
-    return respondError('Unarchive the template before activating it', 409);
+    return respondError('Unarchive this studio class before resuming it.', 409, 'TEMPLATE_ARCHIVED');
   }
   if (result.reason === 'busy') {
     return respondError(

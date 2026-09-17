@@ -11,6 +11,7 @@ import {
 } from '@/lib/api-utils';
 import { createClassSchema } from '@/lib/schemas';
 import { entryConflictMessage, probeConflictingEntry } from '@/lib/entry-conflict';
+import { roomNotOnListResponse } from '@/lib/room-refusal';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 
@@ -78,7 +79,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // Verify teacherRoomId belongs to this teacher
   const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: body.teacherRoomId } });
   if (!teacherRoom || teacherRoom.teacherId !== session.teacherId) {
-    return respondError('Invalid teacher room', 400);
+    return roomNotOnListResponse();
   }
 
   // Two Prisma calls, not one nested `create`. Prisma already wraps a single
@@ -189,7 +190,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         { teacherId: session.teacherId, teacherRoomId: body.teacherRoomId },
         'class create refused: the room was deleted while the create was parked on it',
       );
-      return respondError('Invalid teacher room', 400);
+      return roomNotOnListResponse();
     }
     // WHICH entry, asked of the database, because a zero row count does not
     // say — and either family can be the answer, since both live in one

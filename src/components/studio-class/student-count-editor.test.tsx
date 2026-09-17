@@ -38,13 +38,15 @@ describe('StudentCountEditor', () => {
       }),
     );
     expect(await screen.findByText('Saved')).toBeInTheDocument();
+    // "Saved" is not an alert; only a failure is announced.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('shows the server message instead of "Saved" when the save is refused', async () => {
     fetchMock.mockResolvedValue({
       ok: false,
       status: 400,
-      json: async () => ({ error: { message: 'Student count cannot be negative.' } }),
+      json: async () => ({ error: { message: 'studentCount: Too small: expected number to be >=0' } }),
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<StudentCountEditor studioClassId="sc-1" initialCount={null} />);
@@ -52,7 +54,10 @@ describe('StudentCountEditor', () => {
     type('-4');
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
-    expect(await screen.findByText('Student count cannot be negative.')).toBeInTheDocument();
+    // A role, not just text: without it a screen reader never announces the failure.
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'studentCount: Too small: expected number to be >=0',
+    );
     // The distinction the whole fix turns on: a failed save must not leave
     // the screen in the shape a successful one has.
     expect(screen.queryByText('Saved')).not.toBeInTheDocument();

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { readErrorMessage } from '@/lib/client-errors';
+import { readError } from '@/lib/client-errors';
 import {
   resolveTemplateConfirmation,
   UNREADABLE_CONFIRMATION_MESSAGE,
@@ -66,7 +66,11 @@ export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateBut
         }
         router.refresh();
       } else {
-        setError(await readErrorMessage(res, 'Failed to update. Please try again.'));
+        const { code, message } = await readError(res, 'Failed to update. Please try again.');
+        setError(message);
+        // Only a page rendered before the archive offers this toggle on an
+        // archived template; re-reading it replaces the control.
+        if (code === 'TEMPLATE_ARCHIVED') router.refresh();
       }
     } finally {
       setLoading(false);

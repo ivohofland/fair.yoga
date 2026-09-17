@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { readErrorMessage } from '@/lib/client-errors';
+import { readError } from '@/lib/client-errors';
 
 interface DeleteStudioClassButtonProps {
   studioClassId: string;
@@ -67,8 +67,16 @@ export function DeleteStudioClassButton({
     let removed = false;
     try {
       const res = await fetch(`/api/studio-classes/${studioClassId}`, { method: 'DELETE' });
-      if (res.ok) removed = true;
-      else setError(await readErrorMessage(res, 'Could not remove the class. Please try again.'));
+      if (res.ok) {
+        removed = true;
+      } else {
+        const { code, message } = await readError(res, 'Could not remove the class. Please try again.');
+        // This button asked for the row to be gone, and NOT_FOUND says it is —
+        // a second click or another tab got there first. Only this button may
+        // read it that way: it is the one that asked.
+        if (code === 'NOT_FOUND') removed = true;
+        else setError(message);
+      }
     } catch {
       setError('Network error. Please try again.');
     }
@@ -83,8 +91,8 @@ export function DeleteStudioClassButton({
       // cache entry). A full navigation cannot serve the old schedule.
       //
       // Outside the `try` on purpose: inside it, a throw here would report a
-      // removal the server COMMITTED as "Network error. Please try again.", and
-      // the retry would then answer 404. `removing` is left set — the page is
+      // removal the server COMMITTED as "Network error. Please try again." —
+      // a failure message for a removal that happened. `removing` is left set — the page is
       // going away, and an enabled "Remove" under an in-flight navigation is
       // the silence half of confirm-then-silence.
       window.location.assign('/schedule');

@@ -159,7 +159,9 @@ test.describe('Class edit screen', () => {
 
     await page.getByLabel('Target rate (€)').fill('99');
     await page.getByRole('button', { name: 'Save changes' }).click();
-    await expect(page.getByText(/Cannot update economic fields/)).toBeVisible();
+    await expect(
+      page.getByText('Prices and capacity are locked once the first student books.'),
+    ).toBeVisible();
 
     const cls = await prisma.class.findUniqueOrThrow({ where: { id: draftClassId }, include: { calendarEntry: true } });
     expect(Number(cls.targetRate)).toBe(24); // untouched

@@ -12,7 +12,14 @@ import { updateClassSchema } from '@/lib/schemas';
 import { updateClass, type ClassUpdateData } from '@/services/class-lifecycle';
 import { entryConflictMessage, probeConflictingEntry } from '@/lib/entry-conflict';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
+import { frozenClassMessage } from '@/lib/transition-refusal';
 import { log } from '@/lib/log';
+import { CLASS_GONE } from './shared';
+
+/** The 404 for a class that is not there, whichever read in this file found it gone. */
+function classGone() {
+  return respondError(CLASS_GONE.message, CLASS_GONE.status, CLASS_GONE.code);
+}
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -31,7 +38,7 @@ export const GET = withErrorHandler(async (
     },
   });
 
-  if (!cls) return respondError('Class not found', 404);
+  if (!cls) return classGone();
   if (cls.calendarEntry.teacherId !== session.teacherId) {
     return respondError('Not your class', 403);
   }
@@ -63,7 +70,7 @@ export const PUT = withErrorHandler(async (
     where: { id },
     include: { calendarEntry: true },
   });
-  if (!cls) return respondError('Class not found', 404);
+  if (!cls) return classGone();
   if (cls.calendarEntry.teacherId !== session.teacherId) {
     return respondError('Not your class', 403);
   }
@@ -97,12 +104,18 @@ export const PUT = withErrorHandler(async (
 
   // Narrowed one reason at a time so the `locked` branch below can read
   // `result.fields` without a cast.
-  if (result.reason === 'not_found') return respondError('Class not found', 404);
+  if (result.reason === 'not_found') return classGone();
   if (result.reason === 'no_fields') return respondError('No valid fields to update', 400);
   if (result.reason === 'locked') {
+    // The fields go to the log, not into the sentence.
+    log.info(
+      { classId: id, teacherId: session.teacherId, fields: result.fields },
+      'class edit refused: its economics are locked',
+    );
     return respondError(
-      `Cannot update economic fields when settings are locked: ${result.fields.join(', ')}`,
+      'Prices and capacity are locked once the first student books.',
       409,
+      'SETTINGS_LOCKED',
     );
   }
   // #247. Not a `locked` variant with a different field set — the two freezes
@@ -117,7 +130,7 @@ export const PUT = withErrorHandler(async (
   // below it, so a client can tell "frozen" from "slot taken" without
   // matching on English.
   if (result.reason === 'terminal') {
-    return respondError(`Cannot edit a class that is ${result.state}`, 409, 'CLASS_TERMINAL');
+    return respondError(frozenClassMessage(result.state), 409, 'CLASS_TERMINAL');
   }
   // #327. The ENTRY refused it, not the class row — its schedule is frozen. A
   // sibling of `CLASS_TERMINAL` rather than a widening of it: that one is
@@ -216,7 +229,7 @@ export const PUT = withErrorHandler(async (
   // on English.
   if (result.reason === 'past_start') {
     return respondError(
-      'Cannot move a class to a date and time that has already passed.',
+      'That time has already passed. Choose a later date or time.',
       409,
       'CLASS_STARTS_IN_PAST',
     );
