@@ -2,8 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
-import { hashToken } from '@/lib/auth/magic-link';
-import { cookie, seedSession, uniqueSuffix } from '../../../../../tests/helpers';
+import { cookie, hashToken, seedSession, uniqueSuffix } from '../../../../../tests/helpers';
 import { GET } from './route';
 
 const suffix = uniqueSuffix();
@@ -72,11 +71,8 @@ describe('GET /api/auth/session — session extension race (#632)', () => {
         error: { message: 'Session expired' },
       });
 
-      // Must not log an unhandled error at error level
-      expect(errorSpy).not.toHaveBeenCalledWith(
-        expect.anything(),
-        'unhandled API error',
-      );
+      // Must not log an error
+      expect(errorSpy).not.toHaveBeenCalled();
       expect(updateSpy).toHaveBeenCalledTimes(1);
     } finally {
       updateSpy.mockRestore();
