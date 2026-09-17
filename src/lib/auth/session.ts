@@ -5,6 +5,7 @@ import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
 import type { SessionUser } from '../types';
 import { liveProfile } from '@/lib/live-profile';
+import { isRecordNotFound } from '@/lib/api-errors';
 
 export const SESSION_COOKIE_NAME = 'fair_yoga_session';
 
@@ -98,10 +99,17 @@ export async function validateSession(
   // Extend session if more than 15 days old
   const fifteenDaysAgo = new Date(Date.now() - FIFTEEN_DAYS_MS);
   if (session.createdAt < fifteenDaysAgo) {
-    await db.session.update({
-      where: { id: sessionHash },
-      data: { expiresAt: new Date(Date.now() + THIRTY_DAYS_MS) },
-    });
+    try {
+      await db.session.update({
+        where: { id: sessionHash },
+        data: { expiresAt: new Date(Date.now() + THIRTY_DAYS_MS) },
+      });
+    } catch (err) {
+      if (isRecordNotFound(err)) {
+        return null;
+      }
+      throw err;
+    }
   }
 
   const base = { sessionId: session.id, accountId: account.id };

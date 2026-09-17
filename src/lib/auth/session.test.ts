@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { sha256 } from '@oslojs/crypto/sha2';
@@ -332,6 +332,35 @@ describe('validateSession', () => {
     await validateSession(db, token);
     const after = (await db.session.findUnique({ where: { id: sessionHash } }))!.expiresAt;
     expect(after.getTime()).toBe(original.getTime());
+  });
+
+  it('returns null when session is deleted between read and extension update (#632)', async () => {
+    const token = await createSession(db, teacherAccountId);
+    const sessionHash = hashToken(token);
+
+    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
+    const originalExpiry = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+    await db.session.update({
+      where: { id: sessionHash },
+      data: { createdAt: sixteenDaysAgo, expiresAt: originalExpiry },
+    });
+
+    const realUpdate = db.session.update.bind(db.session);
+    const updateSpy = vi.spyOn(db.session, 'update').mockImplementation(((args) => {
+      return (async () => {
+        // Simulate concurrent deletion (logout or GDPR erasure) between read and update
+        await db.session.delete({ where: { id: sessionHash } });
+        return realUpdate(args);
+      })() as unknown as ReturnType<typeof realUpdate>;
+    }) as typeof db.session.update);
+
+    try {
+      const result = await validateSession(db, token);
+      expect(result).toBeNull();
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      updateSpy.mockRestore();
+    }
   });
 });
 
