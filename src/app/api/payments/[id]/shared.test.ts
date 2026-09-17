@@ -29,8 +29,6 @@ describe('respondPaymentOutcome', () => {
     expect(data).toMatchObject({ id: 'pay-1', status: 'paid', method: 'cash' });
   });
 
-  // No request reaches the service's own not-found answer (each route reads
-  // the row first), so its status is pinned here.
   it('answers a vanished payment 404 NOT_FOUND', async () => {
     await expectRefusal(respondPaymentOutcome({ kind: 'refused', refusal: PAYMENT_GONE }), 'NOT_FOUND');
   });

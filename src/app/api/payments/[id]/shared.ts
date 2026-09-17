@@ -6,8 +6,11 @@ import { prisma } from '@/lib/db';
 import { PAYMENT_GONE, type PaymentOutcome, type PaymentRefusal } from '@/services/payments';
 
 /**
- * The payment action routes' answers, in one place. A file of its own because
- * a `route.ts` may export only HTTP verbs and Next's config names.
+ * Shared by this resource's `route.ts` files: the answer-building functions
+ * (`respondPaymentRefusal`, `respondPaymentOutcome`) and the ownership gate
+ * (`loadOwnedPayment`) a POST door runs before calling into the service. A
+ * file of its own because a `route.ts` may export only HTTP verbs and Next's
+ * config names.
  */
 
 /** A refusal from `services/payments.ts`, at the status its code is registered with. */
@@ -37,22 +40,17 @@ const OWNED_PAYMENT_INCLUDE = {
   },
 } satisfies Prisma.PaymentInclude;
 
-type OwnedPaymentRow = Prisma.PaymentGetPayload<{ include: typeof OWNED_PAYMENT_INCLUDE }>;
-
 /**
- * The ownership preamble the four POST doors under this resource share: read
- * the payment through its registration → class → calendarEntry chain, answer
- * the service's own not-found refusal (`PAYMENT_GONE`) if the row is gone, and
- * 403 if it belongs to another teacher.
+ * The ownership preamble the POST doors under this resource share: read the
+ * payment through its registration → class → calendarEntry chain, answer the
+ * service's own not-found refusal (`PAYMENT_GONE`) if the row is gone, and 403
+ * if it belongs to another teacher.
  *
- * A discriminated result, not a bare `Payment | NextResponse`: a caller that
- * skips the `ok` check gets a compile error at the first field access rather
- * than a `Payment` that might actually be a response in disguise, and the
- * shape mirrors `PaymentOutcome`'s own `kind`-tagged union.
+ * A discriminated result, not a bare `NextResponse | null`: `ok` names the
+ * call site's branch (`if (!owned.ok) return owned.response;`) the same way
+ * `PaymentOutcome`'s `kind` does for the service's own callers.
  */
-export type OwnedPayment =
-  | { readonly ok: true; readonly payment: OwnedPaymentRow }
-  | { readonly ok: false; readonly response: NextResponse };
+export type OwnedPayment = { readonly ok: true } | { readonly ok: false; readonly response: NextResponse };
 
 export async function loadOwnedPayment(paymentId: string, teacherId: string): Promise<OwnedPayment> {
   const payment = await prisma.payment.findUnique({
@@ -64,5 +62,5 @@ export async function loadOwnedPayment(paymentId: string, teacherId: string): Pr
   if (payment.registration.class.calendarEntry.teacherId !== teacherId) {
     return { ok: false, response: respondError('Access denied', 403) };
   }
-  return { ok: true, payment };
+  return { ok: true };
 }

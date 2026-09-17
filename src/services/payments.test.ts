@@ -742,11 +742,7 @@ describe('Payment Service (DB)', () => {
     });
   });
 
-  /**
-   * The service's own not-found answer. No code in `src/` deletes a
-   * `Payment`, and each route reads the row before calling in, so this is
-   * where it is pinned; `api/payments/[id]/shared.test.ts` pins its status.
-   */
+  /** What each function answers when the payment id names no row. */
   describe('a payment that does not exist', () => {
     const UNKNOWN_PAYMENT_ID = '00000000-0000-4000-8000-000000000000';
 
