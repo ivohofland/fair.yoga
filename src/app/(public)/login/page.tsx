@@ -1,13 +1,22 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, Suspense } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
+import { isSafeRelativePath } from '@/lib/schemas';
 
-export default function LoginPage() {
+function LoginForm() {
+  const searchParams = useSearchParams();
+  const rawRedirect = searchParams.get('redirect');
+  const redirect =
+    rawRedirect && isSafeRelativePath(rawRedirect) && rawRedirect.length <= 200
+      ? rawRedirect
+      : undefined;
+
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
 
@@ -18,7 +27,7 @@ export default function LoginPage() {
       const res = await fetch('/api/auth/magic-link/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, ...(redirect ? { redirect } : {}) }),
       });
       if (res.ok) {
         setStatus('sent');
@@ -76,7 +85,7 @@ export default function LoginPage() {
           </form>
 
           <div className="mt-4">
-            <PasskeySignIn />
+            <PasskeySignIn redirect={redirect} />
           </div>
 
           {/* For anyone who bookmarked /login before they had an account. */}
@@ -89,5 +98,13 @@ export default function LoginPage() {
         </>
       )}
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }
