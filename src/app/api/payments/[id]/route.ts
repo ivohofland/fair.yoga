@@ -8,7 +8,8 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
-import type { TeacherPaymentRow } from '@/services/payments';
+import { PAYMENT_GONE, type TeacherPaymentRow } from '@/services/payments';
+import { respondPaymentRefusal } from './shared';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -37,7 +38,7 @@ export const GET = withErrorHandler(async (
     },
   });
 
-  if (!payment) return respondError('Payment not found', 404);
+  if (!payment) return respondPaymentRefusal(PAYMENT_GONE);
 
   // Verify teacher owns the class via registration chain
   if (payment.registration.class.calendarEntry.teacherId !== session.teacherId) {

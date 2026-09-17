@@ -8,6 +8,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { getPaymentsForClass } from '@/services/payments';
+import { CLASS_GONE } from '../shared';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -22,7 +23,7 @@ export const GET = withErrorHandler(async (
     where: { id },
     include: { calendarEntry: { select: { teacherId: true } } },
   });
-  if (!cls) return respondError('Class not found', 404);
+  if (!cls) return respondError(CLASS_GONE.message, CLASS_GONE.status, CLASS_GONE.code);
   if (cls.calendarEntry.teacherId !== session.teacherId) {
     return respondError('Not your class', 403);
   }

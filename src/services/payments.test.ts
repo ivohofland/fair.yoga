@@ -10,6 +10,8 @@ import {
   getPaymentsForClass,
   countOutstandingPaymentsForStudent,
   MANUAL_REMIND_COOLDOWN_MS,
+  type PaymentOutcome,
+  type PaymentRefusal,
 } from './payments';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
@@ -17,6 +19,53 @@ import { createClassFixture } from '../../tests/class-fixtures';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
+
+/** The row an `applied` or `unchanged` outcome carries; throws, naming the outcome, otherwise. */
+function paymentOf(outcome: PaymentOutcome, kind: 'applied' | 'unchanged'): Payment {
+  if (outcome.kind === 'refused' || outcome.kind !== kind) {
+    throw new Error(`expected ${kind}, got ${JSON.stringify(outcome)}`);
+  }
+  return outcome.payment;
+}
+
+/** The code a refused outcome carries; throws, naming the outcome, otherwise. */
+function refusalCode(outcome: PaymentOutcome): PaymentRefusal['code'] {
+  if (outcome.kind !== 'refused') {
+    throw new Error(`expected a refusal, got ${JSON.stringify(outcome)}`);
+  }
+  return outcome.refusal.code;
+}
+
+/**
+ * A client whose `payment.updateMany` runs `between` once, after the write and
+ * before anything else: the window in which a concurrent action lands between
+ * a service's compare-and-swap and its re-read. `fired` says whether it ran, so
+ * a test can tell its interleaving from a hook that never fired.
+ *
+ * `$extends` returns a client missing `$on`, so the result is cast to the
+ * `PrismaClient` the services take; every method they call is the real one.
+ */
+function interposeAfterPaymentWrite(between: () => Promise<unknown>): {
+  db: PrismaClient;
+  fired: () => boolean;
+} {
+  let armed = true;
+  const db = prisma.$extends({
+    query: {
+      payment: {
+        async updateMany({ args, query }) {
+          const result = await query(args);
+          if (armed) {
+            armed = false;
+            await between();
+          }
+          return result;
+        },
+      },
+    },
+  }) as unknown as PrismaClient;
+  return { db, fired: () => !armed };
+}
 
 describe('Payment Service (DB)', () => {
   let teacherId: string;
@@ -168,24 +217,29 @@ describe('Payment Service (DB)', () => {
   });
 
   it('markPaymentPaid updates status, method, and paidAt', async () => {
-    const result = await markPaymentPaid(prisma, paymentId, 'bank_transfer');
+    const payment = paymentOf(await markPaymentPaid(prisma, paymentId, 'bank_transfer'), 'applied');
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.payment.status).toBe('paid');
-      expect(result.payment.method).toBe('bank_transfer');
-      expect(result.payment.paidAt).not.toBeNull();
-    }
+    expect(payment.status).toBe('paid');
+    expect(payment.method).toBe('bank_transfer');
+    expect(payment.paidAt).not.toBeNull();
   });
 
-  it('markPaymentPaid rejects invalid status transition', async () => {
-    // Payment is currently 'paid' from the previous test — should not allow re-paying
-    const result = await markPaymentPaid(prisma, paymentId, 'cash');
+  it('markPaymentPaid answers unchanged for a payment already paid that way, writing nothing', async () => {
+    // Paid with 'bank_transfer' by the previous test.
+    const before = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toContain('paid');
-    }
+    const payment = paymentOf(await markPaymentPaid(prisma, paymentId, 'bank_transfer'), 'unchanged');
+
+    expect(payment.method).toBe('bank_transfer');
+    expect(payment.paidAt).toEqual(before.paidAt);
+    expect(payment.updatedAt).toEqual(before.updatedAt);
+  });
+
+  it('markPaymentPaid refuses a paid payment when the method differs', async () => {
+    expect(refusalCode(await markPaymentPaid(prisma, paymentId, 'cash'))).toBe('PAYMENT_ALREADY_PAID');
+
+    const row = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(row.method).toBe('bank_transfer');
   });
 
   it('markPaymentOverdue updates status to overdue', async () => {
@@ -215,36 +269,33 @@ describe('Payment Service (DB)', () => {
 
   it('markPaymentPaid allows transition from overdue', async () => {
     // Payment is currently 'overdue' — should be allowed to mark as paid
-    const result = await markPaymentPaid(prisma, paymentId, 'cash');
+    const payment = paymentOf(await markPaymentPaid(prisma, paymentId, 'cash'), 'applied');
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.payment.status).toBe('paid');
-      expect(result.payment.method).toBe('cash');
-    }
+    expect(payment.status).toBe('paid');
+    expect(payment.method).toBe('cash');
   });
 
   it('reopenPayment undoes a mistaken mark: paid → pending, fields cleared', async () => {
     // paymentId is 'paid' from the previous test
-    const result = await reopenPayment(prisma, paymentId);
+    const payment = paymentOf(await reopenPayment(prisma, paymentId), 'applied');
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.payment.status).toBe('pending');
-      expect(result.payment.method).toBeNull();
-      expect(result.payment.paidAt).toBeNull();
-    }
+    expect(payment.status).toBe('pending');
+    expect(payment.method).toBeNull();
+    expect(payment.paidAt).toBeNull();
   });
 
-  it('reopenPayment rejects when the payment is already outstanding', async () => {
+  it('reopenPayment answers unchanged when the payment is already outstanding', async () => {
     // now 'pending' after the undo above
-    const result = await reopenPayment(prisma, paymentId);
-    expect(result.ok).toBe(false);
+    const before = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+
+    const payment = paymentOf(await reopenPayment(prisma, paymentId), 'unchanged');
+
+    expect(payment.status).toBe('pending');
+    expect(payment.updatedAt).toEqual(before.updatedAt);
   });
 
   it('re-marking paid after an undo works', async () => {
-    const result = await markPaymentPaid(prisma, paymentId, 'cash');
-    expect(result.ok).toBe(true);
+    expect(paymentOf(await markPaymentPaid(prisma, paymentId, 'cash'), 'applied').status).toBe('paid');
   });
 
   it('sendPaymentReminder refuses a paid payment and sends nothing', async () => {
@@ -255,8 +306,7 @@ describe('Payment Service (DB)', () => {
       where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
     });
 
-    const result = await sendPaymentReminder(prisma, paymentId);
-    expect(result.ok).toBe(false);
+    expect(refusalCode(await sendPaymentReminder(prisma, paymentId))).toBe('PAYMENT_SETTLED');
 
     const after = await prisma.notification.count({
       where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
@@ -270,10 +320,8 @@ describe('Payment Service (DB)', () => {
       data: { status: 'pending', method: null, paidAt: null },
     });
 
-    const result = await sendPaymentReminder(prisma, paymentId);
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('expected the reminder to send');
-    expect(result.payment.reminderSentAt).not.toBeNull();
+    const payment = paymentOf(await sendPaymentReminder(prisma, paymentId), 'applied');
+    expect(payment.reminderSentAt).not.toBeNull();
 
     const notification = await prisma.notification.findFirstOrThrow({
       where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
@@ -420,13 +468,13 @@ describe('Payment Service (DB)', () => {
       await prisma.student.deleteMany({ where: { id: { in: cooldownStudentIds } } });
     });
 
-    it('refuses a second manual reminder inside the cooldown, sending nothing', async () => {
+    it('answers a second manual reminder inside the cooldown unchanged, sending nothing', async () => {
       const { paymentId: id, studentId: sid } = await makeOutstandingPayment('inside');
-      expect((await sendPaymentReminder(prisma, id)).ok).toBe(true);
+      const first = paymentOf(await sendPaymentReminder(prisma, id), 'applied');
 
       const second = await sendPaymentReminder(prisma, id);
 
-      // The notification count comes before the `ok` assertion, deliberately:
+      // The notification count comes before the outcome assertion, deliberately:
       // the defect is a student dunned twice for one debt, and this is the
       // assertion whose failure message names it.
       expect(
@@ -434,12 +482,33 @@ describe('Payment Service (DB)', () => {
           where: { recipientType: 'student', recipientId: sid, type: 'reminder' },
         }),
       ).toBe(1);
-      expect(second.ok).toBe(false);
+      const repeated = paymentOf(second, 'unchanged');
+      expect(repeated.reminderSentAt).toEqual(first.reminderSentAt);
+      expect(repeated.updatedAt).toEqual(first.updatedAt);
+    });
+
+    it('answers unchanged to a fresh stamp it did not write, sending nothing', async () => {
+      // `reminderSentAt` is the column the overdue sweep stamps too.
+      const { paymentId: id, studentId: sid } = await makeOutstandingPayment('swept');
+      const sweptAt = new Date();
+      await prisma.payment.update({
+        where: { id },
+        data: { status: 'overdue', reminderSentAt: sweptAt },
+      });
+
+      const result = await sendPaymentReminder(prisma, id);
+
+      expect(
+        await prisma.notification.count({
+          where: { recipientType: 'student', recipientId: sid, type: 'reminder' },
+        }),
+      ).toBe(0);
+      expect(paymentOf(result, 'unchanged').reminderSentAt).toEqual(sweptAt);
     });
 
     it('allows a manual reminder once the cooldown has lapsed', async () => {
       const { paymentId: id, studentId: sid } = await makeOutstandingPayment('lapsed');
-      expect((await sendPaymentReminder(prisma, id)).ok).toBe(true);
+      paymentOf(await sendPaymentReminder(prisma, id), 'applied');
 
       // Backdate the stamp past the window rather than sleeping two minutes.
       await prisma.payment.update({
@@ -447,7 +516,7 @@ describe('Payment Service (DB)', () => {
         data: { reminderSentAt: new Date(Date.now() - MANUAL_REMIND_COOLDOWN_MS - 1000) },
       });
 
-      expect((await sendPaymentReminder(prisma, id)).ok).toBe(true);
+      paymentOf(await sendPaymentReminder(prisma, id), 'applied');
       expect(
         await prisma.notification.count({
           where: { recipientType: 'student', recipientId: sid, type: 'reminder' },
@@ -455,17 +524,55 @@ describe('Payment Service (DB)', () => {
       ).toBe(2);
     });
 
-    it('blames the status, not the cooldown, when a just-reminded payment was settled', async () => {
-      const { paymentId: id } = await makeOutstandingPayment('settled');
-      expect((await sendPaymentReminder(prisma, id)).ok).toBe(true);
+    it('refuses a just-reminded payment that was settled with PAYMENT_SETTLED, not unchanged', async () => {
+      const { paymentId: id, studentId: sid } = await makeOutstandingPayment('settled');
+      paymentOf(await sendPaymentReminder(prisma, id), 'applied');
       await prisma.payment.update({ where: { id }, data: { status: 'paid' } });
 
-      // Both terms of the WHERE now fail at once. The status is the one worth
-      // reporting: "try again in a couple of minutes" would promise a retry
-      // that the status guard refuses forever.
-      const refused = await sendPaymentReminder(prisma, id);
-      if (refused.ok) throw new Error('expected the reminder to be refused');
-      expect(refused.error).toContain('"paid"');
+      // Both terms of the WHERE now fail at once. Settled makes the reminder
+      // moot, so it answers first: `unchanged` would report a reminder on a
+      // payment that no longer needs one.
+      expect(refusalCode(await sendPaymentReminder(prisma, id))).toBe('PAYMENT_SETTLED');
+      expect(
+        await prisma.notification.count({
+          where: { recipientType: 'student', recipientId: sid, type: 'reminder' },
+        }),
+      ).toBe(1);
+    });
+
+    it('refuses a not-charged payment with PAYMENT_SETTLED, sending nothing', async () => {
+      const { paymentId: id, studentId: sid } = await makeOutstandingPayment('waived');
+      await prisma.payment.update({
+        where: { id },
+        data: { status: 'not_charged', notChargedAt: new Date() },
+      });
+
+      expect(refusalCode(await sendPaymentReminder(prisma, id))).toBe('PAYMENT_SETTLED');
+      expect(
+        await prisma.notification.count({
+          where: { recipientType: 'student', recipientId: sid, type: 'reminder' },
+        }),
+      ).toBe(0);
+    });
+
+    it('refuses with CONCURRENT_MODIFICATION when the stamp it missed is gone by its re-read', async () => {
+      const { paymentId: id, studentId: sid } = await makeOutstandingPayment('raced');
+      paymentOf(await sendPaymentReminder(prisma, id), 'applied');
+      const racing = interposeAfterPaymentWrite(() =>
+        prisma.payment.update({ where: { id }, data: { reminderSentAt: null } }),
+      );
+
+      const result = await sendPaymentReminder(racing.db, id);
+
+      expect(racing.fired()).toBe(true);
+      // `unchanged` would claim a reminder went out moments ago; the row no
+      // longer says so.
+      expect(refusalCode(result)).toBe('CONCURRENT_MODIFICATION');
+      expect(
+        await prisma.notification.count({
+          where: { recipientType: 'student', recipientId: sid, type: 'reminder' },
+        }),
+      ).toBe(1);
     });
   });
 
@@ -513,8 +620,7 @@ describe('Payment Service (DB)', () => {
     describe('markPaymentNotCharged', () => {
       it('settles a pending payment and stamps notChargedAt', async () => {
         const payment = await makePayment('pending');
-        const result = await markPaymentNotCharged(prisma, payment.id);
-        expect(result.ok).toBe(true);
+        paymentOf(await markPaymentNotCharged(prisma, payment.id), 'applied');
         const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
         expect(row.status).toBe('not_charged');
         expect(row.notChargedAt).not.toBeNull();
@@ -523,38 +629,40 @@ describe('Payment Service (DB)', () => {
 
       it('settles an overdue payment', async () => {
         const payment = await makePayment('overdue');
-        expect((await markPaymentNotCharged(prisma, payment.id)).ok).toBe(true);
+        expect(paymentOf(await markPaymentNotCharged(prisma, payment.id), 'applied').status).toBe(
+          'not_charged',
+        );
       });
 
-      it('refuses a paid payment — that would be a refund', async () => {
+      it('refuses a paid payment with PAYMENT_ALREADY_PAID — that would be a refund', async () => {
         const payment = await makePayment('paid');
-        const result = await markPaymentNotCharged(prisma, payment.id);
-        expect(result).toEqual({
-          ok: false,
-          error: 'Cannot mark as not charged: current status is "paid". Must be "pending" or "overdue".',
-        });
+        expect(refusalCode(await markPaymentNotCharged(prisma, payment.id))).toBe(
+          'PAYMENT_ALREADY_PAID',
+        );
+        const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        expect(row.status).toBe('paid');
+        expect(row.notChargedAt).toBeNull();
       });
 
-      it('refuses a payment that is already not charged', async () => {
+      it('answers a payment already not charged unchanged, writing nothing', async () => {
         const payment = await makePayment('not_charged');
-        const result = await markPaymentNotCharged(prisma, payment.id);
-        expect(result.ok).toBe(false);
+        const row = paymentOf(await markPaymentNotCharged(prisma, payment.id), 'unchanged');
+        expect(row.notChargedAt).toEqual(payment.notChargedAt);
+        expect(row.updatedAt).toEqual(payment.updatedAt);
       });
 
-      it('markPaymentPaid refuses a not-charged payment', async () => {
+      it('markPaymentPaid refuses a not-charged payment with PAYMENT_WAIVED', async () => {
         const payment = await makePayment('not_charged');
-        const result = await markPaymentPaid(prisma, payment.id, 'cash');
-        expect(result).toEqual({
-          ok: false,
-          error: 'Cannot mark payment as paid: current status is "not_charged". Must be "pending" or "overdue".',
-        });
+        expect(refusalCode(await markPaymentPaid(prisma, payment.id, 'cash'))).toBe('PAYMENT_WAIVED');
+        const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        expect(row.status).toBe('not_charged');
       });
     });
 
     describe('reopenPayment', () => {
       it('returns a paid payment to pending, clearing method and paidAt', async () => {
         const payment = await makePayment('paid');
-        expect((await reopenPayment(prisma, payment.id)).ok).toBe(true);
+        paymentOf(await reopenPayment(prisma, payment.id), 'applied');
         const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
         expect(row.status).toBe('pending');
         expect(row.paidAt).toBeNull();
@@ -563,20 +671,92 @@ describe('Payment Service (DB)', () => {
 
       it('returns a not-charged payment to pending, clearing notChargedAt', async () => {
         const payment = await makePayment('not_charged');
-        expect((await reopenPayment(prisma, payment.id)).ok).toBe(true);
+        paymentOf(await reopenPayment(prisma, payment.id), 'applied');
         const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
         expect(row.status).toBe('pending');
         expect(row.notChargedAt).toBeNull();
       });
 
-      it('refuses a payment that is already outstanding', async () => {
-        const payment = await makePayment('pending');
-        const result = await reopenPayment(prisma, payment.id);
-        expect(result).toEqual({
-          ok: false,
-          error: 'Cannot undo: current status is "pending". Must be "paid" or "not charged".',
-        });
+      it.each(['pending', 'overdue'] as const)(
+        'answers a %s payment unchanged, carrying its status and writing nothing',
+        async (status) => {
+          const payment = await makePayment(status);
+          const row = paymentOf(await reopenPayment(prisma, payment.id), 'unchanged');
+          expect(row.status).toBe(status);
+          expect(row.updatedAt).toEqual(payment.updatedAt);
+        },
+      );
+    });
+
+    /**
+     * A compare-and-swap that misses, then a re-read that finds a state the
+     * swap would have accepted: another action landed between the two
+     * statements, and neither "already done" nor a status refusal is true of
+     * that row.
+     */
+    describe('a write that lands between the swap and the re-read', () => {
+      it('markPaymentPaid: a paid payment reopened in between → CONCURRENT_MODIFICATION', async () => {
+        const payment = await makePayment('paid');
+        const racing = interposeAfterPaymentWrite(() =>
+          prisma.payment.update({
+            where: { id: payment.id },
+            data: { status: 'pending', method: null, paidAt: null },
+          }),
+        );
+
+        const result = await markPaymentPaid(racing.db, payment.id, 'cash');
+
+        expect(racing.fired()).toBe(true);
+        expect(refusalCode(result)).toBe('CONCURRENT_MODIFICATION');
       });
+
+      it('markPaymentNotCharged: a not-charged payment reopened in between → CONCURRENT_MODIFICATION', async () => {
+        const payment = await makePayment('not_charged');
+        const racing = interposeAfterPaymentWrite(() =>
+          prisma.payment.update({
+            where: { id: payment.id },
+            data: { status: 'pending', notChargedAt: null },
+          }),
+        );
+
+        const result = await markPaymentNotCharged(racing.db, payment.id);
+
+        expect(racing.fired()).toBe(true);
+        expect(refusalCode(result)).toBe('CONCURRENT_MODIFICATION');
+      });
+
+      it('reopenPayment: a pending payment settled in between → CONCURRENT_MODIFICATION', async () => {
+        const payment = await makePayment('pending');
+        const racing = interposeAfterPaymentWrite(() =>
+          prisma.payment.update({
+            where: { id: payment.id },
+            data: { status: 'paid', method: 'cash', paidAt: new Date() },
+          }),
+        );
+
+        const result = await reopenPayment(racing.db, payment.id);
+
+        expect(racing.fired()).toBe(true);
+        expect(refusalCode(result)).toBe('CONCURRENT_MODIFICATION');
+      });
+    });
+  });
+
+  /**
+   * The service's own not-found answer. No code in `src/` deletes a
+   * `Payment`, and each route reads the row before calling in, so this is
+   * where it is pinned; `api/payments/[id]/shared.test.ts` pins its status.
+   */
+  describe('a payment that does not exist', () => {
+    const UNKNOWN_PAYMENT_ID = '00000000-0000-4000-8000-000000000000';
+
+    it.each([
+      ['markPaymentPaid', () => markPaymentPaid(prisma, UNKNOWN_PAYMENT_ID, 'cash')],
+      ['markPaymentNotCharged', () => markPaymentNotCharged(prisma, UNKNOWN_PAYMENT_ID)],
+      ['reopenPayment', () => reopenPayment(prisma, UNKNOWN_PAYMENT_ID)],
+      ['sendPaymentReminder', () => sendPaymentReminder(prisma, UNKNOWN_PAYMENT_ID)],
+    ] as const)('%s answers NOT_FOUND', async (_name, act) => {
+      expect(refusalCode(await act())).toBe('NOT_FOUND');
     });
   });
 });

@@ -1,13 +1,8 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
-import {
-  respondOk,
-  respondError,
-  requireTeacher,
-  isErrorResponse,
-  withErrorHandler,
-} from '@/lib/api-utils';
+import { requireTeacher, isErrorResponse, withErrorHandler } from '@/lib/api-utils';
 import { markPaymentNotCharged } from '@/services/payments';
+import { loadOwnedPayment, respondPaymentOutcome } from '../shared';
 
 /**
  * The teacher chooses not to collect — same ownership chain as /paid and
@@ -23,21 +18,9 @@ export const POST = withErrorHandler(async (
 
   const { id } = await params;
 
-  const payment = await prisma.payment.findUnique({
-    where: { id },
-    include: {
-      registration: {
-        include: { class: { select: { calendarEntry: { select: { teacherId: true } } } } },
-      },
-    },
-  });
+  const owned = await loadOwnedPayment(id, session.teacherId);
+  if (!owned.ok) return owned.response;
 
-  if (!payment) return respondError('Payment not found', 404);
-  if (payment.registration.class.calendarEntry.teacherId !== session.teacherId) {
-    return respondError('Access denied', 403);
-  }
-
-  const result = await markPaymentNotCharged(prisma, id);
-  if (!result.ok) return respondError(result.error, 409);
-  return respondOk(result.payment);
+  // Ownership is settled above; only past it may the service answer `unchanged`.
+  return respondPaymentOutcome(await markPaymentNotCharged(prisma, id));
 });
