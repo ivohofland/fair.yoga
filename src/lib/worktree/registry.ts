@@ -326,13 +326,27 @@ export function reclaimStaleLock(lockDir: string, staleMs: number): boolean {
   return false;
 }
 
+const ACQUIRE_LOCK_MAX_UNKNOWN_PASSES = 3;
+
 export function acquireLock(lockDir: string, options?: LockOptions): LockHandle {
   const retries = options?.retries ?? DEFAULT_LOCK_OPTIONS.retries;
   const delayMs = options?.delayMs ?? DEFAULT_LOCK_OPTIONS.delayMs;
   const staleMs = options?.staleMs ?? DEFAULT_LOCK_OPTIONS.staleMs;
 
   let reclaimedStale = false;
+  // `null` means a read that succeeded and found no token (a legacy lock
+  // shape) — a real, comparable value. A read that failed (ENOENT because a
+  // sibling's mkdirSync landed before its owner.json write, or corrupted
+  // content) also coerces to `null` but is not comparable to anything:
+  // observedTokenKnown/currentTokenKnown track which one we have, so two
+  // unrelated failed reads are never mistaken for the same unchanged holder
+  // (#631). A failed read only buys ACQUIRE_LOCK_MAX_UNKNOWN_PASSES extra
+  // passes before acquireLock gives up anyway — otherwise an owner.json that
+  // never becomes readable (permission error, permanent corruption) would
+  // wait forever instead of timing out.
   let observedToken: string | null | undefined = undefined;
+  let observedTokenKnown = false;
+  let unknownPasses = 0;
 
   while (true) {
     for (let attempt = 0; attempt < retries; attempt++) {
@@ -354,6 +368,7 @@ export function acquireLock(lockDir: string, options?: LockOptions): LockHandle 
         if (observedToken === undefined) {
           const { info } = readLockInfo(lockDir);
           observedToken = info?.token ?? null;
+          observedTokenKnown = info !== null;
         }
         sleepSync(delayMs);
       }
@@ -370,14 +385,35 @@ export function acquireLock(lockDir: string, options?: LockOptions): LockHandle 
         reclaimedStale = true;
       }
       observedToken = undefined;
+      observedTokenKnown = false;
+      unknownPasses = 0;
       continue;
     }
 
-    // Check if the lock holder changed while we were waiting
+    // Check if the lock holder changed while we were waiting. An unknown
+    // read on either side is never proof of an unchanged holder — only two
+    // successfully-read, equal tokens are — but it is also never more than
+    // ACQUIRE_LOCK_MAX_UNKNOWN_PASSES passes' worth of proof of anything, so
+    // a lock whose info never becomes readable still times out.
     const { info: currentInfo } = readLockInfo(lockDir);
     const currentToken = currentInfo?.token ?? null;
+    const currentTokenKnown = currentInfo !== null;
+    unknownPasses = currentTokenKnown ? 0 : unknownPasses + 1;
+
+    if (observedToken !== undefined && (!observedTokenKnown || !currentTokenKnown)) {
+      if (unknownPasses >= ACQUIRE_LOCK_MAX_UNKNOWN_PASSES) {
+        throw new Error(
+          `Timed out waiting for lock at ${lockDir} (lock info stayed unreadable for ${ACQUIRE_LOCK_MAX_UNKNOWN_PASSES} passes — could not confirm the holder)`,
+        );
+      }
+      observedToken = currentToken;
+      observedTokenKnown = currentTokenKnown;
+      continue;
+    }
+
     if (observedToken !== undefined && currentToken !== observedToken) {
       observedToken = currentToken;
+      observedTokenKnown = currentTokenKnown;
       continue;
     }
 
