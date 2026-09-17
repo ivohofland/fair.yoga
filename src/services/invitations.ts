@@ -12,6 +12,7 @@ import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { withdrawWaitingEntriesForTeacher } from './waitlist';
 import { linkTeacherStudent } from './roster-link';
+import { lockLiveStudent, StudentErasedError } from '@/lib/db-locks';
 import { createNotification } from './notifications';
 import { sendInvitationEmail } from '@/lib/email';
 import { recordDispatchFailure } from '@/lib/notify-health';
@@ -1206,7 +1207,7 @@ class NotPendingError extends Error {}
 export async function acceptInvitation(
   db: PrismaClient,
   input: { invitationId: string; studentId: string; accountEmail: string },
-): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' }> {
+): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' | 'STUDENT_ERASED' }> {
   const email = requireNormalised(input.accountEmail);
   const invitation = await db.invitation.findFirst({
     where: { id: input.invitationId, email, teacher: { deletedAt: null } },
@@ -1225,6 +1226,14 @@ export async function acceptInvitation(
   }
 
   const accepted = await db.$transaction(async (tx) => {
+    // The Student gate (#183, #626): this transaction's first lock, before
+    // its roster-link insert below — a child-row insert that takes `FOR KEY
+    // SHARE` on the student and would otherwise wait on a `Student` row the
+    // erasure has already committed past. Who holds the other half, and why
+    // this mode and order: `docs/lock-order.md`, "The `Student` row is the
+    // erasure's gate".
+    await lockLiveStudent(tx, input.studentId);
+
     // `TeacherStudent` BEFORE `Invitation`. `unlinkTeacher`,
     // `deleteStudentAccount` and `deleteTeacherAccount` all take these two
     // rows in that order; this function alone took them the other way
@@ -1337,12 +1346,13 @@ export async function acceptInvitation(
     });
     if (blockedNow) throw new NotPendingError();
 
-    return true;
+    return true as const;
   }).catch((err: unknown) => {
-    if (err instanceof NotPendingError) return false;
+    if (err instanceof StudentErasedError) return 'STUDENT_ERASED' as const;
+    if (err instanceof NotPendingError) return 'NOT_PENDING' as const;
     throw err;
   });
-  if (!accepted) return { ok: false, reason: 'NOT_PENDING' };
+  if (accepted !== true) return { ok: false, reason: accepted };
   return { ok: true };
 }
 
