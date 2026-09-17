@@ -9,8 +9,8 @@ export default async function StudentLayout({
   children: React.ReactNode;
 }) {
   const session = await getSession();
-  // A signed-in teacher-only account belongs on its own home, not a
-  // sign-in form it cannot use.
+  // Non-students belong elsewhere: teachers go to their schedule,
+  // unauthenticated visitors go to login with destination preserved.
   if (!session?.studentId) {
     const pathname = (await headers()).get('x-pathname');
     redirectNonStudent(session, pathname);

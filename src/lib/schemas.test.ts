@@ -87,6 +87,12 @@ describe('redirect path validation', () => {
     expect(isSafeRelativePath('/\\evil.com')).toBe(false);
     expect(isSafeRelativePath('\\/evil.com')).toBe(false);
   });
+
+  it('guards the raw helper against WHATWG control-whitespace stripping', () => {
+    expect(isSafeRelativePath('/\t/evil.com')).toBe(false);
+    expect(isSafeRelativePath('/\r/evil.com')).toBe(false);
+    expect(isSafeRelativePath('/\n/evil.com')).toBe(false);
+  });
 });
 
 describe('class size caps', () => {

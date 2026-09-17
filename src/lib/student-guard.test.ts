@@ -41,6 +41,12 @@ describe('redirectNonStudent', () => {
     expect(redirect).toHaveBeenCalledWith('/login?redirect=%2Faccount%2Fprivacy');
   });
 
+  it('redirects unauthenticated session with query parameters in redirectPath to login with fully encoded redirect', () => {
+    redirectNonStudent(null, '/account/privacy?tab=invitations');
+    expect(redirect).toHaveBeenCalledTimes(1);
+    expect(redirect).toHaveBeenCalledWith('/login?redirect=%2Faccount%2Fprivacy%3Ftab%3Dinvitations');
+  });
+
   it('redirects unauthenticated session with unsafe redirectPath to bare /login', () => {
     const unsafePaths = ['//evil.com', '/\\evil.com', 'https://evil.com'];
     for (const unsafePath of unsafePaths) {

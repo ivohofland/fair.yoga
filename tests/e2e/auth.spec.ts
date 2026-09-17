@@ -235,10 +235,16 @@ test.describe('Magic link authentication', () => {
       page.getByText('Check your inbox for the link.')
     ).toBeVisible();
 
+    const tokenRecord = await prisma.magicLinkToken.findFirst({
+      where: { email: teacherEmail },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(tokenRecord?.redirectTo).toBe('/settings/rooms');
+
     const cookies = await page.context().cookies();
     const originCookie = cookies.find((c) => c.name === 'fair_yoga_origin');
     const nonce = originCookie?.value ?? '';
-    const rawToken = await createMagicLinkToken(teacherEmail, nonce, '/settings/rooms');
+    const rawToken = await createMagicLinkToken(teacherEmail, nonce, tokenRecord?.redirectTo ?? undefined);
 
     await page.goto(`/verify?token=${rawToken}`);
 

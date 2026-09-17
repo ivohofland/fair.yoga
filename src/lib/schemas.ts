@@ -111,11 +111,13 @@ export const MAX_CLASS_SIZE = 200;
 // redirect must be a relative path — a full URL here would be an open redirect.
 /**
  * Shared by the schema below and the verify-route runtime guard. Rejects
- * protocol-relative URLs (`//evil.com`) and their backslash variants
- * (`/\evil.com` — browsers normalize `\` to `/` before resolving).
+ * protocol-relative URLs (`//evil.com`), their backslash variants
+ * (`/\evil.com` — browsers normalize `\` to `/` before resolving), and
+ * WHATWG control-whitespace stripping (`/\t/evil.com`).
  */
 export function isSafeRelativePath(path: string): boolean {
-  return path.startsWith('/') && !path.startsWith('//') && !path.includes('\\');
+  const stripped = path.replace(/[\t\r\n]/g, '');
+  return stripped.startsWith('/') && !stripped.startsWith('//') && !stripped.includes('\\');
 }
 
 const relativePath = z.string().max(200).refine(isSafeRelativePath, 'Must be a relative path');
