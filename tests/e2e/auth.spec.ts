@@ -17,7 +17,11 @@ function generateToken(): string {
  * for a same-browser open, or open the token from a context that never got
  * `asOriginBrowser` to land in the handoff branch instead.
  */
-async function createMagicLinkToken(email: string, nonce: string): Promise<string> {
+async function createMagicLinkToken(
+  email: string,
+  nonce: string,
+  redirectTo?: string,
+): Promise<string> {
   const rawToken = generateToken();
   await prisma.magicLinkToken.create({
     data: {
@@ -25,6 +29,7 @@ async function createMagicLinkToken(email: string, nonce: string): Promise<strin
       email,
       expiresAt: new Date(Date.now() + 15 * 60 * 1000),
       originBrowserHash: hashToken(nonce),
+      ...(redirectTo ? { redirectTo } : {}),
     },
   });
   return rawToken;
@@ -200,11 +205,46 @@ test.describe('Magic link authentication', () => {
   test('unauthenticated user is redirected to login from protected routes', async ({
     page,
   }) => {
-    const protectedRoutes = ['/settings', '/students', '/inbox', '/bookings', '/class/new'];
+    const protectedRoutes = [
+      '/settings',
+      '/students',
+      '/inbox',
+      '/bookings',
+      '/class/new',
+      '/schedule',
+      '/studio-class/sc-1',
+      '/account/privacy',
+      '/updates',
+    ];
     for (const route of protectedRoutes) {
       await page.goto(route);
       await expect(page).toHaveURL(new RegExp(`/login\\?redirect=${encodeURIComponent(route)}`));
     }
+  });
+
+  test('unauthenticated user visiting protected route with redirect preserves destination through sign-in', async ({
+    page,
+  }) => {
+    await page.goto('/settings/rooms');
+    await expect(page).toHaveURL(/\/login\?redirect=%2Fsettings%2Frooms/);
+
+    await page.getByLabel('Email').fill(teacherEmail);
+    await page.getByRole('button', { name: 'Send me the link' }).click();
+
+    await expect(
+      page.getByText('Check your inbox for the link.')
+    ).toBeVisible();
+
+    const cookies = await page.context().cookies();
+    const originCookie = cookies.find((c) => c.name === 'fair_yoga_origin');
+    const nonce = originCookie?.value ?? '';
+    const rawToken = await createMagicLinkToken(teacherEmail, nonce, '/settings/rooms');
+
+    await page.goto(`/verify?token=${rawToken}`);
+
+    await page.waitForURL('/settings/rooms', { timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Rooms' })).toBeVisible();
+    await expect(page).not.toHaveURL(/\/schedule/);
   });
 
   test('unauthenticated user can access public routes without proxy redirect', async ({
