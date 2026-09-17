@@ -1,15 +1,10 @@
 import type { PrismaClient, StudentPrivacy } from '@prisma/client';
+import type { z } from 'zod';
 import { lockLiveStudent, StudentErasedError } from '@/lib/db-locks';
+import type { updatePrivacySchema } from '@/lib/schemas';
 
-/** The six per-teacher share/mute flags `PUT /api/students/[id]/privacy` writes. */
-export interface StudentPrivacyFields {
-  shareFullName?: boolean;
-  shareEmail?: boolean;
-  sharePhone?: boolean;
-  shareBirthday?: boolean;
-  shareAddress?: boolean;
-  receiveComms?: boolean;
-}
+/** The per-teacher share/mute flags `PUT /api/students/[id]/privacy` writes. */
+export type StudentPrivacyFields = Omit<z.infer<typeof updatePrivacySchema>, 'teacherId'>;
 
 /**
  * Writes a student's per-teacher privacy settings.

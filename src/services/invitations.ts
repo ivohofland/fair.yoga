@@ -1203,6 +1203,11 @@ class NotPendingError extends Error {}
  * — and this route's whole design is that an id, on its own, tells a caller
  * nothing. Keeping every "there is nothing here for you" answer identical is
  * worth more than naming this one.
+ *
+ * `STUDENT_ERASED` (#626) is a different axis and does not reopen that
+ * question: it names the CALLER's own account state, sourced from
+ * `session.studentId` and never from the guessed `invitationId` in the URL,
+ * so it discloses nothing to a caller who does not already hold it.
  */
 export async function acceptInvitation(
   db: PrismaClient,
@@ -1601,9 +1606,10 @@ export async function unlinkTeacher(
     });
     return true as const;
   }).catch((err: unknown) => {
-    // The Student gate refusing (#626): a `TeacherStudent` row can survive
-    // an erasure that missed it — an ungated writer, or a row created before
-    // this gate existed — and this refuses writing onto it rather than
+    // The Student gate refusing (#626): either this write waited behind a
+    // live erasure and lost — the race this gate exists to close — or it
+    // reached a `TeacherStudent` row a race predating these gates left
+    // behind. Either way this refuses writing onto it, rather than
     // silencing shares nobody can read and blocking an address whose
     // `Student` row is gone.
     if (err instanceof StudentErasedError) return 'STUDENT_ERASED' as const;
