@@ -4,6 +4,7 @@ import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { formatDayHeader } from '@/lib/format';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
+import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -61,6 +62,39 @@ async function makeTeacher(tag: string): Promise<{ id: string; token: string }> 
   });
   const token = await seedSession(prisma, teacher.accountId);
   return { id: teacher.id, token };
+}
+
+/**
+ * A class of its own, for a test that writes to it. Every caller passes a
+ * date no other fixture in this file uses, so a run that fails before its
+ * cleanup cannot block another test's slot.
+ */
+function isolatedClass(classType: string, date: string, status: ClassStatus, cancelled = false) {
+  return createClassFixture(prisma, {
+    teacherId: ownerId,
+    teacherRoomId,
+    classType,
+    date: new Date(date),
+    startTime: hhmmToTime('09:00'),
+    durationMinutes: 60,
+    roomCost: 30,
+    minRate: 15,
+    targetRate: 25,
+    minStudents: 1,
+    maxStudents: 4,
+    status,
+    cancelledAt: cancelled ? new Date() : null,
+  });
+}
+
+/**
+ * Notifications first: `Notification.relatedClass` is `onDelete: SetNull`.
+ * The entry takes the class with it, the class its registrations, and a
+ * registration its payment.
+ */
+async function removeIsolatedClass(cls: { id: string; calendarEntryId: string }): Promise<void> {
+  await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+  await prisma.calendarEntry.deleteMany({ where: { id: cls.calendarEntryId } });
 }
 
 beforeAll(async () => {
@@ -355,9 +389,8 @@ describe('POST /api/classes/[id]/complete', () => {
     expect(res.status).toBe(401);
   });
 
-  it('404s an unknown class', async () => {
-    const res = await complete(ownerToken, UNKNOWN_CLASS_ID);
-    expect(res.status).toBe(404);
+  it('404s an unknown class with NOT_FOUND', async () => {
+    await expectRefusal(await complete(ownerToken, UNKNOWN_CLASS_ID), 'NOT_FOUND');
   });
 
   it("403s another teacher's class", async () => {
@@ -368,17 +401,60 @@ describe('POST /api/classes/[id]/complete', () => {
     expect(unchanged.status).toBe('draft');
   });
 
-  it('409s completing a class straight from draft (invalid transition)', async () => {
-    const res = await complete(ownerToken, classId);
-    expect(res.status).toBe(409);
-
-    // Pin WHICH 409 fired — verbatim substring from validateTransition's
-    // error in src/services/class-lifecycle.ts.
-    const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('cannot move from "draft" to "completed"');
+  it('refuses completing a class straight from draft with ILLEGAL_TRANSITION', async () => {
+    await expectRefusal(await complete(ownerToken, classId), 'ILLEGAL_TRANSITION');
 
     const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(unchanged.status).toBe('draft');
+  });
+
+  it('answers a repeat completion unchanged, and bills nobody twice', async () => {
+    const cls = await isolatedClass('Complete Twice', '2099-10-04', 'open');
+    try {
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId: waitStudentId, status: 'registered', tierAtBooking: 3 },
+      });
+      const billed = { registration: { classId: cls.id } };
+      const requested = { relatedClassId: cls.id, type: 'payment_request' as const };
+
+      expect(await expectApplied(await complete(ownerToken, cls.id))).toEqual({ ok: true, newStatus: 'completed' });
+      expect(await prisma.payment.count({ where: billed })).toBe(1);
+      expect(await prisma.notification.count({ where: requested })).toBe(2);
+      const first = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+
+      expect(await expectUnchanged(await complete(ownerToken, cls.id))).toEqual({ ok: true, newStatus: 'completed' });
+
+      expect(await prisma.payment.count({ where: billed })).toBe(1);
+      expect(await prisma.notification.count({ where: requested })).toBe(2);
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.status).toBe('completed');
+      expect(after.updatedAt).toEqual(first.updatedAt);
+    } finally {
+      await removeIsolatedClass(cls);
+    }
+  });
+
+  // Moot first (spec §5.1). A cancelled class that is ALSO completed — the
+  // state where the unchanged check would otherwise fire — cannot be built:
+  // `CalendarEntry_not_cancelled_and_completed` forbids the pair, so on this
+  // door the two answers can never contend and this pins the refusal itself.
+  it('refuses a cancelled class with CLASS_CANCELLED', async () => {
+    const cls = await isolatedClass('Complete Cancelled', '2099-10-05', 'in_progress', true);
+    try {
+      await expectRefusal(await complete(ownerToken, cls.id), 'CLASS_CANCELLED');
+
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.status).toBe('in_progress');
+    } finally {
+      await removeIsolatedClass(cls);
+    }
+  });
+
+  // Ownership first (spec §5.1): a class that is already completed is exactly
+  // where an unchanged check placed above this gate would answer 200.
+  it("403s another teacher's class even when it is already completed", async () => {
+    const res = await complete(otherTeacherToken, completedClassId);
+    expect(res.status).toBe(403);
   });
 });
 
@@ -415,9 +491,8 @@ describe('POST /api/classes/[id]/transition', () => {
     expect(res.status).toBe(401);
   });
 
-  it('404s an unknown class', async () => {
-    const res = await transition(ownerToken, UNKNOWN_CLASS_ID, { status: 'open' });
-    expect(res.status).toBe(404);
+  it('404s an unknown class with NOT_FOUND', async () => {
+    await expectRefusal(await transition(ownerToken, UNKNOWN_CLASS_ID, { status: 'open' }), 'NOT_FOUND');
   });
 
   it("403s another teacher's class", async () => {
@@ -428,17 +503,61 @@ describe('POST /api/classes/[id]/transition', () => {
     expect(unchanged.status).toBe('draft');
   });
 
-  it('409s an invalid transition (draft -> in_progress)', async () => {
-    const res = await transition(ownerToken, classId, { status: 'in_progress' });
-    expect(res.status).toBe(409);
-
-    // Pin WHICH 409 fired — verbatim substring from validateTransition's
-    // error in src/services/class-lifecycle.ts.
-    const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('cannot move from "draft" to "in_progress"');
+  it('refuses an illegal transition (draft -> in_progress) with ILLEGAL_TRANSITION', async () => {
+    await expectRefusal(
+      await transition(ownerToken, classId, { status: 'in_progress' }),
+      'ILLEGAL_TRANSITION',
+    );
 
     const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId }, include: { calendarEntry: true } });
     expect(unchanged.status).toBe('draft');
+  });
+
+  it('answers a repeat publish unchanged, and writes nothing the second time', async () => {
+    const cls = await isolatedClass('Publish Twice', '2099-10-01', 'draft');
+    try {
+      expect(
+        await expectApplied(await transition(ownerToken, cls.id, { status: 'open' })),
+      ).toEqual({ ok: true, newStatus: 'open' });
+      const first = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(first.status).toBe('open');
+
+      expect(
+        await expectUnchanged(await transition(ownerToken, cls.id, { status: 'open' })),
+      ).toEqual({ ok: true, newStatus: 'open' });
+
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.status).toBe('open');
+      expect(after.updatedAt).toEqual(first.updatedAt);
+    } finally {
+      await removeIsolatedClass(cls);
+    }
+  });
+
+  // Moot first (spec §5.1): a cancelled class keeps its status, so the
+  // requested status can already hold on a class that is off.
+  it('refuses a cancelled class with CLASS_CANCELLED, even when it already holds the requested status', async () => {
+    const cls = await isolatedClass('Publish Cancelled', '2099-10-02', 'open', true);
+    try {
+      await expectRefusal(await transition(ownerToken, cls.id, { status: 'open' }), 'CLASS_CANCELLED');
+
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
+      expect(after.status).toBe('open');
+      expect(after.calendarEntry.cancelledAt).not.toBeNull();
+    } finally {
+      await removeIsolatedClass(cls);
+    }
+  });
+
+  // Ownership first (spec §5.1).
+  it("403s another teacher's class even when it already holds the requested status", async () => {
+    const cls = await isolatedClass('Publish Not Yours', '2099-10-03', 'open');
+    try {
+      const res = await transition(otherTeacherToken, cls.id, { status: 'open' });
+      expect(res.status).toBe(403);
+    } finally {
+      await removeIsolatedClass(cls);
+    }
   });
 
   it('400s a transition to "completed" — the enum deliberately excludes it', async () => {
@@ -454,23 +573,14 @@ describe('POST /api/classes/[id]/transition', () => {
   });
 
   it('publishing a draft whose start has passed is refused with 409 (#249)', async () => {
-    const res = await transition(ownerToken, pastDraftClassId, { status: 'open' });
-    expect(res.status).toBe(409);
-
-    // The CODE, not just the status. A bare 409 cannot tell STARTS_IN_PAST
-    // from an illegal transition or a concurrent modification, so this test
-    // would have stayed green if the publish were refused for an unrelated
-    // reason — which it nearly was, since a past-dated draft is exactly the
-    // kind of fixture other guards also dislike. This route used to answer
-    // every reason but NOT_FOUND with a bare 409 and no code at all, and the
-    // earlier version of this comment recorded that as a limitation to live
-    // with; #249's review made the case for fixing it instead.
-    //
-    // The same code the PUT door answers with, deliberately — one condition,
-    // one code, whichever door refuses it.
-    const json = (await res.json()) as { error: { message: string; code?: string } };
-    expect(json.error.code).toBe('CLASS_STARTS_IN_PAST');
-    expect(json.error.message).toMatch(/already passed/i);
+    // The code, not the status: a bare 409 cannot tell a past start from an
+    // illegal transition, and a past-dated draft is exactly the fixture other
+    // guards dislike too. The same code the PUT door answers with — one
+    // condition, one code, whichever door refuses it.
+    await expectRefusal(
+      await transition(ownerToken, pastDraftClassId, { status: 'open' }),
+      'CLASS_STARTS_IN_PAST',
+    );
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: pastDraftClassId }, include: { calendarEntry: true } });
     expect(after.status).toBe('draft');
@@ -693,16 +803,16 @@ describe('POST /api/classes/[id]/transition', () => {
    * CAS matches on, so the window is reachable through the product rather than
    * only in theory.
    *
-   * The old code fell back to `cls.status`, the handler's top-of-function
-   * snapshot, and answered `409 "Cannot cancel a class with status "open""`
-   * about a class that no longer existed — reintroducing, on the failure path,
-   * exactly the staleness the sibling test above fixed on the success path.
+   * The answer therefore comes from the re-read inside the transaction, never
+   * from `cls`, the handler's top-of-function snapshot. A snapshot answer
+   * would name the status a class that no longer exists was holding —
+   * reintroducing, on the failure path, exactly the staleness the sibling test
+   * above fixed on the success path.
    *
-   * The existing "409s cancelling an already-cancelled class" cannot cover
-   * this: its class is already `cancelled` at the top-of-handler read, so the
-   * snapshot and the re-read are the same string and swapping one for the other
-   * is unobservable. This needs the row to CHANGE while the request is parked,
-   * which is what the lever provides.
+   * The already-cancelled case below cannot cover this: its class is already
+   * cancelled at the top-of-handler read, so the snapshot and the re-read
+   * agree and swapping one for the other is unobservable. This needs the row
+   * to CHANGE while the request is parked, which is what the lever provides.
    */
   it('404s when the class is deleted while the cancel is parked on its row', async () => {
     const cls = await createClassFixture(prisma, {
@@ -758,11 +868,8 @@ describe('POST /api/classes/[id]/transition', () => {
       await holding;
       const res = await pending;
 
-      expect(res.status).toBe(404);
-      const json = (await res.json()) as { error: { message: string } };
-      expect(json.error.message).toBe('Class not found');
-      // The specific lie the fallback used to tell.
-      expect(json.error.message).not.toContain('status "open"');
+      // NOT_FOUND, and so not the status refusal the stale snapshot used to give.
+      await expectRefusal(res, 'NOT_FOUND');
     } finally {
       release();
       await holding;
@@ -784,20 +891,78 @@ describe('POST /api/classes/[id]/transition', () => {
     // to exceed under cross-project Postgres contention.
   }, 15_000);
 
-  it('409s cancelling an already-cancelled class', async () => {
-    const res = await cancel(ownerToken, cancelClassId);
-    expect(res.status).toBe(409);
+  it('answers a class that is already cancelled unchanged, and leaves its cancellation where it was', async () => {
+    // `cancelClassId` was cancelled by 'cancels a class (happy path)' above.
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId }, include: { calendarEntry: true } });
+    expect(before.calendarEntry.cancelledAt).not.toBeNull();
 
-    // Pin WHICH 409 fired — verbatim substring from the route's own guard text
-    // in src/app/api/classes/[id]/cancel/route.ts. That route's CAS has TWO
-    // conjuncts a teacher can hit since #327 (already cancelled, or past the
-    // point where cancelling is the right verb), and they answer with
-    // different sentences; this is the first.
-    const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('This class is already cancelled.');
+    expect(await expectUnchanged(await cancel(ownerToken, cancelClassId))).toEqual({ ok: true, cancelled: true });
 
-    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId }, include: { calendarEntry: true } });
-    expect(unchanged.calendarEntry.cancelledAt).not.toBeNull();
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId }, include: { calendarEntry: true } });
+    expect(after.calendarEntry.cancelledAt).toEqual(before.calendarEntry.cancelledAt);
+  });
+
+  it('answers a repeat cancel unchanged, and notifies nobody twice', async () => {
+    const cls = await isolatedClass('Cancel Twice', '2099-10-06', 'open');
+    try {
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId: waitStudentId, status: 'registered', tierAtBooking: 3 },
+      });
+      const notices = { relatedClassId: cls.id, type: 'class_cancelled' as const };
+
+      expect(await expectApplied(await cancel(ownerToken, cls.id))).toEqual({ ok: true, cancelled: true });
+      expect(await prisma.notification.count({ where: notices })).toBe(1);
+      const first = await prisma.calendarEntry.findUniqueOrThrow({ where: { id: cls.calendarEntryId } });
+
+      expect(await expectUnchanged(await cancel(ownerToken, cls.id))).toEqual({ ok: true, cancelled: true });
+
+      expect(await prisma.notification.count({ where: notices })).toBe(1);
+      const after = await prisma.calendarEntry.findUniqueOrThrow({ where: { id: cls.calendarEntryId } });
+      expect(after.cancelledAt).toEqual(first.cancelledAt);
+    } finally {
+      await removeIsolatedClass(cls);
+    }
+  });
+
+  it('refuses to cancel a class that has started with CLASS_NOT_CANCELLABLE', async () => {
+    const cls = await isolatedClass('Cancel Started', '2099-10-07', 'in_progress');
+    try {
+      await expectRefusal(await cancel(ownerToken, cls.id), 'CLASS_NOT_CANCELLABLE');
+
+      const after = await prisma.calendarEntry.findUniqueOrThrow({ where: { id: cls.calendarEntryId } });
+      expect(after.cancelledAt).toBeNull();
+    } finally {
+      await removeIsolatedClass(cls);
+    }
+  });
+
+  it('refuses to cancel a finished class with CLASS_NOT_CANCELLABLE', async () => {
+    await expectRefusal(await cancel(ownerToken, completedClassId), 'CLASS_NOT_CANCELLABLE');
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId }, include: { calendarEntry: true } });
+    expect(after.calendarEntry.cancelledAt).toBeNull();
+  });
+
+  // The unchanged check comes before the status refusal (spec §5.1). No
+  // product path cancels a class and then starts it; the fixture writes the
+  // pair directly so the order is observable.
+  it('answers a cancelled class unchanged even when its status is past cancelling', async () => {
+    const cls = await isolatedClass('Cancel Cancelled Started', '2099-10-08', 'in_progress', true);
+    try {
+      expect(await expectUnchanged(await cancel(ownerToken, cls.id))).toEqual({ ok: true, cancelled: true });
+    } finally {
+      await removeIsolatedClass(cls);
+    }
+  });
+
+  // Ownership first (spec §5.1).
+  it("403s another teacher's cancel even when the class is already cancelled", async () => {
+    const res = await cancel(otherTeacherToken, cancelledTerminalClassId);
+    expect(res.status).toBe(403);
+  });
+
+  it('404s cancelling an unknown class with NOT_FOUND', async () => {
+    await expectRefusal(await cancel(ownerToken, UNKNOWN_CLASS_ID), 'NOT_FOUND');
   });
 
   /**

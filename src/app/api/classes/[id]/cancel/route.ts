@@ -1,16 +1,27 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import {
-  respondOk,
+  respondTyped,
   respondError,
+  respondUnchanged,
   requireTeacher,
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
+import type { CodedRefusal } from '@/lib/api-error-codes';
+import { notCancellableMessage } from '@/lib/transition-refusal';
 import { formatDayHeader } from '@/lib/format';
 import { createBulkNotifications, type CreateNotificationInput } from '@/services/notifications';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { lockClassRow } from '@/lib/db-locks';
+import { CLASS_GONE } from '../shared';
+
+type CancelApplied = { ok: true; cancelled: true };
+
+type CancelOutcome =
+  | { kind: 'cancelled' }
+  | { kind: 'unchanged' }
+  | { kind: 'refused'; refusal: CodedRefusal };
 
 /**
  * The regular family's cancel door (#327).
@@ -43,12 +54,12 @@ export const POST = withErrorHandler(async (
     where: { id },
     include: { calendarEntry: { select: { id: true, teacherId: true } } },
   });
-  if (!cls) return respondError('Class not found', 404);
+  if (!cls) return respondError(CLASS_GONE.message, CLASS_GONE.status, CLASS_GONE.code);
   if (cls.calendarEntry.teacherId !== session.teacherId) {
     return respondError('Not your class', 403);
   }
 
-  const outcome = await prisma.$transaction(async (tx) => {
+  const outcome = await prisma.$transaction(async (tx): Promise<CancelOutcome> => {
     // `Class` then `CalendarEntry`, the order every writer of this pair takes
     // (`db-locks.ts`). The old branch relied on its CAS `UPDATE` to take the
     // `Class` lock for free; the CAS now writes the ENTRY, so the free lock
@@ -72,11 +83,10 @@ export const POST = withErrorHandler(async (
       data: { cancelledAt: new Date() },
     });
     if (updated.count === 0) {
-      // Re-read rather than naming `cls`, the handler's top-of-function
-      // snapshot taken outside this transaction. Without this, cancelling a
-      // class that was cancelled a moment earlier reports 409 `status "open"`
-      // for a class that is already cancelled. Cheap here: the CAS already
-      // failed, so there is nothing left to protect by not reading.
+      // Re-read under the lock rather than naming `cls`, the handler's
+      // top-of-function snapshot taken outside this transaction. Cheap here:
+      // the CAS already failed, so there is nothing left to protect by not
+      // reading.
       const current = await tx.class.findUnique({
         where: { id },
         select: { status: true, calendarEntry: { select: { cancelledAt: true } } },
@@ -86,27 +96,20 @@ export const POST = withErrorHandler(async (
       // row freely deletable in that window: archiving a recurring template
       // hard-deletes its future `draft`/`open` instances, the same status set
       // this CAS matches on.
-      //
-      // Falling back to `cls` here told the teacher "cannot cancel a class
-      // with status open" about a class that no longer exists, which is the
-      // very staleness the re-read above was added to remove.
-      if (!current) return { ok: false as const, httpStatus: 404, error: 'Class not found' };
+      if (!current) return { kind: 'refused', refusal: CLASS_GONE };
 
-      // TWO refusals where there used to be one, because the CAS now has two
-      // conjuncts a teacher can hit and they mean different things: already
-      // cancelled (the double-click, and the common one), or past the point
-      // where cancelling is the right verb at all.
-      if (current.calendarEntry.cancelledAt !== null) {
-        return {
-          ok: false as const,
-          httpStatus: 409 as const,
-          error: 'This class is already cancelled.',
-        };
-      }
+      // Already cancelled: what the request asks for holds, and nothing is
+      // written or sent. Asked before the status, because a cancelled class
+      // keeps whatever status it had.
+      if (current.calendarEntry.cancelledAt !== null) return { kind: 'unchanged' };
+
       return {
-        ok: false as const,
-        httpStatus: 409 as const,
-        error: `Cannot cancel a class with status "${current.status}"`,
+        kind: 'refused',
+        refusal: {
+          code: 'CLASS_NOT_CANCELLABLE',
+          status: 409,
+          message: notCancellableMessage(current.status),
+        },
       };
     }
 
@@ -155,16 +158,15 @@ export const POST = withErrorHandler(async (
     if (notifications.length > 0) {
       await createBulkNotifications(tx, notifications);
     }
-    return { ok: true as const, cancelled: true };
+    return { kind: 'cancelled' };
   });
 
-  // No code here, unlike the transition route's table — an asymmetry that is
-  // deliberate rather than an oversight, and inherited with the block. That
-  // table exists because three DISTINCT service reasons arrived as one
-  // indistinguishable 409 and a client had to match English to tell them
-  // apart. This route's two refusals differ in wording rather than in what a
-  // client should do about them, so a code would describe nothing the status
-  // does not.
-  if (!outcome.ok) return respondError(outcome.error, outcome.httpStatus);
-  return respondOk(outcome);
+  if (outcome.kind === 'refused') {
+    const { refusal } = outcome;
+    return respondError(refusal.message, refusal.status, refusal.code);
+  }
+  if (outcome.kind === 'unchanged') {
+    return respondUnchanged<CancelApplied>({ ok: true, cancelled: true });
+  }
+  return respondTyped<CancelApplied>({ ok: true, cancelled: true });
 });

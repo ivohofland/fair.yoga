@@ -227,6 +227,23 @@ describe('validateTransition', () => {
       expect(result.error.length).toBeGreaterThan(0);
     }
   });
+
+  it('carries the pair it refused, including a request for the status already held', () => {
+    expect(validateTransition('draft', 'completed')).toEqual({
+      ok: false,
+      reason: 'ILLEGAL_TRANSITION',
+      error: expect.any(String),
+      from: 'draft',
+      to: 'completed',
+    });
+    expect(validateTransition('open', 'open')).toEqual({
+      ok: false,
+      reason: 'ILLEGAL_TRANSITION',
+      error: expect.any(String),
+      from: 'open',
+      to: 'open',
+    });
+  });
 });
 
 // `sourceStatesFor` is the inverse of `VALID_TRANSITIONS` above, and it is
@@ -585,6 +602,30 @@ describe('transitionClass (DB)', () => {
     const missing = await transitionClass(prisma, 'no-such-class-id', 'open');
     expect(missing.ok).toBe(false);
     if (!missing.ok) expect(missing.error).toMatch(/Class not found/);
+  });
+
+  it('answers a request for the status the class already holds as ILLEGAL_TRANSITION carrying that pair', async () => {
+    const cls = await makeClass({ status: 'open' });
+
+    const result = await transitionClass(prisma, cls.id, 'open');
+
+    expect(result).toMatchObject({ ok: false, reason: 'ILLEGAL_TRANSITION', from: 'open', to: 'open' });
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.status).toBe('open');
+  });
+
+  // The route turns a same-status ILLEGAL_TRANSITION into `unchanged`, so the
+  // cancellation has to be reported first or a cancelled class reads as done.
+  it('reports CANCELLED ahead of the status a cancelled class already holds', async () => {
+    const cls = await makeClass({ status: 'open' });
+    await prisma.calendarEntry.update({
+      where: { id: cls.calendarEntryId },
+      data: { cancelledAt: new Date() },
+    });
+
+    const result = await transitionClass(prisma, cls.id, 'open');
+
+    expect(result).toMatchObject({ ok: false, reason: 'CANCELLED' });
   });
 
   it('closes the waitlist when it moves a class to in_progress', async () => {
@@ -1033,6 +1074,36 @@ describe('completeClass (DB)', () => {
     // the entry's own column that refuses.
     if (!result.ok) expect(result.reason).toBe('CANCELLED');
     expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(0);
+  });
+
+  /**
+   * The service keeps refusing `completed → completed`. The complete route is
+   * what answers it `unchanged`; `autoCompleteClasses` and teacher erasure
+   * branch on this refusal and must keep seeing it.
+   */
+  it('refuses an already-completed class as ILLEGAL_TRANSITION from completed, and bills nothing twice', async () => {
+    const cls = await makeClass({ status: 'open' });
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId: studentIds[2]!, status: 'registered', tierAtBooking: 3 },
+    });
+    try {
+      expect(await completeClass(prisma, cls.id, { finishedEarly: true })).toMatchObject({ ok: true });
+      expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(1);
+
+      const again = await completeClass(prisma, cls.id, { finishedEarly: true });
+
+      expect(again).toMatchObject({
+        ok: false,
+        reason: 'ILLEGAL_TRANSITION',
+        from: 'completed',
+        to: 'completed',
+      });
+      expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(1);
+    } finally {
+      // `Notification.relatedClass` is `onDelete: SetNull`; the block's
+      // `afterAll` removes the class, not these.
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+    }
   });
 
   it('closes the waitlist when a teacher completes an open class directly', async () => {

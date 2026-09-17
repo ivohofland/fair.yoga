@@ -3,61 +3,50 @@ import { prisma } from '@/lib/db';
 import {
   respondOk,
   respondError,
+  respondUnchanged,
   requireTeacher,
   parseBody,
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
-import type { ApiErrorCode } from '@/lib/api-error-codes';
-import { transitionClass, type TransitionFailureReason } from '@/services/class-lifecycle';
+import type { CodedRefusal } from '@/lib/api-error-codes';
+import { transitionRefusalMessage } from '@/lib/transition-refusal';
+import {
+  transitionClass,
+  ROOM_ARCHIVED_MESSAGE,
+  STARTS_IN_PAST_MESSAGE,
+  type TransitionFailureReason,
+} from '@/services/class-lifecycle';
 import { transitionClassSchema } from '@/lib/schemas';
+import { CLASS_CANCELLED, CLASS_GONE, CLASS_NOT_ENDED_YET } from '../shared';
+
+type TransitionApplied = Extract<Awaited<ReturnType<typeof transitionClass>>, { ok: true }>;
 
 /**
- * How each refusal reaches the client, as a table rather than a ternary.
+ * How each refusal but `ILLEGAL_TRANSITION` reaches the client. That one is
+ * answered in the handler, because its words depend on the pair it refused and
+ * one of its pairs is not a refusal at all.
  *
- * `NOT_FOUND` is a 404 and the rest are 409s, which is why this started life as
- * `result.reason === 'NOT_FOUND' ? 404 : 409` — before that, mapping every
- * refusal to 409 answered a deleted class with `409 "Class not found: <id>"`,
- * a status and a message that contradict each other.
+ * Keyed by the full `TransitionFailureReason` union rather than by
+ * `transitionClass`'s range, so a reason added to the union has an answer here
+ * before any caller can return it. `CodedRefusal` checks each entry's status
+ * against its own code.
  *
- * The CODE is the part the ternary could not carry, and #249 is what made its
- * absence cost something. Three of these reach the client as an indistinguishable
- * 409 while wanting three different client behaviours: `STARTS_IN_PAST` is
- * permanent and the page is right (nothing will make that draft publishable),
- * `ILLEGAL_TRANSITION` means the page is stale and should re-read,
- * `CONCURRENT_MODIFICATION` means the write lost a race and may simply be
- * retried. Telling them apart by matching English in the message is exactly
- * what `TransitionFailureReason` was introduced (#182) to stop —
- * `autoCompleteClasses` used to do it with `.endsWith('has not ended yet')`.
- *
- * `CLASS_STARTS_IN_PAST` deliberately matches the code `PUT /api/classes/[id]`
- * already answers with, rather than mirroring the internal name. The two doors
- * refuse the same condition, and a client that learns to handle one gets the
- * other for nothing.
- *
- * A `Record` over the full union, so this is exhaustive by construction: a new
- * `TransitionFailureReason` member fails the build here rather than falling
- * through to some default. `NOT_ENDED_YET` is listed and unreachable through
- * this route — `completeClass` is its only producer — which is the superset
- * looseness `TransitionFailureReason`'s own docblock records.
- *
- * `CANCELLED` (#327) is a member for the same reason a cancelled class is
- * still a live-status row: cancellation is a column on the entry now, so
- * `transitionClass`'s status check cannot see it and answers it separately
- * rather than reporting a legal-looking transition as a lost race.
+ * `CLASS_STARTS_IN_PAST` is the code `PUT /api/classes/[id]` answers the same
+ * condition with.
  */
-const TRANSITION_FAILURE_RESPONSE: Record<
-  TransitionFailureReason,
-  { httpStatus: 404 | 409; code: ApiErrorCode }
-> = {
-  NOT_FOUND: { httpStatus: 404, code: 'NOT_FOUND' },
-  ILLEGAL_TRANSITION: { httpStatus: 409, code: 'ILLEGAL_TRANSITION' },
-  NOT_ENDED_YET: { httpStatus: 409, code: 'CLASS_NOT_ENDED_YET' },
-  CONCURRENT_MODIFICATION: { httpStatus: 409, code: 'CONCURRENT_MODIFICATION' },
-  STARTS_IN_PAST: { httpStatus: 409, code: 'CLASS_STARTS_IN_PAST' },
-  ROOM_ARCHIVED: { httpStatus: 409, code: 'ROOM_ARCHIVED' },
-  CANCELLED: { httpStatus: 409, code: 'CLASS_CANCELLED' },
-};
+const TRANSITION_REFUSAL = {
+  NOT_FOUND: CLASS_GONE,
+  CANCELLED: CLASS_CANCELLED,
+  CONCURRENT_MODIFICATION: {
+    code: 'CONCURRENT_MODIFICATION',
+    status: 409,
+    message: 'This class was just changed elsewhere. Refresh and try again.',
+  },
+  STARTS_IN_PAST: { code: 'CLASS_STARTS_IN_PAST', status: 409, message: STARTS_IN_PAST_MESSAGE },
+  ROOM_ARCHIVED: { code: 'ROOM_ARCHIVED', status: 409, message: ROOM_ARCHIVED_MESSAGE },
+  NOT_ENDED_YET: CLASS_NOT_ENDED_YET,
+} as const satisfies Record<Exclude<TransitionFailureReason, 'ILLEGAL_TRANSITION'>, CodedRefusal>;
 
 export const POST = withErrorHandler(async (
   request: NextRequest,
@@ -72,7 +61,7 @@ export const POST = withErrorHandler(async (
     where: { id },
     include: { calendarEntry: { select: { teacherId: true } } },
   });
-  if (!cls) return respondError('Class not found', 404);
+  if (!cls) return respondError(CLASS_GONE.message, CLASS_GONE.status, CLASS_GONE.code);
   if (cls.calendarEntry.teacherId !== session.teacherId) {
     return respondError('Not your class', 403);
   }
@@ -81,10 +70,22 @@ export const POST = withErrorHandler(async (
   if ('error' in parsed) return parsed.error;
 
   const result = await transitionClass(prisma, id, parsed.data.status);
-  if (!result.ok) {
-    const { httpStatus, code } = TRANSITION_FAILURE_RESPONSE[result.reason];
-    return respondError(result.error, httpStatus, code);
+  if (result.ok) return respondOk(result);
+
+  if (result.reason === 'ILLEGAL_TRANSITION') {
+    // The service asks about cancellation before the state machine, so a
+    // same-status refusal here is a live class already where it was asked to
+    // be.
+    if (result.from === result.to) {
+      return respondUnchanged<TransitionApplied>({ ok: true, newStatus: result.from });
+    }
+    return respondError(
+      transitionRefusalMessage(result.from, result.to),
+      409,
+      'ILLEGAL_TRANSITION',
+    );
   }
 
-  return respondOk(result);
+  const refusal = TRANSITION_REFUSAL[result.reason];
+  return respondError(refusal.message, refusal.status, refusal.code);
 });

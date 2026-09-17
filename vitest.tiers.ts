@@ -138,6 +138,8 @@ export const LOCK_CONTENTION_TESTS = [
   'src/app/api/registrations/route-lock-order.test.ts',
   // #626: the same shape, for the privacy route.
   'src/app/api/students/[id]/privacy/route-lock-order.test.ts',
+  // #197: the same shape, for the class completion route.
+  'src/app/api/classes/[id]/complete/route-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

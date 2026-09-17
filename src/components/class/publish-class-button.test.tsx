@@ -42,14 +42,21 @@ describe('PublishClassButton', () => {
     fetchMock.mockResolvedValue({
       ok: false,
       status: 409,
-      json: async () => ({ error: { message: 'Set a room before publishing.' } }),
+      json: async () => ({
+        error: {
+          code: 'CLASS_STARTS_IN_PAST',
+          message: "This class's start time has already passed, so it can't be published.",
+        },
+      }),
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<PublishClassButton classId="c-1" />);
 
     fireEvent.click(screen.getByRole('button'));
 
-    expect(await screen.findByText('Set a room before publishing.')).toBeInTheDocument();
+    expect(
+      await screen.findByText("This class's start time has already passed, so it can't be published."),
+    ).toBeInTheDocument();
     // Refreshes on refusal as well as on success (#249), which is the reverse
     // of what this line asserted until the past-start guard landed. A 409 here
     // means the server knows something the rendered page does not, and since
@@ -59,6 +66,25 @@ describe('PublishClassButton', () => {
     // refreshed on refusal since #247 for the same reason; this button is the
     // one that did not.
     await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+  });
+
+  it('treats an unchanged answer as success: the class was already published', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { ok: true, newStatus: 'open' }, outcome: 'unchanged' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<PublishClassButton classId="c-1" />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    // The button re-enables in the handler's `finally`, after whichever branch
+    // ran — so this is the settle point, not the assertion. Saying nothing is
+    // the assertion: `router.refresh()` cannot separate the two branches here,
+    // because this button refreshes on refusal as well (#249).
+    await waitFor(() => expect(screen.getByRole('button')).toBeEnabled());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('says something when the request never reaches the server', async () => {

@@ -32,20 +32,35 @@ describe('CompleteClassButton', () => {
     await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
   });
 
-  it('shows the server message when completion is refused', async () => {
+  it('treats an unchanged answer as success: the class was already completed', async () => {
     fetchMock.mockResolvedValue({
-      ok: false,
-      status: 409,
-      json: async () => ({ error: { message: 'This class has already been completed.' } }),
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { ok: true, newStatus: 'completed' }, outcome: 'unchanged' }),
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<CompleteClassButton classId="c-9" />);
 
     fireEvent.click(screen.getByRole('button'));
 
-    expect(
-      await screen.findByText('This class has already been completed.'),
-    ).toBeInTheDocument();
+    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('shows the server message when completion is refused', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: { code: 'CLASS_CANCELLED', message: 'This class has been cancelled.' },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CompleteClassButton classId="c-9" />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('This class has been cancelled.');
     expect(routerRefresh).not.toHaveBeenCalled();
   });
 

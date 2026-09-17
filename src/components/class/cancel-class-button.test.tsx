@@ -64,32 +64,54 @@ describe('CancelClassButton', () => {
     fetchMock.mockResolvedValue({
       ok: false,
       status: 409,
-      json: async () => ({ error: { message: 'That class can no longer be changed' } }),
+      json: async () => ({
+        error: {
+          code: 'CLASS_NOT_CANCELLABLE',
+          message: "This class has already started, so it can't be cancelled.",
+        },
+      }),
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<CancelClassButton classId="c-7" registrationCount={0} />);
 
     confirm();
 
-    expect(await screen.findByText('That class can no longer be changed')).toBeInTheDocument();
+    expect(
+      await screen.findByText("This class has already started, so it can't be cancelled."),
+    ).toBeInTheDocument();
     expect(routerRefresh).not.toHaveBeenCalled();
   });
 
-  // `respondError` sends `{ error: '…' }` from some doors and
-  // `{ error: { message: '…' } }` from others, and `readErrorMessage` reads
-  // both. Both shapes, so a simplification to one of them cannot pass quietly.
-  it('reads a bare string error as well as a nested one', async () => {
+  // Cancelling is not removing: this button did not ask for the class to be
+  // gone, so its absence is a failure to report, not a success.
+  it('shows NOT_FOUND as an error', async () => {
     fetchMock.mockResolvedValue({
       ok: false,
       status: 404,
-      json: async () => ({ error: 'Class not found' }),
+      json: async () => ({ error: { code: 'NOT_FOUND', message: 'This class no longer exists.' } }),
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<CancelClassButton classId="c-7" registrationCount={0} />);
 
     confirm();
 
-    expect(await screen.findByText('Class not found')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('This class no longer exists.');
+    expect(routerRefresh).not.toHaveBeenCalled();
+  });
+
+  it('treats an unchanged answer as success: the class was already cancelled', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { ok: true, cancelled: true }, outcome: 'unchanged' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CancelClassButton classId="c-7" registrationCount={0} />);
+
+    confirm();
+
+    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('says something when the request never reaches the server', async () => {
